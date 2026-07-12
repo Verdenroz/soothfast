@@ -1,0 +1,28 @@
+# Site configuration for `cargo soothfast docs build`/`docs serve`.
+# Generated pages (reference/, perf/, coverage.md) are produced by
+# `make docs-pages` before the build — the site can only reflect the current code.
+
+[site]
+name = "soothfast"
+version = "0.1.0"
+repo = "https://github.com/Verdenroz/soothfast"
+
+[[site.nav]]
+title = "Guide"
+pages = ["index.md", "measuring.md", "gating.md", "living-docs.md", "spec.md", "reports.md"]
+
+[[site.nav]]
+title = "API reference"
+pages = [
+  "reference/soothfast.md",
+  "reference/soothfast-macros.md",
+  "reference/soothfast-registry.md",
+  "reference/soothfast-measure.md",
+  "reference/soothfast-docs.md",
+  "reference/soothfast-spec.md",
+  "reference/soothfast-report.md",
+]
+
+[[site.nav]]
+title = "Performance"
+pages = ["perf/summary.md", "coverage.md"]

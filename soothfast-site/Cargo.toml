@@ -1,0 +1,19 @@
+[package]
+name = "soothfast-site"
+description = "Soothfast site engine: markdown to themed HTML with measured evidence, no mkdocs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# CLI-side crate (consumed only by cargo-soothfast, never by user libs).
+# Renderer, template engine, highlighter and search are hand-rolled: no
+# dependencies beyond serde_json, which the workspace already carries.
+soothfast-docs.workspace = true
+serde_json.workspace = true

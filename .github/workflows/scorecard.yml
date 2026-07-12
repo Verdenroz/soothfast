@@ -1,0 +1,49 @@
+name: Scorecard supply-chain security
+
+on:
+  # Re-evaluate when branch protection changes.
+  branch_protection_rule:
+  schedule:
+    - cron: '20 7 * * 1'
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # upload SARIF to code scanning
+      id-token: write         # publish results to the public Scorecard API
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@99c09fe975337306107572b4fdf4db224cf8e2f2 # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publish results to enable the Scorecard badge.
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code scanning
+        uses: github/codeql-action/upload-sarif@24ea975727876cf496b1eb0c5b36e96e01600b51 # v4.37.0
+        with:
+          sarif_file: results.sarif

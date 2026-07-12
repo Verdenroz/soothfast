@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features
+      - run: cargo test --workspace --all-features
+
+  # MSRV: the workspace pledges rust-version 1.85; prove it still compiles there.
+  msrv:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          shared-key: msrv
+      - run: cargo check --workspace --all-targets --all-features
+
+  # Dogfood: measure the self-bench crates, then gate every bind, claim, and
+  # captured output against this build's own run.
+  docs:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+      - run: rustup toolchain install nightly # rustdoc JSON
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+      - run: make baselines
+      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast --baseline self README.md docs/index.md
+      - run: cargo run --release -p cargo-soothfast -- docs capture -p soothfast --check README.md docs/index.md
+      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast-measure --baseline self docs/measuring.md docs/gating.md
+      - run: cargo run --release -p cargo-soothfast -- docs capture -p soothfast-measure --check docs/measuring.md docs/gating.md
+      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast-docs --baseline self docs/living-docs.md
+      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast-spec --baseline self docs/spec.md
+      - run: cargo run --release -p cargo-soothfast -- docs capture -p soothfast-spec --check docs/spec.md
+      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast-report --baseline self docs/reports.md
+      - run: cargo run --release -p cargo-soothfast -- docs capture -p soothfast-report --check docs/reports.md
+      - run: make check-llms
+
+  # Regenerate and publish the site only on merge to master: fresh
+  # measurements, fresh pages, gh-deploy.
+  deploy-docs:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [check, docs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+      - run: rustup toolchain install nightly
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+      - run: make baselines
+      - run: make docs-pages
+      - run: cargo run --release -p cargo-soothfast -- docs build --baseline self
+      - uses: peaceiris/actions-gh-pages@1ef5a1b1df4c63fe21a2242edbee6cac921ece01 # v4.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site

@@ -1,0 +1,12 @@
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+{% for group in nav %}
+  <div class="nav-group">
+    <span class="label">{{ group.title }}</span>
+    <ul>
+    {% for p in group.pages %}
+      <li><a{% if p.current %} class="active" aria-current="page"{% endif %} href="{{ p.href }}">{{ p.title }}</a></li>
+    {% endfor %}
+    </ul>
+  </div>
+{% endfor %}
+</nav>

@@ -1,0 +1,24 @@
+[package]
+name = "cargo-soothfast"
+description = "CLI for soothfast: measure, gate, docs, spec, report"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "cargo-soothfast"
+path = "src/main.rs"
+
+[dependencies]
+soothfast-docs.workspace = true
+soothfast-report.workspace = true
+soothfast-site.workspace = true
+soothfast-spec.workspace = true
+soothfast-sdk.workspace = true
+serde_json.workspace = true

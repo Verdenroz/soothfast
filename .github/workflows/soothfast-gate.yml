@@ -1,0 +1,66 @@
+name: soothfast-gate
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: "Cargo package with the soothfast bench target"
+        required: true
+        type: string
+      base-ref:
+        description: "Git ref to gate against (defaults to the PR base)"
+        required: false
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # post/update the gate-result PR comment
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # merge-base needs history
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+      # callgrind fallback + triage artifacts for PMU-less runners
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
+      - name: Run gate
+        id: gate
+        run: |
+          REF="${INPUTS_BASE_REF}"
+          if [ -z "$REF" ]; then REF="origin/${GITHUB_BASE_REF:-master}"; fi
+          cargo run --release -p cargo-soothfast -- \
+            gate -p "${INPUTS_PACKAGE}" --against-ref "$REF" | tee gate-output.txt
+        env:
+          INPUTS_BASE_REF: ${{ inputs.base-ref }}
+          INPUTS_PACKAGE: ${{ inputs.package }}
+      - name: Upload triage artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-triage
+          path: .soothfast/triage/
+          if-no-files-found: ignore
+      - name: PR comment with gate results
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '## soothfast gate'
+            echo '```'
+            tail -n 60 gate-output.txt
+            echo '```'
+          } > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file comment.md --edit-last --create-if-none

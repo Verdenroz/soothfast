@@ -1,0 +1,10 @@
+<aside class="rail" aria-label="Page tools">
+{% if toc %}
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  {% for h in toc %}
+    <li><a class="toc-l{{ h.level }}" href="#{{ h.id }}">{{ h.text }}</a></li>
+  {% endfor %}
+  </ul>
+{% endif %}
+</aside>
