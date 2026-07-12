@@ -1,0 +1,25 @@
+[package]
+name = "soothfast-docs"
+description = "Soothfast docs engine: rustdoc JSON surface, bind blocks, claims, doc-test generation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# CLI-side crate (consumed only by cargo-soothfast, never by user libs).
+soothfast-registry.workspace = true
+serde_json.workspace = true
+
+# Path-only (no version): stripped on publish, so no dev-dep cycle on crates.io.
+[dev-dependencies]
+soothfast = { path = "../soothfast", features = ["runner"] }
+
+[[bench]]
+name = "soothfast"
+harness = false

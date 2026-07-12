@@ -1,0 +1,11 @@
+{
+  "name": "acme-items-darwin-x64",
+  "version": "1.2.3",
+  "description": "The embed_server binary for darwin-x64, used by acme-items.",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "files": [
+    "bin"
+  ],
+  "preferUnplugged": true
+}

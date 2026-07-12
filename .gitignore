@@ -1,0 +1,33 @@
+/target
+/target-docker
+/.soothfast/
+
+# Docs-site pages produced by soothfast at build time — never committed, so
+# the site can only reflect the current code (make docs).
+/docs/reference/
+/docs/perf/
+/docs/coverage.md
+/docs/llms.txt
+/site/
+
+# Valgrind / perf debris
+vgcore.*
+core.*
+callgrind.out.*
+cachegrind.out.*
+massif.out.*
+perf.data
+perf.data.old
+
+# Coverage and profiling artifacts
+*.profraw
+*.profdata
+
+# Debris from the SDK runtime tests, which run real Python and Node
+# tooling against the generated goldens.
+__pycache__/
+*.pyc
+
+# Editor / OS junk
+.DS_Store
+*.swp

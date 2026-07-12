@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="16" viewBox="0 0 1200 16"
+     role="img" aria-label="Section divider: ruler graduations.">
+  <defs>
+    <pattern id="rule-fine" width="24" height="16" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="5" x2="0" y2="11" stroke="#98A2C0" stroke-width="1"/>
+    </pattern>
+    <pattern id="rule-coarse" width="144" height="16" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="2" x2="0" y2="14" stroke="#98A2C0" stroke-width="1.4"/>
+    </pattern>
+  </defs>
+  <g opacity=".55">
+    <rect width="1200" height="16" fill="url(#rule-fine)"/>
+    <rect width="1200" height="16" fill="url(#rule-coarse)"/>
+  </g>
+</svg>

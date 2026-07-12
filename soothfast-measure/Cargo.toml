@@ -1,0 +1,28 @@
+[package]
+name = "soothfast-measure"
+description = "Soothfast measurement engine: runner, stats, metric backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+soothfast-registry.workspace = true
+
+# perfcnt backend: raw perf_event_open syscall wrapper. libc has zero
+# transitive deps.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+# Path-only (no version): stripped on publish, so no dev-dep cycle on crates.io.
+[dev-dependencies]
+soothfast = { path = "../soothfast", features = ["runner"] }
+
+[[bench]]
+name = "soothfast"
+harness = false

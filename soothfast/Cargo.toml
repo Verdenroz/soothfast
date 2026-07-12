@@ -1,0 +1,22 @@
+[package]
+name = "soothfast"
+description = "Measured and documented Rust: living docs + gated performance, derived from code"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+# Enable in [dev-dependencies] only: pulls the measurement engine into the
+# bench binary. The plain library dependency stays linkme-only.
+runner = ["dep:soothfast-measure"]
+
+[dependencies]
+soothfast-macros.workspace = true
+soothfast-registry.workspace = true
+soothfast-measure = { workspace = true, optional = true }

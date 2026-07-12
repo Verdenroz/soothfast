@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="150" viewBox="0 0 1200 150"
+     role="img" aria-labelledby="wf-title wf-desc">
+  <title id="wf-title">The soothfast loop</title>
+  <desc id="wf-desc">Annotate a function, measure it, gate it in CI, and keep prose bound to the result: four stages in one closed loop.</desc>
+
+  <style>
+    /* One 7s cycle: a measurement pulse leaves `annotate` and lands on
+       `bind + claim`; each station rings as the pulse passes. */
+    #pulse { opacity: 0; animation: travel 7s linear infinite; }
+    @keyframes travel {
+      0%, 7% { transform: translateX(0); opacity: 0; }
+      10%    { opacity: 1; }
+      55%    { opacity: 1; }
+      59%    { transform: translateX(960px); opacity: 0; }
+      100%   { transform: translateX(960px); opacity: 0; }
+    }
+
+    .ring { opacity: 0; transform-box: fill-box; transform-origin: 50% 50%; }
+    #ring1 { animation: pop1 7s linear infinite; }
+    #ring2 { animation: pop2 7s linear infinite; }
+    #ring3 { animation: pop3 7s linear infinite; }
+    #ring4 { animation: pop4 7s linear infinite; }
+    @keyframes pop1 {
+      0%, 7%    { opacity: 0; transform: scale(.5); }
+      9%        { opacity: .85; transform: scale(1); }
+      16%       { opacity: 0; transform: scale(2.4); }
+      17%, 100% { opacity: 0; transform: scale(.5); }
+    }
+    @keyframes pop2 {
+      0%, 24%   { opacity: 0; transform: scale(.5); }
+      26%       { opacity: .85; transform: scale(1); }
+      33%       { opacity: 0; transform: scale(2.4); }
+      34%, 100% { opacity: 0; transform: scale(.5); }
+    }
+    @keyframes pop3 {
+      0%, 41%   { opacity: 0; transform: scale(.5); }
+      43%       { opacity: .85; transform: scale(1); }
+      50%       { opacity: 0; transform: scale(2.4); }
+      51%, 100% { opacity: 0; transform: scale(.5); }
+    }
+    @keyframes pop4 {
+      0%, 58%   { opacity: 0; transform: scale(.5); }
+      60%       { opacity: .9; transform: scale(1); }
+      68%       { opacity: 0; transform: scale(2.6); }
+      69%, 100% { opacity: 0; transform: scale(.5); }
+    }
+
+    /* The terminal station flicks like a test going green. */
+    #dot4 { transform-box: fill-box; transform-origin: 50% 50%; animation: landed 7s linear infinite; }
+    @keyframes landed {
+      0%, 58% { transform: scale(1); }
+      61%     { transform: scale(1.45); }
+      66%     { transform: scale(1); }
+      100%    { transform: scale(1); }
+    }
+
+    /* Motion off: pulse and rings vanish, stations rest lit. */
+    @media (prefers-reduced-motion: reduce) {
+      #pulse, .ring, #dot4 { animation: none !important; }
+    }
+  </style>
+
+  <defs>
+    <pattern id="wf-ticks" width="24" height="10" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="5" stroke="#93A5F2" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="150" rx="18" fill="#14171F"/>
+  <rect x=".5" y=".5" width="1199" height="149" rx="17.5" fill="none" stroke="#262B3A"/>
+  <rect x="0" y="0" width="1200" height="10" fill="url(#wf-ticks)" opacity=".38"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <line x1="120" y1="88" x2="1080" y2="88" stroke="#3A3F4C" stroke-width="1.4"/>
+
+    <g transform="translate(120 88)">
+      <circle id="ring1" class="ring" r="11" fill="none" stroke="#93A5F2" stroke-width="1.6"/>
+      <circle r="5.5" fill="#93A5F2"/>
+      <text x="0" y="-24" text-anchor="middle" font-size="13" font-weight="700" fill="#D9DEE9">annotate</text>
+      <text x="0" y="30" text-anchor="middle" font-size="11" fill="#7D8496">#[soothfast::measured]</text>
+    </g>
+
+    <g transform="translate(440 88)">
+      <circle id="ring2" class="ring" r="11" fill="none" stroke="#93A5F2" stroke-width="1.6"/>
+      <circle r="5.5" fill="#93A5F2"/>
+      <text x="0" y="-24" text-anchor="middle" font-size="13" font-weight="700" fill="#D9DEE9">measure</text>
+      <text x="0" y="30" text-anchor="middle" font-size="11" fill="#7D8496">perfcnt / callgrind / walltime / alloc</text>
+    </g>
+
+    <g transform="translate(760 88)">
+      <circle id="ring3" class="ring" r="11" fill="none" stroke="#93A5F2" stroke-width="1.6"/>
+      <circle r="5.5" fill="#93A5F2"/>
+      <text x="0" y="-24" text-anchor="middle" font-size="13" font-weight="700" fill="#D9DEE9">gate</text>
+      <text x="0" y="30" text-anchor="middle" font-size="11" fill="#7D8496">fails CI on regression</text>
+    </g>
+
+    <g transform="translate(1080 88)">
+      <circle id="ring4" class="ring" r="11" fill="none" stroke="#57C97C" stroke-width="1.6"/>
+      <circle id="dot4" r="5.5" fill="#57C97C"/>
+      <text x="0" y="-24" text-anchor="middle" font-size="13" font-weight="700" fill="#D9DEE9">bind + claim</text>
+      <text x="0" y="30" text-anchor="middle" font-size="11" fill="#7D8496">prose checked against the same run</text>
+    </g>
+
+    <g id="pulse">
+      <circle cx="120" cy="88" r="9" fill="#93A5F2" opacity=".28"/>
+      <circle cx="120" cy="88" r="4" fill="#93A5F2"/>
+    </g>
+  </g>
+</svg>

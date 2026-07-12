@@ -1,0 +1,26 @@
+[package]
+name = "soothfast-spec"
+description = "Soothfast spec engine: declared-surface providers (OpenAPI/AsyncAPI/GraphQL/MCP) reconciled against route annotations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# yaml-rust2 is the sanctioned pure-Rust YAML parser.
+serde_json.workspace = true
+yaml-rust2 = "0.10"
+
+# Path-only (no version): stripped on publish, so no dev-dep cycle on
+# crates.io. Only needed to compile docs/spec.md's `#[route]` doc example.
+[dev-dependencies]
+soothfast = { path = "../soothfast", features = ["runner"] }
+
+[[bench]]
+name = "soothfast"
+harness = false

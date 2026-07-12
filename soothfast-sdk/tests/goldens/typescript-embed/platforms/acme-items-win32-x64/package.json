@@ -1,0 +1,11 @@
+{
+  "name": "acme-items-win32-x64",
+  "version": "1.2.3",
+  "description": "The embed_server binary for win32-x64, used by acme-items.",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": [
+    "bin"
+  ],
+  "preferUnplugged": true
+}

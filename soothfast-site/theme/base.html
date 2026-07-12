@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ page.title }} · {{ site.name }}</title>
+{% if site.favicon %}<link rel="icon" href="{{ base }}{{ site.favicon }}">
+{% else %}<link rel="icon" href="{{ base }}_soothfast/favicon.svg">
+{% endif %}<link rel="stylesheet" href="{{ base }}_soothfast/tokens.css">
+<link rel="stylesheet" href="{{ base }}_soothfast/site.css">
+{% if theme_vars %}<link rel="stylesheet" href="{{ base }}_soothfast/theme-vars.css">
+{% endif %}{% for css in extra_css %}<link rel="stylesheet" href="{{ base }}{{ css }}">
+{% endfor %}<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="{{ base }}">
+{% include "partials/header.html" %}
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+{% include "partials/nav.html" %}
+<main class="doc">
+{{ body | raw }}
+{% include "partials/footer.html" %}
+</main>
+{% include "partials/toc.html" %}
+</div>
+<script src="{{ base }}_soothfast/site.js" defer></script>
+{% for js in extra_js %}<script src="{{ base }}{{ js }}" defer></script>
+{% endfor %}</body>
+</html>

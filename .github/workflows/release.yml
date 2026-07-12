@@ -1,0 +1,166 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions: {}
+
+jobs:
+  checks:
+    name: Pre-release checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          lookup-only: true
+      - name: Verify tag matches workspace version
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          CARGO_VERSION=$(cargo metadata --format-version 1 --no-deps \
+            | grep -o '"name":"soothfast","version":"[^"]*"' \
+            | head -1 | sed 's/.*"version":"\([^"]*\)".*/\1/')
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match workspace version ($CARGO_VERSION)"
+            exit 1
+          fi
+          echo "Version verified: $TAG_VERSION"
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  dry-run:
+    name: Publish dry-run
+    runs-on: ubuntu-latest
+    needs: [checks]
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          lookup-only: true
+      - name: Package each crate in dependency order
+        run: |
+          for crate in soothfast-macros soothfast-registry soothfast-measure \
+                       soothfast-docs soothfast-spec soothfast-sdk soothfast-report \
+                       soothfast-site soothfast cargo-soothfast; do
+            echo "::group::cargo package -p $crate"
+            cargo package --no-verify --list -p "$crate"
+            echo "::endgroup::"
+          done
+
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: [checks, dry-run]
+    environment: release # manual approval: add required reviewers in settings
+    permissions:
+      id-token: write # mint a short-lived crates.io token via OIDC
+      contents: write # create the GitHub Release
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # previous-tag lookup + surface diff need history
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+      - name: Pin the rustdoc toolchain
+        run: |
+          TC=$(make -s print-SOOTHFAST_RUSTDOC_TOOLCHAIN)
+          echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$TC" >> "$GITHUB_ENV"
+          rustup toolchain install "$TC"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          lookup-only: true
+      - name: Authenticate to crates.io (OIDC)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          for crate in soothfast-macros soothfast-registry soothfast-measure \
+                       soothfast-docs soothfast-spec soothfast-sdk soothfast-report \
+                       soothfast-site soothfast cargo-soothfast; do
+            echo "::group::cargo publish -p $crate"
+            cargo publish -p "$crate"
+            echo "::endgroup::"
+            # Give the crates.io index time to pick up the new version before
+            # publishing a crate that depends on it.
+            sleep 30
+          done
+
+      # Dogfood: release assets are produced from this tag's own measurements.
+      - name: Produce release report from recorded measurements
+        run: |
+          for crate in soothfast-registry soothfast-measure soothfast-docs; do
+            cargo run --release -p cargo-soothfast -- \
+              measure -p "$crate" --save-baseline self
+          done
+          cargo run --release -p cargo-soothfast -- \
+            report render -p soothfast --baseline self --out target/release-report
+
+      - name: Extract CHANGELOG section for this version
+        id: changelog
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          NOTES=""
+          if [ -f CHANGELOG.md ]; then
+            NOTES=$(awk -v ver="$TAG_VERSION" '
+              $0 ~ "^## " && $0 ~ ver { found=1; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md)
+          fi
+          if [ -z "$NOTES" ]; then
+            echo "No CHANGELOG entry found for $TAG_VERSION; using auto-generated notes"
+            echo "use_auto=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "use_auto=false" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$NOTES" > /tmp/release_notes.md
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          USE_AUTO: ${{ steps.changelog.outputs.use_auto }}
+        run: |
+          ASSETS=""
+          [ -f target/release-report/summary.md ] && ASSETS="$ASSETS target/release-report/summary.md"
+          [ -f target/release-report/llms.txt ] && ASSETS="$ASSETS target/release-report/llms.txt"
+          if [ "$USE_AUTO" = "true" ]; then
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes $ASSETS
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file /tmp/release_notes.md $ASSETS
+          fi

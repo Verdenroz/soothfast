@@ -1,0 +1,53 @@
+name: Security
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Re-run weekly so newly disclosed advisories surface even without a push.
+    - cron: "20 7 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  # Dependency supply-chain checks: advisories, banned crates, license policy,
+  # and allowed sources (typosquat / dependency-confusion defense).
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories bans licenses sources
+
+  # Static analysis of the GitHub Actions workflows themselves.
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload SARIF to code scanning
+      contents: read
+      actions: read
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      # The action defaults to the latest zizmor, so a release that adds an
+      # audit turns this job red on a day nothing here changed. Pin the tool
+      # and bump it deliberately, the way the rustdoc nightly is pinned.
+      - uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          version: 1.29.0
