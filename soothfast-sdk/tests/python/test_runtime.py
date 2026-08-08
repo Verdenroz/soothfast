@@ -2,7 +2,7 @@
 
 Run with: uv run --with httpx --with pytest pytest soothfast-sdk/tests/python/
 """
-import sys, threading, json
+import sys, threading, time, json
 sys.dont_write_bytecode = True
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -37,6 +37,11 @@ def test_generated_sdk_end_to_end():
                     body = b'{"error":"rate_limited","message":"slow down","retry_after_seconds":0}'
                 else:
                     self.send_response(200); body = b'{"id": 9}'
+            elif self.path.startswith("/v1/items/glacial"):
+                calls["glacial"] = calls.get("glacial", 0) + 1
+                self.send_response(429)
+                self.send_header("Retry-After", "3600")
+                body = b'{"error":"rate_limited","message":"come back later"}'
             elif "cursor=" in self.path:
                 self.send_response(200)
                 body = json.dumps({"items": [{"id": 2}], "pageInfo": {"endCursor": None, "hasNextPage": False}}).encode()
@@ -70,6 +75,15 @@ def test_generated_sdk_end_to_end():
         except NotFoundError as e:
             assert e.status == 404 and e.error == "not_found"
         assert client.get_item("limited").id == 9 and calls["n"] == 3, calls
+        # A Retry-After longer than we will wait comes back as an error,
+        # not as an hour-long sleep inside the call.
+        started = time.monotonic()
+        try:
+            client.get_item("glacial"); assert False
+        except RateLimitError as e:
+            assert e.retry_after == 3600.0, e.retry_after
+        assert time.monotonic() - started < 5, "retried instead of raising"
+        assert calls["glacial"] == 1, calls
         items = list(client.iter_list_items(limit=1))
         assert [i.id for i in items] == [1, 2], items
         pages = list(client.iter_list_items(limit=1).pages())

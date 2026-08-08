@@ -1,0 +1,156 @@
+name: SDK release
+
+# Reusable: a consumer crate calls this to cross-compile its embedded
+# server, stage the platform artifacts, and publish the SDKs.
+#
+# One runner per target — cross-compiling is only free for the host, and a
+# native runner is what makes a macOS or Windows binary trustworthy. Linux
+# glibc builds run inside the manylinux image so the wheel tag they claim
+# is one they have actually earned.
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: Cargo package whose [[sdk]] entries are built.
+        required: true
+        type: string
+      publish:
+        description: Publish after building. Off means build and upload only.
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      NPM_TOKEN:
+        required: false
+      PYPI_TOKEN:
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions: {}
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            manylinux: quay.io/pypa/manylinux_2_17_x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            manylinux: quay.io/pypa/manylinux_2_17_aarch64
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: rustup toolchain install nightly # rustdoc JSON
+      - uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          key: ${{ matrix.target }}
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+
+      # A manylinux_2_17 tag is a claim about glibc at link time, so the
+      # glibc targets build in the image that makes it true. `sdk build`
+      # reads AUDITWHEEL_PLAT to confirm; without it, it warns.
+      # Expansions go through the environment, never into the shell text:
+      # a package name is workflow input, and `run:` interpolation would
+      # make it executable. (zizmor: template-injection)
+      - name: Build (manylinux)
+        if: matrix.manylinux
+        env:
+          PACKAGE: ${{ inputs.package }}
+          TARGET: ${{ matrix.target }}
+          IMAGE: ${{ matrix.manylinux }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/io" -w /io \
+            -e CARGO_TERM_COLOR -e PACKAGE -e TARGET \
+            "$IMAGE" \
+            bash -c '
+              set -euo pipefail
+              curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+              . "$HOME/.cargo/env"
+              rustup toolchain install nightly # rustdoc JSON
+              curl -LsSf https://astral.sh/uv/install.sh | sh
+              . "$HOME/.local/bin/env"
+              cargo run --release -p cargo-soothfast -- \
+                sdk build -p "$PACKAGE" --target "$TARGET"
+            '
+
+      - name: Build
+        if: ${{ !matrix.manylinux }}
+        env:
+          PACKAGE: ${{ inputs.package }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          cargo run --release -p cargo-soothfast -- \
+            sdk build -p "$PACKAGE" --target "$TARGET"
+
+      # Staged binaries and wheels are gitignored, so they travel between
+      # jobs as artifacts rather than commits.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdk-${{ matrix.target }}
+          path: |
+            **/platforms/*/bin/*
+            **/dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish
+    needs: [build]
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment: sdk-release
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+      - run: rustup toolchain install nightly # rustdoc JSON
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+
+      # Every target's artifacts land back in the tree they were staged
+      # from, so `sdk publish` sees a complete matrix and its
+      # nothing-is-staged guard passes honestly.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: sdk-*
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          cargo run --release -p cargo-soothfast -- \
+            sdk publish -p "$PACKAGE"

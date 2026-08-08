@@ -12,10 +12,43 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
+/// What a table entry says about a type it cannot walk.
+///
+/// Most entries are a literal schema, but a *transparent newtype wrapper*
+/// (`#[serde(transparent)] struct Json<T>(pub T)`) has no wire shape of its
+/// own — it is exactly its type argument, so no literal can describe it
+/// without erasing whatever it wraps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeMapping {
+    /// A JSON Schema substituted wherever the type appears.
+    Literal(Value),
+    /// The type's wire shape is that of one of its generic arguments.
+    Transparent {
+        /// Which type argument carries the shape, zero-based.
+        arg: usize,
+    },
+}
+
+impl TypeMapping {
+    /// The literal schema, when this entry is one.
+    pub fn as_literal(&self) -> Option<&Value> {
+        match self {
+            Self::Literal(v) => Some(v),
+            Self::Transparent { .. } => None,
+        }
+    }
+}
+
+impl From<Value> for TypeMapping {
+    fn from(schema: Value) -> Self {
+        Self::Literal(schema)
+    }
+}
+
 /// Built-in and user-supplied mappings from canonical type path to schema.
 #[derive(Debug, Clone)]
 pub struct TypeTable {
-    map: BTreeMap<String, Value>,
+    map: BTreeMap<String, TypeMapping>,
 }
 
 impl Default for TypeTable {
@@ -30,7 +63,7 @@ impl TypeTable {
     pub fn builtin() -> Self {
         let mut map = BTreeMap::new();
         let mut put = |k: &str, v: Value| {
-            map.insert(k.to_string(), v);
+            map.insert(k.to_string(), TypeMapping::Literal(v));
         };
 
         let string = || json!({ "type": "string" });
@@ -108,14 +141,17 @@ impl TypeTable {
 
     /// Add or override a mapping. User entries win over built-ins, so a crate
     /// with a custom serializer for a std type can correct the default.
-    pub fn insert(&mut self, path: impl Into<String>, schema: Value) {
-        self.map.insert(path.into(), schema);
+    ///
+    /// A bare [`Value`] is a literal schema, so existing callers keep working
+    /// unchanged; pass a [`TypeMapping`] for anything else.
+    pub fn insert(&mut self, path: impl Into<String>, mapping: impl Into<TypeMapping>) {
+        self.map.insert(path.into(), mapping.into());
     }
 
     /// Look a canonical path up, accepting the shorter forms users actually
     /// write in config: `uuid::Uuid` for `uuid::Uuid`, and the bare type name
     /// when a crate re-exports from a private module.
-    pub fn lookup(&self, canonical: &str) -> Option<&Value> {
+    pub fn lookup(&self, canonical: &str) -> Option<&TypeMapping> {
         if let Some(v) = self.map.get(canonical) {
             return Some(v);
         }
@@ -154,11 +190,16 @@ impl TypeTable {
 mod tests {
     use super::*;
 
+    /// The literal schema at a path, for the many tests that expect one.
+    fn literal<'a>(t: &'a TypeTable, path: &str) -> Option<&'a Value> {
+        t.lookup(path).and_then(TypeMapping::as_literal)
+    }
+
     #[test]
     fn maps_std_string_by_canonical_path() {
         let t = TypeTable::builtin();
         assert_eq!(
-            t.lookup("alloc::string::String"),
+            literal(&t, "alloc::string::String"),
             Some(&json!({"type":"string"}))
         );
     }
@@ -166,7 +207,7 @@ mod tests {
     #[test]
     fn duration_maps_to_the_struct_serde_actually_emits() {
         let t = TypeTable::builtin();
-        let d = t.lookup("core::time::Duration").expect("Duration mapped");
+        let d = literal(&t, "core::time::Duration").expect("Duration mapped");
         assert_eq!(d["type"], "object");
         assert_eq!(d["required"][0], "secs");
     }
@@ -176,8 +217,28 @@ mod tests {
         let mut t = TypeTable::empty();
         t.insert("uuid::Uuid", json!({"type":"string","format":"uuid"}));
         // rustdoc reports the definition site, which may be a private module.
-        let found = t.lookup("uuid::builder::Uuid").expect("short form matches");
+        let found = literal(&t, "uuid::builder::Uuid").expect("short form matches");
         assert_eq!(found["format"], "uuid");
+    }
+
+    #[test]
+    fn a_transparent_entry_is_kept_apart_from_a_literal_one() {
+        let mut t = TypeTable::empty();
+        t.insert("async_graphql::types::json::Json", json!({}));
+        assert_eq!(
+            literal(&t, "async_graphql::types::json::Json"),
+            Some(&json!({})),
+            "an empty table is a literal open schema, not a directive"
+        );
+        t.insert(
+            "async_graphql::types::json::Json",
+            TypeMapping::Transparent { arg: 0 },
+        );
+        assert_eq!(
+            t.lookup("async_graphql::types::json::Json"),
+            Some(&TypeMapping::Transparent { arg: 0 })
+        );
+        assert_eq!(literal(&t, "async_graphql::types::json::Json"), None);
     }
 
     #[test]
@@ -190,7 +251,7 @@ mod tests {
     fn user_entries_override_builtins() {
         let mut t = TypeTable::builtin();
         t.insert("core::time::Duration", json!({"type":"integer"}));
-        let d = t.lookup("core::time::Duration").expect("still mapped");
+        let d = literal(&t, "core::time::Duration").expect("still mapped");
         assert_eq!(d["type"], "integer");
     }
 }

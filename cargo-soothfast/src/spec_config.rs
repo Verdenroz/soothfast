@@ -10,6 +10,7 @@ use std::path::Path;
 use serde_json::Value;
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 use soothfast_spec::SpecKind;
+use soothfast_spec::schema::TypeMapping;
 
 /// What soothfast does with a spec file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,12 +34,22 @@ pub struct SpecEntry {
     pub version: Option<String>,
     pub description: Option<String>,
     pub servers: Vec<String>,
-    /// `[spec.types]`: canonical type path → JSON Schema, extending the
-    /// built-in table for foreign types soothfast cannot walk.
-    pub types: BTreeMap<String, Value>,
+    /// `[spec.types]`: canonical type path → schema or directive, extending
+    /// the built-in table for foreign types soothfast cannot walk.
+    pub types: BTreeMap<String, TypeMapping>,
     /// `[spec.responses]`: status code → response merged into every
     /// operation that doesn't already declare that status.
     pub responses: BTreeMap<String, CommonResponse>,
+    /// Whether types defined in sibling crates of this cargo workspace are
+    /// resolved from those crates' own rustdoc, rather than reported as
+    /// unmapped foreign types. On by default: a type in the crate next door
+    /// is as derivable as a local one, and paying for it should be the
+    /// exception, not the thing every consumer has to ask for.
+    pub workspace_types: bool,
+    /// Which workspace crates to document, when the automatic list (every
+    /// workspace member the package depends on) is more than is wanted —
+    /// each one costs a nightly rustdoc build. Empty means all of them.
+    pub workspace_crates: Vec<String>,
 }
 
 /// One `[spec.responses]` entry: a response every operation shares.
@@ -72,6 +83,8 @@ impl SpecEntry {
             servers: Vec::new(),
             types: BTreeMap::new(),
             responses: BTreeMap::new(),
+            workspace_types: true,
+            workspace_crates: Vec::new(),
         }
     }
 }
@@ -99,6 +112,40 @@ impl SpecConfig {
         self.for_path(path)
             .map(SpecEntry::dialect)
             .unwrap_or_else(|| SpecKind::for_path(path))
+    }
+
+    /// Whether any generate-mode entry wants workspace-local types resolved.
+    ///
+    /// The rustdoc builds are per package, not per spec file, so one entry
+    /// asking for them is enough — an entry that opted out simply never
+    /// reaches for a sibling crate's type.
+    pub fn workspace_types(&self) -> bool {
+        self.generating().any(|e| e.workspace_types)
+    }
+
+    /// The union of every generate-mode entry's `workspace_crates`. Empty
+    /// means "every workspace member the package depends on".
+    pub fn workspace_crates(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .generating()
+            .filter(|e| e.workspace_types)
+            .flat_map(|e| e.workspace_crates.clone())
+            .collect();
+        // One entry naming none asks for all of them, which no narrowing
+        // by another entry may take away.
+        if self
+            .generating()
+            .any(|e| e.workspace_types && e.workspace_crates.is_empty())
+        {
+            return Vec::new();
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn generating(&self) -> impl Iterator<Item = &SpecEntry> {
+        self.entries.iter().filter(|e| e.mode == Mode::Generate)
     }
 }
 
@@ -157,13 +204,15 @@ pub fn parse(text: &str) -> Result<SpecConfig, String> {
             }
             Section::Types => {
                 let path = key.trim().trim_matches('"').to_string();
-                let TomlValue::Table(_) = &value else {
+                let TomlValue::Table(t) = value else {
                     return Err(format!(
                         "line {lineno}: [spec.types] entry {path:?} must be an inline table, \
-                         e.g. {{ type = \"string\", format = \"uuid\" }}"
+                         e.g. {{ type = \"string\", format = \"uuid\" }} or \
+                         {{ transparent = true }}"
                     ));
                 };
-                entry.types.insert(path, to_json(value));
+                let mapping = type_mapping(&path, t).map_err(|e| format!("line {lineno}: {e}"))?;
+                entry.types.insert(path, mapping);
             }
             Section::Responses => {
                 let code = key.trim().trim_matches('"').to_string();
@@ -210,6 +259,35 @@ enum Section {
     Other,
 }
 
+/// One `[spec.types]` value: a literal JSON Schema, or a directive.
+///
+/// The key `transparent` is what tells the two apart. It is not a JSON Schema
+/// keyword, so every literal schema — including the bare `{ }` that means
+/// "open schema" — stays a literal, and no existing config changes meaning.
+fn type_mapping(path: &str, table: BTreeMap<String, TomlValue>) -> Result<TypeMapping, String> {
+    let Some(directive) = table.get("transparent") else {
+        return Ok(TypeMapping::Literal(to_json(TomlValue::Table(table))));
+    };
+    if let Some(other) = table.keys().find(|k| k.as_str() != "transparent") {
+        return Err(format!(
+            "[spec.types] entry {path:?} sets `transparent` alongside the schema key {other:?}; \
+             a transparent wrapper resolves to its type argument's schema, so it cannot also be \
+             a literal schema — keep one or the other"
+        ));
+    }
+    let arg = match directive {
+        TomlValue::Bool(true) => 0,
+        TomlValue::Int(n) if *n >= 0 => *n as usize,
+        _ => {
+            return Err(format!(
+                "[spec.types] entry {path:?}: `transparent` takes `true` (the first type \
+                 argument) or a zero-based argument index, e.g. {{ transparent = 1 }}"
+            ));
+        }
+    };
+    Ok(TypeMapping::Transparent { arg })
+}
+
 /// A parsed TOML value as JSON, for schemas that go straight into the spec.
 fn to_json(value: TomlValue) -> Value {
     match value {
@@ -253,6 +331,8 @@ fn set(entry: &mut SpecEntry, key: &str, value: TomlValue) -> Result<(), String>
         ("version", TomlValue::Str(s)) => entry.version = Some(s),
         ("description", TomlValue::Str(s)) => entry.description = Some(s),
         ("servers", TomlValue::StrArray(a)) => entry.servers = a,
+        ("workspace_types", TomlValue::Bool(b)) => entry.workspace_types = b,
+        ("workspace_crates", TomlValue::StrArray(a)) => entry.workspace_crates = a,
         (k, _) => return Err(format!("unknown or mistyped [[spec]] key {k:?}")),
     }
     Ok(())
@@ -380,6 +460,50 @@ mode = "check"
     }
 
     #[test]
+    fn workspace_types_resolve_by_default() {
+        let cfg = parse("[[spec]]\npath = \"a.yaml\"\nmode = \"generate\"\n").expect("parses");
+        assert!(cfg.entries[0].workspace_types);
+        assert!(cfg.workspace_types());
+        assert!(
+            cfg.workspace_crates().is_empty(),
+            "empty means every workspace member the package depends on"
+        );
+    }
+
+    #[test]
+    fn workspace_resolution_can_be_turned_off_or_narrowed() {
+        let off =
+            parse("[[spec]]\npath = \"a.yaml\"\nmode = \"generate\"\nworkspace_types = false\n")
+                .expect("parses");
+        assert!(!off.workspace_types());
+
+        let narrow = parse(
+            "[[spec]]\npath = \"a.yaml\"\nmode = \"generate\"\n\
+             workspace_crates = [\"finance-query\"]\n",
+        )
+        .expect("parses");
+        assert_eq!(narrow.workspace_crates(), vec!["finance-query".to_string()]);
+    }
+
+    #[test]
+    fn a_check_mode_entry_does_not_order_rustdoc_builds() {
+        // Nothing is generated from a check-mode entry, so its settings must
+        // not make the generator pay for a nightly build per sibling crate.
+        let cfg = parse("[[spec]]\npath = \"vendor/x.yaml\"\n").expect("parses");
+        assert!(!cfg.workspace_types());
+    }
+
+    #[test]
+    fn one_entry_wanting_every_crate_outranks_anothers_narrowing() {
+        let cfg = parse(
+            "[[spec]]\npath = \"a.yaml\"\nmode = \"generate\"\nworkspace_crates = [\"core\"]\n\n\
+             [[spec]]\npath = \"b.yaml\"\nmode = \"generate\"\n",
+        )
+        .expect("parses");
+        assert!(cfg.workspace_crates().is_empty());
+    }
+
+    #[test]
     fn an_unknown_key_is_rejected() {
         let err = parse("[[spec]]\npath = \"a.yaml\"\nfomat = \"yaml\"\n")
             .expect_err("typo must not pass silently");
@@ -408,13 +532,21 @@ mode = "generate"
         .expect("parses");
         let e = &cfg.entries[0];
         assert_eq!(
-            e.types["uuid::Uuid"],
+            literal(e, "uuid::Uuid"),
             json!({ "type": "string", "format": "uuid" })
         );
         assert_eq!(
-            e.types["rust_decimal::Decimal"],
+            literal(e, "rust_decimal::Decimal"),
             json!({ "type": "string" })
         );
+    }
+
+    /// The literal schema mapped for a path, for tests that expect one.
+    fn literal(entry: &SpecEntry, path: &str) -> Value {
+        entry.types[path]
+            .as_literal()
+            .unwrap_or_else(|| panic!("{path} is mapped to a literal schema"))
+            .clone()
     }
 
     #[test]
@@ -494,8 +626,64 @@ mode = "generate"
         )
         .expect("parses");
         assert_eq!(
-            cfg.entries[0].types["a::A"],
+            literal(&cfg.entries[0], "a::A"),
             json!({ "type": "array", "items": { "type": "string" } })
         );
+    }
+
+    #[test]
+    fn an_empty_table_is_still_a_literal_open_schema() {
+        // Widely used to say "this type is genuinely unconstrained"; the
+        // directive form must not have quietly claimed it.
+        let cfg = parse("[[spec]]\npath = \"a.yaml\"\n\n[spec.types]\n\"a::A\" = {  }\n")
+            .expect("parses");
+        assert_eq!(literal(&cfg.entries[0], "a::A"), json!({}));
+    }
+
+    #[test]
+    fn a_transparent_entry_reads_as_a_directive_not_a_schema() {
+        let cfg = parse(
+            "[[spec]]\npath = \"a.yaml\"\n\n[spec.types]\n\
+             \"async_graphql::types::json::Json\" = { transparent = true }\n",
+        )
+        .expect("parses");
+        assert_eq!(
+            cfg.entries[0].types["async_graphql::types::json::Json"],
+            TypeMapping::Transparent { arg: 0 }
+        );
+    }
+
+    #[test]
+    fn an_explicit_index_picks_a_later_type_argument() {
+        let cfg = parse(
+            "[[spec]]\npath = \"a.yaml\"\n\n[spec.types]\n\"w::Tagged\" = { transparent = 1 }\n",
+        )
+        .expect("parses");
+        assert_eq!(
+            cfg.entries[0].types["w::Tagged"],
+            TypeMapping::Transparent { arg: 1 }
+        );
+    }
+
+    #[test]
+    fn transparent_plus_a_literal_schema_is_rejected_as_contradictory() {
+        let err = parse(
+            "[[spec]]\npath = \"a.yaml\"\n\n[spec.types]\n\
+             \"w::Json\" = { transparent = true, type = \"string\" }\n",
+        )
+        .expect_err("a wrapper cannot both forward and be a literal");
+        assert!(err.contains("w::Json"), "names the entry: {err}");
+        assert!(err.contains("type"), "names the offending key: {err}");
+    }
+
+    #[test]
+    fn a_non_index_transparent_value_is_rejected() {
+        for bad in ["false", "\"yes\"", "-1"] {
+            let err = parse(&format!(
+                "[[spec]]\npath = \"a.yaml\"\n\n[spec.types]\n\"w::J\" = {{ transparent = {bad} }}\n"
+            ))
+            .expect_err("only `true` or an index is meaningful");
+            assert!(err.contains("transparent"), "got {err}");
+        }
     }
 }

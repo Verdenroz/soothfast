@@ -5,6 +5,7 @@ name: Spec
 # runs on pull requests, where a breaking change can still be discussed.
 on:
   push:
+    branches: [master]
   pull_request:
 
 permissions: {}

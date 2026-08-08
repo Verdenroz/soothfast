@@ -6,9 +6,13 @@
 //! the same operations produce byte-identical output, so `sdk gen --check`
 //! can gate staleness the way `spec gen --check` does.
 
+pub mod envtemplate;
 pub mod lower;
 pub mod model;
+mod naming;
 mod python;
+pub mod target;
+mod typescript;
 
 use std::collections::BTreeMap;
 
@@ -49,10 +53,10 @@ impl SdkKind {
         ops: &[Operation],
         opts: &SdkOptions,
     ) -> Result<SdkFileSet, String> {
-        let sdk = lower::lower(ops, opts)?;
+        let sdk = lower::lower(ops, opts, self)?;
         match self {
             SdkKind::Python => python::emit(info, &sdk, opts),
-            SdkKind::TypeScript => Err("the typescript emitter is not implemented yet".into()),
+            SdkKind::TypeScript => typescript::emit(info, &sdk, opts),
         }
     }
 }
@@ -65,8 +69,28 @@ pub struct SdkOptions {
     /// Import name, e.g. `finance_query`.
     pub module: String,
     pub version: String,
-    /// Default server; falls back to the first `Info` server.
+    /// Default server; falls back to the first `Info` server. Optional
+    /// when [`SdkOptions::embed`] supplies one at runtime instead.
     pub base_url: Option<String>,
+    /// Server binary the package bundles and spawns, making the SDK
+    /// self-contained: a client built with no base URL starts this and
+    /// talks to it. `None` leaves the SDK a pure client for a hosted API.
+    pub embed: Option<String>,
+    /// Arguments passed to the embedded server on every launch.
+    pub embed_args: Vec<String>,
+    /// Environment applied to every launch, over the ambient one and under
+    /// the caller's own. Config beats ambient deliberately: an inherited
+    /// `PORT` from whatever runs the consumer's app must not decide where
+    /// a bundled server binds.
+    pub embed_env: BTreeMap<String, String>,
+    /// The knobs the embedded server documents, parsed from its dotenv
+    /// template. Becomes a typed `ServerEnv` on the client and a table in
+    /// the README, so a client configures the same server the same way a
+    /// deployment does.
+    pub embed_env_vars: Vec<envtemplate::EnvVar>,
+    /// Target triples the embedded server is built for. Empty means
+    /// [`target::Target::DEFAULT`].
+    pub targets: Vec<String>,
     pub description: Option<String>,
     pub repository: Option<String>,
     /// Operation ids whose response switches to a `{items, pageInfo}`
@@ -83,6 +107,11 @@ impl Default for SdkOptions {
             module: String::new(),
             version: String::new(),
             base_url: None,
+            embed: None,
+            embed_args: Vec::new(),
+            embed_env: BTreeMap::new(),
+            embed_env_vars: Vec::new(),
+            targets: Vec::new(),
             description: None,
             repository: None,
             paginated: Vec::new(),
@@ -90,6 +119,25 @@ impl Default for SdkOptions {
             limit_param: "limit".into(),
         }
     }
+}
+
+/// The default base URL an emitter should bake in, if any.
+///
+/// An SDK that embeds its server does not need one — the launcher supplies
+/// an address at runtime — so this is only fatal when neither is set.
+fn base_url_for(info: &Info, opts: &SdkOptions) -> Result<Option<String>, String> {
+    let base_url = opts
+        .base_url
+        .clone()
+        .or_else(|| info.servers.first().cloned());
+    if base_url.is_none() && opts.embed.is_none() {
+        return Err(
+            "no base URL: set `base_url` in the [[sdk]] entry, `servers` on the \
+                    [[spec]] entry, or `embed` to bundle the server itself"
+                .into(),
+        );
+    }
+    Ok(base_url)
 }
 
 /// Rendered SDK files, keyed by path relative to the output directory.

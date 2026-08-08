@@ -32,6 +32,8 @@
 //! # }
 //! ```
 
+pub mod embed;
+
 pub use soothfast_macros::{bench, fixture, measured, mock_seam, route};
 pub use soothfast_registry as registry;
 

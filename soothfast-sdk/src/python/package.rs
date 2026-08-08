@@ -34,12 +34,53 @@ pub(crate) fn pyproject(info: &Info, opts: &SdkOptions) -> String {
         let _ = writeln!(out, "Repository = {repo:?}");
     }
     let _ = writeln!(out);
+    // Hatchling excludes anything the surrounding repo's .gitignore
+    // matches. What belongs in a generated package is decided here, not by
+    // whatever the host repo happens to ignore — a blanket `*.py` upstream
+    // otherwise ships a wheel with no Python in it.
+    let _ = writeln!(out, "[tool.hatch.build]");
+    let _ = writeln!(out, "ignore-vcs = true");
+    let _ = writeln!(out);
     let _ = writeln!(out, "[tool.hatch.build.targets.wheel]");
     let _ = writeln!(out, "packages = [\"src/{}\"]", opts.module);
+    if opts.embed.is_some() {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "[tool.hatch.build.targets.wheel.hooks.custom]");
+        let _ = writeln!(out, "path = \"hatch_build.py\"");
+        let _ = writeln!(out);
+        // The hook has to reach the sdist, or a source install cannot
+        // rebuild the wheel it came from.
+        let _ = writeln!(out, "[tool.hatch.build.targets.sdist]");
+        let _ = writeln!(
+            out,
+            "include = [\"README.md\", \"hatch_build.py\", \"src\"]"
+        );
+    }
     out
 }
 
-pub(crate) fn readme(info: &Info, sdk: &Sdk, opts: &SdkOptions, base_url: &str) -> String {
+/// A copyable example: the knobs the template leaves unset are the ones a
+/// caller actually has to supply, so lead with those.
+fn example_env(opts: &SdkOptions) -> String {
+    let unset: Vec<&crate::envtemplate::EnvVar> = opts
+        .embed_env_vars
+        .iter()
+        .filter(|v| v.optional())
+        .collect();
+    let picks = if unset.is_empty() {
+        opts.embed_env_vars.iter().collect()
+    } else {
+        unset
+    };
+    picks
+        .iter()
+        .take(2)
+        .map(|v| format!("{:?}: \"...\"", v.name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(crate) fn readme(info: &Info, sdk: &Sdk, opts: &SdkOptions, base_url: Option<&str>) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -47,11 +88,26 @@ pub(crate) fn readme(info: &Info, sdk: &Sdk, opts: &SdkOptions, base_url: &str) 
     );
     let _ = writeln!(out, "# {}", opts.package);
     let _ = writeln!(out);
-    let _ = writeln!(
+    let _ = write!(
         out,
-        "Generated Python client for **{}** ({}), talking to `{base_url}`.",
+        "Generated Python client for **{}** ({})",
         info.title, info.version
     );
+    match (&opts.embed, base_url) {
+        (Some(_), _) => {
+            let _ = writeln!(
+                out,
+                ", bundling the server it talks to — there is nothing to \
+                 deploy and no endpoint to configure."
+            );
+        }
+        (None, Some(url)) => {
+            let _ = writeln!(out, ", talking to `{url}`.");
+        }
+        (None, None) => {
+            let _ = writeln!(out, ".");
+        }
+    }
     let _ = writeln!(out);
     let _ = writeln!(out, "```bash");
     let _ = writeln!(out, "pip install {}", opts.package);
@@ -77,6 +133,52 @@ pub(crate) fn readme(info: &Info, sdk: &Sdk, opts: &SdkOptions, base_url: &str) 
          `Client`. Errors raise subclasses of `ApiError`; rate limits retry \
          automatically, honoring `Retry-After`."
     );
+    if let Some(binary) = &opts.embed {
+        let prefix = crate::naming::env_prefix(&opts.package);
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "## Embedded server\n\n\
+             Constructing a client starts the bundled `{binary}` on a port \
+             it picks itself, and the process is reaped when yours exits. \
+             Two environment variables change that:\n\n\
+             - `{prefix}_BASE_URL` — talk to an already-running instance \
+             and spawn nothing.\n\
+             - `{prefix}_SERVER_BIN` — use a different server binary.\n\n\
+             `stop_embedded_servers()` shuts it down early; \
+             `EmbeddedServer.start()` manages one by hand."
+        );
+        if let Some(url) = base_url {
+            let _ = writeln!(
+                out,
+                "\nPass `DEFAULT_BASE_URL` (`{url}`) to use the hosted \
+                 deployment instead."
+            );
+        }
+        if !opts.embed_env_vars.is_empty() {
+            let _ = writeln!(out);
+            let _ = writeln!(
+                out,
+                "### Configuring it\n\n\
+                 The server reads the same environment a deployment sets it \
+                 with. `server_env` supplies that per client:\n\n\
+                 ```python\n\
+                 client = Client(server_env={{{}}})\n\
+                 ```\n\n\
+                 Those values win over the ambient environment; anything left \
+                 out falls back to what this process — or a `.env` file the \
+                 server itself reads — already provides. Clients asking for \
+                 different `server_env` get their own server process. The \
+                 `ServerEnv` TypedDict spells every knob:\n",
+                example_env(opts),
+            );
+            let _ = write!(
+                out,
+                "{}",
+                crate::envtemplate::markdown_table(&opts.embed_env_vars)
+            );
+        }
+    }
     let _ = writeln!(out);
     let _ = writeln!(out, "## Methods");
     let _ = writeln!(out);
@@ -108,6 +210,9 @@ pub(crate) fn init(info: &Info, sdk: &Sdk, opts: &SdkOptions) -> String {
         "ServerError".into(),
         "ServiceUnavailableError".into(),
     ];
+    if opts.embed.is_some() {
+        exports.extend(["EmbeddedServer".into(), "stop_embedded_servers".into()]);
+    }
     let mut model_names: Vec<&str> = sdk.models.iter().map(|m| m.name.as_str()).collect();
     model_names.extend(sdk.aliases.iter().map(|(n, _)| n.as_str()));
     model_names.sort_unstable();
@@ -138,6 +243,12 @@ pub(crate) fn init(info: &Info, sdk: &Sdk, opts: &SdkOptions) -> String {
     }
     let _ = writeln!(out, ")");
     let _ = writeln!(out, "from .client import AsyncClient, Client");
+    if opts.embed.is_some() {
+        let _ = writeln!(
+            out,
+            "from ._server import EmbeddedServer, stop_embedded_servers"
+        );
+    }
     if !model_names.is_empty() {
         let _ = writeln!(out, "from .models import (");
         for name in &model_names {

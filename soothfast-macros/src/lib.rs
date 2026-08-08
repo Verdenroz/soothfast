@@ -176,6 +176,14 @@ pub fn bench(attr: TokenStream, item: TokenStream) -> TokenStream {
     if attrs.sizes.is_empty() {
         attrs.sizes = DEFAULT_SIZES.to_vec();
     }
+    // A sweep needs two points to have a slope; catch it here rather than
+    // let the runner panic mid-measurement.
+    if attrs.complexity.is_some() && attrs.sizes.len() < 2 {
+        return err(
+            span,
+            "`complexity` needs `sizes(...)` with at least 2 sizes",
+        );
+    }
 
     // Async bench fns drive the counting executor via iter_async.
     let iter_fn = if func.sig.asyncness.is_some() {
@@ -240,8 +248,9 @@ fn err(span: Span, msg: &str) -> TokenStream {
 /// surfaces (REST + GraphQL + MCP).
 ///
 /// Spec generation infers the request and response shapes from the handler's
-/// own signature; `request`, `response` and `status` override that for what
-/// inference provably cannot see — chiefly erased returns.
+/// own signature; `request`, `response`, `status`, `params` and `path_params`
+/// override that for what inference provably cannot see — erased returns, and
+/// detached markers whose empty signature says nothing at all.
 ///
 /// ```ignore
 /// #[soothfast::route(spec = "specs/openapi.yaml", operation = "getItem",
@@ -253,6 +262,14 @@ fn err(span: Span, msg: &str) -> TokenStream {
 ///                  method = "POST", path = "/items",
 ///                  response = "Item", status = 201)]
 /// pub async fn create_item(body: Json<NewItem>) -> impl IntoResponse { ... }
+///
+/// // A detached marker states its whole contract. `path_params` types the
+/// // `{placeholder}`s that would otherwise be bare strings.
+/// #[soothfast::route(spec = "specs/openapi.yaml", operation = "listBySector",
+///                  method = "GET", path = "/sectors/{sector}",
+///                  params = "SectorQuery", path_params = "sector: Sector",
+///                  response = "[Item]")]
+/// fn route_list_by_sector() {}
 /// ```
 #[proc_macro_attribute]
 pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -264,6 +281,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut response: Option<String> = None;
     let mut status: Option<u16> = None;
     let mut params: Option<String> = None;
+    let mut path_params: Option<String> = None;
     let parser = syn::meta::parser(|meta| {
         let lit = |m: &syn::meta::ParseNestedMeta| -> syn::Result<String> {
             Ok(m.value()?.parse::<syn::LitStr>()?.value())
@@ -288,10 +306,12 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
             );
         } else if meta.path.is_ident("params") {
             params = Some(lit(&meta)?);
+        } else if meta.path.is_ident("path_params") {
+            path_params = Some(lit(&meta)?);
         } else {
             return Err(meta.error(
                 "expected `spec`, `operation`, `method`, `path`, `request`, \
-                 `response`, `status`, or `params`",
+                 `response`, `status`, `params`, or `path_params`",
             ));
         }
         Ok(())
@@ -322,6 +342,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
         None => quote!(::core::option::Option::None),
     };
     let params_tok = opt_str(&params);
+    let path_params_tok = opt_str(&path_params);
     let summary = func.attrs.iter().find_map(|a| {
         if !a.path().is_ident("doc") {
             return None;
@@ -356,6 +377,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
             )
             .with_shape(#request_tok, #response_tok, #status_tok)
             .with_params(#params_tok)
+            .with_path_params(#path_params_tok)
             .with_summary(#summary_tok);
     }
     .into()

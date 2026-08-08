@@ -5,23 +5,25 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use soothfast_spec::dialect::Operation;
 
-use crate::SdkOptions;
 use crate::model::{Field, Method, Model, Param, ParamLoc, Sdk, Ty};
-use crate::python::naming;
+use crate::{SdkKind, SdkOptions};
 
 /// Lower operations into the SDK model.
 ///
 /// Component schemas shared across operations must agree; two operations
 /// producing a different schema under one name is the same identity
 /// conflict the dialect emitters refuse.
-pub fn lower(ops: &[Operation], opts: &SdkOptions) -> Result<Sdk, String> {
+///
+/// `kind` decides only how wire names are *spelled* — every typing question
+/// is answered the same way for every target.
+pub fn lower(ops: &[Operation], opts: &SdkOptions, kind: SdkKind) -> Result<Sdk, String> {
     let mut notes = Vec::new();
     let components = merge_components(ops)?;
 
     let mut models = Vec::new();
     let mut aliases = Vec::new();
     for (name, schema) in &components {
-        match model_of(name, schema, &mut notes) {
+        match model_of(name, schema, kind, &mut notes) {
             Some(model) => models.push(model),
             None => aliases.push((name.clone(), ty_of(schema, &mut notes, name))),
         }
@@ -29,7 +31,7 @@ pub fn lower(ops: &[Operation], opts: &SdkOptions) -> Result<Sdk, String> {
 
     let mut methods: Vec<Method> = ops
         .iter()
-        .map(|op| method_of(op, opts, &mut notes))
+        .map(|op| method_of(op, opts, kind, &mut notes))
         .collect::<Result<_, _>>()?;
     methods.sort_by(|a, b| a.operation_id.cmp(&b.operation_id));
 
@@ -113,7 +115,7 @@ fn merge_components(ops: &[Operation]) -> Result<BTreeMap<String, Value>, String
 
 /// An object schema with named properties becomes a model; anything else
 /// stays an alias.
-fn model_of(name: &str, schema: &Value, notes: &mut Vec<String>) -> Option<Model> {
+fn model_of(name: &str, schema: &Value, kind: SdkKind, notes: &mut Vec<String>) -> Option<Model> {
     let props = schema.get("properties")?.as_object()?;
     let required: Vec<&str> = schema["required"]
         .as_array()
@@ -126,7 +128,9 @@ fn model_of(name: &str, schema: &Value, notes: &mut Vec<String>) -> Option<Model
         .map(|(wire, field_schema)| {
             let at = format!("{name}.{wire}");
             Field {
-                attr: attr_for(wire, &at, &mut taken, notes),
+                // A dataclass field named `self` would redeclare the one
+                // its generated `__init__` already takes.
+                attr: attr_for(wire, &at, kind, &mut taken, &reserved_fields(kind), notes),
                 wire: wire.clone(),
                 ty: ty_of(field_schema, notes, &at),
                 required: required.contains(&wire.as_str()),
@@ -142,9 +146,19 @@ fn model_of(name: &str, schema: &Value, notes: &mut Vec<String>) -> Option<Model
     })
 }
 
-fn method_of(op: &Operation, opts: &SdkOptions, notes: &mut Vec<String>) -> Result<Method, String> {
+fn method_of(
+    op: &Operation,
+    opts: &SdkOptions,
+    kind: SdkKind,
+    notes: &mut Vec<String>,
+) -> Result<Method, String> {
     let at = &op.operation_id;
     let mut taken = BTreeMap::new();
+    let reserved = reserved_args(
+        kind,
+        op.shape.request.is_some(),
+        opts.paginated.contains(&op.operation_id),
+    );
     let params = op
         .shape
         .parameters
@@ -155,8 +169,21 @@ fn method_of(op: &Operation, opts: &SdkOptions, notes: &mut Vec<String>) -> Resu
                 "header" => ParamLoc::Header,
                 _ => ParamLoc::Query,
             };
+            // In TypeScript only path params become identifiers; the rest
+            // are keys of the options object and keep their wire spelling.
+            let reserved: &[&str] = match (kind, location) {
+                (SdkKind::TypeScript, ParamLoc::Path) | (SdkKind::Python, _) => &reserved,
+                _ => &[],
+            };
             Param {
-                attr: attr_for(&p.name, &format!("{at}({})", p.name), &mut taken, notes),
+                attr: attr_for(
+                    &p.name,
+                    &format!("{at}({})", p.name),
+                    kind,
+                    &mut taken,
+                    reserved,
+                    notes,
+                ),
                 wire: p.name.clone(),
                 location,
                 ty: ty_of(&p.schema, notes, &format!("{at}({})", p.name)),
@@ -175,7 +202,7 @@ fn method_of(op: &Operation, opts: &SdkOptions, notes: &mut Vec<String>) -> Resu
     let (ok, ok_status) = success_of(op, notes);
 
     Ok(Method {
-        name: naming::snake(&op.operation_id),
+        name: method_name(&op.operation_id, kind),
         operation_id: op.operation_id.clone(),
         http_method: op.method.clone(),
         path: op.path.clone(),
@@ -286,23 +313,79 @@ fn object_ty(schema: &Value, notes: &mut Vec<String>, at: &str) -> Ty {
     }
 }
 
+/// How the target spells an operation id as a method name.
+fn method_name(operation_id: &str, kind: SdkKind) -> String {
+    match kind {
+        SdkKind::Python => crate::python::naming::snake(operation_id),
+        SdkKind::TypeScript => crate::typescript::naming::camel(operation_id),
+    }
+}
+
 /// A collision-free target-language attribute for a wire name.
+///
+/// TypeScript stays wire-faithful — property keys are quoted where they
+/// have to be — so the mapping is the identity and cannot collide. Python
+/// snake_cases, which can, and then falls back to the wire spelling.
+/// Names a generated model already uses for itself.
+fn reserved_fields(kind: SdkKind) -> Vec<&'static str> {
+    match kind {
+        SdkKind::TypeScript => Vec::new(),
+        SdkKind::Python => vec!["self"],
+    }
+}
+
+/// Names the emitted code gives its own arguments. A wire name landing on
+/// one of these would redeclare it, so it is moved aside like any other
+/// collision — a duplicate argument is a file that will not even parse.
+fn reserved_args(kind: SdkKind, has_body: bool, paginated: bool) -> Vec<&'static str> {
+    let mut out = match kind {
+        // Only path params are positional in TypeScript; query params live
+        // inside the options object, where wire spelling must survive.
+        SdkKind::TypeScript => vec!["options"],
+        SdkKind::Python => vec!["self"],
+    };
+    if has_body {
+        out.push("body");
+    }
+    if paginated && kind == SdkKind::Python {
+        out.push("limit");
+    }
+    out
+}
+
 fn attr_for(
     wire: &str,
     at: &str,
+    kind: SdkKind,
     taken: &mut BTreeMap<String, String>,
+    reserved: &[&str],
     notes: &mut Vec<String>,
 ) -> String {
-    let mut attr = naming::snake_attr(wire);
-    if taken.get(&attr).is_some_and(|other| other != wire) {
-        let other = taken[&attr].clone();
-        attr = naming::sanitize_ident(wire);
-        while taken.contains_key(&attr) {
+    // TypeScript keeps wire spellings; Python snake_cases them.
+    let mut attr = match kind {
+        SdkKind::TypeScript => wire.to_string(),
+        SdkKind::Python => crate::python::naming::snake_attr(wire),
+    };
+
+    let clash = if reserved.contains(&attr.as_str()) {
+        Some("the argument the client gives itself".to_string())
+    } else {
+        taken
+            .get(&attr)
+            .filter(|other| *other != wire)
+            .map(|other| format!("`{other}` after snake_case"))
+    };
+
+    if let Some(other) = clash {
+        attr = match kind {
+            SdkKind::TypeScript => format!("{attr}_"),
+            SdkKind::Python => crate::python::naming::sanitize_ident(wire),
+        };
+        while taken.contains_key(&attr) || reserved.contains(&attr.as_str()) {
             attr.push('_');
         }
         notes.push(format!(
-            "{at}: `{wire}` collides with `{other}` after snake_case; \
-             emitted as `{attr}`"
+            "{at}: `{wire}` collides with {other}; emitted as `{attr}`"
         ));
     }
     taken.insert(attr.clone(), wire.to_string());

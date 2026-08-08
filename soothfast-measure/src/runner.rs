@@ -502,7 +502,7 @@ fn route_json(r: &soothfast_registry::RouteItem) -> String {
     format!(
         "{{\"type\":\"route\",\"id\":\"{}\",\"spec\":\"{}\",\"operation\":\"{}\",\
          \"method\":\"{}\",\"path\":\"{}\",\"request\":{},\"response\":{},\"status\":{},\
-         \"params\":{},\"summary\":{}}}",
+         \"params\":{},\"path_params\":{},\"summary\":{}}}",
         esc(r.id),
         esc(r.spec),
         esc(r.operation),
@@ -512,6 +512,7 @@ fn route_json(r: &soothfast_registry::RouteItem) -> String {
         opt(r.response),
         status,
         opt(r.params),
+        opt(r.path_params),
         opt(r.summary),
     )
 }
@@ -536,6 +537,7 @@ mod tests {
         assert!(json.contains("\"response\":null"), "{json}");
         assert!(json.contains("\"status\":null"), "{json}");
         assert!(json.contains("\"params\":null"), "{json}");
+        assert!(json.contains("\"path_params\":null"), "{json}");
         assert!(json.contains("\"summary\":null"), "{json}");
     }
 
@@ -552,9 +554,11 @@ mod tests {
     fn params_and_summary_carry_through() {
         let item = PLAIN
             .with_params(Some("ItemQuery"))
+            .with_path_params(Some("id: ItemId"))
             .with_summary(Some("Get one item."));
         let json = route_json(&item);
         assert!(json.contains("\"params\":\"ItemQuery\""), "{json}");
+        assert!(json.contains("\"path_params\":\"id: ItemId\""), "{json}");
         assert!(json.contains("\"summary\":\"Get one item.\""), "{json}");
     }
 

@@ -14,5 +14,8 @@ dependencies = ["httpx>=0.27"]
 [project.urls]
 Repository = "https://github.com/acme/items"
 
+[tool.hatch.build]
+ignore-vcs = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/acme_items"]

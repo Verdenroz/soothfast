@@ -397,6 +397,116 @@ fn untagged_enum_is_the_payload_alone() {
     assert_eq!(branches[1]["type"], "string");
 }
 
+/// A C-like enum: `variants` are all fieldless, with per-variant attributes.
+fn unit_enum_doc(container_attrs: &[&str], variants: &[(&str, &[&str])]) -> Value {
+    let mut index = vec![(
+        1,
+        json!({
+            "name": "TimeRange", "docs": "Time ranges for chart data",
+            "attrs": attrs_of(container_attrs),
+            "inner": { "enum": {
+                "variants": (0..variants.len()).map(|i| i as u64 + 2).collect::<Vec<_>>(),
+                "generics": { "params": [], "where_predicates": [] } } },
+        }),
+    )];
+    for (i, (name, attrs)) in variants.iter().enumerate() {
+        index.push((
+            i as u64 + 2,
+            json!({ "name": name, "docs": Value::Null, "attrs": attrs_of(attrs),
+                    "inner": { "variant": { "kind": "plain" } } }),
+        ));
+    }
+    doc(index, vec![])
+}
+
+#[test]
+fn all_unit_enum_collapses_to_a_string_enum_with_renames_applied() {
+    let d = unit_enum_doc(
+        &[],
+        &[
+            ("OneDay", &["#[serde(rename = \"1d\")]"]),
+            ("FiveDay", &["#[serde(rename = \"5d\")]"]),
+            ("OneMonth", &["#[serde(rename = \"1mo\")]"]),
+        ],
+    );
+    let e = extract_named(&d, &TypeTable::builtin(), "TimeRange").expect("extracts");
+    let schema = &e.components["TimeRange"];
+    assert_eq!(schema["type"], "string");
+    // Declaration order is preserved, and `oneOf` is gone entirely.
+    assert_eq!(schema["enum"], json!(["1d", "5d", "1mo"]));
+    assert!(schema.get("oneOf").is_none(), "got {schema:?}");
+}
+
+#[test]
+fn collapsed_enum_keeps_the_container_doc_comment() {
+    let d = unit_enum_doc(&[], &[("Ok", &[]), ("Bad", &[])]);
+    let e = extract_named(&d, &TypeTable::builtin(), "TimeRange").expect("extracts");
+    assert_eq!(
+        e.components["TimeRange"]["description"],
+        "Time ranges for chart data"
+    );
+}
+
+#[test]
+fn collapsed_enum_honours_the_container_rename_rule() {
+    let d = unit_enum_doc(
+        &["#[serde(rename_all = \"kebab-case\")]"],
+        &[
+            ("NotFound", &[]),
+            ("ServerError", &["#[serde(rename = \"boom\")]"]),
+        ],
+    );
+    let e = extract_named(&d, &TypeTable::builtin(), "TimeRange").expect("extracts");
+    assert_eq!(
+        e.components["TimeRange"]["enum"],
+        json!(["not-found", "boom"]),
+        "container rule applies, an explicit rename still wins"
+    );
+}
+
+#[test]
+fn one_payload_variant_keeps_the_one_of_rendering() {
+    // `Event` has a unit, a newtype and a struct variant: nothing to collapse.
+    let e = extract_named(&enum_doc(&[]), &TypeTable::builtin(), "Event").expect("extracts");
+    let schema = &e.components["Event"];
+    assert!(schema.get("enum").is_none(), "got {schema:?}");
+    assert_eq!(schema["oneOf"][0], json!({ "const": "Ping" }));
+}
+
+#[test]
+fn internally_tagged_all_unit_enum_does_not_collapse() {
+    // Each variant is still an object carrying the tag field on the wire.
+    let d = unit_enum_doc(&["#[serde(tag = \"kind\")]"], &[("Up", &[]), ("Down", &[])]);
+    let e = extract_named(&d, &TypeTable::builtin(), "TimeRange").expect("extracts");
+    let schema = &e.components["TimeRange"];
+    assert!(schema.get("enum").is_none(), "got {schema:?}");
+    assert_eq!(schema["oneOf"][0]["properties"]["kind"]["const"], "Up");
+}
+
+#[test]
+fn adjacently_tagged_all_unit_enum_does_not_collapse() {
+    let d = unit_enum_doc(
+        &["#[serde(tag = \"t\", content = \"c\")]"],
+        &[("Up", &[]), ("Down", &[])],
+    );
+    let e = extract_named(&d, &TypeTable::builtin(), "TimeRange").expect("extracts");
+    let schema = &e.components["TimeRange"];
+    assert!(schema.get("enum").is_none(), "got {schema:?}");
+    assert_eq!(schema["oneOf"][1]["properties"]["t"]["const"], "Down");
+}
+
+#[test]
+fn untagged_all_unit_enum_is_null_not_a_string_enum() {
+    // serde writes every untagged unit variant as `null`; a `oneOf` of
+    // identical nulls is a branch set no input could match exactly once.
+    let d = unit_enum_doc(&["#[serde(untagged)]"], &[("Up", &[]), ("Down", &[])]);
+    let e = extract_named(&d, &TypeTable::builtin(), "TimeRange").expect("extracts");
+    let schema = &e.components["TimeRange"];
+    assert_eq!(schema["type"], "null");
+    assert!(schema.get("oneOf").is_none() && schema.get("enum").is_none());
+    assert_eq!(schema["description"], "Time ranges for chart data");
+}
+
 #[test]
 fn erased_return_types_report_a_gap_rather_than_guessing() {
     let d = doc(

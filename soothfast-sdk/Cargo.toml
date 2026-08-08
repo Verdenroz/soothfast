@@ -10,7 +10,14 @@ repository.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
+exclude = ["tests/goldens"]
 
 [dependencies]
 serde_json.workspace = true
 soothfast-spec.workspace = true
+
+# Path-only (no version): stripped on publish, so no dev-dep cycle on
+# crates.io. Only needed by the embedded-server test fixture, which uses
+# `soothfast::embed::announce` the way a real bundled server would.
+[dev-dependencies]
+soothfast = { path = "../soothfast" }

@@ -128,18 +128,118 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   pre-dialect IR the spec emitters render (`dialect::Operation` +
   `RouteShape`), no external generators or template engines. `lower.rs`
   lowers the JSON Schema IR into a language-neutral model (`model.rs`:
-  `Ty`/`Model`/`Method`), deciding every typing question once — snake_case
-  attribute derivation with collision fallback, `oneOf` → structurally
-  decoded unions, gaps → `Any` plus a note. `python/` renders frozen
-  dataclasses, sync + async clients, pagination iterators, and package
-  scaffolding (`pyproject.toml`, README) around one hand-written runtime
-  (`assets/python/_runtime.py`, `include_str!`'d and emitted verbatim) that
-  owns retries/backoff honoring `Retry-After`, error mapping, type-hint-
-  driven decoding, and cursor pagers. Emission is byte-deterministic;
-  golden tests (`tests/goldens/`, regenerate with `UPDATE_GOLDENS=1`) pin
-  the full file tree, and `tests/python/` exercises the generated golden
-  SDK end-to-end (run via `uv run --with httpx --with pytest pytest`).
-  The TypeScript emitter is a planned second `SdkKind`.
+  `Ty`/`Model`/`Method`), deciding every typing question once — `oneOf` →
+  structurally decoded unions, gaps → `Any` plus a note. The one thing it
+  takes an `SdkKind` for is how wire names are *spelled*: Python
+  snake_cases (with a collision fallback and a reported note), TypeScript
+  stays wire-faithful, quoting keys rather than renaming them, so nothing
+  can collide. Each emitter renders models, clients and package
+  scaffolding around one hand-written runtime, `include_str!`'d and
+  emitted verbatim, that owns retries/backoff honoring `Retry-After`,
+  error mapping, and cursor pagers:
+  - `python/` — frozen dataclasses, sync + async clients, package
+    scaffolding (`pyproject.toml`, README) over
+    `assets/python/_runtime.py`, which also does type-hint-driven
+    decoding. Published with `uv build`/`uv publish`.
+  - `typescript/` — interfaces, per-method options interfaces, one async
+    `Client`, and package scaffolding (`package.json`, `tsconfig.json`
+    pinned to NodeNext so the emitted `.js` specifiers resolve everywhere)
+    over `assets/typescript/runtime.ts`. Zero runtime dependencies: the
+    transport is global `fetch`, and because interfaces carry the wire
+    property names, a parsed response *is* the typed value — there is no
+    decode step to drift from the schema. Published with `npm publish`.
+
+  **Embedded servers.** `[[sdk]] embed = "<binary>"` turns an SDK from a
+  client for a hosted API into a self-contained package: a client built
+  with no base URL spawns the bundled server and talks to that, so
+  consumers deploy nothing. The handshake is one line of stdout
+  (`soothfast-ready {"base_url":...}`, see `soothfast::embed::announce`),
+  which lets the server bind port 0 instead of racing on a guessed port,
+  and lets it log freely — launchers scan for the prefix and ignore
+  everything else. It is plain text on a pipe, so an embedded server need
+  not use soothfast or even be Rust. Launchers live in
+  `assets/{python/_server.py, typescript/server.ts}`, emitted only when
+  `embed` is set; both keep one shared server per binary *and launch
+  environment*, reap it on interpreter/process exit, and honor
+  `<PKG>_BASE_URL` (use a running instance, spawn nothing) and
+  `<PKG>_SERVER_BIN` (use a different binary). Python resolves eagerly in
+  `__init__`; TypeScript resolves on first request, which is why
+  `Transport` accepts a `BaseUrl` thunk. Both drain stdout and stderr for
+  the life of the process — a server free to log is a server that fills a
+  64 KiB pipe buffer and blocks on write — keeping only a tail of stderr,
+  which is all a failure message ever needs.
+
+  **Configuring an embedded server.** A server takes environment
+  variables; an SDK takes constructor options. `[[sdk]] embed_env_template
+  = ".env.template"` bridges the two by parsing the server's own dotenv
+  template (`envtemplate.rs`) into a typed `ServerEnv` — a `total=False`
+  TypedDict in Python, an interface with an index signature in TypeScript
+  — keyed by the server's real variable names, plus a README table. The
+  server's file is the only list, so the SDK's configuration surface
+  cannot drift from what the server reads. `embed_env = { … }` is the
+  package's own launch settings (`HOST`, `PORT`) applied to every spawn.
+  Precedence at launch is ambient environment → `embed_env` → the
+  caller's `server_env`/`serverEnv`: config beats ambient deliberately,
+  since a `PORT` exported for the consumer's app must not decide where a
+  bundled server binds, while an explicit argument still beats both.
+
+  **The cross-compile matrix.** `target.rs` is the single table mapping a
+  Rust triple to how npm (`os`/`cpu`/`libc`) and Python (wheel platform
+  tag) name the same machine, so the emitters and the build command
+  cannot disagree. `[[sdk]] targets = [...]` narrows it; the default is
+  the five mainstream platforms. `cargo soothfast sdk build -p PKG`
+  (`sdk_build.rs`) compiles the server per target and stages it where
+  each ecosystem expects — targets whose toolchain is missing are
+  reported and skipped, not fatal. The two ecosystems package it
+  differently:
+  - **npm** — one `optionalDependencies` sub-package per target
+    (`platforms/<pkg>-<os>-<cpu>/`, the esbuild pattern). npm installs
+    only the matching one; the launcher `createRequire.resolve`s it and
+    falls through to `PATH` when absent. `sdk publish` sends the platform
+    packages *before* the main one, since its optional deps name them by
+    exact version.
+  - **Python** — one platform wheel per target, built by a generated
+    hatchling hook (`assets/python/hatch_build.py`, the one asset not
+    emitted verbatim — it names the import package) that force-includes
+    the binary at `<module>/bin/` and stamps the tag. Built without
+    `SOOTHFAST_SERVER_BIN`/`SOOTHFAST_WHEEL_TAG` it produces a pure
+    wheel, which is what an sdist install gets.
+
+  A `manylinux_*` tag is a claim about the *build* environment, not the
+  table: it holds only if the binary was linked against a glibc that old.
+  `sdk build` checks `AUDITWHEEL_PLAT` and warns when it cannot tell it
+  was, and `sdk-release.yml` builds the glibc targets inside the
+  manylinux image so the claim is earned. `sdk publish` refuses an
+  embedding SDK with nothing (or only partially) staged unless
+  `--allow-unbundled` — otherwise the package advertises a bundled server
+  and silently falls back to `PATH`.
+
+  Emission is byte-deterministic; golden tests (`tests/goldens/<lang>/`
+  and `<lang>-embed/`, regenerate with `UPDATE_GOLDENS=1`) pin the full
+  file tree — staged binaries and wheels are gitignored, only the
+  manifests around them are golden. Each language then exercises its
+  generated golden SDK end-to-end against a live HTTP server, and against
+  the real subprocess launcher via `examples/embed_server.rs` (a
+  hand-rolled HTTP fixture that calls `announce` the way a bundled server
+  would):
+
+  ```bash
+  cargo build -p soothfast-sdk --example embed_server
+  uv run --with httpx --with pytest pytest soothfast-sdk/tests/python/
+  for d in typescript typescript-embed; do
+    npm --prefix soothfast-sdk/tests/goldens/$d install
+    npm --prefix soothfast-sdk/tests/goldens/$d run build   # also type-checks under `strict`
+  done
+  node --test soothfast-sdk/tests/typescript/runtime.test.mjs
+  node --test soothfast-sdk/tests/typescript/embed.test.mjs
+
+  # The packaged-binary path, which is what `sdk build` produces for real:
+  cd soothfast-sdk/tests/goldens/typescript-embed
+  mkdir -p platforms/acme-items-linux-x64/bin
+  cp ../../../../target/debug/examples/embed_server platforms/acme-items-linux-x64/bin/
+  npm install --no-save ./platforms/acme-items-linux-x64 && npm run build
+  node --test ../../../tests/typescript/bundled.test.mjs
+  ```
 - **`soothfast-report`** — renderers consuming measurement output: perf tables
   (`perf_table.rs`), SVG trend charts (`trend_chart.rs`), badges
   (`badges.rs`), living `CHANGELOG.md` draft generation (`changelog.rs`,

@@ -295,6 +295,9 @@ pub struct RouteItem {
     /// Query-parameter struct name; its fields flatten into query
     /// parameters, overriding what the signature implies.
     pub params: Option<&'static str>,
+    /// Path-parameter types: either `"name: Type, name: Type"` pairs naming
+    /// individual `{placeholder}`s, or one struct name whose fields do.
+    pub path_params: Option<&'static str>,
     /// First line of the annotated fn's doc comment, captured at macro
     /// expansion. Marker fns in bench targets never reach the lib's rustdoc
     /// JSON, so expansion time is the only chance to read it.
@@ -320,6 +323,7 @@ impl RouteItem {
             response: None,
             status: None,
             params: None,
+            path_params: None,
             summary: None,
         }
     }
@@ -342,6 +346,13 @@ impl RouteItem {
     /// reason [`RouteItem::with_shape`] is separate from `new`.
     pub const fn with_params(mut self, params: Option<&'static str>) -> Self {
         self.params = params;
+        self
+    }
+
+    /// Attach the path-parameter override, for `{placeholder}`s no signature
+    /// types — a detached marker's empty one, chiefly.
+    pub const fn with_path_params(mut self, path_params: Option<&'static str>) -> Self {
+        self.path_params = path_params;
         self
     }
 

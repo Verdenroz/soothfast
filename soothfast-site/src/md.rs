@@ -763,7 +763,8 @@ fn inline(text: &str, opts: &Options) -> Result<String, String> {
     Ok(out)
 }
 
-/// `[label](href)` starting at `[`; returns (label, href, index past `)`).
+/// `[label](href)` or `[label](href "title")` starting at `[`; returns
+/// (label, href, index past `)`).
 fn link_parts(b: &[char], start: usize) -> Option<(String, String, usize)> {
     let mut depth = 0;
     let mut close = None;
@@ -784,12 +785,42 @@ fn link_parts(b: &[char], start: usize) -> Option<(String, String, usize)> {
     if b.get(close + 1) != Some(&'(') {
         return None;
     }
-    let end = (close + 2..b.len()).find(|&n| b[n] == ')')?;
+    // Count depth: a wiki-style `..._(complexity)` URL ends at its own `)`.
+    let mut depth = 1;
+    let mut end = None;
+    for (n, &c) in b.iter().enumerate().skip(close + 2) {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(n);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end?;
+    let dest: String = b[close + 2..end].iter().collect();
     Some((
         b[start + 1..close].iter().collect(),
-        b[close + 2..end].iter().collect(),
+        strip_title(dest.trim()),
         end + 1,
     ))
+}
+
+/// A destination may carry a `"title"` the renderer has no slot for;
+/// keeping it would land quoted prose inside the `href` attribute.
+fn strip_title(dest: &str) -> String {
+    for quote in ['"', '\''] {
+        if let Some((href, title)) = dest.split_once(quote) {
+            if title.ends_with(quote) {
+                return href.trim().to_string();
+            }
+        }
+    }
+    dest.to_string()
 }
 
 fn count(b: &[char], i: usize, c: char) -> usize {
@@ -894,6 +925,19 @@ mod tests {
         };
         let out = render("[a](b.md)", &opts).unwrap();
         assert!(out.html.contains("href=\"b/\""));
+    }
+
+    #[test]
+    fn link_destinations_keep_parens_and_drop_titles() {
+        let out = r("[Big O](https://en.wikipedia.org/wiki/Big_O_notation_(complexity))\n");
+        assert!(
+            out.html
+                .contains("<a href=\"https://en.wikipedia.org/wiki/Big_O_notation_(complexity)\">")
+        );
+        assert!(!out.html.contains("</a>)"));
+
+        let titled = r("[Home](index.md \"Home page\")\n");
+        assert!(titled.html.contains("<a href=\"index.md\">Home</a>"));
     }
 
     #[test]

@@ -5,12 +5,16 @@
 //! and flat under `untagged`. Getting these wrong produces a schema that is
 //! confidently incorrect rather than merely imprecise, so each shape is
 //! rendered explicitly rather than approximated as a generic object.
+//!
+//! Naming is a separate question from representation, and not always serde's
+//! — see [`wire_names`](super::wire_names).
 
 use serde_json::{Value, json};
 
 use super::Gap;
-use super::serde_attrs::{self, ContainerAttrs};
+use super::serde_attrs;
 use super::types::{Resolver, Subst};
+use super::wire_names::WireNames;
 
 /// One resolved field, ready to place into an object schema.
 struct Field {
@@ -29,7 +33,7 @@ impl<'a> Resolver<'a> {
         subst: &Subst,
         at: &str,
     ) -> Value {
-        let container = self.container_attrs(item, at);
+        let names = self.container_attrs(item, at);
         let kind = &s["kind"];
 
         if kind.as_str() == Some("unit") {
@@ -65,7 +69,7 @@ impl<'a> Resolver<'a> {
         let stripped = plain["has_stripped_fields"].as_bool().unwrap_or(false);
 
         // `transparent` forwards the wire shape of the single visible field.
-        if container.transparent {
+        if names.serde.transparent {
             if let Some(ty) = ids
                 .first()
                 .and_then(|id| self.item(id))
@@ -75,7 +79,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let mut schema = self.fields_object(&ids, &container, stripped, subst, at);
+        let mut schema = self.fields_object(&ids, &names, stripped, subst, at);
         Self::describe(item, &mut schema);
         schema
     }
@@ -84,14 +88,14 @@ impl<'a> Resolver<'a> {
     fn fields_object(
         &mut self,
         ids: &[Value],
-        container: &ContainerAttrs,
+        names: &WireNames,
         stripped: bool,
         subst: &Subst,
         at: &str,
     ) -> Value {
         let mut fields = Vec::new();
         for id in ids {
-            if let Some(f) = self.resolve_field(id, container, subst, at) {
+            if let Some(f) = self.resolve_field(id, names, subst, at) {
                 fields.push(f);
             }
         }
@@ -130,7 +134,7 @@ impl<'a> Resolver<'a> {
             all.extend(merged);
             return json!({ "allOf": all });
         }
-        if container.deny_unknown_fields {
+        if names.serde.deny_unknown_fields {
             schema["additionalProperties"] = json!(false);
         }
         schema
@@ -139,18 +143,16 @@ impl<'a> Resolver<'a> {
     fn resolve_field(
         &mut self,
         id: &Value,
-        container: &ContainerAttrs,
+        names: &WireNames,
         subst: &Subst,
         at: &str,
     ) -> Option<Field> {
         let item = self.item(id)?;
         let name = item["name"].as_str()?.to_string();
         let empty = Vec::new();
-        let attrs = serde_attrs::field(item["attrs"].as_array().unwrap_or(&empty));
-        if attrs.skip {
-            return None;
-        }
-        let wire = serde_attrs::wire_name_field(&name, &attrs, container);
+        let raw = item["attrs"].as_array().unwrap_or(&empty);
+        let attrs = serde_attrs::field(raw);
+        let wire = names.field(&name, raw, &attrs)?;
         let where_ = format!("{at}.{wire}");
         let ty = &item["inner"]["struct_field"];
 
@@ -188,15 +190,31 @@ impl<'a> Resolver<'a> {
         subst: &Subst,
         at: &str,
     ) -> Value {
-        let container = self.container_attrs(item, at);
+        let names = self.container_attrs(item, at);
         let ids: Vec<Value> = e["variants"]
             .as_array()
             .map(|a| a.to_vec())
             .unwrap_or_default();
 
+        // A C-like enum has no per-variant shape to distinguish, so the
+        // tag-free representations collapse to the one scalar schema.
+        if names.serde.tag.is_none() {
+            if let Some(wire) = self.unit_variant_names(&ids, &names) {
+                let mut schema = if names.serde.untagged {
+                    // Each untagged unit variant serializes as `null`, so a
+                    // `oneOf` of nulls is a branch set nothing can satisfy.
+                    json!({ "type": "null" })
+                } else {
+                    json!({ "type": "string", "enum": wire })
+                };
+                Self::describe(item, &mut schema);
+                return schema;
+            }
+        }
+
         let mut branches = Vec::new();
         for id in &ids {
-            if let Some(b) = self.variant_branch(id, &container, subst, at) {
+            if let Some(b) = self.variant_branch(id, &names, subst, at) {
                 branches.push(b);
             }
         }
@@ -208,25 +226,46 @@ impl<'a> Resolver<'a> {
         schema
     }
 
+    /// Wire names of every variant in declaration order, or `None` unless the
+    /// enum is non-empty and every variant is a unit variant.
+    fn unit_variant_names(&self, ids: &[Value], names: &WireNames) -> Option<Vec<String>> {
+        if ids.is_empty() {
+            return None;
+        }
+        let mut wire = Vec::with_capacity(ids.len());
+        for id in ids {
+            let item = self.item(id)?;
+            // Only a fieldless `V` is a bare string; `V()` and `V {}` still
+            // go on the wire wrapped in their externally tagged object.
+            if item["inner"]["variant"]["kind"].as_str() != Some("plain") {
+                return None;
+            }
+            let name = item["name"].as_str()?;
+            let empty = Vec::new();
+            let raw = item["attrs"].as_array().unwrap_or(&empty);
+            wire.push(names.variant(name, raw));
+        }
+        Some(wire)
+    }
+
     fn variant_branch(
         &mut self,
         id: &Value,
-        container: &ContainerAttrs,
+        names: &WireNames,
         subst: &Subst,
         at: &str,
     ) -> Option<Value> {
         let item = self.item(id)?;
         let name = item["name"].as_str()?.to_string();
         let empty = Vec::new();
-        let own = serde_attrs::container(item["attrs"].as_array().unwrap_or(&empty));
-        let wire = serde_attrs::wire_name_variant(&name, &own, container);
+        let wire = names.variant(&name, item["attrs"].as_array().unwrap_or(&empty));
         let where_ = format!("{at}::{wire}");
         let kind = &item["inner"]["variant"]["kind"];
 
-        let payload = self.variant_payload(kind, container, subst, &where_);
+        let payload = self.variant_payload(kind, names, subst, &where_);
 
         Some(
-            match (&container.tag, &container.content, container.untagged) {
+            match (&names.serde.tag, &names.serde.content, names.serde.untagged) {
                 // Untagged: the payload alone, with unit variants as null.
                 (_, _, true) => payload.unwrap_or(json!({ "type": "null" })),
 
@@ -287,7 +326,7 @@ impl<'a> Resolver<'a> {
     fn variant_payload(
         &mut self,
         kind: &Value,
-        container: &ContainerAttrs,
+        names: &WireNames,
         subst: &Subst,
         at: &str,
     ) -> Option<Value> {
@@ -319,7 +358,7 @@ impl<'a> Resolver<'a> {
                 .unwrap_or_default();
             let stripped = st["has_stripped_fields"].as_bool().unwrap_or(false);
             // Variant fields follow the container's rename rule, as in serde.
-            return Some(self.fields_object(&ids, container, stripped, subst, at));
+            return Some(self.fields_object(&ids, names, stripped, subst, at));
         }
         None
     }

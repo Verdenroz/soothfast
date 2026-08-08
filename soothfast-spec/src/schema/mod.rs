@@ -2,8 +2,9 @@
 //!
 //! Generation is rooted at `#[route]` handlers, and handler signatures are
 //! monomorphic, so every type reachable from a route is concrete: generics
-//! resolve by substitution, serde renames come through rustdoc's preserved
-//! attributes, and foreign types resolve by canonical path against a table.
+//! resolve by substitution, wire names come through rustdoc's preserved
+//! attributes — serde's, or async-graphql's for the types it serves — and
+//! foreign types resolve by canonical path against a table.
 //!
 //! Three things stay underivable, and all three are *detectable* — the
 //! extractor never guesses a shape it cannot see:
@@ -16,20 +17,32 @@
 //! Each becomes a [`Gap`] and an open schema — imprecise, never wrong.
 
 mod adt;
+mod attrs;
+pub mod docs;
+#[cfg(test)]
+mod docs_tests;
 #[cfg(test)]
 mod extract_tests;
 pub mod foreign;
+pub mod graphql_attrs;
+#[cfg(test)]
+mod graphql_tests;
+mod naming;
 pub mod route_sig;
 #[cfg(test)]
 mod route_sig_tests;
 pub mod serde_attrs;
+#[cfg(test)]
+mod transparent_tests;
 pub mod types;
+mod wire_names;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-pub use foreign::TypeTable;
+pub use docs::Docs;
+pub use foreign::{TypeMapping, TypeTable};
 pub use route_sig::{Extractors, Overrides, RouteShape};
 pub use types::Resolver;
 
@@ -42,23 +55,31 @@ pub struct Extraction {
     pub components: BTreeMap<String, Value>,
     /// Places a shape could not be derived. Never empty *and* silent.
     pub gaps: Vec<Gap>,
+    /// Canonical paths walked out of a workspace-local crate instead of
+    /// being reported as unmapped.
+    pub aux_resolved: BTreeSet<String>,
 }
 
 /// Extract the schema for a named type from a rustdoc JSON document.
 ///
-/// Used for the `#[route(response = "...")]` override; signature-driven
-/// extraction goes through [`Resolver::resolve`] directly.
-pub fn extract_named(doc: &Value, table: &TypeTable, name: &str) -> Result<Extraction, String> {
-    let mut resolver = Resolver::new(doc, table)?;
-    let id = resolver
-        .find_type_id(name)
+/// Takes one document, or a [`Docs`] carrying the workspace-local crates the
+/// type may actually be defined in. Used for the
+/// `#[route(response = "...")]` override; signature-driven extraction goes
+/// through [`Resolver::resolve`] directly.
+pub fn extract_named<'a>(
+    docs: impl Into<Docs<'a>>,
+    table: &'a TypeTable,
+    name: &str,
+) -> Result<Extraction, String> {
+    let mut resolver = Resolver::new(docs, table)?;
+    let schema = resolver
+        .resolve_by_name(name, name)
         .ok_or_else(|| format!("no struct or enum named `{name}` in this crate's public API"))?;
-    let node = serde_json::json!({ "resolved_path": { "path": name, "id": id, "args": null } });
-    let schema = resolver.resolve(&node, &types::Subst::new(), name);
     Ok(Extraction {
         schema,
         components: resolver.components,
         gaps: resolver.gaps,
+        aux_resolved: resolver.aux_resolved,
     })
 }
 
@@ -87,12 +108,22 @@ pub enum Gap {
         /// Canonical path, e.g. `chrono::DateTime`.
         path: String,
     },
-    /// A `rename_all` rule this extractor does not implement; emitting field
+    /// A rename rule this extractor does not implement, from `rename_all`
+    /// (serde) or `rename_fields`/`rename_items` (async-graphql). Emitting
     /// names under an unknown rule would rename every one of them wrongly.
     UnknownRenameRule { at: String, rule: String },
     /// Rustdoc omits private fields, but serde still serializes them, so the
     /// field list is known to be incomplete.
     StrippedFields { at: String },
+    /// A type mapped `transparent` in `[spec.types]`, used without the type
+    /// argument that was supposed to carry its wire shape.
+    TransparentWithoutArgument {
+        at: String,
+        /// Canonical path of the wrapper, e.g. `async_graphql::types::json::Json`.
+        path: String,
+        /// The zero-based argument position the mapping named.
+        arg: usize,
+    },
 }
 
 impl Gap {
@@ -103,6 +134,7 @@ impl Gap {
             | Self::CustomSerializer { at, .. }
             | Self::UnmappedForeign { at, .. }
             | Self::UnknownRenameRule { at, .. }
+            | Self::TransparentWithoutArgument { at, .. }
             | Self::StrippedFields { at } => at,
         }
     }
@@ -124,8 +156,13 @@ impl Gap {
                  [spec.types] in soothfast.toml"
             ),
             Self::UnknownRenameRule { at, rule } => format!(
-                "{at}: unsupported `rename_all = \"{rule}\"`; field names left \
-                 unrenamed rather than renamed wrongly"
+                "{at}: unsupported rename rule `\"{rule}\"`; names left under \
+                 the framework's default rather than renamed wrongly"
+            ),
+            Self::TransparentWithoutArgument { at, path, arg } => format!(
+                "{at}: `{path}` is mapped `transparent` under [spec.types] but \
+                 is used with no type argument at position {arg}, so nothing \
+                 says what it wraps; emitted open"
             ),
             Self::StrippedFields { at } => format!(
                 "{at}: has private fields that rustdoc omits but serde still \

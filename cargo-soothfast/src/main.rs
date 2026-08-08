@@ -14,6 +14,7 @@ mod invoke;
 mod mcp;
 mod report;
 mod sdk;
+mod sdk_build;
 mod sdk_config;
 mod site;
 mod spec;
@@ -21,6 +22,7 @@ mod spec_config;
 mod spec_gate;
 mod spec_gen;
 mod trend;
+mod workspace;
 
 use invoke::CommonArgs;
 
@@ -52,6 +54,9 @@ commands:
            (reconciles a .proto message's fields against a Rust struct's
            #[prost(..)] fields by tag — for consumed, not served, wire formats)
   sdk      gen -p PKG [--features F] [--target NAME] [--check]
+  sdk      build -p PKG [--target TRIPLE].. [--bench NAME] [--debug]
+           (cross-compiles the embedded server and stages it per ecosystem;
+           note --target is a Rust triple here, so name the bench --bench)
   sdk      gate -p PKG [--base REF] [--allow-breaking]   (alias of spec gate:
            the SDK surface is the linked generate-mode spec surface)
   sdk      publish -p PKG [--only LANG] [--dry-run]   (refuses stale output;
@@ -63,11 +68,12 @@ commands:
 `--features F` builds the bench binary / rustdoc surface with those cargo
 features enabled (feature-gated items are otherwise invisible).
 
-`--target NAME` picks the `[[bench]]` target to link the registry from
-(default \"soothfast\"). Lets `spec check` read `#[route]` markers from a
-target separate from the one `measure`/`gate` use for perf benches, e.g.
-`benches/soothfast-routes.rs` (target \"soothfast-routes\") instead of
-overloading a single `benches/soothfast.rs`.
+`--bench NAME` (also spelled `--target NAME` everywhere except `sdk build`,
+where cargo's meaning of `--target` wins) picks the `[[bench]]` target to
+link the registry from (default \"soothfast\"). Lets `spec check` read
+`#[route]` markers from a target separate from the one `measure`/`gate` use
+for perf benches, e.g. `benches/soothfast-routes.rs` (target
+\"soothfast-routes\") instead of overloading a single `benches/soothfast.rs`.
 ";
 
 fn main() {

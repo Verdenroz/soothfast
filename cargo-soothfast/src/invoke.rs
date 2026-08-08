@@ -29,7 +29,11 @@ impl CommonArgs {
             "--backend" => &mut self.backend,
             "--samples" => &mut self.samples,
             "--features" => &mut self.features,
-            "--target" => &mut self.target,
+            // `--bench` is the unambiguous spelling and works everywhere.
+            // `--target` means the same thing here for compatibility, but
+            // in `sdk build` it means a Rust triple the way cargo spells
+            // it — which is why the other name had to exist.
+            "--bench" | "--target" => &mut self.target,
             _ => return false,
         };
         *slot = it.next().cloned();

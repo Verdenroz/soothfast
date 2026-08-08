@@ -24,6 +24,22 @@ pub struct SdkEntry {
     /// Defaults to the crate version, keeping releases in lockstep.
     pub version: Option<String>,
     pub base_url: Option<String>,
+    /// Server binary the SDK bundles and spawns, making the package
+    /// self-contained. Without it the SDK is a client for a hosted API.
+    pub embed: Option<String>,
+    /// Arguments passed to the embedded server on every launch.
+    pub embed_args: Vec<String>,
+    /// Environment applied to every launch, over the ambient one. This is
+    /// where a bundled server is told to bind loopback on an ephemeral
+    /// port rather than wherever a deployment would put it.
+    pub embed_env: std::collections::BTreeMap<String, String>,
+    /// A dotenv template documenting what the embedded server reads,
+    /// relative to the package directory. Its knobs become a typed
+    /// `ServerEnv` on the generated client.
+    pub embed_env_template: Option<String>,
+    /// Target triples the embedded server is cross-compiled for.
+    /// Empty means `Target::DEFAULT`.
+    pub targets: Vec<String>,
     pub description: Option<String>,
     pub repository: Option<String>,
     /// Operation ids with opt-in cursor pagination.
@@ -42,6 +58,11 @@ impl SdkEntry {
             module: None,
             version: None,
             base_url: None,
+            embed: None,
+            embed_args: Vec::new(),
+            embed_env: std::collections::BTreeMap::new(),
+            embed_env_template: None,
+            targets: Vec::new(),
             description: None,
             repository: None,
             paginated: Vec::new(),
@@ -132,6 +153,23 @@ fn set(entry: &mut SdkEntry, key: &str, value: TomlValue) -> Result<(), String> 
         ("module", TomlValue::Str(s)) => entry.module = Some(s),
         ("version", TomlValue::Str(s)) => entry.version = Some(s),
         ("base_url", TomlValue::Str(s)) => entry.base_url = Some(s),
+        ("embed", TomlValue::Str(s)) => entry.embed = Some(s),
+        ("embed_args", TomlValue::StrArray(a)) => entry.embed_args = a,
+        ("embed_env", TomlValue::Table(t)) => {
+            for (name, value) in t {
+                // Everything crossing an `environ` boundary is a string;
+                // accepting `PORT = 0` unquoted only invites the mistake.
+                let TomlValue::Str(value) = value else {
+                    return Err(format!(
+                        "embed_env.{name} must be a string — an environment \
+                         holds no other type"
+                    ));
+                };
+                entry.embed_env.insert(name, value);
+            }
+        }
+        ("embed_env_template", TomlValue::Str(s)) => entry.embed_env_template = Some(s),
+        ("targets", TomlValue::StrArray(a)) => entry.targets = a,
         ("description", TomlValue::Str(s)) => entry.description = Some(s),
         ("repository", TomlValue::Str(s)) => entry.repository = Some(s),
         ("paginated", TomlValue::StrArray(a)) => entry.paginated = a,
@@ -167,6 +205,57 @@ paginated = ["getQuotes", "getNews"]
         assert_eq!(e.package, "finance-query");
         assert_eq!(e.module(), "finance_query");
         assert_eq!(e.paginated.len(), 2);
+    }
+
+    #[test]
+    fn an_embedded_server_is_read_with_its_arguments() {
+        let cfg = parse(
+            "[[sdk]]\nspec = \"openapi.yaml\"\nout = \"sdk\"\npackage = \"p\"\n\
+             embed = \"acme-server\"\nembed_args = [\"serve\", \"--quiet\"]\n",
+        )
+        .expect("parses");
+        let e = &cfg.entries[0];
+        assert_eq!(e.embed.as_deref(), Some("acme-server"));
+        assert_eq!(e.embed_args, ["serve", "--quiet"]);
+        // A bundled server is what makes `base_url` optional.
+        assert_eq!(e.base_url, None);
+    }
+
+    #[test]
+    fn launch_environment_and_its_template_are_read_together() {
+        let cfg = parse(
+            "[[sdk]]\nspec = \"a.yaml\"\nout = \"o\"\npackage = \"p\"\n\
+             embed = \"srv\"\nembed_env = { HOST = \"127.0.0.1\", PORT = \"0\" }\n\
+             embed_env_template = \"../server/.env.template\"\n",
+        )
+        .expect("parses");
+        let e = &cfg.entries[0];
+        assert_eq!(e.embed_env["HOST"], "127.0.0.1");
+        assert_eq!(e.embed_env["PORT"], "0");
+        assert_eq!(
+            e.embed_env_template.as_deref(),
+            Some("../server/.env.template")
+        );
+    }
+
+    /// `PORT = 0` is the natural typo, and it would reach `execve` as
+    /// something that is not a string. Refuse it where it is written.
+    #[test]
+    fn a_non_string_launch_variable_is_refused() {
+        let err = parse(
+            "[[sdk]]\nspec = \"a.yaml\"\nout = \"o\"\npackage = \"p\"\n\
+             embed = \"srv\"\nembed_env = { PORT = 0 }\n",
+        )
+        .expect_err("rejected");
+        assert!(err.contains("PORT"), "{err}");
+    }
+
+    #[test]
+    fn no_embed_key_leaves_the_sdk_a_plain_client() {
+        let cfg =
+            parse("[[sdk]]\nspec = \"a.yaml\"\nout = \"o\"\npackage = \"p\"\n").expect("parses");
+        assert_eq!(cfg.entries[0].embed, None);
+        assert!(cfg.entries[0].embed_args.is_empty());
     }
 
     #[test]

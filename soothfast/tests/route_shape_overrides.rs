@@ -52,6 +52,7 @@ pub fn list_items() -> impl std::fmt::Debug {
     method = "GET",
     path = "/widgets/{key}",
     params = "WidgetQuery",
+    path_params = "key: WidgetKey",
     response = "Widget"
 )]
 pub fn route_get_widget() {}
@@ -117,6 +118,7 @@ fn the_annotated_functions_still_run_untouched() {
 fn params_and_the_doc_summary_reach_the_registry() {
     let r = route_for("getWidget");
     assert_eq!(r.params, Some("WidgetQuery"));
+    assert_eq!(r.path_params, Some("key: WidgetKey"));
     assert_eq!(r.summary, Some("Get one widget by key."));
 }
 
@@ -124,6 +126,7 @@ fn params_and_the_doc_summary_reach_the_registry() {
 fn an_undocumented_route_has_no_summary() {
     let r = route_for("getItem");
     assert_eq!(r.params, None);
+    assert_eq!(r.path_params, None);
     assert_eq!(r.summary, None);
 }
 

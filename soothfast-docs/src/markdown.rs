@@ -127,10 +127,13 @@ pub fn scan(text: &str) -> Result<Doc, String> {
             continue;
         }
 
-        if let Some(rest) = trimmed.strip_prefix("<!-- soothfast:") {
-            let Some(body) = rest.strip_suffix("-->").map(str::trim) else {
-                continue;
-            };
+        // A marker the scanner declines to read is a claim nothing gates, so
+        // every failure below is an error rather than a `continue`.
+        if let Some(rest) = trimmed.trim_end().strip_prefix("<!-- soothfast:") {
+            let body = rest
+                .strip_suffix("-->")
+                .map(str::trim)
+                .ok_or_else(|| format!("unterminated soothfast marker at line {lineno}"))?;
             if let Some(item) = body.strip_prefix("bind ") {
                 doc.binds.push(Bind {
                     item: item.trim().to_string(),
@@ -141,6 +144,10 @@ pub fn scan(text: &str) -> Result<Doc, String> {
                     expr: expr.trim().to_string(),
                     line: lineno,
                 });
+            } else {
+                return Err(format!(
+                    "unknown soothfast marker at line {lineno}: expected `bind <item>` or `claim <expr>`"
+                ));
             }
         }
     }
@@ -276,6 +283,19 @@ not rust
         assert!(doc.blocks[1].has_tag("no_run"));
         assert!(doc.blocks[2].is_capture());
         assert_eq!(doc.blocks[3].lang, "text");
+    }
+
+    #[test]
+    fn trailing_whitespace_still_reads_the_marker() {
+        let doc = scan("<!-- soothfast:claim demo::f.alloc == 0 -->  \n").unwrap();
+        assert_eq!(doc.claims.len(), 1);
+        assert_eq!(doc.claims[0].expr, "demo::f.alloc == 0");
+    }
+
+    #[test]
+    fn scan_errors_on_a_marker_it_cannot_read() {
+        assert!(scan("<!-- soothfast:claim demo::f.alloc == 0\n").is_err());
+        assert!(scan("<!-- soothfast:clam demo::f.alloc == 0 -->\n").is_err());
     }
 
     #[test]

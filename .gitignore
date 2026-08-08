@@ -23,6 +23,11 @@ perf.data.old
 *.profraw
 *.profdata
 
+# Debris from the SDK runtime tests, which run real Python and Node
+# tooling against the generated goldens.
+__pycache__/
+*.pyc
+
 # Editor / OS junk
 .DS_Store
 *.swp

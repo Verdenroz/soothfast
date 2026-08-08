@@ -6,15 +6,16 @@
 //! written; everything else stays on the reconcile path, because a contract
 //! someone else serves can't be generated from our source.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::Value;
 use soothfast_spec::dialect::{Info, Operation};
-use soothfast_spec::schema::{self, TypeTable, route_sig};
+use soothfast_spec::schema::{self, Docs, TypeTable, route_sig};
 
 use crate::invoke::{self, CommonArgs, Visibility};
 use crate::spec_config::{self, Mode, SpecEntry};
+use crate::workspace;
 
 /// One `#[route]` registration, including the shape overrides.
 pub(crate) struct Route {
@@ -40,6 +41,7 @@ fn route_from(r: &Value) -> Route {
             response: r["response"].as_str().map(String::from),
             status: r["status"].as_u64().map(|n| n as u16),
             params: r["params"].as_str().map(String::from),
+            path_params: r["path_params"].as_str().map(String::from),
         },
     }
 }
@@ -78,6 +80,9 @@ pub(crate) struct Built {
     /// states them — a different shortfall from a gap, and reported apart
     /// from one so the remedy is not confused.
     pub notes: BTreeMap<String, Vec<String>>,
+    /// Types walked out of a workspace-local crate rather than reported as
+    /// gaps, keyed by spec file.
+    pub resolved: BTreeMap<String, BTreeSet<String>>,
     pub conflicts: Vec<String>,
 }
 
@@ -119,6 +124,59 @@ pub(crate) fn rustdoc_for(
     Ok(doc)
 }
 
+/// Rustdoc JSON for the workspace crates whose types the package's routes
+/// can reach — the sibling crates a handler's parameters are typed by.
+///
+/// Best effort throughout: a missing nightly, a crate that fails to
+/// document, or a `workspace_crates` name that isn't a dependency all warn
+/// and drop that crate, leaving its types to resolve exactly as they did
+/// before (a reported gap and an open schema). A spec derived from most of
+/// the workspace beats no spec at all.
+///
+/// The package's own `--features` are deliberately not passed on: they name
+/// features of *that* package, and cargo rejects them for another.
+pub(crate) fn aux_rustdoc_for(
+    pkg: &str,
+    dir: Option<&Path>,
+    cfg: &spec_config::SpecConfig,
+) -> Vec<Value> {
+    if !cfg.workspace_types() {
+        return Vec::new();
+    }
+    let available = match workspace::local_deps(pkg, dir) {
+        Ok(names) => names,
+        Err(e) => {
+            eprintln!(
+                "soothfast: cannot list workspace dependencies of {pkg} ({e}); types \
+                 defined in sibling crates will be reported as gaps"
+            );
+            return Vec::new();
+        }
+    };
+    let wanted = cfg.workspace_crates();
+    for name in wanted.iter().filter(|n| !available.contains(n)) {
+        eprintln!(
+            "soothfast: workspace_crates names {name:?}, which is not a workspace \
+             member {pkg} depends on — ignoring it"
+        );
+    }
+    let selected = available
+        .into_iter()
+        .filter(|n| wanted.is_empty() || wanted.contains(n));
+
+    let mut docs = Vec::new();
+    for name in selected {
+        match invoke::rustdoc_json_in(&name, dir, None, Visibility::Private) {
+            Ok((doc, _)) => docs.push(doc),
+            Err(e) => eprintln!(
+                "soothfast: cannot document workspace crate {name} ({e}); its types \
+                 will be reported as gaps"
+            ),
+        }
+    }
+    docs
+}
+
 /// Infer the operations one spec entry's routes declare.
 ///
 /// Returns the operations (whose shapes still carry structured gaps) plus
@@ -126,7 +184,7 @@ pub(crate) fn rustdoc_for(
 /// several operations reports the same gap each time; the reader needs it
 /// once.
 pub(crate) fn operations_for(
-    doc: &Value,
+    docs: Docs<'_>,
     entry: Option<&SpecEntry>,
     routes: &[Route],
 ) -> Result<(Vec<Operation>, Vec<String>), String> {
@@ -135,15 +193,15 @@ pub(crate) fn operations_for(
     // crate can correct a default it knows to be wrong for its own wire.
     let mut table = TypeTable::builtin();
     if let Some(e) = entry {
-        for (path, schema) in &e.types {
-            table.insert(path.clone(), schema.clone());
+        for (path, mapping) in &e.types {
+            table.insert(path.clone(), mapping.clone());
         }
     }
     let mut ops = Vec::new();
     let mut gaps = Vec::new();
     for route in routes {
         let shape = route_sig::infer(
-            doc,
+            docs,
             &table,
             &extractors,
             &route.id,
@@ -160,7 +218,7 @@ pub(crate) fn operations_for(
         });
     }
     if let Some(e) = entry {
-        merge_common_responses(doc, &table, e, &mut ops, &mut gaps)?;
+        merge_common_responses(docs, &table, e, &mut ops, &mut gaps)?;
     }
     gaps.sort();
     gaps.dedup();
@@ -170,21 +228,21 @@ pub(crate) fn operations_for(
 /// Merge each `[spec.responses]` entry into every operation that doesn't
 /// already declare its status code.
 fn merge_common_responses(
-    doc: &Value,
+    docs: Docs<'_>,
     table: &TypeTable,
     entry: &SpecEntry,
     ops: &mut [Operation],
     gaps: &mut Vec<String>,
 ) -> Result<(), String> {
     for (code, common) in &entry.responses {
-        let (schema, components) = match &common.type_name {
+        let (schema, components, resolved) = match &common.type_name {
             Some(name) => {
-                let ex = schema::extract_named(doc, table, name)
+                let ex = schema::extract_named(docs, table, name)
                     .map_err(|e| format!("[spec.responses] {code}: {e}"))?;
                 gaps.extend(ex.gaps.iter().map(|g| g.explain()));
-                (ex.schema, ex.components)
+                (ex.schema, ex.components, ex.aux_resolved)
             }
-            None => (Value::Null, BTreeMap::new()),
+            None => (Value::Null, BTreeMap::new(), BTreeSet::new()),
         };
         let response = route_sig::Response {
             content_type: if schema.is_null() {
@@ -198,6 +256,7 @@ fn merge_common_responses(
         };
         for op in ops.iter_mut() {
             op.shape.components.extend(components.clone());
+            op.shape.aux_resolved.extend(resolved.iter().cloned());
             op.shape
                 .responses
                 .entry(code.clone())
@@ -224,6 +283,7 @@ pub(crate) fn build(
         docs: BTreeMap::new(),
         gaps: BTreeMap::new(),
         notes: BTreeMap::new(),
+        resolved: BTreeMap::new(),
         conflicts: Vec::new(),
     };
     // No generate-mode entry means nothing can be generated whatever the code
@@ -241,10 +301,18 @@ pub(crate) fn build(
         return Ok(built);
     }
     let doc = rustdoc_for(pkg, common, dir)?;
+    let aux = aux_rustdoc_for(pkg, dir, cfg);
+    let docs = Docs::new(&doc, &aux);
 
     for (spec_file, routes) in &by_spec {
         let entry = cfg.for_path(spec_file);
-        let (ops, gaps) = operations_for(&doc, entry, routes)?;
+        let (ops, gaps) = operations_for(docs, entry, routes)?;
+        built.resolved.insert(
+            spec_file.clone(),
+            ops.iter()
+                .flat_map(|o| o.shape.aux_resolved.iter().cloned())
+                .collect(),
+        );
         let document = cfg
             .dialect_of(spec_file)
             .document(&info_for(entry, pkg, meta), &ops);
@@ -320,6 +388,12 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
         for n in notes {
             println!("  note: {n}");
         }
+        // Where the shapes that would otherwise have been gaps came from.
+        if let Some(resolved) = built.resolved.get(spec_file) {
+            for (krate, count) in by_crate(resolved) {
+                println!("  resolved: {count} type(s) from workspace crate `{krate}`");
+            }
+        }
     }
 
     if !built.conflicts.is_empty() {
@@ -331,6 +405,15 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
         return Ok(1);
     }
     Ok(0)
+}
+
+/// Group canonical paths by the crate that defines them, for the summary.
+fn by_crate(paths: &BTreeSet<String>) -> BTreeMap<&str, usize> {
+    let mut counts = BTreeMap::new();
+    for p in paths {
+        *counts.entry(p.split("::").next().unwrap_or(p)).or_insert(0) += 1;
+    }
+    counts
 }
 
 /// Document metadata: `[[spec]]` first, then the package manifest.
@@ -421,6 +504,8 @@ mod tests {
             servers: vec!["https://api.example.com".into()],
             types: BTreeMap::new(),
             responses: BTreeMap::new(),
+            workspace_types: true,
+            workspace_crates: Vec::new(),
         };
         let info = info_for(Some(&entry), "my-api", &meta);
         assert_eq!(info.title, "Items API");
@@ -494,8 +579,14 @@ mod tests {
         .remove(0);
         let doc = json!({ "index": {}, "paths": {} });
         let mut gaps = Vec::new();
-        merge_common_responses(&doc, &TypeTable::builtin(), &entry, &mut ops, &mut gaps)
-            .expect("merges");
+        merge_common_responses(
+            Docs::single(&doc),
+            &TypeTable::builtin(),
+            &entry,
+            &mut ops,
+            &mut gaps,
+        )
+        .expect("merges");
 
         let merged = &ops[0].shape.responses["429"];
         assert_eq!(merged.description.as_deref(), Some("Rate limited"));
@@ -505,6 +596,23 @@ mod tests {
         let kept = &ops[1].shape.responses["429"];
         assert!(kept.description.is_none(), "a declared status is kept");
         assert_eq!(kept.schema, json!({ "type": "string" }));
+    }
+
+    #[test]
+    fn resolved_types_are_summarized_by_the_crate_they_came_from() {
+        let paths = BTreeSet::from([
+            "finance_query::constants::Interval".to_string(),
+            "finance_query::constants::TimeRange".to_string(),
+            "shared::Meta".to_string(),
+        ]);
+        let counts = by_crate(&paths);
+        assert_eq!(counts["finance_query"], 2);
+        assert_eq!(counts["shared"], 1);
+    }
+
+    #[test]
+    fn nothing_resolved_from_the_workspace_reports_nothing() {
+        assert!(by_crate(&BTreeSet::new()).is_empty());
     }
 
     #[test]

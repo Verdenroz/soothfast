@@ -76,6 +76,20 @@ jobs:
       - run: cargo run --release -p cargo-soothfast -- docs capture -p soothfast-report --check docs/reports.md
       - run: make check-llms
 
+  # Dogfood: gate each self-bench crate's perf against the PR's merge-base.
+  # Keep this package list in sync with Makefile's BENCH_CRATES.
+  gate:
+    if: github.event_name == 'pull_request'
+    strategy:
+      matrix:
+        package: [soothfast-registry, soothfast-measure, soothfast-docs]
+    permissions:
+      contents: read
+      pull-requests: write # post/update the gate-result PR comment
+    uses: ./.github/workflows/soothfast-gate.yml
+    with:
+      package: ${{ matrix.package }}
+
   # Regenerate and publish the site only on merge to master: fresh
   # measurements, fresh pages, gh-deploy.
   deploy-docs:

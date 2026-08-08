@@ -88,6 +88,42 @@ pub async fn create_item(Json(body): Json<NewItem>) -> impl IntoResponse {
 An override always wins over inference, and resolves the gap it answers —
 a route whose erased return is named this way stops being reported.
 
+### Detached markers
+
+A marker fn in a `[[bench]]` target (see [Where route markers live](#where-route-markers-live))
+has an empty signature, so there is nothing to infer from: its attributes
+*are* the contract. `params` names the struct whose fields flatten into query
+parameters, and `path_params` types the path's `{placeholder}`s — without it
+every placeholder is an open `string`, which is honest but weaker than the
+enum the real handler takes.
+
+```rust ignore
+#[route(
+    spec = "specs/openapi.yaml",
+    operation = "getHolders",
+    method = "GET",
+    path = "/holders/{symbol}/{type}",
+    params = "HoldersQuery",
+    path_params = "type: HolderType",
+    response = "HoldersResponse"
+)]
+fn route_get_holders() {}
+```
+
+`path_params` takes either comma-separated `name: Type` bindings, or a single
+struct name whose *field* names pick out the placeholders — the shape an
+axum `Path<HolderPath>` extractor would take. Naming a placeholder the path
+does not have is an error rather than a silent no-op, since it is always a
+typo. Placeholders nothing names keep the open `string`.
+
+A `params` field that happens to name a placeholder types it too, and is
+then *not* also emitted as a query parameter: the URL template is the more
+specific declaration, and one name cannot be in two places. Rust spells a
+keyword field `r#type` or `type_` where the URL only ever says `{type}`, so
+both spellings match. A route that genuinely wants the same name in both
+places renames one side — `#[serde(rename)]` on the field, or the
+placeholder itself. Where both apply, `path_params` wins.
+
 ## Generating
 
 `cargo soothfast spec gen -p PKG` writes every spec file a `[[spec]]` entry
@@ -167,6 +203,34 @@ faithful SDL spelling — untagged unions, flattened structs, maps, 64-bit
 integers, field names SDL cannot spell — becomes a `JSON` or `Int64` custom
 scalar and a note, never a quietly wrong type.
 
+### Who names the wire
+
+Field and variant names come from whichever framework actually serialises the
+type. For most types that is serde, and `#[serde(rename)]` / `rename_all` are
+read straight out of rustdoc's preserved attributes.
+
+A type **async-graphql** serves is different: the response JSON is built by
+async-graphql's resolver, which never consults serde. There, `#[graphql(...)]`
+is the wire truth and serde's attributes are ignored for naming entirely —
+container `rename_fields` / `rename_items`, then a field's or item's own
+`name`, with `#[graphql(skip)]` taking a field off the wire. Types with no
+`#[graphql]` attribute at all are still renamed, because async-graphql's
+defaults are camelCase for fields and `SCREAMING_SNAKE_CASE` for enum items.
+
+The two frameworks' casing genuinely disagrees, so this is a correctness
+matter rather than a tidiness one: async-graphql renames through `Inflector`,
+which opens a new word at every digit, and puts `price_change_percentage_24h`
+on the wire as `priceChangePercentage24H` where serde says `…24h`. Adding a
+serde rename to paper over that is worse still — those types are usually also
+`Deserialize`d from a library's snake_case JSON, where a rename silently
+zeroes every field instead of erroring.
+
+Detection reads the trait impls the derive generated, which rustdoc records
+even though it drops the derive itself, and falls back to the presence of a
+`#[graphql]` attribute. A type that is *both* an async-graphql object and a
+serde-serialised REST body is genuinely ambiguous; annotate it with
+`#[route(response = "...")]` if the derived answer is the wrong one.
+
 Three things cannot be derived, and each is *reported* rather than guessed:
 erased return types, `#[serde(with = "...")]` fields whose wire shape is
 defined by code, and foreign types with no mapping. Each emits an open
@@ -178,6 +242,102 @@ Foreign types are the configurable one:
 "uuid::Uuid" = { type = "string", format = "uuid" }
 "rust_decimal::Decimal" = { type = "string" }
 ```
+
+### Transparent wrappers
+
+A literal schema is the wrong tool for a *transparent newtype wrapper* — a
+foreign type like `#[serde(transparent)] pub struct Json<T>(pub T)`, which is
+exactly its type argument on the wire. The lookup key carries no generic
+arguments, so one literal would have to stand for every `T`, and every
+`Json<Quote>`, `Json<Money>` and `Json<Value>` alike would render as whatever
+that one literal said. Say `transparent` instead:
+
+```toml
+[spec.types]
+"async_graphql::types::json::Json" = { transparent = true }
+```
+
+Now `Json<Quote>` resolves to whatever `Quote` resolves to — walked locally,
+pulled from a workspace crate, or mapped from this same table — with no
+wrapper component, no `$ref` to one, and no gap. `Json<serde_json::Value>`
+still emits `{}`, because that is what `serde_json::Value` maps to: the
+honest answer for an unconstrained payload, arrived at through the argument
+rather than around it.
+
+`transparent = true` forwards the first type argument. A wrapper whose shape
+rides on a later one names its position, zero-based:
+
+```toml
+"tagged::Tagged" = { transparent = 1 }   # Tagged<Tag, T> is T on the wire
+```
+
+Two rules keep the directive honest. `transparent` and a literal schema in
+one entry contradict each other — a wrapper cannot both forward and be a
+fixed schema — and the config is rejected naming the offending key rather
+than one silently winning. And a type declared transparent but *used* with no
+argument at that position has nothing to forward to, so it reports a gap and
+emits an open schema instead of guessing what it wrapped.
+
+The key `transparent` is what distinguishes a directive from a literal
+schema: it is not a JSON Schema keyword, so every literal entry — including
+the bare `{ }` that means "genuinely unconstrained" — keeps its old meaning.
+
+Locally-defined types need none of this. A `#[serde(transparent)]` struct in
+the crate being documented, and every single-field newtype, already forward
+to their inner type by being walked.
+
+### Types from other crates in the workspace
+
+A type defined in a *sibling crate of the same cargo workspace* is not one of
+those three: it is absent from the package's own rustdoc index, but its own
+crate can be documented too, and then it is as walkable as a local type. So
+generation documents every workspace member the package depends on and
+resolves across them by default — an enum in the crate next door keeps its
+`enum:` constraint instead of collapsing to a bare `type: string`.
+
+The order of preference is `[spec.types]` first (an explicit mapping is the
+escape hatch, and outranks anything derived), then the workspace crates, then
+a reported gap. Registry dependencies are never documented: they have no
+source tree here to walk.
+
+Each extra crate costs one nightly rustdoc build, so both halves are
+adjustable per `[[spec]]` entry:
+
+```toml
+[[spec]]
+path = "openapi.yaml"
+mode = "generate"
+workspace_types = true               # the default; false reports gaps instead
+workspace_crates = ["finance-query"] # default: every workspace dep of the package
+```
+
+A crate that fails to document — no nightly toolchain, a compile error, a
+member that isn't a library — warns and is skipped, leaving its types to
+report as gaps rather than failing the run.
+
+### Two types, one name
+
+Resolving more types means more names to keep apart, and a name has to be a
+property of the *type*, not of the walk that reached it: every dialect merges
+the components of all its operations into one document, so a name chosen by
+whichever operation arrived first would both churn between runs and collide
+across operations.
+
+So the whole assignment is computed before anything is walked, from the
+documents alone. A type keeps its bare Rust name while no other type wants
+it. Where several do, each takes the shortest trailing run of its module path
+that tells it apart:
+
+| Canonical path | Component |
+| --- | --- |
+| `finance_query::constants::Region` | `Region` |
+| `finance_query::constants::indices::Region` | `indices_Region` |
+
+Unambiguous names are settled first, so qualifying one type can never take a
+bare name another type was entitled to. The result depends only on which
+types exist — not on route order, not on which operation referenced what — so
+two runs over the same code emit byte-identical specs, and one type is never
+silently described by another's schema.
 
 ## Gating
 

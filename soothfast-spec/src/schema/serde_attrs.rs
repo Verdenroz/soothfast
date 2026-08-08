@@ -1,9 +1,10 @@
 //! serde helper attributes, recovered from rustdoc JSON `attrs` strings.
 //!
-//! Rustdoc preserves derive helper attributes verbatim (`#[serde(rename =
-//! "qty")]`), so the wire name of a field is derivable without parsing source.
-//! Parsing them back out of a string is the price of that; the alternative —
-//! ignoring them — silently emits schemas under the wrong field names.
+//! These describe the wire whenever serde produces it. They do *not* describe
+//! a type async-graphql serves — see [`graphql_attrs`](super::graphql_attrs),
+//! whose attributes replace these for naming there.
+
+use super::attrs;
 
 /// How a container renames every field or variant beneath it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,86 +135,16 @@ pub struct FieldAttrs {
 }
 
 /// Pull the `serde(...)` argument text out of rustdoc's attribute entries.
-///
-/// Rustdoc emits each attribute either as a bare string or as an object with
-/// an `other` key; both shapes appear across versions, so both are accepted.
-pub fn serde_args(attrs: &[serde_json::Value]) -> Vec<String> {
-    let mut out = Vec::new();
-    for attr in attrs {
-        let text = match attr {
-            serde_json::Value::String(s) => s.as_str(),
-            serde_json::Value::Object(o) => match o.get("other").and_then(|v| v.as_str()) {
-                Some(s) => s,
-                None => continue,
-            },
-            _ => continue,
-        };
-        if let Some(args) = strip_serde_wrapper(text) {
-            out.push(args.to_string());
-        }
-    }
-    out
-}
-
-/// `#[serde(a, b)]` -> `a, b`. Returns `None` for any other attribute.
-fn strip_serde_wrapper(text: &str) -> Option<&str> {
-    let t = text.trim();
-    let t = t.strip_prefix("#[")?.strip_suffix(']')?.trim();
-    let t = t.strip_prefix("serde")?.trim();
-    t.strip_prefix('(')?.strip_suffix(')')
-}
-
-/// Split on top-level commas, respecting nesting and string literals so
-/// `rename(serialize = "a,b")` stays one item.
-fn split_items(args: &str) -> Vec<&str> {
-    let (mut out, mut depth, mut in_str, mut escaped, mut start) =
-        (Vec::new(), 0i32, false, false, 0);
-    for (i, c) in args.char_indices() {
-        if in_str {
-            match c {
-                _ if escaped => escaped = false,
-                '\\' => escaped = true,
-                '"' => in_str = false,
-                _ => {}
-            }
-            continue;
-        }
-        match c {
-            '"' => in_str = true,
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth -= 1,
-            ',' if depth == 0 => {
-                out.push(args[start..i].trim());
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    let tail = args[start..].trim();
-    if !tail.is_empty() {
-        out.push(tail);
-    }
-    out
-}
-
-/// Split `key = "value"` into its parts, unquoting the value.
-fn key_value(item: &str) -> (&str, Option<String>) {
-    match item.split_once('=') {
-        None => (item.trim(), None),
-        Some((k, v)) => {
-            let v = v.trim();
-            let unquoted = v.strip_prefix('"').and_then(|s| s.strip_suffix('"'));
-            (k.trim(), Some(unquoted.unwrap_or(v).to_string()))
-        }
-    }
+pub fn serde_args(raw: &[serde_json::Value]) -> Vec<String> {
+    attrs::args(raw, "serde")
 }
 
 /// Parse container-level `#[serde(...)]` attributes.
-pub fn container(attrs: &[serde_json::Value]) -> ContainerAttrs {
+pub fn container(raw: &[serde_json::Value]) -> ContainerAttrs {
     let mut out = ContainerAttrs::default();
-    for args in serde_args(attrs) {
-        for item in split_items(&args) {
-            match key_value(item) {
+    for args in serde_args(raw) {
+        for item in attrs::split_items(&args) {
+            match attrs::key_value(item) {
                 ("rename", Some(v)) => out.rename = Some(v),
                 ("rename_all", Some(v)) => match Rename::parse(&v) {
                     Some(r) => out.rename_all = Some(r),
@@ -232,11 +163,11 @@ pub fn container(attrs: &[serde_json::Value]) -> ContainerAttrs {
 }
 
 /// Parse field-level `#[serde(...)]` attributes.
-pub fn field(attrs: &[serde_json::Value]) -> FieldAttrs {
+pub fn field(raw: &[serde_json::Value]) -> FieldAttrs {
     let mut out = FieldAttrs::default();
-    for args in serde_args(attrs) {
-        for item in split_items(&args) {
-            match key_value(item) {
+    for args in serde_args(raw) {
+        for item in attrs::split_items(&args) {
+            match attrs::key_value(item) {
                 ("rename", Some(v)) => out.rename = Some(v),
                 ("skip", None) | ("skip_serializing", None) => out.skip = true,
                 ("flatten", None) => out.flatten = true,
@@ -288,7 +219,11 @@ mod tests {
 
     #[test]
     fn ignores_non_serde_attributes() {
-        let f = field(&attrs(&["#[doc = \"hi\"]", "#[repr(C)]"]));
+        let f = field(&attrs(&[
+            "#[doc = \"hi\"]",
+            "#[repr(C)]",
+            "#[graphql(name = \"nope\")]",
+        ]));
         assert_eq!(f, FieldAttrs::default());
     }
 
@@ -320,19 +255,6 @@ mod tests {
         let c = container(&attrs(&["#[serde(rename_all = \"Train-Case\")]"]));
         assert_eq!(c.rename_all, None);
         assert_eq!(c.unknown_rename_all.as_deref(), Some("Train-Case"));
-    }
-
-    #[test]
-    fn nested_parens_do_not_split_early() {
-        let items = split_items("rename(serialize = \"a\", deserialize = \"b\"), default");
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[1], "default");
-    }
-
-    #[test]
-    fn commas_inside_string_literals_do_not_split() {
-        let items = split_items("rename = \"a,b\", default");
-        assert_eq!(items, vec!["rename = \"a,b\"", "default"]);
     }
 
     #[test]

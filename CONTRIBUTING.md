@@ -31,7 +31,7 @@ Before filing a bug, search [existing issues](https://github.com/Verdenroz/sooth
 
 Open a new issue and include:
 
-- The crate affected (`soothfast`, `soothfast-macros`, `soothfast-registry`, `soothfast-measure`, `soothfast-docs`, `soothfast-spec`, `soothfast-report`, `cargo-soothfast`).
+- The crate affected (`soothfast`, `soothfast-macros`, `soothfast-registry`, `soothfast-measure`, `soothfast-docs`, `soothfast-spec`, `soothfast-sdk`, `soothfast-report`, `soothfast-site`, `cargo-soothfast`).
 - The version (from `Cargo.toml` or `cargo soothfast --version`).
 - Steps to reproduce, including a minimal code example where possible.
 - Actual vs. expected behavior.

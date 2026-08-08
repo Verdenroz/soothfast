@@ -384,6 +384,229 @@ fn template_placeholders_synthesize_path_parameters_for_bare_signatures() {
     assert!(s.parameters.iter().all(|p| p.location == "path"));
 }
 
+/// A C-like enum at `id`, its variants at `id + 1 ..`.
+fn unit_enum(name: &str, id: u64, variants: &[&str]) -> Vec<(u64, Value)> {
+    let ids: Vec<u64> = (1..=variants.len() as u64).map(|i| id + i).collect();
+    let mut out = vec![(
+        id,
+        json!({
+            "name": name, "docs": Value::Null, "attrs": [],
+            "inner": { "enum": { "variants": ids,
+                                 "generics": { "params": [], "where_predicates": [] } } },
+        }),
+    )];
+    for (i, v) in variants.iter().enumerate() {
+        out.push((
+            id + 1 + i as u64,
+            json!({ "name": v, "docs": Value::Null, "attrs": [],
+                    "inner": { "variant": { "kind": "plain" } } }),
+        ));
+    }
+    out
+}
+
+/// `Sector` (a closed enum at 60) plus a params struct naming it.
+fn sector_params(struct_name: &str, field_name: &str) -> Vec<(u64, Value)> {
+    let mut extra = vec![
+        (50, struct_item(struct_name, &[51, 52], &[])),
+        (51, field(field_name, path("Sector", 60, &[]))),
+        (52, field("fields", prim("str"))),
+    ];
+    extra.extend(unit_enum("Sector", 60, &["Tech", "Energy"]));
+    extra
+}
+
+fn detached(d: &Value, route: &str, o: &Overrides) -> Result<super::RouteShape, String> {
+    infer(
+        d,
+        &TypeTable::builtin(),
+        &Extractors::builtin(),
+        "bench::route_marker",
+        route,
+        o,
+    )
+}
+
+/// `(path parameters, query parameters)` of a shape, in emitted order.
+fn split(s: &super::RouteShape) -> (Vec<&super::route_sig::Parameter>, Vec<&str>) {
+    let (paths, queries): (Vec<_>, Vec<_>) =
+        s.parameters.iter().partition(|p| p.location == "path");
+    (
+        paths,
+        queries.into_iter().map(|p| p.name.as_str()).collect(),
+    )
+}
+
+#[test]
+fn a_params_field_naming_a_placeholder_types_that_path_parameter() {
+    let d = doc_types_only(sector_params("Filter", "sector"));
+    let o = Overrides {
+        params: Some("Filter".into()),
+        ..Default::default()
+    };
+    let s = detached(&d, "/sectors/{sector}", &o).expect("detached shape builds");
+    let (paths, queries) = split(&s);
+    assert_eq!(queries, ["fields"], "the matched field left the query set");
+    assert_eq!(paths.len(), 1, "got {:?}", s.parameters);
+    assert_eq!(paths[0].name, "sector");
+    assert!(paths[0].required);
+    assert_eq!(paths[0].schema["$ref"], "#/components/schemas/Sector");
+    assert_eq!(s.components["Sector"]["enum"], json!(["Tech", "Energy"]));
+}
+
+#[test]
+fn a_placeholder_no_params_field_names_stays_an_open_string() {
+    let d = doc_types_only(sector_params("Filter", "sector"));
+    let o = Overrides {
+        params: Some("Filter".into()),
+        ..Default::default()
+    };
+    // `{industry}` matches nothing, so `sector` is only a query parameter.
+    let s = detached(&d, "/industries/{industry}", &o).expect("detached shape builds");
+    let (paths, queries) = split(&s);
+    assert_eq!(queries, ["fields", "sector"]);
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0].name, "industry");
+    assert_eq!(paths[0].schema, json!({"type": "string"}));
+}
+
+#[test]
+fn a_rust_keyword_field_names_the_placeholder_it_had_to_escape() {
+    for spelling in ["type_", "r#type"] {
+        let d = doc_types_only(sector_params("Filter", spelling));
+        let o = Overrides {
+            params: Some("Filter".into()),
+            ..Default::default()
+        };
+        let s = detached(&d, "/holders/{symbol}/{type}", &o).expect("detached shape builds");
+        let (paths, queries) = split(&s);
+        assert_eq!(queries, ["fields"], "{spelling} left the query set");
+        let names: Vec<&str> = paths.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["symbol", "type"], "{spelling}");
+        assert_eq!(paths[0].schema, json!({"type": "string"}), "{spelling}");
+        assert_eq!(
+            paths[1].schema["$ref"], "#/components/schemas/Sector",
+            "{spelling} typed `{{type}}`"
+        );
+    }
+}
+
+#[test]
+fn path_parameters_follow_the_template_not_the_struct_field_order() {
+    let mut extra = vec![
+        (50, struct_item("Filter", &[51, 52], &[])),
+        // Sorted field order is `alpha`, `zulu` — the reverse of the route's.
+        (51, field("alpha", path("Sector", 60, &[]))),
+        (52, field("zulu", prim("u32"))),
+    ];
+    extra.extend(unit_enum("Sector", 60, &["Tech"]));
+    let d = doc_types_only(extra);
+    let o = Overrides {
+        params: Some("Filter".into()),
+        ..Default::default()
+    };
+    let s = detached(&d, "/x/{zulu}/y/{alpha}/z/{omega}", &o).expect("detached shape builds");
+    let (paths, queries) = split(&s);
+    assert!(queries.is_empty(), "both fields named placeholders");
+    let names: Vec<&str> = paths.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["zulu", "alpha", "omega"]);
+    assert_eq!(paths[0].schema["format"], "int32");
+    assert_eq!(paths[1].schema["$ref"], "#/components/schemas/Sector");
+    assert_eq!(paths[2].schema, json!({"type": "string"}));
+}
+
+#[test]
+fn path_params_bindings_type_placeholders_without_a_params_struct() {
+    let d = doc_types_only(unit_enum("Sector", 60, &["Tech", "Energy"]));
+    let o = Overrides {
+        path_params: Some("sector: Sector".into()),
+        ..Default::default()
+    };
+    let s = detached(&d, "/sectors/{sector}/items/{id}", &o)
+        .expect("path_params alone is a detached contract");
+    let (paths, _) = split(&s);
+    let names: Vec<&str> = paths.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["sector", "id"]);
+    assert_eq!(paths[0].schema["$ref"], "#/components/schemas/Sector");
+    assert_eq!(
+        paths[1].schema,
+        json!({"type": "string"}),
+        "unnamed stays open"
+    );
+}
+
+#[test]
+fn a_path_params_binding_displaces_the_params_field_that_named_it() {
+    let mut extra = sector_params("Filter", "sector");
+    extra.extend(unit_enum("Region", 70, &["Us", "Eu"]));
+    let d = doc_types_only(extra);
+    let o = Overrides {
+        params: Some("Filter".into()),
+        path_params: Some("sector: Region".into()),
+        ..Default::default()
+    };
+    let s = detached(&d, "/sectors/{sector}", &o).expect("detached shape builds");
+    let (paths, queries) = split(&s);
+    assert_eq!(queries, ["fields"], "the field still left the query set");
+    assert_eq!(paths[0].schema["$ref"], "#/components/schemas/Region");
+}
+
+#[test]
+fn a_path_params_struct_types_placeholders_by_field_name() {
+    let d = doc_types_only(sector_params("SectorPath", "sector"));
+    let o = Overrides {
+        path_params: Some("SectorPath".into()),
+        ..Default::default()
+    };
+    let s = detached(&d, "/sectors/{sector}", &o).expect("detached shape builds");
+    let (paths, queries) = split(&s);
+    assert!(queries.is_empty(), "a path struct adds no query parameters");
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0].schema["$ref"], "#/components/schemas/Sector");
+}
+
+#[test]
+fn path_params_naming_an_absent_placeholder_is_an_error_not_a_silent_string() {
+    let d = doc_types_only(unit_enum("Sector", 60, &["Tech"]));
+    let o = Overrides {
+        path_params: Some("secotr: Sector".into()),
+        ..Default::default()
+    };
+    let err = detached(&d, "/sectors/{sector}", &o).expect_err("typo is caught");
+    assert!(err.contains("`secotr`"), "names the typo: {err}");
+}
+
+#[test]
+fn a_path_params_type_that_is_not_in_the_rustdoc_json_errors() {
+    let d = doc_types_only(unit_enum("Sector", 60, &["Tech"]));
+    let o = Overrides {
+        path_params: Some("sector: Nope".into()),
+        ..Default::default()
+    };
+    let err = detached(&d, "/sectors/{sector}", &o).expect_err("typo'd type is caught");
+    assert!(err.contains("`Nope`"), "names the type: {err}");
+}
+
+#[test]
+fn path_params_overrides_what_a_path_extractor_already_typed() {
+    let d = doc(
+        vec![("p", path("Path", 5, &[prim("u32")]))],
+        Value::Null,
+        unit_enum("Sector", 60, &["Tech"]),
+    );
+    let o = Overrides {
+        path_params: Some("id: Sector".into()),
+        ..Default::default()
+    };
+    let s = run(&d, "/items/{id}", &o);
+    assert_eq!(s.parameters.len(), 1);
+    assert_eq!(s.parameters[0].name, "id");
+    assert_eq!(
+        s.parameters[0].schema["$ref"],
+        "#/components/schemas/Sector"
+    );
+}
+
 #[test]
 fn an_array_response_override_wraps_the_named_type() {
     let d = doc_types_only(item_type());

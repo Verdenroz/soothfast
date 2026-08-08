@@ -213,6 +213,7 @@ name = "soothfast-sdk"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "soothfast",
  "soothfast-spec",
 ]
 

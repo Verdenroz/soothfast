@@ -9,59 +9,82 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 
-use super::foreign::TypeTable;
-use super::{Gap, serde_attrs};
+use super::docs::{Doc, Docs};
+use super::foreign::{TypeMapping, TypeTable};
+use super::naming;
+use super::wire_names::WireNames;
+use super::{Gap, graphql_attrs, serde_attrs};
 
 /// Generic parameter bindings captured at a concrete use site: parameter name
 /// → (resolved schema, display name used for component naming).
 pub type Subst = BTreeMap<String, (Value, String)>;
 
 /// Walks rustdoc JSON, emitting JSON Schema and collecting [`Gap`]s.
+///
+/// Resolution may span several documents (see [`Docs`]), but `components`,
+/// the component-name registry and the cycle-breaking stack are shared across
+/// all of them: one type gets one component wherever it was defined.
 pub struct Resolver<'a> {
-    index: &'a serde_json::Map<String, Value>,
-    paths: &'a serde_json::Map<String, Value>,
+    /// The documents in consultation order; `docs[0]` is the primary one.
+    docs: Vec<Doc<'a>>,
+    /// Which document the current descent is walking. A type pulled out of an
+    /// auxiliary document names its fields' types in that same document, so
+    /// the cursor moves with the descent and is restored on the way out.
+    cur: usize,
     table: &'a TypeTable,
     /// Named schemas, emitted as `components/schemas` in OpenAPI.
     pub components: BTreeMap<String, Value>,
+    /// Canonical path → component-name stem, decided up front from the
+    /// documents alone (see [`naming`]). Because it does not depend on the
+    /// walk, every resolver over the same documents names a type identically,
+    /// which is what lets a dialect merge many operations' components.
+    stems: BTreeMap<String, String>,
+    /// Component name → the type identity holding it. The stems already keep
+    /// distinct types apart; this catches what they cannot see — a type with
+    /// no canonical path at all, and a monomorphisation suffix that happens
+    /// to spell another type's name.
+    owners: BTreeMap<String, String>,
     pub gaps: Vec<Gap>,
+    /// Canonical paths walked out of an auxiliary document. Resolved, so
+    /// deliberately *not* gaps — reported only to say where they came from.
+    pub aux_resolved: BTreeSet<String>,
     /// Component names currently being resolved, to break reference cycles.
     stack: BTreeSet<String>,
 }
 
 impl<'a> Resolver<'a> {
-    /// Build a resolver over a parsed rustdoc JSON document.
-    pub fn new(doc: &'a Value, table: &'a TypeTable) -> Result<Self, String> {
-        let index = doc["index"]
-            .as_object()
-            .ok_or("rustdoc JSON has no `index` object")?;
-        let paths = doc["paths"]
-            .as_object()
-            .ok_or("rustdoc JSON has no `paths` object")?;
+    /// Build a resolver over a parsed rustdoc JSON document, or over a
+    /// primary document plus its workspace-local companions ([`Docs`]).
+    pub fn new(docs: impl Into<Docs<'a>>, table: &'a TypeTable) -> Result<Self, String> {
+        let docs = docs.into();
+        let mut open = vec![Doc::open(docs.primary())?];
+        open.extend(docs.aux().iter().filter_map(|d| Doc::open(d).ok()));
+        let walkable: BTreeSet<String> = open
+            .iter()
+            .flat_map(Doc::walkable)
+            .map(String::clone)
+            .collect();
         Ok(Self {
-            index,
-            paths,
+            stems: naming::stems(&walkable),
+            docs: open,
+            cur: 0,
             table,
             components: BTreeMap::new(),
+            owners: BTreeMap::new(),
             gaps: Vec::new(),
+            aux_resolved: BTreeSet::new(),
             stack: BTreeSet::new(),
         })
     }
 
     pub(super) fn item(&self, id: &Value) -> Option<&'a Value> {
-        self.index.get(&id_key(id)?)
+        self.docs[self.cur].item(id)
     }
 
     /// Find a struct or enum by its plain name, for attribute overrides that
     /// name a type rather than pointing at a signature.
     pub fn find_type_id(&self, name: &str) -> Option<Value> {
-        self.index
-            .iter()
-            .find(|(_, item)| {
-                item["name"].as_str() == Some(name)
-                    && (item["inner"].get("struct").is_some()
-                        || item["inner"].get("enum").is_some())
-            })
-            .and_then(|(k, _)| k.parse::<u64>().ok().map(Value::from).or(Some(json!(k))))
+        self.docs[0].scan_type_id(name)
     }
 
     /// Find an item by its fully-qualified path, e.g. `app::routes::create`.
@@ -69,7 +92,8 @@ impl<'a> Resolver<'a> {
     /// `#[route]` records handler ids as `module_path!()::fn_name`, which is
     /// exactly the path rustdoc reports, so route lookup is a direct match.
     pub fn find_by_path(&self, canonical: &str) -> Option<&'a Value> {
-        let (id, _) = self.paths.iter().find(|(_, entry)| {
+        let doc = &self.docs[0];
+        let (id, _) = doc.paths.iter().find(|(_, entry)| {
             entry["path"]
                 .as_array()
                 .map(|segs| {
@@ -78,18 +102,33 @@ impl<'a> Resolver<'a> {
                 })
                 .unwrap_or(false)
         })?;
-        self.index.get(id)
+        doc.index.get(id)
     }
 
-    /// Canonical definition path of an id, e.g. `core::time::Duration`.
+    /// Resolve a struct or enum named in an attribute, searching this crate
+    /// first and then the workspace-local documents.
+    pub fn resolve_by_name(&mut self, name: &str, at: &str) -> Option<Value> {
+        if let Some(id) = self.find_type_id(name) {
+            let node = json!({ "resolved_path": { "path": name, "id": id, "args": null } });
+            return Some(self.resolve(&node, &Subst::new(), at));
+        }
+        let found =
+            (1..self.docs.len()).find_map(|i| self.docs[i].locate_name(name).map(|id| (i, id)));
+        let (home, id) = found?;
+        self.note_aux(home, &id);
+        Some(self.resolve_named(home, &id, &[], &Subst::new(), at))
+    }
+
+    /// Canonical definition path of an id, in the document being walked.
     pub(super) fn canonical(&self, id: &Value) -> Option<String> {
-        let entry = self.paths.get(&id_key(id)?)?;
-        let segs: Vec<&str> = entry["path"]
-            .as_array()?
-            .iter()
-            .filter_map(|s| s.as_str())
-            .collect();
-        Some(segs.join("::"))
+        self.docs[self.cur].canonical(id)
+    }
+
+    /// Record that a type came out of an auxiliary crate rather than a gap.
+    fn note_aux(&mut self, home: usize, id: &Value) {
+        if let Some(path) = self.docs[home].canonical(id) {
+            self.aux_resolved.insert(path);
+        }
     }
 
     pub(super) fn record(&mut self, gap: Gap) {
@@ -235,14 +274,26 @@ impl<'a> Resolver<'a> {
         }
 
         let id = &rp["id"];
-        // A local type is in `index` and can be walked; a foreign one is only
-        // in `paths`, so it is identifiable but opaque.
+        // A type in the current document's `index` can be walked; one only in
+        // `paths` is identifiable but opaque *here*.
         if self.item(id).is_some() {
-            return self.resolve_local(id, &args, subst, at);
+            return self.resolve_named(self.cur, id, &args, subst, at);
         }
         let canonical = self.canonical(id).unwrap_or_else(|| display.to_string());
-        if let Some(mapped) = self.table.lookup(&canonical) {
-            return mapped.clone();
+        // The table first: an explicit mapping is the escape hatch for a type
+        // soothfast would derive wrongly, so it outranks anything derived.
+        match self.table.lookup(&canonical).cloned() {
+            Some(TypeMapping::Literal(schema)) => return schema,
+            Some(TypeMapping::Transparent { arg }) => {
+                return self.transparent(&canonical, arg, &args, subst, at);
+            }
+            None => {}
+        }
+        // Then the workspace: a sibling crate's type is as walkable as a local
+        // one once its own document is on hand.
+        if let Some((home, aux_id)) = self.locate_aux(&canonical) {
+            self.aux_resolved.insert(canonical);
+            return self.resolve_named(home, &aux_id, &args, subst, at);
         }
         if last == "String" || last == "str" {
             return json!({ "type": "string" });
@@ -254,10 +305,50 @@ impl<'a> Resolver<'a> {
         json!({})
     }
 
-    /// Resolve a local named type to a `$ref`, defining the component on
-    /// first visit.
-    fn resolve_local(&mut self, id: &Value, args: &[Value], subst: &Subst, at: &str) -> Value {
-        let Some(item) = self.item(id) else {
+    /// Resolve a wrapper mapped `transparent`: its wire shape is exactly its
+    /// type argument's, so it contributes no component and no `$ref` of its
+    /// own — the argument's schema stands in its place.
+    fn transparent(
+        &mut self,
+        path: &str,
+        arg: usize,
+        args: &[Value],
+        subst: &Subst,
+        at: &str,
+    ) -> Value {
+        match args.get(arg) {
+            Some(inner) => self.resolve(inner, subst, at),
+            None => {
+                // Nothing to forward to: a guess here would invent a shape.
+                self.record(Gap::TransparentWithoutArgument {
+                    at: at.to_string(),
+                    path: path.to_string(),
+                    arg,
+                });
+                json!({})
+            }
+        }
+    }
+
+    /// The first auxiliary document defining `canonical`, and its id there.
+    fn locate_aux(&self, canonical: &str) -> Option<(usize, Value)> {
+        (1..self.docs.len()).find_map(|i| self.docs[i].locate(canonical).map(|id| (i, id)))
+    }
+
+    /// Resolve a named type living in `home` to a `$ref`, defining the
+    /// component on first visit.
+    ///
+    /// Generic arguments come from the *use site*, so they are resolved
+    /// before the cursor moves; only the body walk happens in `home`.
+    fn resolve_named(
+        &mut self,
+        home: usize,
+        id: &Value,
+        args: &[Value],
+        subst: &Subst,
+        at: &str,
+    ) -> Value {
+        let Some(item) = self.docs[home].item(id) else {
             return json!({});
         };
         let base = item["name"].as_str().unwrap_or("Anonymous").to_string();
@@ -273,11 +364,19 @@ impl<'a> Resolver<'a> {
             arg_names.push(name.clone());
             inner_subst.insert(param.clone(), (schema, name));
         }
-        let component = if arg_names.is_empty() {
-            base
-        } else {
-            format!("{base}_{}", arg_names.join("_"))
+        let suffix = |stem: &str| match arg_names.is_empty() {
+            true => stem.to_string(),
+            false => format!("{stem}_{}", arg_names.join("_")),
         };
+        // The stem is a property of the type, so every operation in the
+        // document names it the same way and their components can be merged.
+        let canonical = self.docs[home].canonical(id);
+        let stem = canonical
+            .as_ref()
+            .and_then(|c| self.stems.get(c))
+            .unwrap_or(&base);
+        let identity = suffix(canonical.as_ref().unwrap_or(&base));
+        let component = self.claim(&suffix(stem), &identity);
         let reference = json!({ "$ref": format!("#/components/schemas/{component}") });
 
         if self.components.contains_key(&component) || self.stack.contains(&component) {
@@ -285,10 +384,38 @@ impl<'a> Resolver<'a> {
         }
         self.stack.insert(component.clone());
         // Reserve the name before descending so a cycle finds it on the stack.
+        let outer = std::mem::replace(&mut self.cur, home);
         let defined = self.define(item, &inner_subst, &component);
+        self.cur = outer;
         self.stack.remove(&component);
         self.components.insert(component, defined);
         reference
+    }
+
+    /// Hold `display` for this type, or number it if another type has it.
+    ///
+    /// [`naming::stems`] has already told apart every type the documents can
+    /// see, so this only fires for the two things it cannot: a type rustdoc
+    /// gives no canonical path (identified by bare name alone, exactly as
+    /// before), and a monomorphisation suffix that happens to spell another
+    /// component's name. A name is never re-pointed at a second type.
+    fn claim(&mut self, display: &str, identity: &str) -> String {
+        let mut candidate = display.to_string();
+        let mut n = 1;
+        loop {
+            match self.owners.get(&candidate) {
+                Some(owner) if owner == identity => return candidate,
+                // `owners` is finite, so a free name is always reached.
+                Some(_) => {
+                    n += 1;
+                    candidate = format!("{display}_{n}");
+                }
+                None => {
+                    self.owners.insert(candidate.clone(), identity.to_string());
+                    return candidate;
+                }
+            }
+        }
     }
 
     /// Build the schema body for a local struct or enum.
@@ -317,30 +444,30 @@ impl<'a> Resolver<'a> {
     }
 
     /// Container-level serde attributes, reporting an unusable rename rule.
-    pub(super) fn container_attrs(
-        &mut self,
-        item: &Value,
-        at: &str,
-    ) -> serde_attrs::ContainerAttrs {
+    pub(super) fn container_attrs(&mut self, item: &Value, at: &str) -> WireNames {
         let empty = Vec::new();
         let attrs = item["attrs"].as_array().unwrap_or(&empty);
-        let c = serde_attrs::container(attrs);
-        if let Some(rule) = &c.unknown_rename_all {
+        let serde = serde_attrs::container(attrs);
+
+        // A GraphQL-served type is known two ways: by the container traits its
+        // derive generated, and — for documents whose impls rustdoc did not
+        // record — by carrying a `#[graphql(...)]` attribute at all.
+        let gql = graphql_attrs::container(attrs);
+        let served = gql.present || self.docs[self.cur].serves_graphql(item);
+        let unknown = match served {
+            true => gql.unknown_rename_rule.clone(),
+            false => serde.unknown_rename_all.clone(),
+        };
+        if let Some(rule) = unknown {
             self.record(Gap::UnknownRenameRule {
                 at: at.to_string(),
-                rule: rule.clone(),
+                rule,
             });
         }
-        c
-    }
-}
-
-/// Rustdoc ids appear as integers or strings depending on version.
-fn id_key(id: &Value) -> Option<String> {
-    match id {
-        Value::Number(n) => Some(n.to_string()),
-        Value::String(s) => Some(s.clone()),
-        _ => None,
+        WireNames {
+            serde,
+            graphql: served.then_some(gql),
+        }
     }
 }
 

@@ -6,7 +6,7 @@ use crate::SdkOptions;
 use crate::model::{Method, Param, ParamLoc, Sdk, Ty};
 use crate::python::{HEADER, annotation, doc_escape, into_expr};
 
-pub(crate) fn render(sdk: &Sdk, opts: &SdkOptions, base_url: &str) -> String {
+pub(crate) fn render(sdk: &Sdk, opts: &SdkOptions, base_url: Option<&str>) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "{HEADER}");
     let _ = writeln!(out, "# mypy: disable-error-code=\"no-any-return\"");
@@ -33,18 +33,95 @@ pub(crate) fn render(sdk: &Sdk, opts: &SdkOptions, base_url: &str) -> String {
     runtime.push("query_of");
     runtime.sort_unstable();
     let _ = writeln!(out, "from ._runtime import {}", runtime.join(", "));
+    if opts.embed.is_some() {
+        let _ = writeln!(out, "from ._server import EmbedConfig, embedded_base_url");
+    }
     let _ = writeln!(out);
-    let _ = writeln!(out, "DEFAULT_BASE_URL = {base_url:?}");
+    if let Some(url) = base_url {
+        let _ = writeln!(out, "DEFAULT_BASE_URL = {url:?}");
+    }
+    if let Some(binary) = &opts.embed {
+        render_embed_config(&mut out, opts, binary);
+        render_server_env(&mut out, opts);
+    }
 
     for async_ in [false, true] {
         let _ = writeln!(out);
         let _ = writeln!(out);
-        render_client(&mut out, sdk, opts, async_);
+        render_client(&mut out, sdk, opts, base_url, async_);
     }
     out
 }
 
-fn render_client(out: &mut String, sdk: &Sdk, opts: &SdkOptions, async_: bool) {
+/// The bundled server's identity, handed to the generic launcher.
+fn render_embed_config(out: &mut String, opts: &SdkOptions, binary: &str) {
+    let prefix = crate::naming::env_prefix(&opts.package);
+    let args: Vec<String> = opts.embed_args.iter().map(|a| format!("{a:?}")).collect();
+    let _ = writeln!(out, "EMBED = EmbedConfig(");
+    let _ = writeln!(out, "    binary={binary:?},");
+    let _ = writeln!(
+        out,
+        "    args=({}{}),",
+        args.join(", "),
+        if args.len() == 1 { "," } else { "" }
+    );
+    let _ = writeln!(out, "    base_url_env={:?},", format!("{prefix}_BASE_URL"));
+    let _ = writeln!(out, "    bin_env={:?},", format!("{prefix}_SERVER_BIN"));
+    if !opts.embed_env.is_empty() {
+        let _ = writeln!(out, "    env=(");
+        for (name, value) in &opts.embed_env {
+            let _ = writeln!(out, "        ({name:?}, {value:?}),");
+        }
+        let _ = writeln!(out, "    ),");
+    }
+    let _ = writeln!(out, ")");
+}
+
+/// The knobs the bundled server documents, as a `TypedDict` keyed by the
+/// very names it reads — the client configures it the way a deployment
+/// does, with autocompletion instead of a second vocabulary to learn.
+fn render_server_env(out: &mut String, opts: &SdkOptions) {
+    if opts.embed_env_vars.is_empty() {
+        return;
+    }
+    let _ = writeln!(out);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "class ServerEnv(typing.TypedDict, total=False):");
+    let _ = writeln!(out, "    \"\"\"Environment for the bundled server.");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "    {}",
+        doc_escape(
+            "Every key is optional, and the names are the server's own — \
+             the same ones a deployment sets."
+        )
+    );
+    let _ = writeln!(out, "    \"\"\"");
+    for var in &opts.embed_env_vars {
+        let _ = writeln!(out);
+        for line in &var.doc {
+            let _ = writeln!(out, "    # {}", line.replace('\n', " "));
+        }
+        match &var.default {
+            Some(value) if !value.is_empty() => {
+                let _ = writeln!(out, "    # Defaults to {value:?}.");
+            }
+            _ => {
+                let _ = writeln!(out, "    # Unset unless you set it.");
+            }
+        }
+        let _ = writeln!(out, "    {}: str", var.name);
+    }
+}
+
+fn render_client(
+    out: &mut String,
+    sdk: &Sdk,
+    opts: &SdkOptions,
+    base_url: Option<&str>,
+    async_: bool,
+) {
     let (class, transport) = if async_ {
         ("AsyncClient", "AsyncTransport")
     } else {
@@ -64,8 +141,23 @@ fn render_client(out: &mut String, sdk: &Sdk, opts: &SdkOptions, async_: bool) {
     let _ = writeln!(out);
     let _ = writeln!(out, "    def __init__(");
     let _ = writeln!(out, "        self,");
-    let _ = writeln!(out, "        base_url: str = DEFAULT_BASE_URL,");
+    if opts.embed.is_some() {
+        let _ = writeln!(out, "        base_url: str | None = None,");
+    } else {
+        let _ = writeln!(out, "        base_url: str = DEFAULT_BASE_URL,");
+    }
     let _ = writeln!(out, "        *,");
+    if opts.embed.is_some() {
+        let _ = writeln!(
+            out,
+            "        server_env: {}| None = None,",
+            if opts.embed_env_vars.is_empty() {
+                "typing.Mapping[str, str] "
+            } else {
+                "ServerEnv | typing.Mapping[str, str] "
+            }
+        );
+    }
     let _ = writeln!(out, "        timeout: float = 30.0,");
     let _ = writeln!(out, "        max_retries: int = 3,");
     let _ = writeln!(
@@ -74,6 +166,34 @@ fn render_client(out: &mut String, sdk: &Sdk, opts: &SdkOptions, async_: bool) {
     );
     let _ = writeln!(out, "        transport: {transport} | None = None,");
     let _ = writeln!(out, "    ) -> None:");
+    if opts.embed.is_some() {
+        let head = "Starts the bundled server when no base URL is given.";
+        let mut notes: Vec<String> = Vec::new();
+        if base_url.is_some() {
+            notes.push("Pass ``DEFAULT_BASE_URL`` to use the hosted deployment instead.".into());
+        }
+        if !opts.embed_env_vars.is_empty() {
+            notes.push(
+                "``server_env`` configures that server — see ``ServerEnv`` for \
+                 the knobs it reads."
+                    .into(),
+            );
+        }
+        if notes.is_empty() {
+            let _ = writeln!(out, "        \"\"\"{}\"\"\"", doc_escape(head));
+        } else {
+            let _ = writeln!(out, "        \"\"\"{}", doc_escape(head));
+            for note in &notes {
+                let _ = writeln!(out);
+                let _ = writeln!(out, "        {}", doc_escape(note));
+            }
+            let _ = writeln!(out, "        \"\"\"");
+        }
+        let _ = writeln!(
+            out,
+            "        base_url = base_url or embedded_base_url(EMBED, server_env)"
+        );
+    }
     let _ = writeln!(out, "        self._transport = transport or {transport}(");
     let _ = writeln!(
         out,

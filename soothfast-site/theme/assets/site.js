@@ -117,6 +117,14 @@
     return s;
   }
 
+  // Index fields hold page text with entities decoded, so a docs page that
+  // shows an HTML snippet would otherwise re-enter the DOM as live markup.
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
   function excerpt(text, term) {
     var at = text.toLowerCase().indexOf(term);
     if (at < 0) return text.slice(0, 90);
@@ -133,10 +141,12 @@
     }
     results.innerHTML = hits.slice(0, 8).map(function (rec) {
       var href = base + rec.route + (rec.anchor ? "#" + rec.anchor : "");
-      var title = rec.section ? rec.section + ' <small>· ' + rec.page + "</small>" : rec.page;
-      return '<a class="search-hit" href="' + (href || "./") + '">' +
+      var title = rec.section
+        ? esc(rec.section) + ' <small>· ' + esc(rec.page) + "</small>"
+        : esc(rec.page);
+      return '<a class="search-hit" href="' + esc(href || "./") + '">' +
         '<div class="search-hit-title">' + title + "</div>" +
-        '<div class="search-hit-text">' + excerpt(rec.text, terms[0]) + "</div></a>";
+        '<div class="search-hit-text">' + esc(excerpt(rec.text, terms[0])) + "</div></a>";
     }).join("");
     results.hidden = false;
   }
