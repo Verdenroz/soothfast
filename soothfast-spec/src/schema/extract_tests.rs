@@ -163,6 +163,45 @@ fn containers_become_arrays_and_maps() {
 }
 
 #[test]
+fn async_graphql_connection_becomes_a_paginated_object() {
+    // `Connection<Cursor, Node>` is async-graphql's own cursor-pagination
+    // wrapper, resolved by a hand-written impl inside that crate rather than
+    // derived from its own fields — unwalkable like any other foreign type,
+    // so it is special-cased the same way Vec/HashMap/Result are.
+    let d = doc(
+        vec![
+            (1, struct_item("Item", &[2], &[])),
+            (
+                2,
+                field(
+                    "page",
+                    path("Connection", 9, &[prim("str"), prim("u32")]),
+                    &[],
+                ),
+            ),
+        ],
+        vec![],
+    );
+    let e = extract_named(&d, &TypeTable::builtin(), "Item").expect("extracts");
+    assert!(e.gaps.is_empty(), "got {:?}", e.gaps);
+    let page = &e.components["Item"]["properties"]["page"];
+    assert_eq!(page["type"], "object");
+    assert_eq!(
+        page["properties"]["pageInfo"]["properties"]["hasNextPage"]["type"],
+        "boolean"
+    );
+    // The cursor type argument (args[0]) never reaches the wire itself —
+    // only the node type (args[1]) matters, in both `edges[].node` and
+    // `nodes[]`.
+    assert_eq!(
+        page["properties"]["edges"]["items"]["properties"]["node"]["type"],
+        "integer"
+    );
+    assert_eq!(page["properties"]["nodes"]["items"]["type"], "integer");
+    assert_eq!(page["required"], json!(["pageInfo", "edges", "nodes"]));
+}
+
+#[test]
 fn generic_instantiation_is_monomorphised_into_its_own_component() {
     let d = doc(
         vec![

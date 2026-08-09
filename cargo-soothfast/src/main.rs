@@ -21,6 +21,7 @@ mod spec;
 mod spec_config;
 mod spec_gate;
 mod spec_gen;
+mod spec_html;
 mod trend;
 mod workspace;
 
@@ -53,6 +54,9 @@ commands:
   spec     check-proto -p PKG --proto FILE --message NAME --source FILE --struct NAME
            (reconciles a .proto message's fields against a Rust struct's
            #[prost(..)] fields by tag — for consumed, not served, wire formats)
+  spec     html -p PKG [--features F] [--target NAME] [--out DIR]
+           (renders every generate-mode spec file — OpenAPI/AsyncAPI/MCP —
+           as a themed docs-site page; default --out is docs/api)
   sdk      gen -p PKG [--features F] [--target NAME] [--check]
   sdk      build -p PKG [--target TRIPLE].. [--bench NAME] [--debug]
            (cross-compiles the embedded server and stages it per ecosystem;

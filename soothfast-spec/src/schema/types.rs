@@ -270,6 +270,45 @@ impl<'a> Resolver<'a> {
                       "required": ["Err"], "additionalProperties": false },
                 ]});
             }
+            // async-graphql's cursor-pagination wrapper — hand-written
+            // (`#[Object]` inside async-graphql itself, not derived from its
+            // own struct fields), so it can never be walked out of rustdoc
+            // JSON like a local type; its wire shape is fixed by the crate's
+            // own resolver, not by anything this repo defines. `Cursor` (the
+            // first argument) never reaches the wire itself — only through
+            // the `cursor` field the crate renders as a string — so only the
+            // second argument, the node type, needs resolving.
+            "Connection" => {
+                let node = args
+                    .get(1)
+                    .map(|t| self.resolve(t, subst, at))
+                    .unwrap_or(json!({}));
+                return json!({
+                    "type": "object",
+                    "properties": {
+                        "pageInfo": {
+                            "type": "object",
+                            "properties": {
+                                "hasPreviousPage": { "type": "boolean" },
+                                "hasNextPage": { "type": "boolean" },
+                                "startCursor": { "type": ["string", "null"] },
+                                "endCursor": { "type": ["string", "null"] },
+                            },
+                            "required": ["hasPreviousPage", "hasNextPage"],
+                        },
+                        "edges": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": { "cursor": { "type": "string" }, "node": node.clone() },
+                                "required": ["cursor", "node"],
+                            },
+                        },
+                        "nodes": { "type": "array", "items": node },
+                    },
+                    "required": ["pageInfo", "edges", "nodes"],
+                });
+            }
             _ => {}
         }
 
@@ -472,7 +511,7 @@ impl<'a> Resolver<'a> {
 }
 
 /// The angle-bracketed type arguments of a resolved path, in order.
-fn generic_args(rp: &Value) -> Vec<Value> {
+pub(super) fn generic_args(rp: &Value) -> Vec<Value> {
     rp["args"]["angle_bracketed"]["args"]
         .as_array()
         .map(|args| args.iter().filter_map(|a| a.get("type").cloned()).collect())
