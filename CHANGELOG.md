@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.3)
+## 0.1.4 - 2026-08-09
+
+<!-- soothfast:notes -->
+`Backend::Auto`/`Backend::All` were documented to fall back to callgrind
+when a host has no PMU access, but never actually did: they only tried
+perfcnt, so a PMU-less CI runner silently measured nothing and any
+`X.perfcnt.instructions` claim had no data to evaluate. Found on
+finance-query's own CI, where GitHub Actions runners have no PMU access.
+The runner now falls back to callgrind and records its instruction count
+under a synthetic `perfcnt` entry too, so existing claims stay satisfiable
+regardless of which backend produced the number.
+
+Separately, the 0.1.3 changelog guard fix had its own bug: it compared
+only the CHANGELOG's top heading, which stays a released version for
+every PR after a release, not just during the release PR's own run. That
+made every PR since 0.1.3 skip changelog regeneration entirely instead of
+starting the next Unreleased section. It now also checks the tag it's
+diffing against, so it can tell "still mid-release" from "release already
+tagged, new cycle starting" apart.
+<!-- /soothfast:notes -->
 
 ### API surface
 
