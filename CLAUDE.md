@@ -299,13 +299,14 @@ claim being enforced, not a bug in the check.
 - `soothfast-gate.yml` — reusable workflow; runs `cargo soothfast gate` for a
   given package against the PR's merge-base, uploads `.soothfast/triage/` on
   failure, and posts/updates a PR comment with the gate output.
-- `changelog.yml` — auto-regenerates the living `CHANGELOG.md` and commits it
-  via a bot token (does not retrigger CI).
-- `spec.yml` — on push, regenerates `mode = "generate"` spec files and
-  commits them with the same bot pattern as `changelog.yml`, so nobody has
-  to remember to; on PRs, gates instead — `spec gen --check` fails on a
-  stale committed spec and `spec gate` fails on a consumer-breaking change
-  vs the merge-base (`--allow-breaking` releases one deliberately).
+- `changelog.yml` — auto-regenerates the living `CHANGELOG.md` and lands it
+  via a bot-opened, self-merged PR (the branch ruleset blocks direct pushes
+  to `master`; does not retrigger CI).
+- `spec.yml` — on push, regenerates `mode = "generate"` spec files and lands
+  them the same bot-PR way as `changelog.yml`, so nobody has to remember to;
+  on PRs, gates instead — `spec gen --check` fails on a stale committed spec
+  and `spec gate` fails on a consumer-breaking change vs the merge-base
+  (`--allow-breaking` releases one deliberately).
 - `release.yml` — on `v*` tag push, runs checks + gate, then publishes all 10
   workspace crates to crates.io in dependency order.
 

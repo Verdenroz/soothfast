@@ -1,0 +1,94 @@
+name: Bug report
+description: Something in soothfast is broken or behaving unexpectedly.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please search [existing issues](https://github.com/Verdenroz/soothfast/issues) first to avoid duplicates.
+
+        Found a **security vulnerability**? Do not file it here — see [SECURITY.md](https://github.com/Verdenroz/soothfast/blob/master/SECURITY.md) for the private disclosure process.
+
+  - type: dropdown
+    id: crates
+    attributes:
+      label: Affected crate(s)
+      multiple: true
+      options:
+        - soothfast
+        - soothfast-macros
+        - soothfast-registry
+        - soothfast-measure
+        - soothfast-docs
+        - soothfast-spec
+        - soothfast-sdk
+        - soothfast-report
+        - soothfast-site
+        - cargo-soothfast
+        - not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From `Cargo.toml`, or the output of `cargo soothfast --version`.
+      placeholder: "0.4.2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal code example where possible.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the full error message or output, if any.
+    validations:
+      required: true
+
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust version
+      description: Output of `rustc --version`.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "e.g. Ubuntu 24.04, macOS 15, GitHub Actions ubuntu-latest"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: measure-backend
+    attributes:
+      label: Measurement backend (soothfast-measure issues only)
+      description: Note whether `perf_event_open` is available where the issue occurs — bare metal, container, and CI runners often select a different backend.
+      options:
+        - Not applicable
+        - perf counters (bare metal / privileged container)
+        - callgrind (valgrind-based fallback)
+        - Not sure
+    validations:
+      required: false

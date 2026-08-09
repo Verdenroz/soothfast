@@ -17,17 +17,18 @@ env:
 
 jobs:
   # Regenerate on the default branch and commit the result. Mirrors the
-  # changelog job: same bot identity, same push-with-default-token pattern.
+  # changelog job: same bot identity, same open-PR-and-self-merge pattern.
   generate:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      contents: write # commit + push regenerated spec files
+      contents: write # push the regeneration branch + squash-merge the PR
+      pull-requests: write # open and merge the regeneration PR
     steps:
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
-      # This job pushes back with the default token at the end (git push
+      # This job pushes a branch back with the default token (create-pull-request
       # below); persist-credentials must stay true here, unlike every other
       # workflow's read-only checkout.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 # zizmor: ignore[artipacked]
@@ -44,12 +45,29 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Regenerate spec files
         run: cargo run --release -p cargo-soothfast -- spec gen -p "$SPEC_PKG"
-      - name: Commit if changed
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A -- '*.yaml' '*.yml' '*.json'
-          git diff --cached --quiet || { git commit -m "chore: regenerate API specs"; git push; }
+      # Direct pushes to master are blocked by the branch ruleset, so the bot
+      # opens a PR and squash-merges it itself instead — required approvals
+      # are 0, so nothing blocks the merge from completing immediately.
+      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        id: cpr
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add-paths: |
+            *.yaml
+            *.yml
+            *.json
+          commit-message: "chore: regenerate API specs"
+          title: "chore: regenerate API specs"
+          body: Automated spec regeneration.
+          branch: bot/spec-update
+          delete-branch: true
+          author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+      - name: Merge pull request
+        if: steps.cpr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+        run: gh pr merge --squash --delete-branch "$PR_NUMBER"
 
   # On a PR, prove the committed specs are current and that the API change is
   # backwards compatible with the merge-base.
