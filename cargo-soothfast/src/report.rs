@@ -193,7 +193,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
     // its own CI run gets here — regenerating on top of that would inject
     // a fresh Unreleased section the PR is already in the middle of
     // retiring, which then has to be hand-deleted after every release.
-    if changelog_already_cut(&existing) {
+    if changelog_already_cut(&existing, a.against_ref.as_deref()) {
         println!(
             "report: {} already has a released top section — nothing to regenerate",
             path.display()
@@ -244,19 +244,35 @@ fn changelog_cmd(args: &[String]) -> i32 {
     0
 }
 
-/// True once the top `## ` heading has been renamed away from "Unreleased"
-/// (cutting a release, per CONTRIBUTING's release process) — regeneration
-/// has nothing left to do until a new Unreleased section exists. A file
-/// with no `## ` heading yet (never released) is not "already cut".
-fn changelog_already_cut(existing: &str) -> bool {
-    existing
-        .lines()
-        .find_map(|l| l.strip_prefix("## "))
-        .map(|h| {
-            let h = h.trim_start();
-            !(h.starts_with("Unreleased") || h.starts_with("[Unreleased]"))
-        })
-        .unwrap_or(false)
+/// True only for the specific race the guard exists to catch: a release PR
+/// that has renamed the top heading away from "Unreleased" in its own
+/// branch, running before the matching tag exists. That PR's own CI still
+/// diffs against the *previous* release's tag, so regenerating would inject
+/// a fresh Unreleased section duplicating the one it's mid-flight retiring.
+///
+/// A normal PR sometime after that release has the same top heading, but by
+/// then `against_ref` (the latest tag reachable from HEAD) has caught up to
+/// match it — that's the signal a new Unreleased section is legitimately
+/// due, not a race, so this returns false and regeneration proceeds.
+///
+/// A file with no `## ` heading yet, or one still under "Unreleased", is
+/// never "already cut".
+fn changelog_already_cut(existing: &str, against_ref: Option<&str>) -> bool {
+    let Some(heading) = existing.lines().find_map(|l| l.strip_prefix("## ")) else {
+        return false;
+    };
+    let heading = heading.trim_start();
+    if heading.starts_with("Unreleased") || heading.starts_with("[Unreleased]") {
+        return false;
+    }
+    let heading_version = heading.split_whitespace().next().unwrap_or("");
+    match against_ref {
+        Some(r) => heading_version != r.trim_start_matches('v'),
+        // No tag at all reachable from HEAD only happens for a repo's very
+        // first release, still mid-flight in its own PR — the same race,
+        // just without a previous tag to compare against. Stay conservative.
+        None => true,
+    }
 }
 
 const NOTES_START: &str = "<!-- soothfast:notes -->";
@@ -350,29 +366,58 @@ mod tests {
     use super::{changelog_already_cut, merge_changelog};
 
     #[test]
-    fn a_release_pr_that_already_renamed_unreleased_is_already_cut() {
+    fn a_release_pr_still_diffing_against_the_previous_tag_is_already_cut() {
+        // The race the guard exists for: top heading says 0.1.3, but the
+        // ref this run would diff against (v0.1.2, since v0.1.3 isn't
+        // tagged yet) is one release behind it.
         assert!(changelog_already_cut(
-            "# Changelog\n\n## 0.1.2 - 2026-08-09\n\n- shipped\n"
+            "# Changelog\n\n## 0.1.3 - 2026-08-09\n\n- shipped\n",
+            Some("v0.1.2")
         ));
         assert!(changelog_already_cut(
-            "# Changelog\n\n## [2.8.0] - 2026-07-10\n\n- shipped\n"
+            "# Changelog\n\n## [2.8.0] - 2026-07-10\n\n- shipped\n",
+            Some("v2.7.0")
+        ));
+    }
+
+    #[test]
+    fn a_release_pr_with_no_prior_tag_at_all_is_already_cut() {
+        // A repo's very first release has no earlier tag to compare
+        // against; stay conservative rather than guess.
+        assert!(changelog_already_cut(
+            "# Changelog\n\n## 0.1.0 - 2026-08-01\n\n- shipped\n",
+            None
+        ));
+    }
+
+    #[test]
+    fn a_normal_pr_after_the_tag_catches_up_is_not_already_cut() {
+        // Once v0.1.3 is tagged, a later PR's `against_ref` matches the top
+        // heading exactly — that's not a race, it's a new cycle legitimately
+        // starting, so regeneration should proceed and prepend a fresh
+        // Unreleased section.
+        assert!(!changelog_already_cut(
+            "# Changelog\n\n## 0.1.3 - 2026-08-09\n\n- shipped\n",
+            Some("v0.1.3")
         ));
     }
 
     #[test]
     fn a_normal_pr_with_an_unreleased_section_is_not_already_cut() {
         assert!(!changelog_already_cut(
-            "# Changelog\n\n## Unreleased (draft vs v0.1.1)\n\nold\n"
+            "# Changelog\n\n## Unreleased (draft vs v0.1.1)\n\nold\n",
+            Some("v0.1.1")
         ));
         assert!(!changelog_already_cut(
-            "# Changelog\n\n## [Unreleased]\n\nold\n"
+            "# Changelog\n\n## [Unreleased]\n\nold\n",
+            None
         ));
     }
 
     #[test]
     fn a_file_with_no_sections_yet_is_not_already_cut() {
-        assert!(!changelog_already_cut(""));
-        assert!(!changelog_already_cut("# Changelog\n"));
+        assert!(!changelog_already_cut("", None));
+        assert!(!changelog_already_cut("# Changelog\n", Some("v0.1.0")));
     }
 
     #[test]

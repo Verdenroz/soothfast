@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased (draft vs v0.1.3)
+
+### API surface
+
+No public API changes.
+
+### Performance
+
+| item | instructions | median | p99 | allocs | polls |
+|---|---:|---:|---:|---:|---:|
+| `soothfast_docs::bench_claim_parse` | n/a | 188.1ns | 192.2ns | 6 | n/a |
+| `soothfast_docs::bench_markdown_scan` | n/a | 307.87µs | 329.26µs | 4114 | n/a |
+| `soothfast_measure::bench_summarize` | n/a | 458.12µs | 470.83µs | 4 | n/a |
+| `soothfast_measure::bench_sweep_evaluate` | n/a | 18.4ns | 19.6ns | 0 | n/a |
+| `soothfast_registry::bench_fnv1a` | n/a | 71.43µs | 71.92µs | 0 | n/a |
+| `soothfast_report::bench_llms_render` | n/a | 215.04µs | 220.77µs | 7191 | n/a |
+| `soothfast_report::bench_perf_table` | n/a | 663.86µs | 716.01µs | 8204 | n/a |
+| `soothfast_sdk::bench_emit_typescript` | n/a | 1.68ms | 1.74ms | 42930 | n/a |
+| `soothfast_sdk::bench_lower` | n/a | 1.08ms | 1.66ms | 23907 | n/a |
+| `soothfast_site::bench_highlight` | n/a | 2.50ms | 2.52ms | 88069 | n/a |
+| `soothfast_site::bench_md_render` | n/a | 2.25ms | 2.42ms | 68118 | n/a |
+| `soothfast_spec::bench_openapi_diff` | n/a | 4.30ms | 4.91ms | 77722 | n/a |
+| `soothfast_spec::bench_openapi_document` | n/a | 1.67ms | 1.81ms | 30152 | n/a |
+| `soothfast_spec::bench_serialize_yaml` | n/a | 4.91ms | 5.58ms | 74277 | n/a |
+
+
 ## 0.1.3 - 2026-08-09
 
 <!-- soothfast:notes -->
