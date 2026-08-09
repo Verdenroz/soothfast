@@ -181,6 +181,26 @@ fn changelog_cmd(args: &[String]) -> i32 {
     if a.pkg.is_empty() {
         return err("report changelog needs -p PKG");
     }
+
+    let root = match invoke::workspace_root() {
+        Ok(r) => r,
+        Err(e) => return err(&e.to_string()),
+    };
+    let path = a.out.unwrap_or_else(|| root.join("CHANGELOG.md"));
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    // A release PR renames the top heading away from "Unreleased" before
+    // its own CI run gets here — regenerating on top of that would inject
+    // a fresh Unreleased section the PR is already in the middle of
+    // retiring, which then has to be hand-deleted after every release.
+    if changelog_already_cut(&existing) {
+        println!(
+            "report: {} already has a released top section — nothing to regenerate",
+            path.display()
+        );
+        return 0;
+    }
+
     let baseline = match load_baseline_required(&a.baseline) {
         Ok(b) => b,
         Err(e) => return err(&e),
@@ -217,17 +237,26 @@ fn changelog_cmd(args: &[String]) -> i32 {
         new_baseline: &baseline,
     });
 
-    let root = match invoke::workspace_root() {
-        Ok(r) => r,
-        Err(e) => return err(&e.to_string()),
-    };
-    let path = a.out.unwrap_or_else(|| root.join("CHANGELOG.md"));
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
     if std::fs::write(&path, merge_changelog(&existing, &text)).is_err() {
         return err(&format!("cannot write {}", path.display()));
     }
     println!("report: regenerated {}", path.display());
     0
+}
+
+/// True once the top `## ` heading has been renamed away from "Unreleased"
+/// (cutting a release, per CONTRIBUTING's release process) — regeneration
+/// has nothing left to do until a new Unreleased section exists. A file
+/// with no `## ` heading yet (never released) is not "already cut".
+fn changelog_already_cut(existing: &str) -> bool {
+    existing
+        .lines()
+        .find_map(|l| l.strip_prefix("## "))
+        .map(|h| {
+            let h = h.trim_start();
+            !(h.starts_with("Unreleased") || h.starts_with("[Unreleased]"))
+        })
+        .unwrap_or(false)
 }
 
 const NOTES_START: &str = "<!-- soothfast:notes -->";
@@ -318,7 +347,33 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::merge_changelog;
+    use super::{changelog_already_cut, merge_changelog};
+
+    #[test]
+    fn a_release_pr_that_already_renamed_unreleased_is_already_cut() {
+        assert!(changelog_already_cut(
+            "# Changelog\n\n## 0.1.2 - 2026-08-09\n\n- shipped\n"
+        ));
+        assert!(changelog_already_cut(
+            "# Changelog\n\n## [2.8.0] - 2026-07-10\n\n- shipped\n"
+        ));
+    }
+
+    #[test]
+    fn a_normal_pr_with_an_unreleased_section_is_not_already_cut() {
+        assert!(!changelog_already_cut(
+            "# Changelog\n\n## Unreleased (draft vs v0.1.1)\n\nold\n"
+        ));
+        assert!(!changelog_already_cut(
+            "# Changelog\n\n## [Unreleased]\n\nold\n"
+        ));
+    }
+
+    #[test]
+    fn a_file_with_no_sections_yet_is_not_already_cut() {
+        assert!(!changelog_already_cut(""));
+        assert!(!changelog_already_cut("# Changelog\n"));
+    }
 
     #[test]
     fn merge_replaces_unreleased_and_keeps_released() {
