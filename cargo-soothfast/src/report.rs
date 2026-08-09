@@ -297,6 +297,7 @@ fn merge_changelog(existing: &str, draft: &str) -> String {
             doc.push('\n');
             doc.push_str(NOTES_END);
             doc.push('\n');
+            doc.push('\n');
             doc.push_str(rest.trim_start_matches('\n'));
         }
         _ => doc.push_str(draft),
@@ -366,6 +367,8 @@ mod tests {
         let merged = merge_changelog(existing, draft);
         assert!(merged.contains("Domain handles gain chart/history."));
         assert!(merged.contains("### API surface\n\nnew"));
+        // A blank line separates the closing marker from the next section.
+        assert!(merged.contains("<!-- /soothfast:notes -->\n\n### API surface"));
         // Notes land ahead of the bot's own sections, right after the heading.
         let notes_pos = merged.find("Domain handles").unwrap();
         let surface_pos = merged.find("### API surface").unwrap();
