@@ -195,3 +195,19 @@ automated: pushing a `v*` tag runs the full check suite and the gate, then
 publishes the workspace crates in dependency order (see
 `.github/workflows/release.yml`). If you believe a bug fix warrants a release,
 comment on the relevant issue.
+
+To cut a release:
+
+1. Land a PR that renames `CHANGELOG.md`'s top `## Unreleased (...)` heading
+   to `## X.Y.Z - YYYY-MM-DD`. `changelog.yml` only ever regenerates a
+   heading that starts with `Unreleased`; anything else is treated as a
+   released section and left alone, so this rename is what turns the draft
+   into that release's permanent changelog entry.
+2. Bump `version` in the workspace `[workspace.package]` table (`Cargo.toml`)
+   to match.
+3. Tag the merge commit `vX.Y.Z` and push the tag. `release.yml` verifies the
+   tag matches the workspace version, runs checks, extracts the matching
+   `## X.Y.Z` section for the GitHub Release notes, and publishes.
+4. The `publish` job waits on the `release` environment's required
+   reviewers before it touches crates.io — approve the deployment when
+   you're ready.

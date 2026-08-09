@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (initial public surface)
+## 0.1.0 - 2026-08-09
 
 ### API surface
 
