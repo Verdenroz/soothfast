@@ -456,6 +456,202 @@ details.run-out[open] > summary .run-out-chevron { transform: rotate(90deg); }
 .route-status-fail { color: var(--fail); }
 .route-measured { color: var(--muted); font-weight: 400; }
 
+/* ---------- generated spec reference (`spec html`) ---------- */
+/* Collapsed, tag-grouped rows you expand on click — the recognizable shape
+   of a standardized API reference (Swagger UI, the AsyncAPI generator,
+   ReDoc): scan a compact method + path + summary line, open one to see
+   detail, instead of a page of always-open cards. Rows opt out of the
+   prose column's 720px cap (same reasoning `.evidence-panel` already
+   uses) since a parameter table needs real width. Method badges are
+   solid-filled and colored by what the verb actually costs a caller —
+   read (accent), create (pass), mutate (warn), destroy (fail) — the same
+   evidence palette `.route-status`/`.chip` already use, immediately
+   legible as "the blue one is GET" without inventing a decorative
+   per-verb rainbow. No side-stripe accents: state lives in the badge and
+   the row background on hover/open, not a colored border rail. */
+.doc > .spec-group, .doc > .spec-row, .doc > .spec-rowlist {
+  max-width: none;
+}
+
+.spec-method {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 60px; flex: none;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 700;
+  letter-spacing: .03em;
+  color: var(--on-primary);
+  border-radius: 5px;
+  padding: 4px 9px;
+}
+.spec-method-get, .spec-method-receive { background: var(--primary); }
+.spec-method-post, .spec-method-send { background: var(--pass); }
+.spec-method-put, .spec-method-patch { background: var(--warn); }
+.spec-method-delete { background: var(--fail); }
+.spec-method-options, .spec-method-head, .spec-method-trace { background: var(--secondary); }
+
+/* ---------- collapsed row: one operation / schema / channel ---------- */
+.spec-rowlist { margin: 4px 0 8px; }
+.spec-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 0 0 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.spec-row summary {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+.spec-row summary::-webkit-details-marker { display: none; }
+.spec-row summary::marker { content: ""; display: none; }
+.spec-row summary:hover { background: var(--surface-variant); }
+.spec-row summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.spec-row[open] > summary { border-bottom: 1px solid var(--line); }
+.spec-row-path, .spec-row-name {
+  font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink);
+}
+.spec-row-desc {
+  color: var(--muted); font-size: 13px;
+  margin-left: auto; text-align: right; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.spec-row-chevron {
+  flex: none; color: var(--muted);
+  transition: transform .15s cubic-bezier(.25, 1, .5, 1);
+}
+.spec-row[open] > summary .spec-row-chevron { transform: rotate(90deg); }
+
+.spec-body { padding: 6px 20px 18px; }
+.spec-subhead {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+  margin: 16px 0 8px;
+}
+.spec-body > .spec-subhead:first-child { margin-top: 14px; }
+.spec-status-line {
+  display: flex; align-items: baseline; gap: 10px;
+  font-family: var(--mono); font-size: 13px;
+  padding: 8px 0; border-top: 1px solid var(--line);
+}
+.spec-body .spec-status-line:first-of-type { border-top: none; }
+.spec-status-code { font-weight: 700; border-radius: 4px; padding: 1px 7px; }
+.spec-status-2xx { color: var(--pass); background: var(--pass-bg); }
+.spec-status-3xx { color: var(--accent); background: var(--accent-soft); }
+.spec-status-4xx, .spec-status-5xx { color: var(--fail); background: var(--fail-bg); }
+.spec-status-desc { color: var(--muted); }
+.spec-ct { font-family: var(--mono); font-size: 11.5px; color: var(--faint); margin: 2px 0 8px; }
+
+.spec-required {
+  display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--fail);
+}
+.spec-optional {
+  display: inline-block; font-size: 10px; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--faint);
+}
+
+.spec-oneof { margin: 8px 0 4px; padding-left: 0; list-style: none; }
+.spec-oneof > li {
+  margin: 12px 0; padding: 12px 14px 2px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface-variant);
+}
+.spec-oneof > li > .tablewrap { margin: 0 0 12px; }
+
+/* Type/field tables inside a row sit flush against the row's own edge. */
+.spec-row .tablewrap, .spec-oneof .tablewrap { margin: 6px 0 4px; }
+.spec-row .tablewrap table { font-size: 12.5px; }
+
+/* ---------- parameter reference + inline "Try it out" ---------- */
+/* Available values, defaults, and a live value editor live in the same
+   table a reader already reads the parameter's description from — not a
+   second hidden form disconnected from the reference, and not read-only
+   prose that never shows what an enum actually accepts. */
+.spec-param-meta-type { font-size: 11px; color: var(--muted); margin-top: 2px; white-space: nowrap; }
+.spec-param-meta { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); }
+.spec-param-meta em { font-style: italic; color: var(--ink); font-weight: 500; }
+
+.spec-try-col { width: 240px; }
+.spec-try-col input, .spec-try-col select {
+  width: 100%; box-sizing: border-box;
+  font-family: var(--mono); font-size: 12.5px;
+  color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line-strong); border-radius: 6px;
+  padding: 6px 9px;
+}
+.spec-try-col input:focus, .spec-try-col select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+/* An empty required field reads as unmet, not just as a disabled Execute
+   button elsewhere on the row. */
+.spec-try-col input:required:invalid { border-color: var(--fail); }
+
+.spec-try-body {
+  margin: 10px 0;
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  border: 1px solid var(--code-edge);
+  padding: 12px 14px 14px;
+}
+.spec-try-bodytext {
+  width: 100%; box-sizing: border-box; min-height: 90px; resize: vertical;
+  font-family: var(--mono); font-size: 12.5px;
+  color: var(--code-ink); background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--code-edge); border-radius: 6px;
+  padding: 8px 10px;
+}
+.spec-try-bodytext:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.spec-try-actions { display: flex; gap: 8px; margin: 10px 0; }
+.spec-try-server {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line-strong); border-radius: 6px;
+  padding: 7px 10px;
+}
+.spec-try-send {
+  font-family: var(--mono); font-size: 12px; font-weight: 700;
+  color: var(--on-primary); background: var(--primary);
+  border: 0; border-radius: 6px;
+  padding: 7px 16px;
+}
+.spec-try-send:hover { filter: brightness(1.08); }
+.spec-try-send:disabled {
+  background: var(--line-strong); color: var(--muted);
+  cursor: not-allowed; filter: none;
+}
+.spec-try-result {
+  margin: 10px 0;
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  border: 1px solid var(--code-edge);
+  padding: 12px 14px 14px;
+}
+.spec-try-status {
+  font-family: var(--mono); font-size: 11.5px; color: var(--code-muted);
+  margin-bottom: 8px; word-break: break-all;
+}
+.spec-try-status.spec-try-ok { color: var(--code-pass); }
+.spec-try-status.spec-try-err { color: var(--code-fail); }
+.spec-try-out {
+  margin: 0; max-height: 360px; overflow: auto;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+  color: var(--code-ink); white-space: pre-wrap; word-break: break-word;
+}
+
+/* ---------- synthesized example value ---------- */
+/* A schema table says what shape a body must have; a synthesized example
+   shows what one actually looks like — both are useful, so both are one
+   click apart via the shared `.tabs` component rather than picking one. */
+.spec-example {
+  margin: 0; padding: 12px 14px;
+  background: var(--code-bg); border: 1px solid var(--code-edge); border-radius: 8px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  color: var(--code-ink); white-space: pre-wrap; word-break: break-word;
+  overflow-x: auto;
+}
+.spec-row .tabs, .spec-op .tabs { margin: 8px 0 4px; }
+
 /* ---------- admonitions ---------- */
 /* Severity reuses the evidence-chip palette (accent/warn/fail bg tints) so
    a callout and a claim chip read as the same instrument, not two systems. */

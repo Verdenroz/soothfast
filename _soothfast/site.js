@@ -189,4 +189,95 @@
       box.select();
     }
   });
+
+  // ----- "Try it out" (generated OpenAPI reference, `spec html`) -----
+  // Everything is driven by data-* attributes on the enclosing `.spec-row`
+  // (method, path template) and on each value field (data-name) — this
+  // file has no per-page knowledge, just a generic validator + sender. The
+  // parameter table's value column and the request-body editor are always
+  // visible (built by the generator, not toggled), so the reference
+  // (available values, defaults, descriptions) sits right next to the
+  // field that fills it in. Execute starts disabled on any row with a
+  // required text field, and stays disabled until every such field in that
+  // row actually has a value — a `<select>` is never "empty" (the browser
+  // always has some option chosen), so only text inputs are watched.
+  document.addEventListener("click", function (e) {
+    var send = e.target.closest(".spec-try-send");
+    if (send) sendTryIt(send.closest(".spec-row"));
+  });
+
+  document.addEventListener("input", function (e) {
+    var root = e.target.closest(".spec-row");
+    if (root) updateTryItValidity(root);
+  });
+
+  function updateTryItValidity(root) {
+    var send = root.querySelector(".spec-try-send");
+    if (!send) return;
+    var unmet = Array.prototype.some.call(
+      root.querySelectorAll(".spec-try-col input[required]"),
+      function (field) { return field.value.trim() === ""; }
+    );
+    send.disabled = unmet;
+  }
+
+  document.querySelectorAll(".spec-row .spec-try-send").forEach(function (send) {
+    updateTryItValidity(send.closest(".spec-row"));
+  });
+
+  function sendTryIt(root) {
+    if (!root) return;
+    var method = root.dataset.method || "GET";
+    var path = root.dataset.path || "/";
+    var serverSel = root.querySelector(".spec-try-server");
+    var base = serverSel ? serverSel.value : "";
+    var query = [];
+    root.querySelectorAll('.spec-try-col[data-param="path"]').forEach(function (cell) {
+      var field = cell.querySelector("input, select");
+      if (!field) return;
+      path = path.split("{" + field.dataset.name + "}").join(encodeURIComponent(field.value));
+    });
+    root.querySelectorAll('.spec-try-col[data-param="query"]').forEach(function (cell) {
+      var field = cell.querySelector("input, select");
+      if (!field || field.value === "") return;
+      query.push(encodeURIComponent(field.dataset.name) + "=" + encodeURIComponent(field.value));
+    });
+    var bodyEl = root.querySelector(".spec-try-bodytext");
+    var body = bodyEl && bodyEl.value.trim() !== "" ? bodyEl.value : null;
+    var url = base + path + (query.length ? "?" + query.join("&") : "");
+    var opts = { method: method, headers: {} };
+    if (body !== null) {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = body;
+    }
+
+    var result = root.querySelector(".spec-try-result");
+    var status = root.querySelector(".spec-try-status");
+    var out = root.querySelector(".spec-try-out");
+    if (!result || !status || !out) return;
+    result.hidden = false;
+    status.textContent = url;
+    status.className = "spec-try-status";
+    out.textContent = "Sending…";
+
+    fetch(url, opts)
+      .then(function (res) {
+        status.textContent = res.status + " " + res.statusText + " · " + url;
+        status.className = "spec-try-status " + (res.ok ? "spec-try-ok" : "spec-try-err");
+        return res.text();
+      })
+      .then(function (text) {
+        try {
+          out.textContent = JSON.stringify(JSON.parse(text), null, 2);
+        } catch (e) {
+          out.textContent = text;
+        }
+      })
+      .catch(function (err) {
+        status.className = "spec-try-status spec-try-err";
+        status.textContent = "Request failed · " + url;
+        out.textContent = String(err) + "\n\nA network/CORS error usually means the selected " +
+          "server isn't reachable from here, or doesn't allow cross-origin requests from this page's origin.";
+      });
+  }
 })();
