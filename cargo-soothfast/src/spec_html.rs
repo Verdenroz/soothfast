@@ -571,12 +571,13 @@ fn parameters_and_try_html(
     }
 
     let mut out = String::new();
-    let toggle = if can_try {
-        " <button type=\"button\" class=\"spec-try-toggle\">Try it out</button>"
-    } else {
-        ""
-    };
-    out.push_str(&format!("<p class=\"spec-subhead\">Parameters{toggle}</p>"));
+    out.push_str("<p class=\"spec-subhead\">Parameters</p>");
+
+    // Whether sending this request needs at least one value the reader has
+    // to supply — if so, Execute starts disabled rather than letting a
+    // request go out with an unset required field, and stays that way
+    // until every `required` value field actually has one.
+    let mut has_required_field = false;
 
     if !params.is_empty() {
         let mut rows = String::new();
@@ -591,7 +592,11 @@ fn parameters_and_try_html(
             // (`Region`, say), not this one.
             let ref_target = resolve_ref(schema, defs);
             let ty = type_str(schema);
-            let req_badge = if p["required"].as_bool().unwrap_or(false) {
+            // Path parameters are always required by construction (a route
+            // placeholder cannot be left out), whatever the schema's own
+            // `required` flag says.
+            let is_required = loc == "path" || p["required"].as_bool().unwrap_or(false);
+            let req_badge = if is_required {
                 "<span class=\"spec-required\">required</span>"
             } else {
                 "<span class=\"spec-optional\">optional</span>"
@@ -638,6 +643,9 @@ fn parameters_and_try_html(
 
             let try_cell = if can_try && (loc == "path" || loc == "query") {
                 let field = if !enum_vals.is_empty() {
+                    // A <select> always has some option selected, so it can
+                    // never be "empty" the way a text input can — required
+                    // tracking below only watches text inputs.
                     let default_str = json_plain(&default_val);
                     let opts: String = enum_vals
                         .iter()
@@ -653,19 +661,23 @@ fn parameters_and_try_html(
                         .collect();
                     format!("<select data-name=\"{}\">{opts}</select>", escape(name))
                 } else {
+                    if is_required {
+                        has_required_field = true;
+                    }
                     let val_attr = if default_val.is_null() {
                         String::new()
                     } else {
                         format!(" value=\"{}\"", escape(&json_plain(&default_val)))
                     };
+                    let required_attr = if is_required { " required" } else { "" };
                     format!(
-                        "<input type=\"text\" data-name=\"{}\"{val_attr}>",
+                        "<input type=\"text\" data-name=\"{}\"{val_attr}{required_attr}>",
                         escape(name)
                     )
                 };
-                format!("<td class=\"spec-try-col\" data-param=\"{loc}\" hidden>{field}</td>")
+                format!("<td class=\"spec-try-col\" data-param=\"{loc}\">{field}</td>")
             } else if can_try {
-                "<td class=\"spec-try-col\" hidden></td>".to_string()
+                "<td class=\"spec-try-col\"></td>".to_string()
             } else {
                 String::new()
             };
@@ -679,7 +691,7 @@ fn parameters_and_try_html(
             ));
         }
         let try_th = if can_try {
-            "<th class=\"spec-try-col\" hidden>value</th>"
+            "<th class=\"spec-try-col\">value</th>"
         } else {
             ""
         };
@@ -693,7 +705,7 @@ fn parameters_and_try_html(
             let example = example_value(schema, defs, &mut BTreeSet::new());
             let example_json = serde_json::to_string_pretty(&example).unwrap_or_default();
             out.push_str(&format!(
-                "<div class=\"spec-try-body\" hidden><p class=\"spec-subhead\">Request body</p><textarea class=\"spec-try-bodytext\">{}</textarea></div>",
+                "<div class=\"spec-try-body\"><p class=\"spec-subhead\">Request body</p><textarea class=\"spec-try-bodytext\">{}</textarea></div>",
                 escape(&example_json),
             ));
         }
@@ -701,8 +713,14 @@ fn parameters_and_try_html(
             .iter()
             .map(|s| format!("<option value=\"{}\">{}</option>", escape(s), escape(s)))
             .collect();
+        // Starts disabled whenever a required value field starts empty, so
+        // a request can't go out with an unset required parameter — `spec-
+        // try.js`'s input listener lifts the `disabled` once every field
+        // marked `required` actually has a value, and reinstates it if one
+        // is cleared again.
+        let disabled = if has_required_field { " disabled" } else { "" };
         out.push_str(&format!(
-            "<div class=\"spec-try-actions\" hidden><select class=\"spec-try-server\">{options}</select><button type=\"button\" class=\"spec-try-send\">Execute</button></div>\
+            "<div class=\"spec-try-actions\"><select class=\"spec-try-server\">{options}</select><button type=\"button\" class=\"spec-try-send\"{disabled}>Execute</button></div>\
 <div class=\"spec-try-result\" hidden><div class=\"spec-try-status\"></div><pre class=\"spec-try-out\"></pre></div>",
         ));
     }
@@ -1324,7 +1342,7 @@ mod tests {
             &no_defs(),
         );
         assert!(
-            html.contains("<input type=\"text\" data-name=\"symbol\">"),
+            html.contains("<input type=\"text\" data-name=\"symbol\" required>"),
             "{html}"
         );
     }
@@ -1371,11 +1389,73 @@ mod tests {
     }
 
     #[test]
-    fn parameters_and_try_out_still_shows_the_toggle_with_zero_params() {
+    fn parameters_and_try_out_still_shows_execute_with_zero_params() {
         let html =
             parameters_and_try_html(None, None, &["https://a.example".to_string()], &no_defs());
-        assert!(html.contains("spec-try-toggle"), "{html}");
         assert!(html.contains("spec-try-actions"), "{html}");
+        assert!(html.contains("spec-try-send"), "{html}");
+        assert!(
+            !html.contains("disabled"),
+            "no required fields means Execute starts enabled: {html}"
+        );
+    }
+
+    #[test]
+    fn a_required_param_disables_execute_until_it_has_a_value() {
+        let params = vec![json!({
+            "name": "symbol", "in": "path", "required": true,
+            "schema": { "type": "string" },
+        })];
+        let html = parameters_and_try_html(
+            Some(&params),
+            None,
+            &["https://a.example".to_string()],
+            &no_defs(),
+        );
+        assert!(
+            html.contains("<input type=\"text\" data-name=\"symbol\" required>"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<button type=\"button\" class=\"spec-try-send\" disabled>"),
+            "Execute must start disabled with an unmet required field: {html}"
+        );
+    }
+
+    #[test]
+    fn an_optional_only_operation_leaves_execute_enabled() {
+        let params = vec![json!({
+            "name": "fields", "in": "query", "required": false,
+            "schema": { "type": "string" },
+        })];
+        let html = parameters_and_try_html(
+            Some(&params),
+            None,
+            &["https://a.example".to_string()],
+            &no_defs(),
+        );
+        assert!(
+            html.contains("<button type=\"button\" class=\"spec-try-send\">"),
+            "no required field means Execute starts enabled: {html}"
+        );
+    }
+
+    #[test]
+    fn a_path_parameter_is_always_treated_as_required() {
+        // Path placeholders can't be omitted regardless of what the schema's
+        // own `required` flag says.
+        let params = vec![json!({
+            "name": "symbol", "in": "path", "required": false,
+            "schema": { "type": "string" },
+        })];
+        let html = parameters_and_try_html(
+            Some(&params),
+            None,
+            &["https://a.example".to_string()],
+            &no_defs(),
+        );
+        assert!(html.contains("spec-required"), "{html}");
+        assert!(html.contains("required>"), "{html}");
     }
 
     #[test]

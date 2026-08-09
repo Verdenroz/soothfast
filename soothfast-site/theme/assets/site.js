@@ -193,29 +193,36 @@
   // ----- "Try it out" (generated OpenAPI reference, `spec html`) -----
   // Everything is driven by data-* attributes on the enclosing `.spec-row`
   // (method, path template) and on each value field (data-name) — this
-  // file has no per-page knowledge, just a generic toggle + sender. The
-  // parameter table's value column and the request-body editor stay in the
-  // document at all times (built by the generator) and are just hidden
-  // until "Try it out" is clicked, so the reference (available values,
-  // defaults, descriptions) is never gated behind that click.
+  // file has no per-page knowledge, just a generic validator + sender. The
+  // parameter table's value column and the request-body editor are always
+  // visible (built by the generator, not toggled), so the reference
+  // (available values, defaults, descriptions) sits right next to the
+  // field that fills it in. Execute starts disabled on any row with a
+  // required text field, and stays disabled until every such field in that
+  // row actually has a value — a `<select>` is never "empty" (the browser
+  // always has some option chosen), so only text inputs are watched.
   document.addEventListener("click", function (e) {
-    var toggle = e.target.closest(".spec-try-toggle");
-    if (toggle) {
-      var root = toggle.closest(".spec-row");
-      if (!root) return;
-      var active = toggle.classList.toggle("spec-try-active");
-      root.querySelectorAll(".spec-try-col, .spec-try-body, .spec-try-actions").forEach(function (el) {
-        el.hidden = !active;
-      });
-      toggle.textContent = active ? "Cancel" : "Try it out";
-      if (!active) {
-        var result = root.querySelector(".spec-try-result");
-        if (result) result.hidden = true;
-      }
-      return;
-    }
     var send = e.target.closest(".spec-try-send");
     if (send) sendTryIt(send.closest(".spec-row"));
+  });
+
+  document.addEventListener("input", function (e) {
+    var root = e.target.closest(".spec-row");
+    if (root) updateTryItValidity(root);
+  });
+
+  function updateTryItValidity(root) {
+    var send = root.querySelector(".spec-try-send");
+    if (!send) return;
+    var unmet = Array.prototype.some.call(
+      root.querySelectorAll(".spec-try-col input[required]"),
+      function (field) { return field.value.trim() === ""; }
+    );
+    send.disabled = unmet;
+  }
+
+  document.querySelectorAll(".spec-row .spec-try-send").forEach(function (send) {
+    updateTryItValidity(send.closest(".spec-row"));
   });
 
   function sendTryIt(root) {

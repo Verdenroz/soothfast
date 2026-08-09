@@ -572,19 +572,6 @@ details.run-out[open] > summary .run-out-chevron { transform: rotate(90deg); }
 .spec-param-meta { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); }
 .spec-param-meta em { font-style: italic; color: var(--ink); font-weight: 500; }
 
-.spec-try-toggle {
-  font-family: var(--mono); font-size: 11px; font-weight: 700;
-  letter-spacing: .03em; text-transform: uppercase;
-  color: var(--accent); background: var(--accent-soft);
-  border: 1px solid var(--accent-border);
-  border-radius: 6px;
-  padding: 4px 10px;
-  margin-left: 10px;
-  vertical-align: middle;
-}
-.spec-try-toggle:hover { background: var(--accent-border); }
-.spec-try-toggle.spec-try-active { color: var(--on-primary); background: var(--primary); border-color: var(--primary); }
-
 .spec-try-col { width: 240px; }
 .spec-try-col input, .spec-try-col select {
   width: 100%; box-sizing: border-box;
@@ -594,6 +581,9 @@ details.run-out[open] > summary .run-out-chevron { transform: rotate(90deg); }
   padding: 6px 9px;
 }
 .spec-try-col input:focus, .spec-try-col select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+/* An empty required field reads as unmet, not just as a disabled Execute
+   button elsewhere on the row. */
+.spec-try-col input:required:invalid { border-color: var(--fail); }
 
 .spec-try-body {
   margin: 10px 0;
@@ -626,6 +616,10 @@ details.run-out[open] > summary .run-out-chevron { transform: rotate(90deg); }
   padding: 7px 16px;
 }
 .spec-try-send:hover { filter: brightness(1.08); }
+.spec-try-send:disabled {
+  background: var(--line-strong); color: var(--muted);
+  cursor: not-allowed; filter: none;
+}
 .spec-try-result {
   margin: 10px 0;
   border-radius: var(--radius);
