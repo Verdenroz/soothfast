@@ -386,8 +386,3 @@ Initial release: 309 public items across 9 crates.
 | `soothfast_spec::bench_openapi_diff` | n/a | 5.62ms | 7.30ms | 77722 | n/a |
 | `soothfast_spec::bench_openapi_document` | n/a | 2.03ms | 2.39ms | 30152 | n/a |
 | `soothfast_spec::bench_serialize_yaml` | n/a | 6.57ms | 8.49ms | 74277 | n/a |
-
-
-## 0.1.0
-
-Initial release.
