@@ -12,8 +12,9 @@
 use serde_json::{Value, json};
 
 use super::Gap;
+use super::graphql_attrs;
 use super::serde_attrs;
-use super::types::{Resolver, Subst};
+use super::types::{Resolver, Subst, generic_args};
 use super::wire_names::WireNames;
 
 /// One resolved field, ready to place into an object schema.
@@ -78,14 +79,19 @@ impl<'a> Resolver<'a> {
             return self.resolve(&ty, subst, at);
         }
 
-        let mut schema = self.fields_object(&ids, &names, stripped, subst, at);
+        let mut schema = self.fields_object(Some(item), &ids, &names, stripped, subst, at);
         Self::describe(item, &mut schema);
         schema
     }
 
     /// Build an object schema from a list of struct-field ids.
+    ///
+    /// `container` is the struct's own item, when there is one to look a
+    /// `#[ComplexObject]` impl up on — `None` for an enum variant's fields,
+    /// which have no impl block of their own to search.
     fn fields_object(
         &mut self,
+        container: Option<&'a Value>,
         ids: &[Value],
         names: &WireNames,
         stripped: bool,
@@ -94,8 +100,15 @@ impl<'a> Resolver<'a> {
     ) -> Value {
         let mut fields = Vec::new();
         for id in ids {
-            if let Some(f) = self.resolve_field(id, names, subst, at) {
-                fields.push(f);
+            match self.resolve_field(id, names, subst, at) {
+                Some(f) => fields.push(f),
+                None => {
+                    if let Some(container) = container
+                        && let Some(f) = self.recover_complex_field(container, id, names, subst, at)
+                    {
+                        fields.push(f);
+                    }
+                }
             }
         }
 
@@ -179,6 +192,125 @@ impl<'a> Resolver<'a> {
             required: !optional,
             flatten: attrs.flatten,
         })
+    }
+
+    /// Recover a field a `#[graphql(skip)]` attribute took off the wire, from
+    /// a matching `#[ComplexObject]` resolver method of the same name — the
+    /// pattern async-graphql uses to compute a field (typically paginated)
+    /// instead of storing it directly. `resolve_field` already returned
+    /// `None` for this id for *some* reason; this only investigates further
+    /// when that reason was specifically a graphql skip, so a field that is
+    /// missing from the wire for any other reason is left alone.
+    fn recover_complex_field(
+        &mut self,
+        container: &'a Value,
+        id: &Value,
+        names: &WireNames,
+        subst: &Subst,
+        at: &str,
+    ) -> Option<Field> {
+        let gql = names.graphql.as_ref()?;
+        let item = self.item(id)?;
+        let rust_name = item["name"].as_str()?.to_string();
+        let empty = Vec::new();
+        let raw = item["attrs"].as_array().unwrap_or(&empty);
+        let f = graphql_attrs::field(raw);
+        if !f.skip {
+            return None;
+        }
+        let wire = graphql_attrs::wire_name_field(&rust_name, &f, gql);
+        self.complex_object_field(container, &rust_name, wire, subst, at)
+    }
+
+    /// Find the `#[ComplexObject]`-generated inherent method matching
+    /// `rust_name` on `container`, and resolve its return type as the
+    /// field's schema.
+    ///
+    /// `#[ComplexObject]` is an attribute macro, not a derive: it rewrites
+    /// the impl block entirely, so the user's method is only visible in
+    /// rustdoc JSON as a separate function item at all when rustdoc ran with
+    /// private items documented (`spec_gen`'s route discovery always does).
+    /// Its inherent impl shows up in the struct's own `impls` array exactly
+    /// like every other impl `serves_graphql` already scans — the search
+    /// here is that same array, filtered for `trait: null` instead of a
+    /// GraphQL container trait.
+    fn complex_object_field(
+        &mut self,
+        container: &'a Value,
+        rust_name: &str,
+        wire: String,
+        subst: &Subst,
+        at: &str,
+    ) -> Option<Field> {
+        let impls = container["inner"]["struct"]["impls"].as_array()?;
+        let method = impls
+            .iter()
+            .filter_map(|id| self.item(id))
+            .filter(|im| im["inner"]["impl"]["trait"].is_null())
+            .find_map(|im| {
+                im["inner"]["impl"]["items"]
+                    .as_array()?
+                    .iter()
+                    .find_map(|fid| {
+                        let f = self.item(fid)?;
+                        (f["name"].as_str() == Some(rust_name)
+                            && f["inner"].get("function").is_some())
+                        .then_some(f)
+                    })
+            })?;
+
+        let where_ = format!("{at}.{wire}");
+        let sig = &method["inner"]["function"]["sig"];
+        let inputs = sig["inputs"].as_array().cloned().unwrap_or_default();
+        // Input 0 is always `self`. The macro always injects a synthetic
+        // `Context` parameter next, whichever the user's own signature
+        // declared; every remaining input is a real GraphQL argument this
+        // schema has no room for unless it defaults on its own (`Option`) —
+        // a required one is reported rather than silently guessed at.
+        for input in inputs.iter().skip(1) {
+            let ty = &input[1];
+            let inner_ty = ty.get("borrowed_ref").map(|b| &b["type"]).unwrap_or(ty);
+            let is_context = inner_ty["resolved_path"]["path"]
+                .as_str()
+                .is_some_and(|p| p == "Context" || p.ends_with("::Context"));
+            if is_context {
+                continue;
+            }
+            if !Resolver::is_option(ty) {
+                self.record(Gap::ComplexFieldArgument {
+                    at: where_.clone(),
+                    argument: input[0].as_str().unwrap_or("?").to_string(),
+                });
+                return None;
+            }
+        }
+
+        let (schema, optional) = self.resolve_field_output(&sig["output"], subst, &where_);
+        let mut schema = schema;
+        Self::describe(method, &mut schema);
+        Some(Field {
+            wire,
+            schema,
+            required: !optional,
+            flatten: false,
+        })
+    }
+
+    /// A resolver method's return type, unwrapping `Result<T, E>` to its
+    /// success arm — the error path fails the whole GraphQL response rather
+    /// than shaping this one field, unlike a route handler's `Result`, which
+    /// contributes a real error response and so is kept whole there. Returns
+    /// the schema plus whether the field is optional (nullable), read off
+    /// the *unwrapped* type so `Result<Option<T>>` is still detected right.
+    fn resolve_field_output(&mut self, output: &Value, subst: &Subst, at: &str) -> (Value, bool) {
+        if output["resolved_path"]["path"].as_str() == Some("Result") {
+            let args = generic_args(&output["resolved_path"]);
+            return match args.first() {
+                Some(ok) => (self.resolve(ok, subst, at), Resolver::is_option(ok)),
+                None => (json!({}), true),
+            };
+        }
+        (self.resolve(output, subst, at), Resolver::is_option(output))
     }
 
     /// An enum body under whichever serde tagging the container declares.
@@ -357,7 +489,9 @@ impl<'a> Resolver<'a> {
                 .unwrap_or_default();
             let stripped = st["has_stripped_fields"].as_bool().unwrap_or(false);
             // Variant fields follow the container's rename rule, as in serde.
-            return Some(self.fields_object(&ids, names, stripped, subst, at));
+            // `None`: a variant's fields have no impl block of their own to
+            // search for a `#[ComplexObject]` resolver.
+            return Some(self.fields_object(None, &ids, names, stripped, subst, at));
         }
         None
     }

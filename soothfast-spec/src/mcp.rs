@@ -109,7 +109,7 @@ fn input_schema(op: &Operation, doc: &mut Document) -> Value {
             ));
             continue;
         }
-        properties.insert(p.name.clone(), p.schema.clone());
+        properties.insert(p.name.clone(), rewrite_refs(&p.schema));
         if p.required {
             required.push(p.name.clone());
         }
@@ -462,6 +462,36 @@ mod tests {
         assert!(
             !defs.contains_key("Unrelated"),
             "only reachable definitions travel: {defs:?}"
+        );
+    }
+
+    #[test]
+    fn a_parameter_typed_by_a_component_becomes_a_self_contained_def() {
+        // Regression: a request-body field's $ref was rewritten to `$defs`
+        // via `inline_root`, but a parameter's own $ref went in unrewritten
+        // — the tool's inputSchema pointed at `#/components/schemas/...`,
+        // which does not exist anywhere in a standalone tool manifest.
+        let mut shape = RouteShape::default();
+        shape.components.insert(
+            "AnalysisType".into(),
+            json!({ "type": "string", "enum": ["a", "b"] }),
+        );
+        shape.parameters.push(Parameter {
+            name: "analysis_type".into(),
+            location: "query".into(),
+            required: true,
+            schema: json!({ "$ref": "#/components/schemas/AnalysisType" }),
+        });
+        let d = document(&info(), &[tool("get_analysis", shape)]);
+        let input = &d.value["tools"][0]["inputSchema"];
+        assert_eq!(
+            input["properties"]["analysis_type"]["$ref"], "#/$defs/AnalysisType",
+            "a parameter's $ref must be repointed at $defs like a body field's"
+        );
+        let defs = input["$defs"].as_object().expect("$defs");
+        assert!(
+            defs.contains_key("AnalysisType"),
+            "the referenced component must travel with the schema: {defs:?}"
         );
     }
 

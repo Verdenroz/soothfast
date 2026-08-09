@@ -13,6 +13,10 @@ use super::{Gap, TypeTable, extract_named};
 /// Ids above the fixture's own range, for the generated impl items.
 const IMPL_ID: u64 = 90;
 const TRAIT_ID: u64 = 91;
+/// Ids for the `#[ComplexObject]`-generated inherent impl fixtures below,
+/// disjoint from the trait-impl ids above and the field id range.
+const COMPLEX_IMPL_ID: u64 = 92;
+const METHOD_ID: u64 = 93;
 
 fn attrs_of(attrs: &[&str]) -> Vec<Value> {
     attrs.iter().map(|a| json!({ "other": a })).collect()
@@ -86,6 +90,71 @@ fn doc(index: Vec<(u64, Value)>) -> Value {
             "path": ["async_graphql", "base", "ObjectType"] },
     });
     json!({ "index": index, "paths": paths })
+}
+
+/// A path type with optional generic arguments, mirroring `extract_tests`'s
+/// helper of the same shape.
+fn path(name: &str, id: u64, args: &[Value]) -> Value {
+    let args = if args.is_empty() {
+        Value::Null
+    } else {
+        json!({ "angle_bracketed": {
+            "args": args.iter().map(|a| json!({ "type": a })).collect::<Vec<_>>(),
+            "constraints": [] } })
+    };
+    json!({ "resolved_path": { "path": name, "id": id, "args": args } })
+}
+
+/// A struct with one plain (kept) field and one `#[graphql(skip)]`ed field
+/// whose replacement is a `#[ComplexObject]` inherent-impl resolver method
+/// of the same name — the shape `#[derive(SimpleObject, complex)]` +
+/// `#[ComplexObject]` produces. `extra_inputs` are the resolver's own
+/// GraphQL arguments (after the always-present `self` and macro-injected
+/// `Context`); `output` is its return type node.
+fn struct_doc_with_complex_field(
+    skipped_name: &str,
+    extra_inputs: &[(&str, Value)],
+    output: Value,
+) -> Value {
+    const KEPT_FIELD_ID: u64 = 2;
+    const SKIPPED_FIELD_ID: u64 = 3;
+    let mut inputs = vec![
+        json!(["self", { "borrowed_ref": { "type": { "generic": "Self" } } }]),
+        json!(["_", { "borrowed_ref": {
+            "type": { "resolved_path": { "path": "Context", "id": 40, "args": Value::Null } } } }]),
+    ];
+    inputs.extend(extra_inputs.iter().map(|(n, t)| json!([n, t])));
+
+    let index = vec![
+        (
+            1,
+            json!({
+                "name": "Item", "docs": Value::Null, "attrs": [],
+                "inner": { "struct": {
+                    "kind": { "plain": { "fields": [KEPT_FIELD_ID, SKIPPED_FIELD_ID], "has_stripped_fields": false } },
+                    "generics": { "params": [], "where_predicates": [] },
+                    "impls": [IMPL_ID, COMPLEX_IMPL_ID] } },
+            }),
+        ),
+        (KEPT_FIELD_ID, field("kept", &[])),
+        (
+            SKIPPED_FIELD_ID,
+            json!({ "name": skipped_name, "docs": Value::Null,
+                    "attrs": attrs_of(&["#[graphql(skip)]"]),
+                    "inner": { "struct_field": { "primitive": "f64" } } }),
+        ),
+        (
+            COMPLEX_IMPL_ID,
+            json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
+                    "inner": { "impl": { "trait": Value::Null, "items": [METHOD_ID] } } }),
+        ),
+        (
+            METHOD_ID,
+            json!({ "name": skipped_name, "docs": Value::Null, "attrs": [],
+                    "inner": { "function": { "sig": { "inputs": inputs, "output": output } } } }),
+        ),
+    ];
+    doc(index)
 }
 
 fn properties(d: &Value) -> Value {
@@ -289,4 +358,70 @@ fn a_non_graphql_enum_keeps_serde_variant_naming() {
     );
     let e = extract_named(&d, &TypeTable::builtin(), "Item").expect("extracts");
     assert_eq!(e.components["Item"]["enum"], json!(["not-found", "boom"]));
+}
+
+#[test]
+fn a_graphql_skip_field_is_recovered_from_its_complex_object_resolver() {
+    // The `GqlDividendsBatch` shape: a stored field skipped off the wire,
+    // replaced by a `#[ComplexObject]` method of the same name returning
+    // `Result<T, Error>` with one optional argument.
+    let output = json!({ "resolved_path": { "path": "Result", "id": 60, "args": {
+        "angle_bracketed": { "args": [
+            { "type": { "primitive": "u32" } },
+            { "type": { "resolved_path": { "path": "Error", "id": 61, "args": Value::Null } } },
+        ], "constraints": [] } } } });
+    let d = struct_doc_with_complex_field(
+        "dividends",
+        &[(
+            "first",
+            path("Option", 50, &[json!({ "primitive": "i32" })]),
+        )],
+        output,
+    );
+    let e = extract_named(&d, &TypeTable::builtin(), "Item").expect("extracts");
+    assert!(e.gaps.is_empty(), "got {:?}", e.gaps);
+    let props = &e.components["Item"]["properties"];
+    assert_eq!(props["dividends"]["type"], "integer", "got {props:?}");
+    assert!(props.get("kept").is_some());
+    // Result<T, E> (not Result<Option<T>, E>) is a required field.
+    assert_eq!(
+        e.components["Item"]["required"],
+        json!(["kept", "dividends"])
+    );
+}
+
+#[test]
+fn the_recovered_fields_wire_name_follows_the_containers_rename_rule() {
+    let output = json!({ "primitive": "u32" });
+    let d = struct_doc_with_complex_field("price_history", &[], output);
+    let e = extract_named(&d, &TypeTable::builtin(), "Item").expect("extracts");
+    let props = &e.components["Item"]["properties"];
+    assert!(
+        props.get("priceHistory").is_some(),
+        "the method's Rust name goes through the same camelCase rule a plain field would: {props:?}"
+    );
+}
+
+#[test]
+fn a_required_resolver_argument_is_a_gap_not_a_guess() {
+    let output = json!({ "primitive": "u32" });
+    let d = struct_doc_with_complex_field(
+        "dividends",
+        &[("required_arg", json!({ "primitive": "str" }))],
+        output,
+    );
+    let e = extract_named(&d, &TypeTable::builtin(), "Item").expect("extracts");
+    assert_eq!(
+        e.gaps,
+        vec![Gap::ComplexFieldArgument {
+            at: "Item.dividends".into(),
+            argument: "required_arg".into(),
+        }]
+    );
+    assert!(
+        e.components["Item"]["properties"]
+            .get("dividends")
+            .is_none(),
+        "an unresolvable resolver drops the field rather than guessing its shape"
+    );
 }

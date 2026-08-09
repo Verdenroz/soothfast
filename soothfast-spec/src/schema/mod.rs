@@ -124,6 +124,14 @@ pub enum Gap {
         /// The zero-based argument position the mapping named.
         arg: usize,
     },
+    /// A `#[graphql(skip)]`ed field's matching `#[ComplexObject]` resolver
+    /// takes a required argument this schema has no default for, so the
+    /// field's shape could not be recovered.
+    ComplexFieldArgument {
+        at: String,
+        /// The resolver's own parameter name.
+        argument: String,
+    },
 }
 
 impl Gap {
@@ -135,6 +143,7 @@ impl Gap {
             | Self::UnmappedForeign { at, .. }
             | Self::UnknownRenameRule { at, .. }
             | Self::TransparentWithoutArgument { at, .. }
+            | Self::ComplexFieldArgument { at, .. }
             | Self::StrippedFields { at } => at,
         }
     }
@@ -168,6 +177,11 @@ impl Gap {
                 "{at}: has private fields that rustdoc omits but serde still \
                  serializes; emitted open (regenerate with private items \
                  documented for the full field set)"
+            ),
+            Self::ComplexFieldArgument { at, argument } => format!(
+                "{at}: the #[ComplexObject] resolver for this field takes a \
+                 required argument `{argument}` with no default a JSON \
+                 Schema can express; emitted open"
             ),
         }
     }

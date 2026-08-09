@@ -66,12 +66,14 @@ pub fn run(args: &[String]) -> i32 {
         Some("gate") => crate::spec_gate::run(&args[1..]),
         Some("check") => run_check(&args[1..]),
         Some("check-proto") => run_check_proto(&args[1..]),
+        Some("html") => crate::spec_html::run(&args[1..]),
         _ => {
             eprintln!(
                 "soothfast: usage: cargo soothfast spec gen -p PKG [--check]\n\
                  cargo soothfast spec gate -p PKG [--base REF]\n\
                  cargo soothfast spec check -p PKG\n\
-                 cargo soothfast spec check-proto -p PKG --proto FILE --message NAME --source FILE --struct NAME"
+                 cargo soothfast spec check-proto -p PKG --proto FILE --message NAME --source FILE --struct NAME\n\
+                 cargo soothfast spec html -p PKG [--features F] [--target NAME] [--out DIR]"
             );
             2
         }
@@ -548,7 +550,7 @@ fn route_group(label: &str, count: usize, open: bool, rows_html: &str) -> String
     )
 }
 
-fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
