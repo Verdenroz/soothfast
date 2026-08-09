@@ -378,7 +378,9 @@ fn the_server_template_becomes_a_typed_configuration_surface() {
     );
     assert!(client.contains("    EMBED_SERVER_NOTE: str"), "{client}");
     assert!(
-        client.contains("embedded_base_url(EMBED, server_env)"),
+        client.contains(
+            "embedded_base_url(EMBED, typing.cast(\"typing.Mapping[str, str] | None\", server_env))"
+        ),
         "the caller's environment reaches the launch: {client}"
     );
     assert!(

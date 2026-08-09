@@ -189,9 +189,16 @@ fn render_client(
             }
             let _ = writeln!(out, "        \"\"\"");
         }
+        // ServerEnv (a TypedDict) is never a subtype of Mapping[str, str] to
+        // mypy, even with all-str fields, so the union needs a cast here.
         let _ = writeln!(
             out,
-            "        base_url = base_url or embedded_base_url(EMBED, server_env)"
+            "        base_url = base_url or embedded_base_url(EMBED, {})",
+            if opts.embed_env_vars.is_empty() {
+                "server_env"
+            } else {
+                "typing.cast(\"typing.Mapping[str, str] | None\", server_env)"
+            }
         );
     }
     let _ = writeln!(out, "        self._transport = transport or {transport}(");
