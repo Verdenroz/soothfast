@@ -106,10 +106,11 @@ jobs:
           ]
     permissions:
       contents: read
-      pull-requests: write # post/update the gate-result PR comment
     uses: ./.github/workflows/soothfast-gate.yml
     with:
       package: ${{ matrix.package }}
+    secrets:
+      CHANGELOG_APP_PRIVATE_KEY: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
 
   # Regenerate and publish the site only on merge to master: fresh
   # measurements, fresh pages, gh-deploy.
@@ -118,11 +119,18 @@ jobs:
     needs: [check, docs]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
+      - name: Mint a soothfast-bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.CHANGELOG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
+          permission-contents: write
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -140,5 +148,5 @@ jobs:
       - run: cargo run --release -p cargo-soothfast -- docs build --baseline self
       - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
           publish_dir: ./site

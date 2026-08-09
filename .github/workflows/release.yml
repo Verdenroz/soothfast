@@ -82,11 +82,18 @@ jobs:
     environment: release # manual approval: add required reviewers in settings
     permissions:
       id-token: write # mint a short-lived crates.io token via OIDC
-      contents: write # create the GitHub Release
+      contents: read
     steps:
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
+      - name: Mint a soothfast-bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.CHANGELOG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
+          permission-contents: write
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -152,7 +159,7 @@ jobs:
 
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ github.ref_name }}
           USE_AUTO: ${{ steps.changelog.outputs.use_auto }}
         run: |

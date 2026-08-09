@@ -12,6 +12,9 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      CHANGELOG_APP_PRIVATE_KEY:
+        required: true
 
 permissions: {}
 
@@ -20,11 +23,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write # post/update the gate-result PR comment
     steps:
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
+      - name: Mint a soothfast-bot token
+        id: app-token
+        if: github.event_name == 'pull_request'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.CHANGELOG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -56,7 +66,7 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           {
             echo '## soothfast gate'
