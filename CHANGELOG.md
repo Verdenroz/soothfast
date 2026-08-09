@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.1)
+## 0.1.2 - 2026-08-09
 
 <!-- soothfast:notes -->
 `changelog.yml` regenerates the Unreleased section on every PR now, which
