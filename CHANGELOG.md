@@ -2,6 +2,20 @@
 
 ## Unreleased (draft vs v0.1.1)
 
+<!-- soothfast:notes -->
+The living CHANGELOG now survives itself. `changelog.yml` regenerates the
+Unreleased section on every PR, which was previously an all-or-nothing
+replacement — any hand-written context a maintainer added ("why this
+matters", not just "what changed") got silently deleted the next time the
+bot ran, sometimes minutes later. A `<!-- soothfast:notes -->` block
+anywhere in the Unreleased section now rides along untouched through every
+regeneration, spliced back in ahead of the mechanical API-surface and
+performance data, until the section is renamed to a real version and
+frozen like the rest of the release history. This paragraph is that
+feature testing itself: written by hand, expected to still be here after
+the bot's own runs on this PR regenerate everything around it.
+<!-- /soothfast:notes -->
+
 ### API surface
 
 No public API changes.
