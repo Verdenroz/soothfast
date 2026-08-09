@@ -230,14 +230,29 @@ fn changelog_cmd(args: &[String]) -> i32 {
     0
 }
 
+const NOTES_START: &str = "<!-- soothfast:notes -->";
+const NOTES_END: &str = "<!-- /soothfast:notes -->";
+
+/// A maintainer's hand-written prose survives regeneration by living inside
+/// a `soothfast:notes` marker pair in the Unreleased section; everything
+/// else there is bot-owned and gets replaced. Malformed markers (missing or
+/// out-of-order) are treated as no notes, rather than guessing.
+fn extract_notes(unreleased: &str) -> Option<&str> {
+    let start = unreleased.find(NOTES_START)? + NOTES_START.len();
+    let end = unreleased[start..].find(NOTES_END)? + start;
+    Some(unreleased[start..end].trim())
+}
+
 /// Replace the previous Unreleased section with the fresh draft, keeping
 /// released sections — regeneration is idempotent, one Unreleased at a time.
 /// Keep-a-Changelog files are respected: the preamble prose before the first
 /// section survives, and a bracketed `## [Unreleased]` heading counts as the
-/// Unreleased section to replace.
+/// Unreleased section to replace. A `soothfast:notes` block inside the old
+/// Unreleased section rides along into the new one (see `extract_notes`).
 fn merge_changelog(existing: &str, draft: &str) -> String {
     let mut preamble = String::new();
     let mut released = String::new();
+    let mut unreleased = String::new();
     let mut seen_section = false;
     let mut keep = false;
     for line in existing.lines() {
@@ -255,6 +270,9 @@ fn merge_changelog(existing: &str, draft: &str) -> String {
         } else if keep {
             released.push_str(line);
             released.push('\n');
+        } else {
+            unreleased.push_str(line);
+            unreleased.push('\n');
         }
     }
     let mut doc = String::from("# Changelog\n");
@@ -265,7 +283,24 @@ fn merge_changelog(existing: &str, draft: &str) -> String {
         doc.push('\n');
     }
     doc.push('\n');
-    doc.push_str(draft);
+    match extract_notes(&unreleased) {
+        Some(notes) if !notes.is_empty() => {
+            // Splice right after the heading line, ahead of the bot's own
+            // API-surface/Performance sections.
+            let (heading, rest) = draft.split_once('\n').unwrap_or((draft, ""));
+            doc.push_str(heading);
+            doc.push('\n');
+            doc.push('\n');
+            doc.push_str(NOTES_START);
+            doc.push('\n');
+            doc.push_str(notes);
+            doc.push('\n');
+            doc.push_str(NOTES_END);
+            doc.push('\n');
+            doc.push_str(rest.trim_start_matches('\n'));
+        }
+        _ => doc.push_str(draft),
+    }
     doc.push('\n');
     if !released.is_empty() {
         doc.push('\n');
@@ -320,5 +355,41 @@ mod tests {
             merged,
             merge_changelog(&merged, "## Unreleased (draft vs v2.8.0)\n\nnew")
         );
+    }
+
+    #[test]
+    fn hand_written_notes_survive_regeneration() {
+        let existing = "# Changelog\n\n## Unreleased (draft vs abc)\n\n\
+            <!-- soothfast:notes -->\nDomain handles gain chart/history.\n\
+            <!-- /soothfast:notes -->\n\n### API surface\n\nold\n";
+        let draft = "## Unreleased (draft vs def)\n\n### API surface\n\nnew";
+        let merged = merge_changelog(existing, draft);
+        assert!(merged.contains("Domain handles gain chart/history."));
+        assert!(merged.contains("### API surface\n\nnew"));
+        // Notes land ahead of the bot's own sections, right after the heading.
+        let notes_pos = merged.find("Domain handles").unwrap();
+        let surface_pos = merged.find("### API surface").unwrap();
+        assert!(notes_pos < surface_pos);
+        // Idempotent: re-merging with the same draft carries the notes forward again.
+        assert_eq!(merged, merge_changelog(&merged, draft));
+    }
+
+    #[test]
+    fn no_notes_marker_behaves_exactly_as_before() {
+        let existing = "# Changelog\n\n## Unreleased (draft vs abc)\n\nold\n";
+        let draft = "## Unreleased (draft vs def)\n\nnew";
+        assert_eq!(
+            merge_changelog(existing, draft),
+            format!("# Changelog\n\n{draft}\n")
+        );
+    }
+
+    #[test]
+    fn unclosed_notes_marker_is_treated_as_absent() {
+        let existing = "# Changelog\n\n## Unreleased (draft vs abc)\n\n\
+            <!-- soothfast:notes -->\nnever closed\n";
+        let merged = merge_changelog(existing, "## Unreleased (draft vs def)\n\nnew");
+        assert!(!merged.contains("never closed"));
+        assert!(merged.contains("new"));
     }
 }

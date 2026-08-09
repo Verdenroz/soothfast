@@ -77,6 +77,12 @@ API diff against `v1.0` plus the current perf table. Every `## [released]`
 section already there survives. Re-running it is idempotent: it replaces the
 `Unreleased` section rather than appending a duplicate.
 
+Hand-written prose survives the same regeneration by living inside a
+`<!-- soothfast:notes -->` / `<!-- /soothfast:notes -->` pair anywhere in the
+Unreleased section. Add it once; every later run carries it forward, spliced
+back in right after the heading, until the section is renamed to a real
+version and frozen like the rest of the released history.
+
 Pass several `-p PKG` flags to cover more than one crate, and leave
 `--against-ref` off entirely for a first release, where there is no earlier
 version to diff against and the draft lists the surface it ships instead.
