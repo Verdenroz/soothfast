@@ -2,13 +2,16 @@ name: Changelog
 
 on:
   pull_request:
-    paths-ignore: [CHANGELOG.md]
 
 permissions: {}
 
 jobs:
   changelog:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # pull_request paths-ignore diffs the whole PR vs base, not the latest
+    # push, so skip bot actors instead to stop self-retriggering.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !endsWith(github.actor, '[bot]')
     runs-on: ubuntu-latest
     permissions: {}
     steps:
