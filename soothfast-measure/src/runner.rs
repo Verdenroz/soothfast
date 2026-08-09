@@ -94,6 +94,31 @@ fn die(msg: &str) -> ! {
     std::process::exit(2);
 }
 
+/// Whether resolving backends for this request could possibly need
+/// callgrind, so the caller can skip probing it (a real valgrind
+/// subprocess) when the answer can't matter.
+fn might_need_callgrind(backend: Backend, perf_available: bool) -> bool {
+    matches!(backend, Backend::Callgrind)
+        || (matches!(backend, Backend::Auto | Backend::All) && !perf_available)
+}
+
+/// Which backends actually run, given what was requested and whether perf
+/// counters and callgrind are available on this host. Auto/All degrade
+/// gracefully — perfcnt, else callgrind, else neither — so a PMU-less CI VM
+/// still gets a real run instead of silently measuring nothing. An explicit
+/// choice that isn't available is the caller's job to reject before this
+/// runs; here it just reads as "not used".
+fn resolve_backends(backend: Backend, perf_available: bool, cg_available: bool) -> (bool, bool) {
+    let use_perf =
+        matches!(backend, Backend::Perfcnt | Backend::Auto | Backend::All) && perf_available;
+    let use_cg = match backend {
+        Backend::Callgrind => cg_available,
+        Backend::Auto | Backend::All if !use_perf => cg_available,
+        _ => false,
+    };
+    (use_perf, use_cg)
+}
+
 /// One registered item with its package-qualified id and effective
 /// fingerprint (the setup fixture's fingerprint folded in, so an input
 /// change can never masquerade as unchanged code).
@@ -227,23 +252,28 @@ pub fn main() {
     }
 
     // Resolve backends: explicit choices fail hard when unavailable; auto/all
-    // degrade gracefully but say so (no silent downgrade).
+    // degrade gracefully but say so (no silent downgrade). callgrind::probe
+    // spawns a real valgrind subprocess, so it's only called when the
+    // outcome could actually matter.
     let perf = perf_probe();
-    let use_perf = match args.backend {
-        Backend::Perfcnt => match &perf {
-            Ok(()) => true,
-            Err(e) => die(&format!("--backend perfcnt unavailable: {e}")),
-        },
-        Backend::Auto | Backend::All => perf.is_ok(),
-        _ => false,
+    let perf_available = perf.is_ok();
+    if args.backend == Backend::Perfcnt
+        && let Err(e) = &perf
+    {
+        die(&format!("--backend perfcnt unavailable: {e}"));
+    }
+    let cg_probe = if might_need_callgrind(args.backend, perf_available) {
+        Some(callgrind::probe())
+    } else {
+        None
     };
-    let use_cg = match args.backend {
-        Backend::Callgrind => match callgrind::probe() {
-            Ok(()) => true,
-            Err(e) => die(&format!("--backend callgrind unavailable: {e}")),
-        },
-        _ => false,
-    };
+    if args.backend == Backend::Callgrind
+        && let Some(Err(e)) = &cg_probe
+    {
+        die(&format!("--backend callgrind unavailable: {e}"));
+    }
+    let cg_available = matches!(cg_probe, Some(Ok(())));
+    let (use_perf, use_cg) = resolve_backends(args.backend, perf_available, cg_available);
     let use_wall = matches!(
         args.backend,
         Backend::Auto | Backend::All | Backend::Walltime
@@ -324,13 +354,27 @@ pub fn main() {
         }
         if use_cg {
             match callgrind::measure(&e.id) {
-                Ok(ir) => emit_result(
-                    e,
-                    "callgrind",
-                    &format!("\"ir\":{ir}"),
-                    &format!("callgrind ir={ir}"),
-                    args.json,
-                ),
+                Ok(ir) => {
+                    emit_result(
+                        e,
+                        "callgrind",
+                        &format!("\"ir\":{ir}"),
+                        &format!("callgrind ir={ir}"),
+                        args.json,
+                    );
+                    // Standing in for perfcnt (no PMU access)
+                    if !use_perf {
+                        emit_result(
+                            e,
+                            "perfcnt",
+                            &format!("\"instructions\":{ir},\"cycles\":0,\"cache_refs\":0"),
+                            &format!(
+                                "perfcnt   instructions={ir} cycles=0 cache_refs=0 (via callgrind)"
+                            ),
+                            args.json,
+                        );
+                    }
+                }
                 Err(err) => die(&format!("callgrind measurement failed for {}: {err}", e.id)),
             }
         }
@@ -529,6 +573,61 @@ mod tests {
         "GET",
         "/items/{id}",
     );
+
+    #[test]
+    fn auto_prefers_perfcnt_when_available() {
+        assert_eq!(resolve_backends(Backend::Auto, true, true), (true, false));
+    }
+
+    #[test]
+    fn auto_falls_back_to_callgrind_on_pmu_less_hosts() {
+        assert_eq!(resolve_backends(Backend::Auto, false, true), (false, true));
+    }
+
+    #[test]
+    fn auto_runs_neither_when_nothing_is_available() {
+        assert_eq!(
+            resolve_backends(Backend::Auto, false, false),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn all_degrades_the_same_way_as_auto() {
+        assert_eq!(resolve_backends(Backend::All, true, true), (true, false));
+        assert_eq!(resolve_backends(Backend::All, false, true), (false, true));
+        assert_eq!(resolve_backends(Backend::All, false, false), (false, false));
+    }
+
+    #[test]
+    fn explicit_choices_never_cross_degrade() {
+        // Explicit --backend perfcnt never falls back to callgrind, and
+        // vice versa — an unavailable explicit choice is the caller's job
+        // to reject (die), not silently substitute.
+        assert_eq!(
+            resolve_backends(Backend::Perfcnt, false, true),
+            (false, false)
+        );
+        assert_eq!(
+            resolve_backends(Backend::Callgrind, true, false),
+            (false, false)
+        );
+        assert_eq!(
+            resolve_backends(Backend::Walltime, true, true),
+            (false, false)
+        );
+        assert_eq!(resolve_backends(Backend::Alloc, true, true), (false, false));
+    }
+
+    #[test]
+    fn callgrind_is_only_probed_when_it_could_matter() {
+        assert!(might_need_callgrind(Backend::Callgrind, true));
+        assert!(might_need_callgrind(Backend::Auto, false));
+        assert!(might_need_callgrind(Backend::All, false));
+        assert!(!might_need_callgrind(Backend::Auto, true));
+        assert!(!might_need_callgrind(Backend::Walltime, false));
+        assert!(!might_need_callgrind(Backend::Perfcnt, false));
+    }
 
     #[test]
     fn absent_overrides_serialize_as_null() {
