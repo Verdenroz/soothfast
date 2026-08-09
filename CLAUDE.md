@@ -304,7 +304,13 @@ claim being enforced, not a bug in the check.
   stops that commit from retriggering the job). Runs pre-merge rather than
   after, on purpose: the Performance section embeds freshly measured
   numbers that drift slightly on every run, so triggering on push-to-master
-  would open a near-noise-only bot PR after almost every merge.
+  would open a near-noise-only bot PR after almost every merge. Commits
+  authenticate with a short-lived token from a repo-installed GitHub App
+  (`actions/create-github-app-token`, `CHANGELOG_APP_CLIENT_ID` /
+  `CHANGELOG_APP_PRIVATE_KEY`) rather than the default `GITHUB_TOKEN` —
+  GitHub gates every subsequent workflow run on a PR behind manual approval
+  once a `github-actions[bot]`-authored commit lands on it, and an
+  explicitly installed App doesn't trip that gate.
 - `spec.yml` — on push to `master`, regenerates `mode = "generate"` spec
   files and lands them via a bot-opened, self-merged PR (the branch ruleset
   blocks direct pushes to `master`), so nobody has to remember to; on PRs,
