@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDKs · soothfast</title>
+<link rel="icon" href="../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../_soothfast/tokens.css">
+<link rel="stylesheet" href="../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../">soothfast</a></li>
+    
+      <li><a href="../measuring/">Measuring</a></li>
+    
+      <li><a href="../gating/">Gating</a></li>
+    
+      <li><a href="../living-docs/">Living docs</a></li>
+    
+      <li><a href="../spec/">Specs</a></li>
+    
+      <li><a class="active" aria-current="page" href="../sdk/">SDKs</a></li>
+    
+      <li><a href="../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="sdks">SDKs<a class="anchor" href="#sdks" aria-label="Link to this section">#</a></h1>
+<p>A spec tells someone what to call. An SDK is the thing they actually import.
+<code>cargo soothfast sdk gen</code> emits one for Python and TypeScript from the same
+annotated handlers the spec comes from, so the client cannot describe a
+different API than the server serves.</p>
+<p>There are no external generators and no template engine involved. The
+emitters render from the same IR the spec emitters use, which is what makes
+the output byte-deterministic. A generated SDK is checked into the repo it
+belongs to and diffs like ordinary source.</p>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>what it is</th><th>who writes it</th></tr></thead>
+<tbody>
+<tr><td>runtime</td><td>retries, errors, pagination, decoding</td><td>hand-written once, per language</td></tr>
+<tr><td>models and client</td><td>one type per schema, one method per route</td><td>emitted per package</td></tr>
+<tr><td>packaging</td><td><code>pyproject.toml</code> or <code>package.json</code>, README</td><td>emitted per package</td></tr>
+</tbody>
+</table></div>
+<p>That split is worth the trouble. Everything behavioral lives in a runtime
+that ships verbatim, so changing the retry policy is one reviewed edit in
+one file instead of a re-render of every consumer's client. The emitted half
+stays declarative.</p>
+<h2 id="lowering">Lowering<a class="anchor" href="#lowering" aria-label="Link to this section">#</a></h2>
+<div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_sdk::lower::lower"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">lower</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
+<p>Every typing question is answered once, before either emitter sees the
+model. <code>lower</code> turns the JSON Schema IR into a language-neutral <code>Sdk</code>:
+schemas become <code>Model</code>s, operations become <code>Method</code>s, and each type node
+becomes a <code>Ty</code>. A <code>oneOf</code> becomes a union the runtime decodes structurally.
+A gap the schema engine could not resolve becomes <code>Ty::Any</code> plus a reported
+note, rather than a guess that would typecheck and then fail on the wire.</p>
+<p>The one thing lowering takes an <code>SdkKind</code> for is how wire names are spelled:</p>
+<ul>
+<li>Python snake_cases them. Two wire names that collide after snake_casing, like <code>logoUrl</code> and <code>logo_url</code>, are disambiguated rather than silently merged, and the rename is reported as a note.</li>
+<li>TypeScript stays wire-faithful. Keys that are not legal bare identifiers are quoted instead of renamed, so nothing can collide in the first place.</li>
+</ul>
+<p>Either way <code>Param.wire</code> keeps the name that goes on the wire, so a renamed
+argument never changes the request.</p>
+<p>Names the emitted code gives its own arguments are reserved the same way:
+<code>self</code> and <code>body</code> in Python, <code>options</code> in TypeScript. A path parameter
+called <code>self</code> moves aside instead of producing a signature that declares the
+same name twice.</p>
+<h2 id="emitting">Emitting<a class="anchor" href="#emitting" aria-label="Link to this section">#</a></h2>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[[sdk]]</span>
+<span class="tok-ty">package </span>=<span class="tok-str"> &quot;acme-items&quot;</span>
+<span class="tok-ty">language </span>=<span class="tok-str"> &quot;python&quot;</span></code></pre></figure>
+<p><code>cargo soothfast sdk gen -p PKG</code> writes the tree. Python gets frozen
+dataclasses, a sync <code>Client</code> and an async <code>AsyncClient</code>. TypeScript gets
+interfaces, a per-method options interface, and one async <code>Client</code>.</p>
+<p>TypeScript carries no runtime dependencies. The transport is global <code>fetch</code>,
+and because the emitted interfaces use the wire property names, a parsed
+response is already the typed value. There is no decode step that could
+drift from the schema. Python does decode, driven by the dataclass type
+hints, which is what lets it snake_case without losing the wire mapping.</p>
+<h2 id="embedded-servers">Embedded servers<a class="anchor" href="#embedded-servers" aria-label="Link to this section">#</a></h2>
+<p><code>embed</code> turns an SDK from a client for a hosted API into a self-contained
+package. A client built with no base URL spawns the bundled server and talks
+to that, so consumers deploy nothing.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[[sdk]]</span>
+<span class="tok-ty">package </span>=<span class="tok-str"> &quot;acme-items&quot;</span>
+<span class="tok-ty">language </span>=<span class="tok-str"> &quot;typescript&quot;</span>
+<span class="tok-ty">embed </span>=<span class="tok-str"> &quot;acme-items-server&quot;</span></code></pre></figure>
+<p>The handshake is one line of stdout:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>soothfast-ready {&quot;base_url&quot;:&quot;http://127.0.0.1:53017&quot;}
+</code></pre></figure>
+<p>That single line is the whole contract, and it buys two things. The server
+binds port 0 and reports where it landed, instead of both sides guessing a
+port and racing. And because launchers scan for the prefix and ignore
+everything else, the server stays free to log. It is plain text on a pipe,
+so an embedded server need not use soothfast, or even be written in Rust.</p>
+<p>Both launchers keep one shared server per binary and launch environment,
+reap it on process exit, and honor two escape hatches:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>variable</th><th>effect</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;PKG&gt;_BASE_URL</code></td><td>use a running instance, spawn nothing</td></tr>
+<tr><td><code>&lt;PKG&gt;_SERVER_BIN</code></td><td>use a different binary</td></tr>
+</tbody>
+</table></div>
+<p>Python resolves eagerly in <code>__init__</code>. TypeScript resolves on first request,
+which is why its transport accepts a base-URL thunk rather than a string.
+Both drain stdout and stderr for the life of the process, since a server
+free to log is a server that fills a 64 KiB pipe buffer and blocks on write.
+They keep only a tail of stderr, which is all a failure message needs.</p>
+<h3 id="configuring-one">Configuring one<a class="anchor" href="#configuring-one" aria-label="Link to this section">#</a></h3>
+<p>A server takes environment variables. An SDK takes constructor options.
+<code>embed_env_template</code> bridges the two.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[[sdk]]</span>
+<span class="tok-ty">embed </span>=<span class="tok-str"> &quot;acme-items-server&quot;</span>
+<span class="tok-ty">embed_env_template </span>=<span class="tok-str"> &quot;.env.template&quot;</span>
+<span class="tok-ty">embed_env </span>= { HOST = &quot;127.0.0.1&quot; }</code></pre></figure>
+<div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_sdk::envtemplate::parse"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">parse</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
+<p>The server's own dotenv template is parsed into a typed <code>ServerEnv</code>, a
+<code>total=False</code> TypedDict in Python and an interface in TypeScript, keyed by
+the server's real variable names. The grammar is the subset every such file
+already uses: <code>KEY=value</code> lines, <code>#</code> comments above an entry as its
+documentation, and <code># KEY=value</code> for a knob deliberately left unset. Names
+are unique, so a template that shows an example above the real entry names
+one knob rather than two. Anything unparseable is skipped rather than
+rejected, since the file belongs to the server and an SDK is not the place
+where a stray line becomes fatal.</p>
+<p>Because the server's file is the only list, the SDK's configuration surface
+cannot drift from what the server actually reads.</p>
+<div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_sdk::envtemplate::markdown_table"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">markdown_table</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
+<p>The same knobs are rendered into the package README as a table, identical in
+both languages. The variables belong to the server, not to whoever is
+calling it.</p>
+<p><code>embed_env</code> holds the package's own launch settings, applied to every spawn.
+Precedence runs from weakest to strongest:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>ambient environment  &lt;  embed_env  &lt;  the caller&#39;s server_env
+</code></pre></figure>
+<p>Config beats ambient on purpose. A <code>PORT</code> the consumer exported for their
+own app should not decide where a bundled server binds. An explicit argument
+still beats both.</p>
+<h2 id="shipping-a-binary">Shipping a binary<a class="anchor" href="#shipping-a-binary" aria-label="Link to this section">#</a></h2>
+<p><code>targets</code> narrows the platform matrix, and the default is the five
+mainstream ones. <code>cargo soothfast sdk build -p PKG</code> compiles the server per
+target and stages it where each ecosystem expects. A target whose toolchain
+is missing is reported and skipped rather than treated as fatal.</p>
+<p>The two ecosystems disagree about how a native binary travels, so the
+emitters follow each convention rather than inventing a third:</p>
+<ul>
+<li>npm gets one <code>optionalDependencies</code> sub-package per target, the esbuild pattern. npm installs only the matching one, the launcher resolves it, and it falls through to <code>PATH</code> when absent. <code>sdk publish</code> sends the platform packages before the main one, since its optional deps name them by exact version.</li>
+<li>Python gets one platform wheel per target, built by a generated hatchling hook that force-includes the binary and stamps the tag. Built without those variables it produces a pure wheel, which is what an sdist install gets.</li>
+</ul>
+<p>A <code>manylinux_*</code> tag is a claim about the build environment rather than the
+table. It holds only if the binary was linked against a glibc that old.
+<code>sdk build</code> checks <code>AUDITWHEEL_PLAT</code> and warns when it cannot tell that it
+was, and the release workflow builds the glibc targets inside the manylinux
+image so the claim is earned.</p>
+<p><code>sdk publish</code> refuses an embedding SDK with nothing staged, or only part of
+the matrix, unless you pass <code>--allow-unbundled</code>. A package that advertises a
+bundled server and quietly falls back to <code>PATH</code> is worse than one that
+admits it has no binary.</p>
+<h2 id="gating">Gating<a class="anchor" href="#gating" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast sdk gate -p PKG</code> fails when the committed SDK is stale, the
+same way <code>spec gen --check</code> does for specs. Emission is byte-deterministic,
+so "stale" is an exact comparison rather than a heuristic.</p>
+<p>The generated SDKs are exercised end to end as well. Each language builds
+its golden package and runs it against a live HTTP server, and against the
+real subprocess launcher via a hand-rolled fixture that calls <code>announce</code> the
+way a bundled server would.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#lowering">Lowering</a></li>
+  
+    <li><a class="toc-l2" href="#emitting">Emitting</a></li>
+  
+    <li><a class="toc-l2" href="#embedded-servers">Embedded servers</a></li>
+  
+    <li><a class="toc-l3" href="#configuring-one">Configuring one</a></li>
+  
+    <li><a class="toc-l2" href="#shipping-a-binary">Shipping a binary</a></li>
+  
+    <li><a class="toc-l2" href="#gating">Gating</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../_soothfast/site.js" defer></script>
+</body>
+</html>

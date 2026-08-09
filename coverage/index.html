@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coverage · soothfast</title>
+<link rel="icon" href="../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../_soothfast/tokens.css">
+<link rel="stylesheet" href="../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../">soothfast</a></li>
+    
+      <li><a href="../measuring/">Measuring</a></li>
+    
+      <li><a href="../gating/">Gating</a></li>
+    
+      <li><a href="../living-docs/">Living docs</a></li>
+    
+      <li><a href="../spec/">Specs</a></li>
+    
+      <li><a href="../sdk/">SDKs</a></li>
+    
+      <li><a href="../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../perf/summary/">Performance summary</a></li>
+    
+      <li><a class="active" aria-current="page" href="../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="coverage">Coverage<a class="anchor" href="#coverage" aria-label="Link to this section">#</a></h1>
+<blockquote>
+<p>Generated by <code>cargo soothfast coverage docs</code></p>
+</blockquote>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>documented   soothfast (module)
+documented   soothfast::embed (module)
+documented   soothfast::embed::READY_PREFIX (constant)
+documented   soothfast::embed::announce (function)
+documented   soothfast::keep (function)
+documented   soothfast::mock (module)
+documented   soothfast::mock::activate (function)
+coverage: 7/7 public item(s) documented (100%)
+documented   soothfast_macros (module)
+documented   soothfast_macros::bench (proc_macro)
+documented   soothfast_macros::fixture (proc_macro)
+documented   soothfast_macros::measured (proc_macro)
+documented   soothfast_macros::mock_seam (proc_macro)
+documented   soothfast_macros::route (proc_macro)
+coverage: 6/6 public item(s) documented (100%)
+documented   soothfast_registry (module)
+documented   soothfast_registry::Assertions (struct)
+documented   soothfast_registry::Bencher (struct)
+documented   soothfast_registry::Bencher::iter (function)
+documented   soothfast_registry::Bencher::iter_async (function)
+documented   soothfast_registry::FixtureItem (struct)
+documented   soothfast_registry::MOCKS (static)
+documented   soothfast_registry::MeasuredItem (struct)
+documented   soothfast_registry::MeasuredItem::full_id (function)
+documented   soothfast_registry::MockSeam (trait)
+documented   soothfast_registry::MockSeamItem (struct)
+documented   soothfast_registry::RouteItem (struct)
+documented   soothfast_registry::RouteItem::new (function)
+documented   soothfast_registry::RouteItem::with_shape (function)
+documented   soothfast_registry::async_counters (function)
+documented   soothfast_registry::block_on_counting (function)
+documented   soothfast_registry::fixture_items (function)
+documented   soothfast_registry::fnv1a (function)
+documented   soothfast_registry::measured_items (function)
+documented   soothfast_registry::mock_seam_items (function)
+documented   soothfast_registry::resolve_mock_seam (function)
+documented   soothfast_registry::route_items (function)
+coverage: 22/22 public item(s) documented (100%)
+documented   soothfast_measure (module)
+documented   soothfast_measure::CountingAllocator (struct)
+documented   soothfast_measure::alloc (module)
+documented   soothfast_measure::alloc::AllocMeasurement (struct)
+documented   soothfast_measure::alloc::measure (function)
+documented   soothfast_measure::asyncexec (module)
+documented   soothfast_measure::asyncexec::AsyncMeasurement (struct)
+documented   soothfast_measure::asyncexec::measure (function)
+documented   soothfast_measure::callgrind (module)
+documented   soothfast_measure::callgrind::annotate (function)
+documented   soothfast_measure::callgrind::measure (function)
+documented   soothfast_measure::callgrind::probe (function)
+documented   soothfast_measure::main (function)
+documented   soothfast_measure::perfcnt (module)
+documented   soothfast_measure::perfcnt::PerfMeasurement (struct)
+documented   soothfast_measure::perfcnt::measure (function)
+documented   soothfast_measure::perfcnt::measure_instructions (function)
+documented   soothfast_measure::perfcnt::probe (function)
+documented   soothfast_measure::runner (module)
+documented   soothfast_measure::stats (module)
+documented   soothfast_measure::stats::Summary (struct)
+documented   soothfast_measure::stats::summarize (function)
+documented   soothfast_measure::sweep (module)
+documented   soothfast_measure::sweep::DRIFT_LIMIT (constant)
+documented   soothfast_measure::sweep::SweepOutcome (struct)
+documented   soothfast_measure::sweep::class_value (function)
+documented   soothfast_measure::sweep::evaluate (function)
+documented   soothfast_measure::walltime (module)
+documented   soothfast_measure::walltime::DEFAULT_SAMPLES (constant)
+documented   soothfast_measure::walltime::WallMeasurement (struct)
+documented   soothfast_measure::walltime::calibrate (function)
+documented   soothfast_measure::walltime::measure (function)
+coverage: 32/32 public item(s) documented (100%)
+documented   soothfast_docs (module)
+documented   soothfast_docs::claims (module)
+documented   soothfast_docs::claims::Claim (struct)
+documented   soothfast_docs::claims::Op (enum)
+documented   soothfast_docs::claims::evaluate (function)
+documented   soothfast_docs::claims::parse (function)
+documented   soothfast_docs::diff (module)
+documented   soothfast_docs::diff::SurfaceDiff (struct)
+documented   soothfast_docs::diff::compare (function)
+documented   soothfast_docs::diff::render (function)
+documented   soothfast_docs::gentests (module)
+documented   soothfast_docs::gentests::GENERATED_HEADER (constant)
+documented   soothfast_docs::gentests::capture_examples (function)
+documented   soothfast_docs::gentests::sanitized_stem (function)
+documented   soothfast_docs::gentests::test_file (function)
+documented   soothfast_docs::lockfile (module)
+documented   soothfast_docs::lockfile::Binds (type_alias)
+documented   soothfast_docs::lockfile::LOCKFILE (constant)
+documented   soothfast_docs::lockfile::merge (function)
+documented   soothfast_docs::lockfile::read (function)
+documented   soothfast_docs::lockfile::write (function)
+documented   soothfast_docs::markdown (module)
+documented   soothfast_docs::markdown::Bind (struct)
+documented   soothfast_docs::markdown::ClaimMarker (struct)
+documented   soothfast_docs::markdown::CodeBlock (struct)
+documented   soothfast_docs::markdown::Doc (struct)
+documented   soothfast_docs::markdown::scan (function)
+documented   soothfast_docs::markdown::splice_output (function)
+documented   soothfast_docs::reference (module)
+documented   soothfast_docs::reference::render (function)
+documented   soothfast_docs::reference::resolve_reference_links (function)
+documented   soothfast_docs::surface (module)
+documented   soothfast_docs::surface::ItemGroup (struct)
+documented   soothfast_docs::surface::ItemInfo (struct)
+documented   soothfast_docs::surface::Surface (struct)
+documented   soothfast_docs::surface::from_rustdoc (function)
+coverage: 36/36 public item(s) documented (100%)
+documented   soothfast_spec (module)
+documented   soothfast_spec::DeclaredOp (struct)
+documented   soothfast_spec::RouteDecl (struct)
+documented   soothfast_spec::SpecKind (enum)
+documented   soothfast_spec::asyncapi (module)
+documented   soothfast_spec::asyncapi::diff (module)
+documented   soothfast_spec::asyncapi::diff::diff (function)
+documented   soothfast_spec::asyncapi::document (function)
+documented   soothfast_spec::compat (module)
+documented   soothfast_spec::compat::Change (struct)
+documented   soothfast_spec::compat::Direction (enum)
+documented   soothfast_spec::compat::SchemaDiff (struct)
+documented   soothfast_spec::compat::Severity (enum)
+documented   soothfast_spec::compat::compare_keys (function)
+documented   soothfast_spec::compat::deref (function)
+documented   soothfast_spec::compat::is_compatible (function)
+documented   soothfast_spec::compat::render (function)
+documented   soothfast_spec::compat::required_set (function)
+documented   soothfast_spec::compat::sort (function)
+documented   soothfast_spec::dialect (module)
+documented   soothfast_spec::dialect::Document (struct)
+documented   soothfast_spec::dialect::Info (struct)
+documented   soothfast_spec::dialect::Operation (struct)
+documented   soothfast_spec::graphql (module)
+documented   soothfast_spec::graphql::diff (module)
+documented   soothfast_spec::graphql::diff::diff (function)
+documented   soothfast_spec::graphql::document (function)
+documented   soothfast_spec::graphql::to_sdl (function)
+documented   soothfast_spec::mcp (module)
+documented   soothfast_spec::mcp::diff (function)
+documented   soothfast_spec::mcp::document (function)
+documented   soothfast_spec::openapi (module)
+documented   soothfast_spec::openapi::diff (module)
+documented   soothfast_spec::openapi::diff::diff (function)
+documented   soothfast_spec::openapi::document (function)
+documented   soothfast_spec::proto (module)
+documented   soothfast_spec::proto::ProtoField (struct)
+documented   soothfast_spec::proto::ProtoReconciliation (struct)
+documented   soothfast_spec::proto::parse_proto_message (function)
+documented   soothfast_spec::proto::parse_struct_prost_fields (function)
+documented   soothfast_spec::proto::reconcile_proto (function)
+documented   soothfast_spec::providers (module)
+documented   soothfast_spec::providers::parse (function)
+documented   soothfast_spec::reconcile (module)
+documented   soothfast_spec::reconcile::Reconciliation (struct)
+documented   soothfast_spec::reconcile::reconcile (function)
+documented   soothfast_spec::schema (module)
+documented   soothfast_spec::schema::Docs (struct)
+documented   soothfast_spec::schema::Extraction (struct)
+documented   soothfast_spec::schema::Extractors (struct)
+documented   soothfast_spec::schema::Gap (enum)
+documented   soothfast_spec::schema::Overrides (struct)
+documented   soothfast_spec::schema::Resolver (struct)
+documented   soothfast_spec::schema::RouteShape (struct)
+documented   soothfast_spec::schema::TypeMapping (enum)
+documented   soothfast_spec::schema::TypeTable (struct)
+documented   soothfast_spec::schema::docs (module)
+documented   soothfast_spec::schema::extract_named (function)
+documented   soothfast_spec::schema::foreign (module)
+documented   soothfast_spec::schema::graphql_attrs (module)
+documented   soothfast_spec::schema::graphql_attrs::ContainerAttrs (struct)
+documented   soothfast_spec::schema::graphql_attrs::FieldAttrs (struct)
+documented   soothfast_spec::schema::graphql_attrs::Rename (enum)
+documented   soothfast_spec::schema::graphql_attrs::container (function)
+documented   soothfast_spec::schema::graphql_attrs::field (function)
+documented   soothfast_spec::schema::graphql_attrs::variant (function)
+documented   soothfast_spec::schema::graphql_attrs::wire_name_field (function)
+documented   soothfast_spec::schema::graphql_attrs::wire_name_variant (function)
+documented   soothfast_spec::schema::route_sig (module)
+documented   soothfast_spec::schema::route_sig::Parameter (struct)
+documented   soothfast_spec::schema::route_sig::RequestBody (struct)
+documented   soothfast_spec::schema::route_sig::Response (struct)
+documented   soothfast_spec::schema::route_sig::Role (enum)
+documented   soothfast_spec::schema::route_sig::infer (function)
+documented   soothfast_spec::schema::serde_attrs (module)
+documented   soothfast_spec::schema::serde_attrs::ContainerAttrs (struct)
+documented   soothfast_spec::schema::serde_attrs::FieldAttrs (struct)
+documented   soothfast_spec::schema::serde_attrs::Rename (enum)
+documented   soothfast_spec::schema::serde_attrs::container (function)
+documented   soothfast_spec::schema::serde_attrs::field (function)
+documented   soothfast_spec::schema::serde_attrs::serde_args (function)
+documented   soothfast_spec::schema::serde_attrs::wire_name_field (function)
+documented   soothfast_spec::schema::serde_attrs::wire_name_variant (function)
+documented   soothfast_spec::schema::types (module)
+documented   soothfast_spec::schema::types::Resolver::resolve (function)
+documented   soothfast_spec::schema::types::Subst (type_alias)
+documented   soothfast_spec::serialize (module)
+documented   soothfast_spec::serialize::to_json (function)
+documented   soothfast_spec::serialize::to_yaml (function)
+documented   soothfast_spec::sniff_kind (function)
+coverage: 90/90 public item(s) documented (100%)
+documented   soothfast_sdk (module)
+documented   soothfast_sdk::SdkFileSet (struct)
+documented   soothfast_sdk::SdkKind (enum)
+documented   soothfast_sdk::SdkOptions (struct)
+documented   soothfast_sdk::envtemplate (module)
+documented   soothfast_sdk::envtemplate::EnvVar (struct)
+documented   soothfast_sdk::envtemplate::markdown_table (function)
+documented   soothfast_sdk::envtemplate::parse (function)
+documented   soothfast_sdk::lower (module)
+documented   soothfast_sdk::lower::lower (function)
+documented   soothfast_sdk::model (module)
+documented   soothfast_sdk::model::Field (struct)
+documented   soothfast_sdk::model::Method (struct)
+documented   soothfast_sdk::model::Model (struct)
+documented   soothfast_sdk::model::Param (struct)
+documented   soothfast_sdk::model::ParamLoc (enum)
+documented   soothfast_sdk::model::Sdk (struct)
+documented   soothfast_sdk::model::Ty (enum)
+documented   soothfast_sdk::target (module)
+documented   soothfast_sdk::target::Target (struct)
+coverage: 20/20 public item(s) documented (100%)
+documented   soothfast_site (module)
+documented   soothfast_site::BuildInput (struct)
+documented   soothfast_site::BuildReport (struct)
+documented   soothfast_site::SiteConfig (struct)
+documented   soothfast_site::SitePlugin (trait)
+documented   soothfast_site::build (module)
+documented   soothfast_site::build::build (function)
+documented   soothfast_site::color (module)
+documented   soothfast_site::color::Role (struct)
+documented   soothfast_site::color::RoleTones (struct)
+documented   soothfast_site::color::contrast (function)
+documented   soothfast_site::color::generate_theme_css (function)
+documented   soothfast_site::color::parse_hex (function)
+documented   soothfast_site::color::relative_luminance (function)
+documented   soothfast_site::color::role_from_seed (function)
+documented   soothfast_site::color::to_hex (function)
+documented   soothfast_site::config (module)
+documented   soothfast_site::config::NavGroup (struct)
+documented   soothfast_site::config::ThemeConfig (struct)
+documented   soothfast_site::config::parse (function)
+documented   soothfast_site::evidence (module)
+documented   soothfast_site::evidence::Evidence (struct)
+documented   soothfast_site::highlight (module)
+documented   soothfast_site::highlight::highlight (function)
+documented   soothfast_site::md (module)
+documented   soothfast_site::md::CodeHook (type_alias)
+documented   soothfast_site::md::Heading (struct)
+documented   soothfast_site::md::Options (struct)
+documented   soothfast_site::md::Rendered (struct)
+documented   soothfast_site::md::code_html (function)
+documented   soothfast_site::md::render (function)
+documented   soothfast_site::nav (module)
+documented   soothfast_site::nav::Missing (enum)
+documented   soothfast_site::nav::PageMeta (struct)
+documented   soothfast_site::nav::build (function)
+documented   soothfast_site::nav::href (function)
+documented   soothfast_site::nav::route_for (function)
+documented   soothfast_site::nav::with_current (function)
+documented   soothfast_site::plugin (module)
+documented   soothfast_site::plugin::PageRecord (struct)
+documented   soothfast_site::plugin::PageRef (struct)
+documented   soothfast_site::plugin::page_html (function)
+documented   soothfast_site::plugin::page_markdown (function)
+documented   soothfast_site::search (module)
+documented   soothfast_site::search::Search (struct)
+documented   soothfast_site::serve (module)
+documented   soothfast_site::serve::Server (struct)
+documented   soothfast_site::template (module)
+documented   soothfast_site::template::Includes (trait)
+documented   soothfast_site::template::escape (function)
+documented   soothfast_site::template::render (function)
+documented   soothfast_site::theme (module)
+documented   soothfast_site::theme::Theme (struct)
+documented   soothfast_site::toml (module)
+documented   soothfast_site::toml::TomlValue (enum)
+documented   soothfast_site::toml::logical_lines (function)
+documented   soothfast_site::toml::parse_string (function)
+documented   soothfast_site::toml::parse_value (function)
+coverage: 58/58 public item(s) documented (100%)
+documented   soothfast_report (module)
+documented   soothfast_report::badges (module)
+documented   soothfast_report::badges::badge (function)
+documented   soothfast_report::badges::coverage_badge (function)
+documented   soothfast_report::badges::gate_badge (function)
+documented   soothfast_report::badges::svg_from (function)
+documented   soothfast_report::changelog (module)
+documented   soothfast_report::changelog::ApiSection (enum)
+documented   soothfast_report::changelog::DraftInputs (struct)
+documented   soothfast_report::changelog::draft (function)
+documented   soothfast_report::llms (module)
+documented   soothfast_report::llms::SurfaceEntry (struct)
+documented   soothfast_report::llms::render (function)
+documented   soothfast_report::perf_table (module)
+documented   soothfast_report::perf_table::Row (struct)
+documented   soothfast_report::perf_table::html (function)
+documented   soothfast_report::perf_table::markdown (function)
+documented   soothfast_report::perf_table::rows (function)
+documented   soothfast_report::trend_chart (module)
+documented   soothfast_report::trend_chart::METRICS (constant)
+documented   soothfast_report::trend_chart::render (function)
+coverage: 21/21 public item(s) documented (100%)
+</code></pre></figure>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+</aside>
+
+</div>
+<script src="../_soothfast/site.js" defer></script>
+</body>
+</html>

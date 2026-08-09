@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>soothfast-spec API reference · soothfast</title>
+<link rel="icon" href="../../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../../_soothfast/tokens.css">
+<link rel="stylesheet" href="../../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../../">soothfast</a></li>
+    
+      <li><a href="../../measuring/">Measuring</a></li>
+    
+      <li><a href="../../gating/">Gating</a></li>
+    
+      <li><a href="../../living-docs/">Living docs</a></li>
+    
+      <li><a href="../../spec/">Specs</a></li>
+    
+      <li><a href="../../sdk/">SDKs</a></li>
+    
+      <li><a href="../../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a class="active" aria-current="page" href="../../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="soothfast-spec-api-reference"><code>soothfast-spec</code> API reference<a class="anchor" href="#soothfast-spec-api-reference" aria-label="Link to this section">#</a></h1>
+<blockquote>
+<p>Generated by <code>cargo soothfast docs reference</code>
+Measurements and verified claims come from the latest baseline; CI gates them.</p>
+</blockquote>
+<h2 id="soothfast-spec"><code>soothfast_spec</code><a class="anchor" href="#soothfast-spec" aria-label="Link to this section">#</a></h2>
+<h3 id="declaredop-struct"><code>DeclaredOp</code> <sup>struct</sup><a class="anchor" href="#declaredop-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">DeclaredOp</span>
+</code></pre></figure>
+<p>One operation a spec declares.</p>
+<h3 id="routedecl-struct"><code>RouteDecl</code> <sup>struct</sup><a class="anchor" href="#routedecl-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">RouteDecl</span>
+</code></pre></figure>
+<p>One <code>#[soothfast::route]</code> annotation from the code.</p>
+<h3 id="speckind-enum"><code>SpecKind</code> <sup>enum</sup><a class="anchor" href="#speckind-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">SpecKind</span>
+</code></pre></figure>
+<p>Spec dialects soothfast reads and writes.</p>
+<h3 id="sniff-kind-function"><code>sniff_kind</code> <sup>function</sup><a class="anchor" href="#sniff-kind-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">sniff_kind</span>(filename: &amp;<span class="tok-ty">str</span>, text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Option</span>&lt;<span class="tok-ty">SpecKind</span>&gt;
+</code></pre></figure>
+<p>Sniff the dialect from filename + content.</p>
+<h2 id="soothfast-spec-asyncapi"><code>soothfast_spec::asyncapi</code><a class="anchor" href="#soothfast-spec-asyncapi" aria-label="Link to this section">#</a></h2>
+<h3 id="document-function"><code>document</code> <sup>function</sup><a class="anchor" href="#document-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">document</span>(info: &amp;<span class="tok-ty">Info</span>, ops: &amp;[<span class="tok-ty">Operation</span>]) -&gt; <span class="tok-ty">Document</span>
+</code></pre></figure>
+<p>Assemble an AsyncAPI 3.0 document.</p>
+<h2 id="soothfast-spec-asyncapi-diff"><code>soothfast_spec::asyncapi::diff</code><a class="anchor" href="#soothfast-spec-asyncapi-diff" aria-label="Link to this section">#</a></h2>
+<h3 id="diff-function"><code>diff</code> <sup>function</sup><a class="anchor" href="#diff-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">diff</span>(old: &amp;<span class="tok-ty">Value</span>, new: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Change</span>&gt;
+</code></pre></figure>
+<p>Compare two generated documents, oldest first.</p>
+<h2 id="soothfast-spec-compat"><code>soothfast_spec::compat</code><a class="anchor" href="#soothfast-spec-compat" aria-label="Link to this section">#</a></h2>
+<h3 id="change-struct"><code>Change</code> <sup>struct</sup><a class="anchor" href="#change-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Change</span>
+</code></pre></figure>
+<p>One difference between two versions of a spec.</p>
+<h3 id="direction-enum"><code>Direction</code> <sup>enum</sup><a class="anchor" href="#direction-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Direction</span>
+</code></pre></figure>
+<p>Which way the data flows, which decides what "required" costs.</p>
+<h3 id="schemadiff-struct"><code>SchemaDiff</code> <sup>struct</sup><a class="anchor" href="#schemadiff-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SchemaDiff</span>&lt;<span class="tok-kw">&#39;a</span>&gt;
+</code></pre></figure>
+<p>Compares schemas belonging to two revisions of a document.</p>
+<p>Both documents are held because a <code>$ref</code> only means anything relative to
+the document it came from: the same pointer can name different shapes on
+either side of the comparison.</p>
+<h3 id="severity-enum"><code>Severity</code> <sup>enum</sup><a class="anchor" href="#severity-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Severity</span>
+</code></pre></figure>
+<p>Whether a change can break an existing consumer.</p>
+<h3 id="compare-keys-function"><code>compare_keys</code> <sup>function</sup><a class="anchor" href="#compare-keys-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> compare_keys&lt;<span class="tok-ty">F</span>&gt;( changes: &amp;<span class="tok-kw">mut</span> <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Change</span>&gt;, old: &amp;<span class="tok-ty">BTreeMap</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">Value</span>&gt;, new: &amp;<span class="tok-ty">BTreeMap</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">Value</span>&gt;, noun: &amp;<span class="tok-ty">str</span>, <span class="tok-kw">mut</span> both: <span class="tok-ty">F</span>, ) <span class="tok-kw">where</span> <span class="tok-ty">F</span>: <span class="tok-ty">FnMut</span>(&amp;<span class="tok-kw">mut</span> <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Change</span>&gt;, &amp;<span class="tok-ty">str</span>, &amp;<span class="tok-ty">Value</span>, &amp;<span class="tok-ty">Value</span>),
+</code></pre></figure>
+<p>Compare two maps of named entries, reporting bare presence changes and
+handing matched pairs to <code>both</code>.</p>
+<p>Added and removed entries mean the same thing in every dialect — a tool, a
+channel, an operation or a field that appears or disappears — so only the
+wording and the severity of a <em>removal</em> differ between callers.</p>
+<h3 id="deref-function"><code>deref</code> <sup>function</sup><a class="anchor" href="#deref-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> deref&lt;<span class="tok-kw">&#39;a</span>&gt;(doc: &amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">Value</span>, schema: &amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">Value</span>) -&gt; &amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">Value</span>
+</code></pre></figure>
+<p>Follow a local <code>$ref</code> to the schema it names, once.</p>
+<p>Resolution is by JSON Pointer rather than by a fixed <code>components/schemas</code>
+prefix: dialects disagree on where shared schemas live (<code>#/$defs/X</code> inside
+one tool's schema, <code>#/components/schemas/X</code> at the document root), and the
+pointer already says which.</p>
+<h3 id="is-compatible-function"><code>is_compatible</code> <sup>function</sup><a class="anchor" href="#is-compatible-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">is_compatible</span>(changes: &amp;[<span class="tok-ty">Change</span>]) -&gt; <span class="tok-ty">bool</span>
+</code></pre></figure>
+<p>True when nothing in the diff would break an existing consumer.</p>
+<h3 id="render-function"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>(v: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>A JSON value as it should read inside a diff message.</p>
+<h3 id="required-set-function"><code>required_set</code> <sup>function</sup><a class="anchor" href="#required-set-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">required_set</span>(schema: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">BTreeSet</span>&lt;&amp;<span class="tok-ty">str</span>&gt;
+</code></pre></figure>
+<p>The <code>required</code> names of an object schema.</p>
+<h3 id="sort-function"><code>sort</code> <sup>function</sup><a class="anchor" href="#sort-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">sort</span>(changes: &amp;<span class="tok-kw">mut</span> [<span class="tok-ty">Change</span>])
+</code></pre></figure>
+<p>Order a diff for reporting: breaking first, then by location, so output is
+stable between runs.</p>
+<h2 id="soothfast-spec-dialect"><code>soothfast_spec::dialect</code><a class="anchor" href="#soothfast-spec-dialect" aria-label="Link to this section">#</a></h2>
+<h3 id="document-struct"><code>Document</code> <sup>struct</sup><a class="anchor" href="#document-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Document</span>
+</code></pre></figure>
+<p>A rendered document plus anything that had to be reconciled to build it.</p>
+<h3 id="info-struct"><code>Info</code> <sup>struct</sup><a class="anchor" href="#info-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Info</span>
+</code></pre></figure>
+<p>Document metadata that no amount of code reading can derive.</p>
+<h3 id="operation-struct"><code>Operation</code> <sup>struct</sup><a class="anchor" href="#operation-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Operation</span>
+</code></pre></figure>
+<p>One operation to emit, pairing spec identity with the inferred shape.</p>
+<h2 id="soothfast-spec-graphql"><code>soothfast_spec::graphql</code><a class="anchor" href="#soothfast-spec-graphql" aria-label="Link to this section">#</a></h2>
+<h3 id="document-function-1"><code>document</code> <sup>function</sup><a class="anchor" href="#document-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">document</span>(info: &amp;<span class="tok-ty">Info</span>, ops: &amp;[<span class="tok-ty">Operation</span>]) -&gt; <span class="tok-ty">Document</span>
+</code></pre></figure>
+<p>Assemble a GraphQL type graph.</p>
+<h3 id="to-sdl-function"><code>to_sdl</code> <sup>function</sup><a class="anchor" href="#to-sdl-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">to_sdl</span>(doc: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<h2 id="soothfast-spec-graphql-diff"><code>soothfast_spec::graphql::diff</code><a class="anchor" href="#soothfast-spec-graphql-diff" aria-label="Link to this section">#</a></h2>
+<h3 id="diff-function-1"><code>diff</code> <sup>function</sup><a class="anchor" href="#diff-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">diff</span>(old: &amp;<span class="tok-ty">Value</span>, new: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Change</span>&gt;
+</code></pre></figure>
+<p>Compare two generated type graphs, oldest first.</p>
+<h2 id="soothfast-spec-mcp"><code>soothfast_spec::mcp</code><a class="anchor" href="#soothfast-spec-mcp" aria-label="Link to this section">#</a></h2>
+<h3 id="diff-function-2"><code>diff</code> <sup>function</sup><a class="anchor" href="#diff-function-2" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">diff</span>(old: &amp;<span class="tok-ty">Value</span>, new: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Change</span>&gt;
+</code></pre></figure>
+<p>Compare two generated tool manifests, oldest first.</p>
+<p>A tool's arguments flow inward and its result flows outward, so the two
+schemas are compared in opposite directions — the same asymmetry OpenAPI
+has between a request body and a response.</p>
+<h3 id="document-function-2"><code>document</code> <sup>function</sup><a class="anchor" href="#document-function-2" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">document</span>(_info: &amp;<span class="tok-ty">Info</span>, ops: &amp;[<span class="tok-ty">Operation</span>]) -&gt; <span class="tok-ty">Document</span>
+</code></pre></figure>
+<p>Assemble an MCP tool manifest.</p>
+<p><code>info</code> is unused: a tool manifest has no document-level metadata to carry,
+and inventing a wrapper object for it would break every client that reads
+the standard <code>{ &quot;tools&quot;: [...] }</code> shape.</p>
+<h2 id="soothfast-spec-openapi"><code>soothfast_spec::openapi</code><a class="anchor" href="#soothfast-spec-openapi" aria-label="Link to this section">#</a></h2>
+<h3 id="document-function-3"><code>document</code> <sup>function</sup><a class="anchor" href="#document-function-3" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">document</span>(info: &amp;<span class="tok-ty">Info</span>, ops: &amp;[<span class="tok-ty">Operation</span>]) -&gt; <span class="tok-ty">Document</span>
+</code></pre></figure>
+<p>Assemble an OpenAPI 3.1 document.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.44 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_document`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">2014313</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">2185283</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">30152</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">4715065</span></div></div></div>
+<h2 id="soothfast-spec-openapi-diff"><code>soothfast_spec::openapi::diff</code><a class="anchor" href="#soothfast-spec-openapi-diff" aria-label="Link to this section">#</a></h2>
+<h3 id="diff-function-3"><code>diff</code> <sup>function</sup><a class="anchor" href="#diff-function-3" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">diff</span>(old: &amp;<span class="tok-ty">Value</span>, new: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Change</span>&gt;
+</code></pre></figure>
+<p>Compare two generated documents, oldest first.</p>
+<p>Returns every difference found, breaking ones first, then by location so
+output is stable between runs.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.39 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_diff`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">5988616</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">9168276</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">77722</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">10815487</span></div></div></div>
+<h2 id="soothfast-spec-proto"><code>soothfast_spec::proto</code><a class="anchor" href="#soothfast-spec-proto" aria-label="Link to this section">#</a></h2>
+<h3 id="protofield-struct"><code>ProtoField</code> <sup>struct</sup><a class="anchor" href="#protofield-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ProtoField</span>
+</code></pre></figure>
+<p>One field, from either a <code>.proto</code> message or a struct's <code>#[prost(..)]</code>
+attributes. <code>ty</code> is the bare type token (<code>&quot;string&quot;</code>, <code>&quot;sint64&quot;</code>, ...).</p>
+<h3 id="protoreconciliation-struct"><code>ProtoReconciliation</code> <sup>struct</sup><a class="anchor" href="#protoreconciliation-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ProtoReconciliation</span>
+</code></pre></figure>
+<p>Outcome of matching struct fields to a <code>.proto</code> message by tag number.</p>
+<h3 id="parse-proto-message-function"><code>parse_proto_message</code> <sup>function</sup><a class="anchor" href="#parse-proto-message-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">parse_proto_message</span>(text: &amp;<span class="tok-ty">str</span>, message: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Vec</span>&lt;<span class="tok-ty">ProtoField</span>&gt;, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Parse the scalar fields of one <code>message NAME { ... }</code> block from <code>.proto</code>
+text. Nested message/oneof/enum bodies are skipped by brace depth, not
+descended into — this is a flat wire-format check, not a full parser.</p>
+<h3 id="parse-struct-prost-fields-function"><code>parse_struct_prost_fields</code> <sup>function</sup><a class="anchor" href="#parse-struct-prost-fields-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">parse_struct_prost_fields</span>( source: &amp;<span class="tok-ty">str</span>, struct_name: &amp;<span class="tok-ty">str</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Vec</span>&lt;<span class="tok-ty">ProtoField</span>&gt;, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Extract <code>#[prost(..)]</code> field declarations from one struct in Rust source
+text, by scanning forward from each <code>#[prost(..)]</code> occurrence within the
+struct's brace-matched body to the field name it decorates. Deliberately
+not a full Rust parser (no <code>syn</code>) — same tradeoff as [<code>parse_proto_message</code>].</p>
+<h3 id="reconcile-proto-function"><code>reconcile_proto</code> <sup>function</sup><a class="anchor" href="#reconcile-proto-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">reconcile_proto</span>( spec_fields: &amp;[<span class="tok-ty">ProtoField</span>], code_fields: &amp;[<span class="tok-ty">ProtoField</span>], ) -&gt; <span class="tok-ty">ProtoReconciliation</span>
+</code></pre></figure>
+<p>Match struct fields to declared <code>.proto</code> fields by tag number, then
+check that type (wire-compatibly) and name agree.</p>
+<h2 id="soothfast-spec-providers"><code>soothfast_spec::providers</code><a class="anchor" href="#soothfast-spec-providers" aria-label="Link to this section">#</a></h2>
+<h3 id="parse-function"><code>parse</code> <sup>function</sup><a class="anchor" href="#parse-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">parse</span>(kind: <span class="tok-ty">SpecKind</span>, text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Vec</span>&lt;<span class="tok-ty">DeclaredOp</span>&gt;, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Parse one spec document into the operations it declares, dispatching on
+dialect: OpenAPI, AsyncAPI, and MCP tool schemas are YAML-or-JSON;
+GraphQL is SDL text.</p>
+<h2 id="soothfast-spec-reconcile"><code>soothfast_spec::reconcile</code><a class="anchor" href="#soothfast-spec-reconcile" aria-label="Link to this section">#</a></h2>
+<h3 id="reconciliation-struct"><code>Reconciliation</code> <sup>struct</sup><a class="anchor" href="#reconciliation-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Reconciliation</span>
+</code></pre></figure>
+<p>Outcome of matching <code>#[route]</code> declarations against a spec's operations:
+what's missing on each side, what disagrees, and what lined up.</p>
+<h3 id="reconcile-function"><code>reconcile</code> <sup>function</sup><a class="anchor" href="#reconcile-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">reconcile</span>(declared: &amp;[<span class="tok-ty">DeclaredOp</span>], routes: &amp;[<span class="tok-ty">RouteDecl</span>]) -&gt; <span class="tok-ty">Reconciliation</span>
+</code></pre></figure>
+<p>Match routes to declared operations by operation id, then check that
+method and path agree where the route states them.</p>
+<h2 id="soothfast-spec-schema"><code>soothfast_spec::schema</code><a class="anchor" href="#soothfast-spec-schema" aria-label="Link to this section">#</a></h2>
+<h3 id="docs-struct"><code>Docs</code> <sup>struct</sup><a class="anchor" href="#docs-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Docs</span>&lt;<span class="tok-kw">&#39;a</span>&gt;
+</code></pre></figure>
+<h3 id="extraction-struct"><code>Extraction</code> <sup>struct</sup><a class="anchor" href="#extraction-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Extraction</span>
+</code></pre></figure>
+<p>A schema plus everything it referenced and everything it could not see.</p>
+<h3 id="extractors-struct"><code>Extractors</code> <sup>struct</sup><a class="anchor" href="#extractors-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Extractors</span>
+</code></pre></figure>
+<h3 id="gap-enum"><code>Gap</code> <sup>enum</sup><a class="anchor" href="#gap-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Gap</span>
+</code></pre></figure>
+<p>A place the extractor could not derive a shape, and why.</p>
+<p>Every gap names the exact type or field so the report is actionable, and
+carries an open schema rather than a guessed one.</p>
+<h3 id="overrides-struct"><code>Overrides</code> <sup>struct</sup><a class="anchor" href="#overrides-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Overrides</span>
+</code></pre></figure>
+<h3 id="resolver-struct"><code>Resolver</code> <sup>struct</sup><a class="anchor" href="#resolver-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Resolver</span>&lt;<span class="tok-kw">&#39;a</span>&gt;
+</code></pre></figure>
+<h3 id="routeshape-struct"><code>RouteShape</code> <sup>struct</sup><a class="anchor" href="#routeshape-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">RouteShape</span>
+</code></pre></figure>
+<h3 id="typemapping-enum"><code>TypeMapping</code> <sup>enum</sup><a class="anchor" href="#typemapping-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">TypeMapping</span>
+</code></pre></figure>
+<h3 id="typetable-struct"><code>TypeTable</code> <sup>struct</sup><a class="anchor" href="#typetable-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">TypeTable</span>
+</code></pre></figure>
+<h3 id="extract-named-function"><code>extract_named</code> <sup>function</sup><a class="anchor" href="#extract-named-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> extract_named&lt;<span class="tok-kw">&#39;a</span>&gt;( docs: <span class="tok-kw">impl</span> <span class="tok-ty">Into</span>&lt;<span class="tok-ty">Docs</span>&lt;<span class="tok-kw">&#39;a</span>&gt;&gt;, table: &amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">TypeTable</span>, name: &amp;<span class="tok-ty">str</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Extraction</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Extract the schema for a named type from a rustdoc JSON document.</p>
+<p>Takes one document, or a [<code>Docs</code>] carrying the workspace-local crates the
+type may actually be defined in. Used for the
+<code>#[route(response = &quot;...&quot;)]</code> override; signature-driven extraction goes
+through [<code>Resolver::resolve</code>] directly.</p>
+<h2 id="soothfast-spec-schema-graphql-attrs"><code>soothfast_spec::schema::graphql_attrs</code><a class="anchor" href="#soothfast-spec-schema-graphql-attrs" aria-label="Link to this section">#</a></h2>
+<h3 id="containerattrs-struct"><code>ContainerAttrs</code> <sup>struct</sup><a class="anchor" href="#containerattrs-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ContainerAttrs</span>
+</code></pre></figure>
+<p>Container-level <code>#[graphql(...)]</code> options that change wire names.</p>
+<h3 id="fieldattrs-struct"><code>FieldAttrs</code> <sup>struct</sup><a class="anchor" href="#fieldattrs-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">FieldAttrs</span>
+</code></pre></figure>
+<p>Field-level <code>#[graphql(...)]</code> options.</p>
+<h3 id="rename-enum"><code>Rename</code> <sup>enum</sup><a class="anchor" href="#rename-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Rename</span>
+</code></pre></figure>
+<p>How a container renames every field or enum item beneath it.</p>
+<p>These are the six rules async-graphql accepts — notably <em>not</em> kebab-case,
+which serde has and async-graphql does not.</p>
+<h3 id="container-function"><code>container</code> <sup>function</sup><a class="anchor" href="#container-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">container</span>(raw: &amp;[<span class="tok-ty">Value</span>]) -&gt; <span class="tok-ty">ContainerAttrs</span>
+</code></pre></figure>
+<p>Parse container-level <code>#[graphql(...)]</code> attributes.</p>
+<h3 id="field-function"><code>field</code> <sup>function</sup><a class="anchor" href="#field-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">field</span>(raw: &amp;[<span class="tok-ty">Value</span>]) -&gt; <span class="tok-ty">FieldAttrs</span>
+</code></pre></figure>
+<p>Parse field-level <code>#[graphql(...)]</code> attributes.</p>
+<h3 id="variant-function"><code>variant</code> <sup>function</sup><a class="anchor" href="#variant-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">variant</span>(raw: &amp;[<span class="tok-ty">Value</span>]) -&gt; <span class="tok-ty">FieldAttrs</span>
+</code></pre></figure>
+<p>Parse variant-level <code>#[graphql(...)]</code> attributes. Enum items take <code>name</code>
+but have no <code>skip</code>, so the field parser's answer is reused as-is.</p>
+<h3 id="wire-name-field-function"><code>wire_name_field</code> <sup>function</sup><a class="anchor" href="#wire-name-field-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">wire_name_field</span>(rust_name: &amp;<span class="tok-ty">str</span>, f: &amp;<span class="tok-ty">FieldAttrs</span>, c: &amp;<span class="tok-ty">ContainerAttrs</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>The wire name of a field: <code>name</code> if given, else the container's rule.</p>
+<h3 id="wire-name-variant-function"><code>wire_name_variant</code> <sup>function</sup><a class="anchor" href="#wire-name-variant-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">wire_name_variant</span>(rust_name: &amp;<span class="tok-ty">str</span>, v: &amp;<span class="tok-ty">FieldAttrs</span>, c: &amp;<span class="tok-ty">ContainerAttrs</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>The wire name of an enum item: <code>name</code> if given, else the container's rule.</p>
+<h2 id="soothfast-spec-schema-route-sig"><code>soothfast_spec::schema::route_sig</code><a class="anchor" href="#soothfast-spec-schema-route-sig" aria-label="Link to this section">#</a></h2>
+<h3 id="parameter-struct"><code>Parameter</code> <sup>struct</sup><a class="anchor" href="#parameter-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Parameter</span>
+</code></pre></figure>
+<p>One query, path or header parameter.</p>
+<h3 id="requestbody-struct"><code>RequestBody</code> <sup>struct</sup><a class="anchor" href="#requestbody-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">RequestBody</span>
+</code></pre></figure>
+<p>A request body and the content type it arrives as.</p>
+<h3 id="response-struct"><code>Response</code> <sup>struct</sup><a class="anchor" href="#response-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Response</span>
+</code></pre></figure>
+<p>One response, keyed by status code in [<code>RouteShape</code>].</p>
+<h3 id="role-enum"><code>Role</code> <sup>enum</sup><a class="anchor" href="#role-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Role</span>
+</code></pre></figure>
+<p>What a handler parameter contributes to the wire contract.</p>
+<h3 id="infer-function"><code>infer</code> <sup>function</sup><a class="anchor" href="#infer-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> infer&lt;<span class="tok-kw">&#39;a</span>&gt;( docs: <span class="tok-kw">impl</span> <span class="tok-ty">Into</span>&lt;<span class="tok-ty">Docs</span>&lt;<span class="tok-kw">&#39;a</span>&gt;&gt;, table: &amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">TypeTable</span>, extractors: &amp;<span class="tok-ty">Extractors</span>, handler_path: &amp;<span class="tok-ty">str</span>, route_path: &amp;<span class="tok-ty">str</span>, overrides: &amp;<span class="tok-ty">Overrides</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">RouteShape</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Infer the wire contract of one handler.</p>
+<p><code>handler_path</code> is the <code>#[route]</code> id (<code>app::routes::create_item</code>) and
+<code>route_path</code> the URL template, whose <code>{placeholders}</code> name tuple path
+parameters that the Rust signature leaves positional.</p>
+<h2 id="soothfast-spec-schema-serde-attrs"><code>soothfast_spec::schema::serde_attrs</code><a class="anchor" href="#soothfast-spec-schema-serde-attrs" aria-label="Link to this section">#</a></h2>
+<h3 id="containerattrs-struct-1"><code>ContainerAttrs</code> <sup>struct</sup><a class="anchor" href="#containerattrs-struct-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ContainerAttrs</span>
+</code></pre></figure>
+<p>Container-level serde options that change the emitted schema.</p>
+<h3 id="fieldattrs-struct-1"><code>FieldAttrs</code> <sup>struct</sup><a class="anchor" href="#fieldattrs-struct-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">FieldAttrs</span>
+</code></pre></figure>
+<p>Field-level serde options that change the emitted schema.</p>
+<h3 id="rename-enum-1"><code>Rename</code> <sup>enum</sup><a class="anchor" href="#rename-enum-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Rename</span>
+</code></pre></figure>
+<p>How a container renames every field or variant beneath it.</p>
+<h3 id="container-function-1"><code>container</code> <sup>function</sup><a class="anchor" href="#container-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">container</span>(raw: &amp;[serde_json::<span class="tok-ty">Value</span>]) -&gt; <span class="tok-ty">ContainerAttrs</span>
+</code></pre></figure>
+<p>Parse container-level <code>#[serde(...)]</code> attributes.</p>
+<h3 id="field-function-1"><code>field</code> <sup>function</sup><a class="anchor" href="#field-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">field</span>(raw: &amp;[serde_json::<span class="tok-ty">Value</span>]) -&gt; <span class="tok-ty">FieldAttrs</span>
+</code></pre></figure>
+<p>Parse field-level <code>#[serde(...)]</code> attributes.</p>
+<h3 id="serde-args-function"><code>serde_args</code> <sup>function</sup><a class="anchor" href="#serde-args-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">serde_args</span>(raw: &amp;[serde_json::<span class="tok-ty">Value</span>]) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Pull the <code>serde(...)</code> argument text out of rustdoc's attribute entries.</p>
+<h3 id="wire-name-field-function-1"><code>wire_name_field</code> <sup>function</sup><a class="anchor" href="#wire-name-field-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">wire_name_field</span>(rust_name: &amp;<span class="tok-ty">str</span>, f: &amp;<span class="tok-ty">FieldAttrs</span>, c: &amp;<span class="tok-ty">ContainerAttrs</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>The wire name of a field, applying <code>rename</code> then the container rule.</p>
+<h3 id="wire-name-variant-function-1"><code>wire_name_variant</code> <sup>function</sup><a class="anchor" href="#wire-name-variant-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">wire_name_variant</span>(rust_name: &amp;<span class="tok-ty">str</span>, v: &amp;<span class="tok-ty">ContainerAttrs</span>, c: &amp;<span class="tok-ty">ContainerAttrs</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>The wire name of a variant, applying <code>rename</code> then the container rule.</p>
+<h2 id="soothfast-spec-schema-types"><code>soothfast_spec::schema::types</code><a class="anchor" href="#soothfast-spec-schema-types" aria-label="Link to this section">#</a></h2>
+<h3 id="subst-type-alias"><code>Subst</code> <sup>type_alias</sup><a class="anchor" href="#subst-type-alias" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">type</span> <span class="tok-ty">Subst</span> = <span class="tok-ty">BTreeMap</span>&lt;<span class="tok-ty">String</span>, (<span class="tok-ty">Value</span>, <span class="tok-ty">String</span>)&gt;
+</code></pre></figure>
+<p>Generic parameter bindings captured at a concrete use site: parameter name
+→ (resolved schema, display name used for component naming).</p>
+<h2 id="soothfast-spec-schema-types-resolver"><code>soothfast_spec::schema::types::Resolver</code><a class="anchor" href="#soothfast-spec-schema-types-resolver" aria-label="Link to this section">#</a></h2>
+<h3 id="resolve-function"><code>resolve</code> <sup>function</sup><a class="anchor" href="#resolve-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">resolve</span>(&amp;<span class="tok-kw">mut</span> <span class="tok-kw">self</span>, ty: &amp;<span class="tok-ty">Value</span>, subst: &amp;<span class="tok-ty">Subst</span>, at: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Value</span>
+</code></pre></figure>
+<p>Resolve one rustdoc type node into a JSON Schema.</p>
+<p><code>at</code> is a human-readable location (<code>Item.when</code>) used for gap reports.</p>
+<h2 id="soothfast-spec-serialize"><code>soothfast_spec::serialize</code><a class="anchor" href="#soothfast-spec-serialize" aria-label="Link to this section">#</a></h2>
+<h3 id="to-json-function"><code>to_json</code> <sup>function</sup><a class="anchor" href="#to-json-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">to_json</span>(value: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Render a document as pretty JSON, for <code>.json</code> spec files.</p>
+<p>Hand-rolled rather than <code>serde_json::to_string_pretty</code> for one reason: the
+same key order the YAML path uses. A tool manifest whose <code>description</code>
+sorts above its <code>name</code> is valid and unreadable, and the two serializations
+of one document should not disagree about what comes first.</p>
+<h3 id="to-yaml-function"><code>to_yaml</code> <sup>function</sup><a class="anchor" href="#to-yaml-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">to_yaml</span>(value: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Render a document as YAML, with well-known keys in conventional order.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.11 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_serialize_yaml`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">6911301</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">8035110</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">74277</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">8533615</span></div></div></div>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#soothfast-spec">soothfast_spec</a></li>
+  
+    <li><a class="toc-l3" href="#declaredop-struct">DeclaredOp struct</a></li>
+  
+    <li><a class="toc-l3" href="#routedecl-struct">RouteDecl struct</a></li>
+  
+    <li><a class="toc-l3" href="#speckind-enum">SpecKind enum</a></li>
+  
+    <li><a class="toc-l3" href="#sniff-kind-function">sniff_kind function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-asyncapi">soothfast_spec::asyncapi</a></li>
+  
+    <li><a class="toc-l3" href="#document-function">document function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-asyncapi-diff">soothfast_spec::asyncapi::diff</a></li>
+  
+    <li><a class="toc-l3" href="#diff-function">diff function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-compat">soothfast_spec::compat</a></li>
+  
+    <li><a class="toc-l3" href="#change-struct">Change struct</a></li>
+  
+    <li><a class="toc-l3" href="#direction-enum">Direction enum</a></li>
+  
+    <li><a class="toc-l3" href="#schemadiff-struct">SchemaDiff struct</a></li>
+  
+    <li><a class="toc-l3" href="#severity-enum">Severity enum</a></li>
+  
+    <li><a class="toc-l3" href="#compare-keys-function">compare_keys function</a></li>
+  
+    <li><a class="toc-l3" href="#deref-function">deref function</a></li>
+  
+    <li><a class="toc-l3" href="#is-compatible-function">is_compatible function</a></li>
+  
+    <li><a class="toc-l3" href="#render-function">render function</a></li>
+  
+    <li><a class="toc-l3" href="#required-set-function">required_set function</a></li>
+  
+    <li><a class="toc-l3" href="#sort-function">sort function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-dialect">soothfast_spec::dialect</a></li>
+  
+    <li><a class="toc-l3" href="#document-struct">Document struct</a></li>
+  
+    <li><a class="toc-l3" href="#info-struct">Info struct</a></li>
+  
+    <li><a class="toc-l3" href="#operation-struct">Operation struct</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-graphql">soothfast_spec::graphql</a></li>
+  
+    <li><a class="toc-l3" href="#document-function-1">document function</a></li>
+  
+    <li><a class="toc-l3" href="#to-sdl-function">to_sdl function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-graphql-diff">soothfast_spec::graphql::diff</a></li>
+  
+    <li><a class="toc-l3" href="#diff-function-1">diff function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-mcp">soothfast_spec::mcp</a></li>
+  
+    <li><a class="toc-l3" href="#diff-function-2">diff function</a></li>
+  
+    <li><a class="toc-l3" href="#document-function-2">document function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-openapi">soothfast_spec::openapi</a></li>
+  
+    <li><a class="toc-l3" href="#document-function-3">document function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-openapi-diff">soothfast_spec::openapi::diff</a></li>
+  
+    <li><a class="toc-l3" href="#diff-function-3">diff function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-proto">soothfast_spec::proto</a></li>
+  
+    <li><a class="toc-l3" href="#protofield-struct">ProtoField struct</a></li>
+  
+    <li><a class="toc-l3" href="#protoreconciliation-struct">ProtoReconciliation struct</a></li>
+  
+    <li><a class="toc-l3" href="#parse-proto-message-function">parse_proto_message function</a></li>
+  
+    <li><a class="toc-l3" href="#parse-struct-prost-fields-function">parse_struct_prost_fields function</a></li>
+  
+    <li><a class="toc-l3" href="#reconcile-proto-function">reconcile_proto function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-providers">soothfast_spec::providers</a></li>
+  
+    <li><a class="toc-l3" href="#parse-function">parse function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-reconcile">soothfast_spec::reconcile</a></li>
+  
+    <li><a class="toc-l3" href="#reconciliation-struct">Reconciliation struct</a></li>
+  
+    <li><a class="toc-l3" href="#reconcile-function">reconcile function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-schema">soothfast_spec::schema</a></li>
+  
+    <li><a class="toc-l3" href="#docs-struct">Docs struct</a></li>
+  
+    <li><a class="toc-l3" href="#extraction-struct">Extraction struct</a></li>
+  
+    <li><a class="toc-l3" href="#extractors-struct">Extractors struct</a></li>
+  
+    <li><a class="toc-l3" href="#gap-enum">Gap enum</a></li>
+  
+    <li><a class="toc-l3" href="#overrides-struct">Overrides struct</a></li>
+  
+    <li><a class="toc-l3" href="#resolver-struct">Resolver struct</a></li>
+  
+    <li><a class="toc-l3" href="#routeshape-struct">RouteShape struct</a></li>
+  
+    <li><a class="toc-l3" href="#typemapping-enum">TypeMapping enum</a></li>
+  
+    <li><a class="toc-l3" href="#typetable-struct">TypeTable struct</a></li>
+  
+    <li><a class="toc-l3" href="#extract-named-function">extract_named function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-schema-graphql-attrs">soothfast_spec::schema::graphql_attrs</a></li>
+  
+    <li><a class="toc-l3" href="#containerattrs-struct">ContainerAttrs struct</a></li>
+  
+    <li><a class="toc-l3" href="#fieldattrs-struct">FieldAttrs struct</a></li>
+  
+    <li><a class="toc-l3" href="#rename-enum">Rename enum</a></li>
+  
+    <li><a class="toc-l3" href="#container-function">container function</a></li>
+  
+    <li><a class="toc-l3" href="#field-function">field function</a></li>
+  
+    <li><a class="toc-l3" href="#variant-function">variant function</a></li>
+  
+    <li><a class="toc-l3" href="#wire-name-field-function">wire_name_field function</a></li>
+  
+    <li><a class="toc-l3" href="#wire-name-variant-function">wire_name_variant function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-schema-route-sig">soothfast_spec::schema::route_sig</a></li>
+  
+    <li><a class="toc-l3" href="#parameter-struct">Parameter struct</a></li>
+  
+    <li><a class="toc-l3" href="#requestbody-struct">RequestBody struct</a></li>
+  
+    <li><a class="toc-l3" href="#response-struct">Response struct</a></li>
+  
+    <li><a class="toc-l3" href="#role-enum">Role enum</a></li>
+  
+    <li><a class="toc-l3" href="#infer-function">infer function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-schema-serde-attrs">soothfast_spec::schema::serde_attrs</a></li>
+  
+    <li><a class="toc-l3" href="#containerattrs-struct-1">ContainerAttrs struct</a></li>
+  
+    <li><a class="toc-l3" href="#fieldattrs-struct-1">FieldAttrs struct</a></li>
+  
+    <li><a class="toc-l3" href="#rename-enum-1">Rename enum</a></li>
+  
+    <li><a class="toc-l3" href="#container-function-1">container function</a></li>
+  
+    <li><a class="toc-l3" href="#field-function-1">field function</a></li>
+  
+    <li><a class="toc-l3" href="#serde-args-function">serde_args function</a></li>
+  
+    <li><a class="toc-l3" href="#wire-name-field-function-1">wire_name_field function</a></li>
+  
+    <li><a class="toc-l3" href="#wire-name-variant-function-1">wire_name_variant function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-schema-types">soothfast_spec::schema::types</a></li>
+  
+    <li><a class="toc-l3" href="#subst-type-alias">Subst type_alias</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-schema-types-resolver">soothfast_spec::schema::types::Resolver</a></li>
+  
+    <li><a class="toc-l3" href="#resolve-function">resolve function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-serialize">soothfast_spec::serialize</a></li>
+  
+    <li><a class="toc-l3" href="#to-json-function">to_json function</a></li>
+  
+    <li><a class="toc-l3" href="#to-yaml-function">to_yaml function</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../../_soothfast/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>soothfast-registry API reference · soothfast</title>
+<link rel="icon" href="../../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../../_soothfast/tokens.css">
+<link rel="stylesheet" href="../../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../../">soothfast</a></li>
+    
+      <li><a href="../../measuring/">Measuring</a></li>
+    
+      <li><a href="../../gating/">Gating</a></li>
+    
+      <li><a href="../../living-docs/">Living docs</a></li>
+    
+      <li><a href="../../spec/">Specs</a></li>
+    
+      <li><a href="../../sdk/">SDKs</a></li>
+    
+      <li><a href="../../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a class="active" aria-current="page" href="../../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="soothfast-registry-api-reference"><code>soothfast-registry</code> API reference<a class="anchor" href="#soothfast-registry-api-reference" aria-label="Link to this section">#</a></h1>
+<blockquote>
+<p>Generated by <code>cargo soothfast docs reference</code>
+Measurements and verified claims come from the latest baseline; CI gates them.</p>
+</blockquote>
+<h2 id="soothfast-registry"><code>soothfast_registry</code><a class="anchor" href="#soothfast-registry" aria-label="Link to this section">#</a></h2>
+<h3 id="assertions-struct"><code>Assertions</code> <sup>struct</sup><a class="anchor" href="#assertions-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Assertions</span>
+</code></pre></figure>
+<p>Checked performance claims attached to a measured item.
+Evaluated by the runner after measurement; violations fail CI.</p>
+<h3 id="bencher-struct"><code>Bencher</code> <sup>struct</sup><a class="anchor" href="#bencher-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Bencher</span>&lt;<span class="tok-kw">&#39;a</span>&gt;
+</code></pre></figure>
+<p>Single-use measurement context handed to registered runner glue.</p>
+<p>Generated glue performs setup, then calls [<code>Bencher::iter</code>] (or
+[<code>Bencher::iter_async</code>]) exactly once with the workload; the active
+backend decides how many times (and how) the workload body actually runs.</p>
+<h3 id="fixtureitem-struct"><code>FixtureItem</code> <sup>struct</sup><a class="anchor" href="#fixtureitem-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">FixtureItem</span>
+</code></pre></figure>
+<p>A deterministic input-builder registered via <code>#[soothfast::fixture]</code>.</p>
+<h3 id="mocks-static"><code>MOCKS</code> <sup>static</sup><a class="anchor" href="#mocks-static" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-mac">#[linkme::distributed_slice]</span>
+</code></pre></figure>
+<p>All mock seams registered with <code>#[soothfast::mock_seam]</code>.</p>
+<h3 id="measureditem-struct"><code>MeasuredItem</code> <sup>struct</sup><a class="anchor" href="#measureditem-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">MeasuredItem</span>
+</code></pre></figure>
+<p>A benchmarked item registered via <code>#[soothfast::measured]</code> or <code>#[soothfast::bench]</code>.</p>
+<h3 id="mockseam-trait"><code>MockSeam</code> <sup>trait</sup><a class="anchor" href="#mockseam-trait" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">trait</span> <span class="tok-ty">MockSeam</span>: <span class="tok-ty">Send</span>
+</code></pre></figure>
+<p>A mocked backend a capture-output/test example can stand up by name.
+Implemented by a thin consumer-side newtype around whatever mocking
+crate they bring (mockito, wiremock, a hand-rolled stub server, ...).
+Teardown is ordinary <code>Drop</code> on the concrete type — no separate teardown
+method is needed.</p>
+<h3 id="mockseamitem-struct"><code>MockSeamItem</code> <sup>struct</sup><a class="anchor" href="#mockseamitem-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">MockSeamItem</span>
+</code></pre></figure>
+<p>A mock-backend setup fn registered via <code>#[soothfast::mock_seam]</code>.</p>
+<h3 id="routeitem-struct"><code>RouteItem</code> <sup>struct</sup><a class="anchor" href="#routeitem-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">RouteItem</span>
+</code></pre></figure>
+<p>A declared route/operation registered via <code>#[soothfast::route]</code> — the
+code-side half of spec reconciliation (<code>cargo soothfast spec check</code>).</p>
+<h3 id="async-counters-function"><code>async_counters</code> <sup>function</sup><a class="anchor" href="#async-counters-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">async_counters</span>() -&gt; (<span class="tok-ty">u64</span>, <span class="tok-ty">u64</span>)
+</code></pre></figure>
+<p>(polls, wakes) since process start — backends diff snapshots around a body.</p>
+<h3 id="block-on-counting-function"><code>block_on_counting</code> <sup>function</sup><a class="anchor" href="#block-on-counting-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> block_on_counting&lt;<span class="tok-ty">F</span>: <span class="tok-ty">Future</span>&gt;(fut: <span class="tok-ty">F</span>) -&gt; <span class="tok-ty">F</span>::<span class="tok-ty">Output</span>
+</code></pre></figure>
+<p>Minimal std-only executor with poll/wake counting: enough to measure how
+a future <em>behaves</em> (polls to completion, wake traffic) deterministically.
+No spawns, no timers — a tokio-instrumented backend is future work.</p>
+<h3 id="fixture-items-function"><code>fixture_items</code> <sup>function</sup><a class="anchor" href="#fixture-items-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">fixture_items</span>() -&gt; &amp;<span class="tok-kw">&#39;static</span> [<span class="tok-ty">FixtureItem</span>]
+</code></pre></figure>
+<p>Read-only view of every registered fixture.</p>
+<h3 id="fnv1a-function"><code>fnv1a</code> <sup>function</sup><a class="anchor" href="#fnv1a-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-kw">fn</span> <span class="tok-fn">fnv1a</span>(bytes: &amp;[<span class="tok-ty">u8</span>]) -&gt; <span class="tok-ty">u64</span>
+</code></pre></figure>
+<p>FNV-1a 64-bit hash.</p>
+<p>STABILITY CONTRACT: fingerprints are compared across builds and stored in
+lockfiles, so this algorithm is frozen. Do not change constants or logic.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">alloc</span><span class="ev-detail">allocs 0 &lt;= 0</span></div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.01 over sizes [1024, 8192, 65536] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_registry::bench_fnv1a`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">81485</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">82963</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">0</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">0</span></div></div></div>
+<h3 id="measured-items-function"><code>measured_items</code> <sup>function</sup><a class="anchor" href="#measured-items-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">measured_items</span>() -&gt; &amp;<span class="tok-kw">&#39;static</span> [<span class="tok-ty">MeasuredItem</span>]
+</code></pre></figure>
+<p>Read-only view of every registered measured item.</p>
+<h3 id="mock-seam-items-function"><code>mock_seam_items</code> <sup>function</sup><a class="anchor" href="#mock-seam-items-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">mock_seam_items</span>() -&gt; &amp;<span class="tok-kw">&#39;static</span> [<span class="tok-ty">MockSeamItem</span>]
+</code></pre></figure>
+<p>Read-only view of every registered mock seam.</p>
+<h3 id="resolve-mock-seam-function"><code>resolve_mock_seam</code> <sup>function</sup><a class="anchor" href="#resolve-mock-seam-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> resolve_mock_seam&lt;<span class="tok-kw">&#39;a</span>&gt;( items: &amp;<span class="tok-kw">&#39;a</span> [<span class="tok-ty">MockSeamItem</span>], name: &amp;<span class="tok-ty">str</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;&amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">MockSeamItem</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Resolve a mock seam by name: an exact <code>id</code> match wins; otherwise exactly
+one <code>::name</code> suffix match. Pure/testable without linking real
+<code>#[mock_seam]</code>-registered items — <code>soothfast::mock::activate</code> calls this
+against the live <code>MOCKS</code> slice and panics with the returned message.</p>
+<h3 id="route-items-function"><code>route_items</code> <sup>function</sup><a class="anchor" href="#route-items-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">route_items</span>() -&gt; &amp;<span class="tok-kw">&#39;static</span> [<span class="tok-ty">RouteItem</span>]
+</code></pre></figure>
+<p>Read-only view of every registered route.</p>
+<h2 id="soothfast-registry-bencher"><code>soothfast_registry::Bencher</code><a class="anchor" href="#soothfast-registry-bencher" aria-label="Link to this section">#</a></h2>
+<h3 id="iter-function"><code>iter</code> <sup>function</sup><a class="anchor" href="#iter-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> iter&lt;<span class="tok-ty">T</span>&gt;(&amp;<span class="tok-kw">mut</span> <span class="tok-kw">self</span>, <span class="tok-kw">mut</span> f: <span class="tok-kw">impl</span> <span class="tok-ty">FnMut</span>() -&gt; <span class="tok-ty">T</span>)
+</code></pre></figure>
+<p>Hand the workload to the active backend. Call exactly once per glue call.</p>
+<h3 id="iter-async-function"><code>iter_async</code> <sup>function</sup><a class="anchor" href="#iter-async-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> iter_async&lt;<span class="tok-ty">F</span>, <span class="tok-ty">Fut</span>&gt;(&amp;<span class="tok-kw">mut</span> <span class="tok-kw">self</span>, <span class="tok-kw">mut</span> f: <span class="tok-ty">F</span>) <span class="tok-kw">where</span> <span class="tok-ty">F</span>: <span class="tok-ty">FnMut</span>() -&gt; <span class="tok-ty">Fut</span>, <span class="tok-ty">Fut</span>: <span class="tok-ty">Future</span>,
+</code></pre></figure>
+<p>Async workloads: each iteration drives the future to completion on the
+counting executor (polls/wakes feed the <code>asyncexec</code> backend).</p>
+<h2 id="soothfast-registry-measureditem"><code>soothfast_registry::MeasuredItem</code><a class="anchor" href="#soothfast-registry-measureditem" aria-label="Link to this section">#</a></h2>
+<h3 id="full-id-function"><code>full_id</code> <sup>function</sup><a class="anchor" href="#full-id-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">full_id</span>(&amp;<span class="tok-kw">self</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Package-qualified stable ID; survives file moves. In a lib target
+<code>module_path!()</code> starts with the crate name and the ID reads naturally
+(<code>demo::lcg_checksum</code>). In bench/test targets the first segment is the
+<em>target</em> name (every crate's bench file is <code>soothfast</code>), which would
+collide across packages and clobber shared baselines — substitute the
+package name for it.</p>
+<h2 id="soothfast-registry-routeitem"><code>soothfast_registry::RouteItem</code><a class="anchor" href="#soothfast-registry-routeitem" aria-label="Link to this section">#</a></h2>
+<h3 id="new-function"><code>new</code> <sup>function</sup><a class="anchor" href="#new-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-kw">fn</span> <span class="tok-fn">new</span>( id: &amp;<span class="tok-kw">&#39;static</span> <span class="tok-ty">str</span>, spec: &amp;<span class="tok-kw">&#39;static</span> <span class="tok-ty">str</span>, operation: &amp;<span class="tok-kw">&#39;static</span> <span class="tok-ty">str</span>, method: &amp;<span class="tok-kw">&#39;static</span> <span class="tok-ty">str</span>, path: &amp;<span class="tok-kw">&#39;static</span> <span class="tok-ty">str</span>, ) -&gt; <span class="tok-kw">Self</span>
+</code></pre></figure>
+<p>Const constructor for macro expansions.</p>
+<h3 id="with-shape-function"><code>with_shape</code> <sup>function</sup><a class="anchor" href="#with-shape-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-kw">fn</span> <span class="tok-fn">with_shape</span>( <span class="tok-kw">mut</span> <span class="tok-kw">self</span>, request: <span class="tok-ty">Option</span>&lt;&amp;<span class="tok-kw">&#39;static</span> <span class="tok-ty">str</span>&gt;, response: <span class="tok-ty">Option</span>&lt;&amp;<span class="tok-kw">&#39;static</span> <span class="tok-ty">str</span>&gt;, status: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">u16</span>&gt;, ) -&gt; <span class="tok-kw">Self</span>
+</code></pre></figure>
+<p>Attach the shape overrides. Separate from [<code>RouteItem::new</code>] so that
+later spec dialects can add their own without growing its arity.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#soothfast-registry">soothfast_registry</a></li>
+  
+    <li><a class="toc-l3" href="#assertions-struct">Assertions struct</a></li>
+  
+    <li><a class="toc-l3" href="#bencher-struct">Bencher struct</a></li>
+  
+    <li><a class="toc-l3" href="#fixtureitem-struct">FixtureItem struct</a></li>
+  
+    <li><a class="toc-l3" href="#mocks-static">MOCKS static</a></li>
+  
+    <li><a class="toc-l3" href="#measureditem-struct">MeasuredItem struct</a></li>
+  
+    <li><a class="toc-l3" href="#mockseam-trait">MockSeam trait</a></li>
+  
+    <li><a class="toc-l3" href="#mockseamitem-struct">MockSeamItem struct</a></li>
+  
+    <li><a class="toc-l3" href="#routeitem-struct">RouteItem struct</a></li>
+  
+    <li><a class="toc-l3" href="#async-counters-function">async_counters function</a></li>
+  
+    <li><a class="toc-l3" href="#block-on-counting-function">block_on_counting function</a></li>
+  
+    <li><a class="toc-l3" href="#fixture-items-function">fixture_items function</a></li>
+  
+    <li><a class="toc-l3" href="#fnv1a-function">fnv1a function</a></li>
+  
+    <li><a class="toc-l3" href="#measured-items-function">measured_items function</a></li>
+  
+    <li><a class="toc-l3" href="#mock-seam-items-function">mock_seam_items function</a></li>
+  
+    <li><a class="toc-l3" href="#resolve-mock-seam-function">resolve_mock_seam function</a></li>
+  
+    <li><a class="toc-l3" href="#route-items-function">route_items function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-registry-bencher">soothfast_registry::Bencher</a></li>
+  
+    <li><a class="toc-l3" href="#iter-function">iter function</a></li>
+  
+    <li><a class="toc-l3" href="#iter-async-function">iter_async function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-registry-measureditem">soothfast_registry::MeasuredItem</a></li>
+  
+    <li><a class="toc-l3" href="#full-id-function">full_id function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-registry-routeitem">soothfast_registry::RouteItem</a></li>
+  
+    <li><a class="toc-l3" href="#new-function">new function</a></li>
+  
+    <li><a class="toc-l3" href="#with-shape-function">with_shape function</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../../_soothfast/site.js" defer></script>
+</body>
+</html>

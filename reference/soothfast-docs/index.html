@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>soothfast-docs API reference · soothfast</title>
+<link rel="icon" href="../../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../../_soothfast/tokens.css">
+<link rel="stylesheet" href="../../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../../">soothfast</a></li>
+    
+      <li><a href="../../measuring/">Measuring</a></li>
+    
+      <li><a href="../../gating/">Gating</a></li>
+    
+      <li><a href="../../living-docs/">Living docs</a></li>
+    
+      <li><a href="../../spec/">Specs</a></li>
+    
+      <li><a href="../../sdk/">SDKs</a></li>
+    
+      <li><a href="../../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a class="active" aria-current="page" href="../../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="soothfast-docs-api-reference"><code>soothfast-docs</code> API reference<a class="anchor" href="#soothfast-docs-api-reference" aria-label="Link to this section">#</a></h1>
+<blockquote>
+<p>Generated by <code>cargo soothfast docs reference</code>
+Measurements and verified claims come from the latest baseline; CI gates them.</p>
+</blockquote>
+<h2 id="soothfast-docs"><code>soothfast_docs</code><a class="anchor" href="#soothfast-docs" aria-label="Link to this section">#</a></h2>
+<h2 id="soothfast-docs-claims"><code>soothfast_docs::claims</code><a class="anchor" href="#soothfast-docs-claims" aria-label="Link to this section">#</a></h2>
+<h3 id="claim-struct"><code>Claim</code> <sup>struct</sup><a class="anchor" href="#claim-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Claim</span>
+</code></pre></figure>
+<p>One parsed <code>soothfast:claim</code> expression: a measured metric of an item,
+compared against a fixed bound.</p>
+<h3 id="op-enum"><code>Op</code> <sup>enum</sup><a class="anchor" href="#op-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Op</span>
+</code></pre></figure>
+<p>Comparison operator of a claim expression (<code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>).</p>
+<h3 id="evaluate-function"><code>evaluate</code> <sup>function</sup><a class="anchor" href="#evaluate-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">evaluate</span>(claim: &amp;<span class="tok-ty">Claim</span>, baseline: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Result</span>&lt;(<span class="tok-ty">bool</span>, <span class="tok-ty">f64</span>), <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Evaluate against a baseline document; returns (holds, actual value).</p>
+<h3 id="parse-function"><code>parse</code> <sup>function</sup><a class="anchor" href="#parse-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">parse</span>(expr: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Claim</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Parse <code>demo::lcg_checksum.perfcnt.instructions &lt; 25000</code> (units on the
+bound: ns/us/ms/s multiply into ns; bare numbers stay raw).</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">p99</span><span class="ev-detail">p99 241ns &lt;= 50000ns</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_claim_parse`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">238</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">241</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">6</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">170</span></div></div></div>
+<h2 id="soothfast-docs-diff"><code>soothfast_docs::diff</code><a class="anchor" href="#soothfast-docs-diff" aria-label="Link to this section">#</a></h2>
+<h3 id="surfacediff-struct"><code>SurfaceDiff</code> <sup>struct</sup><a class="anchor" href="#surfacediff-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SurfaceDiff</span>
+</code></pre></figure>
+<p>Public-API delta between two [<code>Surface</code>] snapshots, by item path.</p>
+<h3 id="compare-function"><code>compare</code> <sup>function</sup><a class="anchor" href="#compare-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">compare</span>(old: &amp;<span class="tok-ty">Surface</span>, new: &amp;<span class="tok-ty">Surface</span>) -&gt; <span class="tok-ty">SurfaceDiff</span>
+</code></pre></figure>
+<p>Diff two surfaces: added/removed items by path, changed items by span
+fingerprint (modules are exempt — their span is the whole file).</p>
+<h3 id="render-function"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>(diff: &amp;<span class="tok-ty">SurfaceDiff</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>One <code>ADDED</code>/<code>REMOVED</code>/<code>CHANGED</code> line per item, ready for terminals and
+changelog drafts; an empty diff renders as a single "no changes" line.</p>
+<h2 id="soothfast-docs-gentests"><code>soothfast_docs::gentests</code><a class="anchor" href="#soothfast-docs-gentests" aria-label="Link to this section">#</a></h2>
+<h3 id="generated-header-constant"><code>GENERATED_HEADER</code> <sup>constant</sup><a class="anchor" href="#generated-header-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">GENERATED_HEADER</span>: &amp;<span class="tok-ty">str</span> = <span class="tok-str">&quot;// @generated by `cargo soothfast docs gen-tests`&quot;</span>
+</code></pre></figure>
+<p>First line of every generated file; <code>docs check</code> uses it to tell
+generated artifacts from hand-written ones.</p>
+<h3 id="capture-examples-function"><code>capture_examples</code> <sup>function</sup><a class="anchor" href="#capture-examples-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">capture_examples</span>(rel_path: &amp;<span class="tok-ty">str</span>, doc: &amp;<span class="tok-ty">Doc</span>) -&gt; <span class="tok-ty">Vec</span>&lt;(<span class="tok-ty">String</span>, <span class="tok-ty">String</span>)&gt;
+</code></pre></figure>
+<p>Example-file contents for the capture blocks of one markdown doc, in
+capture order: (example_name, content).</p>
+<p>A <code>feature=NAME</code> tag gates the real <code>fn main</code> behind that feature, with a
+no-op fallback when it's off — an example file (unlike a <code>#[test]</code>) can't
+simply be omitted, so this is what keeps <code>cargo build --examples</code> (and
+clippy/test over <code>--all-targets</code>) green under any feature combination.
+<code>docs capture</code> must be run with that same feature enabled to record real
+output; otherwise it captures the empty fallback.</p>
+<h3 id="sanitized-stem-function"><code>sanitized_stem</code> <sup>function</sup><a class="anchor" href="#sanitized-stem-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">sanitized_stem</span>(rel_path: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p><code>docs/measuring.md</code> → <code>soothfast_doc_docs_measuring</code>.</p>
+<h3 id="test-file-function"><code>test_file</code> <sup>function</sup><a class="anchor" href="#test-file-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">test_file</span>(rel_path: &amp;<span class="tok-ty">str</span>, doc: &amp;<span class="tok-ty">Doc</span>) -&gt; <span class="tok-ty">Option</span>&lt;<span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Test-file content for one markdown doc, or None when it has no testable
+blocks (all ignored / non-rust / capture).</p>
+<h2 id="soothfast-docs-lockfile"><code>soothfast_docs::lockfile</code><a class="anchor" href="#soothfast-docs-lockfile" aria-label="Link to this section">#</a></h2>
+<h3 id="binds-type-alias"><code>Binds</code> <sup>type_alias</sup><a class="anchor" href="#binds-type-alias" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">type</span> <span class="tok-ty">Binds</span> = <span class="tok-ty">BTreeMap</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>item path → fingerprint (hex).</p>
+<h3 id="lockfile-constant"><code>LOCKFILE</code> <sup>constant</sup><a class="anchor" href="#lockfile-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">LOCKFILE</span>: &amp;<span class="tok-ty">str</span> = <span class="tok-str">&quot;soothfast.lock&quot;</span>
+</code></pre></figure>
+<p>Lockfile name, resolved relative to the workspace root.</p>
+<h3 id="merge-function"><code>merge</code> <sup>function</sup><a class="anchor" href="#merge-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">merge</span>(existing: &amp;<span class="tok-ty">Binds</span>, fresh: &amp;<span class="tok-ty">Binds</span>, full_scope: <span class="tok-ty">bool</span>) -&gt; <span class="tok-ty">Binds</span>
+</code></pre></figure>
+<p>Merge freshly accepted binds over <code>existing</code>. A full-scope accept replaces
+the map outright, dropping binds that no longer exist anywhere; a partial
+(explicit-paths) accept must preserve out-of-scope entries.</p>
+<h3 id="read-function"><code>read</code> <sup>function</sup><a class="anchor" href="#read-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">read</span>(root: &amp;<span class="tok-ty">Path</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Binds</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Read accepted binds from <code>root</code>'s lockfile; a missing file is an empty
+map, not an error (a fresh repo has accepted nothing yet).</p>
+<h3 id="write-function"><code>write</code> <sup>function</sup><a class="anchor" href="#write-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">write</span>(root: &amp;<span class="tok-ty">Path</span>, binds: &amp;<span class="tok-ty">Binds</span>) -&gt; <span class="tok-ty">Result</span>&lt;(), <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Persist <code>binds</code> to <code>root</code>'s lockfile as stable, pretty-printed JSON.</p>
+<h2 id="soothfast-docs-markdown"><code>soothfast_docs::markdown</code><a class="anchor" href="#soothfast-docs-markdown" aria-label="Link to this section">#</a></h2>
+<h3 id="bind-struct"><code>Bind</code> <sup>struct</sup><a class="anchor" href="#bind-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Bind</span>
+</code></pre></figure>
+<p><code>&lt;!-- soothfast:bind path::to::item --&gt;</code></p>
+<h3 id="claimmarker-struct"><code>ClaimMarker</code> <sup>struct</sup><a class="anchor" href="#claimmarker-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ClaimMarker</span>
+</code></pre></figure>
+<p><code>&lt;!-- soothfast:claim item.backend.metric &lt; value --&gt;</code></p>
+<h3 id="codeblock-struct"><code>CodeBlock</code> <sup>struct</sup><a class="anchor" href="#codeblock-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">CodeBlock</span>
+</code></pre></figure>
+<p>One fenced code block.</p>
+<h3 id="doc-struct"><code>Doc</code> <sup>struct</sup><a class="anchor" href="#doc-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Doc</span>
+</code></pre></figure>
+<p>Everything [<code>scan</code>] extracts from one markdown file: fenced code blocks
+plus <code>soothfast:bind</code> / <code>soothfast:claim</code> markers, in document order.</p>
+<h3 id="scan-function"><code>scan</code> <sup>function</sup><a class="anchor" href="#scan-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">scan</span>(text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Doc</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Scan one markdown text. Closing markers (<code>&lt;!-- /soothfast:... --&gt;</code>) are
+structural for readers and ignored here. Errs on an unclosed fence:
+dropping it would silently swallow the block and every later marker.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.07 over sizes [512, 2048, 8192] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_markdown_scan`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">444704</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">473024</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4114</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">338400</span></div></div></div>
+<h3 id="splice-output-function"><code>splice_output</code> <sup>function</sup><a class="anchor" href="#splice-output-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">splice_output</span>( text: &amp;<span class="tok-ty">str</span>, nth_capture: <span class="tok-ty">usize</span>, output: &amp;<span class="tok-ty">str</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Option</span>&lt;<span class="tok-ty">String</span>&gt;, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Replace (or insert) the <code>text soothfast-output</code> fence that follows the
+<code>nth</code> capture-output block (0-based among capture blocks). Ok(None) when
+the capture block wasn't found; Err on malformed markdown.</p>
+<h2 id="soothfast-docs-reference"><code>soothfast_docs::reference</code><a class="anchor" href="#soothfast-docs-reference" aria-label="Link to this section">#</a></h2>
+<h3 id="render-function-1"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>( crate_name: &amp;<span class="tok-ty">str</span>, surface: &amp;<span class="tok-ty">Surface</span>, docs_text: &amp;<span class="tok-ty">BTreeMap</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;, baseline: &amp;<span class="tok-ty">Value</span>, ) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Render one crate's surface as a markdown fragment (module-grouped).
+<code>baseline</code> supplies measurements and assertion verdicts; pass <code>Value::Null</code>
+to render signatures + docs only.</p>
+<h3 id="resolve-reference-links-function"><code>resolve_reference_links</code> <sup>function</sup><a class="anchor" href="#resolve-reference-links-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">resolve_reference_links</span>(text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Rustdoc comments often disambiguate intra-doc links with a reference-style
+definition (<code>[`Foo::bar`]: crate::Foo::bar</code>); the site's markdown
+renderer only supports inline links. Drop each definition line and inline
+it into the shorthand <code>[</code>Foo::bar<code>]</code> references it defines. Doesn't handle
+the separate <code>[text][label]</code> reference form — not seen in practice here.</p>
+<h2 id="soothfast-docs-surface"><code>soothfast_docs::surface</code><a class="anchor" href="#soothfast-docs-surface" aria-label="Link to this section">#</a></h2>
+<h3 id="itemgroup-struct"><code>ItemGroup</code> <sup>struct</sup><a class="anchor" href="#itemgroup-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ItemGroup</span>&lt;<span class="tok-kw">&#39;a</span>&gt;
+</code></pre></figure>
+<p>One distinct item, grouped by (kind, fingerprint) to collapse the extra
+path keys <code>alias_reexports</code> adds for the same underlying function —
+<code>representative</code> is the shortest path (for display), <code>aliases</code> holds
+every spelling (for lookups, since a <code>covers=</code> tag may name any of them).
+Un-fingerprinted items (span unreadable) are never merged with others.</p>
+<h3 id="iteminfo-struct"><code>ItemInfo</code> <sup>struct</sup><a class="anchor" href="#iteminfo-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ItemInfo</span>
+</code></pre></figure>
+<p>What the surface records about one public item — enough to detect any
+change to it (fingerprint), classify the change (signature), and audit
+coverage (kind, has_docs).</p>
+<h3 id="surface-struct"><code>Surface</code> <sup>struct</sup><a class="anchor" href="#surface-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Surface</span>
+</code></pre></figure>
+<p>Public items keyed by full path (<code>crate::module::item</code>).</p>
+<h3 id="from-rustdoc-function"><code>from_rustdoc</code> <sup>function</sup><a class="anchor" href="#from-rustdoc-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">from_rustdoc</span>(doc: &amp;<span class="tok-ty">Value</span>, source_root: &amp;<span class="tok-ty">Path</span>) -&gt; <span class="tok-ty">Surface</span>
+</code></pre></figure>
+<p>Build a surface from a rustdoc JSON document. <code>source_root</code> resolves the
+relative filenames in spans (the directory rustdoc ran in).</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#soothfast-docs">soothfast_docs</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-docs-claims">soothfast_docs::claims</a></li>
+  
+    <li><a class="toc-l3" href="#claim-struct">Claim struct</a></li>
+  
+    <li><a class="toc-l3" href="#op-enum">Op enum</a></li>
+  
+    <li><a class="toc-l3" href="#evaluate-function">evaluate function</a></li>
+  
+    <li><a class="toc-l3" href="#parse-function">parse function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-docs-diff">soothfast_docs::diff</a></li>
+  
+    <li><a class="toc-l3" href="#surfacediff-struct">SurfaceDiff struct</a></li>
+  
+    <li><a class="toc-l3" href="#compare-function">compare function</a></li>
+  
+    <li><a class="toc-l3" href="#render-function">render function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-docs-gentests">soothfast_docs::gentests</a></li>
+  
+    <li><a class="toc-l3" href="#generated-header-constant">GENERATED_HEADER constant</a></li>
+  
+    <li><a class="toc-l3" href="#capture-examples-function">capture_examples function</a></li>
+  
+    <li><a class="toc-l3" href="#sanitized-stem-function">sanitized_stem function</a></li>
+  
+    <li><a class="toc-l3" href="#test-file-function">test_file function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-docs-lockfile">soothfast_docs::lockfile</a></li>
+  
+    <li><a class="toc-l3" href="#binds-type-alias">Binds type_alias</a></li>
+  
+    <li><a class="toc-l3" href="#lockfile-constant">LOCKFILE constant</a></li>
+  
+    <li><a class="toc-l3" href="#merge-function">merge function</a></li>
+  
+    <li><a class="toc-l3" href="#read-function">read function</a></li>
+  
+    <li><a class="toc-l3" href="#write-function">write function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-docs-markdown">soothfast_docs::markdown</a></li>
+  
+    <li><a class="toc-l3" href="#bind-struct">Bind struct</a></li>
+  
+    <li><a class="toc-l3" href="#claimmarker-struct">ClaimMarker struct</a></li>
+  
+    <li><a class="toc-l3" href="#codeblock-struct">CodeBlock struct</a></li>
+  
+    <li><a class="toc-l3" href="#doc-struct">Doc struct</a></li>
+  
+    <li><a class="toc-l3" href="#scan-function">scan function</a></li>
+  
+    <li><a class="toc-l3" href="#splice-output-function">splice_output function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-docs-reference">soothfast_docs::reference</a></li>
+  
+    <li><a class="toc-l3" href="#render-function-1">render function</a></li>
+  
+    <li><a class="toc-l3" href="#resolve-reference-links-function">resolve_reference_links function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-docs-surface">soothfast_docs::surface</a></li>
+  
+    <li><a class="toc-l3" href="#itemgroup-struct">ItemGroup struct</a></li>
+  
+    <li><a class="toc-l3" href="#iteminfo-struct">ItemInfo struct</a></li>
+  
+    <li><a class="toc-l3" href="#surface-struct">Surface struct</a></li>
+  
+    <li><a class="toc-l3" href="#from-rustdoc-function">from_rustdoc function</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../../_soothfast/site.js" defer></script>
+</body>
+</html>

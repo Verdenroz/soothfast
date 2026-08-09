@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gating · soothfast</title>
+<link rel="icon" href="../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../_soothfast/tokens.css">
+<link rel="stylesheet" href="../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../">soothfast</a></li>
+    
+      <li><a href="../measuring/">Measuring</a></li>
+    
+      <li><a class="active" aria-current="page" href="../gating/">Gating</a></li>
+    
+      <li><a href="../living-docs/">Living docs</a></li>
+    
+      <li><a href="../spec/">Specs</a></li>
+    
+      <li><a href="../sdk/">SDKs</a></li>
+    
+      <li><a href="../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="gating">Gating<a class="anchor" href="#gating" aria-label="Link to this section">#</a></h1>
+<p>Measuring produces numbers. Gating decides whether they are acceptable.
+<code>cargo soothfast gate</code> re-measures your code, compares it against a
+reference, and exits non-zero as soon as any metric regresses past a
+threshold. That is what turns a benchmark into a CI check.</p>
+<h2 id="picking-a-reference">Picking a reference<a class="anchor" href="#picking-a-reference" aria-label="Link to this section">#</a></h2>
+<p>Three ways to choose what "acceptable" means, in order of how CI actually
+uses them:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast gate -p mylib                                    # vs a saved --baseline (default &quot;base&quot;)
+<span class="tok-kw">$ </span>cargo soothfast gate -p mylib --against-ref origin/master         # vs the merge-base, measured live
+<span class="tok-kw">$ </span>cargo soothfast gate -p mylib --backend buildcost --against-ref origin/master   # binary size / build time
+</code></pre></figure>
+<p><code>--against-ref</code> never reads a file. It measures HEAD and the merge-base of
+<code>REF</code> in a temporary git worktree, twice each, interleaved as
+head/base/head/base. That "tango" order spreads out thermal and scheduler
+drift. It then takes the per-metric minimum across each side's two rounds
+before comparing. This is what <code>make gate</code> runs against <code>origin/master</code> for
+every crate in <code>BENCH_CRATES</code>, and it is why merge-base gating has no
+baseline file that can go stale in version control.</p>
+<h2 id="thresholds">Thresholds<a class="anchor" href="#thresholds" aria-label="Link to this section">#</a></h2>
+<div class="tablewrap"><table>
+<thead><tr><th>metric</th><th>threshold</th><th>notes</th></tr></thead>
+<tbody>
+<tr><td><code>perfcnt.instructions</code></td><td>+5%</td><td>hard</td></tr>
+<tr><td><code>callgrind.ir</code></td><td>+5%</td><td>hard</td></tr>
+<tr><td><code>walltime.median_ns</code></td><td>+10%</td><td>hard, but skipped with a warning when the A/A noise floor is 5% or higher. A threshold half the noise floor cannot tell signal from jitter.</td></tr>
+<tr><td><code>alloc.allocs</code> / <code>alloc.bytes</code></td><td>+5%</td><td>hard, integer ceiling</td></tr>
+<tr><td><code>buildcost.size_bytes</code></td><td>+5%</td><td>hard</td></tr>
+<tr><td><code>buildcost.build_ms</code></td><td>+25%</td><td>soft: printed as a warning, does not fail the gate</td></tr>
+</tbody>
+</table></div>
+<h2 id="ratchets">Ratchets<a class="anchor" href="#ratchets" aria-label="Link to this section">#</a></h2>
+<div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_measure::sweep::evaluate"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">evaluate</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
+<p><code>--ratchet NAME</code> runs a second comparison against a long-lived baseline,
+your last release for instance, after the primary one. It exists because ten
+separate +4% regressions each pass the primary gate on their own. A ratchet
+is an independent floor that catches the sum even when no single change
+trips the per-commit threshold.</p>
+<h2 id="deps-advisory-not-a-different-check"><code>--deps</code>: advisory, not a different check<a class="anchor" href="#deps-advisory-not-a-different-check" aria-label="Link to this section">#</a></h2>
+<p><code>--deps</code> does not change what gets gated. It adds one warning: if any
+measured item's source fingerprint changed relative to the reference,
+<code>cargo soothfast gate --deps</code> prints a note that this is not a pure
+dependency bump. The threshold comparison runs the same either way. All
+<code>--deps</code> tells you is whether a regression comes from your own code
+changing or purely from whatever moved underneath it.</p>
+<h2 id="when-it-fails">When it fails<a class="anchor" href="#when-it-fails" aria-label="Link to this section">#</a></h2>
+<p>Every run writes <code>.soothfast/gate-status.json</code> (<code>{passed, failures, unix}</code>),
+which <code>cargo soothfast report render</code> reads to draw the pass/fail badge.
+On failure, the first three failing items each get a callgrind per-function
+report written to <code>.soothfast/triage/&lt;item-with-_-for-::&gt;.txt</code>. That step is
+skipped entirely when callgrind or valgrind is not available.</p>
+<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_measure::bench_sweep_evaluate.alloc.allocs &lt;= 0"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_sweep_evaluate</span><span class="chip-sep">—</span><span class="chip-detail">allocations 0</span><span class="chip-limit">(limit ≤ 0)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="8" y1="3" x2="8" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8" y2="11" class="chip-scale-fill" style="--fill-len:0"/><circle cx="8" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 0</span></span></span></span></div>
+<p>The complexity-sweep verdict math that <code>--ratchet</code> and <code>--against-ref</code> run
+on every comparison is itself zero-alloc, so gating a hundred items does not
+cost a hundred allocations of bookkeeping.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#picking-a-reference">Picking a reference</a></li>
+  
+    <li><a class="toc-l2" href="#thresholds">Thresholds</a></li>
+  
+    <li><a class="toc-l2" href="#ratchets">Ratchets</a></li>
+  
+    <li><a class="toc-l2" href="#deps-advisory-not-a-different-check">--deps: advisory, not a different check</a></li>
+  
+    <li><a class="toc-l2" href="#when-it-fails">When it fails</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../_soothfast/site.js" defer></script>
+</body>
+</html>

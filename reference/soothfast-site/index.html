@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>soothfast-site API reference · soothfast</title>
+<link rel="icon" href="../../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../../_soothfast/tokens.css">
+<link rel="stylesheet" href="../../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../../">soothfast</a></li>
+    
+      <li><a href="../../measuring/">Measuring</a></li>
+    
+      <li><a href="../../gating/">Gating</a></li>
+    
+      <li><a href="../../living-docs/">Living docs</a></li>
+    
+      <li><a href="../../spec/">Specs</a></li>
+    
+      <li><a href="../../sdk/">SDKs</a></li>
+    
+      <li><a href="../../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a class="active" aria-current="page" href="../../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="soothfast-site-api-reference"><code>soothfast-site</code> API reference<a class="anchor" href="#soothfast-site-api-reference" aria-label="Link to this section">#</a></h1>
+<blockquote>
+<p>Generated by <code>cargo soothfast docs reference</code>
+Measurements and verified claims come from the latest baseline; CI gates them.</p>
+</blockquote>
+<h2 id="soothfast-site"><code>soothfast_site</code><a class="anchor" href="#soothfast-site" aria-label="Link to this section">#</a></h2>
+<h3 id="buildinput-struct"><code>BuildInput</code> <sup>struct</sup><a class="anchor" href="#buildinput-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">BuildInput</span>
+</code></pre></figure>
+<h3 id="buildreport-struct"><code>BuildReport</code> <sup>struct</sup><a class="anchor" href="#buildreport-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">BuildReport</span>
+</code></pre></figure>
+<h3 id="siteconfig-struct"><code>SiteConfig</code> <sup>struct</sup><a class="anchor" href="#siteconfig-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SiteConfig</span>
+</code></pre></figure>
+<h3 id="siteplugin-trait"><code>SitePlugin</code> <sup>trait</sup><a class="anchor" href="#siteplugin-trait" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">trait</span> <span class="tok-ty">SitePlugin</span>
+</code></pre></figure>
+<h2 id="soothfast-site-build"><code>soothfast_site::build</code><a class="anchor" href="#soothfast-site-build" aria-label="Link to this section">#</a></h2>
+<h3 id="build-function"><code>build</code> <sup>function</sup><a class="anchor" href="#build-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">build</span>(input: &amp;<span class="tok-ty">BuildInput</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">BuildReport</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Build the whole site. Any page failing to render fails the build —
+a half-broken published site is worse than a red command.</p>
+<h2 id="soothfast-site-color"><code>soothfast_site::color</code><a class="anchor" href="#soothfast-site-color" aria-label="Link to this section">#</a></h2>
+<h3 id="role-struct"><code>Role</code> <sup>struct</sup><a class="anchor" href="#role-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Role</span>
+</code></pre></figure>
+<p>A role's light and dark tones together, as derived from one seed color.</p>
+<h3 id="roletones-struct"><code>RoleTones</code> <sup>struct</sup><a class="anchor" href="#roletones-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">RoleTones</span>
+</code></pre></figure>
+<p>One Material-style color role, resolved to concrete hex values for a
+single scheme (light or dark).</p>
+<h3 id="contrast-function"><code>contrast</code> <sup>function</sup><a class="anchor" href="#contrast-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">contrast</span>(a: (<span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>), b: (<span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>)) -&gt; <span class="tok-ty">f64</span>
+</code></pre></figure>
+<p>WCAG contrast ratio between two colors, &gt;= 1.0.</p>
+<h3 id="generate-theme-css-function"><code>generate_theme_css</code> <sup>function</sup><a class="anchor" href="#generate-theme-css-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">generate_theme_css</span>( primary: <span class="tok-ty">Option</span>&lt;&amp;<span class="tok-ty">str</span>&gt;, secondary: <span class="tok-ty">Option</span>&lt;&amp;<span class="tok-ty">str</span>&gt;, tertiary: <span class="tok-ty">Option</span>&lt;&amp;<span class="tok-ty">str</span>&gt;, background: <span class="tok-ty">Option</span>&lt;&amp;<span class="tok-ty">str</span>&gt;, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Generate a <code>theme-vars.css</code> override for whichever <code>[site.theme]</code> seeds
+are set, covering <code>:root</code>, the OS-dark media query, and the explicit
+<code>[data-theme]</code> toggle — mirroring <code>tokens.css</code>'s own structure so it can
+simply be linked after it.</p>
+<h3 id="parse-hex-function"><code>parse_hex</code> <sup>function</sup><a class="anchor" href="#parse-hex-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">parse_hex</span>(s: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;(<span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>), <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Parse a <code>#rgb</code>, <code>#rrggbb</code>, or bare <code>rrggbb</code>/<code>rgb</code> hex string into <code>(r, g, b)</code> bytes.</p>
+<h3 id="relative-luminance-function"><code>relative_luminance</code> <sup>function</sup><a class="anchor" href="#relative-luminance-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">relative_luminance</span>(rgb: (<span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>)) -&gt; <span class="tok-ty">f64</span>
+</code></pre></figure>
+<p>WCAG relative luminance, 0.0 (black) .. 1.0 (white).</p>
+<h3 id="role-from-seed-function"><code>role_from_seed</code> <sup>function</sup><a class="anchor" href="#role-from-seed-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">role_from_seed</span>(seed: (<span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>), bg_light: (<span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>), bg_dark: (<span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>)) -&gt; <span class="tok-ty">Role</span>
+</code></pre></figure>
+<p>Derive a full light+dark Material role from one seed hex color, given the
+page's light and dark background tones (see <code>tones_for_scheme</code> for how a
+single scheme's tones are computed).</p>
+<h3 id="to-hex-function"><code>to_hex</code> <sup>function</sup><a class="anchor" href="#to-hex-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">to_hex</span>(rgb: (<span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>, <span class="tok-ty">u8</span>)) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Render a channel triple as <code>#RRGGBB</code>, the form CSS custom properties
+and the theme files are written in.</p>
+<h2 id="soothfast-site-config"><code>soothfast_site::config</code><a class="anchor" href="#soothfast-site-config" aria-label="Link to this section">#</a></h2>
+<h3 id="navgroup-struct"><code>NavGroup</code> <sup>struct</sup><a class="anchor" href="#navgroup-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">NavGroup</span>
+</code></pre></figure>
+<p>One nav group in the sidebar: a titled list of markdown pages.</p>
+<h3 id="themeconfig-struct"><code>ThemeConfig</code> <sup>struct</sup><a class="anchor" href="#themeconfig-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ThemeConfig</span>
+</code></pre></figure>
+<p>The <code>[site.theme]</code> section: seed hex colors for the brand roles. Any
+unset field keeps the built-in "gauge indigo" default from <code>tokens.css</code>.
+When at least one is set, the build generates <code>_soothfast/theme-vars.css</code>
+with the full light+dark Material role set derived from each seed
+(see <code>crate::color::role_from_seed</code>).</p>
+<h3 id="parse-function"><code>parse</code> <sup>function</sup><a class="anchor" href="#parse-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">parse</span>(text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">SiteConfig</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Parse <code>soothfast.toml</code> text into a config. Unknown keys under <code>[site]</code> are
+errors: silently ignored config is how sites drift from intent.</p>
+<h2 id="soothfast-site-evidence"><code>soothfast_site::evidence</code><a class="anchor" href="#soothfast-site-evidence" aria-label="Link to this section">#</a></h2>
+<h3 id="evidence-struct"><code>Evidence</code> <sup>struct</sup><a class="anchor" href="#evidence-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Evidence</span>
+</code></pre></figure>
+<p>Evidence renderer over one baseline + the bind lockfile.</p>
+<h2 id="soothfast-site-highlight"><code>soothfast_site::highlight</code><a class="anchor" href="#soothfast-site-highlight" aria-label="Link to this section">#</a></h2>
+<h3 id="highlight-function"><code>highlight</code> <sup>function</sup><a class="anchor" href="#highlight-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">highlight</span>(lang: &amp;<span class="tok-ty">str</span>, code: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Highlight <code>code</code> for <code>lang</code>. Always returns escaped HTML.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.20 over sizes [128, 512, 2048] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_site::bench_highlight`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">3151066</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">3388349</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">88069</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">2079336</span></div></div></div>
+<h2 id="soothfast-site-md"><code>soothfast_site::md</code><a class="anchor" href="#soothfast-site-md" aria-label="Link to this section">#</a></h2>
+<h3 id="codehook-type-alias"><code>CodeHook</code> <sup>type_alias</sup><a class="anchor" href="#codehook-type-alias" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">type</span> <span class="tok-ty">CodeHook</span>&lt;<span class="tok-kw">&#39;a</span>&gt; = &amp;<span class="tok-kw">&#39;a</span> <span class="tok-kw">dyn</span> <span class="tok-ty">Fn</span>(&amp;<span class="tok-ty">str</span>, &amp;[<span class="tok-ty">String</span>], &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Option</span>&lt;<span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Custom renderer for one fenced block: (lang, tags, code) → HTML, or
+None to fall back to the default <code>&lt;pre&gt;</code> + highlight rendering.</p>
+<h3 id="heading-struct"><code>Heading</code> <sup>struct</sup><a class="anchor" href="#heading-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Heading</span>
+</code></pre></figure>
+<p>One collected heading, for the on-page table of contents.</p>
+<h3 id="options-struct"><code>Options</code> <sup>struct</sup><a class="anchor" href="#options-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Options</span>&lt;<span class="tok-kw">&#39;a</span>&gt;
+</code></pre></figure>
+<p>Render hooks: link rewriting and custom code-block rendering, so the
+build pipeline (and plugins) stay out of the parser.</p>
+<h3 id="rendered-struct"><code>Rendered</code> <sup>struct</sup><a class="anchor" href="#rendered-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Rendered</span>
+</code></pre></figure>
+<p>A rendered page body.</p>
+<h3 id="code-html-function"><code>code_html</code> <sup>function</sup><a class="anchor" href="#code-html-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">code_html</span>(lang: &amp;<span class="tok-ty">str</span>, tags: &amp;[<span class="tok-ty">String</span>], code: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Default fenced-block rendering: instrument-panel <code>&lt;figure&gt;</code> with a
+language label and highlighted body.</p>
+<h3 id="render-function"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>(md: &amp;<span class="tok-ty">str</span>, opts: &amp;<span class="tok-ty">Options</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Rendered</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Render one markdown document.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.02 over sizes [256, 1024, 4096] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_site::bench_md_render`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">3186993</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">3277382</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">68118</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">3502526</span></div></div></div>
+<h2 id="soothfast-site-nav"><code>soothfast_site::nav</code><a class="anchor" href="#soothfast-site-nav" aria-label="Link to this section">#</a></h2>
+<h3 id="missing-enum"><code>Missing</code> <sup>enum</sup><a class="anchor" href="#missing-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Missing</span>
+</code></pre></figure>
+<p>What to do about a nav entry naming a page the build did not find.</p>
+<p>The right answer depends on what the build is for. Publishing a sidebar
+that links nowhere is drift and should fail. Writing docs is a different
+activity: the page you are about to add does not exist yet, and stopping
+the dev server over it helps nobody.</p>
+<h3 id="pagemeta-struct"><code>PageMeta</code> <sup>struct</sup><a class="anchor" href="#pagemeta-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">PageMeta</span>
+</code></pre></figure>
+<p>Minimal facts about a discovered page, gathered before rendering.</p>
+<h3 id="build-function-1"><code>build</code> <sup>function</sup><a class="anchor" href="#build-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">build</span>( cfg: &amp;<span class="tok-ty">SiteConfig</span>, pages: &amp;[<span class="tok-ty">PageMeta</span>], missing: <span class="tok-ty">Missing</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;(<span class="tok-ty">Value</span>, <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">String</span>&gt;), <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Resolve nav groups to template data, plus any warnings raised.</p>
+<p>Explicit nav wins over the automatic layout. A page it names that the
+build did not find is handled per [<code>Missing</code>].</p>
+<h3 id="href-function"><code>href</code> <sup>function</sup><a class="anchor" href="#href-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">href</span>(base: &amp;<span class="tok-ty">str</span>, route: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p><code>base</code> + <code>route</code>, with the empty result mapped to <code>./</code> (a valid link to
+the current directory; an empty href reloads the page instead).</p>
+<h3 id="route-for-function"><code>route_for</code> <sup>function</sup><a class="anchor" href="#route-for-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">route_for</span>(src: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Route for a docs-relative markdown path: pretty directory URLs.</p>
+<h3 id="with-current-function"><code>with_current</code> <sup>function</sup><a class="anchor" href="#with-current-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">with_current</span>(nav: &amp;<span class="tok-ty">Value</span>, route: &amp;<span class="tok-ty">str</span>, base: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Value</span>
+</code></pre></figure>
+<p>Copy of the nav with <code>current: true</code> stamped on the active page and a
+ready-to-use <code>href</code> per page (relative to the page being rendered), so
+the template highlights and links without any logic of its own.</p>
+<h2 id="soothfast-site-plugin"><code>soothfast_site::plugin</code><a class="anchor" href="#soothfast-site-plugin" aria-label="Link to this section">#</a></h2>
+<h3 id="pagerecord-struct"><code>PageRecord</code> <sup>struct</sup><a class="anchor" href="#pagerecord-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">PageRecord</span>
+</code></pre></figure>
+<p>A fully rendered page, as seen by end-of-build events.</p>
+<h3 id="pageref-struct"><code>PageRef</code> <sup>struct</sup><a class="anchor" href="#pageref-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">PageRef</span>&lt;<span class="tok-kw">&#39;a</span>&gt;
+</code></pre></figure>
+<p>Identity of the page an event concerns.</p>
+<h3 id="page-html-function"><code>page_html</code> <sup>function</sup><a class="anchor" href="#page-html-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">page_html</span>( plugins: &amp;[<span class="tok-ty">Box</span>&lt;<span class="tok-kw">dyn</span> <span class="tok-ty">SitePlugin</span>&gt;], page: &amp;<span class="tok-ty">PageRef</span>, <span class="tok-kw">mut</span> html: <span class="tok-ty">String</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Run one HTML-rewrite pass through all plugins, in order.</p>
+<h3 id="page-markdown-function"><code>page_markdown</code> <sup>function</sup><a class="anchor" href="#page-markdown-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">page_markdown</span>( plugins: &amp;[<span class="tok-ty">Box</span>&lt;<span class="tok-kw">dyn</span> <span class="tok-ty">SitePlugin</span>&gt;], page: &amp;<span class="tok-ty">PageRef</span>, <span class="tok-kw">mut</span> md: <span class="tok-ty">String</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Run one markdown-rewrite pass through all plugins, in order.</p>
+<h2 id="soothfast-site-search"><code>soothfast_site::search</code><a class="anchor" href="#soothfast-site-search" aria-label="Link to this section">#</a></h2>
+<h3 id="search-struct"><code>Search</code> <sup>struct</sup><a class="anchor" href="#search-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Search</span>
+</code></pre></figure>
+<p>Search index builder.</p>
+<h2 id="soothfast-site-serve"><code>soothfast_site::serve</code><a class="anchor" href="#soothfast-site-serve" aria-label="Link to this section">#</a></h2>
+<h3 id="server-struct"><code>Server</code> <sup>struct</sup><a class="anchor" href="#server-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Server</span>
+</code></pre></figure>
+<p>A bound dev server, not yet running (split from <code>run</code> so callers and
+tests can learn the actual address before the loop starts).</p>
+<h2 id="soothfast-site-template"><code>soothfast_site::template</code><a class="anchor" href="#soothfast-site-template" aria-label="Link to this section">#</a></h2>
+<h3 id="includes-trait"><code>Includes</code> <sup>trait</sup><a class="anchor" href="#includes-trait" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">trait</span> <span class="tok-ty">Includes</span>
+</code></pre></figure>
+<p>Resolves <code>{% include %}</code> names to template text (backed by the theme).</p>
+<h3 id="escape-function"><code>escape</code> <sup>function</sup><a class="anchor" href="#escape-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">escape</span>(s: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Escape text for HTML element and attribute contexts.</p>
+<h3 id="render-function-1"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>(source: &amp;<span class="tok-ty">str</span>, ctx: &amp;<span class="tok-ty">Value</span>, includes: &amp;<span class="tok-kw">dyn</span> <span class="tok-ty">Includes</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Render <code>source</code> against <code>ctx</code>. Values are looked up by dot path
+(<code>page.title</code>); a bare <code>.</code> names the current <code>for</code> item.</p>
+<h2 id="soothfast-site-theme"><code>soothfast_site::theme</code><a class="anchor" href="#soothfast-site-theme" aria-label="Link to this section">#</a></h2>
+<h3 id="theme-struct"><code>Theme</code> <sup>struct</sup><a class="anchor" href="#theme-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Theme</span>
+</code></pre></figure>
+<p>A resolved theme: defaults plus user overrides.</p>
+<h2 id="soothfast-site-toml"><code>soothfast_site::toml</code><a class="anchor" href="#soothfast-site-toml" aria-label="Link to this section">#</a></h2>
+<h3 id="tomlvalue-enum"><code>TomlValue</code> <sup>enum</sup><a class="anchor" href="#tomlvalue-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">TomlValue</span>
+</code></pre></figure>
+<p>A parsed TOML scalar, string array, or inline table.</p>
+<h3 id="logical-lines-function"><code>logical_lines</code> <sup>function</sup><a class="anchor" href="#logical-lines-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">logical_lines</span>(text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Vec</span>&lt;(<span class="tok-ty">usize</span>, <span class="tok-ty">String</span>)&gt;
+</code></pre></figure>
+<p>Comment-stripped, non-empty logical lines with their 1-based numbers.
+A line whose <code>[</code> array is still open pulls in following lines, so
+multi-line arrays parse as one <code>key = value</code>.</p>
+<h3 id="parse-string-function"><code>parse_string</code> <sup>function</sup><a class="anchor" href="#parse-string-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">parse_string</span>(s: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;(<span class="tok-ty">String</span>, <span class="tok-ty">usize</span>), <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Parse a leading double-quoted string; returns (content, bytes consumed).</p>
+<h3 id="parse-value-function"><code>parse_value</code> <sup>function</sup><a class="anchor" href="#parse-value-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">parse_value</span>(s: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">TomlValue</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Parse a scalar value: string, bool, or string array.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#soothfast-site">soothfast_site</a></li>
+  
+    <li><a class="toc-l3" href="#buildinput-struct">BuildInput struct</a></li>
+  
+    <li><a class="toc-l3" href="#buildreport-struct">BuildReport struct</a></li>
+  
+    <li><a class="toc-l3" href="#siteconfig-struct">SiteConfig struct</a></li>
+  
+    <li><a class="toc-l3" href="#siteplugin-trait">SitePlugin trait</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-build">soothfast_site::build</a></li>
+  
+    <li><a class="toc-l3" href="#build-function">build function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-color">soothfast_site::color</a></li>
+  
+    <li><a class="toc-l3" href="#role-struct">Role struct</a></li>
+  
+    <li><a class="toc-l3" href="#roletones-struct">RoleTones struct</a></li>
+  
+    <li><a class="toc-l3" href="#contrast-function">contrast function</a></li>
+  
+    <li><a class="toc-l3" href="#generate-theme-css-function">generate_theme_css function</a></li>
+  
+    <li><a class="toc-l3" href="#parse-hex-function">parse_hex function</a></li>
+  
+    <li><a class="toc-l3" href="#relative-luminance-function">relative_luminance function</a></li>
+  
+    <li><a class="toc-l3" href="#role-from-seed-function">role_from_seed function</a></li>
+  
+    <li><a class="toc-l3" href="#to-hex-function">to_hex function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-config">soothfast_site::config</a></li>
+  
+    <li><a class="toc-l3" href="#navgroup-struct">NavGroup struct</a></li>
+  
+    <li><a class="toc-l3" href="#themeconfig-struct">ThemeConfig struct</a></li>
+  
+    <li><a class="toc-l3" href="#parse-function">parse function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-evidence">soothfast_site::evidence</a></li>
+  
+    <li><a class="toc-l3" href="#evidence-struct">Evidence struct</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-highlight">soothfast_site::highlight</a></li>
+  
+    <li><a class="toc-l3" href="#highlight-function">highlight function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-md">soothfast_site::md</a></li>
+  
+    <li><a class="toc-l3" href="#codehook-type-alias">CodeHook type_alias</a></li>
+  
+    <li><a class="toc-l3" href="#heading-struct">Heading struct</a></li>
+  
+    <li><a class="toc-l3" href="#options-struct">Options struct</a></li>
+  
+    <li><a class="toc-l3" href="#rendered-struct">Rendered struct</a></li>
+  
+    <li><a class="toc-l3" href="#code-html-function">code_html function</a></li>
+  
+    <li><a class="toc-l3" href="#render-function">render function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-nav">soothfast_site::nav</a></li>
+  
+    <li><a class="toc-l3" href="#missing-enum">Missing enum</a></li>
+  
+    <li><a class="toc-l3" href="#pagemeta-struct">PageMeta struct</a></li>
+  
+    <li><a class="toc-l3" href="#build-function-1">build function</a></li>
+  
+    <li><a class="toc-l3" href="#href-function">href function</a></li>
+  
+    <li><a class="toc-l3" href="#route-for-function">route_for function</a></li>
+  
+    <li><a class="toc-l3" href="#with-current-function">with_current function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-plugin">soothfast_site::plugin</a></li>
+  
+    <li><a class="toc-l3" href="#pagerecord-struct">PageRecord struct</a></li>
+  
+    <li><a class="toc-l3" href="#pageref-struct">PageRef struct</a></li>
+  
+    <li><a class="toc-l3" href="#page-html-function">page_html function</a></li>
+  
+    <li><a class="toc-l3" href="#page-markdown-function">page_markdown function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-search">soothfast_site::search</a></li>
+  
+    <li><a class="toc-l3" href="#search-struct">Search struct</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-serve">soothfast_site::serve</a></li>
+  
+    <li><a class="toc-l3" href="#server-struct">Server struct</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-template">soothfast_site::template</a></li>
+  
+    <li><a class="toc-l3" href="#includes-trait">Includes trait</a></li>
+  
+    <li><a class="toc-l3" href="#escape-function">escape function</a></li>
+  
+    <li><a class="toc-l3" href="#render-function-1">render function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-theme">soothfast_site::theme</a></li>
+  
+    <li><a class="toc-l3" href="#theme-struct">Theme struct</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-site-toml">soothfast_site::toml</a></li>
+  
+    <li><a class="toc-l3" href="#tomlvalue-enum">TomlValue enum</a></li>
+  
+    <li><a class="toc-l3" href="#logical-lines-function">logical_lines function</a></li>
+  
+    <li><a class="toc-l3" href="#parse-string-function">parse_string function</a></li>
+  
+    <li><a class="toc-l3" href="#parse-value-function">parse_value function</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../../_soothfast/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Living docs · soothfast</title>
+<link rel="icon" href="../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../_soothfast/tokens.css">
+<link rel="stylesheet" href="../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../">soothfast</a></li>
+    
+      <li><a href="../measuring/">Measuring</a></li>
+    
+      <li><a href="../gating/">Gating</a></li>
+    
+      <li><a class="active" aria-current="page" href="../living-docs/">Living docs</a></li>
+    
+      <li><a href="../spec/">Specs</a></li>
+    
+      <li><a href="../sdk/">SDKs</a></li>
+    
+      <li><a href="../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="living-docs">Living docs<a class="anchor" href="#living-docs" aria-label="Link to this section">#</a></h1>
+<p>Prose rots in two ways. It describes code that has since changed, or it
+states a number that is no longer true. The docs engine gates both, and this
+page is itself checked by the mechanism it describes.</p>
+<h2 id="binds-prose-tied-to-a-fingerprint">Binds: prose tied to a fingerprint<a class="anchor" href="#binds-prose-tied-to-a-fingerprint" aria-label="Link to this section">#</a></h2>
+<div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_docs::markdown::scan"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">scan</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
+<p><code>&lt;!-- soothfast:bind path::to::item --&gt;</code> marks the prose that follows as a
+claim about that item's <em>behavior</em>. <code>cargo soothfast docs accept</code> records
+the item's current source fingerprint (FNV-1a over its normalized token
+stream) in <code>soothfast.lock</code>. <code>cargo soothfast docs check</code> recomputes it and
+fails the build as soon as it no longer matches, which means the code
+changed under prose nobody re-read.</p>
+<p>A marker the scanner cannot read is an error rather than a skipped line.
+That covers an unterminated marker, or one naming a kind other than <code>bind</code>
+or <code>claim</code>. Trailing whitespace after <code>--&gt;</code> is fine. Dropping a malformed
+marker silently would report a green check for a claim nothing evaluated.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">markdown · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>&lt;!-- soothfast:bind mylib::sorted --&gt;
+`sorted` returns a new, ascending-order vector; the input is untouched.
+&lt;!-- /soothfast:bind --&gt;
+</code></pre></figure>
+<p><code>soothfast.lock</code> is plain JSON: <code>{&quot;version&quot;: 1, &quot;binds&quot;: {&quot;item::path&quot;:
+&quot;&lt;16-hex-digit fingerprint&gt;&quot;}}</code>. Running <code>docs accept</code> with explicit PATHS
+merges into the existing lock, so binds outside that scope survive. Running
+it with no PATHS replaces the whole map, which is how dead binds get
+dropped.</p>
+<h2 id="claims-numbers-checked-against-a-real-run">Claims: numbers checked against a real run<a class="anchor" href="#claims-numbers-checked-against-a-real-run" aria-label="Link to this section">#</a></h2>
+<p>A claim marker looks like
+<code>&lt;!-- soothfast:claim item.backend.metric &lt;op&gt; value[unit] --&gt;</code>. It takes
+exactly three dot-separated tokens before the operator (<code>item</code> uses <code>::</code>
+internally, never <code>.</code>), one of <code>&lt; &lt;= &gt; &gt;=</code>, and a bound with an optional
+unit (<code>ns</code> ×1, <code>us</code>/<code>µs</code> ×1e3, <code>ms</code> ×1e6, <code>s</code> ×1e9). Unitless numbers are
+taken as-is, and underscores are allowed for readability, as in <code>25_000</code>.
+<code>docs check</code> evaluates the expression against
+<code>baseline[&quot;items&quot;][item][backend][metric]</code> and fails if the metric is
+missing or the comparison does not hold.</p>
+<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 241 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.83" y2="11" class="chip-scale-fill" style="--fill-len:0.83"/><circle cx="8.83" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.83"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
+<p>Parsing one claim expression, the exact work <code>docs check</code> does per marker on
+this page, costs under 50µs at the tail.</p>
+<h2 id="fence-tags-on-rust-code-blocks">Fence tags on rust code blocks<a class="anchor" href="#fence-tags-on-rust-code-blocks" aria-label="Link to this section">#</a></h2>
+<div class="tablewrap"><table>
+<thead><tr><th>tag</th><th>effect</th></tr></thead>
+<tbody>
+<tr><td><em>(none)</em></td><td>becomes a real <code>#[test]</code>, generated into <code>tests/soothfast_doc_&lt;file&gt;.rs</code></td></tr>
+<tr><td><code>ignore</code></td><td>excluded entirely: no test, no example, no check</td></tr>
+<tr><td><code>no_run</code></td><td>compiled but never executed (a plain fn, not <code>#[test]</code>)</td></tr>
+<tr><td><code>capture-output</code></td><td>becomes a runnable example. <code>docs capture</code> runs it and splices real stdout into a <code>text soothfast-output</code> fence below it</td></tr>
+<tr><td><code>feature=NAME</code></td><td>gates the generated test/example behind a cargo feature</td></tr>
+<tr><td><code>mock=NAME</code> / <code>mock=NAME(ARG)</code></td><td>activates a <code>#[soothfast::mock_seam]</code> backend by name (requires an accompanying <code>feature=</code> tag)</td></tr>
+<tr><td><code>covers=path::to::item</code></td><td>attaches a bind/claim's chip to this block instead of rendering it standalone (comma-separated for several items, no spaces)</td></tr>
+</tbody>
+</table></div>
+<p><code>cargo soothfast docs check -p PKG</code> runs three checks in order: bind
+fingerprints against <code>soothfast.lock</code>, claims against <code>--baseline</code>, then a
+fresh generation of every test and example in memory, diffed against what is
+on disk. A stale <code>docs gen-tests</code> or <code>docs capture</code> run therefore fails CI
+just like a stale bind or a violated claim.</p>
+<h2 id="why-this-page-has-almost-no-ignored-code">Why this page has almost no <code>ignore</code>d code<a class="anchor" href="#why-this-page-has-almost-no-ignored-code" aria-label="Link to this section">#</a></h2>
+<p>Every rust block on this site either runs for real, with <code>capture-output</code>
+producing its output rather than someone typing it, or is at least checked
+to compile with <code>no_run</code>. An <code>ignore</code>d block is invisible to all of the
+checks above and can drift silently for years. Reach for it only when a
+block genuinely cannot compile on its own, because it needs a real network
+or database, and prefer <code>no_run</code> even then if the code is otherwise real.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#binds-prose-tied-to-a-fingerprint">Binds: prose tied to a fingerprint</a></li>
+  
+    <li><a class="toc-l2" href="#claims-numbers-checked-against-a-real-run">Claims: numbers checked against a real run</a></li>
+  
+    <li><a class="toc-l2" href="#fence-tags-on-rust-code-blocks">Fence tags on rust code blocks</a></li>
+  
+    <li><a class="toc-l2" href="#why-this-page-has-almost-no-ignored-code">Why this page has almost no ignored code</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../_soothfast/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>soothfast-report API reference · soothfast</title>
+<link rel="icon" href="../../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../../_soothfast/tokens.css">
+<link rel="stylesheet" href="../../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../../">soothfast</a></li>
+    
+      <li><a href="../../measuring/">Measuring</a></li>
+    
+      <li><a href="../../gating/">Gating</a></li>
+    
+      <li><a href="../../living-docs/">Living docs</a></li>
+    
+      <li><a href="../../spec/">Specs</a></li>
+    
+      <li><a href="../../sdk/">SDKs</a></li>
+    
+      <li><a href="../../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a class="active" aria-current="page" href="../../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="soothfast-report-api-reference"><code>soothfast-report</code> API reference<a class="anchor" href="#soothfast-report-api-reference" aria-label="Link to this section">#</a></h1>
+<blockquote>
+<p>Generated by <code>cargo soothfast docs reference</code>
+Measurements and verified claims come from the latest baseline; CI gates them.</p>
+</blockquote>
+<h2 id="soothfast-report"><code>soothfast_report</code><a class="anchor" href="#soothfast-report" aria-label="Link to this section">#</a></h2>
+<h2 id="soothfast-report-badges"><code>soothfast_report::badges</code><a class="anchor" href="#soothfast-report-badges" aria-label="Link to this section">#</a></h2>
+<h3 id="badge-function"><code>badge</code> <sup>function</sup><a class="anchor" href="#badge-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">badge</span>(label: &amp;<span class="tok-ty">str</span>, message: &amp;<span class="tok-ty">str</span>, color: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Value</span>
+</code></pre></figure>
+<p>Raw shields.io endpoint JSON: <code>{schemaVersion, label, message, color}</code>.</p>
+<h3 id="coverage-badge-function"><code>coverage_badge</code> <sup>function</sup><a class="anchor" href="#coverage-badge-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">coverage_badge</span>(label: &amp;<span class="tok-ty">str</span>, pct: <span class="tok-ty">u32</span>) -&gt; <span class="tok-ty">Value</span>
+</code></pre></figure>
+<p>Green ≥ 90, yellow ≥ 70, red below.</p>
+<h3 id="gate-badge-function"><code>gate_badge</code> <sup>function</sup><a class="anchor" href="#gate-badge-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">gate_badge</span>(passed: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">bool</span>&gt;) -&gt; <span class="tok-ty">Value</span>
+</code></pre></figure>
+<p><code>None</code> means no recorded gate verdict — say so rather than guess green.</p>
+<h3 id="svg-from-function"><code>svg_from</code> <sup>function</sup><a class="anchor" href="#svg-from-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">svg_from</span>(value: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Render endpoint JSON (as produced by the builders above) as a flat SVG
+badge: dark instrument-panel label segment, evidence-colored message.</p>
+<h2 id="soothfast-report-changelog"><code>soothfast_report::changelog</code><a class="anchor" href="#soothfast-report-changelog" aria-label="Link to this section">#</a></h2>
+<h3 id="apisection-enum"><code>ApiSection</code> <sup>enum</sup><a class="anchor" href="#apisection-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">ApiSection</span>&lt;<span class="tok-kw">&#39;a</span>&gt;
+</code></pre></figure>
+<p>What the API section has to report.</p>
+<p>The two cases are separate types rather than an empty-string convention:
+"nothing changed" and "there was nothing to compare against" read the
+same in prose but mean opposite things, and a changelog that confuses
+them reports calm where it had no input at all.</p>
+<h3 id="draftinputs-struct"><code>DraftInputs</code> <sup>struct</sup><a class="anchor" href="#draftinputs-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">DraftInputs</span>&lt;<span class="tok-kw">&#39;a</span>&gt;
+</code></pre></figure>
+<p>Inputs already computed by the CLI (API section, two baselines).</p>
+<h3 id="draft-function"><code>draft</code> <sup>function</sup><a class="anchor" href="#draft-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">draft</span>(inputs: &amp;<span class="tok-ty">DraftInputs</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Render the "Unreleased" draft section: API surface + perf table.</p>
+<h2 id="soothfast-report-llms"><code>soothfast_report::llms</code><a class="anchor" href="#soothfast-report-llms" aria-label="Link to this section">#</a></h2>
+<h3 id="surfaceentry-struct"><code>SurfaceEntry</code> <sup>struct</sup><a class="anchor" href="#surfaceentry-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SurfaceEntry</span>
+</code></pre></figure>
+<p>One public item as fed by the CLI (from the docs-engine surface).</p>
+<h3 id="render-function"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>(pkg: &amp;<span class="tok-ty">str</span>, entries: &amp;[<span class="tok-ty">SurfaceEntry</span>], baseline: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Render <code>llms.txt</code>: every public item grouped by crate, with its full
+doc comment and measured facts attributed via <code>covers</code> (or direct id)
+matching.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x0.95 over sizes [64, 256, 1024] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_report::bench_llms_render`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">304965</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">482110</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">7191</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">1197537</span></div></div></div>
+<h2 id="soothfast-report-perf-table"><code>soothfast_report::perf_table</code><a class="anchor" href="#soothfast-report-perf-table" aria-label="Link to this section">#</a></h2>
+<h3 id="row-struct"><code>Row</code> <sup>struct</sup><a class="anchor" href="#row-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Row</span>
+</code></pre></figure>
+<p>One measured item's metrics, each <code>None</code> when that backend didn't run.</p>
+<h3 id="html-function"><code>html</code> <sup>function</sup><a class="anchor" href="#html-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">html</span>(baseline: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p><code>rows</code> rendered as a plain <code>&lt;table&gt;</code> for embedding in the docs site.</p>
+<h3 id="markdown-function"><code>markdown</code> <sup>function</sup><a class="anchor" href="#markdown-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">markdown</span>(baseline: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p><code>rows</code> rendered as a GitHub-flavored markdown table.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x0.94 over sizes [64, 256, 1024] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_report::bench_perf_table`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">836132</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">957368</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">8204</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">465747</span></div></div></div>
+<h3 id="rows-function"><code>rows</code> <sup>function</sup><a class="anchor" href="#rows-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">rows</span>(baseline: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Row</span>&gt;
+</code></pre></figure>
+<p>One <code>Row</code> per measured item in the baseline, in baseline (map) order.</p>
+<h2 id="soothfast-report-trend-chart"><code>soothfast_report::trend_chart</code><a class="anchor" href="#soothfast-report-trend-chart" aria-label="Link to this section">#</a></h2>
+<h3 id="metrics-constant"><code>METRICS</code> <sup>constant</sup><a class="anchor" href="#metrics-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">METRICS</span>: &amp;[(&amp;[&amp;<span class="tok-ty">str</span>
+</code></pre></figure>
+<p>(metric key path in baseline items, display name)</p>
+<h3 id="render-function-1"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>(points: &amp;[<span class="tok-ty">Value</span>], key: &amp;[&amp;<span class="tok-ty">str</span>; <span class="tok-num">2</span>], title: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Option</span>&lt;<span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Render one metric's chart; None when fewer than 2 points exist.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#soothfast-report">soothfast_report</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-report-badges">soothfast_report::badges</a></li>
+  
+    <li><a class="toc-l3" href="#badge-function">badge function</a></li>
+  
+    <li><a class="toc-l3" href="#coverage-badge-function">coverage_badge function</a></li>
+  
+    <li><a class="toc-l3" href="#gate-badge-function">gate_badge function</a></li>
+  
+    <li><a class="toc-l3" href="#svg-from-function">svg_from function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-report-changelog">soothfast_report::changelog</a></li>
+  
+    <li><a class="toc-l3" href="#apisection-enum">ApiSection enum</a></li>
+  
+    <li><a class="toc-l3" href="#draftinputs-struct">DraftInputs struct</a></li>
+  
+    <li><a class="toc-l3" href="#draft-function">draft function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-report-llms">soothfast_report::llms</a></li>
+  
+    <li><a class="toc-l3" href="#surfaceentry-struct">SurfaceEntry struct</a></li>
+  
+    <li><a class="toc-l3" href="#render-function">render function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-report-perf-table">soothfast_report::perf_table</a></li>
+  
+    <li><a class="toc-l3" href="#row-struct">Row struct</a></li>
+  
+    <li><a class="toc-l3" href="#html-function">html function</a></li>
+  
+    <li><a class="toc-l3" href="#markdown-function">markdown function</a></li>
+  
+    <li><a class="toc-l3" href="#rows-function">rows function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-report-trend-chart">soothfast_report::trend_chart</a></li>
+  
+    <li><a class="toc-l3" href="#metrics-constant">METRICS constant</a></li>
+  
+    <li><a class="toc-l3" href="#render-function-1">render function</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../../_soothfast/site.js" defer></script>
+</body>
+</html>

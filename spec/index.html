@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Specs · soothfast</title>
+<link rel="icon" href="../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../_soothfast/tokens.css">
+<link rel="stylesheet" href="../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../">soothfast</a></li>
+    
+      <li><a href="../measuring/">Measuring</a></li>
+    
+      <li><a href="../gating/">Gating</a></li>
+    
+      <li><a href="../living-docs/">Living docs</a></li>
+    
+      <li><a class="active" aria-current="page" href="../spec/">Specs</a></li>
+    
+      <li><a href="../sdk/">SDKs</a></li>
+    
+      <li><a href="../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="specs">Specs<a class="anchor" href="#specs" aria-label="Link to this section">#</a></h1>
+<p>For servers, the API surface that matters is not Rust's. It is whatever a
+client actually calls against: an OpenAPI path, an AsyncAPI channel, a
+GraphQL field, an MCP tool. <code>#[soothfast::route]</code> declares which spec
+operation a handler implements.</p>
+<p>What soothfast does next depends on who owns the contract, and the two
+directions are opposites:</p>
+<div class="tablewrap"><table>
+<thead><tr><th></th><th>you serve it</th><th>someone else serves it</th></tr></thead>
+<tbody>
+<tr><td>mode</td><td><code>generate</code></td><td><code>check</code></td></tr>
+<tr><td>source of truth</td><td>the code</td><td>the spec file</td></tr>
+<tr><td>command</td><td><code>spec gen</code></td><td><code>spec check</code></td></tr>
+<tr><td>what fails CI</td><td>a consumer-breaking change (<code>spec gate</code>)</td><td>drift in either direction</td></tr>
+</tbody>
+</table></div>
+<p>A contract you serve can be derived from your handlers, so the spec and the
+code cannot disagree and there is nothing to remember to update. A contract
+someone else serves cannot be generated from your source at all, so
+reconciliation is the only option there. <code>mode</code> in <code>soothfast.toml</code> picks
+per file and defaults to <code>check</code>, since generation overwrites.</p>
+<blockquote>
+<p>This page is illustrative rather than dogfooded like the rest of the site.
+Nothing in this workspace is a server, so there is no real spec file to
+reconcile against. The annotation itself is real and runs below. Only the
+spec file it names is fictional.</p>
+</blockquote>
+<h2 id="declaring-a-route">Declaring a route<a class="anchor" href="#declaring-a-route" aria-label="Link to this section">#</a></h2>
+<p><code>#[route]</code> is pure metadata: it doesn't require an HTTP framework, doesn't
+touch the function body, and doesn't need the spec file to exist at compile
+time (only <code>spec check</code> reads it, at run time). <code>spec</code> and <code>operation</code> are
+required; <code>method</code> and <code>path</code> are optional extra fields to reconcile.</p>
+<p>Three further optional attributes describe the wire <em>shape</em> rather than the
+operation's identity: <code>request</code>, <code>response</code> and <code>status</code>. They are recorded
+on the route and read by spec generation. <code>spec check</code> ignores them, since
+reconciliation matches on identity alone.</p>
+<figure class="code runpanel"><figcaption class="code-bar"><span class="code-lang">rust · runnable</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">use</span> soothfast::route;&#10;&#10;<span class="tok-mac">#[route(&#10;    spec = &quot;specs/openapi.yaml&quot;,&#10;    operation = &quot;getItem&quot;,&#10;    method = &quot;GET&quot;,&#10;    path = &quot;/items/{id}&quot;&#10;)]</span>&#10;<span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">get_item</span>(id: <span class="tok-ty">u64</span>) -&gt; <span class="tok-ty">String</span> {&#10;    <span class="tok-mac">format!</span>(<span class="tok-str">&quot;item-{id}&quot;</span>)&#10;}&#10;&#10;<span class="tok-kw">fn</span> <span class="tok-fn">main</span>() {&#10;    <span class="tok-mac">println!</span>(<span class="tok-str">&quot;{}&quot;</span>, <span class="tok-fn">get_item</span>(<span class="tok-num">42</span>));&#10;}&#10;</code></pre><details class="run-out"><summary class="run-out-head"><span class="run-out-label"><svg class="run-out-chevron" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 2.5 L11 8 L5 13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>recorded output</span><span class="run-out-src">cargo soothfast docs capture</span></summary><pre>item-42</pre></details></figure>
+<h2 id="overriding-an-inferred-shape">Overriding an inferred shape<a class="anchor" href="#overriding-an-inferred-shape" aria-label="Link to this section">#</a></h2>
+<p>Generation reads a handler's own signature: extractor wrappers like
+<code>Json&lt;T&gt;</code> and <code>Query&lt;T&gt;</code> mark which parameters are part of the wire
+contract, and the return type gives the response. Nothing needs restating
+while the signature says it.</p>
+<p>The exception is a return type that erases itself. <code>-&gt; impl IntoResponse</code>
+carries only a trait bound, so no static analysis can recover the concrete
+shape. Use <code>response</code> to name it, and <code>status</code> to set the success code:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-mac">#[route(
+    spec = &quot;specs/openapi.yaml&quot;,
+    operation = &quot;createItem&quot;,
+    method = &quot;POST&quot;,
+    path = &quot;/items&quot;,
+    response = &quot;Item&quot;,
+    status = 201
+)]</span>
+<span class="tok-kw">pub</span> <span class="tok-kw">async</span> <span class="tok-kw">fn</span> <span class="tok-fn">create_item</span>(<span class="tok-ty">Json</span>(body): <span class="tok-ty">Json</span>&lt;<span class="tok-ty">NewItem</span>&gt;) -&gt; <span class="tok-kw">impl</span> <span class="tok-ty">IntoResponse</span> {
+    <span class="tok-com">// request body inferred as NewItem; response named above</span>
+}
+</code></pre></figure>
+<p>An override always wins over inference and resolves the gap it answers, so
+a route whose erased return is named this way stops being reported.</p>
+<h3 id="detached-markers">Detached markers<a class="anchor" href="#detached-markers" aria-label="Link to this section">#</a></h3>
+<p>A marker fn in a <code>[[bench]]</code> target (see <a href="#where-route-markers-live">Where route markers live</a>)
+has an empty signature, so there is nothing to infer from and its
+attributes <em>are</em> the contract. <code>params</code> names the struct whose fields
+flatten into query parameters, and <code>path_params</code> types the path's
+<code>{placeholder}</code>s. Without it every placeholder is an open <code>string</code>, which is
+honest but weaker than the enum the real handler takes.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-mac">#[route(
+    spec = &quot;specs/openapi.yaml&quot;,
+    operation = &quot;getHolders&quot;,
+    method = &quot;GET&quot;,
+    path = &quot;/holders/{symbol}/{type}&quot;,
+    params = &quot;HoldersQuery&quot;,
+    path_params = &quot;type: HolderType&quot;,
+    response = &quot;HoldersResponse&quot;
+)]</span>
+<span class="tok-kw">fn</span> <span class="tok-fn">route_get_holders</span>() {}
+</code></pre></figure>
+<p><code>path_params</code> takes either comma-separated <code>name: Type</code> bindings or a single
+struct name whose <em>field</em> names pick out the placeholders, the shape an axum
+<code>Path&lt;HolderPath&gt;</code> extractor would take. Naming a placeholder the path does
+not have is an error rather than a silent no-op, since it is always a typo.
+Placeholders nothing names keep the open <code>string</code>.</p>
+<p>A <code>params</code> field that happens to name a placeholder types it too, and is
+then not also emitted as a query parameter. The URL template is the more
+specific declaration, and one name cannot be in two places. Rust spells a
+keyword field <code>r#type</code> or <code>type_</code> where the URL only ever says <code>{type}</code>, so
+both spellings match. A route that genuinely wants the same name in both
+places renames one side, either with <code>#[serde(rename)]</code> on the field or by
+renaming the placeholder. Where both apply, <code>path_params</code> wins.</p>
+<h2 id="generating">Generating<a class="anchor" href="#generating" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast spec gen -p PKG</code> writes every spec file a <code>[[spec]]</code> entry
+marks <code>mode = &quot;generate&quot;</code>. Which files those are, and the metadata no code
+can supply, live in <code>soothfast.toml</code>:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[[spec]]</span>
+<span class="tok-ty">path </span>=<span class="tok-str"> &quot;specs/openapi.yaml&quot;</span>
+<span class="tok-ty">mode </span>=<span class="tok-str"> &quot;generate&quot;</span>
+<span class="tok-ty">title </span>=<span class="tok-str"> &quot;Items API&quot;          # defaults to the package name</span>
+<span class="tok-ty">version </span>=<span class="tok-str"> &quot;2.1&quot;              # defaults to the package version</span>
+<span class="tok-ty">servers </span>=<span class="tok-str"> [&quot;https://api.example.com&quot;]</span>
+
+<span class="tok-kw">[[spec]]</span>
+<span class="tok-ty">path </span>=<span class="tok-str"> &quot;vendor/stripe.yaml&quot;  # they serve it; we only reconcile</span>
+<span class="tok-ty">mode </span>=<span class="tok-str"> &quot;check&quot;</span></code></pre></figure>
+<p>Rendering is byte-deterministic and only rewrites a file whose content
+actually changed, so a no-op run leaves nothing to commit.</p>
+<h3 id="dialects">Dialects<a class="anchor" href="#dialects" aria-label="Link to this section">#</a></h3>
+<p>All four dialects <code>spec check</code> reads are also generated, so any surface
+soothfast can verify it can also derive. The dialect comes from the file
+name, or from an explicit <code>dialect =</code> key when the name does not say:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>dialect</th><th><code>dialect =</code></th><th>inferred from</th><th><code>#[route(method = ...)]</code></th></tr></thead>
+<tbody>
+<tr><td>OpenAPI 3.1</td><td><code>openapi</code></td><td>anything else (the default)</td><td><code>GET</code>, <code>POST</code>, <code>PUT</code>, ...</td></tr>
+<tr><td>AsyncAPI 3.0</td><td><code>asyncapi</code></td><td><code>asyncapi</code> in the filename</td><td><code>SEND</code>, <code>RECEIVE</code>, <code>PUBLISH</code>, <code>SUBSCRIBE</code></td></tr>
+<tr><td>GraphQL SDL</td><td><code>graphql</code></td><td><code>.graphql</code>, <code>.graphqls</code>, <code>.sdl</code></td><td><code>QUERY</code>, <code>MUTATION</code>, <code>SUBSCRIPTION</code></td></tr>
+<tr><td>MCP tools</td><td><code>mcp</code></td><td><code>mcp</code> or <code>tools</code> in the filename</td><td><code>TOOL</code></td></tr>
+</tbody>
+</table></div>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[[spec]]</span>
+<span class="tok-ty">path </span>=<span class="tok-str"> &quot;specs/api.yaml&quot;</span>
+<span class="tok-ty">mode </span>=<span class="tok-str"> &quot;generate&quot;</span>
+<span class="tok-ty">dialect </span>=<span class="tok-str"> &quot;asyncapi&quot;        # the filename would have said OpenAPI</span></code></pre></figure>
+<p>A method from the wrong vocabulary is a conflict rather than a guess. A
+<code>GET</code> route pointed at a GraphQL file fails the run instead of being filed
+under some invented root.</p>
+<p>OpenAPI emits 3.1 rather than 3.0, which cannot express the <code>const</code> and
+<code>prefixItems</code> that serde's enum and tuple representations require.</p>
+<p>AsyncAPI emits 3.0, whose <code>action</code> is written from the application's point
+of view, while 2.x's <code>publish</code> and <code>subscribe</code> were written from the
+client's, so they read as opposites. Both vocabularies work and mean the
+same thing, which keeps one annotation valid whether the file it faces is
+generated 3.0 or hand-authored 2.x:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>method</th><th>action</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>SEND</code>, <code>SUBSCRIBE</code></td><td><code>send</code></td><td>this application publishes the message</td></tr>
+<tr><td><code>RECEIVE</code>, <code>PUBLISH</code></td><td><code>receive</code></td><td>this application consumes it</td></tr>
+</tbody>
+</table></div>
+<p>A sender's payload is what the handler returns. A receiver's is what it
+accepts.</p>
+<p>MCP builds each tool's <code>inputSchema</code> from the request body's fields plus any
+parameters, and its <code>outputSchema</code> from the success response. When that
+response is not an object, <code>outputSchema</code> is omitted with a note, since an
+omitted output schema means "unstructured" where a wrapped one would be a
+contract nobody serves. Shared types travel inside each tool as <code>$defs</code>,
+transitively and no wider.</p>
+<p>GraphQL is the one dialect that cannot pass JSON Schema through, because SDL
+is a different type system. Inputs and outputs become separate declarations
+(<code>Item</code> and <code>ItemInput</code>), nullability moves from the parent's <code>required</code> list
+onto the reference (<code>id: String!</code>), and a request body becomes one <code>input:</code>
+argument rather than a splat of fields. Anything with no faithful SDL
+spelling becomes a <code>JSON</code> or <code>Int64</code> custom scalar plus a note, never a
+quietly wrong type. That covers untagged unions, flattened structs, maps,
+64-bit integers, and field names SDL cannot spell.</p>
+<h3 id="who-names-the-wire">Who names the wire<a class="anchor" href="#who-names-the-wire" aria-label="Link to this section">#</a></h3>
+<p>Field and variant names come from whichever framework actually serialises the
+type. For most types that is serde, and <code>#[serde(rename)]</code> / <code>rename_all</code> are
+read straight out of rustdoc's preserved attributes.</p>
+<p>A type async-graphql serves is different. The response JSON is built by
+async-graphql's resolver, which never consults serde, so <code>#[graphql(...)]</code> is
+the wire truth and serde's attributes are ignored for naming entirely. The
+order is container <code>rename_fields</code> or <code>rename_items</code>, then a field's or
+item's own <code>name</code>, with <code>#[graphql(skip)]</code> taking a field off the wire. Types
+with no <code>#[graphql]</code> attribute at all are still renamed, because
+async-graphql's defaults are camelCase for fields and
+<code>SCREAMING_SNAKE_CASE</code> for enum items.</p>
+<p>The two frameworks' casing genuinely disagrees, so this is a correctness
+matter rather than a tidiness one: async-graphql renames through <code>Inflector</code>,
+which opens a new word at every digit, and puts <code>price_change_percentage_24h</code>
+on the wire as <code>priceChangePercentage24H</code> where serde says <code>…24h</code>. Adding a
+serde rename to paper over that is worse still, because those types are
+usually also <code>Deserialize</code>d from a library's snake_case JSON, where a rename
+silently zeroes every field instead of erroring.</p>
+<p>Detection reads the trait impls the derive generated, which rustdoc records
+even though it drops the derive itself, and falls back to the presence of a
+<code>#[graphql]</code> attribute. A type that is <em>both</em> an async-graphql object and a
+serde-serialised REST body is genuinely ambiguous; annotate it with
+<code>#[route(response = &quot;...&quot;)]</code> if the derived answer is the wrong one.</p>
+<p>Three things cannot be derived, and each is <em>reported</em> rather than guessed:
+erased return types, <code>#[serde(with = &quot;...&quot;)]</code> fields whose wire shape is
+defined by code, and foreign types with no mapping. Each emits an open
+schema, imprecise but never wrong, and names itself in the run's output.
+Foreign types are the configurable one:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[spec.types]</span>
+<span class="tok-ty">&quot;uuid::Uuid&quot; </span>= { type = &quot;string&quot;, format = &quot;uuid&quot; }
+<span class="tok-ty">&quot;rust_decimal::Decimal&quot; </span>= { type = &quot;string&quot; }</code></pre></figure>
+<h3 id="transparent-wrappers">Transparent wrappers<a class="anchor" href="#transparent-wrappers" aria-label="Link to this section">#</a></h3>
+<p>A literal schema is the wrong tool for a <em>transparent newtype wrapper</em>, a
+foreign type like <code>#[serde(transparent)] pub struct Json&lt;T&gt;(pub T)</code>, which is
+exactly its type argument on the wire. The lookup key carries no generic
+arguments, so one literal would have to stand for every <code>T</code>, and every
+<code>Json&lt;Quote&gt;</code>, <code>Json&lt;Money&gt;</code> and <code>Json&lt;Value&gt;</code> alike would render as whatever
+that one literal said. Say <code>transparent</code> instead:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[spec.types]</span>
+<span class="tok-ty">&quot;async_graphql::types::json::Json&quot; </span>= { transparent = true }</code></pre></figure>
+<p>Now <code>Json&lt;Quote&gt;</code> resolves to whatever <code>Quote</code> resolves to, whether that is
+walked locally, pulled from a workspace crate, or mapped from this same
+table. There is no wrapper component, no <code>$ref</code> to one, and no gap.
+<code>Json&lt;serde_json::Value&gt;</code> still emits <code>{}</code>, because that is what
+<code>serde_json::Value</code> maps to: the honest answer for an unconstrained payload,
+arrived at through the argument rather than around it.</p>
+<p><code>transparent = true</code> forwards the first type argument. A wrapper whose shape
+rides on a later one names its position, zero-based:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-ty">&quot;tagged::Tagged&quot; </span>= { transparent = 1 }   # Tagged&lt;Tag, T&gt; is T on the wire</code></pre></figure>
+<p>Two rules keep the directive honest. <code>transparent</code> and a literal schema in
+one entry contradict each other, since a wrapper cannot both forward and be
+a fixed schema, so the config is rejected naming the offending key rather
+than letting one silently win. And a type declared transparent but <em>used</em>
+with no argument at that position has nothing to forward to, so it reports a
+gap and emits an open schema instead of guessing what it wrapped.</p>
+<p>The key <code>transparent</code> is what distinguishes a directive from a literal
+schema. It is not a JSON Schema keyword, so every literal entry keeps its old
+meaning, including the bare <code>{ }</code> that means "genuinely unconstrained".</p>
+<p>Locally-defined types need none of this. A <code>#[serde(transparent)]</code> struct in
+the crate being documented, and every single-field newtype, already forward
+to their inner type by being walked.</p>
+<h3 id="types-from-other-crates-in-the-workspace">Types from other crates in the workspace<a class="anchor" href="#types-from-other-crates-in-the-workspace" aria-label="Link to this section">#</a></h3>
+<p>A type defined in a <em>sibling crate of the same cargo workspace</em> is not one of
+those three: it is absent from the package's own rustdoc index, but its own
+crate can be documented too, and then it is as walkable as a local type. So
+generation documents every workspace member the package depends on and
+resolves across them by default. An enum in the crate next door keeps its
+<code>enum:</code> constraint instead of collapsing to a bare <code>type: string</code>.</p>
+<p>The order of preference is <code>[spec.types]</code> first (an explicit mapping is the
+escape hatch, and outranks anything derived), then the workspace crates, then
+a reported gap. Registry dependencies are never documented: they have no
+source tree here to walk.</p>
+<p>Each extra crate costs one nightly rustdoc build, so both halves are
+adjustable per <code>[[spec]]</code> entry:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[[spec]]</span>
+<span class="tok-ty">path </span>=<span class="tok-str"> &quot;openapi.yaml&quot;</span>
+<span class="tok-ty">mode </span>=<span class="tok-str"> &quot;generate&quot;</span>
+<span class="tok-ty">workspace_types </span>= true               # the default; false reports gaps instead
+<span class="tok-ty">workspace_crates </span>=<span class="tok-str"> [&quot;finance-query&quot;] # default: every workspace dep of the package</span></code></pre></figure>
+<p>A crate that fails to document warns and is skipped, leaving its types to
+report as gaps rather than failing the run. That covers a missing nightly
+toolchain, a compile error, or a member that is not a library.</p>
+<h3 id="two-types-one-name">Two types, one name<a class="anchor" href="#two-types-one-name" aria-label="Link to this section">#</a></h3>
+<p>Resolving more types means more names to keep apart, and a name has to be a
+property of the <em>type</em>, not of the walk that reached it: every dialect merges
+the components of all its operations into one document, so a name chosen by
+whichever operation arrived first would both churn between runs and collide
+across operations.</p>
+<p>So the whole assignment is computed before anything is walked, from the
+documents alone. A type keeps its bare Rust name while no other type wants
+it. Where several do, each takes the shortest trailing run of its module path
+that tells it apart:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Canonical path</th><th>Component</th></tr></thead>
+<tbody>
+<tr><td><code>finance_query::constants::Region</code></td><td><code>Region</code></td></tr>
+<tr><td><code>finance_query::constants::indices::Region</code></td><td><code>indices_Region</code></td></tr>
+</tbody>
+</table></div>
+<p>Unambiguous names are settled first, so qualifying one type can never take a
+bare name another type was entitled to. The result depends only on which
+types exist, not on route order and not on which operation referenced what.
+Two runs over the same code therefore emit byte-identical specs, and one type
+is never silently described by another's schema.</p>
+<h2 id="gating">Gating<a class="anchor" href="#gating" aria-label="Link to this section">#</a></h2>
+<p>Once a spec is generated it can no longer disagree with the code, so the
+useful question moves from "does this match?" to "did this break the people
+calling it?".</p>
+<div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_spec::openapi::diff::diff"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">diff</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
+<p><code>cargo soothfast spec gate -p PKG</code> rebuilds the spec from the merge-base in a
+temporary worktree and compares it against this branch's, so there is no
+committed baseline to go stale. Requiredness means opposite things in the two
+directions, which is what the classification turns on: on a <strong>request</strong>, the
+server growing stricter breaks callers, so a newly required field is
+breaking and dropping a requirement is not; on a <strong>response</strong>, the server
+providing less breaks callers, so a field that stops being guaranteed is
+breaking and a new one is not. Removed operations, properties, status codes
+and enum values are breaking either way, as is any changed type. The gate
+exits non-zero on a breaking change unless <code>--allow-breaking</code> says the break
+is deliberate.</p>
+<p>Every dialect gates on that same asymmetry, read off whichever key states
+the direction. For <strong>AsyncAPI</strong> it is the operation's own <code>action</code>: a
+message you <code>send</code> is one a consumer reads, so dropping a guaranteed field
+breaks them, while on a <code>receive</code> the same edit relaxes a demand and it is
+the <em>new required field</em> that breaks the producer. For <strong>GraphQL</strong> it is the
+declaration kind: <code>T!</code> becoming <code>T</code> withdraws a guarantee on a <code>type</code> and
+relaxes one on an <code>input</code>. For <strong>MCP</strong> a tool's arguments flow inward and its
+result outward, so the two schemas are compared in opposite directions.
+Reversing an AsyncAPI action, moving a channel's address, and withdrawing a
+tool's structured output are breaking on their own.</p>
+<p>GraphQL is diffed as a type graph rather than as SDL text, so reformatting
+is invisible and a real edit is named at the field it happened to.</p>
+<p><code>spec gen --check</code> is the companion staleness gate: it fails when
+regenerating would change a committed file, so the bot's output can never
+silently diverge from the code.</p>
+<h2 id="reconciliation">Reconciliation<a class="anchor" href="#reconciliation" aria-label="Link to this section">#</a></h2>
+<div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_spec::reconcile::reconcile"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">reconcile</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
+<p><code>cargo soothfast spec check -p PKG</code> runs the bench binary with
+<code>--list-routes</code>, groups declared <code>#[route]</code>s by their <code>spec</code> file, parses
+each (the dialect is auto-detected, and no <code>--provider</code> flag exists), and matches
+by <code>operation</code> name: a route with no matching spec op is <code>missing_spec</code>; a
+match whose <code>method</code>/<code>path</code> differ from what the spec declares is
+<code>mismatched</code>; a spec op with no implementing route is <code>missing_handler</code>.
+Anything else is <code>matched</code>. An empty <code>method</code> or <code>path</code> on the route side
+skips just that one cross-check.</p>
+<p>Four provider dialects, sniffed from the file automatically:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>dialect</th><th>source shape</th></tr></thead>
+<tbody>
+<tr><td>OpenAPI</td><td><code>paths.&lt;path&gt;.&lt;method&gt;</code>; operation = <code>operationId</code> or <code>&quot;METHOD path&quot;</code></td></tr>
+<tr><td>AsyncAPI</td><td>2.x <code>channels.&lt;channel&gt;.{subscribe,publish}</code>, or 3.0 <code>operations</code> with <code>action</code>; operation = <code>operationId</code> or <code>&quot;channel.verb&quot;</code></td></tr>
+<tr><td>GraphQL SDL</td><td><code>type Query/Mutation/Subscription { ... }</code> fields</td></tr>
+<tr><td>MCP tool schema</td><td>a <code>tools[]</code> array, matched by <code>name</code></td></tr>
+</tbody>
+</table></div>
+<h2 id="where-route-markers-live">Where route markers live<a class="anchor" href="#where-route-markers-live" aria-label="Link to this section">#</a></h2>
+<p><code>#[route]</code> only works inside a binary that links the registry, and
+<code>soothfast</code> is meant to stay a dev-dependency so it usually can't sit directly on the real handler
+in <code>src/</code>. The common workaround is a thin marker function, <code>covers</code>-style,
+in the crate's <code>[[bench]]</code> target.</p>
+<p>By default <code>spec check</code> and <code>docs routes</code> read that registry from the same
+<code>benches/soothfast.rs</code> target that <code>measure</code>/<code>gate</code> use for performance
+benches. That is fine for a crate with a handful of routes, but it means a
+file named after benchmarking ends up holding pure spec and route metadata
+with no perf measurement in it at all, which reads as a mix-up to anyone
+landing on it for the first time.</p>
+<p>Pass <code>--target NAME</code> to point a command at a different <code>[[bench]]</code> target:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[[bench]]</span>
+<span class="tok-ty">name </span>=<span class="tok-str"> &quot;soothfast&quot;          # measure / gate read this one</span>
+<span class="tok-ty">harness </span>=<span class="tok-kw"> false</span>
+
+<span class="tok-kw">[[bench]]</span>
+<span class="tok-ty">name </span>=<span class="tok-str"> &quot;soothfast-routes&quot;   # spec check / docs routes read this one</span>
+<span class="tok-ty">harness </span>=<span class="tok-kw"> false</span></code></pre></figure>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast spec check -p myserver --target soothfast-routes
+<span class="tok-kw">$ </span>cargo soothfast docs routes -p myserver --target soothfast-routes
+</code></pre></figure>
+<p>Route markers can then live in <code>benches/soothfast-routes.rs</code>, separate from
+the perf benches in <code>benches/soothfast.rs</code>.</p>
+<h2 id="the-endpoint-reference">The endpoint reference<a class="anchor" href="#the-endpoint-reference" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast docs routes -p PKG</code> renders <code>docs/routes/&lt;pkg&gt;.md</code>: one
+section per spec file, and one row per declared operation giving the method,
+path, handler id, reconciliation status, the handler's own rustdoc summary,
+and a measured-cost line when the handler is also a measured item,
+attributed by id or <code>covers=</code>. It is the FastAPI-style page <code>#[route]</code> exists to
+produce without hand-maintaining it.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#declaring-a-route">Declaring a route</a></li>
+  
+    <li><a class="toc-l2" href="#overriding-an-inferred-shape">Overriding an inferred shape</a></li>
+  
+    <li><a class="toc-l3" href="#detached-markers">Detached markers</a></li>
+  
+    <li><a class="toc-l2" href="#generating">Generating</a></li>
+  
+    <li><a class="toc-l3" href="#dialects">Dialects</a></li>
+  
+    <li><a class="toc-l3" href="#who-names-the-wire">Who names the wire</a></li>
+  
+    <li><a class="toc-l3" href="#transparent-wrappers">Transparent wrappers</a></li>
+  
+    <li><a class="toc-l3" href="#types-from-other-crates-in-the-workspace">Types from other crates in the workspace</a></li>
+  
+    <li><a class="toc-l3" href="#two-types-one-name">Two types, one name</a></li>
+  
+    <li><a class="toc-l2" href="#gating">Gating</a></li>
+  
+    <li><a class="toc-l2" href="#reconciliation">Reconciliation</a></li>
+  
+    <li><a class="toc-l2" href="#where-route-markers-live">Where route markers live</a></li>
+  
+    <li><a class="toc-l2" href="#the-endpoint-reference">The endpoint reference</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../_soothfast/site.js" defer></script>
+</body>
+</html>

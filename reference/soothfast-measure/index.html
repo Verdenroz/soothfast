@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>soothfast-measure API reference · soothfast</title>
+<link rel="icon" href="../../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../../_soothfast/tokens.css">
+<link rel="stylesheet" href="../../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../../">soothfast</a></li>
+    
+      <li><a href="../../measuring/">Measuring</a></li>
+    
+      <li><a href="../../gating/">Gating</a></li>
+    
+      <li><a href="../../living-docs/">Living docs</a></li>
+    
+      <li><a href="../../spec/">Specs</a></li>
+    
+      <li><a href="../../sdk/">SDKs</a></li>
+    
+      <li><a href="../../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a class="active" aria-current="page" href="../../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="soothfast-measure-api-reference"><code>soothfast-measure</code> API reference<a class="anchor" href="#soothfast-measure-api-reference" aria-label="Link to this section">#</a></h1>
+<blockquote>
+<p>Generated by <code>cargo soothfast docs reference</code>
+Measurements and verified claims come from the latest baseline; CI gates them.</p>
+</blockquote>
+<h2 id="soothfast-measure"><code>soothfast_measure</code><a class="anchor" href="#soothfast-measure" aria-label="Link to this section">#</a></h2>
+<h3 id="countingallocator-struct"><code>CountingAllocator</code> <sup>struct</sup><a class="anchor" href="#countingallocator-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">CountingAllocator</span>
+</code></pre></figure>
+<h3 id="main-function"><code>main</code> <sup>function</sup><a class="anchor" href="#main-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">main</span>()
+</code></pre></figure>
+<h2 id="soothfast-measure-alloc"><code>soothfast_measure::alloc</code><a class="anchor" href="#soothfast-measure-alloc" aria-label="Link to this section">#</a></h2>
+<h3 id="allocmeasurement-struct"><code>AllocMeasurement</code> <sup>struct</sup><a class="anchor" href="#allocmeasurement-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">AllocMeasurement</span>
+</code></pre></figure>
+<p>Per-iteration allocation counts for one item.</p>
+<h3 id="measure-function"><code>measure</code> <sup>function</sup><a class="anchor" href="#measure-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">measure</span>(runner: <span class="tok-kw">impl</span> <span class="tok-ty">Fn</span>(&amp;<span class="tok-kw">mut</span> <span class="tok-ty">Bencher</span>)) -&gt; <span class="tok-ty">AllocMeasurement</span>
+</code></pre></figure>
+<p>Measure one workload iteration's allocations: warm once (lazy statics,
+allocator pools), then take the minimum over a few single-iteration runs.</p>
+<h2 id="soothfast-measure-asyncexec"><code>soothfast_measure::asyncexec</code><a class="anchor" href="#soothfast-measure-asyncexec" aria-label="Link to this section">#</a></h2>
+<h3 id="asyncmeasurement-struct"><code>AsyncMeasurement</code> <sup>struct</sup><a class="anchor" href="#asyncmeasurement-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">AsyncMeasurement</span>
+</code></pre></figure>
+<p>Per-iteration async behavior for one item.</p>
+<h3 id="measure-function-1"><code>measure</code> <sup>function</sup><a class="anchor" href="#measure-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">measure</span>(runner: <span class="tok-kw">impl</span> <span class="tok-ty">Fn</span>(&amp;<span class="tok-kw">mut</span> <span class="tok-ty">Bencher</span>)) -&gt; <span class="tok-ty">AsyncMeasurement</span>
+</code></pre></figure>
+<p>Warm once, then min-of-3 single iterations (same shape as the alloc
+backend — counts, not times, so min is exact).</p>
+<h2 id="soothfast-measure-callgrind"><code>soothfast_measure::callgrind</code><a class="anchor" href="#soothfast-measure-callgrind" aria-label="Link to this section">#</a></h2>
+<h3 id="annotate-function"><code>annotate</code> <sup>function</sup><a class="anchor" href="#annotate-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">annotate</span>(id: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Human triage report: top self-cost functions for one item's workload.</p>
+<h3 id="measure-function-2"><code>measure</code> <sup>function</sup><a class="anchor" href="#measure-function-2" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">measure</span>(id: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">u64</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Per-iteration Ir for one item.</p>
+<h3 id="probe-function"><code>probe</code> <sup>function</sup><a class="anchor" href="#probe-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">probe</span>() -&gt; <span class="tok-ty">Result</span>&lt;(), <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Can valgrind actually run THIS binary? <code>valgrind --version</code> is not
+enough: an AVX-512-compiled glibc loader SIGILLs before main().</p>
+<h2 id="soothfast-measure-perfcnt"><code>soothfast_measure::perfcnt</code><a class="anchor" href="#soothfast-measure-perfcnt" aria-label="Link to this section">#</a></h2>
+<h3 id="perfmeasurement-struct"><code>PerfMeasurement</code> <sup>struct</sup><a class="anchor" href="#perfmeasurement-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">PerfMeasurement</span>
+</code></pre></figure>
+<p>Per-iteration counter values for one item.</p>
+<h3 id="measure-function-3"><code>measure</code> <sup>function</sup><a class="anchor" href="#measure-function-3" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">measure</span>(runner: <span class="tok-kw">impl</span> <span class="tok-ty">Fn</span>(&amp;<span class="tok-kw">mut</span> <span class="tok-ty">Bencher</span>)) -&gt; <span class="tok-ty">PerfMeasurement</span>
+</code></pre></figure>
+<p>Measure per-iteration instructions/cycles/cache-refs (min of 3 rounds).</p>
+<h3 id="measure-instructions-function"><code>measure_instructions</code> <sup>function</sup><a class="anchor" href="#measure-instructions-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">measure_instructions</span>(runner: <span class="tok-kw">impl</span> <span class="tok-ty">Fn</span>(&amp;<span class="tok-kw">mut</span> <span class="tok-ty">Bencher</span>)) -&gt; <span class="tok-ty">u64</span>
+</code></pre></figure>
+<p>Instructions-only measurement, for complexity sweeps.</p>
+<h3 id="probe-function-1"><code>probe</code> <sup>function</sup><a class="anchor" href="#probe-function-1" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">probe</span>() -&gt; <span class="tok-ty">Result</span>&lt;(), <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Can this environment open an instructions counter on itself?</p>
+<h2 id="soothfast-measure-stats"><code>soothfast_measure::stats</code><a class="anchor" href="#soothfast-measure-stats" aria-label="Link to this section">#</a></h2>
+<h3 id="summary-struct"><code>Summary</code> <sup>struct</sup><a class="anchor" href="#summary-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Summary</span>
+</code></pre></figure>
+<p>Robust summary of one sample set.</p>
+<h3 id="summarize-function"><code>summarize</code> <sup>function</sup><a class="anchor" href="#summarize-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">summarize</span>(values: &amp;<span class="tok-kw">mut</span> [<span class="tok-ty">f64</span>]) -&gt; <span class="tok-ty">Summary</span>
+</code></pre></figure>
+<p>Summarize a non-empty sample set. Sorts in place.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">alloc</span><span class="ev-detail">allocs 4 &lt;= 8</span></div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n log n); growth drift x1.22 over sizes [1024, 4096, 16384] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_measure::bench_summarize`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">663773</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">669387</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">524288</span></div></div></div>
+<h2 id="soothfast-measure-sweep"><code>soothfast_measure::sweep</code><a class="anchor" href="#soothfast-measure-sweep" aria-label="Link to this section">#</a></h2>
+<h3 id="drift-limit-constant"><code>DRIFT_LIMIT</code> <sup>constant</sup><a class="anchor" href="#drift-limit-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">DRIFT_LIMIT</span>: <span class="tok-ty">f64</span> = <span class="tok-num">2.5</span>
+</code></pre></figure>
+<p>Growth beyond the claim must stay under this factor across the sweep.
+2.5x tolerates n vs n log n ambiguity (~1.4x over a 16x size range)
+while catching n -&gt; n^2 (16x) the day it happens.</p>
+<h3 id="sweepoutcome-struct"><code>SweepOutcome</code> <sup>struct</sup><a class="anchor" href="#sweepoutcome-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SweepOutcome</span>
+</code></pre></figure>
+<p>Verdict of one complexity sweep: how far measured growth strayed from
+the claimed class, and whether it stayed within [<code>DRIFT_LIMIT</code>].</p>
+<h3 id="class-value-function"><code>class_value</code> <sup>function</sup><a class="anchor" href="#class-value-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">class_value</span>(class: &amp;<span class="tok-ty">str</span>, n: <span class="tok-ty">f64</span>) -&gt; <span class="tok-ty">f64</span>
+</code></pre></figure>
+<p>Cost model for a claimed class at size n.</p>
+<h3 id="evaluate-function"><code>evaluate</code> <sup>function</sup><a class="anchor" href="#evaluate-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">evaluate</span>(class: &amp;<span class="tok-ty">str</span>, sizes: &amp;[<span class="tok-ty">usize</span>], values: &amp;[<span class="tok-ty">f64</span>]) -&gt; <span class="tok-ty">SweepOutcome</span>
+</code></pre></figure>
+<p>Evaluate measured values (one per size, same order) against a claim.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">alloc</span><span class="ev-detail">allocs 0 &lt;= 0</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_measure::bench_sweep_evaluate`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">25</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">34</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">0</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">0</span></div></div></div>
+<h2 id="soothfast-measure-walltime"><code>soothfast_measure::walltime</code><a class="anchor" href="#soothfast-measure-walltime" aria-label="Link to this section">#</a></h2>
+<h3 id="default-samples-constant"><code>DEFAULT_SAMPLES</code> <sup>constant</sup><a class="anchor" href="#default-samples-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">DEFAULT_SAMPLES</span>: <span class="tok-ty">u32</span> = <span class="tok-num">31</span>
+</code></pre></figure>
+<p>Default sample count; odd so the median is a real observation.</p>
+<h3 id="wallmeasurement-struct"><code>WallMeasurement</code> <sup>struct</sup><a class="anchor" href="#wallmeasurement-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">WallMeasurement</span>
+</code></pre></figure>
+<p>Wall-clock summary for one item, in ns per iteration.</p>
+<h3 id="calibrate-function"><code>calibrate</code> <sup>function</sup><a class="anchor" href="#calibrate-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">calibrate</span>(samples: <span class="tok-ty">u32</span>) -&gt; <span class="tok-ty">f64</span>
+</code></pre></figure>
+<p>A/A noise calibration: measure an identical reference workload against
+itself repeatedly; the worst relative disagreement between medians is the
+environment's observed noise floor (percent). Gates wider than this floor
+are meaningful; gates inside it are coin flips.</p>
+<h3 id="measure-function-4"><code>measure</code> <sup>function</sup><a class="anchor" href="#measure-function-4" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">measure</span>(runner: <span class="tok-kw">impl</span> <span class="tok-ty">Fn</span>(&amp;<span class="tok-kw">mut</span> <span class="tok-ty">Bencher</span>), samples: <span class="tok-ty">u32</span>) -&gt; <span class="tok-ty">WallMeasurement</span>
+</code></pre></figure>
+<p>Measure one item: pilot run to pick <code>iters</code>, then <code>samples</code> timed loops.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#soothfast-measure">soothfast_measure</a></li>
+  
+    <li><a class="toc-l3" href="#countingallocator-struct">CountingAllocator struct</a></li>
+  
+    <li><a class="toc-l3" href="#main-function">main function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-measure-alloc">soothfast_measure::alloc</a></li>
+  
+    <li><a class="toc-l3" href="#allocmeasurement-struct">AllocMeasurement struct</a></li>
+  
+    <li><a class="toc-l3" href="#measure-function">measure function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-measure-asyncexec">soothfast_measure::asyncexec</a></li>
+  
+    <li><a class="toc-l3" href="#asyncmeasurement-struct">AsyncMeasurement struct</a></li>
+  
+    <li><a class="toc-l3" href="#measure-function-1">measure function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-measure-callgrind">soothfast_measure::callgrind</a></li>
+  
+    <li><a class="toc-l3" href="#annotate-function">annotate function</a></li>
+  
+    <li><a class="toc-l3" href="#measure-function-2">measure function</a></li>
+  
+    <li><a class="toc-l3" href="#probe-function">probe function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-measure-perfcnt">soothfast_measure::perfcnt</a></li>
+  
+    <li><a class="toc-l3" href="#perfmeasurement-struct">PerfMeasurement struct</a></li>
+  
+    <li><a class="toc-l3" href="#measure-function-3">measure function</a></li>
+  
+    <li><a class="toc-l3" href="#measure-instructions-function">measure_instructions function</a></li>
+  
+    <li><a class="toc-l3" href="#probe-function-1">probe function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-measure-stats">soothfast_measure::stats</a></li>
+  
+    <li><a class="toc-l3" href="#summary-struct">Summary struct</a></li>
+  
+    <li><a class="toc-l3" href="#summarize-function">summarize function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-measure-sweep">soothfast_measure::sweep</a></li>
+  
+    <li><a class="toc-l3" href="#drift-limit-constant">DRIFT_LIMIT constant</a></li>
+  
+    <li><a class="toc-l3" href="#sweepoutcome-struct">SweepOutcome struct</a></li>
+  
+    <li><a class="toc-l3" href="#class-value-function">class_value function</a></li>
+  
+    <li><a class="toc-l3" href="#evaluate-function">evaluate function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-measure-walltime">soothfast_measure::walltime</a></li>
+  
+    <li><a class="toc-l3" href="#default-samples-constant">DEFAULT_SAMPLES constant</a></li>
+  
+    <li><a class="toc-l3" href="#wallmeasurement-struct">WallMeasurement struct</a></li>
+  
+    <li><a class="toc-l3" href="#calibrate-function">calibrate function</a></li>
+  
+    <li><a class="toc-l3" href="#measure-function-4">measure function</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../../_soothfast/site.js" defer></script>
+</body>
+</html>

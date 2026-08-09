@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>soothfast-sdk API reference · soothfast</title>
+<link rel="icon" href="../../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../../_soothfast/tokens.css">
+<link rel="stylesheet" href="../../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../../">soothfast</a></li>
+    
+      <li><a href="../../measuring/">Measuring</a></li>
+    
+      <li><a href="../../gating/">Gating</a></li>
+    
+      <li><a href="../../living-docs/">Living docs</a></li>
+    
+      <li><a href="../../spec/">Specs</a></li>
+    
+      <li><a href="../../sdk/">SDKs</a></li>
+    
+      <li><a href="../../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a class="active" aria-current="page" href="../../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="soothfast-sdk-api-reference"><code>soothfast-sdk</code> API reference<a class="anchor" href="#soothfast-sdk-api-reference" aria-label="Link to this section">#</a></h1>
+<blockquote>
+<p>Generated by <code>cargo soothfast docs reference</code>
+Measurements and verified claims come from the latest baseline; CI gates them.</p>
+</blockquote>
+<h2 id="soothfast-sdk"><code>soothfast_sdk</code><a class="anchor" href="#soothfast-sdk" aria-label="Link to this section">#</a></h2>
+<h3 id="sdkfileset-struct"><code>SdkFileSet</code> <sup>struct</sup><a class="anchor" href="#sdkfileset-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SdkFileSet</span>
+</code></pre></figure>
+<p>Rendered SDK files, keyed by path relative to the output directory.</p>
+<h3 id="sdkkind-enum"><code>SdkKind</code> <sup>enum</sup><a class="anchor" href="#sdkkind-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">SdkKind</span>
+</code></pre></figure>
+<p>A language the SDK engine can emit.</p>
+<h3 id="sdkoptions-struct"><code>SdkOptions</code> <sup>struct</sup><a class="anchor" href="#sdkoptions-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SdkOptions</span>
+</code></pre></figure>
+<p>Everything an emitter needs that the operations don't carry.</p>
+<h2 id="soothfast-sdk-envtemplate"><code>soothfast_sdk::envtemplate</code><a class="anchor" href="#soothfast-sdk-envtemplate" aria-label="Link to this section">#</a></h2>
+<h3 id="envvar-struct"><code>EnvVar</code> <sup>struct</sup><a class="anchor" href="#envvar-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">EnvVar</span>
+</code></pre></figure>
+<p>One environment variable the embedded server reads.</p>
+<h3 id="markdown-table-function"><code>markdown_table</code> <sup>function</sup><a class="anchor" href="#markdown-table-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">markdown_table</span>(vars: &amp;[<span class="tok-ty">EnvVar</span>]) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Render the knobs as a README table. Same text in both languages: the
+variables belong to the server, not to whoever is calling it.</p>
+<h3 id="parse-function"><code>parse</code> <sup>function</sup><a class="anchor" href="#parse-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">parse</span>(text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">EnvVar</span>&gt;
+</code></pre></figure>
+<p>Parse a dotenv-style template into the knobs it documents.</p>
+<p>Anything unparseable is skipped rather than rejected: the file belongs
+to the server, and an SDK is not the place a stray line becomes fatal.</p>
+<p>Names are unique: a template that shows <code># KEY=example</code> above the real
+<code>KEY=</code> names one knob, and emitting it twice would not compile.</p>
+<h2 id="soothfast-sdk-lower"><code>soothfast_sdk::lower</code><a class="anchor" href="#soothfast-sdk-lower" aria-label="Link to this section">#</a></h2>
+<h3 id="lower-function"><code>lower</code> <sup>function</sup><a class="anchor" href="#lower-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">lower</span>(ops: &amp;[<span class="tok-ty">Operation</span>], opts: &amp;<span class="tok-ty">SdkOptions</span>, kind: <span class="tok-ty">SdkKind</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Sdk</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Lower operations into the SDK model.</p>
+<p>Component schemas shared across operations must agree; two operations
+producing a different schema under one name is the same identity
+conflict the dialect emitters refuse.</p>
+<p><code>kind</code> decides only how wire names are <em>spelled</em> — every typing question
+is answered the same way for every target.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.29 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_sdk::bench_lower`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">1482539</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">1528004</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">23907</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">2064788</span></div></div></div>
+<h2 id="soothfast-sdk-model"><code>soothfast_sdk::model</code><a class="anchor" href="#soothfast-sdk-model" aria-label="Link to this section">#</a></h2>
+<h3 id="field-struct"><code>Field</code> <sup>struct</sup><a class="anchor" href="#field-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Field</span>
+</code></pre></figure>
+<p>One field of a [<code>Model</code>].</p>
+<h3 id="method-struct"><code>Method</code> <sup>struct</sup><a class="anchor" href="#method-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Method</span>
+</code></pre></figure>
+<p>One client method, lowered from an operation.</p>
+<h3 id="model-struct"><code>Model</code> <sup>struct</sup><a class="anchor" href="#model-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Model</span>
+</code></pre></figure>
+<p>A named object schema, emitted as a class/interface.</p>
+<h3 id="param-struct"><code>Param</code> <sup>struct</sup><a class="anchor" href="#param-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Param</span>
+</code></pre></figure>
+<p>One parameter of a [<code>Method</code>].</p>
+<h3 id="paramloc-enum"><code>ParamLoc</code> <sup>enum</sup><a class="anchor" href="#paramloc-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">ParamLoc</span>
+</code></pre></figure>
+<p>Where a request parameter travels.</p>
+<h3 id="sdk-struct"><code>Sdk</code> <sup>struct</sup><a class="anchor" href="#sdk-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Sdk</span>
+</code></pre></figure>
+<p>The whole lowered SDK.</p>
+<h3 id="ty-enum"><code>Ty</code> <sup>enum</sup><a class="anchor" href="#ty-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Ty</span>
+</code></pre></figure>
+<p>A wire type, lowered from JSON Schema.</p>
+<h2 id="soothfast-sdk-target"><code>soothfast_sdk::target</code><a class="anchor" href="#soothfast-sdk-target" aria-label="Link to this section">#</a></h2>
+<h3 id="target-struct"><code>Target</code> <sup>struct</sup><a class="anchor" href="#target-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Target</span>
+</code></pre></figure>
+<p>One cross-compilation target and how each ecosystem names it.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#soothfast-sdk">soothfast_sdk</a></li>
+  
+    <li><a class="toc-l3" href="#sdkfileset-struct">SdkFileSet struct</a></li>
+  
+    <li><a class="toc-l3" href="#sdkkind-enum">SdkKind enum</a></li>
+  
+    <li><a class="toc-l3" href="#sdkoptions-struct">SdkOptions struct</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-sdk-envtemplate">soothfast_sdk::envtemplate</a></li>
+  
+    <li><a class="toc-l3" href="#envvar-struct">EnvVar struct</a></li>
+  
+    <li><a class="toc-l3" href="#markdown-table-function">markdown_table function</a></li>
+  
+    <li><a class="toc-l3" href="#parse-function">parse function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-sdk-lower">soothfast_sdk::lower</a></li>
+  
+    <li><a class="toc-l3" href="#lower-function">lower function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-sdk-model">soothfast_sdk::model</a></li>
+  
+    <li><a class="toc-l3" href="#field-struct">Field struct</a></li>
+  
+    <li><a class="toc-l3" href="#method-struct">Method struct</a></li>
+  
+    <li><a class="toc-l3" href="#model-struct">Model struct</a></li>
+  
+    <li><a class="toc-l3" href="#param-struct">Param struct</a></li>
+  
+    <li><a class="toc-l3" href="#paramloc-enum">ParamLoc enum</a></li>
+  
+    <li><a class="toc-l3" href="#sdk-struct">Sdk struct</a></li>
+  
+    <li><a class="toc-l3" href="#ty-enum">Ty enum</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-sdk-target">soothfast_sdk::target</a></li>
+  
+    <li><a class="toc-l3" href="#target-struct">Target struct</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../../_soothfast/site.js" defer></script>
+</body>
+</html>

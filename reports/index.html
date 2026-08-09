@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reports · soothfast</title>
+<link rel="icon" href="../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../_soothfast/tokens.css">
+<link rel="stylesheet" href="../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../">soothfast</a></li>
+    
+      <li><a href="../measuring/">Measuring</a></li>
+    
+      <li><a href="../gating/">Gating</a></li>
+    
+      <li><a href="../living-docs/">Living docs</a></li>
+    
+      <li><a href="../spec/">Specs</a></li>
+    
+      <li><a href="../sdk/">SDKs</a></li>
+    
+      <li><a class="active" aria-current="page" href="../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="reports">Reports<a class="anchor" href="#reports" aria-label="Link to this section">#</a></h1>
+<p>Every table, chart, badge, and changelog entry on this site is rendered from
+a baseline, or a pair of them, rather than typed by hand. The example below
+calls the real renderer directly on a small baseline of its own.</p>
+<h2 id="perf-tables-and-badges">Perf tables and badges<a class="anchor" href="#perf-tables-and-badges" aria-label="Link to this section">#</a></h2>
+<figure class="code runpanel"><figcaption class="code-bar"><span class="code-lang">rust · runnable</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">use</span> serde_json::json;&#10;<span class="tok-kw">use</span> soothfast_report::{badges, perf_table};&#10;&#10;<span class="tok-kw">fn</span> <span class="tok-fn">main</span>() {&#10;    <span class="tok-kw">let</span> baseline = <span class="tok-mac">json!</span>({ <span class="tok-str">&quot;items&quot;</span>: { <span class="tok-str">&quot;demo::checksum&quot;</span>: {&#10;        <span class="tok-str">&quot;perfcnt&quot;</span>: { <span class="tok-str">&quot;instructions&quot;</span>: <span class="tok-num">812</span> },&#10;        <span class="tok-str">&quot;walltime&quot;</span>: { <span class="tok-str">&quot;median_ns&quot;</span>: <span class="tok-num">41.2</span>, <span class="tok-str">&quot;p99_ns&quot;</span>: <span class="tok-num">58.0</span> },&#10;        <span class="tok-str">&quot;alloc&quot;</span>: { <span class="tok-str">&quot;allocs&quot;</span>: <span class="tok-num">0</span>, <span class="tok-str">&quot;bytes&quot;</span>: <span class="tok-num">0</span> }&#10;    }}});&#10;&#10;    <span class="tok-mac">print!</span>(<span class="tok-str">&quot;{}&quot;</span>, perf_table::<span class="tok-fn">markdown</span>(&amp;baseline));&#10;    <span class="tok-mac">println!</span>(<span class="tok-str">&quot;{}&quot;</span>, badges::<span class="tok-fn">coverage_badge</span>(<span class="tok-str">&quot;docs&quot;</span>, <span class="tok-num">92</span>));&#10;    <span class="tok-mac">println!</span>(<span class="tok-str">&quot;{}&quot;</span>, badges::<span class="tok-fn">gate_badge</span>(<span class="tok-ty">Some</span>(<span class="tok-kw">true</span>)));&#10;}&#10;</code></pre><details class="run-out"><summary class="run-out-head"><span class="run-out-label"><svg class="run-out-chevron" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 2.5 L11 8 L5 13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>recorded output</span><span class="run-out-src">cargo soothfast docs capture</span></summary><pre>| item | instructions | median | p99 | allocs | polls |&#10;|---|---:|---:|---:|---:|---:|&#10;| `demo::checksum` | 812 | 41.2ns | 58.0ns | 0 | n/a |&#10;{&quot;color&quot;:&quot;brightgreen&quot;,&quot;label&quot;:&quot;docs&quot;,&quot;message&quot;:&quot;92%&quot;,&quot;schemaVersion&quot;:1}&#10;{&quot;color&quot;:&quot;brightgreen&quot;,&quot;label&quot;:&quot;soothfast gate&quot;,&quot;message&quot;:&quot;passing&quot;,&quot;schemaVersion&quot;:1}</pre></details></figure>
+<p><code>perf_table::rows</code> is the shared data extraction step. <code>markdown</code> and <code>html</code>
+both call it and are otherwise identical. <code>badges::badge</code> is the raw
+shields.io endpoint shape (<code>{schemaVersion, label, message, color}</code>), and
+<code>coverage_badge</code> and <code>gate_badge</code> are the two callers that pick <code>color</code> for
+you: green at 90% or above, yellow at 70% or above, red below that, and
+passing, failing or unknown for a gate verdict.</p>
+<h2 id="cargo-soothfast-report-render"><code>cargo soothfast report render</code><a class="anchor" href="#cargo-soothfast-report-render" aria-label="Link to this section">#</a></h2>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast report render -p mylib --baseline self
+report: wrote docs/perf/summary.md
+report: wrote docs/perf/summary.html
+report: wrote docs/perf/badges/gate.json
+report: wrote docs/perf/llms.txt
+</code></pre></figure>
+<p><code>summary.md</code> and <code>summary.html</code> are <code>perf_table::markdown</code> and <code>html</code> over
+the baseline. <code>badges/gate.json</code> reads <code>.soothfast/gate-status.json</code>, written
+by the last <code>gate</code> run, through <code>badges::gate_badge</code>.</p>
+<p>The trend SVGs (<code>trend-instructions.svg</code>, <code>trend-walltime_median_ns.svg</code>,
+<code>trend-allocs.svg</code>) only appear once <code>.soothfast/trend.jsonl</code> holds at least
+two points for that metric. Below that <code>trend_chart::render</code> returns <code>None</code>
+and <code>report render</code> skips the file rather than draw an empty axis.</p>
+<p><code>llms.txt</code> is written only when <code>-p PKG</code> is given. It is <code>PKG</code>'s public
+surface, meaning each signature and its first doc line, joined against the
+baseline by id and falling back to <code>covers=</code>. An agent reading it can answer
+"what does <code>X</code> measure right now" without guessing from a README that may be
+out of date.</p>
+<h2 id="trend-and-changelog">Trend and changelog<a class="anchor" href="#trend-and-changelog" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast trend append -p mylib</code> appends one line per run
+(<code>{unix, commit, noise_pct, items}</code>) to <code>.soothfast/trend.jsonl</code>. That file
+feeds both the SVG charts above and <code>trend render</code>, which prints each
+metric's drift from first to last point straight to stdout. It writes no
+file of its own, since charting is <code>report render</code>'s job.</p>
+<p><code>cargo soothfast report changelog -p mylib --against-ref v1.0</code> merges a
+fresh "Unreleased" section into <code>CHANGELOG.md</code> in place, holding the public
+API diff against <code>v1.0</code> plus the current perf table. Every <code>## [released]</code>
+section already there survives. Re-running it is idempotent: it replaces the
+<code>Unreleased</code> section rather than appending a duplicate.</p>
+<p>Pass several <code>-p PKG</code> flags to cover more than one crate, and leave
+<code>--against-ref</code> off entirely for a first release, where there is no earlier
+version to diff against and the draft lists the surface it ships instead.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#perf-tables-and-badges">Perf tables and badges</a></li>
+  
+    <li><a class="toc-l2" href="#cargo-soothfast-report-render">cargo soothfast report render</a></li>
+  
+    <li><a class="toc-l2" href="#trend-and-changelog">Trend and changelog</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../_soothfast/site.js" defer></script>
+</body>
+</html>
