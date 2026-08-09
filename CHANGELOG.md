@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.2)
+## 0.1.3 - 2026-08-09
 
 ### API surface
 
