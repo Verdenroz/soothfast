@@ -10,20 +10,20 @@ No public API changes.
 
 | item | instructions | median | p99 | allocs | polls |
 |---|---:|---:|---:|---:|---:|
-| `soothfast_docs::bench_claim_parse` | n/a | 176.4ns | 183.3ns | 6 | n/a |
-| `soothfast_docs::bench_markdown_scan` | n/a | 319.64µs | 462.36µs | 4114 | n/a |
-| `soothfast_measure::bench_summarize` | n/a | 469.94µs | 473.69µs | 4 | n/a |
-| `soothfast_measure::bench_sweep_evaluate` | n/a | 11.6ns | 11.9ns | 0 | n/a |
-| `soothfast_registry::bench_fnv1a` | n/a | 62.88µs | 63.19µs | 0 | n/a |
-| `soothfast_report::bench_llms_render` | n/a | 205.66µs | 208.13µs | 7191 | n/a |
-| `soothfast_report::bench_perf_table` | n/a | 652.88µs | 692.17µs | 8204 | n/a |
-| `soothfast_sdk::bench_emit_typescript` | n/a | 1.55ms | 1.67ms | 42930 | n/a |
-| `soothfast_sdk::bench_lower` | n/a | 973.20µs | 1.01ms | 23907 | n/a |
-| `soothfast_site::bench_highlight` | n/a | 2.10ms | 2.19ms | 88069 | n/a |
-| `soothfast_site::bench_md_render` | n/a | 2.10ms | 2.15ms | 68118 | n/a |
-| `soothfast_spec::bench_openapi_diff` | n/a | 5.29ms | 6.03ms | 77722 | n/a |
-| `soothfast_spec::bench_openapi_document` | n/a | 1.84ms | 2.12ms | 30152 | n/a |
-| `soothfast_spec::bench_serialize_yaml` | n/a | 5.70ms | 6.22ms | 74277 | n/a |
+| `soothfast_docs::bench_claim_parse` | n/a | 260.4ns | 265.0ns | 6 | n/a |
+| `soothfast_docs::bench_markdown_scan` | n/a | 403.65µs | 424.43µs | 4114 | n/a |
+| `soothfast_measure::bench_summarize` | n/a | 593.02µs | 607.30µs | 4 | n/a |
+| `soothfast_measure::bench_sweep_evaluate` | n/a | 23.9ns | 24.3ns | 0 | n/a |
+| `soothfast_registry::bench_fnv1a` | n/a | 92.10µs | 92.50µs | 0 | n/a |
+| `soothfast_report::bench_llms_render` | n/a | 282.40µs | 287.61µs | 7191 | n/a |
+| `soothfast_report::bench_perf_table` | n/a | 827.25µs | 863.39µs | 8204 | n/a |
+| `soothfast_sdk::bench_emit_typescript` | n/a | 2.23ms | 2.31ms | 42930 | n/a |
+| `soothfast_sdk::bench_lower` | n/a | 1.48ms | 1.60ms | 23907 | n/a |
+| `soothfast_site::bench_highlight` | n/a | 3.19ms | 3.23ms | 88069 | n/a |
+| `soothfast_site::bench_md_render` | n/a | 3.02ms | 3.08ms | 68118 | n/a |
+| `soothfast_spec::bench_openapi_diff` | n/a | 5.82ms | 6.86ms | 77722 | n/a |
+| `soothfast_spec::bench_openapi_document` | n/a | 2.19ms | 2.40ms | 30152 | n/a |
+| `soothfast_spec::bench_serialize_yaml` | n/a | 6.98ms | 7.57ms | 74277 | n/a |
 
 
 ## 0.1.0 - 2026-08-09
