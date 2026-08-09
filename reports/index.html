@@ -173,6 +173,11 @@ fresh "Unreleased" section into <code>CHANGELOG.md</code> in place, holding the 
 API diff against <code>v1.0</code> plus the current perf table. Every <code>## [released]</code>
 section already there survives. Re-running it is idempotent: it replaces the
 <code>Unreleased</code> section rather than appending a duplicate.</p>
+<p>Hand-written prose survives the same regeneration by living inside a
+<code>&lt;!-- soothfast:notes --&gt;</code> / <code>&lt;!-- /soothfast:notes --&gt;</code> pair anywhere in the
+Unreleased section. Add it once; every later run carries it forward, spliced
+back in right after the heading, until the section is renamed to a real
+version and frozen like the rest of the released history.</p>
 <p>Pass several <code>-p PKG</code> flags to cover more than one crate, and leave
 <code>--against-ref</code> off entirely for a first release, where there is no earlier
 version to diff against and the draft lists the surface it ships instead.</p>
