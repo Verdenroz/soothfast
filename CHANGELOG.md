@@ -2,6 +2,16 @@
 
 ## 0.1.3 - 2026-08-09
 
+<!-- soothfast:notes -->
+Every release cut so far had needed a manual follow-up PR to delete a
+duplicate Unreleased section: the release PR renames the heading, but
+`changelog.yml`'s own run fires before the new tag exists, so it diffs
+against the still-current tag and injects a fresh Unreleased section right
+on top of the one being retired. `report changelog` now checks the
+CHANGELOG's top heading first and is a no-op once it's already been
+renamed away from Unreleased, so future releases won't need one.
+<!-- /soothfast:notes -->
+
 ### API surface
 
 No public API changes.
@@ -67,6 +77,18 @@ No public API changes.
 
 
 ## 0.1.1 - 2026-08-09
+
+<!-- soothfast:notes -->
+The changelog and spec bots now authenticate as the `soothfast-bot` GitHub
+App instead of the default token. GitHub gates every subsequent workflow
+run on a PR behind manual approval once a `github-actions[bot]`-authored
+commit lands on it, which was blocking normal review on PRs the bots had
+touched. The Python SDK generator also gained a mypy fix: `server_env` now
+casts to `Mapping[str, str]` before reaching `embedded_base_url`, since
+`mypy --strict` rejects a `TypedDict` there even when every field is
+`str`-typed. This was found on finance-query's own generated SDK, which
+failed exactly this check.
+<!-- /soothfast:notes -->
 
 ### API surface
 
