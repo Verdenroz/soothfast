@@ -299,13 +299,23 @@ claim being enforced, not a bug in the check.
 - `soothfast-gate.yml` — reusable workflow; runs `cargo soothfast gate` for a
   given package against the PR's merge-base, uploads `.soothfast/triage/` on
   failure, and posts/updates a PR comment with the gate output.
-- `changelog.yml` — auto-regenerates the living `CHANGELOG.md` and lands it
-  via a bot-opened, self-merged PR (the branch ruleset blocks direct pushes
-  to `master`; does not retrigger CI).
-- `spec.yml` — on push, regenerates `mode = "generate"` spec files and lands
-  them the same bot-PR way as `changelog.yml`, so nobody has to remember to;
-  on PRs, gates instead — `spec gen --check` fails on a stale committed spec
-  and `spec gate` fails on a consumer-breaking change vs the merge-base
+- `changelog.yml` — on a same-repo PR, regenerates the living `CHANGELOG.md`
+  and commits straight onto the PR's own branch (`paths-ignore: CHANGELOG.md`
+  stops that commit from retriggering the job). Runs pre-merge rather than
+  after, on purpose: the Performance section embeds freshly measured
+  numbers that drift slightly on every run, so triggering on push-to-master
+  would open a near-noise-only bot PR after almost every merge. Commits
+  authenticate with a short-lived token from a repo-installed GitHub App
+  (`actions/create-github-app-token`, `CHANGELOG_APP_CLIENT_ID` /
+  `CHANGELOG_APP_PRIVATE_KEY`) rather than the default `GITHUB_TOKEN` —
+  GitHub gates every subsequent workflow run on a PR behind manual approval
+  once a `github-actions[bot]`-authored commit lands on it, and an
+  explicitly installed App doesn't trip that gate.
+- `spec.yml` — on push to `master`, regenerates `mode = "generate"` spec
+  files and lands them via a bot-opened, self-merged PR (the branch ruleset
+  blocks direct pushes to `master`), so nobody has to remember to; on PRs,
+  gates instead — `spec gen --check` fails on a stale committed spec and
+  `spec gate` fails on a consumer-breaking change vs the merge-base
   (`--allow-breaking` releases one deliberately).
 - `release.yml` — on `v*` tag push, runs checks + gate, then publishes all 10
   workspace crates to crates.io in dependency order.

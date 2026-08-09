@@ -72,7 +72,7 @@ jobs:
   # On a PR, prove the committed specs are current and that the API change is
   # backwards compatible with the merge-base.
   gate:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read

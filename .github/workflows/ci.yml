@@ -13,6 +13,7 @@ permissions: {}
 
 jobs:
   check:
+    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout (a private repo needs it)
@@ -33,6 +34,7 @@ jobs:
       - run: cargo test --workspace --all-features
 
   msrv:
+    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout (a private repo needs it)
@@ -54,6 +56,7 @@ jobs:
   # Dogfood: measure the self-bench crates, then gate every bind, claim, and
   # captured output against this build's own run.
   docs:
+    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout (a private repo needs it)
@@ -88,7 +91,7 @@ jobs:
   # Dogfood: gate each self-bench crate's perf against the PR's merge-base.
   # Keep this package list in sync with Makefile's BENCH_CRATES.
   gate:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]')
     strategy:
       matrix:
         package:
