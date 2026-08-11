@@ -9,13 +9,13 @@ use crate::invoke::{self, CommonArgs, Run};
 use crate::workspace;
 
 /// Deterministic counters gate tight.
-const INSTRUCTIONS_THRESHOLD_PCT: f64 = 5.0;
+pub const INSTRUCTIONS_THRESHOLD_PCT: f64 = 5.0;
 const IR_THRESHOLD_PCT: f64 = 5.0;
 /// Walltime medians gate at +10% — but only when the observed A/A noise
 /// floor is safely inside that margin (refuse to gate on noise).
-const WALLTIME_THRESHOLD_PCT: f64 = 10.0;
+pub const WALLTIME_THRESHOLD_PCT: f64 = 10.0;
 /// Allocation counts/bytes and binary size are deterministic; gate at +5%.
-const ALLOC_THRESHOLD_PCT: u64 = 5;
+pub const ALLOC_THRESHOLD_PCT: u64 = 5;
 const SIZE_THRESHOLD_PCT: u64 = 5;
 /// Compile time is noisy: soft (warn-only) at +25%.
 const BUILD_MS_SOFT_PCT: f64 = 25.0;
