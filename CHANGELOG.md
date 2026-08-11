@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.5)
+## 0.1.6 - 2026-08-11
+
+<!-- soothfast:notes -->
+The `asyncexec` backend was measured but never gated. Poll and wake counts
+flowed all the way through — macro, runner, `collect`, the saved baseline,
+and the perf table's `polls` column — and `gate` compared none of them. An
+async regression that added an await point was invisible to every metric
+that can actually fail a build.
+
+`polls` and `wakes` now gate at +5%, through the same integer-ceiling
+comparator allocations use. Validated against finance-query's quote
+dispatch, where one extra pending await moved instructions +0.4% — well
+inside their threshold — while polls went 1 to 2 and wakes 0 to 1.
+Instructions, allocations, and walltime all passed that change; only the
+async counters caught it.
+
+`bench_yield_chain` joins the registry's self-benches as the workspace's
+first async bench, and both metrics are documented in `docs/gating.md`.
+<!-- /soothfast:notes -->
 
 ### API surface
 
