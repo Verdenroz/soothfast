@@ -20,12 +20,31 @@ pub enum ApiSection<'a> {
     Initial(&'a [SurfaceEntry]),
 }
 
+/// Per-metric movement a delta table is willing to report, as percentages.
+///
+/// These mirror the gate's own thresholds and are passed in rather than
+/// defined here, so the changelog reports exactly what the gate would have
+/// flagged instead of drifting from it. A flat low threshold would fill the
+/// table on every run: walltime jitters by several percent between two
+/// measurements of identical code, while instructions and allocs do not.
+pub struct PerfThresholds {
+    pub instructions_pct: f64,
+    pub walltime_pct: f64,
+    pub allocs_pct: f64,
+    /// False when the measured noise floor sits too close to
+    /// `walltime_pct` to tell a real move from sampling jitter, in which
+    /// case walltime rows are dropped and deterministic metrics still count.
+    pub report_walltime: bool,
+}
+
 /// Inputs already computed by the CLI (API section, two baselines).
 pub struct DraftInputs<'a> {
     pub api: ApiSection<'a>,
     /// Reference baseline (older) — None renders current-only.
     pub old_baseline: Option<&'a Value>,
     pub new_baseline: &'a Value,
+    /// Only consulted when `old_baseline` is Some.
+    pub thresholds: PerfThresholds,
 }
 
 /// Render the "Unreleased" draft section: API surface + perf table.
@@ -56,23 +75,31 @@ pub fn draft(inputs: &DraftInputs) -> String {
             out.push_str(&crate::perf_table::markdown(inputs.new_baseline));
         }
         Some(old) => {
+            let t = &inputs.thresholds;
+            let mut metrics: Vec<(&str, [&str; 2], f64)> = vec![
+                (
+                    "instructions",
+                    ["perfcnt", "instructions"],
+                    t.instructions_pct,
+                ),
+                ("allocs", ["alloc", "allocs"], t.allocs_pct),
+            ];
+            if t.report_walltime {
+                metrics.push(("median_ns", ["walltime", "median_ns"], t.walltime_pct));
+            }
             out.push_str("| item | metric | was | now | delta |\n|---|---|---:|---:|---:|\n");
             let mut any = false;
             let empty = serde_json::Map::new();
             let new_items = inputs.new_baseline["items"].as_object().unwrap_or(&empty);
             for (id, m) in new_items {
-                for (label, path) in [
-                    ("instructions", ["perfcnt", "instructions"]),
-                    ("median_ns", ["walltime", "median_ns"]),
-                    ("allocs", ["alloc", "allocs"]),
-                ] {
+                for (label, path, threshold) in &metrics {
                     let new_v = m[path[0]][path[1]].as_f64();
                     let old_v = old["items"][id][path[0]][path[1]].as_f64();
                     if let (Some(o), Some(n)) = (old_v, new_v)
                         && o > 0.0
                     {
                         let delta = (n - o) / o * 100.0;
-                        if delta.abs() >= 1.0 {
+                        if delta.abs() >= *threshold {
                             any = true;
                             out.push_str(&format!(
                                 "| `{id}` | {label} | {o:.1} | {n:.1} | {delta:+.1}% |\n"
@@ -82,7 +109,7 @@ pub fn draft(inputs: &DraftInputs) -> String {
                 }
             }
             if !any {
-                out.push_str("| _no per-item deltas ≥ 1%_ | | | | |\n");
+                out.push_str("| _no movement past gate thresholds_ | | | | |\n");
             }
         }
     }
@@ -126,8 +153,18 @@ fn inventory(entries: &[SurfaceEntry]) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::{ApiSection, DraftInputs, draft};
+    use super::{ApiSection, DraftInputs, PerfThresholds, draft};
     use crate::llms::SurfaceEntry;
+
+    /// The values `cargo-soothfast` passes from its gate constants.
+    fn gate_thresholds() -> PerfThresholds {
+        PerfThresholds {
+            instructions_pct: 5.0,
+            walltime_pct: 10.0,
+            allocs_pct: 5.0,
+            report_walltime: true,
+        }
+    }
 
     fn entry(pkg: &str, path: &str, kind: &str, summary: &str) -> SurfaceEntry {
         SurfaceEntry {
@@ -151,10 +188,57 @@ mod tests {
             },
             old_baseline: Some(&old),
             new_baseline: &new,
+            thresholds: gate_thresholds(),
         });
         assert!(text.contains("draft vs v1.0.0"));
         assert!(text.contains("ADDED    demo::g"));
         assert!(text.contains("-10.0%"));
+    }
+
+    /// Walltime moves several percent between two measurements of identical
+    /// code. Reporting that churns the table on every regeneration for no
+    /// signal, which is what the per-metric thresholds exist to stop.
+    #[test]
+    fn walltime_jitter_below_threshold_reports_nothing() {
+        let old = json!({ "items": { "demo::f": {
+            "walltime": { "median_ns": 186.7 }, "alloc": { "allocs": 6 } } } });
+        let new = json!({ "items": { "demo::f": {
+            "walltime": { "median_ns": 170.0 }, "alloc": { "allocs": 6 } } } });
+        let text = draft(&DraftInputs {
+            api: ApiSection::Diff {
+                against: "v1.0.0",
+                text: "",
+            },
+            old_baseline: Some(&old),
+            new_baseline: &new,
+            thresholds: gate_thresholds(),
+        });
+        // -8.9%: real jitter observed in CI, under the +10% walltime bar.
+        assert!(text.contains("no movement past gate thresholds"), "{text}");
+        assert!(!text.contains("median_ns"), "{text}");
+    }
+
+    #[test]
+    fn a_noisy_run_drops_walltime_but_keeps_deterministic_metrics() {
+        let old = json!({ "items": { "demo::f": {
+            "walltime": { "median_ns": 100.0 }, "alloc": { "allocs": 100 } } } });
+        let new = json!({ "items": { "demo::f": {
+            "walltime": { "median_ns": 200.0 }, "alloc": { "allocs": 120 } } } });
+        let text = draft(&DraftInputs {
+            api: ApiSection::Diff {
+                against: "v1.0.0",
+                text: "",
+            },
+            old_baseline: Some(&old),
+            new_baseline: &new,
+            thresholds: PerfThresholds {
+                report_walltime: false,
+                ..gate_thresholds()
+            },
+        });
+        assert!(!text.contains("median_ns"), "{text}");
+        assert!(text.contains("allocs"), "{text}");
+        assert!(text.contains("+20.0%"), "{text}");
     }
 
     /// The bug this section's types exist to prevent: an empty diff and a
@@ -169,6 +253,7 @@ mod tests {
             },
             old_baseline: None,
             new_baseline: &new,
+            thresholds: gate_thresholds(),
         });
         assert!(unchanged.contains("No public API changes."));
 
@@ -177,6 +262,7 @@ mod tests {
             api: ApiSection::Initial(&items),
             old_baseline: None,
             new_baseline: &new,
+            thresholds: gate_thresholds(),
         });
         assert!(!initial.contains("No public API changes."), "{initial}");
         assert!(initial.contains("initial public surface"), "{initial}");
@@ -197,6 +283,7 @@ mod tests {
             api: ApiSection::Initial(&[]),
             old_baseline: None,
             new_baseline: &new,
+            thresholds: gate_thresholds(),
         });
         assert!(text.contains("No public items found"), "{text}");
     }

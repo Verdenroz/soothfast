@@ -45,15 +45,25 @@ Also pins `linkme` to `=0.3.36`. Its 0.3.37 release moved `linkme-impl` to
 syn 3 while `serde_derive` is still on syn 2, which puts two `syn` versions
 in the tree and fails cargo-deny's `bans` check. The pin comes off once
 serde moves to syn 3.
+
+The Unreleased section's Performance table now reports what moved against
+the reference instead of a fresh snapshot of every item. Point-in-time
+walltime numbers jitter by several percent between two measurements of
+identical code, so a merge that changed nothing still rewrote every row and
+opened a changelog PR for it. `report changelog --against-ref` measures the
+ref side too and reports only movement past the gate's own thresholds,
+which makes a no-op merge produce byte-identical output.
 <!-- /soothfast:notes -->
 
 ### API surface
 
 ```
 ADDED    soothfast_docs::markdown::CodeBlock::feature_list
+ADDED    soothfast_report::changelog::PerfThresholds
 CHANGED  soothfast_docs::gentests::capture_examples (body)
 CHANGED  soothfast_docs::gentests::test_file (body)
 CHANGED  soothfast_docs::markdown::scan (body)
+CHANGED  soothfast_report::changelog::DraftInputs (field added)
 ```
 
 ### Performance

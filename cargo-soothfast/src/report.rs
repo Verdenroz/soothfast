@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use soothfast_report::{badges, changelog, llms, perf_table, trend_chart};
 
-use crate::{docs_support, invoke};
+use crate::{docs_support, invoke, workspace};
 
 pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
@@ -173,6 +173,56 @@ fn surface_diffs(pkgs: &[String], refname: &str, features: Option<&str>) -> Resu
     Ok(out)
 }
 
+/// Measure every `-p` package that carries a bench target at the merge-base
+/// of `refname`, merged into one baseline-shaped document.
+///
+/// One worktree for all of them; packages without a bench target there are
+/// skipped rather than failing the run, since a newly measured crate simply
+/// has no earlier side to compare against. `Ok(None)` when that leaves
+/// nothing measured, which renders the current-only table as before.
+fn measure_ref(a: &ReportArgs, refname: &str) -> Result<Option<Value>, String> {
+    let pkgs = a.pkg.clone();
+    let features = a.features.clone();
+    println!("report: measuring {refname} in a worktree for the perf delta");
+    let runs = invoke::with_merge_base_worktree(refname, |wt| {
+        let mut runs = Vec::new();
+        for pkg in &pkgs {
+            if !workspace::has_bench_target(pkg, "soothfast", Some(wt))
+                .map_err(|e| e.to_string())?
+            {
+                continue;
+            }
+            let common = invoke::CommonArgs {
+                pkg: Some(pkg.clone()),
+                features: features.clone(),
+                ..Default::default()
+            };
+            let records =
+                invoke::run_bench_in(&common, &[], Some(wt)).map_err(|e| e.to_string())?;
+            runs.push(invoke::collect(&records));
+        }
+        Ok(runs)
+    })?;
+    if runs.is_empty() {
+        return Ok(None);
+    }
+    let mut items = serde_json::Map::new();
+    let mut noise: Option<f64> = None;
+    for run in &runs {
+        if let Some(obj) = invoke::run_to_items_value(run).as_object() {
+            items.extend(obj.clone());
+        }
+        if let Some(n) = run.noise_pct {
+            noise = Some(noise.map_or(n, |m: f64| m.max(n)));
+        }
+    }
+    let mut doc = serde_json::json!({ "version": 1, "items": items });
+    if let Some(n) = noise {
+        doc["noise_pct"] = serde_json::json!(n);
+    }
+    Ok(Some(doc))
+}
+
 fn changelog_cmd(args: &[String]) -> i32 {
     let a = match parse(args) {
         Ok(a) => a,
@@ -186,7 +236,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
         Ok(r) => r,
         Err(e) => return err(&e.to_string()),
     };
-    let path = a.out.unwrap_or_else(|| root.join("CHANGELOG.md"));
+    let path = a.out.clone().unwrap_or_else(|| root.join("CHANGELOG.md"));
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
 
     // A release PR renames the top heading away from "Unreleased" before
@@ -225,6 +275,21 @@ fn changelog_cmd(args: &[String]) -> i32 {
             (String::new(), all)
         }
     };
+    // Measuring the ref turns the Performance section from a point-in-time
+    // snapshot into "what moved", which is what a changelog reader wants and
+    // what keeps a no-op merge from rewriting the whole table.
+    let ref_baseline = match &a.against_ref {
+        Some(refname) => match measure_ref(&a, refname) {
+            Ok(b) => b,
+            Err(e) => return err(&e),
+        },
+        None => None,
+    };
+    let noise = ref_baseline
+        .as_ref()
+        .and_then(|b| b["noise_pct"].as_f64())
+        .unwrap_or(0.0)
+        .max(baseline["noise_pct"].as_f64().unwrap_or(0.0));
     let text = changelog::draft(&changelog::DraftInputs {
         api: match &a.against_ref {
             Some(refname) => changelog::ApiSection::Diff {
@@ -233,8 +298,14 @@ fn changelog_cmd(args: &[String]) -> i32 {
             },
             None => changelog::ApiSection::Initial(&entries),
         },
-        old_baseline: None, // ref-side measurements: Phase 5 wiring
+        old_baseline: ref_baseline.as_ref(),
         new_baseline: &baseline,
+        thresholds: changelog::PerfThresholds {
+            instructions_pct: crate::gate::INSTRUCTIONS_THRESHOLD_PCT,
+            walltime_pct: crate::gate::WALLTIME_THRESHOLD_PCT,
+            allocs_pct: crate::gate::ALLOC_THRESHOLD_PCT as f64,
+            report_walltime: noise < crate::gate::WALLTIME_THRESHOLD_PCT / 2.0,
+        },
     });
 
     if std::fs::write(&path, merge_changelog(&existing, &text)).is_err() {
