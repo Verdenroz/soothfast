@@ -5,6 +5,11 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.1.6 (must match Cargo.toml)"
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,9 +17,48 @@ env:
 permissions: {}
 
 jobs:
+  resolve:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Resolve and validate
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION#v}"
+            if [ "$REF_NAME" != "master" ]; then
+              echo "::error::Dispatch a release from master, not $REF_NAME"
+              exit 1
+            fi
+            if gh api "repos/${{ github.repository }}/git/ref/tags/v$VERSION" >/dev/null 2>&1; then
+              echo "::error::Tag v$VERSION already exists"
+              exit 1
+            fi
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$VERSION"
+
   checks:
     name: Pre-release checks
     runs-on: ubuntu-latest
+    needs: [resolve]
     permissions:
       contents: read
     steps:
@@ -31,14 +75,15 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           lookup-only: true
-      - name: Verify tag matches workspace version
+      - name: Verify release version matches workspace version
+        env:
+          TAG_VERSION: ${{ needs.resolve.outputs.version }}
         run: |
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
           CARGO_VERSION=$(cargo metadata --format-version 1 --no-deps \
             | grep -o '"name":"soothfast","version":"[^"]*"' \
             | head -1 | sed 's/.*"version":"\([^"]*\)".*/\1/')
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-            echo "::error::Tag version ($TAG_VERSION) does not match workspace version ($CARGO_VERSION)"
+            echo "::error::Release version ($TAG_VERSION) does not match workspace version ($CARGO_VERSION)"
             exit 1
           fi
           echo "Version verified: $TAG_VERSION"
@@ -78,15 +123,25 @@ jobs:
   publish:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    needs: [checks, dry-run]
+    needs: [resolve, checks, dry-run]
     environment: release # manual approval: add required reviewers in settings
     permissions:
       id-token: write # mint a short-lived crates.io token via OIDC
-      contents: read
+      contents: write # create the tag when dispatched
     steps:
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
           egress-policy: audit
+      # github.token, not the app token: an app-token tag push would re-trigger
+      # this workflow and release the same version twice.
+      - name: Tag this release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/git/refs" \
+            -f ref="refs/tags/$TAG" -f sha="${{ github.sha }}"
       - name: Mint a soothfast-bot token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -139,8 +194,9 @@ jobs:
 
       - name: Extract CHANGELOG section for this version
         id: changelog
+        env:
+          TAG_VERSION: ${{ needs.resolve.outputs.version }}
         run: |
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
           NOTES=""
           if [ -f CHANGELOG.md ]; then
             NOTES=$(awk -v ver="$TAG_VERSION" '
@@ -160,7 +216,7 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.resolve.outputs.tag }}
           USE_AUTO: ${{ steps.changelog.outputs.use_auto }}
         run: |
           ASSETS=""
