@@ -156,7 +156,7 @@ compared against a fixed bound.</p>
 </code></pre></figure>
 <p>Parse <code>demo::lcg_checksum.perfcnt.instructions &lt; 25000</code> (units on the
 bound: ns/us/ms/s multiply into ns; bare numbers stay raw).</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">p99</span><span class="ev-detail">p99 234ns &lt;= 50000ns</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_claim_parse`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">228</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">234</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">6</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">170</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">p99</span><span class="ev-detail">p99 250ns &lt;= 50000ns</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_claim_parse`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">240</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">250</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">6</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">170</span></div></div></div>
 <h2 id="soothfast-docs-diff"><code>soothfast_docs::diff</code><a class="anchor" href="#soothfast-docs-diff" aria-label="Link to this section">#</a></h2>
 <h3 id="surfacediff-struct"><code>SurfaceDiff</code> <sup>struct</sup><a class="anchor" href="#surfacediff-struct" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SurfaceDiff</span>
@@ -183,12 +183,8 @@ generated artifacts from hand-written ones.</p>
 </code></pre></figure>
 <p>Example-file contents for the capture blocks of one markdown doc, in
 capture order: (example_name, content).</p>
-<p>A <code>feature=NAME</code> tag gates the real <code>fn main</code> behind that feature, with a
-no-op fallback when it's off — an example file (unlike a <code>#[test]</code>) can't
-simply be omitted, so this is what keeps <code>cargo build --examples</code> (and
-clippy/test over <code>--all-targets</code>) green under any feature combination.
-<code>docs capture</code> must be run with that same feature enabled to record real
-output; otherwise it captures the empty fallback.</p>
+<p>A <code>feature=NAME</code> tag gates the real <code>fn main</code> behind that feature
+(<code>feature=A,B</code> behind all of them)</p>
 <h3 id="sanitized-stem-function"><code>sanitized_stem</code> <sup>function</sup><a class="anchor" href="#sanitized-stem-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">sanitized_stem</span>(rel_path: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">String</span>
 </code></pre></figure>
@@ -246,13 +242,22 @@ plus <code>soothfast:bind</code> / <code>soothfast:claim</code> markers, in docu
 <p>Scan one markdown text. Closing markers (<code>&lt;!-- /soothfast:... --&gt;</code>) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.02 over sizes [512, 2048, 8192] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_markdown_scan`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">413006</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">436602</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4114</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">338400</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.03 over sizes [512, 2048, 8192] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_markdown_scan`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">440957</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">767663</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4114</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">338400</span></div></div></div>
 <h3 id="splice-output-function"><code>splice_output</code> <sup>function</sup><a class="anchor" href="#splice-output-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">splice_output</span>( text: &amp;<span class="tok-ty">str</span>, nth_capture: <span class="tok-ty">usize</span>, output: &amp;<span class="tok-ty">str</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Option</span>&lt;<span class="tok-ty">String</span>&gt;, <span class="tok-ty">String</span>&gt;
 </code></pre></figure>
 <p>Replace (or insert) the <code>text soothfast-output</code> fence that follows the
 <code>nth</code> capture-output block (0-based among capture blocks). Ok(None) when
 the capture block wasn't found; Err on malformed markdown.</p>
+<h2 id="soothfast-docs-markdown-codeblock"><code>soothfast_docs::markdown::CodeBlock</code><a class="anchor" href="#soothfast-docs-markdown-codeblock" aria-label="Link to this section">#</a></h2>
+<h3 id="feature-list-function"><code>feature_list</code> <sup>function</sup><a class="anchor" href="#feature-list-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">feature_list</span>(&amp;<span class="tok-kw">self</span>) -&gt; <span class="tok-ty">Vec</span>&lt;&amp;<span class="tok-ty">str</span>&gt;
+</code></pre></figure>
+<p>Individual features of a <code>feature=</code> tag — one, or several
+comma-separated with <strong>no spaces</strong> (<code>feature=risk,polygon</code>; a space
+would split into a separate fence tag) when a block needs more than one
+feature to compile. Empty when the block has no <code>feature=</code> tag; <code>scan</code>
+rejects a tag whose value names no feature.</p>
 <h2 id="soothfast-docs-reference"><code>soothfast_docs::reference</code><a class="anchor" href="#soothfast-docs-reference" aria-label="Link to this section">#</a></h2>
 <h3 id="render-function-1"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function-1" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>( crate_name: &amp;<span class="tok-ty">str</span>, surface: &amp;<span class="tok-ty">Surface</span>, docs_text: &amp;<span class="tok-ty">BTreeMap</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;, baseline: &amp;<span class="tok-ty">Value</span>, ) -&gt; <span class="tok-ty">String</span>
@@ -359,6 +364,10 @@ relative filenames in spans (the directory rustdoc ran in).</p>
     <li><a class="toc-l3" href="#scan-function">scan function</a></li>
   
     <li><a class="toc-l3" href="#splice-output-function">splice_output function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-docs-markdown-codeblock">soothfast_docs::markdown::CodeBlock</a></li>
+  
+    <li><a class="toc-l3" href="#feature-list-function">feature_list function</a></li>
   
     <li><a class="toc-l2" href="#soothfast-docs-reference">soothfast_docs::reference</a></li>
   
