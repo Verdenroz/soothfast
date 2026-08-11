@@ -24,17 +24,16 @@ pub enum ApiSection<'a> {
 ///
 /// These mirror the gate's own thresholds and are passed in rather than
 /// defined here, so the changelog reports exactly what the gate would have
-/// flagged instead of drifting from it. A flat low threshold would fill the
-/// table on every run: walltime jitters by several percent between two
-/// measurements of identical code, while instructions and allocs do not.
+/// flagged instead of drifting from it.
+///
+/// Only deterministic metrics have thresholds, because a changelog is a
+/// permanent record: walltime moves 15-20% between two runs of identical
+/// code on a shared CI runner, so recording it means rewriting the section
+/// on every merge to say nothing. Walltime regressions are `gate`'s job,
+/// where a human reads the verdict against a live noise floor.
 pub struct PerfThresholds {
     pub instructions_pct: f64,
-    pub walltime_pct: f64,
     pub allocs_pct: f64,
-    /// False when the measured noise floor sits too close to
-    /// `walltime_pct` to tell a real move from sampling jitter, in which
-    /// case walltime rows are dropped and deterministic metrics still count.
-    pub report_walltime: bool,
 }
 
 /// Inputs already computed by the CLI (API section, two baselines).
@@ -76,7 +75,7 @@ pub fn draft(inputs: &DraftInputs) -> String {
         }
         Some(old) => {
             let t = &inputs.thresholds;
-            let mut metrics: Vec<(&str, [&str; 2], f64)> = vec![
+            let metrics: [(&str, [&str; 2], f64); 2] = [
                 (
                     "instructions",
                     ["perfcnt", "instructions"],
@@ -84,9 +83,6 @@ pub fn draft(inputs: &DraftInputs) -> String {
                 ),
                 ("allocs", ["alloc", "allocs"], t.allocs_pct),
             ];
-            if t.report_walltime {
-                metrics.push(("median_ns", ["walltime", "median_ns"], t.walltime_pct));
-            }
             out.push_str("| item | metric | was | now | delta |\n|---|---|---:|---:|---:|\n");
             let mut any = false;
             let empty = serde_json::Map::new();
@@ -160,9 +156,7 @@ mod tests {
     fn gate_thresholds() -> PerfThresholds {
         PerfThresholds {
             instructions_pct: 5.0,
-            walltime_pct: 10.0,
             allocs_pct: 5.0,
-            report_walltime: true,
         }
     }
 
@@ -195,15 +189,15 @@ mod tests {
         assert!(text.contains("-10.0%"));
     }
 
-    /// Walltime moves several percent between two measurements of identical
-    /// code. Reporting that churns the table on every regeneration for no
-    /// signal, which is what the per-metric thresholds exist to stop.
+    /// A changelog is permanent, so it records only metrics that reproduce.
+    /// Two CI runs of identical code moved walltime -15.2% and +18.2% on
+    /// separate items, which rewrote this section on every merge.
     #[test]
-    fn walltime_jitter_below_threshold_reports_nothing() {
+    fn walltime_never_reaches_the_table_however_far_it_moved() {
         let old = json!({ "items": { "demo::f": {
-            "walltime": { "median_ns": 186.7 }, "alloc": { "allocs": 6 } } } });
+            "walltime": { "median_ns": 275028.3 }, "alloc": { "allocs": 6 } } } });
         let new = json!({ "items": { "demo::f": {
-            "walltime": { "median_ns": 170.0 }, "alloc": { "allocs": 6 } } } });
+            "walltime": { "median_ns": 324972.0 }, "alloc": { "allocs": 6 } } } });
         let text = draft(&DraftInputs {
             api: ApiSection::Diff {
                 against: "v1.0.0",
@@ -213,13 +207,13 @@ mod tests {
             new_baseline: &new,
             thresholds: gate_thresholds(),
         });
-        // -8.9%: real jitter observed in CI, under the +10% walltime bar.
         assert!(text.contains("no movement past gate thresholds"), "{text}");
         assert!(!text.contains("median_ns"), "{text}");
     }
 
+    /// The deterministic metrics are the point: they must still land.
     #[test]
-    fn a_noisy_run_drops_walltime_but_keeps_deterministic_metrics() {
+    fn an_allocation_regression_is_still_reported() {
         let old = json!({ "items": { "demo::f": {
             "walltime": { "median_ns": 100.0 }, "alloc": { "allocs": 100 } } } });
         let new = json!({ "items": { "demo::f": {
@@ -231,10 +225,7 @@ mod tests {
             },
             old_baseline: Some(&old),
             new_baseline: &new,
-            thresholds: PerfThresholds {
-                report_walltime: false,
-                ..gate_thresholds()
-            },
+            thresholds: gate_thresholds(),
         });
         assert!(!text.contains("median_ns"), "{text}");
         assert!(text.contains("allocs"), "{text}");

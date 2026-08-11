@@ -285,11 +285,6 @@ fn changelog_cmd(args: &[String]) -> i32 {
         },
         None => None,
     };
-    let noise = ref_baseline
-        .as_ref()
-        .and_then(|b| b["noise_pct"].as_f64())
-        .unwrap_or(0.0)
-        .max(baseline["noise_pct"].as_f64().unwrap_or(0.0));
     let text = changelog::draft(&changelog::DraftInputs {
         api: match &a.against_ref {
             Some(refname) => changelog::ApiSection::Diff {
@@ -302,9 +297,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
         new_baseline: &baseline,
         thresholds: changelog::PerfThresholds {
             instructions_pct: crate::gate::INSTRUCTIONS_THRESHOLD_PCT,
-            walltime_pct: crate::gate::WALLTIME_THRESHOLD_PCT,
             allocs_pct: crate::gate::ALLOC_THRESHOLD_PCT as f64,
-            report_walltime: noise < crate::gate::WALLTIME_THRESHOLD_PCT / 2.0,
         },
     });
 

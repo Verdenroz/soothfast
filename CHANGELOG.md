@@ -34,12 +34,15 @@ in the tree and fails cargo-deny's `bans` check. The pin comes off once
 serde moves to syn 3.
 
 The Unreleased section's Performance table now reports what moved against
-the reference instead of a fresh snapshot of every item. Point-in-time
-walltime numbers jitter by several percent between two measurements of
-identical code, so a merge that changed nothing still rewrote every row and
-opened a changelog PR for it. `report changelog --against-ref` measures the
-ref side too and reports only movement past the gate's own thresholds,
-which makes a no-op merge produce byte-identical output.
+the reference instead of a fresh snapshot of every item. A merge that
+changed nothing still rewrote every row of that snapshot and opened a
+changelog PR for it. `report changelog --against-ref` measures the ref side
+too and reports only deterministic movement — instructions and allocations
+— past the gate's own thresholds, so a no-op merge produces byte-identical
+output. Walltime is deliberately absent: it swings 15-20% between two runs
+of identical code on a shared CI runner, which is a verdict for `gate` to
+deliver against a live noise floor, not a number to write into a permanent
+record.
 <!-- /soothfast:notes -->
 
 ### API surface
