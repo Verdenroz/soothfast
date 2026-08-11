@@ -1,6 +1,5 @@
 //! Public-surface diff between two builds: what a reviewer needs to see
-//! about API-relevant change, and the raw material for changelog drafting
-//! (Phase 4).
+//! about API-relevant change, and the raw material for changelog drafting.
 
 use crate::surface::Surface;
 

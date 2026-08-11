@@ -1,6 +1,6 @@
 //! Trend time series: one JSONL record per `trend append` (typically per
 //! merge to main), rendered as first→last drift per item. Chart rendering
-//! arrives with soothfast-report in Phase 4; the series format is the contract.
+//! lives in `soothfast-report`; the series format is the contract.
 
 use serde_json::{Value, json};
 

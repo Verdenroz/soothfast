@@ -1,6 +1,6 @@
 //! Allocation-counting backend: a `GlobalAlloc` wrapper over `System` that
 //! counts into process-global atomics. Fully deterministic for
-//! single-threaded workloads, which Phase 1 benches are.
+//! single-threaded workloads.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
