@@ -1,7 +1,7 @@
 {
   "binds": {
     "soothfast::keep": "40ed41ef7edb6071",
-    "soothfast_docs::markdown::scan": "05fd18426b946e95",
+    "soothfast_docs::markdown::scan": "dd1c726e26918840",
     "soothfast_measure::stats::summarize": "fee68b1d78b7c283",
     "soothfast_measure::sweep::evaluate": "25adff41bf8c1e86",
     "soothfast_sdk::envtemplate::markdown_table": "d3886fe4ba7e0ad2",

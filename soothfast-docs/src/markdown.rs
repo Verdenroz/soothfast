@@ -31,10 +31,40 @@ impl CodeBlock {
     pub fn is_capture(&self) -> bool {
         self.lang == "rust" && self.has_tag("capture-output")
     }
-    /// Value of a `feature=NAME` tag: the cargo feature the generated test is
-    /// gated behind (for blocks exercising feature-gated API).
+    /// Raw value of a `feature=NAME` tag: the cargo feature the generated test
+    /// is gated behind (for blocks exercising feature-gated API). Callers that
+    /// want the individual features want [`Self::feature_list`] instead.
     pub fn feature_tag(&self) -> Option<&str> {
         self.tags.iter().find_map(|t| t.strip_prefix("feature="))
+    }
+    /// Individual features of a `feature=` tag — one, or several
+    /// comma-separated with **no spaces** (`feature=risk,polygon`; a space
+    /// would split into a separate fence tag) when a block needs more than one
+    /// feature to compile. Empty when the block has no `feature=` tag; `scan`
+    /// rejects a tag whose value names no feature.
+    pub fn feature_list(&self) -> Vec<&str> {
+        self.feature_tag()
+            .into_iter()
+            .flat_map(|raw| raw.split(','))
+            .map(str::trim)
+            .filter(|f| !f.is_empty())
+            .collect()
+    }
+    /// The `cfg` predicate gating this block, or None when it has no
+    /// `feature=` tag. Several features become an `all(...)` — every listed
+    /// feature must be on for the block to compile.
+    pub fn feature_cfg(&self) -> Option<String> {
+        match self.feature_list().as_slice() {
+            [] => None,
+            [one] => Some(format!("feature = \"{one}\"")),
+            many => Some(format!(
+                "all({})",
+                many.iter()
+                    .map(|f| format!("feature = \"{f}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
     }
     /// `(name, arg)` from a `mock=NAME` or `mock=NAME(ARG)` tag — the name of
     /// a `#[soothfast::mock_seam]` fn this block calls via
@@ -158,6 +188,14 @@ pub fn scan(text: &str) -> Result<Doc, String> {
         if block.mock_tag().is_some() && block.feature_tag().is_none() {
             return Err(format!(
                 "mock=NAME requires an accompanying feature=NAME tag (block opened at line {})",
+                block.line
+            ));
+        }
+        // A tag that names no feature would silently generate an ungated
+        // block, which is exactly what the tag was written to prevent.
+        if block.feature_tag().is_some() && block.feature_list().is_empty() {
+            return Err(format!(
+                "feature= tag names no feature (block opened at line {})",
                 block.line
             ));
         }
@@ -343,6 +381,28 @@ not rust
         let md = "```rust capture-output mock=fmp_profile\nlet x = 1;\n```\n";
         let err = scan(md).unwrap_err();
         assert!(err.contains("feature=NAME"), "{err}");
+    }
+
+    #[test]
+    fn feature_list_splits_on_commas() {
+        let doc = scan("```rust feature=risk,polygon\nlet x = 1;\n```\n").unwrap();
+        assert_eq!(doc.blocks[0].feature_list(), ["risk", "polygon"]);
+        let doc = scan("```rust feature=risk\nlet x = 1;\n```\n").unwrap();
+        assert_eq!(doc.blocks[0].feature_list(), ["risk"]);
+        assert!(
+            scan("```rust\nlet x = 1;\n```\n").unwrap().blocks[0]
+                .feature_list()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn scan_errors_when_feature_tag_names_no_feature() {
+        // Silently generating an ungated block would defeat the tag.
+        let err = scan("```rust feature=\nlet x = 1;\n```\n").unwrap_err();
+        assert!(err.contains("names no feature"), "{err}");
+        let err = scan("```rust feature=,,\nlet x = 1;\n```\n").unwrap_err();
+        assert!(err.contains("names no feature"), "{err}");
     }
 
     #[test]

@@ -53,9 +53,9 @@ pub fn test_file(rel_path: &str, doc: &Doc) -> Option<String> {
         } else {
             ""
         };
-        // A `feature=NAME` tag gates the generated test behind that feature.
-        let cfg = match block.feature_tag() {
-            Some(f) => format!("#[cfg(feature = \"{f}\")]\n"),
+        // A `feature=NAME` tag gates the generated test behind that feature (`feature=A,B` behind all of them).
+        let cfg = match block.feature_cfg() {
+            Some(pred) => format!("#[cfg({pred})]\n"),
             None => String::new(),
         };
         // rustfmt::skip (per-item — the inner-attribute form is unstable):
@@ -79,12 +79,8 @@ pub fn test_file(rel_path: &str, doc: &Doc) -> Option<String> {
 /// Example-file contents for the capture blocks of one markdown doc, in
 /// capture order: (example_name, content).
 ///
-/// A `feature=NAME` tag gates the real `fn main` behind that feature, with a
-/// no-op fallback when it's off — an example file (unlike a `#[test]`) can't
-/// simply be omitted, so this is what keeps `cargo build --examples` (and
-/// clippy/test over `--all-targets`) green under any feature combination.
-/// `docs capture` must be run with that same feature enabled to record real
-/// output; otherwise it captures the empty fallback.
+/// A `feature=NAME` tag gates the real `fn main` behind that feature
+/// (`feature=A,B` behind all of them)
 pub fn capture_examples(rel_path: &str, doc: &Doc) -> Vec<(String, String)> {
     let stem = sanitized_stem(rel_path);
     doc.blocks
@@ -94,7 +90,7 @@ pub fn capture_examples(rel_path: &str, doc: &Doc) -> Vec<(String, String)> {
         .map(|(n, block)| {
             let name = format!("soothfast_capture_{stem}_{}", n + 1);
             let has_main = block.code.contains("fn main");
-            let body = match (block.feature_tag(), has_main) {
+            let body = match (block.feature_cfg(), has_main) {
                 // A feature-gated block that already defines `fn main` may
                 // also have preceding items (`use` ...): a bare `#[cfg(...)]`
                 // above the verbatim block would only gate the first item,
@@ -103,19 +99,19 @@ pub fn capture_examples(rel_path: &str, doc: &Doc) -> Vec<(String, String)> {
                 // item; `pub use` re-exports `main` (whatever its signature/
                 // attributes, e.g. `#[tokio::main]`) as the real entry point
                 // — it must be `pub` first, or the re-export can't see it.
-                (Some(f), true) => {
+                (Some(pred), true) => {
                     let pub_main = if block.code.contains("async fn main") {
                         block.code.replacen("async fn main", "pub async fn main", 1)
                     } else {
                         block.code.replacen("fn main", "pub fn main", 1)
                     };
                     format!(
-                        "#[cfg(feature = \"{f}\")]\nmod soothfast_capture_body {{\n{}\n}}\n#[cfg(feature = \"{f}\")]\npub use soothfast_capture_body::main;\n\n#[cfg(not(feature = \"{f}\"))]\nfn main() {{}}\n",
+                        "#[cfg({pred})]\nmod soothfast_capture_body {{\n{}\n}}\n#[cfg({pred})]\npub use soothfast_capture_body::main;\n\n#[cfg(not({pred}))]\nfn main() {{}}\n",
                         indent(&pub_main, "    ")
                     )
                 }
-                (Some(f), false) => format!(
-                    "#[cfg(feature = \"{f}\")]\nfn main() {{\n{}\n}}\n\n#[cfg(not(feature = \"{f}\"))]\nfn main() {{}}\n",
+                (Some(pred), false) => format!(
+                    "#[cfg({pred})]\nfn main() {{\n{}\n}}\n\n#[cfg(not({pred}))]\nfn main() {{}}\n",
                     indent(&block.code, "    ")
                 ),
                 (None, true) => block.code.clone(),
@@ -160,6 +156,30 @@ mod tests {
         let doc = markdown::scan(md).unwrap();
         let tests = test_file("docs/r.md", &doc).unwrap();
         assert_eq!(tests.matches("#[cfg(feature = \"risk\")]").count(), 2);
+    }
+
+    #[test]
+    fn comma_separated_feature_tag_gates_on_all_of_them() {
+        // A block whose body needs two features to compile — gating on only
+        // the first leaves it enabled, and failing to build, when the second
+        // is off.
+        let md = "```rust no_run feature=risk,polygon\nloop {}\n```\n";
+        let doc = markdown::scan(md).unwrap();
+        let tests = test_file("docs/r.md", &doc).unwrap();
+        assert!(tests.contains("#[cfg(all(feature = \"risk\", feature = \"polygon\"))]"));
+    }
+
+    #[test]
+    fn comma_separated_feature_tag_gates_capture_example_and_its_fallback() {
+        let md = "```rust capture-output feature=risk,polygon\nprintln!(\"hi\");\n```\n";
+        let doc = markdown::scan(md).unwrap();
+        let content = &capture_examples("docs/c.md", &doc)[0].1;
+        assert!(content.contains("#[cfg(all(feature = \"risk\", feature = \"polygon\"))]"));
+        assert!(
+            content.contains(
+                "#[cfg(not(all(feature = \"risk\", feature = \"polygon\")))]\nfn main() {}"
+            )
+        );
     }
 
     #[test]
