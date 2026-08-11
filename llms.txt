@@ -61,7 +61,7 @@ Evaluate against a baseline document; returns (holds, actual value).
 Parse `demo::lcg_checksum.perfcnt.instructions < 25000` (units on the
 bound: ns/us/ms/s multiply into ns; bare numbers stay raw).
 
-**Measured:** 2691 instructions/iter, 315ns median, 6 allocs/iter
+**Measured:** 2691 instructions/iter, 317ns median, 6 allocs/iter
 
 #### `pub struct SurfaceDiff`
 
@@ -153,7 +153,7 @@ Scan one markdown text. Closing markers (`<!-- /soothfast:... -->`) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.
 
-**Measured:** 4717100 instructions/iter, 499878ns median, 4114 allocs/iter
+**Measured:** 4717099 instructions/iter, 461130ns median, 4114 allocs/iter
 
 #### `pub fn splice_output( text: &str, nth_capture: usize, output: &str, ) -> Result<Option<String>, String>`
 
@@ -343,7 +343,7 @@ Robust summary of one sample set.
 
 Summarize a non-empty sample set. Sorts in place.
 
-**Measured:** 4163365 instructions/iter, 725636ns median, 4 allocs/iter
+**Measured:** 4163367 instructions/iter, 747549ns median, 4 allocs/iter
 
 #### `pub const DRIFT_LIMIT: f64 = 2.5`
 
@@ -364,7 +364,7 @@ Cost model for a claimed class at size n.
 
 Evaluate measured values (one per size, same order) against a claim.
 
-**Measured:** 236 instructions/iter, 42ns median, 0 allocs/iter
+**Measured:** 236 instructions/iter, 41ns median, 0 allocs/iter
 
 #### `pub const DEFAULT_SAMPLES: u32 = 31`
 
@@ -489,7 +489,7 @@ FNV-1a 64-bit hash.
 STABILITY CONTRACT: fingerprints are compared across builds and stored in
 lockfiles, so this algorithm is frozen. Do not change constants or logic.
 
-**Measured:** 245782 instructions/iter, 131100ns median, 0 allocs/iter
+**Measured:** 245782 instructions/iter, 131127ns median, 0 allocs/iter
 
 #### `pub fn measured_items() -> &'static [MeasuredItem]`
 
@@ -548,9 +548,13 @@ Per-metric movement a delta table is willing to report, as percentages.
 
 These mirror the gate's own thresholds and are passed in rather than
 defined here, so the changelog reports exactly what the gate would have
-flagged instead of drifting from it. A flat low threshold would fill the
-table on every run: walltime jitters by several percent between two
-measurements of identical code, while instructions and allocs do not.
+flagged instead of drifting from it.
+
+Only deterministic metrics have thresholds, because a changelog is a
+permanent record: walltime moves 15-20% between two runs of identical
+code on a shared CI runner, so recording it means rewriting the section
+on every merge to say nothing. Walltime regressions are `gate`'s job,
+where a human reads the verdict against a live noise floor.
 
 #### `pub fn draft(inputs: &DraftInputs) -> String`
 
@@ -566,7 +570,7 @@ Render `llms.txt`: every public item grouped by crate, with its full
 doc comment and measured facts attributed via `covers` (or direct id)
 matching.
 
-**Measured:** 3466253 instructions/iter, 420174ns median, 7191 allocs/iter
+**Measured:** 3466252 instructions/iter, 421412ns median, 7191 allocs/iter
 
 #### `pub struct Row`
 
@@ -580,7 +584,7 @@ One measured item's metrics, each `None` when that backend didn't run.
 
 `rows` rendered as a GitHub-flavored markdown table.
 
-**Measured:** 8494626 instructions/iter, 1160981ns median, 8204 allocs/iter
+**Measured:** 8493594 instructions/iter, 1148436ns median, 8204 allocs/iter
 
 #### `pub fn rows(baseline: &Value) -> Vec<Row>`
 
@@ -638,7 +642,7 @@ conflict the dialect emitters refuse.
 `kind` decides only how wire names are *spelled* — every typing question
 is answered the same way for every target.
 
-**Measured:** 11217250 instructions/iter, 1701715ns median, 23907 allocs/iter
+**Measured:** 11217252 instructions/iter, 1721185ns median, 23907 allocs/iter
 
 #### `pub struct Field`
 
@@ -763,7 +767,7 @@ Evidence renderer over one baseline + the bind lockfile.
 
 Highlight `code` for `lang`. Always returns escaped HTML.
 
-**Measured:** 26477138 instructions/iter, 4155241ns median, 88069 allocs/iter
+**Measured:** 26477138 instructions/iter, 4115199ns median, 88069 allocs/iter
 
 #### `pub type CodeHook<'a> = &'a dyn Fn(&str, &[String], &str) -> Option<String>`
 
@@ -792,7 +796,7 @@ language label and highlighted body.
 
 Render one markdown document.
 
-**Measured:** 29464163 instructions/iter, 4505307ns median, 68118 allocs/iter
+**Measured:** 29464163 instructions/iter, 4426295ns median, 68118 allocs/iter
 
 #### `pub enum Missing`
 
@@ -1020,13 +1024,13 @@ Compare two generated documents, oldest first.
 Returns every difference found, breaking ones first, then by location so
 output is stable between runs.
 
-**Measured:** 38441987 instructions/iter, 7914401ns median, 77722 allocs/iter
+**Measured:** 38441986 instructions/iter, 6632384ns median, 77722 allocs/iter
 
 #### `pub fn document(info: &Info, ops: &[Operation]) -> Document`
 
 Assemble an OpenAPI 3.1 document.
 
-**Measured:** 14309455 instructions/iter, 3220317ns median, 30152 allocs/iter
+**Measured:** 14309454 instructions/iter, 2426796ns median, 30152 allocs/iter
 
 #### `pub struct ProtoField`
 
@@ -1267,7 +1271,7 @@ of one document should not disagree about what comes first.
 
 Render a document as YAML, with well-known keys in conventional order.
 
-**Measured:** 55381226 instructions/iter, 7894610ns median, 74277 allocs/iter
+**Measured:** 55380269 instructions/iter, 7587726ns median, 74277 allocs/iter
 
 #### `pub fn sniff_kind(filename: &str, text: &str) -> Option<SpecKind>`
 
