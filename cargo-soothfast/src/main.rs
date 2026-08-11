@@ -1,8 +1,9 @@
 //! `cargo soothfast` — CLI entry point.
 //!
-//! Phase 2 subcommands: `measure` (bench or buildcost backends, baseline
-//! save), `gate` (baseline / merge-base worktree / ratchet comparison with
-//! thresholds + triage artifacts), `trend append|render`, `coverage measure`.
+//! Subcommands: `measure` (bench or buildcost backends, baseline save),
+//! `gate` (baseline / merge-base worktree / ratchet comparison with
+//! thresholds + triage artifacts), `trend append|render`, `coverage`,
+//! `docs`, `spec`, `sdk`, `report`, `site`, and `mcp`.
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod buildcost;

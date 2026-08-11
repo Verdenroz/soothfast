@@ -2,8 +2,8 @@
 //! `perf_event_open` wrapper (Linux). Per-iteration counts computed by the
 //! K vs 2K subtraction trick, which cancels collector/setup overhead exactly.
 //!
-//! Phase 0 finding: bare-metal instruction counts are stable to ~1 part in
-//! 30M; Docker's default seccomp profile blocks the syscall (probe → EPERM).
+//! Bare-metal instruction counts are stable to ~1 part in 30M; Docker's
+//! default seccomp profile blocks the syscall (probe → EPERM).
 
 use std::mem;
 

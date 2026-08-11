@@ -1,10 +1,11 @@
 //! Soothfast measurement engine.
 //!
-//! Zero-dependency (registry aside) by design. Backends
-//! implemented in Phase 1: `walltime` (adaptive sampling, median+MAD, A/A
-//! noise calibration) and `alloc` (counting global allocator). Runs inside
-//! the user's bench binary via `soothfast::bench_main!` and speaks JSONL on
-//! stdout to `cargo-soothfast`.
+//! Zero-dependency (registry aside) by design. Backends: `walltime`
+//! (adaptive sampling, median+MAD, A/A noise calibration), `alloc`
+//! (counting global allocator), `perfcnt` (Linux CPU counters), `callgrind`,
+//! and `asyncexec` (poll/wake counts). Runs inside the user's bench binary
+//! via `soothfast::bench_main!` and speaks JSONL on stdout to
+//! `cargo-soothfast`.
 
 pub mod alloc;
 pub mod asyncexec;
