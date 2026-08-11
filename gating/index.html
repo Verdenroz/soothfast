@@ -158,6 +158,7 @@ baseline file that can go stale in version control.</p>
 <tr><td><code>callgrind.ir</code></td><td>+5%</td><td>hard</td></tr>
 <tr><td><code>walltime.median_ns</code></td><td>+10%</td><td>hard, but skipped with a warning when the A/A noise floor is 5% or higher. A threshold half the noise floor cannot tell signal from jitter.</td></tr>
 <tr><td><code>alloc.allocs</code> / <code>alloc.bytes</code></td><td>+5%</td><td>hard, integer ceiling</td></tr>
+<tr><td><code>asyncexec.polls</code> / <code>asyncexec.wakes</code></td><td>+5%</td><td>hard, integer ceiling. Present only for <code>async fn</code> benches. Catches what instruction counts can miss: a future that polls twice as often does the same work per poll.</td></tr>
 <tr><td><code>buildcost.size_bytes</code></td><td>+5%</td><td>hard</td></tr>
 <tr><td><code>buildcost.build_ms</code></td><td>+25%</td><td>soft: printed as a warning, does not fail the gate</td></tr>
 </tbody>
