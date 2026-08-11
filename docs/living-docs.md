@@ -57,7 +57,7 @@ this page, costs under 50µs at the tail.
 | `ignore` | excluded entirely: no test, no example, no check |
 | `no_run` | compiled but never executed (a plain fn, not `#[test]`) |
 | `capture-output` | becomes a runnable example. `docs capture` runs it and splices real stdout into a `text soothfast-output` fence below it |
-| `feature=NAME` | gates the generated test/example behind a cargo feature |
+| `feature=NAME` | gates the generated test/example behind a cargo feature (comma-separated for a block that needs several to compile, no spaces — it is then gated behind `all` of them) |
 | `mock=NAME` / `mock=NAME(ARG)` | activates a `#[soothfast::mock_seam]` backend by name (requires an accompanying `feature=` tag) |
 | `covers=path::to::item` | attaches a bind/claim's chip to this block instead of rendering it standalone (comma-separated for several items, no spaces) |
 

@@ -61,7 +61,7 @@ Evaluate against a baseline document; returns (holds, actual value).
 Parse `demo::lcg_checksum.perfcnt.instructions < 25000` (units on the
 bound: ns/us/ms/s multiply into ns; bare numbers stay raw).
 
-**Measured:** 2691 instructions/iter, 321ns median, 6 allocs/iter
+**Measured:** 2691 instructions/iter, 314ns median, 6 allocs/iter
 
 #### `pub struct SurfaceDiff`
 
@@ -87,12 +87,8 @@ generated artifacts from hand-written ones.
 Example-file contents for the capture blocks of one markdown doc, in
 capture order: (example_name, content).
 
-A `feature=NAME` tag gates the real `fn main` behind that feature, with a
-no-op fallback when it's off — an example file (unlike a `#[test]`) can't
-simply be omitted, so this is what keeps `cargo build --examples` (and
-clippy/test over `--all-targets`) green under any feature combination.
-`docs capture` must be run with that same feature enabled to record real
-output; otherwise it captures the empty fallback.
+A `feature=NAME` tag gates the real `fn main` behind that feature
+(`feature=A,B` behind all of them)
 
 #### `pub fn sanitized_stem(rel_path: &str) -> String`
 
@@ -138,6 +134,14 @@ Persist `binds` to `root`'s lockfile as stable, pretty-printed JSON.
 
 One fenced code block.
 
+#### `pub fn feature_list(&self) -> Vec<&str>`
+
+Individual features of a `feature=` tag — one, or several
+comma-separated with **no spaces** (`feature=risk,polygon`; a space
+would split into a separate fence tag) when a block needs more than one
+feature to compile. Empty when the block has no `feature=` tag; `scan`
+rejects a tag whose value names no feature.
+
 #### `pub struct Doc`
 
 Everything [`scan`] extracts from one markdown file: fenced code blocks
@@ -149,7 +153,7 @@ Scan one markdown text. Closing markers (`<!-- /soothfast:... -->`) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.
 
-**Measured:** 4715746 instructions/iter, 467942ns median, 4114 allocs/iter
+**Measured:** 4716579 instructions/iter, 467695ns median, 4114 allocs/iter
 
 #### `pub fn splice_output( text: &str, nth_capture: usize, output: &str, ) -> Result<Option<String>, String>`
 
@@ -339,7 +343,7 @@ Robust summary of one sample set.
 
 Summarize a non-empty sample set. Sorts in place.
 
-**Measured:** 4163363 instructions/iter, 583864ns median, 4 allocs/iter
+**Measured:** 4163365 instructions/iter, 579148ns median, 4 allocs/iter
 
 #### `pub const DRIFT_LIMIT: f64 = 2.5`
 
@@ -360,7 +364,7 @@ Cost model for a claimed class at size n.
 
 Evaluate measured values (one per size, same order) against a claim.
 
-**Measured:** 236 instructions/iter, 28ns median, 0 allocs/iter
+**Measured:** 236 instructions/iter, 26ns median, 0 allocs/iter
 
 #### `pub const DEFAULT_SAMPLES: u32 = 31`
 
@@ -485,7 +489,7 @@ FNV-1a 64-bit hash.
 STABILITY CONTRACT: fingerprints are compared across builds and stored in
 lockfiles, so this algorithm is frozen. Do not change constants or logic.
 
-**Measured:** 245782 instructions/iter, 131591ns median, 0 allocs/iter
+**Measured:** 245782 instructions/iter, 130996ns median, 0 allocs/iter
 
 #### `pub fn measured_items() -> &'static [MeasuredItem]`
 
@@ -552,7 +556,7 @@ Render `llms.txt`: every public item grouped by crate, with its full
 doc comment and measured facts attributed via `covers` (or direct id)
 matching.
 
-**Measured:** 3466252 instructions/iter, 418668ns median, 7191 allocs/iter
+**Measured:** 3466251 instructions/iter, 425238ns median, 7191 allocs/iter
 
 #### `pub struct Row`
 
@@ -566,7 +570,7 @@ One measured item's metrics, each `None` when that backend didn't run.
 
 `rows` rendered as a GitHub-flavored markdown table.
 
-**Measured:** 8493593 instructions/iter, 1161146ns median, 8204 allocs/iter
+**Measured:** 8493595 instructions/iter, 1212908ns median, 8204 allocs/iter
 
 #### `pub fn rows(baseline: &Value) -> Vec<Row>`
 
@@ -624,7 +628,7 @@ conflict the dialect emitters refuse.
 `kind` decides only how wire names are *spelled* — every typing question
 is answered the same way for every target.
 
-**Measured:** 11217253 instructions/iter, 1732050ns median, 23907 allocs/iter
+**Measured:** 11217252 instructions/iter, 1705258ns median, 23907 allocs/iter
 
 #### `pub struct Field`
 
@@ -749,7 +753,7 @@ Evidence renderer over one baseline + the bind lockfile.
 
 Highlight `code` for `lang`. Always returns escaped HTML.
 
-**Measured:** 26477138 instructions/iter, 4207993ns median, 88069 allocs/iter
+**Measured:** 26477142 instructions/iter, 4021037ns median, 88069 allocs/iter
 
 #### `pub type CodeHook<'a> = &'a dyn Fn(&str, &[String], &str) -> Option<String>`
 
@@ -778,7 +782,7 @@ language label and highlighted body.
 
 Render one markdown document.
 
-**Measured:** 29464156 instructions/iter, 4467996ns median, 68118 allocs/iter
+**Measured:** 29464163 instructions/iter, 4401938ns median, 68118 allocs/iter
 
 #### `pub enum Missing`
 
@@ -1006,13 +1010,13 @@ Compare two generated documents, oldest first.
 Returns every difference found, breaking ones first, then by location so
 output is stable between runs.
 
-**Measured:** 38441981 instructions/iter, 9337447ns median, 77722 allocs/iter
+**Measured:** 38441986 instructions/iter, 7756279ns median, 77722 allocs/iter
 
 #### `pub fn document(info: &Info, ops: &[Operation]) -> Document`
 
 Assemble an OpenAPI 3.1 document.
 
-**Measured:** 14309451 instructions/iter, 2809216ns median, 30152 allocs/iter
+**Measured:** 14309454 instructions/iter, 2400217ns median, 30152 allocs/iter
 
 #### `pub struct ProtoField`
 
@@ -1253,7 +1257,7 @@ of one document should not disagree about what comes first.
 
 Render a document as YAML, with well-known keys in conventional order.
 
-**Measured:** 55380007 instructions/iter, 9255411ns median, 74277 allocs/iter
+**Measured:** 55380496 instructions/iter, 7666152ns median, 74277 allocs/iter
 
 #### `pub fn sniff_kind(filename: &str, text: &str) -> Option<SpecKind>`
 
