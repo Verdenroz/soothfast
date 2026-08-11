@@ -144,7 +144,7 @@ jobs:
           NOTES=""
           if [ -f CHANGELOG.md ]; then
             NOTES=$(awk -v ver="$TAG_VERSION" '
-              $0 ~ "^## " && $0 ~ ver { found=1; next }
+              $0 ~ "^## " ver "([^0-9]|$)" { found=1; next }
               found && /^## / { exit }
               found { print }
             ' CHANGELOG.md)

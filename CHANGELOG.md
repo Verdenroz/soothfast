@@ -40,6 +40,11 @@ building the generated tests. `feature=` now takes a comma-separated list
 and gates on `all` of them, the same convention `covers=` already uses, and
 `scan` rejects a `feature=` tag that names no feature rather than silently
 generating an ungated block.
+
+Also pins `linkme` to `=0.3.36`. Its 0.3.37 release moved `linkme-impl` to
+syn 3 while `serde_derive` is still on syn 2, which puts two `syn` versions
+in the tree and fails cargo-deny's `bans` check. The pin comes off once
+serde moves to syn 3.
 <!-- /soothfast:notes -->
 
 ### API surface
