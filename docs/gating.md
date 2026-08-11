@@ -32,6 +32,7 @@ baseline file that can go stale in version control.
 | `callgrind.ir` | +5% | hard |
 | `walltime.median_ns` | +10% | hard, but skipped with a warning when the A/A noise floor is 5% or higher. A threshold half the noise floor cannot tell signal from jitter. |
 | `alloc.allocs` / `alloc.bytes` | +5% | hard, integer ceiling |
+| `asyncexec.polls` / `asyncexec.wakes` | +5% | hard, integer ceiling. Present only for `async fn` benches. Catches what instruction counts can miss: a future that polls twice as often does the same work per poll. |
 | `buildcost.size_bytes` | +5% | hard |
 | `buildcost.build_ms` | +25% | soft: printed as a warning, does not fail the gate |
 
