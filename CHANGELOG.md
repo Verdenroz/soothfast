@@ -1,29 +1,48 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.4)
+## 0.1.5 - 2026-08-10
+
+<!-- soothfast:notes -->
+A `feature=NAME` fence tag accepted exactly one cargo feature, so a doc
+block needing two to compile could not be gated correctly. Tagging it with
+either feature alone leaves the generated test enabled — and failing to
+build — under any feature set that turns that one on without the other.
+Found on finance-query, where four `feature=risk` blocks each construct a
+provider-routed handle: workspace feature unification turns `risk` on while
+`polygon`/`fmp`/`alphavantage` stay off, so `cargo test --workspace` died
+building the generated tests. `feature=` now takes a comma-separated list
+and gates on `all` of them, the same convention `covers=` already uses, and
+`scan` rejects a `feature=` tag that names no feature rather than silently
+generating an ungated block.
+<!-- /soothfast:notes -->
 
 ### API surface
 
-No public API changes.
+```
+ADDED    soothfast_docs::markdown::CodeBlock::feature_list
+CHANGED  soothfast_docs::gentests::capture_examples (body)
+CHANGED  soothfast_docs::gentests::test_file (body)
+CHANGED  soothfast_docs::markdown::scan (body)
+```
 
 ### Performance
 
 | item | instructions | median | p99 | allocs | polls |
 |---|---:|---:|---:|---:|---:|
-| `soothfast_docs::bench_claim_parse` | n/a | 184.2ns | 193.7ns | 6 | n/a |
-| `soothfast_docs::bench_markdown_scan` | n/a | 305.23µs | 326.35µs | 4114 | n/a |
-| `soothfast_measure::bench_summarize` | n/a | 463.70µs | 478.58µs | 4 | n/a |
-| `soothfast_measure::bench_sweep_evaluate` | n/a | 18.4ns | 19.6ns | 0 | n/a |
-| `soothfast_registry::bench_fnv1a` | n/a | 71.40µs | 72.19µs | 0 | n/a |
-| `soothfast_report::bench_llms_render` | n/a | 217.46µs | 228.53µs | 7191 | n/a |
-| `soothfast_report::bench_perf_table` | n/a | 663.15µs | 675.53µs | 8204 | n/a |
-| `soothfast_sdk::bench_emit_typescript` | n/a | 1.68ms | 1.76ms | 42930 | n/a |
-| `soothfast_sdk::bench_lower` | n/a | 1.07ms | 1.10ms | 23907 | n/a |
-| `soothfast_site::bench_highlight` | n/a | 2.48ms | 2.77ms | 88069 | n/a |
-| `soothfast_site::bench_md_render` | n/a | 2.26ms | 2.32ms | 68118 | n/a |
-| `soothfast_spec::bench_openapi_diff` | n/a | 4.36ms | 5.15ms | 77722 | n/a |
-| `soothfast_spec::bench_openapi_document` | n/a | 1.71ms | 1.86ms | 30152 | n/a |
-| `soothfast_spec::bench_serialize_yaml` | n/a | 4.92ms | 5.40ms | 74277 | n/a |
+| `soothfast_docs::bench_claim_parse` | 2691 | 314.3ns | 316.4ns | 6 | n/a |
+| `soothfast_docs::bench_markdown_scan` | 4716579 | 467.69µs | 509.62µs | 4114 | n/a |
+| `soothfast_measure::bench_summarize` | 4163365 | 579.15µs | 671.79µs | 4 | n/a |
+| `soothfast_measure::bench_sweep_evaluate` | 236 | 26.2ns | 26.5ns | 0 | n/a |
+| `soothfast_registry::bench_fnv1a` | 245782 | 131.00µs | 133.83µs | 0 | n/a |
+| `soothfast_report::bench_llms_render` | 3466251 | 425.24µs | 459.91µs | 7191 | n/a |
+| `soothfast_report::bench_perf_table` | 8493595 | 1.21ms | 1.33ms | 8204 | n/a |
+| `soothfast_sdk::bench_emit_typescript` | 19932078 | 2.88ms | 2.96ms | 42930 | n/a |
+| `soothfast_sdk::bench_lower` | 11217252 | 1.71ms | 1.78ms | 23907 | n/a |
+| `soothfast_site::bench_highlight` | 26477142 | 4.02ms | 4.09ms | 88069 | n/a |
+| `soothfast_site::bench_md_render` | 29464163 | 4.40ms | 4.51ms | 68118 | n/a |
+| `soothfast_spec::bench_openapi_diff` | 38441986 | 7.76ms | 10.23ms | 77722 | n/a |
+| `soothfast_spec::bench_openapi_document` | 14309454 | 2.40ms | 2.49ms | 30152 | n/a |
+| `soothfast_spec::bench_serialize_yaml` | 55380496 | 7.67ms | 10.50ms | 74277 | n/a |
 
 
 ## 0.1.4 - 2026-08-09

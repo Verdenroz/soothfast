@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -26,14 +26,14 @@ categories = ["development-tools", "development-tools::profiling", "development-
 
 [workspace.dependencies]
 # `version` alongside `path` lets `cargo publish` resolve intra-workspace deps.
-soothfast-macros = { path = "soothfast-macros", version = "0.1.4" }
-soothfast-registry = { path = "soothfast-registry", version = "0.1.4" }
-soothfast-measure = { path = "soothfast-measure", version = "0.1.4" }
-soothfast-docs = { path = "soothfast-docs", version = "0.1.4" }
-soothfast-spec = { path = "soothfast-spec", version = "0.1.4" }
-soothfast-sdk = { path = "soothfast-sdk", version = "0.1.4" }
-soothfast-report = { path = "soothfast-report", version = "0.1.4" }
-soothfast-site = { path = "soothfast-site", version = "0.1.4" }
+soothfast-macros = { path = "soothfast-macros", version = "0.1.5" }
+soothfast-registry = { path = "soothfast-registry", version = "0.1.5" }
+soothfast-measure = { path = "soothfast-measure", version = "0.1.5" }
+soothfast-docs = { path = "soothfast-docs", version = "0.1.5" }
+soothfast-spec = { path = "soothfast-spec", version = "0.1.5" }
+soothfast-sdk = { path = "soothfast-sdk", version = "0.1.5" }
+soothfast-report = { path = "soothfast-report", version = "0.1.5" }
+soothfast-site = { path = "soothfast-site", version = "0.1.5" }
 serde_json = "1"
 linkme = "0.3"
 proc-macro2 = "1"
