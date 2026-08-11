@@ -17,6 +17,10 @@ const WALLTIME_THRESHOLD_PCT: f64 = 10.0;
 /// Allocation counts/bytes and binary size are deterministic; gate at +5%.
 pub const ALLOC_THRESHOLD_PCT: u64 = 5;
 const SIZE_THRESHOLD_PCT: u64 = 5;
+/// Poll/wake counts on the counting executor are exact; gate them like
+/// allocations. This is the regression class instruction counts miss — a
+/// future that polls twice as often can have an identical `Ir`.
+const ASYNC_THRESHOLD_PCT: u64 = 5;
 /// Compile time is noisy: soft (warn-only) at +25%.
 const BUILD_MS_SOFT_PCT: f64 = 25.0;
 
@@ -333,7 +337,7 @@ fn compare(
         .max(reference["noise_pct"].as_f64().unwrap_or(0.0));
     let wall_gating = noise < WALLTIME_THRESHOLD_PCT / 2.0;
     println!(
-        "{label}gate: noise_floor={noise:.2}% thresholds: instructions +{INSTRUCTIONS_THRESHOLD_PCT}% ir +{IR_THRESHOLD_PCT}% walltime +{WALLTIME_THRESHOLD_PCT}% alloc/size +{ALLOC_THRESHOLD_PCT}%"
+        "{label}gate: noise_floor={noise:.2}% thresholds: instructions +{INSTRUCTIONS_THRESHOLD_PCT}% ir +{IR_THRESHOLD_PCT}% walltime +{WALLTIME_THRESHOLD_PCT}% alloc/size +{ALLOC_THRESHOLD_PCT}% polls/wakes +{ASYNC_THRESHOLD_PCT}%"
     );
     if !wall_gating {
         println!(
@@ -446,6 +450,18 @@ fn compare(
             old["buildcost"]["size_bytes"].as_u64(),
             cur.size_bytes,
             SIZE_THRESHOLD_PCT,
+        );
+        int(
+            "polls",
+            old["asyncexec"]["polls"].as_u64(),
+            cur.polls,
+            ASYNC_THRESHOLD_PCT,
+        );
+        int(
+            "wakes",
+            old["asyncexec"]["wakes"].as_u64(),
+            cur.wakes,
+            ASYNC_THRESHOLD_PCT,
         );
     }
     if let Some(old_map) = old_items.as_object() {
