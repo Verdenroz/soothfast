@@ -10,7 +10,7 @@ No public API changes.
 
 | item | metric | was | now | delta |
 |---|---|---:|---:|---:|
-| `soothfast_docs::bench_claim_parse` | median_ns | 282.8 | 239.7 | -15.2% |
+| _no movement past gate thresholds_ | | | | |
 
 
 ## 0.1.5 - 2026-08-10
