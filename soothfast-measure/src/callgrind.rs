@@ -2,7 +2,9 @@
 //! environments (default-seccomp containers, CI VMs). The runner re-executes
 //! itself under valgrind with `--callgrind-exec <id> --iters K`; per-iteration
 //! Ir = (run at 2K − run at K) / K, which cancels startup + setup exactly —
-//! no client requests, no toggle-collect fragility.
+//! no client requests, no toggle-collect fragility. A third run at 3K gives a
+//! second, disjoint window: the two must agree, or the workload has not
+//! reached steady state and no per-iteration cost is well defined.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -95,20 +97,43 @@ fn run_ir(id: &str, iters: u64, tag: &str) -> Result<(u64, PathBuf), String> {
     Ok((ir, out))
 }
 
-/// Iterations in the low run; the high run does twice this. K > 1 so the
-/// measured window averages several iterations instead of reporting a single
-/// one: a one-off allocator arena extension landing in the window then shifts
-/// the result by 1/K rather than its full cost. Valgrind process startup
-/// dominates each run, so raising K costs far less than it looks like it does.
-const K: u64 = 10;
+/// Iterations per window. Only a runtime knob: the convergence check below is
+/// what makes the result trustworthy, so K is not sized to hide anything.
+const K: u64 = 4;
+
+/// How far the two window estimates may differ, in per-mille of the larger.
+/// In steady state both windows execute identical work and callgrind is
+/// deterministic, so they should agree exactly; this only absorbs rounding
+/// from the two integer divisions.
+const CONVERGENCE_TOLERANCE_PER_MILLE: u64 = 2;
 
 /// Per-iteration Ir for one item.
+///
+/// Two disjoint windows are measured — iterations K..2K and 2K..3K — and must
+/// agree. `(2K − K)/K` alone assumes per-iteration cost is already constant; a
+/// workload still reaching steady state (an allocator growing its arena, say)
+/// violates that, and a single window would silently report whichever cost
+/// happened to land inside it. Disagreement is reported rather than averaged
+/// away, because the number would not mean what the gate assumes it means.
 pub fn measure(id: &str) -> Result<u64, String> {
-    let (low, f1) = run_ir(id, K, "k1")?;
-    let (high, f2) = run_ir(id, 2 * K, "k2")?;
-    let _ = std::fs::remove_file(f1);
-    let _ = std::fs::remove_file(f2);
-    Ok(high.saturating_sub(low) / K)
+    let (a, f1) = run_ir(id, K, "k1")?;
+    let (b, f2) = run_ir(id, 2 * K, "k2")?;
+    let (c, f3) = run_ir(id, 3 * K, "k3")?;
+    for f in [f1, f2, f3] {
+        let _ = std::fs::remove_file(f);
+    }
+
+    let first = b.saturating_sub(a) / K;
+    let second = c.saturating_sub(b) / K;
+    let (lo, hi) = (first.min(second), first.max(second));
+    if hi.saturating_sub(lo) * 1000 > hi.saturating_mul(CONVERGENCE_TOLERANCE_PER_MILLE) {
+        return Err(format!(
+            "{id}: Ir has not converged ({first} then {second} per iteration); \
+             the workload is still warming up, so no per-iteration cost is well defined"
+        ));
+    }
+    // The later window is the more thoroughly warmed of the two.
+    Ok(second)
 }
 
 /// Human triage report: top self-cost functions for one item's workload.
