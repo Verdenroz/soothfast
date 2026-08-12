@@ -2,7 +2,8 @@
 //! environments (default-seccomp containers, CI VMs). The runner re-executes
 //! itself under valgrind with `--callgrind-exec <id> --iters K`; per-iteration
 //! Ir = (run at 2K − run at K) / K, which cancels startup + setup exactly —
-//! no client requests, no toggle-collect fragility.
+//! no client requests, no toggle-collect fragility. K > 1 so the window
+//! averages: see the constant below for why a single iteration is not enough.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -95,13 +96,27 @@ fn run_ir(id: &str, iters: u64, tag: &str) -> Result<(u64, PathBuf), String> {
     Ok((ir, out))
 }
 
+/// Iterations in the low run; the high run does twice this.
+///
+/// K must exceed 1. `gate` compares two builds run from different working
+/// directories — the reference side lives in a worktree whose path is ~60
+/// characters longer — and that difference in environment size alone shifts
+/// heap layout, hence the instruction count of allocator work inside the
+/// measured region. Measured directly: the same binary run from a 42- and a
+/// 115-character path differs by 0.08%. At K=1 the subtraction reports one
+/// iteration, so that offset lands at full weight; averaging over K spreads it
+/// to 1/K. Valgrind process startup dominates each run, so raising K costs far
+/// less than it looks like it does.
+const K: u64 = 10;
+
 /// Per-iteration Ir for one item.
 pub fn measure(id: &str) -> Result<u64, String> {
-    let (low, f1) = run_ir(id, 1, "k1")?;
-    let (high, f2) = run_ir(id, 2, "k2")?;
-    let _ = std::fs::remove_file(f1);
-    let _ = std::fs::remove_file(f2);
-    Ok(high.saturating_sub(low))
+    let (low, f1) = run_ir(id, K, "k1")?;
+    let (high, f2) = run_ir(id, 2 * K, "k2")?;
+    for f in [f1, f2] {
+        let _ = std::fs::remove_file(f);
+    }
+    Ok(high.saturating_sub(low) / K)
 }
 
 /// Human triage report: top self-cost functions for one item's workload.
