@@ -1,6 +1,32 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.6)
+## 0.1.7 - 2026-08-11
+
+<!-- soothfast:notes -->
+The callgrind backend reported a single unaveraged iteration. `measure` pinned
+K to 1 while the module doc described `(2K − K)/K`, and `run_ir` had accepted
+an arbitrary iteration count all along — only the caller was fixed at one.
+
+Individual callgrind iterations vary more than the gate's own threshold
+tolerates. Measured across twelve iteration counts on a real workload,
+consecutive iterations ranged from 5,156,616 to 5,641,041 instructions, a 9.4%
+spread with no trend. The per-iteration estimate settles within 0.05% of its
+final value from K=6 onward, while K=2, K=4 and K=5 still deviate by up to
+1.4%. K is now 10.
+
+Found on finance-query, where `gate` failed at +7.6% on a serde bench between
+two commits whose only difference was workflow YAML. A CI job built both sides
+the way `gate` does — head at the workspace root, base in a
+`.soothfast/worktrees/<sha>` worktree — and hashed the machine code: byte
+identical, so nothing about the binaries explained the delta. The failing
+measurement matched that workload's second iteration to within 43 instructions.
+
+This averages the noise rather than removing its cause. The two sides still run
+from working directories about 60 characters apart in length, which is worth
+about 0.08% on its own; the same binary run from a 42- and a 115-character path
+measures 4,858,401 against 4,862,212 instructions. Running both sides from
+paths of equal length is the durable fix and remains to be done.
+<!-- /soothfast:notes -->
 
 ### API surface
 
