@@ -95,13 +95,20 @@ fn run_ir(id: &str, iters: u64, tag: &str) -> Result<(u64, PathBuf), String> {
     Ok((ir, out))
 }
 
+/// Iterations in the low run; the high run does twice this. K > 1 so the
+/// measured window averages several iterations instead of reporting a single
+/// one: a one-off allocator arena extension landing in the window then shifts
+/// the result by 1/K rather than its full cost. Valgrind process startup
+/// dominates each run, so raising K costs far less than it looks like it does.
+const K: u64 = 10;
+
 /// Per-iteration Ir for one item.
 pub fn measure(id: &str) -> Result<u64, String> {
-    let (low, f1) = run_ir(id, 1, "k1")?;
-    let (high, f2) = run_ir(id, 2, "k2")?;
+    let (low, f1) = run_ir(id, K, "k1")?;
+    let (high, f2) = run_ir(id, 2 * K, "k2")?;
     let _ = std::fs::remove_file(f1);
     let _ = std::fs::remove_file(f2);
-    Ok(high.saturating_sub(low))
+    Ok(high.saturating_sub(low) / K)
 }
 
 /// Human triage report: top self-cost functions for one item's workload.
