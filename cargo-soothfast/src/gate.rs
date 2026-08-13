@@ -14,10 +14,6 @@ const IR_THRESHOLD_PCT: f64 = 5.0;
 /// Walltime medians gate at +10% — but only when the observed A/A noise
 /// floor is safely inside that margin (refuse to gate on noise).
 const WALLTIME_THRESHOLD_PCT: f64 = 10.0;
-/// How many times the measured noise floor the walltime threshold must exceed
-/// before walltime is gated at all. 3x puts the threshold at 3 sigma, where a
-/// suite of a few hundred items expects well under one false positive.
-const WALLTIME_NOISE_MARGIN: f64 = 3.0;
 /// Allocation counts/bytes and binary size are deterministic; gate at +5%.
 pub const ALLOC_THRESHOLD_PCT: u64 = 5;
 const SIZE_THRESHOLD_PCT: u64 = 5;
@@ -339,12 +335,7 @@ fn compare(
         .noise_pct
         .unwrap_or(0.0)
         .max(reference["noise_pct"].as_f64().unwrap_or(0.0));
-    // Walltime gates at a fixed +10%, so a run whose A/A noise floor is a
-    // large fraction of that has no discriminating power: at 4.75% noise the
-    // threshold sits at 2.1 sigma, and across ~175 items that yields several
-    // false positives every run. Require the threshold to be at least
-    // WALLTIME_NOISE_MARGIN times the measured noise before trusting it.
-    let wall_gating = noise * WALLTIME_NOISE_MARGIN < WALLTIME_THRESHOLD_PCT;
+    let wall_gating = noise < WALLTIME_THRESHOLD_PCT / 2.0;
     println!(
         "{label}gate: noise_floor={noise:.2}% thresholds: instructions +{INSTRUCTIONS_THRESHOLD_PCT}% ir +{IR_THRESHOLD_PCT}% walltime +{WALLTIME_THRESHOLD_PCT}% alloc/size +{ALLOC_THRESHOLD_PCT}% polls/wakes +{ASYNC_THRESHOLD_PCT}%"
     );
