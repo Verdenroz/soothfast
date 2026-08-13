@@ -11,9 +11,13 @@ use crate::workspace;
 /// Deterministic counters gate tight.
 pub const INSTRUCTIONS_THRESHOLD_PCT: f64 = 5.0;
 const IR_THRESHOLD_PCT: f64 = 5.0;
-/// Walltime medians gate at +10% — but only when the observed A/A noise
-/// floor is safely inside that margin (refuse to gate on noise).
+/// Walltime medians gate at +10%, or higher on noisy runners (see
+/// `walltime_limit`).
 const WALLTIME_THRESHOLD_PCT: f64 = 10.0;
+/// Multiple of the A/A noise floor the walltime threshold must stay above.
+/// 3x keeps the threshold at ≥3 sigma, where a suite of a few hundred items
+/// expects well under one false positive per run.
+const WALLTIME_NOISE_MARGIN: f64 = 3.0;
 /// Allocation counts/bytes and binary size are deterministic; gate at +5%.
 pub const ALLOC_THRESHOLD_PCT: u64 = 5;
 const SIZE_THRESHOLD_PCT: u64 = 5;
@@ -23,6 +27,15 @@ const SIZE_THRESHOLD_PCT: u64 = 5;
 const ASYNC_THRESHOLD_PCT: u64 = 5;
 /// Compile time is noisy: soft (warn-only) at +25%.
 const BUILD_MS_SOFT_PCT: f64 = 25.0;
+
+/// Effective walltime threshold: the fixed +10%, raised to 3x the measured
+/// A/A noise floor when that is higher. A fixed threshold is ~2 sigma on a
+/// noisy runner — several false positives per run across a few hundred
+/// items — while dropping walltime entirely would leave such runners
+/// unmonitored. Scaling keeps every run gated at ≥3 sigma.
+fn walltime_limit(noise_pct: f64) -> f64 {
+    WALLTIME_THRESHOLD_PCT.max(noise_pct * WALLTIME_NOISE_MARGIN)
+}
 
 struct GateArgs {
     common: CommonArgs,
@@ -339,13 +352,13 @@ fn compare(
         .noise_pct
         .unwrap_or(0.0)
         .max(reference["noise_pct"].as_f64().unwrap_or(0.0));
-    let wall_gating = noise < WALLTIME_THRESHOLD_PCT / 2.0;
+    let wall_limit = walltime_limit(noise);
     println!(
-        "{label}gate: noise_floor={noise:.2}% thresholds: instructions +{INSTRUCTIONS_THRESHOLD_PCT}% ir +{IR_THRESHOLD_PCT}% walltime +{WALLTIME_THRESHOLD_PCT}% alloc/size +{ALLOC_THRESHOLD_PCT}% polls/wakes +{ASYNC_THRESHOLD_PCT}%"
+        "{label}gate: noise_floor={noise:.2}% thresholds: instructions +{INSTRUCTIONS_THRESHOLD_PCT}% ir +{IR_THRESHOLD_PCT}% walltime +{wall_limit:.1}% alloc/size +{ALLOC_THRESHOLD_PCT}% polls/wakes +{ASYNC_THRESHOLD_PCT}%"
     );
-    if !wall_gating {
+    if wall_limit > WALLTIME_THRESHOLD_PCT {
         println!(
-            "WARN: noise floor {noise:.2}% too close to +{WALLTIME_THRESHOLD_PCT}% — walltime not gated (deterministic metrics still are)"
+            "NOTE: noise floor {noise:.2}% raised the walltime threshold to +{wall_limit:.1}% (deterministic metrics unaffected)"
         );
     }
 
@@ -406,15 +419,13 @@ fn compare(
             IR_THRESHOLD_PCT,
             true,
         );
-        if wall_gating {
-            rel(
-                "walltime_median_ns",
-                old["walltime"]["median_ns"].as_f64(),
-                cur.median_ns,
-                WALLTIME_THRESHOLD_PCT,
-                true,
-            );
-        }
+        rel(
+            "walltime_median_ns",
+            old["walltime"]["median_ns"].as_f64(),
+            cur.median_ns,
+            wall_limit,
+            true,
+        );
         rel(
             "build_ms",
             old["buildcost"]["build_ms"].as_u64().map(|v| v as f64),
@@ -543,4 +554,23 @@ fn triage(common: &CommonArgs, failing_ids: &[String]) {
 fn err(msg: &str) -> i32 {
     eprintln!("soothfast: {msg}");
     2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::walltime_limit;
+
+    #[test]
+    fn quiet_runners_keep_the_fixed_threshold() {
+        assert_eq!(walltime_limit(0.0), 10.0);
+        assert_eq!(walltime_limit(0.22), 10.0);
+        assert_eq!(walltime_limit(3.33), 10.0);
+    }
+
+    #[test]
+    fn noisy_runners_scale_instead_of_dropping_walltime() {
+        assert_eq!(walltime_limit(4.75), 14.25);
+        // Clears the A/A control's worst observed false positive (+11.8%).
+        assert!(walltime_limit(4.75) > 11.8);
+    }
 }

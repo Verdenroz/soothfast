@@ -37,7 +37,7 @@ a slow `serde` bump is exactly what the gate exists to catch.
 |---|---|---|
 | `perfcnt.instructions` | +5% | hard |
 | `callgrind.ir` | +5% | hard |
-| `walltime.median_ns` | +10% | hard, but skipped with a warning when the A/A noise floor is 5% or higher. A threshold half the noise floor cannot tell signal from jitter. |
+| `walltime.median_ns` | +10%, or 3x the A/A noise floor when that is higher | hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all. |
 | `alloc.allocs` / `alloc.bytes` | +5% | hard, integer ceiling |
 | `asyncexec.polls` / `asyncexec.wakes` | +5% | hard, integer ceiling. Present only for `async fn` benches. Catches what instruction counts can miss: a future that polls twice as often does the same work per poll. |
 | `buildcost.size_bytes` | +5% | hard |
