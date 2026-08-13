@@ -24,6 +24,13 @@ before comparing. This is what `make gate` runs against `origin/master` for
 every crate in `BENCH_CRATES`, and it is why merge-base gating has no
 baseline file that can go stale in version control.
 
+Before the reference side is measured, its locked `soothfast*` crates are
+pinned to the versions in HEAD's `Cargo.lock`. The harness compiles into
+both bench binaries, so without this a measurement-protocol change riding
+along in a lockfile bump would be reported as a regression in *your* code.
+Other dependencies are deliberately left as the reference locked them —
+a slow `serde` bump is exactly what the gate exists to catch.
+
 ## Thresholds
 
 | metric | threshold | notes |

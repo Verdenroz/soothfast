@@ -260,6 +260,10 @@ fn measure_ref_interleaved(
         {
             return Ok(None);
         }
+        // Both bench binaries must embed the same soothfast harness: a
+        // measurement-protocol change between the two locked versions would
+        // otherwise be reported as a regression in the measured project.
+        invoke::sync_harness_versions(wt)?;
         Ok(Some((
             measure(None),
             measure(Some(wt)),

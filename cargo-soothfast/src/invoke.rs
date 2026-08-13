@@ -734,6 +734,91 @@ pub fn with_merge_base_worktree<T>(
     result
 }
 
+/// One `[[package]]` entry from a Cargo.lock.
+struct LockPkg {
+    name: String,
+    version: String,
+    /// Registry entries carry a `source` line; path dependencies don't and
+    /// cannot be re-pinned.
+    registry: bool,
+}
+
+fn lock_packages(lock: &str) -> Vec<LockPkg> {
+    lock.split("[[package]]")
+        .skip(1)
+        .filter_map(|block| {
+            let field = |key: &str| {
+                block
+                    .lines()
+                    .find_map(|l| l.strip_prefix(key))
+                    .map(|v| v.trim().trim_matches('"').to_string())
+            };
+            Some(LockPkg {
+                name: field("name = ")?,
+                version: field("version = ")?,
+                registry: block.lines().any(|l| l.starts_with("source = ")),
+            })
+        })
+        .collect()
+}
+
+/// Soothfast-family registry entries whose worktree version differs from
+/// HEAD's: (name, worktree version, HEAD version).
+fn harness_mismatches(head_lock: &str, wt_lock: &str) -> Vec<(String, String, String)> {
+    let head: BTreeMap<String, LockPkg> = lock_packages(head_lock)
+        .into_iter()
+        .map(|p| (p.name.clone(), p))
+        .collect();
+    lock_packages(wt_lock)
+        .into_iter()
+        .filter(|p| p.registry && (p.name == "soothfast" || p.name.starts_with("soothfast-")))
+        .filter_map(|p| {
+            let h = head.get(&p.name).filter(|h| h.registry)?;
+            (h.version != p.version).then(|| (p.name, p.version, h.version.clone()))
+        })
+        .collect()
+}
+
+/// Pin the merge-base worktree's soothfast crates to HEAD's locked versions
+/// so the reference bench binary embeds the same measurement harness. Best
+/// effort: a pin that cargo rejects (offline, incompatible requirement)
+/// warns and leaves the reference side as its own lock resolved it.
+pub fn sync_harness_versions(wt: &Path) -> Result<(), String> {
+    let head_path = workspace_root()
+        .map_err(|e| e.to_string())?
+        .join("Cargo.lock");
+    let Ok(head) = std::fs::read_to_string(&head_path) else {
+        return Ok(());
+    };
+    // One crate per pass, re-reading the lock: pinning the facade drags its
+    // family along, and already-moved entries must not be warned about.
+    for _ in 0..16 {
+        let Ok(base) = std::fs::read_to_string(wt.join("Cargo.lock")) else {
+            return Ok(());
+        };
+        let Some((name, from, to)) = harness_mismatches(&head, &base).into_iter().next() else {
+            return Ok(());
+        };
+        println!(
+            "gate: pinning {name} {from} -> {to} in the merge-base worktree (harness must match HEAD)"
+        );
+        let out = Command::new("cargo")
+            .args(["update", "-p", &format!("{name}@{from}"), "--precise", &to])
+            .current_dir(wt)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            eprintln!(
+                "WARN: could not pin {name} ({}); the reference keeps its own harness — deltas may reflect the harness change itself",
+                stderr.trim().lines().last().unwrap_or("no error output")
+            );
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
 /// Effective cargo target directory (respects CARGO_TARGET_DIR and
 /// .cargo/config.toml), optionally for a build rooted in another worktree.
 pub fn target_dir(dir: Option<&Path>) -> io::Result<PathBuf> {
@@ -771,4 +856,62 @@ pub fn git_in(dir: &Path, args: &[&str]) -> io::Result<String> {
         )));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::harness_mismatches;
+
+    const HEAD: &str = r#"
+version = 4
+
+[[package]]
+name = "serde"
+version = "1.0.200"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "soothfast"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "soothfast-measure",
+]
+
+[[package]]
+name = "soothfast-measure"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+
+    #[test]
+    fn pins_family_crates_to_heads_versions() {
+        let base = HEAD.replace("0.1.7", "0.1.5");
+        assert_eq!(
+            harness_mismatches(HEAD, &base),
+            vec![
+                ("soothfast".into(), "0.1.5".into(), "0.1.7".into()),
+                ("soothfast-measure".into(), "0.1.5".into(), "0.1.7".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn matching_locks_and_foreign_crates_need_nothing() {
+        assert!(harness_mismatches(HEAD, HEAD).is_empty());
+        // serde is measured code, not the harness — its bumps must stay gated.
+        let base = HEAD.replace("1.0.200", "1.0.100");
+        assert!(harness_mismatches(HEAD, &base).is_empty());
+    }
+
+    #[test]
+    fn path_dependencies_are_skipped() {
+        // Gating soothfast itself: family crates are path deps, no source line.
+        let no_source = HEAD.replace(
+            "source = \"registry+https://github.com/rust-lang/crates.io-index\"",
+            "",
+        );
+        let base = no_source.replace("0.1.7", "0.1.5");
+        assert!(harness_mismatches(&no_source, &base).is_empty());
+    }
 }
