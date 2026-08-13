@@ -3,24 +3,24 @@
 ## 0.1.8 - 2026-08-12
 
 <!-- soothfast:notes -->
-Walltime gated at a fixed +10% and stepped aside only when the A/A noise floor
-was under half that. A run measuring 4.75% noise therefore kept walltime
-enabled with its threshold sitting at 2.1 sigma, which cannot tell a regression
-from a busy afternoon on a shared runner.
+`gate --against-ref` now pins the reference worktree's locked `soothfast*`
+crates to the versions in HEAD's `Cargo.lock` before measuring. The harness
+compiles into both bench binaries, so a harness bump riding along in a
+lockfile change made the gate compare two measurement protocols and report
+the difference as a regression in the measured project — finance-query's
+deploy gate failed at +8.2% Ir on a commit that touched no benchmarked code,
+because its base side still measured one unaveraged callgrind iteration
+under the 0.1.5 protocol. Other dependencies are deliberately left as the
+reference locked them; a slow `serde` bump is exactly what the gate exists
+to catch.
 
-Measured on finance-query with an A/A control: matched runner versions on both
-sides and a comment-only source change, so every reported delta is false by
-construction. That run reported a 4.75% noise floor, kept walltime gated, and
-failed with five walltime regressions between +10.1% and +11.8%. Binomial
-arithmetic over 176 items at 2.1 sigma predicts about three.
-
-The threshold must now exceed the measured noise floor by 3x before walltime is
-gated at all, putting it at 3 sigma where a suite this size expects well under
-one false positive. Gating is unchanged at every noise floor this suite has
-produced below 3.33%; only the 4.75% case steps aside.
-
-The same A/A control puts the worst instruction delta across 176 items at 1.30%
-against a +5% threshold, so the deterministic metrics keep their margin.
+The walltime threshold now scales with the measured A/A noise floor:
+`max(+10%, 3x noise)`. A fixed +10% sits at ~2 sigma on the 4.75% noise
+floors shared runners produce — an A/A control with matched runners and a
+comment-only change failed five of 176 items on walltime alone — while the
+previous rule (and the interim 3x off-switch this release replaces, which
+briefly existed on master as an unreleased fix) stopped gating walltime
+entirely on such runners. Scaling keeps every run gated at 3 sigma or wider.
 <!-- /soothfast:notes -->
 
 ### API surface
