@@ -150,13 +150,19 @@ drift. It then takes the per-metric minimum across each side's two rounds
 before comparing. This is what <code>make gate</code> runs against <code>origin/master</code> for
 every crate in <code>BENCH_CRATES</code>, and it is why merge-base gating has no
 baseline file that can go stale in version control.</p>
+<p>Before the reference side is measured, its locked <code>soothfast*</code> crates are
+pinned to the versions in HEAD's <code>Cargo.lock</code>. The harness compiles into
+both bench binaries, so without this a measurement-protocol change riding
+along in a lockfile bump would be reported as a regression in <em>your</em> code.
+Other dependencies are deliberately left as the reference locked them —
+a slow <code>serde</code> bump is exactly what the gate exists to catch.</p>
 <h2 id="thresholds">Thresholds<a class="anchor" href="#thresholds" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap"><table>
 <thead><tr><th>metric</th><th>threshold</th><th>notes</th></tr></thead>
 <tbody>
 <tr><td><code>perfcnt.instructions</code></td><td>+5%</td><td>hard</td></tr>
 <tr><td><code>callgrind.ir</code></td><td>+5%</td><td>hard</td></tr>
-<tr><td><code>walltime.median_ns</code></td><td>+10%</td><td>hard, but skipped with a warning when the A/A noise floor is 5% or higher. A threshold half the noise floor cannot tell signal from jitter.</td></tr>
+<tr><td><code>walltime.median_ns</code></td><td>+10%, or 3x the A/A noise floor when that is higher</td><td>hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all.</td></tr>
 <tr><td><code>alloc.allocs</code> / <code>alloc.bytes</code></td><td>+5%</td><td>hard, integer ceiling</td></tr>
 <tr><td><code>asyncexec.polls</code> / <code>asyncexec.wakes</code></td><td>+5%</td><td>hard, integer ceiling. Present only for <code>async fn</code> benches. Catches what instruction counts can miss: a future that polls twice as often does the same work per poll.</td></tr>
 <tr><td><code>buildcost.size_bytes</code></td><td>+5%</td><td>hard</td></tr>
