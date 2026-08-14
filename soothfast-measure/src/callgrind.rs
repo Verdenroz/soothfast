@@ -7,6 +7,8 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Disable runtime AVX-512 dispatch in the child: valgrind's VEX can't
 /// decode EVEX. Helps hosts whose *loader* is decodable; a loader compiled
@@ -51,10 +53,14 @@ pub fn probe() -> Result<(), String> {
     }
 }
 
+// The sequence number keeps concurrent measurements (measure_all) from
+// colliding on a pid-keyed name.
 fn out_file(tag: &str) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     std::env::temp_dir().join(format!(
-        "soothfast-callgrind-{}-{tag}.out",
-        std::process::id()
+        "soothfast-callgrind-{}-{}-{tag}.out",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed),
     ))
 }
 
@@ -119,6 +125,42 @@ pub fn measure(id: &str) -> Result<u64, String> {
     Ok(high.saturating_sub(low) / K)
 }
 
+// Each measurement holds a live valgrind child with a real memory footprint,
+// so the pool is capped rather than sized to the machine.
+const MAX_PARALLEL: usize = 4;
+
+/// Per-iteration Ir for many items, measured concurrently (Ir counts are
+/// timing-independent). Results come back in input order.
+pub fn measure_all(ids: &[&str]) -> Vec<Result<u64, String>> {
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(MAX_PARALLEL)
+        .min(ids.len());
+    let next = AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<Result<u64, String>>>> =
+        ids.iter().map(|_| Mutex::new(None)).collect();
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(id) = ids.get(i) else { break };
+                    *slots[i].lock().unwrap() = Some(measure(id));
+                }
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .unwrap()
+                .expect("worker filled every slot")
+        })
+        .collect()
+}
+
 /// Human triage report: top self-cost functions for one item's workload.
 pub fn annotate(id: &str) -> Result<String, String> {
     let (total, path) = run_ir(id, 1, "annotate")?;
@@ -159,4 +201,14 @@ pub fn annotate(id: &str) -> Result<String, String> {
         report.push_str(&format!("{cost:>14} Ir  {pct:5.1}%  {name}\n"));
     }
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::out_file;
+
+    #[test]
+    fn out_files_never_collide_even_with_the_same_tag() {
+        assert_ne!(out_file("k1"), out_file("k1"));
+    }
 }

@@ -313,7 +313,17 @@ pub fn main() {
         }
     }
 
-    for e in &entries {
+    // Only Ir collection is safe to parallelize: it counts instructions, not
+    // time, so concurrent valgrind children cannot disturb each other's
+    // numbers. Everything else below stays serial.
+    let cg_irs: Vec<Result<u64, String>> = if use_cg {
+        let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+        callgrind::measure_all(&ids)
+    } else {
+        Vec::new()
+    };
+
+    for (idx, e) in entries.iter().enumerate() {
         let item = e.item;
         let mut wall: Option<walltime::WallMeasurement> = None;
         let mut allocs: Option<alloc::AllocMeasurement> = None;
@@ -353,7 +363,7 @@ pub fn main() {
             );
         }
         if use_cg {
-            match callgrind::measure(&e.id) {
+            match &cg_irs[idx] {
                 Ok(ir) => {
                     emit_result(
                         e,
