@@ -43,7 +43,7 @@ a slow `serde` bump is exactly what the gate exists to catch.
 |---|---|---|
 | `perfcnt.instructions` | +5% | hard |
 | `callgrind.ir` | +5% | hard |
-| `walltime.median_ns` | +10%, or 3x the A/A noise floor when that is higher | hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all. |
+| `walltime.median_ns` | +10%, or 3x the A/A noise floor when that is higher | hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all. A fail is also downgraded to a SOFT warning when the deterministic evidence contradicts it: unchanged fingerprint, instructions/Ir flat (within 0.5%), and alloc counts/bytes identical. Identical code doing identical work cannot have gotten slower — that is the clock measuring the machine. |
 | `alloc.allocs` / `alloc.bytes` | +5% | hard, integer ceiling |
 | `asyncexec.polls` / `asyncexec.wakes` | +5% | hard, integer ceiling. Present only for `async fn` benches. Catches what instruction counts can miss: a future that polls twice as often does the same work per poll. |
 | `buildcost.size_bytes` | +5% | hard |
