@@ -78,5 +78,10 @@ pub fn surface_diff_text(
     let _ = invoke::git(&["worktree", "remove", "--force", wt.to_str().unwrap()]);
     let old_surf = old_surf.map_err(|e| format!("cannot build surface at {sha}: {e}"))?;
 
-    Ok(diff::render(&diff::compare(&old_surf, &new_surf)))
+    let d = diff::compare(&old_surf, &new_surf);
+    Ok(if d.is_empty() {
+        String::new()
+    } else {
+        diff::render(&d)
+    })
 }

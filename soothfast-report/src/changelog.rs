@@ -114,7 +114,7 @@ pub fn draft(inputs: &DraftInputs) -> String {
 
 /// A diff the surface engine produced no findings for.
 fn is_empty_diff(text: &str) -> bool {
-    text.trim().is_empty() || text.contains("no public API changes")
+    text.trim().is_empty() || text.trim() == "surface: no public API changes"
 }
 
 /// Every public item, grouped by crate. Nothing is capped: a first release
@@ -187,6 +187,22 @@ mod tests {
         assert!(text.contains("draft vs v1.0.0"));
         assert!(text.contains("ADDED    demo::g"));
         assert!(text.contains("-10.0%"));
+    }
+
+    #[test]
+    fn an_unchanged_crates_sentinel_must_not_hide_findings() {
+        let new = json!({ "items": {} });
+        let text = draft(&DraftInputs {
+            api: ApiSection::Diff {
+                against: "v1.0.0",
+                text: "# a\nsurface: no public API changes\n\n# b\nADDED    b::x\n",
+            },
+            old_baseline: None,
+            new_baseline: &new,
+            thresholds: gate_thresholds(),
+        });
+        assert!(text.contains("ADDED    b::x"), "{text}");
+        assert!(!text.contains("No public API changes"), "{text}");
     }
 
     /// A changelog is permanent, so it records only metrics that reproduce.
