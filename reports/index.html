@@ -168,6 +168,11 @@ out of date.</p>
 feeds both the SVG charts above and <code>trend render</code>, which prints each
 metric's drift from first to last point straight to stdout. It writes no
 file of its own, since charting is <code>report render</code>'s job.</p>
+<p><code>--from-baseline NAME</code> builds the point from a saved baseline instead of
+measuring again — a pipeline whose gate already ran with <code>--save-baseline</code>
+appends the very numbers it just verified. <code>-p PKG</code> scopes the point the
+same way it scopes a measured run: other packages' entries and buildcost
+pseudo-items in the shared baseline file stay out.</p>
 <p><code>cargo soothfast report changelog -p mylib --against-ref v1.0</code> merges a
 fresh "Unreleased" section into <code>CHANGELOG.md</code> in place, holding the public
 API diff against <code>v1.0</code> plus the current perf table. Every <code>## [released]</code>

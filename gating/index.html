@@ -144,10 +144,16 @@ uses them:</p>
 <span class="tok-kw">$ </span>cargo soothfast gate -p mylib --backend buildcost --against-ref origin/master   # binary size / build time
 </code></pre></figure>
 <p><code>--against-ref</code> never reads a file. It measures HEAD and the merge-base of
-<code>REF</code> in a temporary git worktree, twice each, interleaved as
+<code>REF</code> in a temporary git worktree, in rounds interleaved as
 head/base/head/base. That "tango" order spreads out thermal and scheduler
-drift. It then takes the per-metric minimum across each side's two rounds
-before comparing. This is what <code>make gate</code> runs against <code>origin/master</code> for
+drift. Deterministic gating counters (perf instructions, callgrind Ir) do
+not drift, so they are collected once per side in the first round; the
+second round re-measures only the timing-sensitive backends, and the
+per-metric minimum across a side's rounds is its comparison value. When the
+two sides' bench binaries have byte-identical <code>.text</code> sections, no
+measurable change is possible and the gate short-circuits to a single cheap
+pass whose assertions still run. This is
+what <code>make gate</code> runs against <code>origin/master</code> for
 every crate in <code>BENCH_CRATES</code>, and it is why merge-base gating has no
 baseline file that can go stale in version control.</p>
 <p>Before the reference side is measured, its locked <code>soothfast*</code> crates are
@@ -162,7 +168,7 @@ a slow <code>serde</code> bump is exactly what the gate exists to catch.</p>
 <tbody>
 <tr><td><code>perfcnt.instructions</code></td><td>+5%</td><td>hard</td></tr>
 <tr><td><code>callgrind.ir</code></td><td>+5%</td><td>hard</td></tr>
-<tr><td><code>walltime.median_ns</code></td><td>+10%, or 3x the A/A noise floor when that is higher</td><td>hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all.</td></tr>
+<tr><td><code>walltime.median_ns</code></td><td>+10%, or 3x the A/A noise floor when that is higher</td><td>hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all. A fail is also downgraded to a SOFT warning when the deterministic evidence contradicts it: unchanged fingerprint, instructions/Ir flat (within 0.5%), and alloc counts/bytes identical. Identical code doing identical work cannot have gotten slower — that is the clock measuring the machine.</td></tr>
 <tr><td><code>alloc.allocs</code> / <code>alloc.bytes</code></td><td>+5%</td><td>hard, integer ceiling</td></tr>
 <tr><td><code>asyncexec.polls</code> / <code>asyncexec.wakes</code></td><td>+5%</td><td>hard, integer ceiling. Present only for <code>async fn</code> benches. Catches what instruction counts can miss: a future that polls twice as often does the same work per poll.</td></tr>
 <tr><td><code>buildcost.size_bytes</code></td><td>+5%</td><td>hard</td></tr>
@@ -176,6 +182,14 @@ your last release for instance, after the primary one. It exists because ten
 separate +4% regressions each pass the primary gate on their own. A ratchet
 is an independent floor that catches the sum even when no single change
 trips the per-commit threshold.</p>
+<h2 id="reusing-the-gate-s-measurement">Reusing the gate's measurement<a class="anchor" href="#reusing-the-gate-s-measurement" aria-label="Link to this section">#</a></h2>
+<p><code>--save-baseline NAME</code> persists the head run a passing gate just measured,
+exactly as <code>measure --save-baseline</code> would, so a deploy pipeline that needs
+both a gate verdict and a fresh baseline pays for one measurement instead of
+two. A failing run is never saved — the baseline would ratify its own
+regression — and the identical-binaries short circuit skips the save too:
+its single cheap pass collects no gating counters, and since the code did
+not change, the previously saved baseline is still the truth.</p>
 <h2 id="deps-advisory-not-a-different-check"><code>--deps</code>: advisory, not a different check<a class="anchor" href="#deps-advisory-not-a-different-check" aria-label="Link to this section">#</a></h2>
 <p><code>--deps</code> does not change what gets gated. It adds one warning: if any
 measured item's source fingerprint changed relative to the reference,
@@ -210,6 +224,8 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l2" href="#thresholds">Thresholds</a></li>
   
     <li><a class="toc-l2" href="#ratchets">Ratchets</a></li>
+  
+    <li><a class="toc-l2" href="#reusing-the-gate-s-measurement">Reusing the gate&#39;s measurement</a></li>
   
     <li><a class="toc-l2" href="#deps-advisory-not-a-different-check">--deps: advisory, not a different check</a></li>
   
