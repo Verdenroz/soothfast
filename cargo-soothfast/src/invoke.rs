@@ -343,8 +343,22 @@ pub enum SaveScope {
     Buildcost(Option<String>),
 }
 
+impl SaveScope {
+    /// Scope of the run these args produced (what `--save-baseline` may
+    /// replace) — shared by `measure` and `gate`.
+    pub fn of(common: &CommonArgs) -> SaveScope {
+        if common.backend.as_deref() == Some("buildcost") {
+            SaveScope::Buildcost(common.pkg.clone())
+        } else if common.filter.is_some() {
+            SaveScope::BenchFiltered
+        } else {
+            SaveScope::BenchFull(common.pkg.clone())
+        }
+    }
+}
+
 /// First segment of a measured-item id (the package, `-` normalized to `_`).
-fn id_pkg(id: &str) -> &str {
+pub fn id_pkg(id: &str) -> &str {
     id.split("::").next().unwrap_or(id)
 }
 
@@ -898,7 +912,25 @@ pub fn git_in(dir: &Path, args: &[&str]) -> io::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::harness_mismatches;
+    use super::{CommonArgs, SaveScope, harness_mismatches};
+
+    #[test]
+    fn save_scope_mirrors_what_the_args_measured() {
+        let mut common = CommonArgs {
+            pkg: Some("mylib".into()),
+            ..CommonArgs::default()
+        };
+        assert!(matches!(
+            SaveScope::of(&common), SaveScope::BenchFull(Some(p)) if p == "mylib"
+        ));
+        common.filter = Some("group::".into());
+        assert!(matches!(SaveScope::of(&common), SaveScope::BenchFiltered));
+        common.filter = None;
+        common.backend = Some("buildcost".into());
+        assert!(matches!(
+            SaveScope::of(&common), SaveScope::Buildcost(Some(p)) if p == "mylib"
+        ));
+    }
 
     const HEAD: &str = r#"
 version = 4

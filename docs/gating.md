@@ -59,6 +59,16 @@ is an independent floor that catches the sum even when no single change
 trips the per-commit threshold.
 <!-- /soothfast:bind -->
 
+## Reusing the gate's measurement
+
+`--save-baseline NAME` persists the head run a passing gate just measured,
+exactly as `measure --save-baseline` would, so a deploy pipeline that needs
+both a gate verdict and a fresh baseline pays for one measurement instead of
+two. A failing run is never saved — the baseline would ratify its own
+regression — and the identical-binaries short circuit skips the save too:
+its single cheap pass collects no gating counters, and since the code did
+not change, the previously saved baseline is still the truth.
+
 ## `--deps`: advisory, not a different check
 
 `--deps` does not change what gets gated. It adds one warning: if any

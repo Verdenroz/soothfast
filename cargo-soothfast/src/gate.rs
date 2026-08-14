@@ -45,6 +45,7 @@ struct GateArgs {
     deps: bool,
     allow_gone: bool,
     matrix: String,
+    save_baseline: Option<String>,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -56,6 +57,7 @@ pub fn run(args: &[String]) -> i32 {
         deps: false,
         allow_gone: false,
         matrix: "default".into(),
+        save_baseline: None,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -79,6 +81,10 @@ pub fn run(args: &[String]) -> i32 {
                 Some(r) => g.against_ref = Some(r.clone()),
                 None => return err("--against-ref needs a git ref"),
             },
+            "--save-baseline" => match it.next() {
+                Some(n) => g.save_baseline = Some(n.clone()),
+                None => return err("--save-baseline needs a name"),
+            },
             "--deps" => g.deps = true,
             "--allow-gone" => g.allow_gone = true,
             other => return err(&format!("unknown gate arg {other:?}")),
@@ -87,6 +93,7 @@ pub fn run(args: &[String]) -> i32 {
 
     let mut failures = 0u32;
     let mut failing_ids: Vec<String> = Vec::new();
+    let mut short_circuited = false;
 
     // Reference + current: merge-base worktree (interleaved) or stored baseline.
     let (reference, current) = if g.common.backend.as_deref() == Some("buildcost") {
@@ -134,7 +141,10 @@ pub fn run(args: &[String]) -> i32 {
         (reference, current)
     } else if let Some(refname) = &g.against_ref {
         match measure_ref_interleaved(&g.common, refname) {
-            Ok(Some(pair)) => pair,
+            Ok(Some(pair)) => {
+                short_circuited = pair.short_circuited;
+                (pair.reference, pair.current)
+            }
             // Newly measured crate: nothing at the ref to regress against.
             // Passing is the honest answer; failing would make a crate's
             // first bench permanently ungateable until it is already merged.
@@ -213,6 +223,26 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     write_gate_status(failures);
+    if let Some(name) = &g.save_baseline {
+        match save_verdict(failures, short_circuited) {
+            SaveVerdict::Save => {
+                match invoke::save_baseline(name, &current, invoke::SaveScope::of(&g.common)) {
+                    Ok(path) => println!("baseline saved: {}", path.display()),
+                    Err(e) => {
+                        eprintln!("soothfast: failed to save baseline: {e}");
+                        return 1;
+                    }
+                }
+            }
+            SaveVerdict::RefuseFailing => {
+                eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
+            }
+            SaveVerdict::SkipShortCircuit => println!(
+                "gate: not saving baseline {name:?} — the short-circuit pass skipped the \
+                 gating counters, and unchanged code leaves the previous baseline valid"
+            ),
+        }
+    }
     if failures > 0 {
         failing_ids.sort();
         failing_ids.dedup();
@@ -224,6 +254,27 @@ pub fn run(args: &[String]) -> i32 {
     } else {
         println!("gate: passed ({} item(s))", current.items.len());
         0
+    }
+}
+
+/// Whether a `--save-baseline` request may persist this run. A failing run
+/// is never saved (it would ratify its own regression), and the identical-
+/// binaries short-circuit run carries no gating counters — saving it would
+/// hand downstream readers a baseline with the instruction counts missing.
+#[derive(Debug, PartialEq)]
+enum SaveVerdict {
+    Save,
+    RefuseFailing,
+    SkipShortCircuit,
+}
+
+fn save_verdict(failures: u32, short_circuited: bool) -> SaveVerdict {
+    if failures > 0 {
+        SaveVerdict::RefuseFailing
+    } else if short_circuited {
+        SaveVerdict::SkipShortCircuit
+    } else {
+        SaveVerdict::Save
     }
 }
 
@@ -249,6 +300,15 @@ fn write_gate_status(failures: u32) {
     );
 }
 
+/// A measured (reference, head) pair from the merge-base worktree.
+struct RefPair {
+    reference: Value,
+    current: Run,
+    /// The identical-binaries short circuit ran one timing-only pass, so
+    /// `current` has no gating counters and is not baseline material.
+    short_circuited: bool,
+}
+
 /// Measure the merge-base with HEAD in a temp worktree, interleaving rounds
 /// (head, base, head, base) tango-style so slow environmental drift cancels;
 /// per-metric minima across each side's rounds form the comparison values.
@@ -257,10 +317,7 @@ fn write_gate_status(failures: u32) {
 /// them and re-measures only the timing-sensitive backends.
 /// `Ok(None)` when the merge-base has no such bench target: the crate is
 /// newly measured, so there is nothing on that side to compare against.
-fn measure_ref_interleaved(
-    common: &CommonArgs,
-    refname: &str,
-) -> Result<Option<(Value, Run)>, String> {
+fn measure_ref_interleaved(common: &CommonArgs, refname: &str) -> Result<Option<RefPair>, String> {
     const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
     enum Ref {
         NoBenchTarget,
@@ -308,14 +365,22 @@ fn measure_ref_interleaved(
         // zero deltas by construction.
         Ref::IdenticalBinaries(run) => {
             let head = run?;
-            return Ok(Some((ref_doc(&head), head)));
+            return Ok(Some(RefPair {
+                reference: ref_doc(&head),
+                current: head,
+                short_circuited: true,
+            }));
         }
         Ref::Rounds(rounds) => {
             let [head1, base1, head2, base2] = *rounds;
             (combine_rounds(base1?, base2), combine_rounds(head1?, head2))
         }
     };
-    Ok(Some((ref_doc(&base), head)))
+    Ok(Some(RefPair {
+        reference: ref_doc(&base),
+        current: head,
+        short_circuited: false,
+    }))
 }
 
 /// A measured run in the reference-document shape `compare` reads.
@@ -640,8 +705,27 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{combine_min, combine_rounds, text_section_bytes, walltime_limit};
+    use super::{
+        SaveVerdict, combine_min, combine_rounds, save_verdict, text_section_bytes, walltime_limit,
+    };
     use crate::invoke::{ItemMetrics, Run};
+
+    #[test]
+    fn a_passing_full_run_is_baseline_material() {
+        assert_eq!(save_verdict(0, false), SaveVerdict::Save);
+    }
+
+    #[test]
+    fn a_failing_run_is_never_saved() {
+        // Saving it would ratify its own regression.
+        assert_eq!(save_verdict(1, false), SaveVerdict::RefuseFailing);
+        assert_eq!(save_verdict(3, true), SaveVerdict::RefuseFailing);
+    }
+
+    #[test]
+    fn a_short_circuit_run_lacks_counters_and_is_skipped() {
+        assert_eq!(save_verdict(0, true), SaveVerdict::SkipShortCircuit);
+    }
 
     #[test]
     fn quiet_runners_keep_the_fixed_threshold() {
