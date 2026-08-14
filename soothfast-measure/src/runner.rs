@@ -30,9 +30,14 @@ struct Args {
     callgrind_exec: Option<String>,
     triage: Option<String>,
     iters: u64,
+    skip_gating_counters: bool,
 }
 
 fn parse_args() -> Args {
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
     let mut args = Args {
         json: false,
         list: false,
@@ -43,8 +48,8 @@ fn parse_args() -> Args {
         callgrind_exec: None,
         triage: None,
         iters: 1,
+        skip_gating_counters: false,
     };
-    let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             // `cargo bench` appends --bench to harness=false binaries; ignore.
@@ -83,6 +88,7 @@ fn parse_args() -> Args {
                 Some(n) if n > 0 => args.iters = n,
                 _ => die("--iters needs a positive integer"),
             },
+            "--skip-gating-counters" => args.skip_gating_counters = true,
             other => die(&format!("unknown runner arg {other:?}")),
         }
     }
@@ -262,18 +268,25 @@ pub fn main() {
     {
         die(&format!("--backend perfcnt unavailable: {e}"));
     }
-    let cg_probe = if might_need_callgrind(args.backend, perf_available) {
-        Some(callgrind::probe())
-    } else {
-        None
-    };
+    let cg_probe =
+        if !args.skip_gating_counters && might_need_callgrind(args.backend, perf_available) {
+            Some(callgrind::probe())
+        } else {
+            None
+        };
     if args.backend == Backend::Callgrind
         && let Some(Err(e)) = &cg_probe
     {
         die(&format!("--backend callgrind unavailable: {e}"));
     }
     let cg_available = matches!(cg_probe, Some(Ok(())));
-    let (use_perf, use_cg) = resolve_backends(args.backend, perf_available, cg_available);
+    // Gating counters (perfcnt/callgrind) are deterministic: when the caller
+    // already has them from another pass, re-collecting only costs time.
+    let (use_perf, use_cg) = if args.skip_gating_counters {
+        (false, false)
+    } else {
+        resolve_backends(args.backend, perf_available, cg_available)
+    };
     let use_wall = matches!(
         args.backend,
         Backend::Auto | Backend::All | Backend::Walltime
@@ -583,6 +596,15 @@ mod tests {
         "GET",
         "/items/{id}",
     );
+
+    #[test]
+    fn skip_gating_counters_flag_parses() {
+        let argv = ["--json", "--skip-gating-counters"].map(String::from);
+        let args = parse_args_from(argv.into_iter());
+        assert!(args.json);
+        assert!(args.skip_gating_counters);
+        assert!(!parse_args_from(std::iter::empty()).skip_gating_counters);
+    }
 
     #[test]
     fn auto_prefers_perfcnt_when_available() {
