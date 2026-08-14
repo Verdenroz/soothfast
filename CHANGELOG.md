@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.8)
+## 0.1.9 - 2026-08-14
+
+<!-- soothfast:notes -->
+The gate got cheap. Callgrind measurements run four-wide, deterministic
+counters are collected once per side instead of every round, and two sides
+with byte-identical `.text` sections skip measurement entirely. A passing
+gate saves its run as a baseline that `trend append --from-baseline` reuses
+instead of re-measuring, the merge-base worktree keeps a persistent target
+dir so dependencies compile once per machine, and releases ship a prebuilt
+x86_64-linux `cargo-soothfast` that cargo-binstall resolves. finance-query's
+deploy gate drops from ~1400 sequential valgrind launches to ~176 spawn
+slots.
+
+Walltime overruns with flat deterministic counters on unchanged code now
+downgrade to a SOFT warning: identical work on a different clock is the
+machine, not a regression. And `report changelog` no longer lets one
+unchanged crate's "no changes" sentinel hide other crates' findings — the
+bug that would have shipped these notes claiming no API changes.
+<!-- /soothfast:notes -->
 
 ### API surface
 
