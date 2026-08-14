@@ -136,6 +136,44 @@ pub fn run_bench(common: &CommonArgs, extra: &[&str]) -> io::Result<Vec<Value>> 
     run_bench_in(common, extra, None)
 }
 
+/// Path of the compiled bench executable, via `cargo bench --no-run`'s JSON
+/// messages. `None` on any failure: callers fall through to a normal
+/// measured run, which surfaces the real error.
+pub fn bench_executable(common: &CommonArgs, dir: Option<&Path>) -> Option<PathBuf> {
+    let target = common.target.as_deref().unwrap_or("soothfast");
+    let mut cmd = Command::new("cargo");
+    cmd.args(["bench", "--no-run", "--message-format=json"]);
+    if let Some(p) = &common.pkg {
+        cmd.args(["-p", p]);
+    }
+    if let Some(f) = &common.features {
+        cmd.args(["--features", f]);
+    }
+    cmd.args(["--bench", target]);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|m| m["reason"] == "compiler-artifact")
+        .filter(|m| m["target"]["name"] == target)
+        .filter(|m| {
+            m["target"]["kind"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|k| k == "bench")
+        })
+        .find_map(|m| m["executable"].as_str().map(PathBuf::from))
+}
+
 /// One item's collected metrics across backends.
 #[derive(Default, Debug, Clone)]
 pub struct ItemMetrics {
