@@ -262,6 +262,12 @@ fn measure_ref_interleaved(
     refname: &str,
 ) -> Result<Option<(Value, Run)>, String> {
     const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
+    enum Ref {
+        NoBenchTarget,
+        IdenticalBinaries(Result<Run, String>),
+        Rounds(Box<[Result<Run, String>; 4]>),
+    }
+
     println!("gate: measuring merge-base of {refname} in worktree (interleaved rounds)");
     let measure = |dir: Option<&std::path::Path>, extra: &[&str]| -> Result<Run, String> {
         let recs = invoke::run_bench_in(common, extra, dir).map_err(|e| e.to_string())?;
@@ -269,38 +275,97 @@ fn measure_ref_interleaved(
     };
     let pkg = common.pkg.clone();
     let target = common.target.clone().unwrap_or_else(|| "soothfast".into());
-    let Some((head1, base1, head2, base2)) = invoke::with_merge_base_worktree(refname, |wt| {
+    let outcome = invoke::with_merge_base_worktree(refname, |wt| {
         // Only checkable when a package was named; without `-p` cargo picks
         // the default member and there is nothing to look up.
         if let Some(pkg) = &pkg
             && !workspace::has_bench_target(pkg, &target, Some(wt)).map_err(|e| e.to_string())?
         {
-            return Ok(None);
+            return Ok(Ref::NoBenchTarget);
         }
         // Both bench binaries must embed the same soothfast harness: a
         // measurement-protocol change between the two locked versions would
         // otherwise be reported as a regression in the measured project.
+        // Pinning must precede the base build the binary comparison does.
         invoke::sync_harness_versions(wt)?;
-        Ok(Some((
+        if bench_binaries_identical(common, wt) {
+            println!(
+                "gate: bench binaries identical (.text match) — no measurable change possible"
+            );
+            return Ok(Ref::IdenticalBinaries(measure(None, TIMING_ONLY)));
+        }
+        Ok(Ref::Rounds(Box::new([
             measure(None, &[]),
             measure(Some(wt), &[]),
             measure(None, TIMING_ONLY),
             measure(Some(wt), TIMING_ONLY),
-        )))
-    })?
-    else {
-        return Ok(None);
+        ])))
+    })?;
+
+    let (base, head) = match outcome {
+        Ref::NoBenchTarget => return Ok(None),
+        // One cheap pass serves as both sides: real items and assertions,
+        // zero deltas by construction.
+        Ref::IdenticalBinaries(run) => {
+            let head = run?;
+            return Ok(Some((ref_doc(&head), head)));
+        }
+        Ref::Rounds(rounds) => {
+            let [head1, base1, head2, base2] = *rounds;
+            (combine_rounds(base1?, base2), combine_rounds(head1?, head2))
+        }
     };
+    Ok(Some((ref_doc(&base), head)))
+}
 
-    let base = combine_rounds(base1?, base2);
-    let head = combine_rounds(head1?, head2);
-
+/// A measured run in the reference-document shape `compare` reads.
+fn ref_doc(run: &Run) -> Value {
     let mut doc = serde_json::json!({ "version": 1 });
-    if let Some(n) = base.noise_pct {
+    if let Some(n) = run.noise_pct {
         doc["noise_pct"] = serde_json::json!(n);
     }
-    doc["items"] = invoke::run_to_items_value(&base);
-    Ok(Some((doc, head)))
+    doc["items"] = invoke::run_to_items_value(run);
+    doc
+}
+
+/// Whether the head and merge-base bench binaries carry identical machine
+/// code. Conservative: any build or extraction failure reads as "different"
+/// so the gate falls through to a real measurement.
+fn bench_binaries_identical(common: &CommonArgs, wt: &std::path::Path) -> bool {
+    let (Some(head), Some(base)) = (
+        invoke::bench_executable(common, None),
+        invoke::bench_executable(common, Some(wt)),
+    ) else {
+        return false;
+    };
+    matches!(
+        (text_section_bytes(&head), text_section_bytes(&base)),
+        (Some(a), Some(b)) if a == b
+    )
+}
+
+/// The executable's `.text` section, extracted with objcopy. Whole-file
+/// comparison would never match: debug info embeds the absolute build path,
+/// and the two sides build in different directories.
+fn text_section_bytes(exe: &std::path::Path) -> Option<Vec<u8>> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let out = std::env::temp_dir().join(format!(
+        "soothfast-text-{}-{}.bin",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed),
+    ));
+    let status = std::process::Command::new("objcopy")
+        .args(["-O", "binary", "--only-section=.text"])
+        .arg(exe)
+        .arg(&out)
+        .status();
+    let bytes = match status {
+        Ok(s) if s.success() => std::fs::read(&out).ok(),
+        _ => None,
+    };
+    let _ = std::fs::remove_file(&out);
+    bytes.filter(|b| !b.is_empty())
 }
 
 /// Fold a side's timing-only second round into its full first round. A
@@ -575,7 +640,7 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{combine_min, combine_rounds, walltime_limit};
+    use super::{combine_min, combine_rounds, text_section_bytes, walltime_limit};
     use crate::invoke::{ItemMetrics, Run};
 
     #[test]
@@ -642,5 +707,35 @@ mod tests {
         );
         let merged = combine_rounds(full, Err("unknown runner arg".into()));
         assert_eq!(merged.items["pkg::item"].ir, Some(100));
+    }
+
+    #[test]
+    fn text_extraction_returns_none_for_a_non_elf_file() {
+        let path = std::env::temp_dir().join(format!("soothfast-not-elf-{}", std::process::id()));
+        std::fs::write(&path, b"just text, no sections").unwrap();
+        assert_eq!(text_section_bytes(&path), None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn text_extraction_returns_none_for_a_missing_file() {
+        assert_eq!(
+            text_section_bytes(std::path::Path::new("/nonexistent/soothfast-bench")),
+            None
+        );
+    }
+
+    #[test]
+    fn an_executable_text_section_matches_itself() {
+        let objcopy_present = std::process::Command::new("objcopy")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !objcopy_present {
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        let a = text_section_bytes(&exe).expect("test binary has a .text section");
+        assert_eq!(Some(a), text_section_bytes(&exe));
     }
 }
