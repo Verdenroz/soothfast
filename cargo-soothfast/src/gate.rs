@@ -5,7 +5,7 @@
 
 use serde_json::Value;
 
-use crate::invoke::{self, CommonArgs, Run};
+use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::workspace;
 
 /// Deterministic counters gate tight.
@@ -27,6 +27,9 @@ const SIZE_THRESHOLD_PCT: u64 = 5;
 const ASYNC_THRESHOLD_PCT: u64 = 5;
 /// Compile time is noisy: soft (warn-only) at +25%.
 const BUILD_MS_SOFT_PCT: f64 = 25.0;
+/// A deterministic counter within this of the reference reads as "flat" —
+/// wide enough for perfcnt's tiny run-to-run wobble, far below any real change.
+const COUNTER_FLAT_PCT: f64 = 0.5;
 
 /// Effective walltime threshold: the fixed +10%, raised to 3x the measured
 /// A/A noise floor when that is higher. A fixed threshold is ~2 sigma on a
@@ -487,6 +490,45 @@ fn min_opt_u(a: Option<u64>, b: Option<u64>) -> Option<u64> {
     }
 }
 
+/// Why a walltime overrun is a SOFT warning instead of a hard fail, if it is.
+fn walltime_downgrade(old: &Value, cur: &ItemMetrics) -> Option<&'static str> {
+    if counters_flat_on_unchanged_code(old, cur) {
+        return Some("counters flat on unchanged code — environment, not regression");
+    }
+    None
+}
+
+/// Whether the deterministic evidence contradicts a walltime regression:
+/// unchanged fingerprint, at least one instruction-level counter present on
+/// both sides, and every counter present on both sides flat. Identical code
+/// doing identical work with an identical allocation profile cannot have
+/// gotten slower — the clock was measuring the machine.
+fn counters_flat_on_unchanged_code(old: &Value, cur: &ItemMetrics) -> bool {
+    let fp = old["fingerprint"].as_str().unwrap_or("");
+    if fp.is_empty() || fp != cur.fingerprint {
+        return false;
+    }
+    let flat = |o: Option<u64>, n: Option<u64>| {
+        let (o, n) = (o?, n?);
+        Some(
+            o == n || o > 0 && ((n as f64 - o as f64) / o as f64 * 100.0).abs() <= COUNTER_FLAT_PCT,
+        )
+    };
+    let instructions = flat(old["perfcnt"]["instructions"].as_u64(), cur.instructions);
+    let ir = flat(old["callgrind"]["ir"].as_u64(), cur.ir);
+    if instructions.is_none() && ir.is_none() {
+        return false; // no counters on both sides = no corroboration
+    }
+    let exact = |o: Option<u64>, n: Option<u64>| match (o, n) {
+        (Some(o), Some(n)) => o == n,
+        _ => true,
+    };
+    instructions != Some(false)
+        && ir != Some(false)
+        && exact(old["alloc"]["allocs"].as_u64(), cur.allocs)
+        && exact(old["alloc"]["bytes"].as_u64(), cur.bytes)
+}
+
 /// How one comparison run should treat scope and disappearance.
 #[derive(Clone)]
 struct CompareCtx {
@@ -541,36 +583,42 @@ fn compare(
             println!("NOTE  {id}: code changed since reference");
         }
 
-        // Hard-gated relative metrics.
-        let mut rel =
-            |metric: &str, old_v: Option<f64>, new_v: Option<f64>, limit: f64, hard: bool| {
-                let (Some(o), Some(n)) = (old_v, new_v) else {
-                    return;
-                };
-                if o <= 0.0 {
-                    return;
-                }
-                let delta = (n - o) / o * 100.0;
-                let fail = delta > limit;
-                let verdict = if fail && hard {
-                    "FAIL"
-                } else if fail {
-                    "SOFT"
-                } else {
-                    "ok"
-                };
-                if fail && hard {
-                    failures += 1;
-                    failed_here.push(id.clone());
-                }
-                println!("{verdict:<5} {label}{id} {metric} {o:.1} -> {n:.1} ({delta:+.1}%)");
+        // Hard-gated relative metrics. A `downgrade` reason turns a hard
+        // fail into a SOFT warning (walltime anti-flake rules).
+        let mut rel = |metric: &str,
+                       old_v: Option<f64>,
+                       new_v: Option<f64>,
+                       limit: f64,
+                       hard: bool,
+                       downgrade: Option<&str>| {
+            let (Some(o), Some(n)) = (old_v, new_v) else {
+                return;
             };
+            if o <= 0.0 {
+                return;
+            }
+            let delta = (n - o) / o * 100.0;
+            let fail = delta > limit;
+            let (verdict, why) = match (fail, hard, downgrade) {
+                (false, ..) => ("ok", None),
+                (true, true, None) => ("FAIL", None),
+                (true, true, Some(why)) => ("SOFT", Some(why)),
+                (true, false, _) => ("SOFT", None),
+            };
+            if verdict == "FAIL" {
+                failures += 1;
+                failed_here.push(id.clone());
+            }
+            let suffix = why.map(|w| format!(" ({w})")).unwrap_or_default();
+            println!("{verdict:<5} {label}{id} {metric} {o:.1} -> {n:.1} ({delta:+.1}%){suffix}");
+        };
         rel(
             "instructions",
             old["perfcnt"]["instructions"].as_u64().map(|v| v as f64),
             cur.instructions.map(|v| v as f64),
             INSTRUCTIONS_THRESHOLD_PCT,
             true,
+            None,
         );
         rel(
             "callgrind_ir",
@@ -578,6 +626,7 @@ fn compare(
             cur.ir.map(|v| v as f64),
             IR_THRESHOLD_PCT,
             true,
+            None,
         );
         rel(
             "walltime_median_ns",
@@ -585,6 +634,7 @@ fn compare(
             cur.median_ns,
             wall_limit,
             true,
+            walltime_downgrade(old, cur),
         );
         rel(
             "build_ms",
@@ -592,6 +642,7 @@ fn compare(
             cur.build_ms.map(|v| v as f64),
             BUILD_MS_SOFT_PCT,
             false,
+            None,
         );
 
         // Integer metrics: old=0 allows nothing (zero-alloc stays zero-alloc).
@@ -719,9 +770,114 @@ fn err(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        SaveVerdict, combine_min, combine_rounds, save_verdict, text_section_bytes, walltime_limit,
+        CompareCtx, SaveVerdict, combine_min, combine_rounds, compare, save_verdict,
+        text_section_bytes, walltime_limit,
     };
     use crate::invoke::{ItemMetrics, Run};
+    use serde_json::{Value, json};
+
+    fn ctx() -> CompareCtx {
+        CompareCtx {
+            deps_mode: false,
+            allow_gone: false,
+            filter: None,
+            pkg: None,
+            buildcost_mode: false,
+        }
+    }
+
+    fn reference(item: Value) -> Value {
+        json!({ "version": 1, "noise_pct": 0.20, "items": { "pkg::bt_base_to_htf_index": item } })
+    }
+
+    fn run_with(m: ItemMetrics) -> Run {
+        let mut run = Run::default();
+        run.items.insert("pkg::bt_base_to_htf_index".into(), m);
+        run
+    }
+
+    fn gate_failures(reference: &Value, current: &Run) -> (u32, Vec<String>) {
+        let mut failing = Vec::new();
+        let failures = compare(reference, current, "", &ctx(), &mut failing);
+        (failures, failing)
+    }
+
+    /// The motivating incident: walltime 22995 -> 27327 ns (+18.8%) with
+    /// byte-identical instructions, identical allocs, unchanged fingerprint.
+    fn incident_reference(fingerprint: &str) -> Value {
+        reference(json!({
+            "fingerprint": fingerprint,
+            "walltime": { "median_ns": 22995.0, "mad_ns": 46.0, "p99_ns": 23500.0 },
+            "perfcnt": { "instructions": 337491, "cycles": 91000, "cache_refs": 1200 },
+            "alloc": { "allocs": 57, "bytes": 4096 },
+        }))
+    }
+
+    fn incident_head() -> ItemMetrics {
+        ItemMetrics {
+            fingerprint: "fp-unchanged".into(),
+            median_ns: Some(27327.0),
+            instructions: Some(337491),
+            allocs: Some(57),
+            bytes: Some(4096),
+            ..ItemMetrics::default()
+        }
+    }
+
+    #[test]
+    fn flat_counters_on_unchanged_code_downgrade_a_walltime_fail() {
+        let (failures, failing) = gate_failures(
+            &incident_reference("fp-unchanged"),
+            &run_with(incident_head()),
+        );
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty(), "a SOFT item must not enter triage");
+    }
+
+    #[test]
+    fn a_walltime_fail_on_changed_code_still_fails() {
+        let (failures, failing) =
+            gate_failures(&incident_reference("fp-old"), &run_with(incident_head()));
+        assert_eq!(failures, 1);
+        assert_eq!(failing, vec!["pkg::bt_base_to_htf_index"]);
+    }
+
+    #[test]
+    fn a_walltime_fail_with_moving_counters_still_fails() {
+        // +3.7% instructions passes its own +5% gate but breaks the
+        // "identical work" corroboration — the slowdown could be real.
+        let head = ItemMetrics {
+            instructions: Some(350_000),
+            ..incident_head()
+        };
+        let (failures, _) = gate_failures(&incident_reference("fp-unchanged"), &run_with(head));
+        assert_eq!(failures, 1);
+    }
+
+    #[test]
+    fn a_walltime_fail_with_changed_allocs_still_fails() {
+        let head = ItemMetrics {
+            allocs: Some(58),
+            ..incident_head()
+        };
+        let (failures, _) = gate_failures(&incident_reference("fp-unchanged"), &run_with(head));
+        assert_eq!(failures, 1);
+    }
+
+    #[test]
+    fn no_instruction_counters_means_no_corroboration() {
+        let old = reference(json!({
+            "fingerprint": "fp-unchanged",
+            "walltime": { "median_ns": 22995.0, "mad_ns": 46.0, "p99_ns": 23500.0 },
+            "alloc": { "allocs": 57, "bytes": 4096 },
+        }));
+        let head = ItemMetrics {
+            instructions: None,
+            ..incident_head()
+        };
+        let (failures, _) = gate_failures(&old, &run_with(head));
+        assert_eq!(failures, 1);
+    }
 
     #[test]
     fn a_passing_full_run_is_baseline_material() {
