@@ -37,8 +37,10 @@ commands:
            [--target NAME] [--save-baseline NAME]
   gate     [-p PKG] [--filter S] [--backend B] [--samples N] [--features F]
            [--baseline NAME] [--ratchet NAME] [--against-ref REF] [--deps]
-           [--features-matrix M] [--target NAME]
-  trend    append|render [-p PKG]
+           [--features-matrix M] [--target NAME] [--save-baseline NAME]
+           (--save-baseline persists the measured head run after a pass)
+  trend    append [-p PKG] [--from-baseline NAME] | render
+           (--from-baseline reads a saved baseline instead of re-measuring)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--features F] [PATHS...]
   docs     capture -p PKG [--check] [PATHS...]
   docs     diff -p PKG --against-ref REF [--features F]
@@ -217,14 +219,7 @@ fn cmd_measure(args: &[String]) -> i32 {
         return 1;
     }
     if let Some(name) = save {
-        let scope = if common.backend.as_deref() == Some("buildcost") {
-            invoke::SaveScope::Buildcost(common.pkg.clone())
-        } else if common.filter.is_some() {
-            invoke::SaveScope::BenchFiltered
-        } else {
-            invoke::SaveScope::BenchFull(common.pkg.clone())
-        };
-        match invoke::save_baseline(&name, &run, scope) {
+        match invoke::save_baseline(&name, &run, invoke::SaveScope::of(&common)) {
             Ok(path) => println!("baseline saved: {}", path.display()),
             Err(e) => {
                 eprintln!("soothfast: failed to save baseline: {e}");

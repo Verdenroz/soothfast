@@ -71,6 +71,12 @@ feeds both the SVG charts above and `trend render`, which prints each
 metric's drift from first to last point straight to stdout. It writes no
 file of its own, since charting is `report render`'s job.
 
+`--from-baseline NAME` builds the point from a saved baseline instead of
+measuring again — a pipeline whose gate already ran with `--save-baseline`
+appends the very numbers it just verified. `-p PKG` scopes the point the
+same way it scopes a measured run: other packages' entries and buildcost
+pseudo-items in the shared baseline file stay out.
+
 `cargo soothfast report changelog -p mylib --against-ref v1.0` merges a
 fresh "Unreleased" section into `CHANGELOG.md` in place, holding the public
 API diff against `v1.0` plus the current perf table. Every `## [released]`

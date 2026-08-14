@@ -11,7 +11,9 @@ pub fn run(args: &[String]) -> i32 {
         Some("append") => append(&args[1..]),
         Some("render") => render(),
         _ => {
-            eprintln!("soothfast: usage: cargo soothfast trend append|render [-p PKG]");
+            eprintln!(
+                "soothfast: usage: cargo soothfast trend append|render [-p PKG] [--from-baseline NAME]"
+            );
             2
         }
     }
@@ -25,21 +27,26 @@ fn trend_path() -> std::io::Result<std::path::PathBuf> {
 
 fn append(args: &[String]) -> i32 {
     let mut common = CommonArgs::default();
+    let mut from_baseline: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        if !common.try_parse(a, &mut it) {
-            eprintln!("soothfast: unknown trend arg {a:?}");
-            return 2;
+        if common.try_parse(a, &mut it) {
+            continue;
+        }
+        match a.as_str() {
+            "--from-baseline" => match it.next() {
+                Some(n) => from_baseline = Some(n.clone()),
+                None => {
+                    eprintln!("soothfast: --from-baseline needs a name");
+                    return 2;
+                }
+            },
+            other => {
+                eprintln!("soothfast: unknown trend arg {other:?}");
+                return 2;
+            }
         }
     }
-    let records = match invoke::run_bench(&common, &[]) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("soothfast: {e}");
-            return 1;
-        }
-    };
-    let run = invoke::collect(&records);
 
     let commit =
         invoke::git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|_| "unknown".into());
@@ -47,12 +54,48 @@ fn append(args: &[String]) -> i32 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let record = json!({
-        "unix": unix,
-        "commit": commit,
-        "noise_pct": run.noise_pct,
-        "items": invoke::run_to_items_value(&run),
-    });
+
+    // A saved baseline already carries every backend's metrics; reading it
+    // spares the pipeline a full re-measurement of the same commit.
+    let (record, count) = if let Some(name) = &from_baseline {
+        let doc = match invoke::load_baseline(name) {
+            Ok(Some(d)) => d,
+            Ok(None) => {
+                eprintln!("soothfast: no baseline named {name:?}");
+                return 2;
+            }
+            Err(e) => {
+                eprintln!("soothfast: failed to load baseline: {e}");
+                return 1;
+            }
+        };
+        match point_from_baseline(&doc, common.pkg.as_deref(), &commit, unix) {
+            Ok(r) => {
+                let count = r["items"].as_object().map(|o| o.len()).unwrap_or(0);
+                (r, count)
+            }
+            Err(e) => {
+                eprintln!("soothfast: baseline {name:?}: {e}");
+                return 2;
+            }
+        }
+    } else {
+        let records = match invoke::run_bench(&common, &[]) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("soothfast: {e}");
+                return 1;
+            }
+        };
+        let run = invoke::collect(&records);
+        let record = json!({
+            "unix": unix,
+            "commit": commit,
+            "noise_pct": run.noise_pct,
+            "items": invoke::run_to_items_value(&run),
+        });
+        (record, run.items.len())
+    };
 
     let path = match trend_path() {
         Ok(p) => p,
@@ -72,11 +115,42 @@ fn append(args: &[String]) -> i32 {
         return 1;
     }
     println!(
-        "trend: appended {} item(s) at commit {commit} -> {}",
-        run.items.len(),
+        "trend: appended {count} item(s) at commit {commit} -> {}",
         path.display()
     );
     0
+}
+
+/// A trend point built from a saved baseline instead of a fresh measurement.
+/// Buildcost pseudo-items and other packages' entries are dropped so the
+/// point holds exactly what `trend append -p PKG` would have measured.
+fn point_from_baseline(
+    doc: &Value,
+    pkg: Option<&str>,
+    commit: &str,
+    unix: u64,
+) -> Result<Value, String> {
+    let items: serde_json::Map<String, Value> = doc["items"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(id, _)| !id.starts_with("buildcost::"))
+        .filter(|(id, _)| pkg.is_none_or(|p| invoke::id_pkg(id) == p.replace('-', "_").as_str()))
+        .collect();
+    if items.is_empty() {
+        return Err(format!(
+            "no bench items{} — measure into it first",
+            pkg.map(|p| format!(" for package {p:?}"))
+                .unwrap_or_default()
+        ));
+    }
+    Ok(json!({
+        "unix": unix,
+        "commit": commit,
+        "noise_pct": doc["noise_pct"],
+        "items": items,
+    }))
 }
 
 fn render() -> i32 {
@@ -145,4 +219,65 @@ fn render() -> i32 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::point_from_baseline;
+    use serde_json::json;
+
+    fn baseline() -> serde_json::Value {
+        json!({
+            "version": 1,
+            "noise_pct": 0.42,
+            "items": {
+                "finance_query::indicators::sma": {
+                    "fingerprint": "abc",
+                    "perfcnt": { "instructions": 1000, "cycles": 900, "cache_refs": 10 },
+                    "walltime": { "median_ns": 50.0, "mad_ns": 1.0, "p99_ns": 70.0 },
+                    "alloc": { "allocs": 2, "bytes": 128 }
+                },
+                "other_pkg::thing": { "walltime": { "median_ns": 9.0 } },
+                "buildcost::finance-query::default": {
+                    "buildcost": { "build_ms": 12000, "size_bytes": 4096 }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn a_point_carries_the_baselines_metrics_verbatim() {
+        let p = point_from_baseline(&baseline(), Some("finance-query"), "abc1234", 1700).unwrap();
+        assert_eq!(p["unix"], 1700);
+        assert_eq!(p["commit"], "abc1234");
+        assert_eq!(p["noise_pct"], 0.42);
+        let item = &p["items"]["finance_query::indicators::sma"];
+        assert_eq!(item["perfcnt"]["instructions"], 1000);
+        assert_eq!(item["walltime"]["median_ns"], 50.0);
+        assert_eq!(item["alloc"]["allocs"], 2);
+    }
+
+    #[test]
+    fn out_of_scope_entries_are_dropped() {
+        // `-p` scopes the point the way it scopes a measured run: no other
+        // packages, no buildcost pseudo-items.
+        let p = point_from_baseline(&baseline(), Some("finance-query"), "c", 0).unwrap();
+        let items = p["items"].as_object().unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(items.contains_key("finance_query::indicators::sma"));
+    }
+
+    #[test]
+    fn no_package_keeps_every_bench_item_but_never_buildcost() {
+        let p = point_from_baseline(&baseline(), None, "c", 0).unwrap();
+        let items = p["items"].as_object().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(!items.contains_key("buildcost::finance-query::default"));
+    }
+
+    #[test]
+    fn an_empty_slice_is_an_error_not_an_empty_point() {
+        let err = point_from_baseline(&baseline(), Some("absent-pkg"), "c", 0).unwrap_err();
+        assert!(err.contains("absent-pkg"), "unhelpful error: {err}");
+    }
 }
