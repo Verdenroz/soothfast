@@ -326,8 +326,12 @@ fn measure_ref_interleaved(common: &CommonArgs, refname: &str) -> Result<Option<
     }
 
     println!("gate: measuring merge-base of {refname} in worktree (interleaved rounds)");
+    // Worktree builds go to a persistent sibling of the parent target dir so
+    // dependencies compile once per machine, not once per gate run.
+    let wt_target = invoke::worktree_target_dir().ok();
     let measure = |dir: Option<&std::path::Path>, extra: &[&str]| -> Result<Run, String> {
-        let recs = invoke::run_bench_in(common, extra, dir).map_err(|e| e.to_string())?;
+        let td = dir.and(wt_target.as_deref());
+        let recs = invoke::run_bench_dir(common, extra, dir, td).map_err(|e| e.to_string())?;
         Ok(invoke::collect(&recs))
     };
     let pkg = common.pkg.clone();
@@ -345,7 +349,7 @@ fn measure_ref_interleaved(common: &CommonArgs, refname: &str) -> Result<Option<
         // otherwise be reported as a regression in the measured project.
         // Pinning must precede the base build the binary comparison does.
         invoke::sync_harness_versions(wt)?;
-        if bench_binaries_identical(common, wt) {
+        if bench_binaries_identical(common, wt, wt_target.as_deref()) {
             println!(
                 "gate: bench binaries identical (.text match) — no measurable change possible"
             );
@@ -396,13 +400,22 @@ fn ref_doc(run: &Run) -> Value {
 /// Whether the head and merge-base bench binaries carry identical machine
 /// code. Conservative: any build or extraction failure reads as "different"
 /// so the gate falls through to a real measurement.
-fn bench_binaries_identical(common: &CommonArgs, wt: &std::path::Path) -> bool {
+fn bench_binaries_identical(
+    common: &CommonArgs,
+    wt: &std::path::Path,
+    wt_target: Option<&std::path::Path>,
+) -> bool {
     let (Some(head), Some(base)) = (
-        invoke::bench_executable(common, None),
-        invoke::bench_executable(common, Some(wt)),
+        invoke::bench_executable(common, None, None),
+        invoke::bench_executable(common, Some(wt), wt_target),
     ) else {
         return false;
     };
+    // One path for both sides means extraction resolved head's own binary
+    // twice; treat it as failed and fall through to a real measurement.
+    if head == base {
+        return false;
+    }
     matches!(
         (text_section_bytes(&head), text_section_bytes(&base)),
         (Some(a), Some(b)) if a == b

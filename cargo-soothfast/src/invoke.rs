@@ -42,9 +42,17 @@ impl CommonArgs {
     }
 }
 
-fn bench_command(common: &CommonArgs, extra: &[&str], dir: Option<&Path>) -> Command {
+fn bench_command(
+    common: &CommonArgs,
+    extra: &[&str],
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+) -> Command {
     let mut cmd = Command::new("cargo");
     cmd.arg("bench");
+    if let Some(td) = target_dir {
+        cmd.env("CARGO_TARGET_DIR", td);
+    }
     if let Some(p) = &common.pkg {
         cmd.args(["-p", p]);
     }
@@ -77,10 +85,21 @@ pub fn run_bench_in(
     extra: &[&str],
     dir: Option<&Path>,
 ) -> io::Result<Vec<Value>> {
+    run_bench_dir(common, extra, dir, None)
+}
+
+/// `run_bench_in` with an explicit CARGO_TARGET_DIR for the child build —
+/// the gate points merge-base worktree builds at `worktree_target_dir()`.
+pub fn run_bench_dir(
+    common: &CommonArgs,
+    extra: &[&str],
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+) -> io::Result<Vec<Value>> {
     let mut args = vec!["--json"];
     args.extend_from_slice(extra);
     let target = common.target.as_deref().unwrap_or("soothfast");
-    let mut cmd = bench_command(common, &args, dir);
+    let mut cmd = bench_command(common, &args, dir, target_dir);
     cmd.stdout(Stdio::piped());
     let out = cmd.output()?;
     if !out.status.success() {
@@ -109,7 +128,7 @@ pub fn run_bench_in(
 
 /// Run the bench binary in raw (non-JSON) mode and capture stdout as text.
 pub fn run_bench_raw(common: &CommonArgs, extra: &[&str]) -> io::Result<String> {
-    let mut cmd = bench_command(common, extra, None);
+    let mut cmd = bench_command(common, extra, None, None);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     let out = cmd.output()?;
@@ -139,10 +158,17 @@ pub fn run_bench(common: &CommonArgs, extra: &[&str]) -> io::Result<Vec<Value>> 
 /// Path of the compiled bench executable, via `cargo bench --no-run`'s JSON
 /// messages. `None` on any failure: callers fall through to a normal
 /// measured run, which surfaces the real error.
-pub fn bench_executable(common: &CommonArgs, dir: Option<&Path>) -> Option<PathBuf> {
+pub fn bench_executable(
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+) -> Option<PathBuf> {
     let target = common.target.as_deref().unwrap_or("soothfast");
     let mut cmd = Command::new("cargo");
     cmd.args(["bench", "--no-run", "--message-format=json"]);
+    if let Some(td) = target_dir {
+        cmd.env("CARGO_TARGET_DIR", td);
+    }
     if let Some(p) = &common.pkg {
         cmd.args(["-p", p]);
     }
@@ -889,6 +915,16 @@ pub fn target_dir(dir: Option<&Path>) -> io::Result<PathBuf> {
         .as_str()
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::other("cargo metadata: no target_directory"))
+}
+
+/// Persistent target dir for merge-base worktree bench builds: a sibling
+/// inside the parent's target dir, surviving the per-run worktree churn so
+/// dependencies compile once per machine instead of once per gate. Sharing
+/// the parent target dir itself is unsound: a workspace member hashes to
+/// the same `-C metadata` from either path, so head and base leaf artifacts
+/// would collide (and mtime races silently serve the wrong side's binary).
+pub fn worktree_target_dir() -> io::Result<PathBuf> {
+    Ok(target_dir(None)?.join("soothfast-worktree"))
 }
 
 /// Run a git command in the workspace root, returning trimmed stdout.
