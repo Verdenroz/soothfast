@@ -15,6 +15,12 @@ categories.workspace = true
 name = "cargo-soothfast"
 path = "src/main.rs"
 
+# Prebuilt asset uploaded by .github/workflows/release.yml; cargo-binstall
+# falls back to a source build for targets without one.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.tgz"
+pkg-fmt = "tgz"
+
 [dependencies]
 soothfast-docs.workspace = true
 soothfast-report.workspace = true
