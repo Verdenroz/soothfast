@@ -466,6 +466,9 @@ fn combine_rounds(first: Run, second: Result<Run, String>) -> Run {
 fn combine_min(mut first: Run, second: Run) -> Run {
     for (id, m2) in second.items {
         let m = first.items.entry(id).or_default();
+        if let (Some(a), Some(b)) = (m.median_ns, m2.median_ns) {
+            m.wall_rounds = vec![a, b];
+        }
         m.median_ns = min_opt_f(m.median_ns, m2.median_ns);
         m.p99_ns = min_opt_f(m.p99_ns, m2.p99_ns);
         m.instructions = min_opt_u(m.instructions, m2.instructions);
@@ -491,11 +494,31 @@ fn min_opt_u(a: Option<u64>, b: Option<u64>) -> Option<u64> {
 }
 
 /// Why a walltime overrun is a SOFT warning instead of a hard fail, if it is.
-fn walltime_downgrade(old: &Value, cur: &ItemMetrics) -> Option<&'static str> {
+fn walltime_downgrade(old: &Value, cur: &ItemMetrics, limit: f64) -> Option<&'static str> {
     if counters_flat_on_unchanged_code(old, cur) {
         return Some("counters flat on unchanged code — environment, not regression");
     }
+    if round_pairings_disagree(old, cur, limit) {
+        return Some("not reproduced in both interleaved round pairings");
+    }
     None
+}
+
+/// A regression that exists only in the min-of-rounds comparison. One lucky
+/// round on either side can manufacture that; a real slowdown shows up in
+/// every pairing. Sides without two rounds keep the single comparison.
+fn round_pairings_disagree(old: &Value, cur: &ItemMetrics, limit: f64) -> bool {
+    let old_rounds: Vec<f64> = old["walltime"]["rounds"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_f64)
+        .collect();
+    if old_rounds.len() != 2 || cur.wall_rounds.len() != 2 {
+        return false;
+    }
+    let over = |o: f64, n: f64| o > 0.0 && (n - o) / o * 100.0 > limit;
+    !(over(old_rounds[0], cur.wall_rounds[0]) && over(old_rounds[1], cur.wall_rounds[1]))
 }
 
 /// Whether the deterministic evidence contradicts a walltime regression:
@@ -634,7 +657,7 @@ fn compare(
             cur.median_ns,
             wall_limit,
             true,
-            walltime_downgrade(old, cur),
+            walltime_downgrade(old, cur, wall_limit),
         );
         rel(
             "build_ms",
@@ -840,6 +863,69 @@ mod tests {
             gate_failures(&incident_reference("fp-old"), &run_with(incident_head()));
         assert_eq!(failures, 1);
         assert_eq!(failing, vec!["pkg::bt_base_to_htf_index"]);
+    }
+
+    fn rounds_reference(rounds: [f64; 2]) -> Value {
+        reference(json!({
+            "fingerprint": "fp-old",
+            "walltime": { "median_ns": 22995.0, "mad_ns": 46.0, "p99_ns": 23500.0,
+                          "rounds": rounds },
+            "perfcnt": { "instructions": 337491 },
+        }))
+    }
+
+    fn rounds_head(rounds: [f64; 2]) -> ItemMetrics {
+        ItemMetrics {
+            fingerprint: "fp-new".into(),
+            median_ns: Some(rounds[0].min(rounds[1])),
+            instructions: Some(337491),
+            wall_rounds: rounds.to_vec(),
+            ..ItemMetrics::default()
+        }
+    }
+
+    #[test]
+    fn a_single_lucky_base_round_downgrades_a_walltime_fail() {
+        // Base round 1 is anomalously fast; pairing 2 shows no regression.
+        let (failures, failing) = gate_failures(
+            &rounds_reference([22995.0, 27200.0]),
+            &run_with(rounds_head([27327.0, 27350.0])),
+        );
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty());
+    }
+
+    #[test]
+    fn a_regression_in_both_pairings_still_fails() {
+        let (failures, _) = gate_failures(
+            &rounds_reference([22995.0, 23100.0]),
+            &run_with(rounds_head([27327.0, 27350.0])),
+        );
+        assert_eq!(failures, 1);
+    }
+
+    #[test]
+    fn a_side_with_one_round_keeps_the_single_comparison() {
+        let mut head = rounds_head([27327.0, 27350.0]);
+        head.wall_rounds.clear();
+        let (failures, _) = gate_failures(&rounds_reference([22995.0, 27200.0]), &run_with(head));
+        assert_eq!(failures, 1);
+    }
+
+    #[test]
+    fn combine_min_records_both_rounds() {
+        let m = |ns: f64| ItemMetrics {
+            median_ns: Some(ns),
+            ..ItemMetrics::default()
+        };
+        let mut a = Run::default();
+        a.items.insert("pkg::x".into(), m(100.0));
+        let mut b = Run::default();
+        b.items.insert("pkg::x".into(), m(90.0));
+        let merged = combine_min(a, b);
+        let item = &merged.items["pkg::x"];
+        assert_eq!(item.wall_rounds, vec![100.0, 90.0]);
+        assert_eq!(item.median_ns, Some(90.0));
     }
 
     #[test]
