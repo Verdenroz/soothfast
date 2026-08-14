@@ -4,7 +4,12 @@
 
 ### API surface
 
-No public API changes.
+```
+# soothfast-measure
+ADDED    soothfast_measure::callgrind::measure_all
+CHANGED  soothfast_measure::main (body)
+CHANGED  soothfast_measure::runner::main (body)
+```
 
 ### Performance
 
