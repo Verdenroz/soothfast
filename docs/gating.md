@@ -17,10 +17,13 @@ $ cargo soothfast gate -p mylib --backend buildcost --against-ref origin/master 
 ```
 
 `--against-ref` never reads a file. It measures HEAD and the merge-base of
-`REF` in a temporary git worktree, twice each, interleaved as
+`REF` in a temporary git worktree, in rounds interleaved as
 head/base/head/base. That "tango" order spreads out thermal and scheduler
-drift. It then takes the per-metric minimum across each side's two rounds
-before comparing. This is what `make gate` runs against `origin/master` for
+drift. Deterministic gating counters (perf instructions, callgrind Ir) do
+not drift, so they are collected once per side in the first round; the
+second round re-measures only the timing-sensitive backends, and the
+per-metric minimum across a side's rounds is its comparison value. This is
+what `make gate` runs against `origin/master` for
 every crate in `BENCH_CRATES`, and it is why merge-base gating has no
 baseline file that can go stale in version control.
 

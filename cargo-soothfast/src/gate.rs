@@ -252,15 +252,19 @@ fn write_gate_status(failures: u32) {
 /// Measure the merge-base with HEAD in a temp worktree, interleaving rounds
 /// (head, base, head, base) tango-style so slow environmental drift cancels;
 /// per-metric minima across each side's rounds form the comparison values.
+/// Interleaving is a timing concern: the deterministic gating counters
+/// (perfcnt/callgrind) don't drift, so the second round of each side skips
+/// them and re-measures only the timing-sensitive backends.
 /// `Ok(None)` when the merge-base has no such bench target: the crate is
 /// newly measured, so there is nothing on that side to compare against.
 fn measure_ref_interleaved(
     common: &CommonArgs,
     refname: &str,
 ) -> Result<Option<(Value, Run)>, String> {
+    const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
     println!("gate: measuring merge-base of {refname} in worktree (interleaved rounds)");
-    let measure = |dir: Option<&std::path::Path>| -> Result<Run, String> {
-        let recs = invoke::run_bench_in(common, &[], dir).map_err(|e| e.to_string())?;
+    let measure = |dir: Option<&std::path::Path>, extra: &[&str]| -> Result<Run, String> {
+        let recs = invoke::run_bench_in(common, extra, dir).map_err(|e| e.to_string())?;
         Ok(invoke::collect(&recs))
     };
     let pkg = common.pkg.clone();
@@ -278,18 +282,18 @@ fn measure_ref_interleaved(
         // otherwise be reported as a regression in the measured project.
         invoke::sync_harness_versions(wt)?;
         Ok(Some((
-            measure(None),
-            measure(Some(wt)),
-            measure(None),
-            measure(Some(wt)),
+            measure(None, &[]),
+            measure(Some(wt), &[]),
+            measure(None, TIMING_ONLY),
+            measure(Some(wt), TIMING_ONLY),
         )))
     })?
     else {
         return Ok(None);
     };
 
-    let base = combine_min(base1?, base2?);
-    let head = combine_min(head1?, head2?);
+    let base = combine_rounds(base1?, base2);
+    let head = combine_rounds(head1?, head2);
 
     let mut doc = serde_json::json!({ "version": 1 });
     if let Some(n) = base.noise_pct {
@@ -297,6 +301,19 @@ fn measure_ref_interleaved(
     }
     doc["items"] = invoke::run_to_items_value(&base);
     Ok(Some((doc, head)))
+}
+
+/// Fold a side's timing-only second round into its full first round. A
+/// failed second round costs drift cancellation, not the gate: a merge-base
+/// harness that predates `--skip-gating-counters` rejects the flag.
+fn combine_rounds(first: Run, second: Result<Run, String>) -> Run {
+    match second {
+        Ok(r) => combine_min(first, r),
+        Err(e) => {
+            eprintln!("WARN: second timing round failed ({e}); using one round for this side");
+            first
+        }
+    }
 }
 
 /// Per-metric minima of two rounds of the same side.
@@ -558,7 +575,8 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::walltime_limit;
+    use super::{combine_min, combine_rounds, walltime_limit};
+    use crate::invoke::{ItemMetrics, Run};
 
     #[test]
     fn quiet_runners_keep_the_fixed_threshold() {
@@ -572,5 +590,57 @@ mod tests {
         assert_eq!(walltime_limit(4.75), 14.25);
         // Clears the A/A control's worst observed false positive (+11.8%).
         assert!(walltime_limit(4.75) > 11.8);
+    }
+
+    #[test]
+    fn combine_min_keeps_counters_a_timing_only_round_lacks() {
+        let mut full = Run {
+            noise_pct: Some(1.5),
+            gating_backend: Some("callgrind".into()),
+            ..Run::default()
+        };
+        full.items.insert(
+            "pkg::item".into(),
+            ItemMetrics {
+                ir: Some(100),
+                instructions: Some(200),
+                median_ns: Some(50.0),
+                allocs: Some(3),
+                ..ItemMetrics::default()
+            },
+        );
+        let mut timing_only = Run::default();
+        timing_only.items.insert(
+            "pkg::item".into(),
+            ItemMetrics {
+                median_ns: Some(40.0),
+                allocs: Some(3),
+                ..ItemMetrics::default()
+            },
+        );
+
+        let merged = combine_min(full, timing_only);
+        let m = &merged.items["pkg::item"];
+        assert_eq!(m.ir, Some(100));
+        assert_eq!(m.instructions, Some(200));
+        assert_eq!(m.median_ns, Some(40.0));
+        assert_eq!(m.allocs, Some(3));
+        // Calibration and env records ride on round 1, the full one.
+        assert_eq!(merged.noise_pct, Some(1.5));
+        assert_eq!(merged.gating_backend.as_deref(), Some("callgrind"));
+    }
+
+    #[test]
+    fn a_failed_second_round_degrades_to_the_full_first_round() {
+        let mut full = Run::default();
+        full.items.insert(
+            "pkg::item".into(),
+            ItemMetrics {
+                ir: Some(100),
+                ..ItemMetrics::default()
+            },
+        );
+        let merged = combine_rounds(full, Err("unknown runner arg".into()));
+        assert_eq!(merged.items["pkg::item"].ir, Some(100));
     }
 }
