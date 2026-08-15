@@ -23,6 +23,7 @@ pub mod dialect;
 pub mod graphql;
 pub mod mcp;
 pub mod openapi;
+pub mod probe;
 pub mod proto;
 pub mod providers;
 pub mod reconcile;

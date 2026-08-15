@@ -67,13 +67,15 @@ pub fn run(args: &[String]) -> i32 {
         Some("check") => run_check(&args[1..]),
         Some("check-proto") => run_check_proto(&args[1..]),
         Some("html") => crate::spec_html::run(&args[1..]),
+        Some("probe") => crate::spec_probe::run(&args[1..]),
         _ => {
             eprintln!(
                 "soothfast: usage: cargo soothfast spec gen -p PKG [--check]\n\
                  cargo soothfast spec gate -p PKG [--base REF] [--from-committed]\n\
                  cargo soothfast spec check -p PKG\n\
                  cargo soothfast spec check-proto -p PKG --proto FILE --message NAME --source FILE --struct NAME\n\
-                 cargo soothfast spec html -p PKG [--features F] [--target NAME] [--out DIR]"
+                 cargo soothfast spec html -p PKG [--features F] [--target NAME] [--out DIR]\n\
+                 cargo soothfast spec probe -p PKG [--accept] [--allow-gone] [--base-url URL] [--filter SUBSTR]"
             );
             2
         }
