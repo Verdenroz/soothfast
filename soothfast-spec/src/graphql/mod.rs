@@ -28,7 +28,7 @@ use serde_json::{Value, json};
 
 use crate::dialect::{Document, Info, Operation, unknown_method};
 
-pub use sdl::to_sdl;
+pub use sdl::{from_sdl, to_sdl};
 
 /// The three root operation types, in the order SDL conventionally declares
 /// them.

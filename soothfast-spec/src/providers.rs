@@ -4,55 +4,18 @@
 //! an AST — dependency policy).
 
 use serde_json::Value;
-use yaml_rust2::{Yaml, YamlLoader};
 
-use crate::{DeclaredOp, SpecKind};
+use crate::{DeclaredOp, SpecKind, serialize};
 
 /// Parse one spec document into the operations it declares, dispatching on
 /// dialect: OpenAPI, AsyncAPI, and MCP tool schemas are YAML-or-JSON;
 /// GraphQL is SDL text.
 pub fn parse(kind: SpecKind, text: &str) -> Result<Vec<DeclaredOp>, String> {
     match kind {
-        SpecKind::OpenApi => openapi(&load_value(text)?),
-        SpecKind::AsyncApi => asyncapi(&load_value(text)?),
-        SpecKind::McpTools => mcp_tools(&load_value(text)?),
+        SpecKind::OpenApi => openapi(&serialize::from_text(text)?),
+        SpecKind::AsyncApi => asyncapi(&serialize::from_text(text)?),
+        SpecKind::McpTools => mcp_tools(&serialize::from_text(text)?),
         SpecKind::GraphQl => graphql(text),
-    }
-}
-
-/// Parse YAML-or-JSON into a JSON value (JSON is valid YAML, but try JSON
-/// first for exactness).
-fn load_value(text: &str) -> Result<Value, String> {
-    if let Ok(v) = serde_json::from_str::<Value>(text) {
-        return Ok(v);
-    }
-    let docs = YamlLoader::load_from_str(text).map_err(|e| format!("YAML parse error: {e}"))?;
-    docs.into_iter()
-        .next()
-        .map(|y| yaml_to_json(&y))
-        .ok_or_else(|| "empty spec document".to_string())
-}
-
-fn yaml_to_json(y: &Yaml) -> Value {
-    match y {
-        Yaml::Real(s) => s
-            .parse::<f64>()
-            .map(|f| serde_json::json!(f))
-            .unwrap_or(Value::Null),
-        Yaml::Integer(i) => serde_json::json!(i),
-        Yaml::String(s) => Value::String(s.clone()),
-        Yaml::Boolean(b) => Value::Bool(*b),
-        Yaml::Array(a) => Value::Array(a.iter().map(yaml_to_json).collect()),
-        Yaml::Hash(h) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in h {
-                if let Yaml::String(key) = k {
-                    map.insert(key.clone(), yaml_to_json(v));
-                }
-            }
-            Value::Object(map)
-        }
-        _ => Value::Null,
     }
 }
 

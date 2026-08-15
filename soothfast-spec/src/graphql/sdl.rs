@@ -48,6 +48,178 @@ pub fn to_sdl(doc: &Value) -> String {
     format!("{}\n", blocks.join("\n\n"))
 }
 
+/// Parse SDL previously rendered by [`to_sdl`] back into a type graph.
+///
+/// A deliberate inverse of `to_sdl`'s deterministic output, not a general
+/// SDL parser: the spec gate reads committed generated schemas, and the
+/// freshness check guarantees those are `to_sdl` output.
+pub fn from_sdl(text: &str) -> Result<Value, String> {
+    let mut info = serde_json::Map::new();
+    let mut types = serde_json::Map::new();
+    let mut roots = serde_json::Map::new();
+    let mut description: Option<String> = None;
+    let mut lines = text.lines();
+
+    while let Some(line) = lines.next() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(header) = line.strip_prefix("# ") {
+            let (title, version) = match header.rsplit_once(' ') {
+                Some((t, v)) => (t, v),
+                None => (header, ""),
+            };
+            info.insert("title".into(), title.into());
+            info.insert("version".into(), version.into());
+        } else if line.starts_with(r#"""""#) {
+            description = Some(read_description(line, &mut lines, "")?);
+        } else if let Some(name) = line.strip_prefix("scalar ") {
+            types.insert(
+                name.into(),
+                decl_value("scalar", description.take(), None, None),
+            );
+        } else if let Some(rest) = line.strip_prefix("enum ") {
+            let name = block_name(rest, line)?;
+            let mut values = Vec::new();
+            for body in lines.by_ref() {
+                let body = body.trim_end();
+                if body == "}" {
+                    break;
+                }
+                values.push(Value::String(body.trim_start().into()));
+            }
+            let values = Value::Array(values);
+            types.insert(
+                name.into(),
+                decl_value("enum", description.take(), Some(values), None),
+            );
+        } else if let Some(rest) = line.strip_prefix("input ") {
+            let name = block_name(rest, line)?;
+            let fields = read_fields(&mut lines)?;
+            types.insert(
+                name.into(),
+                decl_value("input", description.take(), None, Some(fields)),
+            );
+        } else if let Some(rest) = line.strip_prefix("type ") {
+            let name = block_name(rest, line)?;
+            let fields = read_fields(&mut lines)?;
+            if matches!(name, "Query" | "Mutation" | "Subscription") {
+                roots.insert(name.into(), Value::Object(fields));
+            } else {
+                types.insert(
+                    name.into(),
+                    decl_value("type", description.take(), None, Some(fields)),
+                );
+            }
+        } else {
+            return Err(format!("unrecognized SDL line {line:?}"));
+        }
+    }
+
+    let mut doc = serde_json::Map::new();
+    if !info.is_empty() {
+        doc.insert("info".into(), Value::Object(info));
+    }
+    doc.insert("types".into(), Value::Object(types));
+    doc.insert("roots".into(), Value::Object(roots));
+    Ok(Value::Object(doc))
+}
+
+fn block_name<'a>(rest: &'a str, line: &str) -> Result<&'a str, String> {
+    rest.strip_suffix(" {")
+        .ok_or_else(|| format!("malformed SDL declaration {line:?}"))
+}
+
+fn decl_value(
+    kind: &str,
+    description: Option<String>,
+    values: Option<Value>,
+    fields: Option<serde_json::Map<String, Value>>,
+) -> Value {
+    let mut decl = serde_json::Map::new();
+    decl.insert("kind".into(), kind.into());
+    if let Some(d) = description {
+        decl.insert("description".into(), d.into());
+    }
+    if let Some(v) = values {
+        decl.insert("values".into(), v);
+    }
+    if let Some(f) = fields {
+        decl.insert("fields".into(), Value::Object(f));
+    }
+    Value::Object(decl)
+}
+
+fn read_fields(lines: &mut std::str::Lines) -> Result<serde_json::Map<String, Value>, String> {
+    let mut fields = serde_json::Map::new();
+    let mut description: Option<String> = None;
+    while let Some(line) = lines.next() {
+        let line = line.trim_end();
+        if line == "}" {
+            return Ok(fields);
+        }
+        let body = line
+            .strip_prefix("  ")
+            .ok_or_else(|| format!("malformed SDL field line {line:?}"))?;
+        if body.starts_with(r#"""""#) {
+            description = Some(read_description(body, lines, "  ")?);
+            continue;
+        }
+        // rsplit: argument lists contain ": " but GraphQL types cannot
+        let (name_args, ty) = body
+            .rsplit_once(": ")
+            .ok_or_else(|| format!("malformed SDL field line {line:?}"))?;
+        let mut field = serde_json::Map::new();
+        if let Some(d) = description.take() {
+            field.insert("description".into(), d.into());
+        }
+        field.insert("type".into(), ty.into());
+        let name = match name_args.split_once('(') {
+            Some((name, rest)) => {
+                let inner = rest
+                    .strip_suffix(')')
+                    .ok_or_else(|| format!("malformed SDL arguments {line:?}"))?;
+                let mut args = serde_json::Map::new();
+                for arg in inner.split(", ") {
+                    let (n, t) = arg
+                        .split_once(": ")
+                        .ok_or_else(|| format!("malformed SDL argument {arg:?}"))?;
+                    args.insert(n.into(), serde_json::json!({ "type": t }));
+                }
+                field.insert("args".into(), Value::Object(args));
+                name
+            }
+            None => name_args,
+        };
+        fields.insert(name.into(), Value::Object(field));
+    }
+    Err("unterminated SDL block".into())
+}
+
+fn read_description(
+    first: &str,
+    lines: &mut std::str::Lines,
+    indent: &str,
+) -> Result<String, String> {
+    let delim = r#"""""#;
+    let inline = first.strip_prefix(delim).unwrap_or(first);
+    if let Some(body) = inline.strip_suffix(delim)
+        && !inline.is_empty()
+    {
+        return Ok(body.replace(r#"\""""#, delim));
+    }
+    let mut body = Vec::new();
+    for line in lines {
+        let line = line.trim_end();
+        if line == format!("{indent}{delim}") {
+            return Ok(body.join("\n").replace(r#"\""""#, delim));
+        }
+        body.push(line.strip_prefix(indent).unwrap_or(line).to_string());
+    }
+    Err("unterminated SDL description".into())
+}
+
 fn declaration(name: &str, decl: &Value) -> String {
     let mut lines = Vec::new();
     lines.extend(description_lines(decl, ""));
@@ -226,5 +398,56 @@ mod tests {
     #[test]
     fn an_empty_graph_renders_to_nothing() {
         assert_eq!(to_sdl(&json!({ "types": {}, "roots": {} })), "");
+    }
+
+    #[test]
+    fn from_sdl_inverts_to_sdl() {
+        let rendered = to_sdl(&doc());
+        let parsed = from_sdl(&rendered).expect("parses");
+        assert_eq!(to_sdl(&parsed), rendered);
+        assert_eq!(
+            parsed["types"]["Status"]["values"],
+            json!(["ACTIVE", "ARCHIVED"])
+        );
+        assert_eq!(
+            parsed["roots"]["Query"]["item"]["args"]["id"]["type"],
+            "Int!"
+        );
+        assert_eq!(
+            parsed["types"]["Item"]["fields"]["tags"]["type"],
+            "[String]"
+        );
+    }
+
+    #[test]
+    fn from_sdl_round_trips_descriptions_and_escapes() {
+        let d = json!({
+            "info": {},
+            "types": { "X": { "kind": "type", "description": "One.\nTwo.",
+                              "fields": { "a": { "type": "Int",
+                                                 "description": "a \"\"\" b" } } } },
+            "roots": {},
+        });
+        let rendered = to_sdl(&d);
+        let parsed = from_sdl(&rendered).expect("parses");
+        assert_eq!(to_sdl(&parsed), rendered);
+        assert_eq!(parsed["types"]["X"]["description"], "One.\nTwo.");
+        assert_eq!(
+            parsed["types"]["X"]["fields"]["a"]["description"],
+            "a \"\"\" b"
+        );
+    }
+
+    #[test]
+    fn from_sdl_rejects_sdl_this_module_did_not_render() {
+        assert!(from_sdl("interface Node { id: ID! }").is_err());
+    }
+
+    #[test]
+    fn from_sdl_of_empty_text_is_the_empty_graph() {
+        assert_eq!(
+            from_sdl("").expect("parses"),
+            json!({ "types": {}, "roots": {} })
+        );
     }
 }
