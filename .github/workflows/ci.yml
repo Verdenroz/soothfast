@@ -112,6 +112,23 @@ jobs:
     secrets:
       CHANGELOG_APP_PRIVATE_KEY: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
 
+  # One stable context for branch protection; the per-crate gate legs
+  # change names whenever the crate list does.
+  ci-ok:
+    name: CI ok
+    if: always() && github.event_name == 'pull_request'
+    needs: [check, msrv, docs, gate]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Verify needed jobs succeeded or were skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: jq -e 'to_entries | all(.value.result == "success" or .value.result == "skipped")' <<<"$RESULTS"
+
   # Regenerate and publish the site only on merge to master: fresh
   # measurements, fresh pages, gh-deploy.
   deploy-docs:
