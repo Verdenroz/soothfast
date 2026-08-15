@@ -4,7 +4,10 @@
 
 ### API surface
 
-No public API changes.
+```
+# soothfast-site
+CHANGED  soothfast_site::build::build (body)
+```
 
 ### Performance
 
