@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.10)
+## 0.1.11 - 2026-08-15
+
+<!-- soothfast:notes -->
+`spec gate --from-committed` reads the committed spec files at the
+merge-base instead of rebuilding it in a worktree, which cuts the base
+side of the gate to seconds for repos that already require the freshness
+check. Every parsed file must re-render byte-identically, so a stale or
+hand-edited base fails loudly rather than diffing wrong. The walltime
+gate also now requires both round pairs to fail before reporting a
+regression.
 
 ### API surface
 
