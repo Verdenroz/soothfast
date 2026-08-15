@@ -5,6 +5,7 @@
 //! would produce an endless stream of no-op commits.
 
 use serde_json::Value;
+use yaml_rust2::{Yaml, YamlLoader};
 
 /// Keys emitted before any others, so a generated document reads in the order
 /// a human expects rather than alphabetically.
@@ -218,6 +219,42 @@ fn to_yaml_value(value: &Value, data_keyed: bool) -> yaml_rust2::Yaml {
             }
             Yaml::Hash(hash)
         }
+    }
+}
+
+/// Parse YAML-or-JSON text into a JSON value (JSON is valid YAML, but JSON
+/// is tried first for exactness).
+pub fn from_text(text: &str) -> Result<Value, String> {
+    if let Ok(v) = serde_json::from_str::<Value>(text) {
+        return Ok(v);
+    }
+    let docs = YamlLoader::load_from_str(text).map_err(|e| format!("YAML parse error: {e}"))?;
+    docs.into_iter()
+        .next()
+        .map(|y| yaml_to_json(&y))
+        .ok_or_else(|| "empty spec document".to_string())
+}
+
+fn yaml_to_json(y: &Yaml) -> Value {
+    match y {
+        Yaml::Real(s) => s
+            .parse::<f64>()
+            .map(|f| serde_json::json!(f))
+            .unwrap_or(Value::Null),
+        Yaml::Integer(i) => serde_json::json!(i),
+        Yaml::String(s) => Value::String(s.clone()),
+        Yaml::Boolean(b) => Value::Bool(*b),
+        Yaml::Array(a) => Value::Array(a.iter().map(yaml_to_json).collect()),
+        Yaml::Hash(h) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in h {
+                if let Yaml::String(key) = k {
+                    map.insert(key.clone(), yaml_to_json(v));
+                }
+            }
+            Value::Object(map)
+        }
+        _ => Value::Null,
     }
 }
 

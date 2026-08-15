@@ -70,7 +70,7 @@ pub fn run(args: &[String]) -> i32 {
         _ => {
             eprintln!(
                 "soothfast: usage: cargo soothfast spec gen -p PKG [--check]\n\
-                 cargo soothfast spec gate -p PKG [--base REF]\n\
+                 cargo soothfast spec gate -p PKG [--base REF] [--from-committed]\n\
                  cargo soothfast spec check -p PKG\n\
                  cargo soothfast spec check-proto -p PKG --proto FILE --message NAME --source FILE --struct NAME\n\
                  cargo soothfast spec html -p PKG [--features F] [--target NAME] [--out DIR]"

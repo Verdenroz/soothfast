@@ -360,6 +360,13 @@ exits non-zero on a breaking change unless `--allow-breaking` says the break
 is deliberate.
 <!-- /soothfast:bind -->
 
+`--from-committed` skips the worktree rebuild and reads the committed spec
+files at the merge-base instead. Every parsed file must re-render
+byte-identically or the gate fails, so a stale or hand-edited base can never
+be silently diffed. It is the right default for CI that already requires
+`spec gen --check` on every merge, which pins the committed file to what the
+merge-base would generate.
+
 Every dialect gates on that same asymmetry, read off whichever key states
 the direction. For **AsyncAPI** it is the operation's own `action`: a
 message you `send` is one a consumer reads, so dropping a guaranteed field

@@ -5,6 +5,11 @@
 //! remains worth gating is compatibility: the spec is rebuilt from the
 //! merge-base in a temporary worktree and compared against this branch's, so
 //! there is no committed baseline to go stale.
+//!
+//! `--from-committed` skips the worktree rebuild and reads the committed
+//! spec files at the merge-base instead. Every parsed file must re-render
+//! byte-identically, so the mode is self-checking; it is the right default
+//! for CI that already requires the freshness check on every merge.
 
 use soothfast_spec::compat::Severity;
 
@@ -16,6 +21,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut common = CommonArgs::default();
     let mut base = "origin/master".to_string();
     let mut allow_breaking = false;
+    let mut from_committed = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -28,6 +34,7 @@ pub fn run(args: &[String]) -> i32 {
             },
             // Escape hatch for a deliberate, coordinated break.
             "--allow-breaking" => allow_breaking = true,
+            "--from-committed" => from_committed = true,
             _ => {
                 if !common.try_parse(a, &mut it) {
                     eprintln!("soothfast: unknown spec gate arg {a:?}");
@@ -40,7 +47,7 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("soothfast: spec gate requires -p PKG");
         return 2;
     };
-    match gate(&pkg, &common, &base, allow_breaking) {
+    match gate(&pkg, &common, &base, allow_breaking, from_committed) {
         Ok(code) => code,
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -49,7 +56,13 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-fn gate(pkg: &str, common: &CommonArgs, base: &str, allow_breaking: bool) -> Result<i32, String> {
+fn gate(
+    pkg: &str,
+    common: &CommonArgs,
+    base: &str,
+    allow_breaking: bool,
+    from_committed: bool,
+) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let cfg = spec_config::load(&meta.dir)?;
 
@@ -59,9 +72,14 @@ fn gate(pkg: &str, common: &CommonArgs, base: &str, allow_breaking: bool) -> Res
         return Ok(0);
     }
 
-    let base_built = invoke::with_merge_base_worktree(base, |wt| {
-        spec_gen::build(pkg, common, Some(wt), &cfg, &meta)
-    })?;
+    let base_docs = if from_committed {
+        committed_base_docs(&head, &cfg, &meta, base)?
+    } else {
+        invoke::with_merge_base_worktree(base, |wt| {
+            spec_gen::build(pkg, common, Some(wt), &cfg, &meta)
+        })?
+        .docs
+    };
 
     let mut breaking = 0u32;
     let mut additive = 0u32;
@@ -71,7 +89,7 @@ fn gate(pkg: &str, common: &CommonArgs, base: &str, allow_breaking: bool) -> Res
         // A spec file absent from the base is entirely new, so every
         // operation in it is additive by construction.
         let empty = kind.empty();
-        let old_doc = base_built.docs.get(spec_file).unwrap_or(&empty);
+        let old_doc = base_docs.get(spec_file).unwrap_or(&empty);
         let changes = kind.diff(old_doc, new_doc);
 
         if changes.is_empty() {
@@ -109,4 +127,31 @@ fn gate(pkg: &str, common: &CommonArgs, base: &str, allow_breaking: bool) -> Res
         println!("spec gate: breaking changes allowed by --allow-breaking");
     }
     Ok(0)
+}
+
+/// The base documents, read from the committed spec files at the merge-base
+/// instead of rebuilding it. Sound whenever merges require the freshness
+/// check, which guarantees a committed generated spec matches its code.
+/// Files absent at the base diff as new, the same as the worktree path.
+fn committed_base_docs(
+    head: &spec_gen::Built,
+    cfg: &spec_config::SpecConfig,
+    meta: &invoke::PkgMeta,
+    base: &str,
+) -> Result<std::collections::BTreeMap<String, serde_json::Value>, String> {
+    let sha = invoke::git(&["merge-base", "HEAD", base]).map_err(|e| e.to_string())?;
+    println!(
+        "spec gate: base from committed specs at {}",
+        &sha[..sha.len().min(12)]
+    );
+    let mut docs = std::collections::BTreeMap::new();
+    for spec_file in head.docs.keys() {
+        let rev = format!("{sha}:./{spec_file}");
+        let Ok(text) = invoke::git_in(&meta.dir, &["show", &rev]) else {
+            continue;
+        };
+        let value = cfg.dialect_of(spec_file).parse(spec_file, &text)?;
+        docs.insert(spec_file.clone(), value);
+    }
+    Ok(docs)
 }

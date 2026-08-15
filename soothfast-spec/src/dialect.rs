@@ -138,6 +138,25 @@ impl SpecKind {
         }
     }
 
+    /// Parse a committed spec file back into its generated document.
+    ///
+    /// Round-trips the result through [`SpecKind::render`] and fails on any
+    /// drift, so a stale or hand-edited file can never be silently diffed
+    /// as the base.
+    pub fn parse(self, path: &str, text: &str) -> Result<Value, String> {
+        let value = match self {
+            SpecKind::GraphQl => crate::graphql::from_sdl(text)?,
+            _ => serialize::from_text(text)?,
+        };
+        if self.render(path, &value).trim_end() != text.trim_end() {
+            return Err(format!(
+                "{path}: committed spec does not re-render byte-identically — \
+                 regenerate it, or run the gate without --from-committed"
+            ));
+        }
+        Ok(value)
+    }
+
     /// Compare two revisions of a document for consumer compatibility.
     pub fn diff(self, old: &Value, new: &Value) -> Vec<Change> {
         match self {
@@ -241,6 +260,45 @@ mod tests {
     fn a_directory_name_does_not_decide_the_dialect() {
         // `graphql/` as a directory is common; the file is what counts.
         assert_eq!(SpecKind::for_path("graphql/spec.yaml"), SpecKind::OpenApi);
+    }
+
+    #[test]
+    fn parse_round_trips_a_rendered_document() {
+        let doc = serde_json::json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Items", "version": "1.0" },
+            "paths": { "/items": { "get": {
+                "operationId": "listItems",
+                "responses": { "200": { "description": "OK" } },
+            } } },
+        });
+        for path in ["openapi.yaml", "openapi.json"] {
+            let rendered = SpecKind::OpenApi.render(path, &doc);
+            let parsed = SpecKind::OpenApi.parse(path, &rendered).expect("parses");
+            assert_eq!(SpecKind::OpenApi.render(path, &parsed), rendered);
+        }
+    }
+
+    #[test]
+    fn parse_rejects_text_that_does_not_re_render_identically() {
+        // Valid YAML, but hand-ordered keys the renderer would sort.
+        let err = SpecKind::OpenApi
+            .parse("openapi.yaml", "zebra: 1\nopenapi: 3.1.0\n")
+            .unwrap_err();
+        assert!(err.contains("byte-identically"), "{err}");
+    }
+
+    #[test]
+    fn parse_reads_generated_sdl() {
+        let doc = serde_json::json!({
+            "types": { "JSON": { "kind": "scalar" } },
+            "roots": { "Query": { "ping": { "type": "String!" } } },
+        });
+        let rendered = SpecKind::GraphQl.render("schema.graphql", &doc);
+        let parsed = SpecKind::GraphQl
+            .parse("schema.graphql", &rendered)
+            .expect("parses");
+        assert_eq!(parsed["roots"]["Query"]["ping"]["type"], "String!");
     }
 
     #[test]
