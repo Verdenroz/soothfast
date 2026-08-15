@@ -4,7 +4,25 @@
 
 ### API surface
 
-No public API changes.
+```
+# soothfast-spec
+ADDED    soothfast_spec::probe
+ADDED    soothfast_spec::probe::assert
+ADDED    soothfast_spec::probe::assert::Assertion
+ADDED    soothfast_spec::probe::baseline
+ADDED    soothfast_spec::probe::baseline::Baseline
+ADDED    soothfast_spec::probe::baseline::Class
+ADDED    soothfast_spec::probe::baseline::Findings
+ADDED    soothfast_spec::probe::baseline::ProbeLock
+ADDED    soothfast_spec::probe::coverage
+ADDED    soothfast_spec::probe::coverage::declared_paths
+ADDED    soothfast_spec::probe::population
+ADDED    soothfast_spec::probe::population::populate
+ADDED    soothfast_spec::probe::shape
+ADDED    soothfast_spec::probe::shape::Violation
+ADDED    soothfast_spec::probe::shape::response_schema
+ADDED    soothfast_spec::probe::shape::validate
+```
 
 ### Performance
 
