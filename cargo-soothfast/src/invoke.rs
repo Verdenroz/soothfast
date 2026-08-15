@@ -216,6 +216,8 @@ pub struct ItemMetrics {
     pub bytes: Option<u64>,
     pub polls: Option<u64>,
     pub wakes: Option<u64>,
+    /// Per-round walltime medians when a side ran interleaved rounds.
+    pub wall_rounds: Vec<f64>,
     /// buildcost pseudo-items
     pub build_ms: Option<u64>,
     pub size_bytes: Option<u64>,
@@ -308,6 +310,9 @@ pub fn run_to_items_value(run: &Run) -> Value {
                 "mad_ns": m.mad_ns.unwrap_or(0.0),
                 "p99_ns": m.p99_ns.unwrap_or(0.0),
             });
+            if !m.wall_rounds.is_empty() {
+                entry["walltime"]["rounds"] = json!(m.wall_rounds);
+            }
         }
         if let Some(i) = m.instructions {
             entry["perfcnt"] = json!({
