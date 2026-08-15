@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.12)
+## 0.1.13 - 2026-08-15
+
+<!-- soothfast:notes -->
+Spec reconciliation proves every operation exists; nothing proved an
+endpoint still populates what it answers. `cargo soothfast spec probe`
+launches the package's embedded server, fires the requests declared in
+`probes.toml`, and holds each response to four checks: field population
+against a committed `probes.lock`, spec-declared coverage of fields never
+populated, structure against the response schema, and per-probe sanity
+assertions. Accepting folds observations back into the lock with the same
+no-delete-to-go-green discipline as the perf baseline.
 
 ### API surface
 
