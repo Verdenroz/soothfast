@@ -23,6 +23,7 @@ mod spec_config;
 mod spec_gate;
 mod spec_gen;
 mod spec_html;
+mod spec_probe;
 mod trend;
 mod workspace;
 

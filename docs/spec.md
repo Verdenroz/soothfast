@@ -449,3 +449,64 @@ path, handler id, reconciliation status, the handler's own rustdoc summary,
 and a measured-cost line when the handler is also a measured item,
 attributed by id or `covers=`. It is the FastAPI-style page `#[route]` exists to
 produce without hand-maintaining it.
+
+## Probing data quality
+
+Reconciliation proves every operation exists on both sides; nothing above
+notices an endpoint that answers 200 with half its fields silently null —
+which is exactly how serde key mismatches and hand-copied structs fail.
+`spec probe` closes that gap by asking the running server.
+
+```console
+$ cargo soothfast spec probe -p myserver            # gate against probes.lock
+$ cargo soothfast spec probe -p myserver --accept   # re-lock after a deliberate change
+```
+
+The package declares its probes in `probes.toml` next to the spec:
+
+```text
+[probes]
+spec = "openapi.yaml"                       # shape-validate against this spec
+command = "../target/release/myserver"      # launched per run; announces
+env = { PORT = "0", HOST = "127.0.0.1" }    # soothfast-ready on stdout
+
+[[probe]]
+name = "quote"
+path = "/v2/quote/AAPL"
+sometimes = ["preMarket*"]                  # operator-pinned intermittent fields
+assert = ["regularMarketPrice > 0", "candles#len >= 1"]
+```
+
+Each probe's response is held to four checks:
+
+- **Population** — the response is flattened to dotted paths (array indices
+  collapse to `[]`) and diffed against the committed `probes.lock`. The
+  lock records a *class* per field: `always` (populated in every accepted
+  run — going null fails the gate) or `sometimes` (observed both ways —
+  never gated). Repeated `--accept` runs demote flapping fields to
+  `sometimes` permanently, so the lock converges on the stable contract
+  instead of ratcheting on one lucky run.
+- **Coverage** — every field path the response schema declares, diffed
+  against observed population. A declared field nobody has ever populated
+  goes in the lock's per-probe `uncovered` list at accept time — committed,
+  reviewable coverage debt — and a declared field in neither the classes
+  nor that list fails the gate, so a schema field added without wiring
+  data to it is a finding, not a silence. Children of `oneOf`/`anyOf`
+  unions are conditional on the branch taken and never count as declared.
+- **Shape** — the body validated structurally against the spec's own
+  response schema. `null` passes everywhere (nullability is population's
+  job); what shape catches is a number turning into a string. A probe
+  whose spec is known to misdescribe it can set `shape = false`.
+- **Assertions** — one comparison per line, `path op literal`, with `[]`
+  descending every array element and `#len` comparing lengths. Sanity
+  bounds, not tests: `meta.regularMarketPrice > 0`.
+
+The server is launched from `command` with `env` applied and must announce
+`soothfast-ready {"base_url":...}` on stdout (`soothfast::embed::announce`);
+`--base-url` probes an already-running server instead. A locked probe the
+manifest no longer declares fails the gate until `--allow-gone` drops it —
+the same no-delete-to-go-green rule as the perf baseline, and a run with
+failing shape checks or assertions is never accepted into the lock.
+
+Live upstreams make probe runs non-deterministic, so the gate belongs in a
+scheduled workflow that files an issue on failure, not in PR CI.
