@@ -4,7 +4,14 @@
 
 ### API surface
 
-No public API changes.
+```
+# soothfast-spec
+ADDED    soothfast_spec::SpecKind::render
+ADDED    soothfast_spec::graphql::from_sdl
+ADDED    soothfast_spec::graphql::sdl::from_sdl
+ADDED    soothfast_spec::serialize::from_text
+CHANGED  soothfast_spec::providers::parse (body)
+```
 
 ### Performance
 
