@@ -153,6 +153,13 @@ Measurements and verified claims come from the latest baseline; CI gates them.</
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">sniff_kind</span>(filename: &amp;<span class="tok-ty">str</span>, text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Option</span>&lt;<span class="tok-ty">SpecKind</span>&gt;
 </code></pre></figure>
 <p>Sniff the dialect from filename + content.</p>
+<h2 id="soothfast-spec-speckind"><code>soothfast_spec::SpecKind</code><a class="anchor" href="#soothfast-spec-speckind" aria-label="Link to this section">#</a></h2>
+<h3 id="render-function"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>(<span class="tok-kw">self</span>, path: &amp;<span class="tok-ty">str</span>, value: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>Serialize a document for writing to <code>path</code>.</p>
+<p>GraphQL ignores the extension because SDL is its only serialization;
+the rest honour <code>.json</code> and default to the dialect's usual form.</p>
 <h2 id="soothfast-spec-asyncapi"><code>soothfast_spec::asyncapi</code><a class="anchor" href="#soothfast-spec-asyncapi" aria-label="Link to this section">#</a></h2>
 <h3 id="document-function"><code>document</code> <sup>function</sup><a class="anchor" href="#document-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">document</span>(info: &amp;<span class="tok-ty">Info</span>, ops: &amp;[<span class="tok-ty">Operation</span>]) -&gt; <span class="tok-ty">Document</span>
@@ -203,7 +210,7 @@ pointer already says which.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">is_compatible</span>(changes: &amp;[<span class="tok-ty">Change</span>]) -&gt; <span class="tok-ty">bool</span>
 </code></pre></figure>
 <p>True when nothing in the diff would break an existing consumer.</p>
-<h3 id="render-function"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function" aria-label="Link to this section">#</a></h3>
+<h3 id="render-function-1"><code>render</code> <sup>function</sup><a class="anchor" href="#render-function-1" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render</span>(v: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
 </code></pre></figure>
 <p>A JSON value as it should read inside a diff message.</p>
@@ -234,6 +241,9 @@ stable between runs.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">document</span>(info: &amp;<span class="tok-ty">Info</span>, ops: &amp;[<span class="tok-ty">Operation</span>]) -&gt; <span class="tok-ty">Document</span>
 </code></pre></figure>
 <p>Assemble a GraphQL type graph.</p>
+<h3 id="from-sdl-function"><code>from_sdl</code> <sup>function</sup><a class="anchor" href="#from-sdl-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">from_sdl</span>(text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Value</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
 <h3 id="to-sdl-function"><code>to_sdl</code> <sup>function</sup><a class="anchor" href="#to-sdl-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">to_sdl</span>(doc: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
 </code></pre></figure>
@@ -262,7 +272,7 @@ the standard <code>{ &quot;tools&quot;: [...] }</code> shape.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">document</span>(info: &amp;<span class="tok-ty">Info</span>, ops: &amp;[<span class="tok-ty">Operation</span>]) -&gt; <span class="tok-ty">Document</span>
 </code></pre></figure>
 <p>Assemble an OpenAPI 3.1 document.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.48 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_document`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">2017378</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">2197745</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">30152</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">4715065</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.58 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_document`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">2025728</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">2291074</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">30152</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">4715065</span></div></div></div>
 <h2 id="soothfast-spec-openapi-diff"><code>soothfast_spec::openapi::diff</code><a class="anchor" href="#soothfast-spec-openapi-diff" aria-label="Link to this section">#</a></h2>
 <h3 id="diff-function-3"><code>diff</code> <sup>function</sup><a class="anchor" href="#diff-function-3" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">diff</span>(old: &amp;<span class="tok-ty">Value</span>, new: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Change</span>&gt;
@@ -270,7 +280,7 @@ the standard <code>{ &quot;tools&quot;: [...] }</code> shape.</p>
 <p>Compare two generated documents, oldest first.</p>
 <p>Returns every difference found, breaking ones first, then by location so
 output is stable between runs.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.37 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_diff`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">5486707</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">5993523</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">77722</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">10815487</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.40 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_diff`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">5505273</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">6032589</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">77722</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">10815487</span></div></div></div>
 <h2 id="soothfast-spec-proto"><code>soothfast_spec::proto</code><a class="anchor" href="#soothfast-spec-proto" aria-label="Link to this section">#</a></h2>
 <h3 id="protofield-struct"><code>ProtoField</code> <sup>struct</sup><a class="anchor" href="#protofield-struct" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ProtoField</span>
@@ -463,6 +473,11 @@ parameters that the Rust signature leaves positional.</p>
 <p>Resolve one rustdoc type node into a JSON Schema.</p>
 <p><code>at</code> is a human-readable location (<code>Item.when</code>) used for gap reports.</p>
 <h2 id="soothfast-spec-serialize"><code>soothfast_spec::serialize</code><a class="anchor" href="#soothfast-spec-serialize" aria-label="Link to this section">#</a></h2>
+<h3 id="from-text-function"><code>from_text</code> <sup>function</sup><a class="anchor" href="#from-text-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">from_text</span>(text: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Value</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Parse YAML-or-JSON text into a JSON value (JSON is valid YAML, but JSON
+is tried first for exactness).</p>
 <h3 id="to-json-function"><code>to_json</code> <sup>function</sup><a class="anchor" href="#to-json-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">to_json</span>(value: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
 </code></pre></figure>
@@ -475,7 +490,7 @@ of one document should not disagree about what comes first.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">to_yaml</span>(value: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
 </code></pre></figure>
 <p>Render a document as YAML, with well-known keys in conventional order.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.08 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_serialize_yaml`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">6915925</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">7087056</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">74277</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">8533615</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.09 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_serialize_yaml`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">6439220</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">7198890</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">74277</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">8533615</span></div></div></div>
 
 <div class="doc-foot">
   <span>built with <b>cargo soothfast docs build</b></span>
@@ -497,6 +512,10 @@ of one document should not disagree about what comes first.</p>
     <li><a class="toc-l3" href="#speckind-enum">SpecKind enum</a></li>
   
     <li><a class="toc-l3" href="#sniff-kind-function">sniff_kind function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-speckind">soothfast_spec::SpecKind</a></li>
+  
+    <li><a class="toc-l3" href="#render-function">render function</a></li>
   
     <li><a class="toc-l2" href="#soothfast-spec-asyncapi">soothfast_spec::asyncapi</a></li>
   
@@ -522,7 +541,7 @@ of one document should not disagree about what comes first.</p>
   
     <li><a class="toc-l3" href="#is-compatible-function">is_compatible function</a></li>
   
-    <li><a class="toc-l3" href="#render-function">render function</a></li>
+    <li><a class="toc-l3" href="#render-function-1">render function</a></li>
   
     <li><a class="toc-l3" href="#required-set-function">required_set function</a></li>
   
@@ -539,6 +558,8 @@ of one document should not disagree about what comes first.</p>
     <li><a class="toc-l2" href="#soothfast-spec-graphql">soothfast_spec::graphql</a></li>
   
     <li><a class="toc-l3" href="#document-function-1">document function</a></li>
+  
+    <li><a class="toc-l3" href="#from-sdl-function">from_sdl function</a></li>
   
     <li><a class="toc-l3" href="#to-sdl-function">to_sdl function</a></li>
   
@@ -661,6 +682,8 @@ of one document should not disagree about what comes first.</p>
     <li><a class="toc-l3" href="#resolve-function">resolve function</a></li>
   
     <li><a class="toc-l2" href="#soothfast-spec-serialize">soothfast_spec::serialize</a></li>
+  
+    <li><a class="toc-l3" href="#from-text-function">from_text function</a></li>
   
     <li><a class="toc-l3" href="#to-json-function">to_json function</a></li>
   

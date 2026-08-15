@@ -61,7 +61,7 @@ Evaluate against a baseline document; returns (holds, actual value).
 Parse `demo::lcg_checksum.perfcnt.instructions < 25000` (units on the
 bound: ns/us/ms/s multiply into ns; bare numbers stay raw).
 
-**Measured:** 230ns median, 6 allocs/iter
+**Measured:** 277ns median, 6 allocs/iter
 
 #### `pub struct SurfaceDiff`
 
@@ -153,7 +153,7 @@ Scan one markdown text. Closing markers (`<!-- /soothfast:... -->`) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.
 
-**Measured:** 425668ns median, 4114 allocs/iter
+**Measured:** 473358ns median, 4114 allocs/iter
 
 #### `pub fn splice_output( text: &str, nth_capture: usize, output: &str, ) -> Result<Option<String>, String>`
 
@@ -348,7 +348,7 @@ Robust summary of one sample set.
 
 Summarize a non-empty sample set. Sorts in place.
 
-**Measured:** 670796ns median, 4 allocs/iter
+**Measured:** 671376ns median, 4 allocs/iter
 
 #### `pub const DRIFT_LIMIT: f64 = 2.5`
 
@@ -369,7 +369,7 @@ Cost model for a claimed class at size n.
 
 Evaluate measured values (one per size, same order) against a claim.
 
-**Measured:** 25ns median, 0 allocs/iter
+**Measured:** 26ns median, 0 allocs/iter
 
 #### `pub const DEFAULT_SAMPLES: u32 = 31`
 
@@ -483,7 +483,7 @@ Minimal std-only executor with poll/wake counting: enough to measure how
 a future *behaves* (polls to completion, wake traffic) deterministically.
 No spawns, no timers — a tokio-instrumented backend is future work.
 
-**Measured:** 142ns median, 1 allocs/iter, 9 polls/iter
+**Measured:** 141ns median, 1 allocs/iter, 9 polls/iter
 
 #### `pub fn fixture_items() -> &'static [FixtureItem]`
 
@@ -496,7 +496,7 @@ FNV-1a 64-bit hash.
 STABILITY CONTRACT: fingerprints are compared across builds and stored in
 lockfiles, so this algorithm is frozen. Do not change constants or logic.
 
-**Measured:** 81584ns median, 0 allocs/iter
+**Measured:** 81492ns median, 0 allocs/iter
 
 #### `pub fn measured_items() -> &'static [MeasuredItem]`
 
@@ -577,7 +577,7 @@ Render `llms.txt`: every public item grouped by crate, with its full
 doc comment and measured facts attributed via `covers` (or direct id)
 matching.
 
-**Measured:** 321518ns median, 7191 allocs/iter
+**Measured:** 323014ns median, 7191 allocs/iter
 
 #### `pub struct Row`
 
@@ -591,7 +591,7 @@ One measured item's metrics, each `None` when that backend didn't run.
 
 `rows` rendered as a GitHub-flavored markdown table.
 
-**Measured:** 850848ns median, 8204 allocs/iter
+**Measured:** 857514ns median, 8204 allocs/iter
 
 #### `pub fn rows(baseline: &Value) -> Vec<Row>`
 
@@ -649,7 +649,7 @@ conflict the dialect emitters refuse.
 `kind` decides only how wire names are *spelled* — every typing question
 is answered the same way for every target.
 
-**Measured:** 1468172ns median, 23907 allocs/iter
+**Measured:** 1506628ns median, 23907 allocs/iter
 
 #### `pub struct Field`
 
@@ -774,7 +774,7 @@ Evidence renderer over one baseline + the bind lockfile.
 
 Highlight `code` for `lang`. Always returns escaped HTML.
 
-**Measured:** 3239866ns median, 88069 allocs/iter
+**Measured:** 3206697ns median, 88069 allocs/iter
 
 #### `pub type CodeHook<'a> = &'a dyn Fn(&str, &[String], &str) -> Option<String>`
 
@@ -803,7 +803,7 @@ language label and highlighted body.
 
 Render one markdown document.
 
-**Measured:** 3087743ns median, 68118 allocs/iter
+**Measured:** 3083326ns median, 68118 allocs/iter
 
 #### `pub enum Missing`
 
@@ -919,6 +919,13 @@ One `#[soothfast::route]` annotation from the code.
 
 Spec dialects soothfast reads and writes.
 
+#### `pub fn render(self, path: &str, value: &Value) -> String`
+
+Serialize a document for writing to `path`.
+
+GraphQL ignores the extension because SDL is its only serialization;
+the rest honour `.json` and default to the dialect's usual form.
+
 #### `pub fn diff(old: &Value, new: &Value) -> Vec<Change>`
 
 Compare two generated documents, oldest first.
@@ -1002,6 +1009,16 @@ Compare two generated type graphs, oldest first.
 
 Assemble a GraphQL type graph.
 
+#### `pub fn from_sdl(text: &str) -> Result<Value, String>`
+
+#### `pub fn from_sdl(text: &str) -> Result<Value, String>`
+
+Parse SDL previously rendered by [`to_sdl`] back into a type graph.
+
+A deliberate inverse of `to_sdl`'s deterministic output, not a general
+SDL parser: the spec gate reads committed generated schemas, and the
+freshness check guarantees those are `to_sdl` output.
+
 #### `pub fn to_sdl(doc: &Value) -> String`
 
 Render a generated type graph as GraphQL SDL.
@@ -1031,13 +1048,13 @@ Compare two generated documents, oldest first.
 Returns every difference found, breaking ones first, then by location so
 output is stable between runs.
 
-**Measured:** 5486707ns median, 77722 allocs/iter
+**Measured:** 5505273ns median, 77722 allocs/iter
 
 #### `pub fn document(info: &Info, ops: &[Operation]) -> Document`
 
 Assemble an OpenAPI 3.1 document.
 
-**Measured:** 2017378ns median, 30152 allocs/iter
+**Measured:** 2025728ns median, 30152 allocs/iter
 
 #### `pub struct ProtoField`
 
@@ -1265,6 +1282,11 @@ Resolve one rustdoc type node into a JSON Schema.
 Generic parameter bindings captured at a concrete use site: parameter name
 → (resolved schema, display name used for component naming).
 
+#### `pub fn from_text(text: &str) -> Result<Value, String>`
+
+Parse YAML-or-JSON text into a JSON value (JSON is valid YAML, but JSON
+is tried first for exactness).
+
 #### `pub fn to_json(value: &Value) -> String`
 
 Render a document as pretty JSON, for `.json` spec files.
@@ -1278,7 +1300,7 @@ of one document should not disagree about what comes first.
 
 Render a document as YAML, with well-known keys in conventional order.
 
-**Measured:** 6915925ns median, 74277 allocs/iter
+**Measured:** 6439220ns median, 74277 allocs/iter
 
 #### `pub fn sniff_kind(filename: &str, text: &str) -> Option<SpecKind>`
 

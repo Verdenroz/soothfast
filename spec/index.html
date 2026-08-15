@@ -407,6 +407,12 @@ breaking and a new one is not. Removed operations, properties, status codes
 and enum values are breaking either way, as is any changed type. The gate
 exits non-zero on a breaking change unless <code>--allow-breaking</code> says the break
 is deliberate.</p>
+<p><code>--from-committed</code> skips the worktree rebuild and reads the committed spec
+files at the merge-base instead. Every parsed file must re-render
+byte-identically or the gate fails, so a stale or hand-edited base can never
+be silently diffed. It is the right default for CI that already requires
+<code>spec gen --check</code> on every merge, which pins the committed file to what the
+merge-base would generate.</p>
 <p>Every dialect gates on that same asymmetry, read off whichever key states
 the direction. For <strong>AsyncAPI</strong> it is the operation's own <code>action</code>: a
 message you <code>send</code> is one a consumer reads, so dropping a guaranteed field
