@@ -479,6 +479,41 @@ path, handler id, reconciliation status, the handler's own rustdoc summary,
 and a measured-cost line when the handler is also a measured item,
 attributed by id or <code>covers=</code>. It is the FastAPI-style page <code>#[route]</code> exists to
 produce without hand-maintaining it.</p>
+<h2 id="probing-data-quality">Probing data quality<a class="anchor" href="#probing-data-quality" aria-label="Link to this section">#</a></h2>
+<p>Reconciliation proves every operation exists on both sides; nothing above
+notices an endpoint that answers 200 with half its fields silently null —
+which is exactly how serde key mismatches and hand-copied structs fail.
+<code>spec probe</code> closes that gap by asking the running server.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast spec probe -p myserver            # gate against probes.lock
+<span class="tok-kw">$ </span>cargo soothfast spec probe -p myserver --accept   # re-lock after a deliberate change
+</code></pre></figure>
+<p>The package declares its probes in <code>probes.toml</code> next to the spec:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>[probes]
+spec = &quot;openapi.yaml&quot;                       # shape-validate against this spec
+command = &quot;../target/release/myserver&quot;      # launched per run; announces
+env = { PORT = &quot;0&quot;, HOST = &quot;127.0.0.1&quot; }    # soothfast-ready on stdout
+
+[[probe]]
+name = &quot;quote&quot;
+path = &quot;/v2/quote/AAPL&quot;
+sometimes = [&quot;preMarket*&quot;]                  # operator-pinned intermittent fields
+assert = [&quot;regularMarketPrice &gt; 0&quot;, &quot;candles#len &gt;= 1&quot;]
+</code></pre></figure>
+<p>Each probe's response is held to four checks:</p>
+<ul>
+<li><strong>Population</strong> — the response is flattened to dotted paths (array indices collapse to <code>[]</code>) and diffed against the committed <code>probes.lock</code>. The lock records a <em>class</em> per field: <code>always</code> (populated in every accepted run — going null fails the gate) or <code>sometimes</code> (observed both ways — never gated). Repeated <code>--accept</code> runs demote flapping fields to <code>sometimes</code> permanently, so the lock converges on the stable contract instead of ratcheting on one lucky run.</li>
+<li><strong>Coverage</strong> — every field path the response schema declares, diffed against observed population. A declared field nobody has ever populated goes in the lock's per-probe <code>uncovered</code> list at accept time — committed, reviewable coverage debt — and a declared field in neither the classes nor that list fails the gate, so a schema field added without wiring data to it is a finding, not a silence. Children of <code>oneOf</code>/<code>anyOf</code> unions are conditional on the branch taken and never count as declared.</li>
+<li><strong>Shape</strong> — the body validated structurally against the spec's own response schema. <code>null</code> passes everywhere (nullability is population's job); what shape catches is a number turning into a string. A probe whose spec is known to misdescribe it can set <code>shape = false</code>.</li>
+<li><strong>Assertions</strong> — one comparison per line, <code>path op literal</code>, with <code>[]</code> descending every array element and <code>#len</code> comparing lengths. Sanity bounds, not tests: <code>meta.regularMarketPrice &gt; 0</code>.</li>
+</ul>
+<p>The server is launched from <code>command</code> with <code>env</code> applied and must announce
+<code>soothfast-ready {&quot;base_url&quot;:...}</code> on stdout (<code>soothfast::embed::announce</code>);
+<code>--base-url</code> probes an already-running server instead. A locked probe the
+manifest no longer declares fails the gate until <code>--allow-gone</code> drops it —
+the same no-delete-to-go-green rule as the perf baseline, and a run with
+failing shape checks or assertions is never accepted into the lock.</p>
+<p>Live upstreams make probe runs non-deterministic, so the gate belongs in a
+scheduled workflow that files an issue on failure, not in PR CI.</p>
 
 <div class="doc-foot">
   <span>built with <b>cargo soothfast docs build</b></span>
@@ -516,6 +551,8 @@ produce without hand-maintaining it.</p>
     <li><a class="toc-l2" href="#where-route-markers-live">Where route markers live</a></li>
   
     <li><a class="toc-l2" href="#the-endpoint-reference">The endpoint reference</a></li>
+  
+    <li><a class="toc-l2" href="#probing-data-quality">Probing data quality</a></li>
   
   </ul>
 

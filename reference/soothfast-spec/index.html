@@ -272,7 +272,7 @@ the standard <code>{ &quot;tools&quot;: [...] }</code> shape.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">document</span>(info: &amp;<span class="tok-ty">Info</span>, ops: &amp;[<span class="tok-ty">Operation</span>]) -&gt; <span class="tok-ty">Document</span>
 </code></pre></figure>
 <p>Assemble an OpenAPI 3.1 document.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.48 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_document`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">2228591</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">2408653</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">30152</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">4715065</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.46 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_document`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">2184318</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">2380985</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">30152</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">4715065</span></div></div></div>
 <h2 id="soothfast-spec-openapi-diff"><code>soothfast_spec::openapi::diff</code><a class="anchor" href="#soothfast-spec-openapi-diff" aria-label="Link to this section">#</a></h2>
 <h3 id="diff-function-3"><code>diff</code> <sup>function</sup><a class="anchor" href="#diff-function-3" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">diff</span>(old: &amp;<span class="tok-ty">Value</span>, new: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Change</span>&gt;
@@ -280,7 +280,63 @@ the standard <code>{ &quot;tools&quot;: [...] }</code> shape.</p>
 <p>Compare two generated documents, oldest first.</p>
 <p>Returns every difference found, breaking ones first, then by location so
 output is stable between runs.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.61 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_diff`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">6266022</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">7278439</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">77722</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">10815487</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.41 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_openapi_diff`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">5668154</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">6241357</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">77722</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">10815487</span></div></div></div>
+<h2 id="soothfast-spec-probe"><code>soothfast_spec::probe</code><a class="anchor" href="#soothfast-spec-probe" aria-label="Link to this section">#</a></h2>
+<h2 id="soothfast-spec-probe-assert"><code>soothfast_spec::probe::assert</code><a class="anchor" href="#soothfast-spec-probe-assert" aria-label="Link to this section">#</a></h2>
+<h3 id="assertion-struct"><code>Assertion</code> <sup>struct</sup><a class="anchor" href="#assertion-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Assertion</span>
+</code></pre></figure>
+<p>One parsed assertion, kept with its source line for reporting.</p>
+<h2 id="soothfast-spec-probe-baseline"><code>soothfast_spec::probe::baseline</code><a class="anchor" href="#soothfast-spec-probe-baseline" aria-label="Link to this section">#</a></h2>
+<h3 id="baseline-struct"><code>Baseline</code> <sup>struct</sup><a class="anchor" href="#baseline-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Baseline</span>
+</code></pre></figure>
+<p>The lock file: probe name → locked state.</p>
+<h3 id="class-enum"><code>Class</code> <sup>enum</sup><a class="anchor" href="#class-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Class</span>
+</code></pre></figure>
+<p>A field's population class across accepted runs.</p>
+<h3 id="findings-struct"><code>Findings</code> <sup>struct</sup><a class="anchor" href="#findings-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Findings</span>
+</code></pre></figure>
+<p>One probe's gate findings against the lock.</p>
+<h3 id="probelock-struct"><code>ProbeLock</code> <sup>struct</sup><a class="anchor" href="#probelock-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ProbeLock</span>
+</code></pre></figure>
+<p>One probe's locked state.</p>
+<h2 id="soothfast-spec-probe-coverage"><code>soothfast_spec::probe::coverage</code><a class="anchor" href="#soothfast-spec-probe-coverage" aria-label="Link to this section">#</a></h2>
+<h3 id="declared-paths-function"><code>declared_paths</code> <sup>function</sup><a class="anchor" href="#declared-paths-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">declared_paths</span>(schema: &amp;<span class="tok-ty">Value</span>, spec: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">BTreeSet</span>&lt;<span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Enumerate the field paths <code>schema</code> declares, resolving <code>$ref</code>s through
+the spec's <code>components/schemas</code>. <code>allOf</code> branches all apply and are
+merged; <code>oneOf</code>/<code>anyOf</code> children are conditional on which branch the
+value takes, so nothing below a union counts as declared. Recursive
+schemas stop at the repeated <code>$ref</code>; an open schema (<code>{}</code>) declares
+nothing below its own path.</p>
+<h2 id="soothfast-spec-probe-population"><code>soothfast_spec::probe::population</code><a class="anchor" href="#soothfast-spec-probe-population" aria-label="Link to this section">#</a></h2>
+<h3 id="populate-function"><code>populate</code> <sup>function</sup><a class="anchor" href="#populate-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">populate</span>(value: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">BTreeMap</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">bool</span>&gt;
+</code></pre></figure>
+<p>Flatten <code>value</code> into path → populated. Paths are dotted, arrays
+collapse to <code>[]</code>, and a path already seen stays populated once any
+occurrence carried data.</p>
+<h2 id="soothfast-spec-probe-shape"><code>soothfast_spec::probe::shape</code><a class="anchor" href="#soothfast-spec-probe-shape" aria-label="Link to this section">#</a></h2>
+<h3 id="violation-struct"><code>Violation</code> <sup>struct</sup><a class="anchor" href="#violation-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Violation</span>
+</code></pre></figure>
+<p>One structural disagreement between response and schema.</p>
+<h3 id="response-schema-function"><code>response_schema</code> <sup>function</sup><a class="anchor" href="#response-schema-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> response_schema&lt;<span class="tok-kw">&#39;a</span>&gt;( spec: &amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">Value</span>, method: &amp;<span class="tok-ty">str</span>, path: &amp;<span class="tok-ty">str</span>, status: <span class="tok-ty">u16</span>, ) -&gt; <span class="tok-ty">Option</span>&lt;&amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">Value</span>&gt;
+</code></pre></figure>
+<p>Find the JSON response schema the spec declares for <code>method</code> on the
+concrete <code>path</code> (path template segments <code>{like_this}</code> match anything),
+for the given status code.</p>
+<h3 id="validate-function"><code>validate</code> <sup>function</sup><a class="anchor" href="#validate-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">validate</span>(value: &amp;<span class="tok-ty">Value</span>, schema: &amp;<span class="tok-ty">Value</span>, spec: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Violation</span>&gt;
+</code></pre></figure>
+<p>Validate <code>value</code> against <code>schema</code>, resolving <code>$ref</code>s through the
+spec's <code>components/schemas</code>. Returns every violation found.</p>
 <h2 id="soothfast-spec-proto"><code>soothfast_spec::proto</code><a class="anchor" href="#soothfast-spec-proto" aria-label="Link to this section">#</a></h2>
 <h3 id="protofield-struct"><code>ProtoField</code> <sup>struct</sup><a class="anchor" href="#protofield-struct" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ProtoField</span>
@@ -490,7 +546,7 @@ of one document should not disagree about what comes first.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">to_yaml</span>(value: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
 </code></pre></figure>
 <p>Render a document as YAML, with well-known keys in conventional order.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.27 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_serialize_yaml`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">7284508</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">8296896</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">74277</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">8533615</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.11 over sizes [16, 64, 256] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_spec::bench_serialize_yaml`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">6790143</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">7466902</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">74277</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">8533615</span></div></div></div>
 
 <div class="doc-foot">
   <span>built with <b>cargo soothfast docs build</b></span>
@@ -580,6 +636,38 @@ of one document should not disagree about what comes first.</p>
     <li><a class="toc-l2" href="#soothfast-spec-openapi-diff">soothfast_spec::openapi::diff</a></li>
   
     <li><a class="toc-l3" href="#diff-function-3">diff function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-probe">soothfast_spec::probe</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-probe-assert">soothfast_spec::probe::assert</a></li>
+  
+    <li><a class="toc-l3" href="#assertion-struct">Assertion struct</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-probe-baseline">soothfast_spec::probe::baseline</a></li>
+  
+    <li><a class="toc-l3" href="#baseline-struct">Baseline struct</a></li>
+  
+    <li><a class="toc-l3" href="#class-enum">Class enum</a></li>
+  
+    <li><a class="toc-l3" href="#findings-struct">Findings struct</a></li>
+  
+    <li><a class="toc-l3" href="#probelock-struct">ProbeLock struct</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-probe-coverage">soothfast_spec::probe::coverage</a></li>
+  
+    <li><a class="toc-l3" href="#declared-paths-function">declared_paths function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-probe-population">soothfast_spec::probe::population</a></li>
+  
+    <li><a class="toc-l3" href="#populate-function">populate function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-spec-probe-shape">soothfast_spec::probe::shape</a></li>
+  
+    <li><a class="toc-l3" href="#violation-struct">Violation struct</a></li>
+  
+    <li><a class="toc-l3" href="#response-schema-function">response_schema function</a></li>
+  
+    <li><a class="toc-l3" href="#validate-function">validate function</a></li>
   
     <li><a class="toc-l2" href="#soothfast-spec-proto">soothfast_spec::proto</a></li>
   
