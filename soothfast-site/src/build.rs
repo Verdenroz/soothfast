@@ -169,6 +169,10 @@ pub fn build(input: &BuildInput) -> Result<BuildReport, String> {
         write(&out_dir.join("_soothfast/theme-vars.css"), css.as_bytes())?;
         assets += 1;
     }
+    // GitHub Pages runs branch builds through Jekyll, which drops the
+    // underscore-prefixed _soothfast/ dir; .nojekyll opts the site out.
+    write(&out_dir.join(".nojekyll"), b"")?;
+    assets += 1;
     assets += copy_docs_assets(&docs_dir, &out_dir, cfg, &input.root)?;
     for extra in cfg.extra_css.iter().chain(&cfg.extra_js) {
         let from = input.root.join(extra);
@@ -406,6 +410,7 @@ mod tests {
         assert!(guide.contains("../../_soothfast/site.css")); // depth-aware base
         assert!(root.join("site/logo.svg").exists());
         assert!(root.join("site/search_index.json").exists());
+        assert!(root.join("site/.nojekyll").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
