@@ -95,8 +95,8 @@ fn render(args: &[String]) -> i32 {
             .lines()
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
-        for (key, name) in trend_chart::METRICS {
-            if let Some(svg) = trend_chart::render(&points, key, name) {
+        for (key, name, threshold, rel) in trend_chart::METRICS {
+            if let Some(svg) = trend_chart::render(&points, key, name, *threshold, *rel) {
                 let file = format!("trend-{name}.svg");
                 if std::fs::write(out_dir.join(&file), svg).is_ok() {
                     summary.push_str(&format!("\n![{name} trend]({file})\n"));
