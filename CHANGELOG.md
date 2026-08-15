@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.9)
+## 0.1.10 - 2026-08-15
+
+<!-- soothfast:notes -->
+Sites published with `docs gh-deploy` now include a `.nojekyll` marker.
+GitHub Pages otherwise runs branch-published sites through Jekyll, which
+strips underscore-prefixed paths like `_soothfast/` and served the site
+without its stylesheets.
 
 ### API surface
 
