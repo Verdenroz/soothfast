@@ -1,10 +1,38 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.12)
+## 0.1.13 - 2026-08-15
+
+<!-- soothfast:notes -->
+Spec reconciliation proves every operation exists; nothing proved an
+endpoint still populates what it answers. `cargo soothfast spec probe`
+launches the package's embedded server, fires the requests declared in
+`probes.toml`, and holds each response to four checks: field population
+against a committed `probes.lock`, spec-declared coverage of fields never
+populated, structure against the response schema, and per-probe sanity
+assertions. Accepting folds observations back into the lock with the same
+no-delete-to-go-green discipline as the perf baseline.
 
 ### API surface
 
-No public API changes.
+```
+# soothfast-spec
+ADDED    soothfast_spec::probe
+ADDED    soothfast_spec::probe::assert
+ADDED    soothfast_spec::probe::assert::Assertion
+ADDED    soothfast_spec::probe::baseline
+ADDED    soothfast_spec::probe::baseline::Baseline
+ADDED    soothfast_spec::probe::baseline::Class
+ADDED    soothfast_spec::probe::baseline::Findings
+ADDED    soothfast_spec::probe::baseline::ProbeLock
+ADDED    soothfast_spec::probe::coverage
+ADDED    soothfast_spec::probe::coverage::declared_paths
+ADDED    soothfast_spec::probe::population
+ADDED    soothfast_spec::probe::population::populate
+ADDED    soothfast_spec::probe::shape
+ADDED    soothfast_spec::probe::shape::Violation
+ADDED    soothfast_spec::probe::shape::response_schema
+ADDED    soothfast_spec::probe::shape::validate
+```
 
 ### Performance
 
