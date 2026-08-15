@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.11)
+## 0.1.12 - 2026-08-15
+
+<!-- soothfast:notes -->
+Trend charts are readable at fleet scale. The fleet renders as a
+p10-p90 band with a median line, and only items whose final point
+drifted past the metric's threshold get a labeled line, capped at a
+colorblind-validated palette with the overflow counted in the footer.
+Walltime is fleet-relative, so a runner-speed shift that moves every
+item together no longer reads as a fleet of regressions.
 
 ### API surface
 
