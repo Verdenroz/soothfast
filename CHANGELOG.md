@@ -3,14 +3,11 @@
 ## 0.1.14 - 2026-08-15
 
 <!-- soothfast:notes -->
-`spec probe` holds live responses to four data-quality checks: field
-population against a committed `probes.lock`, spec-declared coverage of
-fields never populated, structure against the response schema, and
-per-probe sanity assertions. `spec gate` acknowledges deliberate breaks
-by the spec's own version: breaking findings pass on a semver-major bump
-of `info.version` in the same diff and fail otherwise, with
-`--allow-breaking` kept as the blanket override for coordinated releases
-and versionless dialects.
+`spec gate` acknowledges deliberate breaks by the spec's own version:
+breaking findings pass on a semver-major bump of `info.version` in the
+same diff and fail otherwise, so the acknowledgment is priced where
+consumers already look. `--allow-breaking` stays as the blanket override
+for coordinated releases and versionless dialects.
 
 ### API surface
 
