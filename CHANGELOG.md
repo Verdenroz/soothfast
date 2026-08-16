@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (draft vs v0.1.13)
+
+### API surface
+
+No public API changes.
+
+### Performance
+
+| item | metric | was | now | delta |
+|---|---|---:|---:|---:|
+| _no movement past gate thresholds_ | | | | |
+
+
 ## 0.1.13 - 2026-08-15
 
 <!-- soothfast:notes -->
