@@ -10,13 +10,6 @@
 //! spec files at the merge-base instead. Every parsed file must re-render
 //! byte-identically, so the mode is self-checking; it is the right default
 //! for CI that already requires the freshness check on every merge.
-//!
-//! A deliberate break is sanctioned per finding, not per run: commit the
-//! gate's exact finding line to `<spec-file>.allow` next to the spec. A
-//! listed break passes; an unlisted one still fails; a listed line that no
-//! longer matches anything fails as stale so allowances cannot outlive the
-//! change they sanctioned. `--allow-breaking` remains the blanket override
-//! for release coordination.
 
 use soothfast_spec::compat::Severity;
 
@@ -89,8 +82,6 @@ fn gate(
     };
 
     let mut breaking = 0u32;
-    let mut allowed = 0u32;
-    let mut stale = 0u32;
     let mut additive = 0u32;
 
     for (spec_file, new_doc) in &head.docs {
@@ -109,15 +100,8 @@ fn gate(
             continue;
         }
         println!("spec gate: {spec_file} [{}] — vs {base}", kind.name());
-        let allow_path = meta.dir.join(format!("{spec_file}.allow"));
-        let mut allow = allowlist(&allow_path)?;
         for c in &changes {
-            let finding = format!("{}: {}", c.at, c.detail);
             let tag = match c.severity {
-                Severity::Breaking if allow.remove(&finding) => {
-                    allowed += 1;
-                    "allowed "
-                }
                 Severity::Breaking => {
                     breaking += 1;
                     "BREAKING"
@@ -127,25 +111,15 @@ fn gate(
                     "additive"
                 }
             };
-            println!("  {tag}  {finding}");
-        }
-        for line in allow {
-            stale += 1;
-            println!("  STALE     {line} (in {spec_file}.allow, matches nothing — remove it)");
+            println!("  {tag}  {}: {}", c.at, c.detail);
         }
     }
 
-    println!(
-        "spec gate: {breaking} breaking, {allowed} allowed, {stale} stale, {additive} additive"
-    );
-    if stale > 0 && !allow_breaking {
-        println!("spec gate: FAILED — stale .allow entries must be removed");
-        return Ok(1);
-    }
+    println!("spec gate: {breaking} breaking, {additive} additive");
     if breaking > 0 && !allow_breaking {
         println!(
-            "spec gate: FAILED — sanction each finding by committing its exact \
-             line to <spec-file>.allow, or pass --allow-breaking"
+            "spec gate: FAILED — pass --allow-breaking to release these \
+             deliberately, after coordinating with consumers"
         );
         return Ok(1);
     }
@@ -153,22 +127,6 @@ fn gate(
         println!("spec gate: breaking changes allowed by --allow-breaking");
     }
     Ok(0)
-}
-
-/// Read `<spec-file>.allow`: one sanctioned finding per line, `#` comments
-/// and blank lines ignored. Absent file means nothing is sanctioned.
-fn allowlist(path: &std::path::Path) -> Result<std::collections::BTreeSet<String>, String> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
-        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
-    };
-    Ok(text
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(String::from)
-        .collect())
 }
 
 /// The base documents, read from the committed spec files at the merge-base
@@ -196,34 +154,4 @@ fn committed_base_docs(
         docs.insert(spec_file.clone(), value);
     }
     Ok(docs)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn parsed(text: &str) -> std::collections::BTreeSet<String> {
-        let dir = std::env::temp_dir().join(format!("sf-allow-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("openapi.yaml.allow");
-        std::fs::write(&path, text).unwrap();
-        let entries = allowlist(&path).unwrap();
-        std::fs::remove_file(&path).unwrap();
-        entries
-    }
-
-    #[test]
-    fn an_absent_allow_file_sanctions_nothing() {
-        let entries = allowlist(std::path::Path::new("/nonexistent/x.allow")).unwrap();
-        assert!(entries.is_empty());
-    }
-
-    #[test]
-    fn comments_blanks_and_padding_are_ignored() {
-        let entries = parsed(
-            "# transcripts response was never served\n\n  GET /v2/t 200.eventId: property removed  \n",
-        );
-        assert_eq!(entries.len(), 1);
-        assert!(entries.contains("GET /v2/t 200.eventId: property removed"));
-    }
 }

@@ -360,15 +360,6 @@ exits non-zero on a breaking change unless `--allow-breaking` says the break
 is deliberate.
 <!-- /soothfast:bind -->
 
-A deliberate break is sanctioned per finding rather than per run: commit
-the gate's exact finding line to `<spec-file>.allow` next to the spec
-(`#` comments and blank lines ignored). A listed break prints as
-`allowed` and passes; an unlisted break still fails; a listed line that
-matches nothing fails as stale, so the file empties itself in the next
-spec-touching change and an old allowance can never absorb a future
-identical break. `--allow-breaking` remains the blanket override for
-coordinated releases.
-
 `--from-committed` skips the worktree rebuild and reads the committed spec
 files at the merge-base instead. Every parsed file must re-render
 byte-identically or the gate fails, so a stale or hand-edited base can never
