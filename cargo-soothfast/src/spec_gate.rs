@@ -11,12 +11,13 @@
 //! byte-identically, so the mode is self-checking; it is the right default
 //! for CI that already requires the freshness check on every merge.
 //!
-//! A deliberate break is sanctioned per finding, not per run: commit the
-//! gate's exact finding line to `<spec-file>.allow` next to the spec. A
-//! listed break passes; an unlisted one still fails; a listed line that no
-//! longer matches anything fails as stale so allowances cannot outlive the
-//! change they sanctioned. `--allow-breaking` remains the blanket override
-//! for release coordination.
+//! A deliberate break is acknowledged the way consumers experience it: by
+//! the spec's own version. Breaking findings pass when the head spec's
+//! `info.version` is a semver-major bump over the base's (minor for 0.x),
+//! and fail otherwise. The bump lever is `version` on the `[[spec]]`
+//! entry, or the crate version it defaults to. Dialects without a version
+//! field (GraphQL, MCP tools) keep failing unless `--allow-breaking`
+//! says the break is coordinated.
 
 use soothfast_spec::compat::Severity;
 
@@ -89,8 +90,7 @@ fn gate(
     };
 
     let mut breaking = 0u32;
-    let mut allowed = 0u32;
-    let mut stale = 0u32;
+    let mut acknowledged = 0u32;
     let mut additive = 0u32;
 
     for (spec_file, new_doc) in &head.docs {
@@ -109,17 +109,11 @@ fn gate(
             continue;
         }
         println!("spec gate: {spec_file} [{}] — vs {base}", kind.name());
-        let allow_path = meta.dir.join(format!("{spec_file}.allow"));
-        let mut allow = allowlist(&allow_path)?;
+        let mut file_breaking = 0u32;
         for c in &changes {
-            let finding = format!("{}: {}", c.at, c.detail);
             let tag = match c.severity {
-                Severity::Breaking if allow.remove(&finding) => {
-                    allowed += 1;
-                    "allowed "
-                }
                 Severity::Breaking => {
-                    breaking += 1;
+                    file_breaking += 1;
                     "BREAKING"
                 }
                 Severity::Additive => {
@@ -127,25 +121,31 @@ fn gate(
                     "additive"
                 }
             };
-            println!("  {tag}  {finding}");
+            println!("  {tag}  {}: {}", c.at, c.detail);
         }
-        for line in allow {
-            stale += 1;
-            println!("  STALE     {line} (in {spec_file}.allow, matches nothing — remove it)");
+        if file_breaking > 0 {
+            match (doc_version(old_doc), doc_version(new_doc)) {
+                (Some(base_v), Some(head_v)) if bump_acknowledges(base_v, head_v) => {
+                    acknowledged += file_breaking;
+                    println!("  version bump {base_v} → {head_v} acknowledges the break");
+                }
+                (Some(base_v), Some(head_v)) => {
+                    breaking += file_breaking;
+                    println!(
+                        "  spec version {head_v} does not acknowledge the break (base {base_v})"
+                    );
+                }
+                _ => breaking += file_breaking,
+            }
         }
     }
 
-    println!(
-        "spec gate: {breaking} breaking, {allowed} allowed, {stale} stale, {additive} additive"
-    );
-    if stale > 0 && !allow_breaking {
-        println!("spec gate: FAILED — stale .allow entries must be removed");
-        return Ok(1);
-    }
+    println!("spec gate: {breaking} breaking, {acknowledged} acknowledged, {additive} additive");
     if breaking > 0 && !allow_breaking {
         println!(
-            "spec gate: FAILED — sanction each finding by committing its exact \
-             line to <spec-file>.allow, or pass --allow-breaking"
+            "spec gate: FAILED — a deliberate break needs a semver-major bump of \
+             the spec version (`version` on the [[spec]] entry, or the crate \
+             version it defaults to), or --allow-breaking"
         );
         return Ok(1);
     }
@@ -155,20 +155,33 @@ fn gate(
     Ok(0)
 }
 
-/// Read `<spec-file>.allow`: one sanctioned finding per line, `#` comments
-/// and blank lines ignored. Absent file means nothing is sanctioned.
-fn allowlist(path: &std::path::Path) -> Result<std::collections::BTreeSet<String>, String> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
-        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+/// The spec document's own version: `info.version` where the dialect has
+/// one (OpenAPI, AsyncAPI).
+fn doc_version(doc: &serde_json::Value) -> Option<&str> {
+    doc.get("info")?.get("version")?.as_str()
+}
+
+/// Whether `head` is a semver bump that licenses breaking changes over
+/// `base`: a major bump, or a minor bump while the major is 0 (Cargo's
+/// 0.x convention). Pre-release and build suffixes are ignored.
+fn bump_acknowledges(base: &str, head: &str) -> bool {
+    let (Some(base), Some(head)) = (core_triple(base), core_triple(head)) else {
+        return false;
     };
-    Ok(text
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(String::from)
-        .collect())
+    if base.0 == 0 && head.0 == 0 {
+        return head.1 > base.1;
+    }
+    head.0 > base.0
+}
+
+fn core_triple(version: &str) -> Option<(u64, u64, u64)> {
+    let core = version.split(['-', '+']).next()?;
+    let mut parts = core.split('.').map(str::parse);
+    Some((
+        parts.next()?.ok()?,
+        parts.next().unwrap_or(Ok(0)).ok()?,
+        parts.next().unwrap_or(Ok(0)).ok()?,
+    ))
 }
 
 /// The base documents, read from the committed spec files at the merge-base
@@ -202,28 +215,34 @@ fn committed_base_docs(
 mod tests {
     use super::*;
 
-    fn parsed(text: &str) -> std::collections::BTreeSet<String> {
-        let dir = std::env::temp_dir().join(format!("sf-allow-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("openapi.yaml.allow");
-        std::fs::write(&path, text).unwrap();
-        let entries = allowlist(&path).unwrap();
-        std::fs::remove_file(&path).unwrap();
-        entries
+    #[test]
+    fn a_major_bump_licenses_a_break_and_lesser_bumps_do_not() {
+        assert!(bump_acknowledges("2.8.0", "3.0.0"));
+        assert!(bump_acknowledges("2.8.0", "4.1.2"));
+        assert!(!bump_acknowledges("2.8.0", "2.9.0"));
+        assert!(!bump_acknowledges("2.8.0", "2.8.1"));
+        assert!(!bump_acknowledges("2.8.0", "2.8.0"));
+        assert!(!bump_acknowledges("3.0.0", "2.0.0"));
     }
 
     #[test]
-    fn an_absent_allow_file_sanctions_nothing() {
-        let entries = allowlist(std::path::Path::new("/nonexistent/x.allow")).unwrap();
-        assert!(entries.is_empty());
+    fn zero_major_uses_the_minor_as_the_breaking_axis() {
+        assert!(bump_acknowledges("0.1.12", "0.2.0"));
+        assert!(!bump_acknowledges("0.1.12", "0.1.13"));
+        assert!(bump_acknowledges("0.1.12", "1.0.0"));
     }
 
     #[test]
-    fn comments_blanks_and_padding_are_ignored() {
-        let entries = parsed(
-            "# transcripts response was never served\n\n  GET /v2/t 200.eventId: property removed  \n",
-        );
-        assert_eq!(entries.len(), 1);
-        assert!(entries.contains("GET /v2/t 200.eventId: property removed"));
+    fn suffixes_are_ignored_and_garbage_never_acknowledges() {
+        assert!(bump_acknowledges("2.8.0", "3.0.0-rc.1"));
+        assert!(!bump_acknowledges("two", "3.0.0"));
+        assert!(!bump_acknowledges("2.8.0", "next"));
+    }
+
+    #[test]
+    fn doc_version_reads_info_version_only() {
+        let doc = serde_json::json!({"info": {"version": "2.8.0"}});
+        assert_eq!(doc_version(&doc), Some("2.8.0"));
+        assert_eq!(doc_version(&serde_json::json!({"version": "1"})), None);
     }
 }

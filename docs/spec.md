@@ -360,14 +360,14 @@ exits non-zero on a breaking change unless `--allow-breaking` says the break
 is deliberate.
 <!-- /soothfast:bind -->
 
-A deliberate break is sanctioned per finding rather than per run: commit
-the gate's exact finding line to `<spec-file>.allow` next to the spec
-(`#` comments and blank lines ignored). A listed break prints as
-`allowed` and passes; an unlisted break still fails; a listed line that
-matches nothing fails as stale, so the file empties itself in the next
-spec-touching change and an old allowance can never absorb a future
-identical break. `--allow-breaking` remains the blanket override for
-coordinated releases.
+A deliberate break is acknowledged where consumers already look: the
+spec's own version. Breaking findings pass when the head spec's
+`info.version` is a semver-major bump over the base's (minor while the
+major is 0), and fail otherwise, so the acknowledgment rides in the same
+diff as the break. The bump lever is `version` on the `[[spec]]` entry,
+or the crate version it defaults to. `--allow-breaking` remains the
+blanket override for dialects without a version field and coordinated
+multi-consumer releases.
 
 `--from-committed` skips the worktree rebuild and reads the committed spec
 files at the merge-base instead. Every parsed file must re-render
