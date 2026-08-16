@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.14 - 2026-08-15
+
+<!-- soothfast:notes -->
+`spec gate` sanctions deliberate breaks per finding instead of per run.
+Committing the gate's exact finding line to `<spec-file>.allow` lets that
+break pass while an unlisted one still fails, and a line matching nothing
+fails as stale, so the file empties itself and an old allowance can never
+absorb a future identical break. `--allow-breaking` stays as the blanket
+override for coordinated releases.
+
+### API surface
+
+No public API changes.
+
+### Performance
+
+| item | metric | was | now | delta |
+|---|---|---:|---:|---:|
+| _no movement past gate thresholds_ | | | | |
+
+
 ## 0.1.13 - 2026-08-15
 
 <!-- soothfast:notes -->
