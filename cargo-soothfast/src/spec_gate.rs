@@ -184,6 +184,33 @@ fn core_triple(version: &str) -> Option<(u64, u64, u64)> {
     ))
 }
 
+/// The base documents, read from the committed spec files at the merge-base
+/// instead of rebuilding it. Sound whenever merges require the freshness
+/// check, which guarantees a committed generated spec matches its code.
+/// Files absent at the base diff as new, the same as the worktree path.
+fn committed_base_docs(
+    head: &spec_gen::Built,
+    cfg: &spec_config::SpecConfig,
+    meta: &invoke::PkgMeta,
+    base: &str,
+) -> Result<std::collections::BTreeMap<String, serde_json::Value>, String> {
+    let sha = invoke::git(&["merge-base", "HEAD", base]).map_err(|e| e.to_string())?;
+    println!(
+        "spec gate: base from committed specs at {}",
+        &sha[..sha.len().min(12)]
+    );
+    let mut docs = std::collections::BTreeMap::new();
+    for spec_file in head.docs.keys() {
+        let rev = format!("{sha}:./{spec_file}");
+        let Ok(text) = invoke::git_in(&meta.dir, &["show", &rev]) else {
+            continue;
+        };
+        let value = cfg.dialect_of(spec_file).parse(spec_file, &text)?;
+        docs.insert(spec_file.clone(), value);
+    }
+    Ok(docs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,31 +245,4 @@ mod tests {
         assert_eq!(doc_version(&doc), Some("2.8.0"));
         assert_eq!(doc_version(&serde_json::json!({"version": "1"})), None);
     }
-}
-
-/// The base documents, read from the committed spec files at the merge-base
-/// instead of rebuilding it. Sound whenever merges require the freshness
-/// check, which guarantees a committed generated spec matches its code.
-/// Files absent at the base diff as new, the same as the worktree path.
-fn committed_base_docs(
-    head: &spec_gen::Built,
-    cfg: &spec_config::SpecConfig,
-    meta: &invoke::PkgMeta,
-    base: &str,
-) -> Result<std::collections::BTreeMap<String, serde_json::Value>, String> {
-    let sha = invoke::git(&["merge-base", "HEAD", base]).map_err(|e| e.to_string())?;
-    println!(
-        "spec gate: base from committed specs at {}",
-        &sha[..sha.len().min(12)]
-    );
-    let mut docs = std::collections::BTreeMap::new();
-    for spec_file in head.docs.keys() {
-        let rev = format!("{sha}:./{spec_file}");
-        let Ok(text) = invoke::git_in(&meta.dir, &["show", &rev]) else {
-            continue;
-        };
-        let value = cfg.dialect_of(spec_file).parse(spec_file, &text)?;
-        docs.insert(spec_file.clone(), value);
-    }
-    Ok(docs)
 }
