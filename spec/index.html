@@ -407,6 +407,14 @@ breaking and a new one is not. Removed operations, properties, status codes
 and enum values are breaking either way, as is any changed type. The gate
 exits non-zero on a breaking change unless <code>--allow-breaking</code> says the break
 is deliberate.</p>
+<p>A deliberate break is sanctioned per finding rather than per run: commit
+the gate's exact finding line to <code>&lt;spec-file&gt;.allow</code> next to the spec
+(<code>#</code> comments and blank lines ignored). A listed break prints as
+<code>allowed</code> and passes; an unlisted break still fails; a listed line that
+matches nothing fails as stale, so the file empties itself in the next
+spec-touching change and an old allowance can never absorb a future
+identical break. <code>--allow-breaking</code> remains the blanket override for
+coordinated releases.</p>
 <p><code>--from-committed</code> skips the worktree rebuild and reads the committed spec
 files at the merge-base instead. Every parsed file must re-render
 byte-identically or the gate fails, so a stale or hand-edited base can never
