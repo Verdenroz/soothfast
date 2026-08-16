@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.13)
+## 0.1.14 - 2026-08-15
+
+<!-- soothfast:notes -->
+`spec gate` acknowledges deliberate breaks by the spec's own version:
+breaking findings pass on a semver-major bump of `info.version` in the
+same diff and fail otherwise, so the acknowledgment is priced where
+consumers already look. `--allow-breaking` stays as the blanket override
+for coordinated releases and versionless dialects.
 
 ### API surface
 
