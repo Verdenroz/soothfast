@@ -175,6 +175,41 @@ a slow <code>serde</code> bump is exactly what the gate exists to catch.</p>
 <tr><td><code>buildcost.build_ms</code></td><td>+25%</td><td>soft: printed as a warning, does not fail the gate</td></tr>
 </tbody>
 </table></div>
+<p>A bench can widen its own limit with <code>#[bench(..., tolerance = &quot;8%&quot;)]</code>, which
+raises the instruction, Ir and walltime thresholds for that item alone. It is
+for bodies too small to survive the default: a loop costing ~20 instructions
+per element moves 5% when one register spills, and no fixture size changes
+that ratio. Attribute text is part of an item's fingerprint, so the commit
+adding a tolerance also reports the item as changed.</p>
+<h2 id="build-settings">Build settings<a class="anchor" href="#build-settings" aria-label="Link to this section">#</a></h2>
+<p>Instruction counts only compare across builds that made the same codegen
+decisions. Rust compilation is not function-local: at the stock
+<code>codegen-units = 16</code> rustc spreads modules over 16 units, and adding code
+anywhere repartitions them, moving inlining and register allocation in
+functions nobody touched. An untouched bench can then report several percent.</p>
+<p>So the gate pins it. Every measurement build runs with <code>codegen-units = 1</code>,
+on both sides of a comparison, whatever the checked-out tree's profile says.
+One unit cannot be repartitioned. This costs build time, which is the price
+of a comparison that means something; <code>--codegen-units N</code> or <code>inherit</code> opts
+out, as does</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[gate]</span>
+<span class="tok-ty">codegen-units </span>=<span class="tok-str"> &quot;inherit&quot;</span></code></pre></figure>
+<p>Pinning cannot reach everything. A <code>[profile.bench.package.mycrate]</code> table
+still wins over the gate's setting, and <code>RUSTFLAGS</code>, <code>.cargo/config.toml</code> and
+the rustc version all change codegen too. Every run therefore records what it
+was built with, printed as <code>build=&lt;digest&gt;</code> in the gate banner. When the two
+sides disagree the gate says which field differs and downgrades the
+deterministic counters to SOFT for that comparison:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: build settings differ: profiles (7b1f.. -&gt; 22c0..) — deterministic counters softened
+SOFT  ind_alma instructions 81076.0 -&gt; 107851.0 (+33.0%)
+</code></pre></figure>
+<p>The run still passes. A profile change that cannot be measured is not a
+regression, and it has to be able to land through the gate that will measure
+it afterwards. Allocation and poll counts stay hard: they are semantic, and
+codegen does not move them.</p>
+<p>A baseline saved before build stamps existed compares the same way, and says
+to re-save it. <code>--against-ref</code> never hits that: both sides are measured fresh
+in the same run.</p>
 <h2 id="ratchets">Ratchets<a class="anchor" href="#ratchets" aria-label="Link to this section">#</a></h2>
 <div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_measure::sweep::evaluate"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">evaluate</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
 <p><code>--ratchet NAME</code> runs a second comparison against a long-lived baseline,
@@ -222,6 +257,8 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l2" href="#picking-a-reference">Picking a reference</a></li>
   
     <li><a class="toc-l2" href="#thresholds">Thresholds</a></li>
+  
+    <li><a class="toc-l2" href="#build-settings">Build settings</a></li>
   
     <li><a class="toc-l2" href="#ratchets">Ratchets</a></li>
   
