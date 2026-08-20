@@ -23,6 +23,7 @@ pkg-fmt = "tgz"
 
 [dependencies]
 soothfast-docs.workspace = true
+soothfast-registry.workspace = true
 soothfast-report.workspace = true
 soothfast-site.workspace = true
 soothfast-spec.workspace = true

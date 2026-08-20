@@ -23,6 +23,7 @@ struct Attrs {
     p99_ns: Option<u64>,
     complexity: Option<String>,
     sizes: Vec<usize>,
+    tolerance_pct: Option<f64>,
 }
 
 fn parse_attrs(attr: TokenStream, allowed: &[&str]) -> Result<Attrs, syn::Error> {
@@ -45,6 +46,11 @@ fn parse_attrs(attr: TokenStream, allowed: &[&str]) -> Result<Attrs, syn::Error>
             "setup_sized" => out.setup_sized = Some(meta.value()?.parse()?),
             "covers" => out.covers = meta.value()?.parse::<syn::LitStr>()?.value(),
             "alloc" => out.max_allocs = Some(meta.value()?.parse::<syn::LitInt>()?.base10_parse()?),
+            "tolerance" => {
+                let lit = meta.value()?.parse::<syn::LitStr>()?;
+                out.tolerance_pct =
+                    Some(parse_percent(&lit.value()).map_err(|e| syn::Error::new(lit.span(), e))?);
+            }
             "p99" => {
                 let lit = meta.value()?.parse::<syn::LitStr>()?;
                 out.p99_ns = Some(
@@ -94,6 +100,19 @@ fn parse_duration_ns(s: &str) -> Result<u64, String> {
         other => return Err(format!("unknown duration unit {other:?}")),
     };
     Ok(value * factor)
+}
+
+/// Parse `"8%"` into a percentage.
+fn parse_percent(s: &str) -> Result<f64, String> {
+    let num = s.strip_suffix('%').ok_or("missing `%`")?;
+    let value: f64 = num
+        .trim()
+        .parse()
+        .map_err(|_| "invalid number".to_string())?;
+    if value <= 0.0 {
+        return Err("tolerance must be positive".into());
+    }
+    Ok(value)
 }
 
 /// Register a zero-argument function as a directly measured item.
@@ -158,6 +177,7 @@ pub fn bench(attr: TokenStream, item: TokenStream) -> TokenStream {
             "p99",
             "complexity",
             "sizes",
+            "tolerance",
         ],
     ) {
         Ok(a) => a,
@@ -529,6 +549,9 @@ fn registration(
         entry = quote! {
             #entry.with_assertions(::soothfast::__private::Assertions::new(#a, #p, #c))
         };
+    }
+    if let Some(t) = attrs.tolerance_pct {
+        entry = quote! { #entry.with_tolerance(#t) };
     }
     if func.sig.asyncness.is_some() {
         entry = quote! { #entry.with_async() };

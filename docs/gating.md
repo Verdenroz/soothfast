@@ -49,6 +49,53 @@ a slow `serde` bump is exactly what the gate exists to catch.
 | `buildcost.size_bytes` | +5% | hard |
 | `buildcost.build_ms` | +25% | soft: printed as a warning, does not fail the gate |
 
+A bench can widen its own limit with `#[bench(..., tolerance = "8%")]`, which
+raises the instruction, Ir and walltime thresholds for that item alone. It is
+for bodies too small to survive the default: a loop costing ~20 instructions
+per element moves 5% when one register spills, and no fixture size changes
+that ratio. Attribute text is part of an item's fingerprint, so the commit
+adding a tolerance also reports the item as changed.
+
+## Build settings
+
+Instruction counts only compare across builds that made the same codegen
+decisions. Rust compilation is not function-local: at the stock
+`codegen-units = 16` rustc spreads modules over 16 units, and adding code
+anywhere repartitions them, moving inlining and register allocation in
+functions nobody touched. An untouched bench can then report several percent.
+
+So the gate pins it. Every measurement build runs with `codegen-units = 1`,
+on both sides of a comparison, whatever the checked-out tree's profile says.
+One unit cannot be repartitioned. This costs build time, which is the price
+of a comparison that means something; `--codegen-units N` or `inherit` opts
+out, as does
+
+```toml
+[gate]
+codegen-units = "inherit"
+```
+
+Pinning cannot reach everything. A `[profile.bench.package.mycrate]` table
+still wins over the gate's setting, and `RUSTFLAGS`, `.cargo/config.toml` and
+the rustc version all change codegen too. Every run therefore records what it
+was built with, printed as `build=<digest>` in the gate banner. When the two
+sides disagree the gate says which field differs and downgrades the
+deterministic counters to SOFT for that comparison:
+
+```console
+gate: build settings differ: profiles (7b1f.. -> 22c0..) — deterministic counters softened
+SOFT  ind_alma instructions 81076.0 -> 107851.0 (+33.0%)
+```
+
+The run still passes. A profile change that cannot be measured is not a
+regression, and it has to be able to land through the gate that will measure
+it afterwards. Allocation and poll counts stay hard: they are semantic, and
+codegen does not move them.
+
+A baseline saved before build stamps existed compares the same way, and says
+to re-save it. `--against-ref` never hits that: both sides are measured fresh
+in the same run.
+
 ## Ratchets
 
 <!-- soothfast:bind soothfast_measure::sweep::evaluate -->
