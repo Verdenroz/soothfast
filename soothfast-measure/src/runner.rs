@@ -431,8 +431,12 @@ pub fn main() {
 
 fn emit_result(e: &Entry, backend: &str, metrics_json: &str, human: &str, json: bool) {
     if json {
+        let tolerance = match e.item.tolerance_pct {
+            Some(t) => format!(",\"tolerance_pct\":{t}"),
+            None => String::new(),
+        };
         println!(
-            "{{\"type\":\"result\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\",\"backend\":\"{backend}\",\"metrics\":{{{metrics_json}}}}}",
+            "{{\"type\":\"result\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"{tolerance},\"backend\":\"{backend}\",\"metrics\":{{{metrics_json}}}}}",
             esc(&e.id),
             esc(e.item.group),
             e.fingerprint,

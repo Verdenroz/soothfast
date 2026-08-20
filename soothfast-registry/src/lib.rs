@@ -160,6 +160,9 @@ pub struct MeasuredItem {
     pub sized_runner: Option<fn(&mut Bencher, usize)>,
     /// The annotated fn is async (drives the `asyncexec` backend).
     pub is_async: bool,
+    /// Gate threshold this item widens to, when the default is too tight for
+    /// a body this small.
+    pub tolerance_pct: Option<f64>,
 }
 
 impl MeasuredItem {
@@ -187,6 +190,7 @@ impl MeasuredItem {
             sizes: &[],
             sized_runner: None,
             is_async: false,
+            tolerance_pct: None,
         }
     }
 
@@ -232,6 +236,13 @@ impl MeasuredItem {
     /// Attach checked claims (const-chainable in static initializers).
     pub const fn with_assertions(mut self, assertions: Assertions) -> Self {
         self.assertions = assertions;
+        self
+    }
+
+    /// Widen this item's gate threshold (const-chainable in static
+    /// initializers).
+    pub const fn with_tolerance(mut self, pct: f64) -> Self {
+        self.tolerance_pct = Some(pct);
         self
     }
 

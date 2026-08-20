@@ -5,6 +5,8 @@
 
 use serde_json::Value;
 
+use crate::buildstamp;
+use crate::gate_config;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::workspace;
 
@@ -38,6 +40,13 @@ const COUNTER_FLAT_PCT: f64 = 0.5;
 /// unmonitored. Scaling keeps every run gated at ≥3 sigma.
 fn walltime_limit(noise_pct: f64) -> f64 {
     WALLTIME_THRESHOLD_PCT.max(noise_pct * WALLTIME_NOISE_MARGIN)
+}
+
+/// A bench whose loop body is only a few instructions wide cannot survive a
+/// tight relative threshold across a refactor: one spilled register is
+/// already several percent. `tolerance` widens its own gate.
+fn counter_limit(default_pct: f64, cur: &ItemMetrics) -> f64 {
+    default_pct.max(cur.tolerance_pct.unwrap_or(0.0))
 }
 
 struct GateArgs {
@@ -92,6 +101,10 @@ pub fn run(args: &[String]) -> i32 {
             "--allow-gone" => g.allow_gone = true,
             other => return err(&format!("unknown gate arg {other:?}")),
         }
+    }
+
+    if let Err(e) = gate_config::apply(&mut g.common) {
+        return err(&e);
     }
 
     let mut failures = 0u32;
@@ -165,7 +178,8 @@ pub fn run(args: &[String]) -> i32 {
             Ok(r) => r,
             Err(e) => return err(&e.to_string()),
         };
-        let current = invoke::collect(&records);
+        let mut current = invoke::collect(&records);
+        current.build = Some(buildstamp::capture(g.common.codegen_units_env(), None));
         let baseline = match invoke::load_baseline(&g.baseline) {
             Ok(Some(b)) => b,
             Ok(None) => {
@@ -335,7 +349,9 @@ fn measure_ref_interleaved(common: &CommonArgs, refname: &str) -> Result<Option<
     let measure = |dir: Option<&std::path::Path>, extra: &[&str]| -> Result<Run, String> {
         let td = dir.and(wt_target.as_deref());
         let recs = invoke::run_bench_dir(common, extra, dir, td).map_err(|e| e.to_string())?;
-        Ok(invoke::collect(&recs))
+        let mut run = invoke::collect(&recs);
+        run.build = Some(buildstamp::capture(common.codegen_units_env(), dir));
+        Ok(run)
     };
     let pkg = common.pkg.clone();
     let target = common.target.clone().unwrap_or_else(|| "soothfast".into());
@@ -395,6 +411,9 @@ fn ref_doc(run: &Run) -> Value {
     let mut doc = serde_json::json!({ "version": 1 });
     if let Some(n) = run.noise_pct {
         doc["noise_pct"] = serde_json::json!(n);
+    }
+    if let Some(b) = &run.build {
+        doc["build"] = b.to_json();
     }
     doc["items"] = invoke::run_to_items_value(run);
     doc
@@ -578,14 +597,31 @@ fn compare(
         .unwrap_or(0.0)
         .max(reference["noise_pct"].as_f64().unwrap_or(0.0));
     let wall_limit = walltime_limit(noise);
+    let build_drift = current
+        .build
+        .as_ref()
+        .and_then(|b| buildstamp::compare(reference, b));
+    if let Some(m) = &build_drift {
+        println!(
+            "{label}gate: {} — deterministic counters softened for this comparison",
+            m.detail
+        );
+    }
+    let build = current
+        .build
+        .as_ref()
+        .map(|b| b.digest())
+        .unwrap_or_else(|| "?".into());
     println!(
-        "{label}gate: noise_floor={noise:.2}% thresholds: instructions +{INSTRUCTIONS_THRESHOLD_PCT}% ir +{IR_THRESHOLD_PCT}% walltime +{wall_limit:.1}% alloc/size +{ALLOC_THRESHOLD_PCT}% polls/wakes +{ASYNC_THRESHOLD_PCT}%"
+        "{label}gate: build={build} noise_floor={noise:.2}% thresholds: instructions +{INSTRUCTIONS_THRESHOLD_PCT}% ir +{IR_THRESHOLD_PCT}% walltime +{wall_limit:.1}% alloc/size +{ALLOC_THRESHOLD_PCT}% polls/wakes +{ASYNC_THRESHOLD_PCT}%"
     );
     if wall_limit > WALLTIME_THRESHOLD_PCT {
         println!(
             "NOTE: noise floor {noise:.2}% raised the walltime threshold to +{wall_limit:.1}% (deterministic metrics unaffected)"
         );
     }
+
+    let build_soft = build_drift.as_ref().map(|m| m.reason.as_str());
 
     let old_items = &reference["items"];
     let mut failures = 0u32;
@@ -639,25 +675,25 @@ fn compare(
             "instructions",
             old["perfcnt"]["instructions"].as_u64().map(|v| v as f64),
             cur.instructions.map(|v| v as f64),
-            INSTRUCTIONS_THRESHOLD_PCT,
+            counter_limit(INSTRUCTIONS_THRESHOLD_PCT, cur),
             true,
-            None,
+            build_soft,
         );
         rel(
             "callgrind_ir",
             old["callgrind"]["ir"].as_u64().map(|v| v as f64),
             cur.ir.map(|v| v as f64),
-            IR_THRESHOLD_PCT,
+            counter_limit(IR_THRESHOLD_PCT, cur),
             true,
-            None,
+            build_soft,
         );
         rel(
             "walltime_median_ns",
             old["walltime"]["median_ns"].as_f64(),
             cur.median_ns,
-            wall_limit,
+            counter_limit(wall_limit, cur),
             true,
-            walltime_downgrade(old, cur, wall_limit),
+            walltime_downgrade(old, cur, wall_limit).or(build_soft),
         );
         rel(
             "build_ms",
@@ -799,6 +835,8 @@ mod tests {
     use crate::invoke::{ItemMetrics, Run};
     use serde_json::{Value, json};
 
+    use crate::buildstamp;
+
     fn ctx() -> CompareCtx {
         CompareCtx {
             deps_mode: false,
@@ -823,6 +861,79 @@ mod tests {
         let mut failing = Vec::new();
         let failures = compare(reference, current, "", &ctx(), &mut failing);
         (failures, failing)
+    }
+
+    fn stamp(profiles: &str) -> buildstamp::BuildStamp {
+        buildstamp::BuildStamp {
+            rustc: "1.88.0 x86_64-unknown-linux-gnu".into(),
+            codegen_units: "1".into(),
+            profiles: profiles.into(),
+            rustflags: "0".into(),
+        }
+    }
+
+    /// 321107 -> 337491 Ir is +5.1%, one instruction per element on a
+    /// 16384-element workload: a repartitioned codegen unit, not a change.
+    fn drift_reference(build: Option<Value>) -> Value {
+        let mut doc = reference(json!({
+            "fingerprint": "fp-unchanged",
+            "perfcnt": { "instructions": 321107, "cycles": 91000, "cache_refs": 1200 },
+        }));
+        if let Some(b) = build {
+            doc["build"] = b;
+        }
+        doc
+    }
+
+    fn drift_head(build: Option<buildstamp::BuildStamp>, tolerance: Option<f64>) -> Run {
+        let mut run = run_with(ItemMetrics {
+            fingerprint: "fp-unchanged".into(),
+            instructions: Some(337491),
+            tolerance_pct: tolerance,
+            ..Default::default()
+        });
+        run.build = build;
+        run
+    }
+
+    #[test]
+    fn matching_build_stamps_still_fail_instructions() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let (failures, failing) = gate_failures(&reference, &drift_head(Some(stamp("aaaa")), None));
+        assert_eq!(failures, 1);
+        assert_eq!(failing, ["pkg::bt_base_to_htf_index"]);
+    }
+
+    #[test]
+    fn differing_build_stamps_soften_instructions() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let (failures, failing) = gate_failures(&reference, &drift_head(Some(stamp("bbbb")), None));
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty(), "a SOFT item must not enter triage");
+    }
+
+    #[test]
+    fn reference_without_a_build_stamp_softens() {
+        let (failures, failing) = gate_failures(
+            &drift_reference(None),
+            &drift_head(Some(stamp("aaaa")), None),
+        );
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty());
+    }
+
+    #[test]
+    fn tolerance_widens_the_instruction_threshold() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let head = drift_head(Some(stamp("aaaa")), Some(8.0));
+        assert_eq!(gate_failures(&reference, &head).0, 0);
+    }
+
+    #[test]
+    fn tolerance_below_the_delta_still_fails() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let head = drift_head(Some(stamp("aaaa")), Some(2.0));
+        assert_eq!(gate_failures(&reference, &head).0, 1);
     }
 
     /// The motivating incident: walltime 22995 -> 27327 ns (+18.8%) with

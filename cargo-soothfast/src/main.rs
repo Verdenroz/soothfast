@@ -7,10 +7,12 @@
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod buildcost;
+mod buildstamp;
 mod coverage;
 mod docs;
 mod docs_support;
 mod gate;
+mod gate_config;
 mod invoke;
 mod mcp;
 mod report;
@@ -39,7 +41,9 @@ commands:
   gate     [-p PKG] [--filter S] [--backend B] [--samples N] [--features F]
            [--baseline NAME] [--ratchet NAME] [--against-ref REF] [--deps]
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
+           [--codegen-units N|inherit]
            (--save-baseline persists the measured head run after a pass)
+           (--codegen-units pins both sides' partitioning; default 1)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--features F] [PATHS...]
@@ -143,6 +147,10 @@ fn cmd_measure(args: &[String]) -> i32 {
         }
     }
 
+    if let Err(e) = gate_config::apply(&mut common) {
+        return arg_err(&e);
+    }
+
     // buildcost is CLI-side (no bench binary); everything else runs the runner.
     let run = if common.backend.as_deref() == Some("buildcost") {
         let Some(pkg) = common.pkg.clone() else {
@@ -163,7 +171,8 @@ fn cmd_measure(args: &[String]) -> i32 {
                 return 1;
             }
         };
-        let run = invoke::collect(&records);
+        let mut run = invoke::collect(&records);
+        run.build = Some(buildstamp::capture(common.codegen_units_env(), None));
         if let Some(b) = &run.gating_backend {
             println!("env: gating backend = {b}");
         }

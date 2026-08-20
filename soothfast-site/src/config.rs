@@ -93,33 +93,50 @@ impl Default for SiteConfig {
     }
 }
 
+/// Tables belonging to the other consumers of the shared `soothfast.toml`.
+/// Rejecting these would make a spec- or SDK-configured repo unable to build
+/// its site at all.
+const FOREIGN_TABLES: [&str; 3] = ["spec", "sdk", "gate"];
+
+fn is_foreign(table: &[String]) -> bool {
+    table
+        .first()
+        .is_some_and(|t| FOREIGN_TABLES.contains(&t.as_str()))
+}
+
 /// Parse `soothfast.toml` text into a config. Unknown keys under `[site]` are
 /// errors: silently ignored config is how sites drift from intent.
 pub fn parse(text: &str) -> Result<SiteConfig, String> {
     let mut cfg = SiteConfig::default();
     // Current table path, e.g. ["site"] or ["site", "nav"] for [[site.nav]].
     let mut table: Vec<String> = Vec::new();
+    let mut foreign = false;
 
     for (lineno, line) in logical_lines(text) {
         let line = line.as_str();
 
         if let Some(inner) = line.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
             table = inner.split('.').map(|s| s.trim().to_string()).collect();
+            foreign = is_foreign(&table);
             if table == ["site", "nav"] {
                 cfg.nav.push(NavGroup {
                     title: String::new(),
                     pages: Vec::new(),
                 });
-            } else {
+            } else if !foreign {
                 return Err(format!("line {lineno}: unknown array table [[{inner}]]"));
             }
             continue;
         }
         if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
             table = inner.split('.').map(|s| s.trim().to_string()).collect();
-            if table != ["site"] && table != ["site", "theme"] {
+            foreign = is_foreign(&table);
+            if !foreign && table != ["site"] && table != ["site", "theme"] {
                 return Err(format!("line {lineno}: unknown table [{inner}]"));
             }
+            continue;
+        }
+        if foreign {
             continue;
         }
 
@@ -189,6 +206,18 @@ fn set(cfg: &mut SiteConfig, table: &[String], key: &str, value: TomlValue) -> R
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn tables_owned_by_other_engines_are_skipped() {
+        let text = "[site]\nname = \"x\"\n\n[gate]\ncodegen-units = 1\n\n[[spec]]\npath = \"a\"\n\n[[sdk]]\nspec = \"a\"\n";
+        let cfg = parse(text).expect("foreign tables must not break the site build");
+        assert_eq!(cfg.name, "x");
+    }
+
+    #[test]
+    fn genuinely_unknown_tables_are_still_errors() {
+        assert!(parse("[site]\nname = \"x\"\n\n[nonsense]\nk = 1\n").is_err());
+    }
     use super::*;
 
     #[test]

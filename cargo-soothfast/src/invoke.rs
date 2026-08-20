@@ -19,6 +19,9 @@ pub struct CommonArgs {
     pub features: Option<String>,
     /// `[[bench]]` target to link the registry from (default `"soothfast"`).
     pub target: Option<String>,
+    /// `codegen-units` measurement builds are pinned to, or `"inherit"` to
+    /// leave the project's own profile alone.
+    pub codegen_units: Option<String>,
 }
 
 impl CommonArgs {
@@ -35,12 +38,29 @@ impl CommonArgs {
             // in `sdk build` it means a Rust triple the way cargo spells
             // it — which is why the other name had to exist.
             "--bench" | "--target" => &mut self.target,
+            "--codegen-units" => &mut self.codegen_units,
             _ => return false,
         };
         *slot = it.next().cloned();
         true
     }
+
+    /// The `codegen-units` to force on a measurement build, or `None` to
+    /// inherit the project's profile.
+    pub fn codegen_units_env(&self) -> Option<&str> {
+        match self.codegen_units.as_deref() {
+            Some("inherit") => None,
+            Some(n) => Some(n),
+            None => Some(CANONICAL_CODEGEN_UNITS),
+        }
+    }
 }
+
+/// Codegen partitioning varies with unrelated edits: rustc reassigns modules
+/// to units whenever a crate's contents change, which moves inlining and
+/// register allocation in functions nobody touched. One unit cannot be
+/// repartitioned, so both sides of a comparison are pinned to it.
+const CANONICAL_CODEGEN_UNITS: &str = "1";
 
 fn bench_command(
     common: &CommonArgs,
@@ -52,6 +72,9 @@ fn bench_command(
     cmd.arg("bench");
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
+    }
+    if let Some(n) = common.codegen_units_env() {
+        cmd.env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", n);
     }
     if let Some(p) = &common.pkg {
         cmd.args(["-p", p]);
@@ -169,6 +192,9 @@ pub fn bench_executable(
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
     }
+    if let Some(n) = common.codegen_units_env() {
+        cmd.env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", n);
+    }
     if let Some(p) = &common.pkg {
         cmd.args(["-p", p]);
     }
@@ -216,6 +242,8 @@ pub struct ItemMetrics {
     pub bytes: Option<u64>,
     pub polls: Option<u64>,
     pub wakes: Option<u64>,
+    /// Gate threshold widened by `#[bench(tolerance = "...")]`.
+    pub tolerance_pct: Option<f64>,
     /// Per-round walltime medians when a side ran interleaved rounds.
     pub wall_rounds: Vec<f64>,
     /// buildcost pseudo-items
@@ -236,6 +264,7 @@ pub struct AssertionOutcome {
 #[derive(Default, Debug)]
 pub struct Run {
     pub noise_pct: Option<f64>,
+    pub build: Option<crate::buildstamp::BuildStamp>,
     pub gating_backend: Option<String>,
     pub items: BTreeMap<String, ItemMetrics>,
     pub assertions: Vec<AssertionOutcome>,
@@ -264,6 +293,9 @@ pub fn collect(records: &[Value]) -> Run {
                 }
                 if let Some(c) = rec["covers"].as_str() {
                     item.covers = c.to_string();
+                }
+                if let Some(t) = rec["tolerance_pct"].as_f64() {
+                    item.tolerance_pct = Some(t);
                 }
                 let m = &rec["metrics"];
                 match rec["backend"].as_str() {
@@ -304,6 +336,9 @@ pub fn run_to_items_value(run: &Run) -> Value {
     let mut items = serde_json::Map::new();
     for (id, m) in &run.items {
         let mut entry = json!({ "fingerprint": m.fingerprint, "covers": m.covers });
+        if let Some(t) = m.tolerance_pct {
+            entry["tolerance_pct"] = json!(t);
+        }
         if let Some(v) = m.median_ns {
             entry["walltime"] = json!({
                 "median_ns": v,
@@ -404,6 +439,9 @@ pub fn save_baseline(name: &str, run: &Run, scope: SaveScope) -> io::Result<Path
     doc["created_unix"] = json!(unix_now);
     if let Some(n) = run.noise_pct {
         doc["noise_pct"] = json!(n);
+    }
+    if let Some(b) = &run.build {
+        doc["build"] = b.to_json();
     }
     if let (Some(map), Some(new_map)) = (doc["items"].as_object_mut(), new_items.as_object()) {
         // Full runs replace their scope: renamed/removed items must not
