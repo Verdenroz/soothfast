@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased (draft vs v0.1.14)
+
+### API surface
+
+```
+# soothfast-macros
+CHANGED  soothfast_macros::bench (body)
+
+# soothfast-registry
+CHANGED  soothfast_registry::MeasuredItem (body)
+
+# soothfast-site
+CHANGED  soothfast_site::config::parse (body)
+```
+
+### Performance
+
+| item | metric | was | now | delta |
+|---|---|---:|---:|---:|
+| _no movement past gate thresholds_ | | | | |
+
+
 ## 0.1.14 - 2026-08-15
 
 <!-- soothfast:notes -->
