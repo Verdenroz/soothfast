@@ -403,7 +403,8 @@ fn measure_ref_interleaved(
             println!(
                 "gate: bench binaries identical (.text match) — no measurable change possible"
             );
-            return Ok(Ref::IdenticalBinaries(measure(None, TIMING_ONLY)));
+            let args = identical_pass_args(common.backend.as_deref());
+            return Ok(Ref::IdenticalBinaries(measure(None, args)));
         }
         Ok(Ref::Rounds(Box::new([
             measure(None, &[]),
@@ -453,6 +454,16 @@ fn cache_head(common: &CommonArgs, stamp: &buildstamp::BuildStamp, head: &Run) {
     };
     let sha = sha.trim();
     runcache::store(&runcache::key(sha, stamp, common), &ref_doc(head));
+}
+
+/// Runner args for the single pass taken when both sides' binaries match.
+/// A backend named on the command line may be one of the gating counters,
+/// which measures nothing once those counters are skipped, so it keeps them.
+fn identical_pass_args(backend: Option<&str>) -> &'static [&'static str] {
+    match backend {
+        Some("perfcnt" | "callgrind") => &[],
+        _ => &["--skip-gating-counters"],
+    }
 }
 
 /// A measured run in the reference-document shape `compare` reads.
@@ -885,13 +896,12 @@ fn err(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompareCtx, SaveVerdict, combine_min, combine_rounds, compare, save_verdict,
-        text_section_bytes, walltime_limit,
+        CompareCtx, SaveVerdict, combine_min, combine_rounds, compare, identical_pass_args,
+        save_verdict, text_section_bytes, walltime_limit,
     };
+    use crate::buildstamp;
     use crate::invoke::{ItemMetrics, Run};
     use serde_json::{Value, json};
-
-    use crate::buildstamp;
 
     fn ctx() -> CompareCtx {
         CompareCtx {
@@ -990,6 +1000,21 @@ mod tests {
         let reference = drift_reference(Some(stamp("aaaa").to_json()));
         let head = drift_head(Some(stamp("aaaa")), Some(2.0));
         assert_eq!(gate_failures(&reference, &head).0, 1);
+    }
+
+    #[test]
+    fn a_named_gating_backend_keeps_its_counters_on_the_identical_pass() {
+        assert!(identical_pass_args(Some("perfcnt")).is_empty());
+        assert!(identical_pass_args(Some("callgrind")).is_empty());
+    }
+
+    #[test]
+    fn the_identical_pass_skips_counters_otherwise() {
+        assert_eq!(identical_pass_args(None), ["--skip-gating-counters"]);
+        assert_eq!(
+            identical_pass_args(Some("walltime")),
+            ["--skip-gating-counters"]
+        );
     }
 
     fn reused(mut doc: Value) -> Value {
