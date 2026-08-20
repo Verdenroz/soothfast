@@ -900,6 +900,31 @@ fn harness_mismatches(head_lock: &str, wt_lock: &str) -> Vec<(String, String, St
         .collect()
 }
 
+/// HEAD's locked soothfast versions, as `name@version` pairs. The reference
+/// side is pinned to these before it is built, so they decide what a
+/// reference measurement means.
+pub fn harness_versions() -> String {
+    let Ok(root) = workspace_root() else {
+        return String::new();
+    };
+    let Ok(lock) = std::fs::read_to_string(root.join("Cargo.lock")) else {
+        return String::new();
+    };
+    let mut out: Vec<String> = lock_packages(&lock)
+        .into_iter()
+        .filter(|p| p.name == "soothfast" || p.name.starts_with("soothfast-"))
+        .map(|p| format!("{}@{}", p.name, p.version))
+        .collect();
+    out.sort();
+    out.join(",")
+}
+
+/// Whether the working tree has no uncommitted changes, so HEAD's SHA names
+/// what was actually measured.
+pub fn tree_is_clean() -> bool {
+    git(&["status", "--porcelain"]).is_ok_and(|s| s.trim().is_empty())
+}
+
 /// Pin the merge-base worktree's soothfast crates to HEAD's locked versions
 /// so the reference bench binary embeds the same measurement harness. Best
 /// effort: a pin that cargo rejects (offline, incompatible requirement)

@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::buildstamp;
 use crate::gate_config;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
+use crate::runcache;
 use crate::workspace;
 
 /// Deterministic counters gate tight.
@@ -58,6 +59,7 @@ struct GateArgs {
     allow_gone: bool,
     matrix: String,
     save_baseline: Option<String>,
+    reuse_base: bool,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -70,6 +72,7 @@ pub fn run(args: &[String]) -> i32 {
         allow_gone: false,
         matrix: "default".into(),
         save_baseline: None,
+        reuse_base: true,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -97,6 +100,7 @@ pub fn run(args: &[String]) -> i32 {
                 Some(n) => g.save_baseline = Some(n.clone()),
                 None => return err("--save-baseline needs a name"),
             },
+            "--no-reuse-base" => g.reuse_base = false,
             "--deps" => g.deps = true,
             "--allow-gone" => g.allow_gone = true,
             other => return err(&format!("unknown gate arg {other:?}")),
@@ -156,7 +160,7 @@ pub fn run(args: &[String]) -> i32 {
         };
         (reference, current)
     } else if let Some(refname) = &g.against_ref {
-        match measure_ref_interleaved(&g.common, refname) {
+        match measure_ref_interleaved(&g.common, refname, g.reuse_base) {
             Ok(Some(pair)) => {
                 short_circuited = pair.short_circuited;
                 (pair.reference, pair.current)
@@ -334,7 +338,13 @@ struct RefPair {
 /// them and re-measures only the timing-sensitive backends.
 /// `Ok(None)` when the merge-base has no such bench target: the crate is
 /// newly measured, so there is nothing on that side to compare against.
-fn measure_ref_interleaved(common: &CommonArgs, refname: &str) -> Result<Option<RefPair>, String> {
+/// A merge-base already measured under the same conditions is served from
+/// the run cache instead of being rebuilt, unless `reuse` is false.
+fn measure_ref_interleaved(
+    common: &CommonArgs,
+    refname: &str,
+    reuse: bool,
+) -> Result<Option<RefPair>, String> {
     const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
     enum Ref {
         NoBenchTarget,
@@ -342,7 +352,6 @@ fn measure_ref_interleaved(common: &CommonArgs, refname: &str) -> Result<Option<
         Rounds(Box<[Result<Run, String>; 4]>),
     }
 
-    println!("gate: measuring merge-base of {refname} in worktree (interleaved rounds)");
     // Worktree builds go to a persistent sibling of the parent target dir so
     // dependencies compile once per machine, not once per gate run.
     let wt_target = invoke::worktree_target_dir().ok();
@@ -353,6 +362,28 @@ fn measure_ref_interleaved(common: &CommonArgs, refname: &str) -> Result<Option<
         run.build = Some(buildstamp::capture(common.codegen_units_env(), dir));
         Ok(run)
     };
+
+    let base_sha = invoke::git(&["merge-base", "HEAD", refname])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let head_stamp = buildstamp::capture(common.codegen_units_env(), None);
+    let cache_key =
+        (!base_sha.is_empty() && reuse).then(|| runcache::key(&base_sha, &head_stamp, common));
+
+    if let Some(k) = &cache_key
+        && let Some(doc) = runcache::load(k, &base_sha)
+    {
+        println!("gate: reusing the measured merge-base {base_sha}");
+        let head = measure(None, &[])?;
+        cache_head(common, &head_stamp, &head);
+        return Ok(Some(RefPair {
+            reference: doc,
+            current: head,
+            short_circuited: false,
+        }));
+    }
+
+    println!("gate: measuring merge-base of {refname} in worktree (interleaved rounds)");
     let pkg = common.pkg.clone();
     let target = common.target.clone().unwrap_or_else(|| "soothfast".into());
     let outcome = invoke::with_merge_base_worktree(refname, |wt| {
@@ -399,11 +430,29 @@ fn measure_ref_interleaved(common: &CommonArgs, refname: &str) -> Result<Option<
             (combine_rounds(base1?, base2), combine_rounds(head1?, head2))
         }
     };
+    let reference = ref_doc(&base);
+    if let Some(k) = &cache_key {
+        runcache::store(k, &reference);
+    }
+    cache_head(common, &head_stamp, &head);
     Ok(Some(RefPair {
-        reference: ref_doc(&base),
+        reference,
         current: head,
         short_circuited: false,
     }))
+}
+
+/// Keep HEAD's run so the next commit's gate finds its reference already
+/// measured. Only from a clean tree, where HEAD's SHA names what was built.
+fn cache_head(common: &CommonArgs, stamp: &buildstamp::BuildStamp, head: &Run) {
+    if !invoke::tree_is_clean() {
+        return;
+    }
+    let Ok(sha) = invoke::git(&["rev-parse", "HEAD"]) else {
+        return;
+    };
+    let sha = sha.trim();
+    runcache::store(&runcache::key(sha, stamp, common), &ref_doc(head));
 }
 
 /// A measured run in the reference-document shape `compare` reads.
@@ -622,6 +671,11 @@ fn compare(
     }
 
     let build_soft = build_drift.as_ref().map(|m| m.reason.as_str());
+    // A reused reference was read against another process's clock, so only
+    // its counters carry over.
+    let reused_soft = reference["reused_from"]
+        .as_str()
+        .map(|_| "reference measured in an earlier run");
 
     let old_items = &reference["items"];
     let mut failures = 0u32;
@@ -693,7 +747,9 @@ fn compare(
             cur.median_ns,
             counter_limit(wall_limit, cur),
             true,
-            walltime_downgrade(old, cur, wall_limit).or(build_soft),
+            walltime_downgrade(old, cur, wall_limit)
+                .or(build_soft)
+                .or(reused_soft),
         );
         rel(
             "build_ms",
@@ -934,6 +990,49 @@ mod tests {
         let reference = drift_reference(Some(stamp("aaaa").to_json()));
         let head = drift_head(Some(stamp("aaaa")), Some(2.0));
         assert_eq!(gate_failures(&reference, &head).0, 1);
+    }
+
+    fn reused(mut doc: Value) -> Value {
+        doc["reused_from"] = json!("deadbeef");
+        doc
+    }
+
+    fn walltime_reference() -> Value {
+        reference(json!({
+            "fingerprint": "fp-base",
+            "walltime": { "median_ns": 1000.0, "mad_ns": 5.0, "p99_ns": 1100.0 },
+        }))
+    }
+
+    fn walltime_head() -> Run {
+        run_with(ItemMetrics {
+            fingerprint: "fp-head".into(),
+            median_ns: Some(1300.0),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn a_freshly_measured_reference_fails_walltime() {
+        assert_eq!(gate_failures(&walltime_reference(), &walltime_head()).0, 1);
+    }
+
+    #[test]
+    fn a_reused_reference_softens_walltime() {
+        let (failures, failing) = gate_failures(&reused(walltime_reference()), &walltime_head());
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty());
+    }
+
+    #[test]
+    fn a_reused_reference_still_fails_instructions() {
+        let doc = reused(drift_reference(Some(stamp("aaaa").to_json())));
+        let head = drift_head(Some(stamp("aaaa")), None);
+        assert_eq!(
+            gate_failures(&doc, &head).0,
+            1,
+            "reuse must not soften counters"
+        );
     }
 
     /// The motivating incident: walltime 22995 -> 27327 ns (+18.8%) with
