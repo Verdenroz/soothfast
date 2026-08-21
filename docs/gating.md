@@ -67,8 +67,14 @@ it keyed on the merge-base commit:
 - uses: actions/cache@v4
   with:
     path: .soothfast/runs
-    key: soothfast-runs-${{ github.base_ref || github.ref_name }}
+    key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}
+    restore-keys: |
+      soothfast-runs-${{ github.ref_name }}-
 ```
+
+The key has to be unique per commit, with the prefix in `restore-keys`. An
+exact key that never changes is never rewritten once saved, so the cache
+would keep the first commit's runs and every later commit would miss.
 
 ## Thresholds
 
