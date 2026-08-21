@@ -349,6 +349,8 @@ fn measure_ref_interleaved(
     enum Ref {
         NoBenchTarget,
         IdenticalBinaries(Result<Run, String>),
+        /// Reference served by binary identity rather than by commit.
+        Cached(Value),
         Rounds(Box<[Result<Run, String>; 4]>),
     }
 
@@ -392,27 +394,50 @@ fn measure_ref_interleaved(
         if let Some(pkg) = &pkg
             && !workspace::has_bench_target(pkg, &target, Some(wt)).map_err(|e| e.to_string())?
         {
-            return Ok(Ref::NoBenchTarget);
+            return Ok((Ref::NoBenchTarget, None));
         }
         // Both bench binaries must embed the same soothfast harness: a
         // measurement-protocol change between the two locked versions would
         // otherwise be reported as a regression in the measured project.
         // Pinning must precede the base build the binary comparison does.
         invoke::sync_harness_versions(wt)?;
-        if bench_binaries_identical(common, wt, wt_target.as_deref()) {
+        let digests = bench_text_digests(common, wt, wt_target.as_deref());
+        // A run measured from byte-identical machine code under the same
+        // conditions is that binary's measurement, whatever commit built it.
+        let by_binary = match (reuse, &digests) {
+            (true, Some((_, base))) => {
+                runcache::load(&runcache::key(base, &head_stamp, common), &base_sha)
+            }
+            _ => None,
+        };
+
+        if digests.as_ref().is_some_and(|(head, base)| head == base) {
             println!(
                 "gate: bench binaries identical (.text match) — no measurable change possible"
             );
+            // Head shares that machine code, so the cached run is its
+            // measurement too, and the next commit can reuse it from HEAD.
+            if let Some(doc) = &by_binary {
+                cache_head_doc(common, &head_stamp, doc);
+            }
             let args = identical_pass_args(common.backend.as_deref());
-            return Ok(Ref::IdenticalBinaries(measure(None, args)));
+            return Ok((Ref::IdenticalBinaries(measure(None, args)), digests));
         }
-        Ok(Ref::Rounds(Box::new([
-            measure(None, &[]),
-            measure(Some(wt), &[]),
-            measure(None, TIMING_ONLY),
-            measure(Some(wt), TIMING_ONLY),
-        ])))
+        if let Some(doc) = by_binary {
+            println!("gate: reusing a run measured from the same merge-base binary");
+            return Ok((Ref::Cached(doc), digests));
+        }
+        Ok((
+            Ref::Rounds(Box::new([
+                measure(None, &[]),
+                measure(Some(wt), &[]),
+                measure(None, TIMING_ONLY),
+                measure(Some(wt), TIMING_ONLY),
+            ])),
+            digests,
+        ))
     })?;
+    let (outcome, digests) = outcome;
 
     let (base, head) = match outcome {
         Ref::NoBenchTarget => return Ok(None),
@@ -426,6 +451,15 @@ fn measure_ref_interleaved(
                 short_circuited: true,
             }));
         }
+        Ref::Cached(doc) => {
+            let head = measure(None, &[])?;
+            cache_head(common, &head_stamp, &head);
+            return Ok(Some(RefPair {
+                reference: doc,
+                current: head,
+                short_circuited: false,
+            }));
+        }
         Ref::Rounds(rounds) => {
             let [head1, base1, head2, base2] = *rounds;
             (combine_rounds(base1?, base2), combine_rounds(head1?, head2))
@@ -434,6 +468,15 @@ fn measure_ref_interleaved(
     let reference = ref_doc(&base);
     if let Some(k) = &cache_key {
         runcache::store(k, &reference);
+    }
+    // Keyed by machine code as well as by commit, so a later merge-base
+    // that builds the same binary hits even if it was never gated.
+    if reuse && let Some((head_digest, base_digest)) = &digests {
+        runcache::store(&runcache::key(base_digest, &head_stamp, common), &reference);
+        runcache::store(
+            &runcache::key(head_digest, &head_stamp, common),
+            &ref_doc(&head),
+        );
     }
     cache_head(common, &head_stamp, &head);
     Ok(Some(RefPair {
@@ -446,14 +489,18 @@ fn measure_ref_interleaved(
 /// Keep HEAD's run so the next commit's gate finds its reference already
 /// measured. Only from a clean tree, where HEAD's SHA names what was built.
 fn cache_head(common: &CommonArgs, stamp: &buildstamp::BuildStamp, head: &Run) {
+    cache_head_doc(common, stamp, &ref_doc(head));
+}
+
+/// Keep `doc` as HEAD's measurement.
+fn cache_head_doc(common: &CommonArgs, stamp: &buildstamp::BuildStamp, doc: &Value) {
     if !invoke::tree_is_clean() {
         return;
     }
     let Ok(sha) = invoke::git(&["rev-parse", "HEAD"]) else {
         return;
     };
-    let sha = sha.trim();
-    runcache::store(&runcache::key(sha, stamp, common), &ref_doc(head));
+    runcache::store(&runcache::key(sha.trim(), stamp, common), doc);
 }
 
 /// Runner args for the single pass taken when both sides' binaries match.
@@ -479,29 +526,29 @@ fn ref_doc(run: &Run) -> Value {
     doc
 }
 
-/// Whether the head and merge-base bench binaries carry identical machine
-/// code. Conservative: any build or extraction failure reads as "different"
-/// so the gate falls through to a real measurement.
-fn bench_binaries_identical(
+/// Digests of the head and merge-base bench binaries' machine code.
+/// Conservative: any build or extraction failure yields `None`, so the gate
+/// falls through to a real measurement.
+fn bench_text_digests(
     common: &CommonArgs,
     wt: &std::path::Path,
     wt_target: Option<&std::path::Path>,
-) -> bool {
+) -> Option<(String, String)> {
     let (Some(head), Some(base)) = (
         invoke::bench_executable(common, None, None),
         invoke::bench_executable(common, Some(wt), wt_target),
     ) else {
-        return false;
+        return None;
     };
     // One path for both sides means extraction resolved head's own binary
     // twice; treat it as failed and fall through to a real measurement.
     if head == base {
-        return false;
+        return None;
     }
-    matches!(
-        (text_section_bytes(&head), text_section_bytes(&base)),
-        (Some(a), Some(b)) if a == b
-    )
+    let digest = |p: &std::path::Path| {
+        text_section_bytes(p).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
+    };
+    Some((digest(&head)?, digest(&base)?))
 }
 
 /// The executable's `.text` section, extracted with objcopy. Whole-file
