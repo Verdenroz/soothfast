@@ -61,7 +61,7 @@ Evaluate against a baseline document; returns (holds, actual value).
 Parse `demo::lcg_checksum.perfcnt.instructions < 25000` (units on the
 bound: ns/us/ms/s multiply into ns; bare numbers stay raw).
 
-**Measured:** 215ns median, 6 allocs/iter
+**Measured:** 261ns median, 6 allocs/iter
 
 #### `pub struct SurfaceDiff`
 
@@ -153,7 +153,7 @@ Scan one markdown text. Closing markers (`<!-- /soothfast:... -->`) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.
 
-**Measured:** 358694ns median, 4114 allocs/iter
+**Measured:** 421380ns median, 4114 allocs/iter
 
 #### `pub fn splice_output( text: &str, nth_capture: usize, output: &str, ) -> Result<Option<String>, String>`
 
@@ -348,7 +348,7 @@ Robust summary of one sample set.
 
 Summarize a non-empty sample set. Sorts in place.
 
-**Measured:** 567238ns median, 4 allocs/iter
+**Measured:** 664702ns median, 4 allocs/iter
 
 #### `pub const DRIFT_LIMIT: f64 = 2.5`
 
@@ -369,7 +369,7 @@ Cost model for a claimed class at size n.
 
 Evaluate measured values (one per size, same order) against a claim.
 
-**Measured:** 17ns median, 0 allocs/iter
+**Measured:** 25ns median, 0 allocs/iter
 
 #### `pub const DEFAULT_SAMPLES: u32 = 31`
 
@@ -483,7 +483,7 @@ Minimal std-only executor with poll/wake counting: enough to measure how
 a future *behaves* (polls to completion, wake traffic) deterministically.
 No spawns, no timers — a tokio-instrumented backend is future work.
 
-**Measured:** 361ns median, 1 allocs/iter, 9 polls/iter
+**Measured:** 142ns median, 1 allocs/iter, 9 polls/iter
 
 #### `pub fn fixture_items() -> &'static [FixtureItem]`
 
@@ -496,7 +496,7 @@ FNV-1a 64-bit hash.
 STABILITY CONTRACT: fingerprints are compared across builds and stored in
 lockfiles, so this algorithm is frozen. Do not change constants or logic.
 
-**Measured:** 82445ns median, 0 allocs/iter
+**Measured:** 81609ns median, 0 allocs/iter
 
 #### `pub fn measured_items() -> &'static [MeasuredItem]`
 
@@ -577,7 +577,7 @@ Render `llms.txt`: every public item grouped by crate, with its full
 doc comment and measured facts attributed via `covers` (or direct id)
 matching.
 
-**Measured:** 277524ns median, 7191 allocs/iter
+**Measured:** 312265ns median, 7191 allocs/iter
 
 #### `pub struct Row`
 
@@ -591,7 +591,7 @@ One measured item's metrics, each `None` when that backend didn't run.
 
 `rows` rendered as a GitHub-flavored markdown table.
 
-**Measured:** 824566ns median, 8204 allocs/iter
+**Measured:** 829625ns median, 8204 allocs/iter
 
 #### `pub fn rows(baseline: &Value) -> Vec<Row>`
 
@@ -653,7 +653,7 @@ conflict the dialect emitters refuse.
 `kind` decides only how wire names are *spelled* — every typing question
 is answered the same way for every target.
 
-**Measured:** 1212090ns median, 23907 allocs/iter
+**Measured:** 1447913ns median, 23907 allocs/iter
 
 #### `pub struct Field`
 
@@ -778,7 +778,7 @@ Evidence renderer over one baseline + the bind lockfile.
 
 Highlight `code` for `lang`. Always returns escaped HTML.
 
-**Measured:** 2871297ns median, 88069 allocs/iter
+**Measured:** 3122011ns median, 88069 allocs/iter
 
 #### `pub type CodeHook<'a> = &'a dyn Fn(&str, &[String], &str) -> Option<String>`
 
@@ -807,7 +807,7 @@ language label and highlighted body.
 
 Render one markdown document.
 
-**Measured:** 2808210ns median, 68118 allocs/iter
+**Measured:** 3214484ns median, 68118 allocs/iter
 
 #### `pub enum Missing`
 
@@ -1052,13 +1052,13 @@ Compare two generated documents, oldest first.
 Returns every difference found, breaking ones first, then by location so
 output is stable between runs.
 
-**Measured:** 5823620ns median, 77722 allocs/iter
+**Measured:** 6260132ns median, 77722 allocs/iter
 
 #### `pub fn document(info: &Info, ops: &[Operation]) -> Document`
 
 Assemble an OpenAPI 3.1 document.
 
-**Measured:** 2054689ns median, 30152 allocs/iter
+**Measured:** 1931169ns median, 30152 allocs/iter
 
 #### `pub struct Assertion`
 
@@ -1354,7 +1354,7 @@ of one document should not disagree about what comes first.
 
 Render a document as YAML, with well-known keys in conventional order.
 
-**Measured:** 6732529ns median, 74277 allocs/iter
+**Measured:** 6640374ns median, 74277 allocs/iter
 
 #### `pub fn sniff_kind(filename: &str, text: &str) -> Option<SpecKind>`
 
