@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.14)
+## 0.1.15 - 2026-08-20
+
+<!-- soothfast:notes -->
+Instruction counts only compare across builds that made the same codegen
+decisions. Every measurement build now pins `codegen-units = 1` on both
+sides of a comparison, so a bench nobody touched stops reporting the
+repartitioning of unrelated code as a regression. What pinning cannot
+reach, a build stamp records: the `rustc` version, the profile tables
+cargo honours, and the flags reaching rustc. When two runs disagree the
+gate names the field that differs and softens the deterministic counters,
+which is what lets a profile change land through the gate that measures
+it. A bench too small to survive a tight threshold can widen its own with
+`#[bench(tolerance = "8%")]`.
+
+That stamp also makes reuse checkable, so `--against-ref` no longer
+re-measures a merge-base it has already measured. Runs are kept under
+`.soothfast/runs/`, keyed by the commit and by the bench binary's machine
+code, so a merge-base that was never gated still hits whenever an earlier
+commit built the same binary. Counters carry across runs and the clock
+does not, so `walltime` softens against a reused reference.
 
 ### API surface
 
