@@ -54,6 +54,21 @@ the worktree is never built:
 gate: reusing the measured merge-base 1aa6c4de39f9408a4279b9f9d78a6a8ed0de6a39
 ```
 
+The commit is not the only key. A merge-base that was never gated has no run
+under its commit, which on master is most of them, since the gate usually runs
+only on benchmarkable changes. Once such a reference is built, its machine code
+is checked against the cache as well: a byte-identical `.text` under the same
+conditions is the same measurement, whichever commit produced it.
+
+```console
+gate: reusing a run measured from the same merge-base binary
+```
+
+That second key saves the measurement and not the build, because the binary is
+what the lookup needs. It is also what lets the identical-binaries short
+circuit keep its result, so a reference measured once carries forward through
+commits that leave the bench binary alone.
+
 Counters carry across runs; the clock does not. A reused reference was timed
 in a different process, so `walltime` softens to `SOFT` for that comparison
 while instructions, Ir and allocation counts gate exactly as they would
