@@ -162,6 +162,31 @@ both bench binaries, so without this a measurement-protocol change riding
 along in a lockfile bump would be reported as a regression in <em>your</em> code.
 Other dependencies are deliberately left as the reference locked them —
 a slow <code>serde</code> bump is exactly what the gate exists to catch.</p>
+<h2 id="reusing-a-measured-reference">Reusing a measured reference<a class="anchor" href="#reusing-a-measured-reference" aria-label="Link to this section">#</a></h2>
+<p>Measuring the reference side is the most expensive thing the gate does, and
+it repeats. Every push to a branch has the same merge-base, and on master the
+commit gated as HEAD becomes the next commit's reference. A run is therefore
+kept under <code>.soothfast/runs/</code>, keyed by the commit and by every condition
+outside it that moves the numbers: the <code>rustc</code> version, the pinned
+<code>codegen-units</code>, the flags reaching rustc, the CPU model, the locked
+<code>soothfast</code> versions the reference is pinned to, and the measurement scope
+(<code>-p</code>, <code>--features</code>, <code>--bench</code>, <code>--backend</code>, <code>--samples</code>, <code>--filter</code>). A
+merge-base with a stored run under the same key is served from there, and
+the worktree is never built:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: reusing the measured merge-base 1aa6c4de39f9408a4279b9f9d78a6a8ed0de6a39
+</code></pre></figure>
+<p>Counters carry across runs; the clock does not. A reused reference was timed
+in a different process, so <code>walltime</code> softens to <code>SOFT</code> for that comparison
+while instructions, Ir and allocation counts gate exactly as they would
+against a freshly measured reference. <code>--no-reuse-base</code> measures the
+reference again regardless.</p>
+<p>For this to pay off in CI, <code>.soothfast/runs/</code> has to outlive the job. Cache
+it keyed on the merge-base commit:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">yaml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>- uses: actions/cache@v4
+  with:
+    path: .soothfast/runs
+    key: soothfast-runs-${{ github.base_ref || github.ref_name }}
+</code></pre></figure>
 <h2 id="thresholds">Thresholds<a class="anchor" href="#thresholds" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap"><table>
 <thead><tr><th>metric</th><th>threshold</th><th>notes</th></tr></thead>
@@ -255,6 +280,8 @@ cost a hundred allocations of bookkeeping.</p>
   <ul class="toc-list" id="toc">
   
     <li><a class="toc-l2" href="#picking-a-reference">Picking a reference</a></li>
+  
+    <li><a class="toc-l2" href="#reusing-a-measured-reference">Reusing a measured reference</a></li>
   
     <li><a class="toc-l2" href="#thresholds">Thresholds</a></li>
   
