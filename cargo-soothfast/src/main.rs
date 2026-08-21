@@ -16,6 +16,7 @@ mod gate_config;
 mod invoke;
 mod mcp;
 mod report;
+mod runcache;
 mod sdk;
 mod sdk_build;
 mod sdk_config;
@@ -41,9 +42,10 @@ commands:
   gate     [-p PKG] [--filter S] [--backend B] [--samples N] [--features F]
            [--baseline NAME] [--ratchet NAME] [--against-ref REF] [--deps]
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
-           [--codegen-units N|inherit]
+           [--codegen-units N|inherit] [--no-reuse-base]
            (--save-baseline persists the measured head run after a pass)
            (--codegen-units pins both sides' partitioning; default 1)
+           (--no-reuse-base re-measures the reference instead of reusing it)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--features F] [PATHS...]

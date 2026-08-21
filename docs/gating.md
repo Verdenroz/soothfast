@@ -37,6 +37,39 @@ along in a lockfile bump would be reported as a regression in *your* code.
 Other dependencies are deliberately left as the reference locked them —
 a slow `serde` bump is exactly what the gate exists to catch.
 
+## Reusing a measured reference
+
+Measuring the reference side is the most expensive thing the gate does, and
+it repeats. Every push to a branch has the same merge-base, and on master the
+commit gated as HEAD becomes the next commit's reference. A run is therefore
+kept under `.soothfast/runs/`, keyed by the commit and by every condition
+outside it that moves the numbers: the `rustc` version, the pinned
+`codegen-units`, the flags reaching rustc, the CPU model, the locked
+`soothfast` versions the reference is pinned to, and the measurement scope
+(`-p`, `--features`, `--bench`, `--backend`, `--samples`, `--filter`). A
+merge-base with a stored run under the same key is served from there, and
+the worktree is never built:
+
+```console
+gate: reusing the measured merge-base 1aa6c4de39f9408a4279b9f9d78a6a8ed0de6a39
+```
+
+Counters carry across runs; the clock does not. A reused reference was timed
+in a different process, so `walltime` softens to `SOFT` for that comparison
+while instructions, Ir and allocation counts gate exactly as they would
+against a freshly measured reference. `--no-reuse-base` measures the
+reference again regardless.
+
+For this to pay off in CI, `.soothfast/runs/` has to outlive the job. Cache
+it keyed on the merge-base commit:
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: .soothfast/runs
+    key: soothfast-runs-${{ github.base_ref || github.ref_name }}
+```
+
 ## Thresholds
 
 | metric | threshold | notes |
