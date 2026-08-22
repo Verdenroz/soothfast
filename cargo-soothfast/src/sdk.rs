@@ -123,7 +123,9 @@ fn build_binaries(
                 }
             }
             SdkKind::Python => {
-                if let Some(warning) = sdk_build::manylinux_warning(&compiled) {
+                let built_targets: Vec<&'static Target> =
+                    compiled.iter().map(|b| b.target).collect();
+                if let Some(warning) = sdk_build::manylinux_warning(&built_targets) {
                     println!("  WARNING: {warning}");
                 }
                 for tag in sdk_build::build_wheels(&out_dir, &compiled)? {

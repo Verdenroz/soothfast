@@ -142,17 +142,17 @@ pub fn build_wheels(out_dir: &Path, built: &[Built]) -> Result<Vec<String>, Stri
 /// A `manylinux_*` tag asserts the binary links against a glibc at least
 /// that old. Only a manylinux build container can honor that, and it
 /// advertises itself through `AUDITWHEEL_PLAT`.
-pub fn manylinux_warning(built: &[Built]) -> Option<String> {
-    manylinux_warning_for(built, std::env::var_os("AUDITWHEEL_PLAT").is_some())
+pub fn manylinux_warning(targets: &[&'static Target]) -> Option<String> {
+    manylinux_warning_for(targets, std::env::var_os("AUDITWHEEL_PLAT").is_some())
 }
 
-fn manylinux_warning_for(built: &[Built], in_manylinux: bool) -> Option<String> {
+fn manylinux_warning_for(targets: &[&'static Target], in_manylinux: bool) -> Option<String> {
     if in_manylinux {
         return None;
     }
-    let claimed: Vec<&str> = built
+    let claimed: Vec<&str> = targets
         .iter()
-        .map(|b| b.target.wheel_platform)
+        .map(|t| t.wheel_platform)
         .filter(|p| p.starts_with("manylinux"))
         .collect();
     if claimed.is_empty() {
@@ -243,14 +243,8 @@ mod tests {
         Target::find(triple).expect("known target")
     }
 
-    fn built(triples: &[&str]) -> Vec<Built> {
-        triples
-            .iter()
-            .map(|t| Built {
-                target: target(t),
-                binary: PathBuf::from("unused"),
-            })
-            .collect()
+    fn targets(triples: &[&str]) -> Vec<&'static Target> {
+        triples.iter().map(|t| target(t)).collect()
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -282,14 +276,14 @@ mod tests {
     #[test]
     fn a_manylinux_tag_built_outside_the_container_is_called_out() {
         let warning =
-            manylinux_warning_for(&built(&["x86_64-unknown-linux-gnu"]), false).expect("warned");
+            manylinux_warning_for(&targets(&["x86_64-unknown-linux-gnu"]), false).expect("warned");
         assert!(warning.contains("manylinux_2_17_x86_64"), "{warning}");
     }
 
     #[test]
     fn inside_the_container_the_tag_is_earned_and_nothing_is_said() {
         assert_eq!(
-            manylinux_warning_for(&built(&["x86_64-unknown-linux-gnu"]), true),
+            manylinux_warning_for(&targets(&["x86_64-unknown-linux-gnu"]), true),
             None
         );
     }
@@ -302,7 +296,7 @@ mod tests {
             "x86_64-unknown-linux-musl",
         ] {
             assert_eq!(
-                manylinux_warning_for(&built(&[triple]), false),
+                manylinux_warning_for(&targets(&[triple]), false),
                 None,
                 "{triple}"
             );

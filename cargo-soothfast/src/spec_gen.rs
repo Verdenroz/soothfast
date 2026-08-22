@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::Value;
+use soothfast_bind::model::ExportRecord;
 use soothfast_spec::dialect::{Info, Operation};
 use soothfast_spec::schema::{self, Docs, TypeTable, route_sig};
 
@@ -43,6 +44,40 @@ fn route_from(r: &Value) -> Route {
             params: r["params"].as_str().map(String::from),
             path_params: r["path_params"].as_str().map(String::from),
         },
+    }
+}
+
+/// Every `#[soothfast::export]` registration in the package.
+///
+/// Shells out to `cargo bench` the way route discovery does, because the
+/// attribute is consumed at expansion and never reaches rustdoc JSON.
+pub(crate) fn discover_exports(
+    common: &CommonArgs,
+    dir: Option<&Path>,
+) -> Result<Vec<ExportRecord>, String> {
+    let records =
+        invoke::run_bench_in(common, &["--list-exports"], dir).map_err(|e| e.to_string())?;
+    Ok(records
+        .iter()
+        .filter(|r| r["type"] == "export")
+        .map(export_from)
+        .collect())
+}
+
+fn export_from(e: &Value) -> ExportRecord {
+    let s = |k: &str| e[k].as_str().unwrap_or("").to_string();
+    ExportRecord {
+        id: s("id"),
+        kind: s("kind"),
+        fingerprint: u64::from_str_radix(&s("fingerprint"), 16).unwrap_or_default(),
+        skip: s("skip")
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        owner: e["owner"].as_str().map(String::from),
+        constructor: e["constructor"].as_bool().unwrap_or(false),
+        summary: e["summary"].as_str().map(String::from),
     }
 }
 

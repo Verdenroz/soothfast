@@ -6,6 +6,9 @@
 //! `docs`, `spec`, `sdk`, `report`, `site`, and `mcp`.
 //! Fully synchronous; everything is subprocess + file I/O.
 
+mod bind;
+mod bind_build;
+mod bind_config;
 mod buildcost;
 mod buildstamp;
 mod coverage;
@@ -75,6 +78,13 @@ commands:
            the SDK surface is the linked generate-mode spec surface)
   sdk      publish -p PKG [--only LANG] [--dry-run]   (refuses stale output;
            python publishes via `uv build` + `uv publish`)
+  bind     gen -p PKG [--features F] [--check]   (native bindings for the
+           `#[soothfast::export]` surface, one [[bind]] entry per language)
+  bind     gate -p PKG [--base REF] [--allow-breaking]   (compares the
+           exported surface itself: a native binding has no spec to gate)
+  bind     build -p PKG [--target TRIPLE].. [--debug]
+           (drives each language's own packaging tool; python uses maturin,
+           wasm uses wasm-pack and has no target matrix)
   report   render -p PKG [--out DIR] [--baseline NAME] [--features F]
   report   changelog -p PKG [-p PKG ...] [--against-ref REF] [--features F]
            (no --against-ref: first release, lists the surface it ships)
@@ -113,6 +123,7 @@ fn run() -> i32 {
         "docs" => docs::run(rest),
         "coverage" => coverage::run(rest),
         "spec" => spec::run(rest),
+        "bind" => bind::run(rest),
         "sdk" => sdk::run(rest),
         "report" => report::run(rest),
         "mcp" => mcp::run(rest),
