@@ -2,6 +2,47 @@
 
 ## 0.1.16 - 2026-08-22
 
+<!-- soothfast:notes -->
+### Overview
+
+A patch release fixing a gate false positive on short,
+allocator/dynamic-linker-heavy benchmarks, and unifying the workspace
+onto one `syn` major version after a dependency update pulled in a
+second. No public API changes.
+
+### Issues fixed
+
+- `walltime` gate false-fails on short benchmarks whose
+  instruction-counter jitter lands just past the flat 0.5% cutoff,
+  even with an unchanged fingerprint and identical allocs/bytes
+  (#93, #94)
+
+### Notes
+
+Short benchmarks whose instruction count is dominated by allocator or
+dynamic-linker overhead could fail the walltime gate on ordinary
+counting jitter: a roughly 20K-instruction bench moving by 106
+instructions is a larger share of its own count than the same jitter
+is for a benchmark with millions, so the flat 0.5% cutoff that
+corroborates a genuine regression missed it by a fraction of a
+percentage point even with fingerprint, allocs, and bytes unchanged.
+`counters_flat_on_unchanged_code()` now also accepts a fixed
+150-instruction floor alongside that percentage, wide enough to
+absorb the jitter on small benchmarks while staying negligible above
+roughly 30K instructions, where the percentage still governs.
+
+linkme 0.3.37 moved its proc-macro implementation onto syn 3.
+soothfast-macros now targets syn 3 as well, so the workspace's two
+proc-macro crates share one major version instead of leaving
+`cargo-deny`'s duplicate-version check to reject the split.
+
+### Dependencies
+
+- `linkme` 0.3.36 to 0.3.37 (#85)
+- `syn` 2 to 3 for `soothfast-macros`, to keep `cargo-deny`'s
+  duplicate-version check passing after that bump (#96)
+<!-- /soothfast:notes -->
+
 ### API surface
 
 No public API changes.
