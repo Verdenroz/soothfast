@@ -103,8 +103,16 @@ pub struct ClaimMarker {
     pub line: usize,
 }
 
+/// `<!-- soothfast:export path::to::item -->`
+#[derive(Debug, Clone)]
+pub struct ExportMarker {
+    pub item: String,
+    pub line: usize,
+}
+
 /// Everything [`scan`] extracts from one markdown file: fenced code blocks
-/// plus `soothfast:bind` / `soothfast:claim` markers, in document order.
+/// plus `soothfast:bind` / `soothfast:claim` / `soothfast:export` markers,
+/// in document order.
 #[derive(Debug, Default)]
 pub struct Doc {
     /// Fenced code blocks, with language and tags.
@@ -113,6 +121,8 @@ pub struct Doc {
     pub binds: Vec<Bind>,
     /// `<!-- soothfast:claim ... -->` markers.
     pub claims: Vec<ClaimMarker>,
+    /// `<!-- soothfast:export ... -->` markers.
+    pub exports: Vec<ExportMarker>,
 }
 
 /// Scan one markdown text. Closing markers (`<!-- /soothfast:... -->`) are
@@ -174,9 +184,15 @@ pub fn scan(text: &str) -> Result<Doc, String> {
                     expr: expr.trim().to_string(),
                     line: lineno,
                 });
+            } else if let Some(item) = body.strip_prefix("export ") {
+                doc.exports.push(ExportMarker {
+                    item: item.trim().to_string(),
+                    line: lineno,
+                });
             } else {
                 return Err(format!(
-                    "unknown soothfast marker at line {lineno}: expected `bind <item>` or `claim <expr>`"
+                    "unknown soothfast marker at line {lineno}: expected \
+                     `bind <item>`, `claim <expr>` or `export <item>`"
                 ));
             }
         }

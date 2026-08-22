@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use soothfast_docs::{claims, diff, gentests, lockfile, markdown, reference, surface};
 
+use crate::invoke::CommonArgs;
 use crate::{docs_support, invoke};
 
 struct DocsArgs {
@@ -237,7 +238,7 @@ fn check(a: &DocsArgs) -> i32 {
                     continue;
                 };
                 let current = format!("{:016x}", info.fingerprint);
-                match lock.get(&bind.item) {
+                match lock.binds.get(&bind.item) {
                     None => {
                         failures += 1;
                         println!(
@@ -336,6 +337,70 @@ fn check(a: &DocsArgs) -> i32 {
         }
     }
 
+    // 4. Exported binding surface vs soothfast.lock.
+    let marked: Vec<(&String, &markdown::ExportMarker)> = scanned
+        .docs
+        .iter()
+        .flat_map(|(file, doc, _)| doc.exports.iter().map(move |m| (file, m)))
+        .collect();
+    match export_fingerprints(a, !marked.is_empty()) {
+        Err(e) => return err(&e),
+        Ok(None) => {
+            for (file, marker) in &marked {
+                failures += 1;
+                println!(
+                    "FAIL  {file}:{} export {}: the package configures no bindings, so nothing exports it",
+                    marker.line, marker.item
+                );
+            }
+        }
+        Ok(Some((prefix, fresh))) => {
+            for (file, marker) in &marked {
+                if fresh.contains_key(&marker.item) {
+                    println!("ok    {file}:{} export {}", marker.line, marker.item);
+                } else {
+                    failures += 1;
+                    println!(
+                        "FAIL  {file}:{} export {}: not an exported item",
+                        marker.line, marker.item
+                    );
+                }
+            }
+            let lock = match lockfile::read(&scanned.root) {
+                Ok(l) => l,
+                Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
+            };
+            let pkg = a.pkg.as_deref().unwrap_or("PKG");
+            for (id, current) in &fresh {
+                match lock.exports.get(id) {
+                    None => {
+                        failures += 1;
+                        println!(
+                            "FAIL  export {id}: not locked — review the binding surface, then `cargo soothfast docs accept -p {pkg}`"
+                        );
+                    }
+                    Some(locked) if locked != current => {
+                        failures += 1;
+                        println!(
+                            "FAIL  export {id}: STALE — the bound signature changed; re-review, then `docs accept`"
+                        );
+                    }
+                    Some(_) => println!("ok    export {id}"),
+                }
+            }
+            for id in lock
+                .exports
+                .keys()
+                .filter(|k| k.starts_with(&prefix) && !fresh.contains_key(*k))
+            {
+                failures += 1;
+                println!(
+                    "FAIL  export {id}: locked but no longer exported — consumers lose it; `docs accept -p {pkg}` to confirm"
+                );
+            }
+        }
+    }
+
     if failures > 0 {
         println!("docs check: FAILED ({failures} problem(s))");
         1
@@ -343,6 +408,34 @@ fn check(a: &DocsArgs) -> i32 {
         println!("docs check: passed ({} file(s))", scanned.docs.len());
         0
     }
+}
+
+/// Contract fingerprints for the package's exported items, and the id prefix
+/// they all share.
+///
+/// `None` when nothing asks for them, which is what keeps a package with no
+/// bindings and no export markers from paying for a bench run.
+fn export_fingerprints(
+    a: &DocsArgs,
+    marked: bool,
+) -> Result<Option<(String, lockfile::Binds)>, String> {
+    let Some(pkg) = a.pkg.as_deref() else {
+        return Ok(None);
+    };
+    let dir = invoke::pkg_dir(pkg).map_err(|e| e.to_string())?;
+    if !marked && crate::bind_config::load(&dir)?.entries.is_empty() {
+        return Ok(None);
+    }
+    let mut common = CommonArgs {
+        pkg: Some(pkg.to_string()),
+        ..CommonArgs::default()
+    };
+    common.features.clone_from(&a.features);
+    let (surface, _) = crate::bind::exported_surface(pkg, &common)?;
+    Ok(Some((
+        format!("{}::", pkg.replace('-', "_")),
+        surface.fingerprints(),
+    )))
 }
 
 fn accept(a: &DocsArgs) -> i32 {
@@ -366,23 +459,31 @@ fn accept(a: &DocsArgs) -> i32 {
             fresh.insert(bind.item.clone(), format!("{:016x}", info.fingerprint));
         }
     }
+    let current = match lockfile::read(&scanned.root) {
+        Ok(l) => l,
+        Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
+    };
     // Explicit PATHS scan a subset of docs: merge so locks for binds in
     // out-of-scope files survive. Full scope replaces (drops dead binds).
     let full_scope = a.paths.is_empty();
-    let existing = if full_scope {
-        lockfile::Binds::new()
-    } else {
-        match lockfile::read(&scanned.root) {
-            Ok(b) => b,
-            Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
-        }
+    // Exports are not scoped by markdown path, so they re-lock per package
+    // whatever the paths were, and a package with none leaves them be.
+    let any_marked = scanned.docs.iter().any(|(_, d, _)| !d.exports.is_empty());
+    let exports = match export_fingerprints(a, any_marked) {
+        Err(e) => return err(&e),
+        Ok(Some((prefix, fresh))) => lockfile::merge_scoped(&current.exports, &fresh, &prefix),
+        Ok(None) => current.exports.clone(),
     };
-    let binds = lockfile::merge(&existing, &fresh, full_scope);
-    match lockfile::write(&scanned.root, &binds) {
+    let lock = lockfile::Lock {
+        binds: lockfile::merge(&current.binds, &fresh, full_scope),
+        exports,
+    };
+    match lockfile::write(&scanned.root, &lock) {
         Ok(()) => {
             println!(
-                "docs accept: locked {} bind(s) in {}",
-                binds.len(),
+                "docs accept: locked {} bind(s) and {} export(s) in {}",
+                lock.binds.len(),
+                lock.exports.len(),
                 lockfile::LOCKFILE
             );
             0
