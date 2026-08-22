@@ -4,6 +4,10 @@
 //! [`linkme`] distributed slices at link time; engines and the CLI read them
 //! back through accessor functions. This crate is the only runtime dependency
 //! the user-facing surface carries.
+//!
+//! linkme has no wasm32 support, and nothing reads a registry there anyway:
+//! discovery runs on the host. Every slice is absent on wasm32 and every
+//! accessor reads empty, so an annotated crate still builds for it.
 
 pub use linkme;
 
@@ -273,12 +277,16 @@ impl std::fmt::Debug for MeasuredItem {
 }
 
 /// All items registered with `#[soothfast::measured]` / `#[soothfast::bench]`.
+#[cfg(not(target_arch = "wasm32"))]
 #[linkme::distributed_slice]
 pub static MEASURED: [MeasuredItem];
 
 /// Read-only view of every registered measured item.
 pub fn measured_items() -> &'static [MeasuredItem] {
-    &MEASURED
+    #[cfg(not(target_arch = "wasm32"))]
+    return &MEASURED;
+    #[cfg(target_arch = "wasm32")]
+    &[]
 }
 
 /// A declared route/operation registered via `#[soothfast::route]` — the
@@ -375,12 +383,94 @@ impl RouteItem {
 }
 
 /// All routes registered with `#[soothfast::route]`.
+#[cfg(not(target_arch = "wasm32"))]
 #[linkme::distributed_slice]
 pub static ROUTES: [RouteItem];
 
 /// Read-only view of every registered route.
 pub fn route_items() -> &'static [RouteItem] {
-    &ROUTES
+    #[cfg(not(target_arch = "wasm32"))]
+    return &ROUTES;
+    #[cfg(target_arch = "wasm32")]
+    &[]
+}
+
+/// An item bound into other languages via `#[soothfast::export]` — the
+/// code-side half of native binding generation (`cargo soothfast bind gen`).
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct ExportItem {
+    /// Stable ID: `module_path!()`, then the owning type for a method, then
+    /// the item name, joined by `::`.
+    pub id: &'static str,
+    /// What was annotated: `fn`, `method`, `struct`, or `enum`.
+    pub kind: &'static str,
+    /// FNV-1a fingerprint of the item's normalized token stream.
+    pub fingerprint: u64,
+    /// Languages this item opts out of, comma-separated. Empty binds every
+    /// language the package configures.
+    pub skip: &'static str,
+    /// Type an associated item belongs to.
+    pub owner: Option<&'static str>,
+    /// Whether this associated fn builds the type, rather than the inherent
+    /// `new` a binding would otherwise pick.
+    pub constructor: bool,
+    /// First line of the item's doc comment, captured at macro expansion.
+    /// Generated glue carries the prose into each language's own docs.
+    pub summary: Option<&'static str>,
+}
+
+impl ExportItem {
+    /// Const constructor for macro expansions.
+    pub const fn new(id: &'static str, kind: &'static str, fingerprint: u64) -> Self {
+        ExportItem {
+            id,
+            kind,
+            fingerprint,
+            skip: "",
+            owner: None,
+            constructor: false,
+            summary: None,
+        }
+    }
+
+    /// Attach the opt-out language list. Its own builder so that later
+    /// backends can add narrowing of their own without growing `new`'s arity.
+    pub const fn with_skip(mut self, skip: &'static str) -> Self {
+        self.skip = skip;
+        self
+    }
+
+    /// Attach the owning type of an associated item.
+    pub const fn with_owner(mut self, owner: Option<&'static str>) -> Self {
+        self.owner = owner;
+        self
+    }
+
+    /// Mark this associated fn as the type's constructor.
+    pub const fn with_constructor(mut self) -> Self {
+        self.constructor = true;
+        self
+    }
+
+    /// Attach the expansion-time doc summary.
+    pub const fn with_summary(mut self, summary: Option<&'static str>) -> Self {
+        self.summary = summary;
+        self
+    }
+}
+
+/// All items registered with `#[soothfast::export]`.
+#[cfg(not(target_arch = "wasm32"))]
+#[linkme::distributed_slice]
+pub static EXPORTS: [ExportItem];
+
+/// Read-only view of every exported item.
+pub fn export_items() -> &'static [ExportItem] {
+    #[cfg(not(target_arch = "wasm32"))]
+    return &EXPORTS;
+    #[cfg(target_arch = "wasm32")]
+    &[]
 }
 
 /// A deterministic input-builder registered via `#[soothfast::fixture]`.
@@ -403,12 +493,16 @@ impl FixtureItem {
 }
 
 /// All fixtures registered with `#[soothfast::fixture]`.
+#[cfg(not(target_arch = "wasm32"))]
 #[linkme::distributed_slice]
 pub static FIXTURES: [FixtureItem];
 
 /// Read-only view of every registered fixture.
 pub fn fixture_items() -> &'static [FixtureItem] {
-    &FIXTURES
+    #[cfg(not(target_arch = "wasm32"))]
+    return &FIXTURES;
+    #[cfg(target_arch = "wasm32")]
+    &[]
 }
 
 /// A mocked backend a capture-output/test example can stand up by name.
@@ -461,12 +555,16 @@ impl std::fmt::Debug for MockSeamItem {
 }
 
 /// All mock seams registered with `#[soothfast::mock_seam]`.
+#[cfg(not(target_arch = "wasm32"))]
 #[linkme::distributed_slice]
 pub static MOCKS: [MockSeamItem];
 
 /// Read-only view of every registered mock seam.
 pub fn mock_seam_items() -> &'static [MockSeamItem] {
-    &MOCKS
+    #[cfg(not(target_arch = "wasm32"))]
+    return &MOCKS;
+    #[cfg(target_arch = "wasm32")]
+    &[]
 }
 
 /// Resolve a mock seam by name: an exact `id` match wins; otherwise exactly
