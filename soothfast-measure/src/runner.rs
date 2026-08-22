@@ -5,7 +5,9 @@
 //! The runner always exits 0 on a completed run; assertion verdicts travel
 //! as records and the CLI decides the exit code.
 
-use soothfast_registry::{Bencher, MeasuredItem, fixture_items, measured_items, route_items};
+use soothfast_registry::{
+    Bencher, MeasuredItem, export_items, fixture_items, measured_items, route_items,
+};
 
 use crate::json::esc;
 use crate::{alloc, asyncexec, callgrind, sweep, walltime};
@@ -24,6 +26,7 @@ struct Args {
     json: bool,
     list: bool,
     list_routes: bool,
+    list_exports: bool,
     backend: Backend,
     filter: Option<String>,
     samples: u32,
@@ -42,6 +45,7 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
         json: false,
         list: false,
         list_routes: false,
+        list_exports: false,
         backend: Backend::Auto,
         filter: None,
         samples: walltime::DEFAULT_SAMPLES,
@@ -57,6 +61,7 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
             "--json" => args.json = true,
             "--list" => args.list = true,
             "--list-routes" => args.list_routes = true,
+            "--list-exports" => args.list_exports = true,
             "--backend" => {
                 args.backend = match it.next().as_deref() {
                     Some("auto") => Backend::Auto,
@@ -197,6 +202,19 @@ pub fn main() {
                     "{} {} {} -> {} [{}]",
                     r.method, r.path, r.operation, r.id, r.spec
                 );
+            }
+        }
+        return;
+    }
+
+    if args.list_exports {
+        let mut exports: Vec<_> = export_items().iter().collect();
+        exports.sort_by_key(|e| e.id);
+        for e in exports {
+            if args.json {
+                println!("{}", export_json(e));
+            } else {
+                println!("{} {}", e.kind, e.id);
             }
         }
         return;
@@ -585,6 +603,28 @@ fn route_json(r: &soothfast_registry::RouteItem) -> String {
         opt(r.params),
         opt(r.path_params),
         opt(r.summary),
+    )
+}
+
+/// One `--list-exports --json` record.
+///
+/// `owner` and `summary` follow `route_json`'s convention: absent is `null`,
+/// so the consumer can tell "not set" from "set to empty".
+fn export_json(e: &soothfast_registry::ExportItem) -> String {
+    let opt = |v: Option<&str>| match v {
+        Some(s) => format!("\"{}\"", esc(s)),
+        None => "null".to_string(),
+    };
+    format!(
+        "{{\"type\":\"export\",\"id\":\"{}\",\"kind\":\"{}\",\"fingerprint\":\"{:016x}\",\
+         \"skip\":\"{}\",\"owner\":{},\"constructor\":{},\"summary\":{}}}",
+        esc(e.id),
+        esc(e.kind),
+        e.fingerprint,
+        esc(e.skip),
+        opt(e.owner),
+        e.constructor,
+        opt(e.summary),
     )
 }
 

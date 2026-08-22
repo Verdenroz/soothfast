@@ -363,27 +363,11 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let params_tok = opt_str(&params);
     let path_params_tok = opt_str(&path_params);
-    let summary = func.attrs.iter().find_map(|a| {
-        if !a.path().is_ident("doc") {
-            return None;
-        }
-        let syn::Meta::NameValue(nv) = &a.meta else {
-            return None;
-        };
-        let syn::Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Str(s),
-            ..
-        }) = &nv.value
-        else {
-            return None;
-        };
-        let line = s.value().trim().to_string();
-        (!line.is_empty()).then_some(line)
-    });
-    let summary_tok = opt_str(&summary);
+    let summary_tok = opt_str(&doc_summary(&func.attrs));
     quote! {
         #func
 
+        #[cfg(not(target_arch = "wasm32"))]
         #[::soothfast::__private::linkme::distributed_slice(::soothfast::__private::ROUTES)]
         #[linkme(crate = ::soothfast::__private::linkme)]
         #[allow(non_upper_case_globals)]
@@ -403,6 +387,303 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Languages an exported item opts out of.
+#[derive(Clone, Default, PartialEq)]
+enum Skip {
+    #[default]
+    None,
+    All,
+    Langs(Vec<String>),
+}
+
+impl Skip {
+    /// Registry encoding: empty binds everything, `*` binds nothing.
+    fn encode(&self) -> String {
+        match self {
+            Skip::None => String::new(),
+            Skip::All => "*".into(),
+            Skip::Langs(langs) => langs.join(","),
+        }
+    }
+
+    /// An `impl` block's opt-outs apply to every method in it, on top of
+    /// whatever the method names itself.
+    fn merge(&self, other: &Skip) -> Skip {
+        match (self, other) {
+            (Skip::All, _) | (_, Skip::All) => Skip::All,
+            (Skip::None, o) => o.clone(),
+            (s, Skip::None) => s.clone(),
+            (Skip::Langs(a), Skip::Langs(b)) => {
+                let mut merged = a.clone();
+                merged.extend(b.iter().cloned());
+                merged.sort();
+                merged.dedup();
+                Skip::Langs(merged)
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct ExportAttrs {
+    skip: Skip,
+    constructor: bool,
+}
+
+fn parse_export_attrs(attr: TokenStream) -> Result<ExportAttrs, syn::Error> {
+    let mut out = ExportAttrs::default();
+    let parser = syn::meta::parser(|meta| {
+        if meta.path.is_ident("skip") {
+            out.skip = if meta.input.peek(syn::token::Paren) {
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let list: syn::punctuated::Punctuated<syn::Ident, syn::Token![,]> = content
+                    .parse_terminated(<syn::Ident as syn::parse::Parse>::parse, syn::Token![,])?;
+                Skip::Langs(list.iter().map(ToString::to_string).collect())
+            } else {
+                Skip::All
+            };
+        } else if meta.path.is_ident("constructor") {
+            out.constructor = true;
+        } else {
+            return Err(meta.error("expected `skip`, `skip(lang, ...)`, or `constructor`"));
+        }
+        Ok(())
+    });
+    syn::parse::Parser::parse(parser, attr).map(|()| out)
+}
+
+/// Bind a function, struct, enum, or inherent `impl` block into every
+/// language the package configures under `[[bind]]`.
+///
+/// ```ignore
+/// #[soothfast::export]
+/// pub struct Counter { pub value: i64 }
+///
+/// #[soothfast::export]
+/// impl Counter {
+///     pub fn new(start: i64) -> Self { ... }
+///     pub fn bump(&self, by: i64) -> Result<i64, CounterError> { ... }
+///
+///     #[soothfast::export(skip)]
+///     pub fn debug_dump(&self) -> String { ... }
+/// }
+/// ```
+///
+/// `skip(wasm)` narrows to the languages named; bare `skip` binds none.
+/// `constructor` picks an associated fn other than an inherent `new`.
+#[proc_macro_attribute]
+pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr_str = attr.to_string();
+    let attrs = match parse_export_attrs(attr) {
+        Ok(a) => a,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    match syn::parse_macro_input!(item as syn::Item) {
+        syn::Item::Fn(func) => export_fn(&func, &attrs, &attr_str),
+        syn::Item::Struct(item) => {
+            let mut bare = item.clone();
+            bare.attrs.retain(|a| !a.path().is_ident("doc"));
+            export_type(
+                quote!(#item),
+                &item.ident,
+                &item.attrs,
+                "struct",
+                &attrs,
+                &fingerprint_tokens(attr_str.as_str(), quote!(#bare)),
+            )
+        }
+        syn::Item::Enum(item) => {
+            let mut bare = item.clone();
+            bare.attrs.retain(|a| !a.path().is_ident("doc"));
+            export_type(
+                quote!(#item),
+                &item.ident,
+                &item.attrs,
+                "enum",
+                &attrs,
+                &fingerprint_tokens(attr_str.as_str(), quote!(#bare)),
+            )
+        }
+        syn::Item::Impl(block) => export_impl(block, &attrs, &attr_str),
+        other => err(
+            syn::spanned::Spanned::span(&other),
+            "#[soothfast::export] applies to a fn, struct, enum, or inherent `impl` block",
+        ),
+    }
+}
+
+fn export_fn(func: &syn::ItemFn, attrs: &ExportAttrs, attr_str: &str) -> TokenStream {
+    let name = &func.sig.ident;
+    if attrs.constructor {
+        return err(
+            name.span(),
+            "`constructor` applies to an associated fn inside an exported `impl` block",
+        );
+    }
+    let entry = registration_entry(
+        &format_ident!("__SOOTHFAST_EXPORT_FN_{}", name),
+        quote!(concat!(module_path!(), "::", stringify!(#name))),
+        "fn",
+        &fingerprint_input(func, attr_str),
+        &attrs.skip,
+        None,
+        false,
+        doc_summary(&func.attrs),
+    );
+    quote! {
+        #func
+
+        #entry
+    }
+    .into()
+}
+
+fn export_type(
+    item: proc_macro2::TokenStream,
+    name: &syn::Ident,
+    item_attrs: &[syn::Attribute],
+    kind: &'static str,
+    attrs: &ExportAttrs,
+    fingerprint: &str,
+) -> TokenStream {
+    if attrs.constructor {
+        return err(name.span(), "`constructor` applies to an associated fn");
+    }
+    let entry = registration_entry(
+        &format_ident!("__SOOTHFAST_EXPORT_TY_{}", name),
+        quote!(concat!(module_path!(), "::", stringify!(#name))),
+        kind,
+        fingerprint,
+        &attrs.skip,
+        None,
+        false,
+        doc_summary(item_attrs),
+    );
+    quote! {
+        #item
+
+        #entry
+    }
+    .into()
+}
+
+fn export_impl(mut block: syn::ItemImpl, attrs: &ExportAttrs, attr_str: &str) -> TokenStream {
+    let span = syn::spanned::Spanned::span(&block.self_ty);
+    if block.trait_.is_some() {
+        return err(span, "#[soothfast::export] does not apply to trait impls");
+    }
+    if !block.generics.params.is_empty() {
+        return err(span, "#[soothfast::export] does not apply to generic impls");
+    }
+    let Some(owner) = impl_type_name(&block.self_ty) else {
+        return err(span, "cannot name the type this `impl` block is for");
+    };
+
+    let mut entries = Vec::new();
+    for item in &mut block.items {
+        let syn::ImplItem::Fn(func) = item else {
+            continue;
+        };
+        let own = match take_export_attr(&mut func.attrs) {
+            Ok(a) => a,
+            Err(e) => return e.to_compile_error().into(),
+        };
+        if !matches!(func.vis, syn::Visibility::Public(_)) {
+            continue;
+        }
+        let skip = attrs.skip.merge(&own.skip);
+        if skip == Skip::All {
+            continue;
+        }
+        let name = &func.sig.ident;
+        let mut bare = func.clone();
+        bare.attrs.retain(|a| !a.path().is_ident("doc"));
+        entries.push(registration_entry(
+            &format_ident!("__SOOTHFAST_EXPORT_M_{}_{}", owner, name),
+            quote!(concat!(module_path!(), "::", #owner, "::", stringify!(#name))),
+            "method",
+            &fingerprint_tokens(attr_str, quote!(#bare)),
+            &skip,
+            Some(owner.as_str()),
+            own.constructor,
+            doc_summary(&func.attrs),
+        ));
+    }
+
+    quote! {
+        #block
+
+        #(#entries)*
+    }
+    .into()
+}
+
+/// Read and remove a method's own `#[soothfast::export(...)]`. Left in place
+/// it would expand a second time, nested inside the block this one emits.
+fn take_export_attr(attrs: &mut Vec<syn::Attribute>) -> Result<ExportAttrs, syn::Error> {
+    let Some(pos) = attrs.iter().position(|a| {
+        a.path()
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "export")
+    }) else {
+        return Ok(ExportAttrs::default());
+    };
+    let attr = attrs.remove(pos);
+    match &attr.meta {
+        syn::Meta::Path(_) => Ok(ExportAttrs::default()),
+        syn::Meta::List(list) => parse_export_attrs(list.tokens.clone().into()),
+        syn::Meta::NameValue(nv) => Err(syn::Error::new_spanned(
+            nv,
+            "expected `skip`, `skip(lang, ...)`, or `constructor`",
+        )),
+    }
+}
+
+fn impl_type_name(ty: &syn::Type) -> Option<String> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    Some(path.path.segments.last()?.ident.to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn registration_entry(
+    static_ident: &syn::Ident,
+    id: proc_macro2::TokenStream,
+    kind: &'static str,
+    fingerprint: &str,
+    skip: &Skip,
+    owner: Option<&str>,
+    constructor: bool,
+    summary: Option<String>,
+) -> proc_macro2::TokenStream {
+    let skip = skip.encode();
+    let owner_tok = opt_str(&owner.map(ToString::to_string));
+    let summary_tok = opt_str(&summary);
+    let mut entry = quote! {
+        ::soothfast::__private::ExportItem::new(
+            #id,
+            #kind,
+            ::soothfast::__private::fnv1a(#fingerprint.as_bytes()),
+        )
+        .with_skip(#skip)
+        .with_owner(#owner_tok)
+        .with_summary(#summary_tok)
+    };
+    if constructor {
+        entry = quote! { #entry.with_constructor() };
+    }
+    quote! {
+        #[cfg(not(target_arch = "wasm32"))]
+        #[::soothfast::__private::linkme::distributed_slice(::soothfast::__private::EXPORTS)]
+        #[linkme(crate = ::soothfast::__private::linkme)]
+        #[allow(non_upper_case_globals)]
+        static #static_ident: ::soothfast::__private::ExportItem = #entry;
+    }
+}
+
 /// Mark a deterministic input-builder. Registers metadata only; the function
 /// is referenced by name from `#[bench(setup = ...)]` / `setup_sized`.
 #[proc_macro_attribute]
@@ -417,6 +698,7 @@ pub fn fixture(attr: TokenStream, item: TokenStream) -> TokenStream {
     quote! {
         #func
 
+        #[cfg(not(target_arch = "wasm32"))]
         #[::soothfast::__private::linkme::distributed_slice(::soothfast::__private::FIXTURES)]
         #[linkme(crate = ::soothfast::__private::linkme)]
         #[allow(non_upper_case_globals)]
@@ -467,6 +749,7 @@ pub fn mock_seam(attr: TokenStream, item: TokenStream) -> TokenStream {
             ::std::boxed::Box::new(#call)
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         #[::soothfast::__private::linkme::distributed_slice(::soothfast::__private::MOCKS)]
         #[linkme(crate = ::soothfast::__private::linkme)]
         #[allow(non_upper_case_globals)]
@@ -500,7 +783,34 @@ fn opt_str(v: &Option<String>) -> proc_macro2::TokenStream {
 fn fingerprint_input(func: &syn::ItemFn, attr_str: &str) -> String {
     let mut f = func.clone();
     f.attrs.retain(|a| !a.path().is_ident("doc"));
-    format!("{attr_str}\u{1}{}", quote!(#f))
+    fingerprint_tokens(attr_str, quote!(#f))
+}
+
+fn fingerprint_tokens(attr_str: &str, tokens: proc_macro2::TokenStream) -> String {
+    format!("{attr_str}\u{1}{tokens}")
+}
+
+/// First non-empty `///` line. Captured at expansion because generated
+/// artifacts (bench-target markers, binding glue) never reach the lib's
+/// rustdoc JSON.
+fn doc_summary(attrs: &[syn::Attribute]) -> Option<String> {
+    attrs.iter().find_map(|a| {
+        if !a.path().is_ident("doc") {
+            return None;
+        }
+        let syn::Meta::NameValue(nv) = &a.meta else {
+            return None;
+        };
+        let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(s),
+            ..
+        }) = &nv.value
+        else {
+            return None;
+        };
+        let line = s.value().trim().to_string();
+        (!line.is_empty()).then_some(line)
+    })
 }
 
 /// Shared expansion: original fn + glue fn(s) + registry entry.
@@ -575,6 +885,7 @@ fn registration(
             #iter_call
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         #[::soothfast::__private::linkme::distributed_slice(::soothfast::__private::MEASURED)]
         #[linkme(crate = ::soothfast::__private::linkme)]
         #[allow(non_upper_case_globals)]

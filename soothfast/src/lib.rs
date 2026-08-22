@@ -34,7 +34,7 @@
 
 pub mod embed;
 
-pub use soothfast_macros::{bench, fixture, measured, mock_seam, route};
+pub use soothfast_macros::{bench, export, fixture, measured, mock_seam, route};
 pub use soothfast_registry as registry;
 
 /// Optimizer barrier for measured code, the `black_box` equivalent.
@@ -92,7 +92,12 @@ macro_rules! bench_main {
 #[doc(hidden)]
 pub mod __private {
     pub use soothfast_registry::{
-        Assertions, Bencher, FIXTURES, FixtureItem, MEASURED, MOCKS, MeasuredItem, MockSeam,
-        MockSeamItem, ROUTES, RouteItem, fnv1a, linkme,
+        Assertions, Bencher, ExportItem, FixtureItem, MeasuredItem, MockSeam, MockSeamItem,
+        RouteItem, fnv1a, linkme,
     };
+
+    // The slices themselves exist only where linkme does; expansions that
+    // name them are gated to match.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use soothfast_registry::{EXPORTS, FIXTURES, MEASURED, MOCKS, ROUTES};
 }
