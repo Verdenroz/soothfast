@@ -4,7 +4,7 @@
 //! surface is walked once and lowered per language, so a class defined once
 //! in Rust reaches every configured language as the same class.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use soothfast_bind::foreign::TypeTable;
 use soothfast_bind::model::Surface;
@@ -131,12 +131,30 @@ fn base_surface_in(
     common: &CommonArgs,
     wt: &Path,
 ) -> Result<(Surface, Vec<soothfast_bind::gap::Gap>), String> {
+    // A package added by this very branch has no surface at the merge base,
+    // and asking cargo about one it has never heard of fails in a way that
+    // reads like a broken bench target.
+    if !package_dir_in(pkg, wt)?.is_dir() {
+        return Ok((Surface::default(), Vec::new()));
+    }
     let records = spec_gen::discover_exports(common, Some(wt))?;
     if records.is_empty() {
         return Ok((Surface::default(), Vec::new()));
     }
     let doc = spec_gen::rustdoc_for(pkg, common, Some(wt))?;
     soothfast_bind::walk::surface(&doc, &TypeTable::with_defaults(), &records)
+}
+
+/// Where the package sits inside a worktree, by the path it holds in this
+/// one.
+fn package_dir_in(pkg: &str, wt: &Path) -> Result<PathBuf, String> {
+    let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
+    let root = invoke::workspace_root().map_err(|e| e.to_string())?;
+    let relative = meta
+        .dir
+        .strip_prefix(&root)
+        .map_err(|_| format!("{} is outside the workspace", meta.dir.display()))?;
+    Ok(wt.join(relative))
 }
 
 fn run_build(args: &[String]) -> i32 {
