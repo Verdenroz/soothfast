@@ -62,6 +62,7 @@ ci: check baselines ## Everything PR CI runs: docs gated against this build's ow
 	$(SOOTHFAST) docs check -p soothfast-sdk --baseline self docs/sdk.md
 	$(SOOTHFAST) docs check -p soothfast-report --baseline self docs/reports.md
 	$(SOOTHFAST) docs capture -p soothfast-report --check docs/reports.md
+	$(SOOTHFAST) docs check -p soothfast-demo docs/bindings.md
 	@$(MAKE) llms-gate
 	@echo "All CI checks passed."
 

@@ -10,5 +10,18 @@
     "soothfast_spec::openapi::diff::diff": "62368d178ce6bc49",
     "soothfast_spec::reconcile::reconcile": "0e17d5defc0e63ac"
   },
+  "exports": {
+    "soothfast_demo::Metric": "1b3c79cbb5976dae",
+    "soothfast_demo::Summary": "0d96fb4b907ed5aa",
+    "soothfast_demo::Summary::deviations": "13f3c24041fc50fd",
+    "soothfast_demo::Summary::deviations_all": "3b92a8dc8161ba6b",
+    "soothfast_demo::Summary::deviations_into": "384f6e3c72186fd3",
+    "soothfast_demo::Summary::get": "a3aacf5b2e4df2c6",
+    "soothfast_demo::Summary::label": "5b82cd7114f083c2",
+    "soothfast_demo::Summary::new": "9218a84590d57d26",
+    "soothfast_demo::Summary::parse": "1ef6c5187f258483",
+    "soothfast_demo::Summary::rescale": "ce0d96c78dd8ddc2",
+    "soothfast_demo::fingerprint": "8d7e42acecae6866"
+  },
   "version": 1
 }
