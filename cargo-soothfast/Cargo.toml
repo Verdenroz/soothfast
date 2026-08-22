@@ -22,6 +22,7 @@ pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ targe
 pkg-fmt = "tgz"
 
 [dependencies]
+soothfast-bind.workspace = true
 soothfast-docs.workspace = true
 soothfast-registry.workspace = true
 soothfast-report.workspace = true
