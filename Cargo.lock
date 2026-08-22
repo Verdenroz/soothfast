@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-demo"
-version = "0.1.15"
+version = "0.3.2"
 dependencies = [
  "soothfast",
  "soothfast-measure",

@@ -1,0 +1,28 @@
+[package]
+name = "soothfast-demo"
+description = "Dogfood package for native bindings: soothfast's own fingerprint and statistics, exported to other languages"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+# The bindings it generates are the artifact, not the crate itself.
+publish = false
+
+# Path-only, like every other dependency on the facade here: this crate
+# never publishes, so there is no version to resolve on crates.io.
+[dependencies]
+soothfast = { path = "../soothfast" }
+soothfast-measure.workspace = true
+soothfast-registry.workspace = true
+
+[dev-dependencies]
+soothfast = { path = "../soothfast", features = ["runner"] }
+
+[[bench]]
+name = "soothfast"
+harness = false

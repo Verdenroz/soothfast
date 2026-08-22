@@ -1,0 +1,17 @@
+[[bind]]
+lang = "python"
+out = "bindings/python"
+package = "soothfast-stats"
+description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+
+[[bind]]
+lang = "wasm"
+out = "bindings/js"
+package = "soothfast-stats-js"
+description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+
+[[bind]]
+lang = "c"
+out = "bindings/c"
+package = "soothfast-stats-c"
+description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"

@@ -96,6 +96,14 @@ impl BindKind {
             BindKind::Wasm => wasm::emit(&plan, opts)?,
             BindKind::CAbi => cabi::emit(&plan, opts)?,
         };
+        // A repository that trims file endings would otherwise rewrite what
+        // was just emitted, and `gen --check` would call it stale forever.
+        for text in out.files.values_mut() {
+            while text.ends_with('\n') {
+                text.pop();
+            }
+            text.push('\n');
+        }
         out.gaps = plan.gaps.iter().map(gap::Gap::explain).collect();
         Ok(out)
     }
