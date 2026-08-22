@@ -13,6 +13,7 @@ name = "cargo-soothfast"
 version = "0.1.15"
 dependencies = [
  "serde_json",
+ "soothfast-bind",
  "soothfast-docs",
  "soothfast-registry",
  "soothfast-report",
@@ -163,6 +164,23 @@ name = "soothfast"
 version = "0.1.15"
 dependencies = [
  "soothfast-macros",
+ "soothfast-measure",
+ "soothfast-registry",
+]
+
+[[package]]
+name = "soothfast-bind"
+version = "0.1.15"
+dependencies = [
+ "serde_json",
+ "soothfast-registry",
+]
+
+[[package]]
+name = "soothfast-demo"
+version = "0.1.15"
+dependencies = [
+ "soothfast",
  "soothfast-measure",
  "soothfast-registry",
 ]
