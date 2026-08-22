@@ -14,9 +14,11 @@ const HW_CPU_CYCLES: u64 = 0;
 const HW_INSTRUCTIONS: u64 = 1;
 const HW_CACHE_REFERENCES: u64 = 2;
 const PERF_FLAG_FD_CLOEXEC: libc::c_ulong = 8;
-const IOC_RESET: libc::c_ulong = 0x2403;
-const IOC_ENABLE: libc::c_ulong = 0x2400;
-const IOC_DISABLE: libc::c_ulong = 0x2401;
+// Untyped at the call site on purpose: `ioctl` takes a `c_ulong` request on
+// glibc and a `c_int` one on musl, so only inference gets both right.
+const IOC_RESET: u32 = 0x2403;
+const IOC_ENABLE: u32 = 0x2400;
+const IOC_DISABLE: u32 = 0x2401;
 const FLAG_DISABLED: u64 = 1 << 0;
 const FLAG_EXCLUDE_KERNEL: u64 = 1 << 5;
 const FLAG_EXCLUDE_HV: u64 = 1 << 6;
@@ -68,12 +70,12 @@ impl Counter {
 
     fn count(&self, work: &mut dyn FnMut()) -> u64 {
         unsafe {
-            libc::ioctl(self.fd, IOC_RESET, 0);
-            libc::ioctl(self.fd, IOC_ENABLE, 0);
+            libc::ioctl(self.fd, IOC_RESET as _, 0);
+            libc::ioctl(self.fd, IOC_ENABLE as _, 0);
         }
         work();
         unsafe {
-            libc::ioctl(self.fd, IOC_DISABLE, 0);
+            libc::ioctl(self.fd, IOC_DISABLE as _, 0);
         }
         let mut value: u64 = 0;
         let n = unsafe {
