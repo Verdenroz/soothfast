@@ -10,7 +10,7 @@ checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
 name = "cargo-soothfast"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde_json",
  "soothfast-docs",
@@ -160,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "soothfast-macros",
  "soothfast-measure",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-docs"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde_json",
  "soothfast",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-macros"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-measure"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "libc",
  "soothfast",
@@ -196,7 +196,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-registry"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "linkme",
  "soothfast",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-report"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde_json",
  "soothfast",
@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-sdk"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde_json",
  "soothfast",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-site"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde_json",
  "soothfast",
@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-spec"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde_json",
  "soothfast",
