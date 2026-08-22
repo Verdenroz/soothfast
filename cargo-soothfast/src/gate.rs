@@ -33,6 +33,9 @@ const BUILD_MS_SOFT_PCT: f64 = 25.0;
 /// A deterministic counter within this of the reference reads as "flat" —
 /// wide enough for perfcnt's tiny run-to-run wobble, far below any real change.
 const COUNTER_FLAT_PCT: f64 = 0.5;
+/// Absolute floor alongside `COUNTER_FLAT_PCT`: below ~30K instructions the
+/// 0.5% cutoff is tighter than perfcnt's own run-to-run wobble.
+const COUNTER_FLAT_ABS: u64 = 150;
 
 /// Effective walltime threshold: the fixed +10%, raised to 3x the measured
 /// A/A noise floor when that is higher. A fixed threshold is ~2 sigma on a
@@ -659,9 +662,14 @@ fn counters_flat_on_unchanged_code(old: &Value, cur: &ItemMetrics) -> bool {
     }
     let flat = |o: Option<u64>, n: Option<u64>| {
         let (o, n) = (o?, n?);
-        Some(
-            o == n || o > 0 && ((n as f64 - o as f64) / o as f64 * 100.0).abs() <= COUNTER_FLAT_PCT,
-        )
+        if o == n {
+            return Some(true);
+        }
+        if o == 0 {
+            return Some(false);
+        }
+        let diff = o.abs_diff(n);
+        Some(diff <= COUNTER_FLAT_ABS || diff as f64 / o as f64 * 100.0 <= COUNTER_FLAT_PCT)
     };
     let instructions = flat(old["perfcnt"]["instructions"].as_u64(), cur.instructions);
     let ir = flat(old["callgrind"]["ir"].as_u64(), cur.ir);
@@ -1244,6 +1252,46 @@ mod tests {
             ..incident_head()
         };
         let (failures, _) = gate_failures(&old, &run_with(head));
+        assert_eq!(failures, 1);
+    }
+
+    /// A ~20K-instruction benchmark's allocator/dynamic-linker churn moves
+    /// the count past 0.5% while fingerprint/allocs/bytes stay identical.
+    fn issue93_reference() -> Value {
+        reference(json!({
+            "fingerprint": "fp-unchanged",
+            "walltime": { "median_ns": 1313.2, "mad_ns": 5.0, "p99_ns": 1400.0 },
+            "perfcnt": { "instructions": 19965 },
+            "alloc": { "allocs": 12, "bytes": 512 },
+        }))
+    }
+
+    fn issue93_head(instructions: u64) -> ItemMetrics {
+        ItemMetrics {
+            fingerprint: "fp-unchanged".into(),
+            median_ns: Some(1823.0),
+            instructions: Some(instructions),
+            allocs: Some(12),
+            bytes: Some(512),
+            ..ItemMetrics::default()
+        }
+    }
+
+    #[test]
+    fn small_benchmark_instruction_noise_downgrades_a_walltime_fail() {
+        // 19965 -> 19859 is -0.53%, past COUNTER_FLAT_PCT alone, but the
+        // 106-instruction move is under the absolute floor for a bench this size.
+        let (failures, failing) =
+            gate_failures(&issue93_reference(), &run_with(issue93_head(19859)));
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty(), "a SOFT item must not enter triage");
+    }
+
+    #[test]
+    fn small_benchmark_floor_does_not_mask_a_real_instruction_change() {
+        // 19965 -> 19645 is a 320-instruction, -1.60% move: past both the
+        // absolute floor and COUNTER_FLAT_PCT, so it must still corroborate a fail.
+        let (failures, _) = gate_failures(&issue93_reference(), &run_with(issue93_head(19645)));
         assert_eq!(failures, 1);
     }
 
