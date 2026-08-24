@@ -45,12 +45,18 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       # callgrind fallback + triage artifacts for PMU-less runners
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
+      # Built once by ci.yml's build-cli job
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cargo-soothfast-bin
+          path: bin
+      - run: chmod +x bin/cargo-soothfast
       - name: Run gate
         id: gate
         run: |
           REF="${INPUTS_BASE_REF}"
           if [ -z "$REF" ]; then REF="origin/${GITHUB_BASE_REF:-master}"; fi
-          cargo run --release -p cargo-soothfast -- \
+          bin/cargo-soothfast \
             gate -p "${INPUTS_PACKAGE}" --against-ref "$REF" | tee gate-output.txt
         env:
           INPUTS_BASE_REF: ${{ inputs.base-ref }}
