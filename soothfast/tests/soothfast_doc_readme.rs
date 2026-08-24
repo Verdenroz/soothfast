@@ -2,11 +2,11 @@
 // source: README.md
 #![allow(unused)]
 
-// line 83: compile-only (no_run)
+// line 85: compile-only (no_run)
 #[cfg(feature = "runner")]
 #[rustfmt::skip]
 #[allow(dead_code)]
-fn doc_block_line_83() {
+fn doc_block_line_85() {
     // benches/soothfast.rs
     soothfast::bench_main!();
 

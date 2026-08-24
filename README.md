@@ -15,6 +15,8 @@
   &nbsp;·&nbsp;
   <a href="#quick-start"><code>quick start</code></a>
   &nbsp;·&nbsp;
+  <a href="#in-ci"><code>in ci</code></a>
+  &nbsp;·&nbsp;
   <a href="#dogfood"><code>dogfood</code></a>
   &nbsp;·&nbsp;
   <a href="#workspace"><code>workspace</code></a>
@@ -134,6 +136,21 @@ Prose describing `sorted`. CI fails if the code changes under it.
 <!-- soothfast:claim mylib::checksum.perfcnt.instructions < 25000 -->
 Numbers in prose become gated facts.
 ```
+
+## In CI
+
+A composite action installs the CLI on GitHub Actions, pinned to the
+`soothfast` version in your `Cargo.lock` and cached across runs:
+
+```yaml ignore
+- uses: Verdenroz/soothfast@<tag-or-sha>
+- run: cargo soothfast gate -p mylib --against-ref origin/master
+```
+
+`soothfast-measure` builds into your bench binary from the lock, so an
+unpinned CLI silently outruns it. The `version` input overrides the pin;
+`lockfile` points at a `Cargo.lock` outside the working directory. Outputs
+are `version` and `cache-hit`.
 
 ## Dogfood
 

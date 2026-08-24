@@ -1,0 +1,75 @@
+name: Setup cargo-soothfast
+description: >-
+  Install the cargo-soothfast CLI, pinned to the soothfast version locked in
+  the caller's Cargo.lock, and cache the binary across workflow runs.
+  soothfast-measure builds into the caller's bench binary from that lock, so
+  an unpinned CLI silently outruns it.
+
+inputs:
+  version:
+    description: >-
+      cargo-soothfast version to install. Defaults to the soothfast version
+      resolved from `lockfile`.
+    required: false
+    default: ""
+  lockfile:
+    description: Path to the Cargo.lock holding the soothfast version.
+    required: false
+    default: Cargo.lock
+
+outputs:
+  version:
+    description: The cargo-soothfast version that was installed.
+    value: ${{ steps.resolve.outputs.version }}
+  cache-hit:
+    description: '"true" when the binary was restored from cache.'
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve cargo-soothfast version
+      id: resolve
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_LOCKFILE: ${{ inputs.lockfile }}
+      run: |
+        version="$INPUT_VERSION"
+        if [ -z "$version" ]; then
+          version=$(grep -A1 '^name = "soothfast"$' "$INPUT_LOCKFILE" | grep '^version' | cut -d'"' -f2)
+        fi
+        if [ -z "$version" ]; then
+          echo "::error::No soothfast version found in $INPUT_LOCKFILE; pass the version input"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "bin=${CARGO_HOME:-$HOME/.cargo}/bin/cargo-soothfast" >> "$GITHUB_OUTPUT"
+    - name: Restore cargo-soothfast
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.resolve.outputs.bin }}
+        key: cargo-soothfast-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.version }}
+    - name: Install cargo-binstall
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2.85.13
+      with:
+        tool: cargo-binstall
+    - name: Install cargo-soothfast
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ steps.resolve.outputs.version }}
+      # --force gets past an install record that rust-cache restores without
+      # the binary itself.
+      run: cargo binstall cargo-soothfast --version "$VERSION" --locked --no-confirm --force
+    - name: Verify cargo-soothfast
+      shell: bash
+      env:
+        BIN: ${{ steps.resolve.outputs.bin }}
+      run: |
+        if [ ! -x "$BIN" ]; then
+          echo "::error::$BIN is missing or not executable after setup"
+          exit 1
+        fi
