@@ -62,6 +62,12 @@ impl CommonArgs {
 /// repartitioned, so both sides of a comparison are pinned to it.
 const CANONICAL_CODEGEN_UNITS: &str = "1";
 
+/// Toolchain override for `cargo bench`, `SOOTHFAST_BENCH_TOOLCHAIN`. Unset
+/// by default, so `measure`/`gate` stay pinned to the active toolchain.
+fn bench_toolchain() -> Option<String> {
+    std::env::var("SOOTHFAST_BENCH_TOOLCHAIN").ok()
+}
+
 fn bench_command(
     common: &CommonArgs,
     extra: &[&str],
@@ -69,6 +75,9 @@ fn bench_command(
     target_dir: Option<&Path>,
 ) -> Command {
     let mut cmd = Command::new("cargo");
+    if let Some(toolchain) = bench_toolchain() {
+        cmd.arg(format!("+{toolchain}"));
+    }
     cmd.arg("bench");
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
