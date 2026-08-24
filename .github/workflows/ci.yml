@@ -53,13 +53,43 @@ jobs:
           shared-key: msrv
       - run: cargo check --workspace --all-targets --all-features
 
-  # Dogfood: measure the self-bench crates, then gate every bind, claim, and
-  # captured output against this build's own run.
-  docs:
+  # Compile cargo-soothfast once and share it as an artifact: docs,
+  # docs-regen, the gate matrix, and deploy-docs would otherwise each
+  # rebuild it from source in release mode.
+  build-cli:
     if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout (a private repo needs it)
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - run: cargo build --release --locked -p cargo-soothfast
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-soothfast-bin
+          path: target/release/cargo-soothfast
+          retention-days: 1
+
+  # Dogfood: measure the self-bench crates, then gate every bind, claim, and
+  # captured output against this build's own run.
+  docs:
+    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
+    needs: [build-cli]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout (a private repo needs it)
+    env:
+      SOOTHFAST: ./bin/cargo-soothfast
+      SOOTHFAST_RELEASE: ./bin/cargo-soothfast
     steps:
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
@@ -76,17 +106,22 @@ jobs:
           echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$TC" >> "$GITHUB_ENV"
           rustup toolchain install "$TC"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cargo-soothfast-bin
+          path: bin
+      - run: chmod +x bin/cargo-soothfast
       - run: make baselines
-      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast --baseline self README.md docs/index.md
-      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast-measure --baseline self docs/measuring.md docs/gating.md
-      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast-docs --baseline self docs/living-docs.md
-      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast-spec --baseline self docs/spec.md
-      - run: cargo run --release -p cargo-soothfast -- docs check -p soothfast-report --baseline self docs/reports.md
+      - run: bin/cargo-soothfast docs check -p soothfast --baseline self README.md docs/index.md
+      - run: bin/cargo-soothfast docs check -p soothfast-measure --baseline self docs/measuring.md docs/gating.md
+      - run: bin/cargo-soothfast docs check -p soothfast-docs --baseline self docs/living-docs.md
+      - run: bin/cargo-soothfast docs check -p soothfast-spec --baseline self docs/spec.md
+      - run: bin/cargo-soothfast docs check -p soothfast-report --baseline self docs/reports.md
       - name: Public API doc coverage must stay complete
         run: |
           for crate in soothfast soothfast-macros soothfast-registry soothfast-measure \
                        soothfast-docs soothfast-spec soothfast-sdk soothfast-report soothfast-site; do
-            cargo run --release -p cargo-soothfast -- coverage docs -p "$crate" --min 100
+            bin/cargo-soothfast coverage docs -p "$crate" --min 100
           done
 
   # Regenerate every derivable docs artifact on the default branch and commit
@@ -94,8 +129,12 @@ jobs:
   # remember to run capture or docs-pages by hand.
   docs-regen:
     if: github.event_name == 'push'
+    needs: [build-cli]
     runs-on: ubuntu-latest
     permissions: {} # all repo access comes from the minted App token below
+    env:
+      SOOTHFAST: ./bin/cargo-soothfast
+      SOOTHFAST_RELEASE: ./bin/cargo-soothfast
     steps:
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
@@ -127,13 +166,18 @@ jobs:
           echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$TC" >> "$GITHUB_ENV"
           rustup toolchain install "$TC"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cargo-soothfast-bin
+          path: bin
+      - run: chmod +x bin/cargo-soothfast
       - run: make baselines
       - name: Regenerate captured doc output and reference pages
         run: |
-          cargo run --release -p cargo-soothfast -- docs capture -p soothfast README.md docs/index.md
-          cargo run --release -p cargo-soothfast -- docs capture -p soothfast-measure docs/measuring.md docs/gating.md
-          cargo run --release -p cargo-soothfast -- docs capture -p soothfast-spec docs/spec.md
-          cargo run --release -p cargo-soothfast -- docs capture -p soothfast-report docs/reports.md
+          bin/cargo-soothfast docs capture -p soothfast README.md docs/index.md
+          bin/cargo-soothfast docs capture -p soothfast-measure docs/measuring.md docs/gating.md
+          bin/cargo-soothfast docs capture -p soothfast-spec docs/spec.md
+          bin/cargo-soothfast docs capture -p soothfast-report docs/reports.md
           make docs-pages
       - name: Keep llms.txt only when the documented surface moved
         # Measured lines change every run; committing them would make this
@@ -171,6 +215,7 @@ jobs:
   # Keep this package list in sync with Makefile's BENCH_CRATES.
   gate:
     if: github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]')
+    needs: [build-cli]
     strategy:
       matrix:
         package:
@@ -212,10 +257,13 @@ jobs:
   # measurements, fresh pages, gh-deploy.
   deploy-docs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [check, docs]
+    needs: [check, docs, build-cli]
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      SOOTHFAST: ./bin/cargo-soothfast
+      SOOTHFAST_RELEASE: ./bin/cargo-soothfast
     steps:
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
@@ -239,9 +287,14 @@ jobs:
           echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$TC" >> "$GITHUB_ENV"
           rustup toolchain install "$TC"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cargo-soothfast-bin
+          path: bin
+      - run: chmod +x bin/cargo-soothfast
       - run: make baselines
       - run: make docs-pages
-      - run: cargo run --release -p cargo-soothfast -- docs build --baseline self
+      - run: bin/cargo-soothfast docs build --baseline self
       - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ steps.app-token.outputs.token }}
