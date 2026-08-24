@@ -143,7 +143,7 @@ A composite action installs the CLI on GitHub Actions, pinned to the
 `soothfast` version in your `Cargo.lock` and cached across runs:
 
 ```yaml ignore
-- uses: Verdenroz/soothfast/.github/actions/setup-cargo-soothfast@<tag-or-sha>
+- uses: Verdenroz/soothfast@<tag-or-sha>
 - run: cargo soothfast gate -p mylib --against-ref origin/master
 ```
 
