@@ -14,7 +14,7 @@ CLI in a consumer's own CI with the version pinned from its
 `Cargo.lock`, cached across workflow runs.
 
 `SOOTHFAST_BENCH_TOOLCHAIN` lets a job pin `cargo bench`'s toolchain
-independently of the active one — set it alongside
+independently of the active one, set alongside
 `SOOTHFAST_RUSTDOC_TOOLCHAIN` so a job running both `spec`/`docs` and
 rustdoc-JSON commands compiles its dependency graph once instead of
 twice. `measure`/`gate` are unaffected unless a caller sets it.
@@ -593,7 +593,9 @@ The changelog and spec bots now authenticate as the `soothfast-bot` GitHub
 App instead of the default token. GitHub gates every subsequent workflow
 run on a PR behind manual approval once a `github-actions[bot]`-authored
 commit lands on it, which was blocking normal review on PRs the bots had
-touched. The Python SDK generator also gained a mypy fix: `server_env` now
+touched.
+
+The Python SDK generator also gained a mypy fix: `server_env` now
 casts to `Mapping[str, str]` before reaching `embedded_base_url`, since
 `mypy --strict` rejects a `TypedDict` there even when every field is
 `str`-typed. This was found on finance-query's own generated SDK, which
