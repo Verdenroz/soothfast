@@ -5,11 +5,14 @@
 <!-- soothfast:notes -->
 CI-only release, no runtime behavior change. `cargo-soothfast`'s own CI
 now builds itself once per run and shares that binary across the docs,
-gate, and deploy jobs instead of rebuilding from source in each; release
-binaries are now published for five platforms instead of just
-`x86_64-unknown-linux-gnu`. A new `.github/actions/setup-cargo-soothfast`
-composite action installs the CLI in a consumer's own CI with the
-version pinned from its `Cargo.lock`, cached across workflow runs.
+gate, and deploy jobs instead of rebuilding from source in each;
+release binaries are now published for five platforms instead of just
+`x86_64-unknown-linux-gnu`.
+
+A new composite action (`action.yml` at the repo root) installs the
+CLI in a consumer's own CI with the version pinned from its
+`Cargo.lock`, cached across workflow runs.
+
 `SOOTHFAST_BENCH_TOOLCHAIN` lets a job pin `cargo bench`'s toolchain
 independently of the active one — set it alongside
 `SOOTHFAST_RUSTDOC_TOOLCHAIN` so a job running both `spec`/`docs` and
