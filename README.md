@@ -152,9 +152,6 @@ unpinned CLI silently outruns it. The `version` input overrides the pin;
 `lockfile` points at a `Cargo.lock` outside the working directory. Outputs
 are `version` and `cache-hit`.
 
-Add `step-security/harden-runner` as the job's own first step if you use it.
-The action deliberately leaves that to the caller.
-
 ## Dogfood
 
 CI runs soothfast on soothfast. Seven crates each carry a bench target
