@@ -206,7 +206,15 @@ jobs:
               found && /^## / { exit }
               found && /^<!-- \/?soothfast:notes -->$/ { next }
               found { print }
-            ' CHANGELOG.md)
+            ' CHANGELOG.md | awk '
+              function trim(s) { sub(/^[[:space:]]+/, "", s); return s }
+              /^```/ { if (buf != "") { print buf; buf = "" }; print; fence = !fence; next }
+              fence { print; next }
+              /^[[:space:]]*$/ { if (buf != "") { print buf; buf = "" }; print; next }
+              /^(#{1,6} |\||[-*] |[0-9]+\. )/ { if (buf != "") { print buf }; buf = $0; next }
+              { t = trim($0); buf = (buf == "" ? t : buf " " t) }
+              END { if (buf != "") print buf }
+            ')
           fi
           if [ -z "$NOTES" ]; then
             echo "No CHANGELOG entry found for $TAG_VERSION; using auto-generated notes"
