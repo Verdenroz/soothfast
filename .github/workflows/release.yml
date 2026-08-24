@@ -232,11 +232,27 @@ jobs:
           fi
 
   binaries:
-    name: Prebuilt cargo-soothfast (x86_64-linux-gnu)
-    runs-on: ubuntu-latest
+    name: Prebuilt cargo-soothfast (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
     needs: [resolve, publish]
     permissions:
       contents: write # upload the release asset
+    strategy:
+      fail-fast: false
+      # Mirrors soothfast-sdk's Target::DEFAULT matrix (target.rs): one native
+      # runner per platform, since cross-compiling is only free for the host.
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
     steps:
       - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
@@ -247,19 +263,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
+          key: ${{ matrix.target }}
           lookup-only: true
       - name: Build release binary
-        run: cargo build --release --locked -p cargo-soothfast --target x86_64-unknown-linux-gnu
+        run: cargo build --release --locked -p cargo-soothfast --target ${{ matrix.target }}
       # Asset name follows cargo-binstall's default convention, matched by
       # [package.metadata.binstall] in cargo-soothfast/Cargo.toml.
       - name: Package and upload release asset
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.resolve.outputs.tag }}
           VERSION: ${{ needs.resolve.outputs.version }}
+          TARGET: ${{ matrix.target }}
         run: |
-          ASSET="cargo-soothfast-v${VERSION}-x86_64-unknown-linux-gnu.tgz"
-          tar -C target/x86_64-unknown-linux-gnu/release -czf "$ASSET" cargo-soothfast
+          BIN=cargo-soothfast
+          [ "$TARGET" = x86_64-pc-windows-msvc ] && BIN=cargo-soothfast.exe
+          ASSET="cargo-soothfast-v${VERSION}-${TARGET}.tgz"
+          tar -C "target/${TARGET}/release" -czf "$ASSET" "$BIN"
           gh release upload "$TAG" "$ASSET" --clobber
