@@ -68,11 +68,21 @@ fn bench_toolchain() -> Option<String> {
     std::env::var("SOOTHFAST_BENCH_TOOLCHAIN").ok()
 }
 
+/// `Measure` pins the bench profile so numbers stay comparable; `Discover`
+/// builds under the dev profile, since a registry dump's output doesn't
+/// depend on optimization and dev artifacts never displace measured ones.
+#[derive(Clone, Copy)]
+enum Build {
+    Measure,
+    Discover,
+}
+
 fn bench_command(
     common: &CommonArgs,
     extra: &[&str],
     dir: Option<&Path>,
     target_dir: Option<&Path>,
+    build: Build,
 ) -> Command {
     let mut cmd = Command::new("cargo");
     if let Some(toolchain) = bench_toolchain() {
@@ -82,8 +92,15 @@ fn bench_command(
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
     }
-    if let Some(n) = common.codegen_units_env() {
-        cmd.env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", n);
+    match build {
+        Build::Measure => {
+            if let Some(n) = common.codegen_units_env() {
+                cmd.env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", n);
+            }
+        }
+        Build::Discover => {
+            cmd.args(["--profile", "dev"]);
+        }
     }
     if let Some(p) = &common.pkg {
         cmd.args(["-p", p]);
@@ -128,10 +145,35 @@ pub fn run_bench_dir(
     dir: Option<&Path>,
     target_dir: Option<&Path>,
 ) -> io::Result<Vec<Value>> {
+    run_records(common, extra, dir, target_dir, Build::Measure)
+}
+
+/// `run_bench_in` for registry dumps (`--list`, `--list-routes`): dev
+/// profile, no codegen-units pin.
+pub fn run_discovery_in(
+    common: &CommonArgs,
+    extra: &[&str],
+    dir: Option<&Path>,
+) -> io::Result<Vec<Value>> {
+    run_records(common, extra, dir, None, Build::Discover)
+}
+
+/// `run_discovery_in` in the current workspace.
+pub fn run_discovery(common: &CommonArgs, extra: &[&str]) -> io::Result<Vec<Value>> {
+    run_discovery_in(common, extra, None)
+}
+
+fn run_records(
+    common: &CommonArgs,
+    extra: &[&str],
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+) -> io::Result<Vec<Value>> {
     let mut args = vec!["--json"];
     args.extend_from_slice(extra);
     let target = common.target.as_deref().unwrap_or("soothfast");
-    let mut cmd = bench_command(common, &args, dir, target_dir);
+    let mut cmd = bench_command(common, &args, dir, target_dir, build);
     cmd.stdout(Stdio::piped());
     let out = cmd.output()?;
     if !out.status.success() {
@@ -160,7 +202,7 @@ pub fn run_bench_dir(
 
 /// Run the bench binary in raw (non-JSON) mode and capture stdout as text.
 pub fn run_bench_raw(common: &CommonArgs, extra: &[&str]) -> io::Result<String> {
-    let mut cmd = bench_command(common, extra, None, None);
+    let mut cmd = bench_command(common, extra, None, None, Build::Measure);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     let out = cmd.output()?;

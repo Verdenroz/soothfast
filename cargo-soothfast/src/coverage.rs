@@ -39,7 +39,7 @@ fn measure(args: &[String]) -> i32 {
     };
 
     // What is measured: registry list, attributing `covers` where set.
-    let records = match invoke::run_bench(&common, &["--list"]) {
+    let records = match invoke::run_discovery(&common, &["--list"]) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("soothfast: {e}");
