@@ -96,7 +96,7 @@ pub(crate) fn discover_routes(
     dir: Option<&Path>,
 ) -> Result<BTreeMap<String, Vec<Route>>, String> {
     let records =
-        invoke::run_bench_in(common, &["--list-routes"], dir).map_err(|e| e.to_string())?;
+        invoke::run_discovery_in(common, &["--list-routes"], dir).map_err(|e| e.to_string())?;
     let mut by_spec: BTreeMap<String, Vec<Route>> = BTreeMap::new();
     for r in records.iter().filter(|r| r["type"] == "route") {
         by_spec
@@ -518,7 +518,7 @@ mod tests {
         // The regression this guards: `spec gen` used to discover routes
         // first, so pointing it at a crate that generates no specs failed on
         // the missing `[[bench]]` target instead of reporting nothing to do.
-        // `run_bench_in` would panic-or-error here if it were reached, since
+        // `run_discovery_in` would panic-or-error here if it were reached, since
         // there is no such package.
         let meta = invoke::PkgMeta {
             dir: std::path::PathBuf::from("/nonexistent"),

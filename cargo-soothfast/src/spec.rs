@@ -21,7 +21,7 @@ struct SpecReport {
 /// Collect `#[route]` registrations grouped by spec file, parse each spec,
 /// and reconcile. Shared by `spec check` and `docs routes`.
 fn gather(pkg: &str, common: &CommonArgs) -> Result<Vec<SpecReport>, String> {
-    let records = invoke::run_bench(common, &["--list-routes"]).map_err(|e| e.to_string())?;
+    let records = invoke::run_discovery(common, &["--list-routes"]).map_err(|e| e.to_string())?;
     let mut by_spec: BTreeMap<String, Vec<RouteDecl>> = BTreeMap::new();
     for r in records.iter().filter(|r| r["type"] == "route") {
         let route = RouteDecl {
