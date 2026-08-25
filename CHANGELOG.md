@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.17)
+## 0.1.18 - 2026-08-25
+
+<!-- soothfast:notes -->
+### Overview
+
+A patch release making registry dumps build under the dev profile:
+route discovery in `spec check`, `spec gen`, and `sdk gen`, and the
+item listing in `coverage measure`. No public API changes to the
+library crates; `measure`/`gate` numbers are unaffected.
+
+### Notes
+
+A registry dump only executes the bench binary to print its linkme
+registrations, but it was built exactly like a measurement: bench
+profile at opt-level 3 with `codegen-units` pinned to 1. For
+downstream workspaces that pinned, optimized compile dominated `spec
+check` wall clock in CI. Discovery runs now pass `--profile dev` and
+skip the pin; measurement commands (`measure`, `gate`, `trend`,
+`report`) still build the bench profile pinned to `codegen-units = 1`.
+
+Discovery artifacts also land in `target/debug` instead of sharing
+the bench profile's directory, so jobs that mix discovery and
+measurement no longer invalidate each other's build caches.
 
 ### API surface
 
