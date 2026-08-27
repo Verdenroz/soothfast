@@ -424,6 +424,46 @@ pub fn run_to_items_value(run: &Run) -> Value {
     Value::Object(items)
 }
 
+/// Deserialize the baseline `items` shape back into a `Run`. The mirror of
+/// `run_to_items_value`, for reusing a cached reference-shaped doc as a live
+/// measurement instead of remeasuring it.
+pub fn run_from_items_value(items: &Value) -> Run {
+    let mut run = Run::default();
+    let Some(map) = items.as_object() else {
+        return run;
+    };
+    for (id, v) in map {
+        run.items.insert(
+            id.clone(),
+            ItemMetrics {
+                fingerprint: v["fingerprint"].as_str().unwrap_or("").to_string(),
+                covers: v["covers"].as_str().unwrap_or("").to_string(),
+                tolerance_pct: v["tolerance_pct"].as_f64(),
+                median_ns: v["walltime"]["median_ns"].as_f64(),
+                mad_ns: v["walltime"]["mad_ns"].as_f64(),
+                p99_ns: v["walltime"]["p99_ns"].as_f64(),
+                wall_rounds: v["walltime"]["rounds"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_f64)
+                    .collect(),
+                instructions: v["perfcnt"]["instructions"].as_u64(),
+                cycles: v["perfcnt"]["cycles"].as_u64(),
+                cache_refs: v["perfcnt"]["cache_refs"].as_u64(),
+                ir: v["callgrind"]["ir"].as_u64(),
+                allocs: v["alloc"]["allocs"].as_u64(),
+                bytes: v["alloc"]["bytes"].as_u64(),
+                polls: v["asyncexec"]["polls"].as_u64(),
+                wakes: v["asyncexec"]["wakes"].as_u64(),
+                build_ms: v["buildcost"]["build_ms"].as_u64(),
+                size_bytes: v["buildcost"]["size_bytes"].as_u64(),
+            },
+        );
+    }
+    run
+}
+
 /// Workspace root (parent of the workspace Cargo.toml), via cargo itself.
 pub fn workspace_root() -> io::Result<PathBuf> {
     let out = Command::new("cargo")
@@ -539,7 +579,28 @@ pub fn save_baseline(name: &str, run: &Run, scope: SaveScope) -> io::Result<Path
     let path = baseline_path(name)?;
     std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
     std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
+    prune_absorbed_accepts(run);
     Ok(path)
+}
+
+/// Drop `soothfast-gate.lock` entries a fresh baseline has absorbed. Best
+/// effort: a baseline save must never fail because of the lock file.
+fn prune_absorbed_accepts(run: &Run) {
+    let Ok(root) = workspace_root() else {
+        return;
+    };
+    let Ok(entries) = crate::gate_lock::read(&root) else {
+        return;
+    };
+    let (pruned, removed) = crate::gate_lock::prune_absorbed(&entries, run);
+    if removed.is_empty() {
+        return;
+    }
+    if crate::gate_lock::write(&root, &pruned).is_ok() {
+        for id in removed {
+            println!("soothfast-gate.lock: {id} absorbed into the new baseline, entry removed");
+        }
+    }
 }
 
 /// Load a named baseline, if present.
@@ -1067,7 +1128,55 @@ pub fn git_in(dir: &Path, args: &[&str]) -> io::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommonArgs, SaveScope, harness_mismatches};
+    use super::{
+        CommonArgs, ItemMetrics, Run, SaveScope, harness_mismatches, run_from_items_value,
+        run_to_items_value,
+    };
+
+    #[test]
+    fn run_from_items_value_round_trips_run_to_items_value() {
+        let mut run = Run::default();
+        run.items.insert(
+            "pkg::bench".into(),
+            ItemMetrics {
+                fingerprint: "fp".into(),
+                covers: "pkg::covered".into(),
+                median_ns: Some(100.0),
+                mad_ns: Some(1.0),
+                p99_ns: Some(120.0),
+                wall_rounds: vec![95.0, 105.0],
+                instructions: Some(500),
+                cycles: Some(600),
+                cache_refs: Some(10),
+                ir: Some(700),
+                allocs: Some(2),
+                bytes: Some(64),
+                polls: Some(3),
+                wakes: Some(3),
+                tolerance_pct: Some(8.0),
+                build_ms: None,
+                size_bytes: None,
+            },
+        );
+        let round_tripped = run_from_items_value(&run_to_items_value(&run));
+        let original = &run.items["pkg::bench"];
+        let back = &round_tripped.items["pkg::bench"];
+        assert_eq!(back.fingerprint, original.fingerprint);
+        assert_eq!(back.covers, original.covers);
+        assert_eq!(back.median_ns, original.median_ns);
+        assert_eq!(back.mad_ns, original.mad_ns);
+        assert_eq!(back.p99_ns, original.p99_ns);
+        assert_eq!(back.wall_rounds, original.wall_rounds);
+        assert_eq!(back.instructions, original.instructions);
+        assert_eq!(back.cycles, original.cycles);
+        assert_eq!(back.cache_refs, original.cache_refs);
+        assert_eq!(back.ir, original.ir);
+        assert_eq!(back.allocs, original.allocs);
+        assert_eq!(back.bytes, original.bytes);
+        assert_eq!(back.polls, original.polls);
+        assert_eq!(back.wakes, original.wakes);
+        assert_eq!(back.tolerance_pct, original.tolerance_pct);
+    }
 
     #[test]
     fn save_scope_mirrors_what_the_args_measured() {

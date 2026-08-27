@@ -3,10 +3,13 @@
 //! exit non-zero on regression. On failure, emits a callgrind triage
 //! artifact when valgrind is available.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde_json::Value;
 
 use crate::buildstamp;
 use crate::gate_config;
+use crate::gate_lock;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::runcache;
 use crate::workspace;
@@ -66,6 +69,9 @@ struct GateArgs {
 }
 
 pub fn run(args: &[String]) -> i32 {
+    if args.first().map(String::as_str) == Some("accept") {
+        return accept_cmd(&args[1..]);
+    }
     let mut g = GateArgs {
         common: CommonArgs::default(),
         baseline: "base".into(),
@@ -116,90 +122,21 @@ pub fn run(args: &[String]) -> i32 {
 
     let mut failures = 0u32;
     let mut failing_ids: Vec<String> = Vec::new();
-    let mut short_circuited = false;
 
-    // Reference + current: merge-base worktree (interleaved) or stored baseline.
-    let (reference, current) = if g.common.backend.as_deref() == Some("buildcost") {
-        let Some(pkg) = g.common.pkg.clone() else {
-            return err("--backend buildcost requires -p PKG");
-        };
-        let current = match crate::buildcost::measure(&pkg, &g.matrix) {
-            Ok(r) => r,
-            Err(e) => return err(&e),
-        };
-        let reference = if let Some(refname) = &g.against_ref {
-            // Merge-base build cost, measured in a worktree. Warm the dep
-            // graph un-timed first: the worktree's target dir starts cold,
-            // and dep compilation isn't this package's build cost.
-            let base = invoke::with_merge_base_worktree(refname, |wt| {
-                let warm = std::process::Command::new("cargo")
-                    .args(["build", "--release", "-p", &pkg])
-                    .current_dir(wt)
-                    .status()
-                    .map_err(|e| e.to_string())?;
-                if !warm.success() {
-                    return Err(format!("merge-base warmup build failed for {pkg}"));
-                }
-                crate::buildcost::measure_in(&pkg, &g.matrix, Some(wt))
-            });
-            let base = match base {
-                Ok(r) => r,
-                Err(e) => return err(&e),
-            };
-            let mut doc = serde_json::json!({ "version": 1 });
-            doc["items"] = invoke::run_to_items_value(&base);
-            doc
-        } else {
-            let mut baseline = match invoke::load_baseline(&g.baseline) {
-                Ok(Some(b)) => b,
-                Ok(None) => return err(&format!("no baseline named {:?}", g.baseline)),
-                Err(e) => return err(&format!("failed to load baseline: {e}")),
-            };
-            // Only buildcost items are in play; drop bench entries from the view.
-            if let Some(map) = baseline["items"].as_object_mut() {
-                map.retain(|k, _| k.starts_with("buildcost::"));
-            }
-            baseline
-        };
-        (reference, current)
-    } else if let Some(refname) = &g.against_ref {
-        match measure_ref_interleaved(&g.common, refname, g.reuse_base) {
-            Ok(Some(pair)) => {
-                short_circuited = pair.short_circuited;
-                (pair.reference, pair.current)
-            }
-            // Newly measured crate: nothing at the ref to regress against.
-            // Passing is the honest answer; failing would make a crate's
-            // first bench permanently ungateable until it is already merged.
-            Ok(None) => {
-                println!(
-                    "gate: no bench target at {refname} for {} — newly measured, nothing to compare",
-                    g.common.pkg.as_deref().unwrap_or("this package")
-                );
-                return 0;
-            }
-            Err(e) => return err(&e),
+    let (reference, current, short_circuited) = match resolve(&g) {
+        Ok(Some(triple)) => triple,
+        // Newly measured crate: nothing at the ref to regress against.
+        // Passing is the honest answer; failing would make a crate's
+        // first bench permanently ungateable until it is already merged.
+        Ok(None) => {
+            println!(
+                "gate: no bench target at {} for {} — newly measured, nothing to compare",
+                g.against_ref.as_deref().unwrap_or("?"),
+                g.common.pkg.as_deref().unwrap_or("this package")
+            );
+            return 0;
         }
-    } else {
-        let records = match invoke::run_bench(&g.common, &[]) {
-            Ok(r) => r,
-            Err(e) => return err(&e.to_string()),
-        };
-        let mut current = invoke::collect(&records);
-        current.build = Some(buildstamp::capture(g.common.codegen_units_env(), None));
-        let baseline = match invoke::load_baseline(&g.baseline) {
-            Ok(Some(b)) => b,
-            Ok(None) => {
-                eprintln!(
-                    "soothfast: no baseline named {:?} — create one with \
-                     `cargo soothfast measure --save-baseline {}`",
-                    g.baseline, g.baseline
-                );
-                return 2;
-            }
-            Err(e) => return err(&format!("failed to load baseline: {e}")),
-        };
-        (baseline, current)
+        Err(e) => return err(&e),
     };
     // A gate that measured nothing must never pass: a typo'd --filter, an
     // empty registry, or lost records would otherwise be permanently green.
@@ -209,6 +146,11 @@ pub fn run(args: &[String]) -> i32 {
     if let Some(b) = &current.gating_backend {
         println!("gate: gating backend = {b}");
     }
+    let root = invoke::workspace_root().ok();
+    let accepted = root
+        .as_deref()
+        .and_then(|r| gate_lock::read(r).ok())
+        .unwrap_or_default();
     let buildcost_mode = g.common.backend.as_deref() == Some("buildcost");
     let ctx = CompareCtx {
         deps_mode: g.deps,
@@ -216,8 +158,16 @@ pub fn run(args: &[String]) -> i32 {
         filter: g.common.filter.clone(),
         pkg: g.common.pkg.clone(),
         buildcost_mode,
+        accepted,
     };
-    failures += compare(&reference, &current, "", &ctx, &mut failing_ids);
+    failures += compare(
+        &reference,
+        &current,
+        "",
+        &ctx,
+        &mut failing_ids,
+        &mut Vec::new(),
+    );
 
     // Ratchet: also compare against a long-lived baseline (e.g. last release)
     // so ten +4% regressions can't compound past a single gate.
@@ -229,7 +179,14 @@ pub fn run(args: &[String]) -> i32 {
                     deps_mode: false,
                     ..ctx.clone()
                 };
-                failures += compare(&r, &current, "RATCHET ", &rctx, &mut failing_ids);
+                failures += compare(
+                    &r,
+                    &current,
+                    "RATCHET ",
+                    &rctx,
+                    &mut failing_ids,
+                    &mut Vec::new(),
+                );
             }
             Ok(None) => return err(&format!("no ratchet baseline named {ratchet_name:?}")),
             Err(e) => return err(&format!("failed to load ratchet baseline: {e}")),
@@ -279,6 +236,234 @@ pub fn run(args: &[String]) -> i32 {
         println!("gate: passed ({} item(s))", current.items.len());
         0
     }
+}
+
+/// Resolve the comparison pair for a gate run: reference doc, current run,
+/// and whether the current run was a short-circuited identical-binaries
+/// pass. `Ok(None)` only in `--against-ref` mode: a crate newly measured has
+/// nothing at the ref to compare against.
+fn resolve(g: &GateArgs) -> Result<Option<(Value, Run, bool)>, String> {
+    if g.common.backend.as_deref() == Some("buildcost") {
+        let Some(pkg) = g.common.pkg.clone() else {
+            return Err("--backend buildcost requires -p PKG".into());
+        };
+        let current = crate::buildcost::measure(&pkg, &g.matrix)?;
+        let reference = if let Some(refname) = &g.against_ref {
+            // Merge-base build cost, measured in a worktree. Warm the dep
+            // graph un-timed first: the worktree's target dir starts cold,
+            // and dep compilation isn't this package's build cost.
+            let base = invoke::with_merge_base_worktree(refname, |wt| {
+                let warm = std::process::Command::new("cargo")
+                    .args(["build", "--release", "-p", &pkg])
+                    .current_dir(wt)
+                    .status()
+                    .map_err(|e| e.to_string())?;
+                if !warm.success() {
+                    return Err(format!("merge-base warmup build failed for {pkg}"));
+                }
+                crate::buildcost::measure_in(&pkg, &g.matrix, Some(wt))
+            })?;
+            let mut doc = serde_json::json!({ "version": 1 });
+            doc["items"] = invoke::run_to_items_value(&base);
+            doc
+        } else {
+            let mut baseline = invoke::load_baseline(&g.baseline)
+                .map_err(|e| format!("failed to load baseline: {e}"))?
+                .ok_or_else(|| format!("no baseline named {:?}", g.baseline))?;
+            // Only buildcost items are in play; drop bench entries from the view.
+            if let Some(map) = baseline["items"].as_object_mut() {
+                map.retain(|k, _| k.starts_with("buildcost::"));
+            }
+            baseline
+        };
+        return Ok(Some((reference, current, false)));
+    }
+    if let Some(refname) = &g.against_ref {
+        return match measure_ref_interleaved(&g.common, refname, g.reuse_base)? {
+            Some(pair) => Ok(Some((pair.reference, pair.current, pair.short_circuited))),
+            None => Ok(None),
+        };
+    }
+    let records = invoke::run_bench(&g.common, &[]).map_err(|e| e.to_string())?;
+    let mut current = invoke::collect(&records);
+    current.build = Some(buildstamp::capture(g.common.codegen_units_env(), None));
+    let baseline = invoke::load_baseline(&g.baseline)
+        .map_err(|e| format!("failed to load baseline: {e}"))?
+        .ok_or_else(|| {
+            format!(
+                "no baseline named {:?} — create one with `cargo soothfast measure --save-baseline {}`",
+                g.baseline, g.baseline
+            )
+        })?;
+    Ok(Some((baseline, current, false)))
+}
+
+struct AcceptArgs {
+    common: CommonArgs,
+    baseline: String,
+    against_ref: Option<String>,
+    matrix: String,
+    justification: Option<String>,
+    only: Vec<String>,
+}
+
+/// Record a reviewed, currently-failing delta into `soothfast-gate.lock`, so
+/// a future `gate` treats it as the new ceiling for that bench and metric
+/// instead of a regression — without touching the threshold for anything
+/// else. Refuses a bench that isn't currently failing: an unearned entry
+/// would let the lock file accumulate speculative headroom instead of a
+/// reviewed record of what actually shifted.
+fn accept_cmd(args: &[String]) -> i32 {
+    let mut a = AcceptArgs {
+        common: CommonArgs::default(),
+        baseline: "base".into(),
+        against_ref: None,
+        matrix: "default".into(),
+        justification: None,
+        only: Vec::new(),
+    };
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        if a.common.try_parse(arg, &mut it) {
+            continue;
+        }
+        match arg.as_str() {
+            "--baseline" => match it.next() {
+                Some(n) => a.baseline = n.clone(),
+                None => return err("--baseline needs a name"),
+            },
+            "--against-ref" => match it.next() {
+                Some(r) => a.against_ref = Some(r.clone()),
+                None => return err("--against-ref needs a git ref"),
+            },
+            "--features-matrix" => match it.next() {
+                Some(m) => a.matrix = m.clone(),
+                None => return err("--features-matrix needs combos like \"default;full\""),
+            },
+            "--justification" => match it.next() {
+                Some(j) => a.justification = Some(j.clone()),
+                None => return err("--justification needs text"),
+            },
+            "--only" => match it.next() {
+                Some(id) => a.only.push(id.clone()),
+                None => return err("--only needs a bench id"),
+            },
+            other => return err(&format!("unknown gate accept arg {other:?}")),
+        }
+    }
+    if let Err(e) = gate_config::apply(&mut a.common) {
+        return err(&e);
+    }
+    let Some(justification) = a.justification.clone() else {
+        return err("gate accept needs --justification \"...\"");
+    };
+
+    let g = GateArgs {
+        common: a.common,
+        baseline: a.baseline,
+        ratchet: None,
+        against_ref: a.against_ref,
+        deps: false,
+        allow_gone: false,
+        matrix: a.matrix,
+        save_baseline: None,
+        reuse_base: true,
+    };
+    let (reference, current, _) = match resolve(&g) {
+        Ok(Some(triple)) => triple,
+        Ok(None) => {
+            println!("gate accept: nothing to compare — nothing to accept");
+            return 0;
+        }
+        Err(e) => return err(&e),
+    };
+    if current.items.is_empty() {
+        return err("measured 0 items — check --filter / registry setup; refusing to accept");
+    }
+    let root = match invoke::workspace_root() {
+        Ok(r) => r,
+        Err(e) => return err(&format!("failed to resolve workspace root: {e}")),
+    };
+    let mut entries = match gate_lock::read(&root) {
+        Ok(e) => e,
+        Err(e) => return err(&format!("failed to read {}: {e}", gate_lock::LOCKFILE)),
+    };
+
+    let ctx = CompareCtx {
+        deps_mode: false,
+        allow_gone: false,
+        filter: g.common.filter.clone(),
+        pkg: g.common.pkg.clone(),
+        buildcost_mode: g.common.backend.as_deref() == Some("buildcost"),
+        accepted: entries.clone(),
+    };
+    let mut failed_metrics = Vec::new();
+    compare(
+        &reference,
+        &current,
+        "",
+        &ctx,
+        &mut Vec::new(),
+        &mut failed_metrics,
+    );
+
+    let failing_ids: BTreeSet<&str> = failed_metrics.iter().map(|f| f.id.as_str()).collect();
+    for id in &a.only {
+        if !failing_ids.contains(id.as_str()) {
+            return err(&format!(
+                "{id} is not currently failing — nothing to accept"
+            ));
+        }
+    }
+    if failed_metrics.is_empty() {
+        println!("gate accept: nothing is failing — nothing to accept");
+        return 0;
+    }
+
+    let mut by_id: BTreeMap<&str, Vec<&FailedMetric>> = BTreeMap::new();
+    for m in &failed_metrics {
+        if a.only.is_empty() || a.only.iter().any(|id| id == &m.id) {
+            by_id.entry(m.id.as_str()).or_default().push(m);
+        }
+    }
+
+    let accepted_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    for (id, metrics) in &by_id {
+        let entry = entries.entry(id.to_string()).or_default();
+        entry.base_fingerprint = reference["items"][*id]["fingerprint"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        entry.head_fingerprint = current
+            .items
+            .get(*id)
+            .map(|m| m.fingerprint.clone())
+            .unwrap_or_default();
+        for m in metrics {
+            entry.metrics.insert(m.metric.clone(), m.new_value);
+        }
+        entry.justifications.push(gate_lock::Justification {
+            text: justification.clone(),
+            accepted_unix,
+        });
+        println!(
+            "gate accept: {id} — {} metric(s) accepted ({justification:?})",
+            metrics.len()
+        );
+    }
+
+    if let Err(e) = gate_lock::write(&root, &entries) {
+        return err(&format!("failed to write {}: {e}", gate_lock::LOCKFILE));
+    }
+    println!(
+        "gate accept: recorded {} bench(es) in {}",
+        by_id.len(),
+        gate_lock::LOCKFILE
+    );
+    0
 }
 
 /// Whether a `--save-baseline` request may persist this run. A failing run
@@ -379,7 +564,13 @@ fn measure_ref_interleaved(
         && let Some(doc) = runcache::load(k, &base_sha)
     {
         println!("gate: reusing the measured merge-base {base_sha}");
-        let head = measure(None, &[])?;
+        let head = match head_from_runcache(common, &head_stamp) {
+            Some(head) => {
+                println!("gate: reusing HEAD's own already-measured run");
+                head
+            }
+            None => measure(None, &[])?,
+        };
         cache_head(common, &head_stamp, &head);
         return Ok(Some(RefPair {
             reference: doc,
@@ -455,7 +646,10 @@ fn measure_ref_interleaved(
             }));
         }
         Ref::Cached(doc) => {
-            let head = measure(None, &[])?;
+            let head = match head_from_runcache(common, &head_stamp) {
+                Some(head) => head,
+                None => measure(None, &[])?,
+            };
             cache_head(common, &head_stamp, &head);
             return Ok(Some(RefPair {
                 reference: doc,
@@ -487,6 +681,20 @@ fn measure_ref_interleaved(
         current: head,
         short_circuited: false,
     }))
+}
+
+/// HEAD's own measurement, if a clean-tree run already cached one under this
+/// commit and these conditions — e.g. the `gate` run `gate accept` follows
+/// moments later. Avoids paying for a second full measurement of the same
+/// commit just to build the accept report.
+fn head_from_runcache(common: &CommonArgs, stamp: &buildstamp::BuildStamp) -> Option<Run> {
+    if !invoke::tree_is_clean() {
+        return None;
+    }
+    let sha = invoke::git(&["rev-parse", "HEAD"]).ok()?;
+    let sha = sha.trim();
+    let doc = runcache::load(&runcache::key(sha, stamp, common), sha)?;
+    Some(invoke::run_from_items_value(&doc["items"]))
 }
 
 /// Keep HEAD's run so the next commit's gate finds its reference already
@@ -696,16 +904,27 @@ struct CompareCtx {
     /// packages are out of scope, not GONE.
     pkg: Option<String>,
     buildcost_mode: bool,
+    accepted: gate_lock::Entries,
 }
 
-/// Compare one reference document against the current run; returns failures
-/// and records regressed item IDs for triage.
+/// A metric that failed its check, collected only when the caller (`gate
+/// accept`) needs to build a new lock entry from it.
+struct FailedMetric {
+    id: String,
+    metric: String,
+    new_value: f64,
+}
+
+/// Compare one reference document against the current run; returns failures,
+/// records regressed item IDs for triage, and (for `gate accept`) collects
+/// every metric that still fails after accepted overrides are applied.
 fn compare(
     reference: &Value,
     current: &Run,
     label: &str,
     ctx: &CompareCtx,
     failing_ids: &mut Vec<String>,
+    out_failed: &mut Vec<FailedMetric>,
 ) -> u32 {
     let noise = current
         .noise_pct
@@ -747,6 +966,7 @@ fn compare(
     let mut failures = 0u32;
     let mut fingerprints_changed = false;
     let mut failed_here: Vec<String> = Vec::new();
+    let mut failed_metrics: Vec<FailedMetric> = Vec::new();
 
     for (id, cur) in &current.items {
         let old = &old_items[id.as_str()];
@@ -754,16 +974,16 @@ fn compare(
             println!("NEW   {id} (no reference entry)");
             continue;
         }
-        if let Some(fp) = old["fingerprint"].as_str()
-            && !fp.is_empty()
-            && fp != cur.fingerprint
-        {
+        let old_fp = old["fingerprint"].as_str().unwrap_or("");
+        if !old_fp.is_empty() && old_fp != cur.fingerprint {
             fingerprints_changed = true;
             println!("NOTE  {id}: code changed since reference");
         }
 
         // Hard-gated relative metrics. A `downgrade` reason turns a hard
-        // fail into a SOFT warning (walltime anti-flake rules).
+        // fail into a SOFT warning (walltime anti-flake rules). An accepted
+        // entry — reviewed, one-sided ceiling anchored at its own value —
+        // takes precedence over a plain FAIL, but not over a downgrade.
         let mut rel = |metric: &str,
                        old_v: Option<f64>,
                        new_v: Option<f64>,
@@ -778,18 +998,36 @@ fn compare(
             }
             let delta = (n - o) / o * 100.0;
             let fail = delta > limit;
-            let (verdict, why) = match (fail, hard, downgrade) {
+            let accept = (fail && hard && downgrade.is_none())
+                .then(|| gate_lock::allows(&ctx.accepted, id, metric, old_fp, n, limit))
+                .flatten();
+            let (verdict, why) = match (fail, hard, downgrade, accept) {
                 (false, ..) => ("ok", None),
-                (true, true, None) => ("FAIL", None),
-                (true, true, Some(why)) => ("SOFT", Some(why)),
-                (true, false, _) => ("SOFT", None),
+                (_, _, _, Some(true)) => ("ACPT", None),
+                (true, true, None, _) => ("FAIL", None),
+                (true, true, Some(why), _) => ("SOFT", Some(why)),
+                (true, false, _, _) => ("SOFT", None),
             };
             if verdict == "FAIL" {
                 failures += 1;
                 failed_here.push(id.clone());
+                failed_metrics.push(FailedMetric {
+                    id: id.clone(),
+                    metric: metric.into(),
+                    new_value: n,
+                });
             }
-            let suffix = why.map(|w| format!(" ({w})")).unwrap_or_default();
+            let suffix = match (why, verdict) {
+                (Some(w), _) => format!(" ({w})"),
+                (None, "ACPT") => accept_suffix(&ctx.accepted, id),
+                _ => String::new(),
+            };
             println!("{verdict:<5} {label}{id} {metric} {o:.1} -> {n:.1} ({delta:+.1}%){suffix}");
+            if verdict == "FAIL" && gate_lock::is_stale(&ctx.accepted, id, old_fp) {
+                println!(
+                    "NOTE  {label}{id}: accepted entry for {metric} is stale (base changed since accept) — re-run `gate accept`"
+                );
+            }
         };
         rel(
             "instructions",
@@ -833,12 +1071,34 @@ fn compare(
             };
             let allowed = o + o * pct / 100;
             let fail = n > allowed;
-            if fail {
+            let accept = fail
+                .then(|| gate_lock::allows(&ctx.accepted, id, metric, old_fp, n as f64, pct as f64))
+                .flatten();
+            let verdict = match (fail, accept) {
+                (false, _) => "ok",
+                (true, Some(true)) => "ACPT",
+                _ => "FAIL",
+            };
+            if verdict == "FAIL" {
                 failures += 1;
                 failed_here.push(id.clone());
+                failed_metrics.push(FailedMetric {
+                    id: id.clone(),
+                    metric: metric.into(),
+                    new_value: n as f64,
+                });
             }
-            let verdict = if fail { "FAIL" } else { "ok" };
-            println!("{verdict:<5} {label}{id} {metric} {o} -> {n} (allowed <= {allowed})");
+            let suffix = if verdict == "ACPT" {
+                accept_suffix(&ctx.accepted, id)
+            } else {
+                String::new()
+            };
+            println!("{verdict:<5} {label}{id} {metric} {o} -> {n} (allowed <= {allowed}){suffix}");
+            if verdict == "FAIL" && gate_lock::is_stale(&ctx.accepted, id, old_fp) {
+                println!(
+                    "NOTE  {label}{id}: accepted entry for {metric} is stale (base changed since accept) — re-run `gate accept`"
+                );
+            }
         };
         int(
             "allocs",
@@ -913,7 +1173,17 @@ fn compare(
         );
     }
     failing_ids.extend(failed_here);
+    out_failed.extend(failed_metrics);
     failures
+}
+
+/// The printed suffix naming the lock file and justification behind an
+/// `ACPT` verdict, so a CI log reader can trace the waiver without opening
+/// the repo.
+fn accept_suffix(entries: &gate_lock::Entries, id: &str) -> String {
+    gate_lock::latest_justification(entries, id)
+        .map(|j| format!(" per {}: {j:?}", gate_lock::LOCKFILE))
+        .unwrap_or_default()
 }
 
 /// On failure, produce a callgrind function-level report per regressed item
@@ -951,10 +1221,11 @@ fn err(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompareCtx, SaveVerdict, combine_min, combine_rounds, compare, identical_pass_args,
-        save_verdict, text_section_bytes, walltime_limit,
+        CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare,
+        identical_pass_args, save_verdict, text_section_bytes, walltime_limit,
     };
     use crate::buildstamp;
+    use crate::gate_lock;
     use crate::invoke::{ItemMetrics, Run};
     use serde_json::{Value, json};
 
@@ -965,6 +1236,7 @@ mod tests {
             filter: None,
             pkg: None,
             buildcost_mode: false,
+            accepted: gate_lock::Entries::new(),
         }
     }
 
@@ -979,8 +1251,12 @@ mod tests {
     }
 
     fn gate_failures(reference: &Value, current: &Run) -> (u32, Vec<String>) {
+        gate_failures_with(reference, current, ctx())
+    }
+
+    fn gate_failures_with(reference: &Value, current: &Run, ctx: CompareCtx) -> (u32, Vec<String>) {
         let mut failing = Vec::new();
-        let failures = compare(reference, current, "", &ctx(), &mut failing);
+        let failures = compare(reference, current, "", &ctx, &mut failing, &mut Vec::new());
         (failures, failing)
     }
 
@@ -1055,6 +1331,102 @@ mod tests {
         let reference = drift_reference(Some(stamp("aaaa").to_json()));
         let head = drift_head(Some(stamp("aaaa")), Some(2.0));
         assert_eq!(gate_failures(&reference, &head).0, 1);
+    }
+
+    fn accepted_entries(base_fingerprint: &str, metric: &str, value: f64) -> gate_lock::Entries {
+        let mut entries = gate_lock::Entries::new();
+        entries.insert(
+            "pkg::bt_base_to_htf_index".into(),
+            gate_lock::Entry {
+                base_fingerprint: base_fingerprint.into(),
+                head_fingerprint: "fp-head".into(),
+                metrics: [(metric.to_string(), value)].into_iter().collect(),
+                justifications: vec![gate_lock::Justification {
+                    text: "reviewed bug fix".into(),
+                    accepted_unix: 1,
+                }],
+            },
+        );
+        entries
+    }
+
+    #[test]
+    fn an_accepted_entry_suppresses_a_matching_fail() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let head = drift_head(Some(stamp("aaaa")), None);
+        let ctx = CompareCtx {
+            accepted: accepted_entries("fp-unchanged", "instructions", 337491.0),
+            ..ctx()
+        };
+        let (failures, failing) = gate_failures_with(&reference, &head, ctx);
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty(), "an ACPT item must not enter triage");
+    }
+
+    #[test]
+    fn a_stale_accepted_entry_still_fails() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let head = drift_head(Some(stamp("aaaa")), None);
+        let ctx = CompareCtx {
+            accepted: accepted_entries("fp-old-base", "instructions", 337491.0),
+            ..ctx()
+        };
+        assert_eq!(gate_failures_with(&reference, &head, ctx).0, 1);
+    }
+
+    #[test]
+    fn a_value_well_below_the_accepted_ceiling_still_passes() {
+        // One-sided: the accept bounds an upper ceiling, not a band, so a
+        // value far under the accepted number needs no separate re-review.
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let head = drift_head(Some(stamp("aaaa")), None);
+        let ctx = CompareCtx {
+            accepted: accepted_entries("fp-unchanged", "instructions", 500000.0),
+            ..ctx()
+        };
+        assert_eq!(gate_failures_with(&reference, &head, ctx).0, 0);
+    }
+
+    #[test]
+    fn exceeding_the_accepted_ceiling_still_fails() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let mut head = drift_head(Some(stamp("aaaa")), None);
+        head.items
+            .get_mut("pkg::bt_base_to_htf_index")
+            .unwrap()
+            .instructions = Some(1_000_000);
+        let ctx = CompareCtx {
+            accepted: accepted_entries("fp-unchanged", "instructions", 337491.0),
+            ..ctx()
+        };
+        assert_eq!(gate_failures_with(&reference, &head, ctx).0, 1);
+    }
+
+    #[test]
+    fn out_failed_collects_failing_metrics_for_accept() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let head = drift_head(Some(stamp("aaaa")), None);
+        let mut failing = Vec::new();
+        let mut out: Vec<FailedMetric> = Vec::new();
+        compare(&reference, &head, "", &ctx(), &mut failing, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "pkg::bt_base_to_htf_index");
+        assert_eq!(out[0].metric, "instructions");
+        assert_eq!(out[0].new_value, 337491.0);
+    }
+
+    #[test]
+    fn out_failed_is_empty_when_accepted() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let head = drift_head(Some(stamp("aaaa")), None);
+        let ctx = CompareCtx {
+            accepted: accepted_entries("fp-unchanged", "instructions", 337491.0),
+            ..ctx()
+        };
+        let mut failing = Vec::new();
+        let mut out: Vec<FailedMetric> = Vec::new();
+        compare(&reference, &head, "", &ctx, &mut failing, &mut out);
+        assert!(out.is_empty());
     }
 
     #[test]

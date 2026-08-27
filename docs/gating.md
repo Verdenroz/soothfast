@@ -160,6 +160,50 @@ is an independent floor that catches the sum even when no single change
 trips the per-commit threshold.
 <!-- /soothfast:bind -->
 
+## Accepting an intentional shift
+
+A ratchet widens what passes for every future PR, permanently. Sometimes
+what you need is the opposite: one bench legitimately costs more now, for
+one reviewed reason, and the ongoing threshold should stay exactly as tight
+as it was for everyone else.
+
+```console
+$ cargo soothfast gate accept -p mylib --against-ref origin/master \
+    --justification "risk block now runs on zero-trade paths (bug fix)"
+```
+
+`gate accept` re-runs the same comparison `gate` would, and for every
+metric that's currently failing, records its new value into a committed
+`soothfast-gate.lock` — a top-level file, like `soothfast.lock`, not under
+`.soothfast/`, so the acceptance and its justification land in the PR diff
+where a reviewer actually sees them. A later `gate` run reports a covered
+metric as `ACPT`, naming the lock file and the justification inline, instead
+of `FAIL`:
+
+```console
+ACPT  mylib::bt_no_trade_risk_metrics instructions 288000.0 -> 412345.0 (+43.2%) per soothfast-gate.lock: "risk block now runs on zero-trade paths (bug fix)"
+```
+
+Two things keep this from becoming a second, quieter tolerance:
+
+- **The ceiling is one-sided, anchored at the accepted value, not a band
+  around it.** A metric at or under the accepted number always passes, no
+  matter how far below the *original* reference it lands — a follow-up fix
+  that claws back most of an accepted regression is an improvement, not a
+  new review target.
+- **It expires on its own.** The next `--save-baseline` (`gate` or
+  `measure`) that captures the accepted value as the new normal removes the
+  lock entry for that bench automatically. There is nothing to clean up by
+  hand, and nothing left over once the accepted state ships.
+
+`gate accept` refuses a bench that isn't currently failing — accepting
+ahead of an actual regression would let the lock file fill with speculative
+headroom instead of a record of what really shifted. If the reference side
+moves past the reviewed commit before the accept is consumed, the entry
+goes stale and the next `gate` fails again with a `NOTE` pointing back at
+`gate accept` — the review was against a specific old state, and that state
+moved.
+
 ## Reusing the gate's measurement
 
 `--save-baseline NAME` persists the head run a passing gate just measured,
