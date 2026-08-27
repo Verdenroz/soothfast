@@ -13,6 +13,7 @@ mod docs;
 mod docs_support;
 mod gate;
 mod gate_config;
+mod gate_lock;
 mod invoke;
 mod mcp;
 mod report;
@@ -46,6 +47,10 @@ commands:
            (--save-baseline persists the measured head run after a pass)
            (--codegen-units pins both sides' partitioning; default 1)
            (--no-reuse-base re-measures the reference instead of reusing it)
+  gate     accept -p PKG --against-ref REF --justification \"...\" [--only ID]...
+           (records currently-failing benches into soothfast-gate.lock as a
+           reviewed one-time ceiling; gate reports them ACPT, not FAIL, until
+           a real baseline absorbs the new cost and the entry is pruned)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--features F] [PATHS...]
