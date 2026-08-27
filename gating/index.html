@@ -258,6 +258,35 @@ your last release for instance, after the primary one. It exists because ten
 separate +4% regressions each pass the primary gate on their own. A ratchet
 is an independent floor that catches the sum even when no single change
 trips the per-commit threshold.</p>
+<h2 id="accepting-an-intentional-shift">Accepting an intentional shift<a class="anchor" href="#accepting-an-intentional-shift" aria-label="Link to this section">#</a></h2>
+<p>A ratchet widens what passes for every future PR, permanently. Sometimes
+what you need is the opposite: one bench legitimately costs more now, for
+one reviewed reason, and the ongoing threshold should stay exactly as tight
+as it was for everyone else.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast gate accept -p mylib --against-ref origin/master \
+    --justification &quot;risk block now runs on zero-trade paths (bug fix)&quot;
+</code></pre></figure>
+<p><code>gate accept</code> re-runs the same comparison <code>gate</code> would, and for every
+metric that's currently failing, records its new value into a committed
+<code>soothfast-gate.lock</code> — a top-level file, like <code>soothfast.lock</code>, not under
+<code>.soothfast/</code>, so the acceptance and its justification land in the PR diff
+where a reviewer actually sees them. A later <code>gate</code> run reports a covered
+metric as <code>ACPT</code>, naming the lock file and the justification inline, instead
+of <code>FAIL</code>:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>ACPT  mylib::bt_no_trade_risk_metrics instructions 288000.0 -&gt; 412345.0 (+43.2%) per soothfast-gate.lock: &quot;risk block now runs on zero-trade paths (bug fix)&quot;
+</code></pre></figure>
+<p>Two things keep this from becoming a second, quieter tolerance:</p>
+<ul>
+<li>**The ceiling is one-sided, anchored at the accepted value, not a band around it.** A metric at or under the accepted number always passes, no matter how far below the <em>original</em> reference it lands — a follow-up fix that claws back most of an accepted regression is an improvement, not a new review target.</li>
+<li><strong>It expires on its own.</strong> The next <code>--save-baseline</code> (<code>gate</code> or <code>measure</code>) that captures the accepted value as the new normal removes the lock entry for that bench automatically. There is nothing to clean up by hand, and nothing left over once the accepted state ships.</li>
+</ul>
+<p><code>gate accept</code> refuses a bench that isn't currently failing — accepting
+ahead of an actual regression would let the lock file fill with speculative
+headroom instead of a record of what really shifted. If the reference side
+moves past the reviewed commit before the accept is consumed, the entry
+goes stale and the next <code>gate</code> fails again with a <code>NOTE</code> pointing back at
+<code>gate accept</code> — the review was against a specific old state, and that state
+moved.</p>
 <h2 id="reusing-the-gate-s-measurement">Reusing the gate's measurement<a class="anchor" href="#reusing-the-gate-s-measurement" aria-label="Link to this section">#</a></h2>
 <p><code>--save-baseline NAME</code> persists the head run a passing gate just measured,
 exactly as <code>measure --save-baseline</code> would, so a deploy pipeline that needs
@@ -304,6 +333,8 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l2" href="#build-settings">Build settings</a></li>
   
     <li><a class="toc-l2" href="#ratchets">Ratchets</a></li>
+  
+    <li><a class="toc-l2" href="#accepting-an-intentional-shift">Accepting an intentional shift</a></li>
   
     <li><a class="toc-l2" href="#reusing-the-gate-s-measurement">Reusing the gate&#39;s measurement</a></li>
   
