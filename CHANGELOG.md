@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.18)
+## 0.1.19 - 2026-08-27
+
+<!-- soothfast:notes -->
+### Overview
+
+A feature release adding `cargo soothfast gate accept`, a `docs
+accept`-style mechanism for a benchmark whose cost genuinely changed as
+the reviewed result of a bug fix.
+
+### Notes
+
+Currently-failing metrics are recorded into a committed
+`soothfast-gate.lock` with a required justification. `gate` reports a
+covered metric as `ACPT` instead of `FAIL` as long as the reference side
+hasn't moved past the reviewed commit, treating the accepted value as a
+one-sided ceiling rather than widening the bench's tolerance permanently.
+The entry is pruned automatically once a real baseline captures the
+accepted cost as the new normal.
 
 ### API surface
 
