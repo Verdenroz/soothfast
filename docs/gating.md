@@ -234,6 +234,13 @@ case where none of them qualified — never `0`, so a CI step chained as
 `gate accept ... || [ $? -eq 3 ]` can tell "some entries missing" from
 "nothing happened."
 
+Size `PCT` to the population's real jitter, not one run's wobble: a bench
+sitting at +3.8% locally can measure +5.4% on a noisier CI backend, and a
+band only 1 point wide can still miss it. Aim for 2–3x the observed
+run-to-run swing across the benches you're sweeping, and when in doubt
+widen rather than narrow — the noise-floor qualifier already keeps an
+unrelated bench from riding along, so extra headroom costs little.
+
 ## Walltime alongside an accepted bench
 
 Accepting a bench's instructions or `callgrind_ir` doesn't automatically
