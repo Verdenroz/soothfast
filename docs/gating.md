@@ -196,13 +196,56 @@ Two things keep this from becoming a second, quieter tolerance:
   lock entry for that bench automatically. There is nothing to clean up by
   hand, and nothing left over once the accepted state ships.
 
-`gate accept` refuses a bench that isn't currently failing — accepting
-ahead of an actual regression would let the lock file fill with speculative
-headroom instead of a record of what really shifted. If the reference side
-moves past the reviewed commit before the accept is consumed, the entry
-goes stale and the next `gate` fails again with a `NOTE` pointing back at
-`gate accept` — the review was against a specific old state, and that state
-moved.
+`gate accept` refuses a bench that isn't currently failing, unless it also
+clears `--headroom` (below) — accepting ahead of an actual regression would
+otherwise let the lock file fill with speculative headroom instead of a
+record of what really shifted. If the reference side moves past the
+reviewed commit before the accept is consumed, the entry goes stale and the
+next `gate` fails again with a `NOTE` pointing back at `gate accept` — the
+review was against a specific old state, and that state moved.
+
+## Accepting a near-threshold population
+
+One change can legitimately move a broad population of benches at once — a
+shared-code refactor, say — leaving some sitting just under the threshold
+with ordinary run-to-run measurement noise. Since `accept` only ever
+records what's failing *right now*, a different subset of that population
+flips over on every fresh `gate` run, and the lock file never converges.
+
+```console
+$ cargo soothfast gate accept -p mylib --against-ref origin/master \
+    --justification "shared parser rewrite" --headroom 1
+```
+
+`--headroom PCT` also records a passing metric within `PCT` points of its
+threshold, as long as its delta first clears a noise floor (3x the same
+deterministic-counter or walltime noise margin `gate` already scales its
+own thresholds by) — a bench parked near the line by chance measurement
+wobble, with no real delta, never qualifies. `--only`/`-p`/`--filter`
+scoping still narrows what a headroom sweep can touch.
+
+Naming a bench via `--only` that isn't in the recordable set (failing, or
+headroom-eligible) is a skip, not a hard stop: `gate accept` still records
+everything else, still writes `soothfast-gate.lock`, and prints a `WARN`
+for the name it skipped. The exit code says which happened: `0` means every
+named bench (or, with no `--only`, everything failing or headroom-eligible)
+was recorded; `3` means at least one named bench was skipped, including the
+case where none of them qualified — never `0`, so a CI step chained as
+`gate accept ... || [ $? -eq 3 ]` can tell "some entries missing" from
+"nothing happened."
+
+## Walltime alongside an accepted bench
+
+Accepting a bench's instructions or `callgrind_ir` doesn't automatically
+cover its walltime. Walltime is noisy enough on its own (15–20% run to run
+on a shared CI runner) that freezing one accept-time sample as a ceiling
+would make future noise more likely to trip, not less. Instead, once a
+bench's deterministic counters are accepted and still match the reference,
+walltime is allowed to run hot up to that accepted growth plus the normal
+walltime threshold: counters accepted at +17% permit walltime up to roughly
++27% before it fails on its own. A walltime move that just tracks the
+already-reviewed cost doesn't need a second review; a wall-clock-only
+regression (lock contention, syscalls) past that ceiling still does.
 
 ## Reusing the gate's measurement
 
