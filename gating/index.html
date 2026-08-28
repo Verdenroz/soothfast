@@ -311,6 +311,12 @@ was recorded; <code>3</code> means at least one named bench was skipped, includi
 case where none of them qualified — never <code>0</code>, so a CI step chained as
 <code>gate accept ... || [ $? -eq 3 ]</code> can tell "some entries missing" from
 "nothing happened."</p>
+<p>Size <code>PCT</code> to the population's real jitter, not one run's wobble: a bench
+sitting at +3.8% locally can measure +5.4% on a noisier CI backend, and a
+band only 1 point wide can still miss it. Aim for 2–3x the observed
+run-to-run swing across the benches you're sweeping, and when in doubt
+widen rather than narrow — the noise-floor qualifier already keeps an
+unrelated bench from riding along, so extra headroom costs little.</p>
 <h2 id="walltime-alongside-an-accepted-bench">Walltime alongside an accepted bench<a class="anchor" href="#walltime-alongside-an-accepted-bench" aria-label="Link to this section">#</a></h2>
 <p>Accepting a bench's instructions or <code>callgrind_ir</code> doesn't automatically
 cover its walltime. Walltime is noisy enough on its own (15–20% run to run
