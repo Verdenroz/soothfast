@@ -47,10 +47,15 @@ commands:
            (--save-baseline persists the measured head run after a pass)
            (--codegen-units pins both sides' partitioning; default 1)
            (--no-reuse-base re-measures the reference instead of reusing it)
-  gate     accept -p PKG --against-ref REF --justification \"...\" [--only ID]...
+  gate     accept -p PKG --against-ref REF --justification \"...\"
+           [--only ID]... [--headroom PCT]
            (records currently-failing benches into soothfast-gate.lock as a
            reviewed one-time ceiling; gate reports them ACPT, not FAIL, until
            a real baseline absorbs the new cost and the entry is pruned)
+           (--headroom PCT also records passing metrics within PCT points of
+           the threshold, past measurement noise, on the same reviewed
+           change; --only names outside the recordable set are skipped, not
+           fatal, and the command still exits 3, not 0, if any were)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--features F] [PATHS...]

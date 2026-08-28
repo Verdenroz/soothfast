@@ -39,6 +39,10 @@ const COUNTER_FLAT_PCT: f64 = 0.5;
 /// Absolute floor alongside `COUNTER_FLAT_PCT`: below ~30K instructions the
 /// 0.5% cutoff is tighter than perfcnt's own run-to-run wobble.
 const COUNTER_FLAT_ABS: u64 = 150;
+/// `gate accept --headroom` floor for deterministic counters: a delta must
+/// clear this before it counts as "close to failing," so a bench parked
+/// near the line by measurement noise alone never qualifies.
+const HEADROOM_COUNTER_FLOOR_PCT: f64 = 3.0 * COUNTER_FLAT_PCT;
 
 /// Effective walltime threshold: the fixed +10%, raised to 3x the measured
 /// A/A noise floor when that is higher. A fixed threshold is ~2 sigma on a
@@ -159,6 +163,7 @@ pub fn run(args: &[String]) -> i32 {
         pkg: g.common.pkg.clone(),
         buildcost_mode,
         accepted,
+        headroom_pct: None,
     };
     failures += compare(
         &reference,
@@ -166,6 +171,7 @@ pub fn run(args: &[String]) -> i32 {
         "",
         &ctx,
         &mut failing_ids,
+        &mut Vec::new(),
         &mut Vec::new(),
     );
 
@@ -185,6 +191,7 @@ pub fn run(args: &[String]) -> i32 {
                     "RATCHET ",
                     &rctx,
                     &mut failing_ids,
+                    &mut Vec::new(),
                     &mut Vec::new(),
                 );
             }
@@ -306,14 +313,18 @@ struct AcceptArgs {
     matrix: String,
     justification: Option<String>,
     only: Vec<String>,
+    headroom: Option<f64>,
 }
 
-/// Record a reviewed, currently-failing delta into `soothfast-gate.lock`, so
-/// a future `gate` treats it as the new ceiling for that bench and metric
-/// instead of a regression — without touching the threshold for anything
-/// else. Refuses a bench that isn't currently failing: an unearned entry
-/// would let the lock file accumulate speculative headroom instead of a
-/// reviewed record of what actually shifted.
+/// Record a reviewed delta into `soothfast-gate.lock`, so a future `gate`
+/// treats it as the new ceiling for that bench and metric instead of a
+/// regression — without touching the threshold for anything else. Only
+/// records benches that are failing, or (with `--headroom`) close enough to
+/// failing to plausibly be part of the same shift; an unearned entry would
+/// let the lock file accumulate speculative headroom instead of a reviewed
+/// record of what actually shifted. `--only` names outside that set are
+/// skipped, not fatal — see the exit-code contract at the end of this
+/// function.
 fn accept_cmd(args: &[String]) -> i32 {
     let mut a = AcceptArgs {
         common: CommonArgs::default(),
@@ -322,6 +333,7 @@ fn accept_cmd(args: &[String]) -> i32 {
         matrix: "default".into(),
         justification: None,
         only: Vec::new(),
+        headroom: None,
     };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -348,6 +360,10 @@ fn accept_cmd(args: &[String]) -> i32 {
             "--only" => match it.next() {
                 Some(id) => a.only.push(id.clone()),
                 None => return err("--only needs a bench id"),
+            },
+            "--headroom" => match it.next().map(|v| v.parse::<f64>()) {
+                Some(Ok(pct)) => a.headroom = Some(pct),
+                _ => return err("--headroom needs a percentage number"),
             },
             other => return err(&format!("unknown gate accept arg {other:?}")),
         }
@@ -397,35 +413,56 @@ fn accept_cmd(args: &[String]) -> i32 {
         pkg: g.common.pkg.clone(),
         buildcost_mode: g.common.backend.as_deref() == Some("buildcost"),
         accepted: entries.clone(),
+        headroom_pct: a.headroom,
     };
-    let mut failed_metrics = Vec::new();
+    let mut candidates = Vec::new();
+    let mut near_miss = Vec::new();
     compare(
         &reference,
         &current,
         "",
         &ctx,
         &mut Vec::new(),
-        &mut failed_metrics,
+        &mut candidates,
+        &mut near_miss,
     );
+    candidates.extend(near_miss);
 
-    let failing_ids: BTreeSet<&str> = failed_metrics.iter().map(|f| f.id.as_str()).collect();
-    for id in &a.only {
-        if !failing_ids.contains(id.as_str()) {
-            return err(&format!(
-                "{id} is not currently failing — nothing to accept"
-            ));
-        }
-    }
-    if failed_metrics.is_empty() {
+    if candidates.is_empty() && a.only.is_empty() {
         println!("gate accept: nothing is failing — nothing to accept");
         return 0;
     }
 
+    let available_ids: BTreeSet<&str> = candidates.iter().map(|f| f.id.as_str()).collect();
+    let (selected_ids, skipped): (BTreeSet<&str>, Vec<&str>) = if a.only.is_empty() {
+        (available_ids, Vec::new())
+    } else {
+        let mut selected = BTreeSet::new();
+        let mut skipped = Vec::new();
+        for id in &a.only {
+            if available_ids.contains(id.as_str()) {
+                selected.insert(id.as_str());
+            } else {
+                skipped.push(id.as_str());
+            }
+        }
+        (selected, skipped)
+    };
+    for id in &skipped {
+        println!("WARN: {id} is not currently failing or headroom-eligible — skipped");
+    }
+
     let mut by_id: BTreeMap<&str, Vec<&FailedMetric>> = BTreeMap::new();
-    for m in &failed_metrics {
-        if a.only.is_empty() || a.only.iter().any(|id| id == &m.id) {
+    for m in &candidates {
+        if selected_ids.contains(m.id.as_str()) {
             by_id.entry(m.id.as_str()).or_default().push(m);
         }
+    }
+    if by_id.is_empty() {
+        return partial(&format!(
+            "none of the named benches ({}) are currently failing or headroom-eligible",
+            a.only.join(", ")
+        ));
     }
 
     let accepted_unix = std::time::SystemTime::now()
@@ -456,6 +493,8 @@ fn accept_cmd(args: &[String]) -> i32 {
         );
     }
 
+    // Written before the exit code, so a partial `--only` match (exit 3
+    // below) still leaves the lock file usable for the next CI step.
     if let Err(e) = gate_lock::write(&root, &entries) {
         return err(&format!("failed to write {}: {e}", gate_lock::LOCKFILE));
     }
@@ -464,7 +503,7 @@ fn accept_cmd(args: &[String]) -> i32 {
         by_id.len(),
         gate_lock::LOCKFILE
     );
-    0
+    if skipped.is_empty() { 0 } else { 3 }
 }
 
 /// Whether a `--save-baseline` request may persist this run. A failing run
@@ -847,6 +886,40 @@ fn walltime_downgrade(old: &Value, cur: &ItemMetrics, limit: f64) -> Option<&'st
     None
 }
 
+/// Whether this bench's already-accepted, unstale instructions/callgrind_ir
+/// growth covers a walltime move proportionally: walltime softens up to the
+/// accepted counter's own growth plus the normal walltime threshold, so a
+/// slowdown that just tracks the accepted cost doesn't need its own review,
+/// while a walltime-only pathology (lock contention, syscalls) past that
+/// ceiling still fails.
+fn accepted_counters_walltime_downgrade(
+    entries: &gate_lock::Entries,
+    id: &str,
+    old: &Value,
+    old_fp: &str,
+    delta: f64,
+    wall_limit: f64,
+) -> Option<&'static str> {
+    if gate_lock::is_stale(entries, id, old_fp) {
+        return None;
+    }
+    let entry = entries.get(id)?;
+    let ratio = |metric: &str, table: &str, field: &str| {
+        let accepted = *entry.metrics.get(metric)?;
+        let reference = old[table][field].as_f64().filter(|r| *r > 0.0)?;
+        Some((accepted - reference) / reference * 100.0)
+    };
+    let accepted_ratio = match (
+        ratio("instructions", "perfcnt", "instructions"),
+        ratio("callgrind_ir", "callgrind", "ir"),
+    ) {
+        (Some(a), Some(b)) => a.max(b),
+        (Some(a), None) | (None, Some(a)) => a,
+        (None, None) => return None,
+    };
+    (delta <= accepted_ratio + wall_limit).then_some("counters already accepted for this bench")
+}
+
 /// A regression that exists only in the min-of-rounds comparison. One lucky
 /// round on either side can manufacture that; a real slowdown shows up in
 /// every pairing. Sides without two rounds keep the single comparison.
@@ -911,6 +984,9 @@ struct CompareCtx {
     pkg: Option<String>,
     buildcost_mode: bool,
     accepted: gate_lock::Entries,
+    /// `gate accept --headroom PCT`: also collect near-miss metrics within
+    /// `PCT` points of failing. `None` for every ordinary `gate` run.
+    headroom_pct: Option<f64>,
 }
 
 /// A metric that failed its check, collected only when the caller (`gate
@@ -923,7 +999,9 @@ struct FailedMetric {
 
 /// Compare one reference document against the current run; returns failures,
 /// records regressed item IDs for triage, and (for `gate accept`) collects
-/// every metric that still fails after accepted overrides are applied.
+/// every metric that still fails after accepted overrides are applied, plus
+/// (with `ctx.headroom_pct` set) every passing metric close enough to
+/// failing to be worth recording in the same accept.
 fn compare(
     reference: &Value,
     current: &Run,
@@ -931,6 +1009,7 @@ fn compare(
     ctx: &CompareCtx,
     failing_ids: &mut Vec<String>,
     out_failed: &mut Vec<FailedMetric>,
+    out_near_miss: &mut Vec<FailedMetric>,
 ) -> u32 {
     let noise = current
         .noise_pct
@@ -973,6 +1052,7 @@ fn compare(
     let mut fingerprints_changed = false;
     let mut failed_here: Vec<String> = Vec::new();
     let mut failed_metrics: Vec<FailedMetric> = Vec::new();
+    let mut near_miss_metrics: Vec<FailedMetric> = Vec::new();
 
     for (id, cur) in &current.items {
         let old = &old_items[id.as_str()];
@@ -995,6 +1075,7 @@ fn compare(
                        new_v: Option<f64>,
                        limit: f64,
                        hard: bool,
+                       noise_floor: f64,
                        downgrade: Option<&str>| {
             let (Some(o), Some(n)) = (old_v, new_v) else {
                 return;
@@ -1023,6 +1104,18 @@ fn compare(
                     new_value: n,
                 });
             }
+            if !fail
+                && hard
+                && let Some(headroom) = ctx.headroom_pct
+                && delta > noise_floor
+                && limit - delta <= headroom
+            {
+                near_miss_metrics.push(FailedMetric {
+                    id: id.clone(),
+                    metric: metric.into(),
+                    new_value: n,
+                });
+            }
             let suffix = match (why, verdict) {
                 (Some(w), _) => format!(" ({w})"),
                 (None, "ACPT") => accept_suffix(&ctx.accepted, id),
@@ -1041,6 +1134,7 @@ fn compare(
             cur.instructions.map(|v| v as f64),
             counter_limit(INSTRUCTIONS_THRESHOLD_PCT, cur),
             true,
+            HEADROOM_COUNTER_FLOOR_PCT,
             build_soft,
         );
         rel(
@@ -1049,17 +1143,27 @@ fn compare(
             cur.ir.map(|v| v as f64),
             counter_limit(IR_THRESHOLD_PCT, cur),
             true,
+            HEADROOM_COUNTER_FLOOR_PCT,
             build_soft,
         );
+        let walltime_delta = match (old["walltime"]["median_ns"].as_f64(), cur.median_ns) {
+            (Some(o), Some(n)) if o > 0.0 => Some((n - o) / o * 100.0),
+            _ => None,
+        };
+        let accepted_counters_soft = walltime_delta.and_then(|d| {
+            accepted_counters_walltime_downgrade(&ctx.accepted, id, old, old_fp, d, wall_limit)
+        });
         rel(
             "walltime_median_ns",
             old["walltime"]["median_ns"].as_f64(),
             cur.median_ns,
             counter_limit(wall_limit, cur),
             true,
+            WALLTIME_NOISE_MARGIN * noise,
             walltime_downgrade(old, cur, wall_limit)
                 .or(build_soft)
-                .or(reused_soft),
+                .or(reused_soft)
+                .or(accepted_counters_soft),
         );
         rel(
             "build_ms",
@@ -1067,6 +1171,7 @@ fn compare(
             cur.build_ms.map(|v| v as f64),
             BUILD_MS_SOFT_PCT,
             false,
+            0.0,
             None,
         );
 
@@ -1093,6 +1198,20 @@ fn compare(
                     metric: metric.into(),
                     new_value: n as f64,
                 });
+            }
+            if !fail && let Some(headroom) = ctx.headroom_pct {
+                let delta = if o > 0 {
+                    (n as f64 - o as f64) / o as f64 * 100.0
+                } else {
+                    0.0
+                };
+                if delta > HEADROOM_COUNTER_FLOOR_PCT && pct as f64 - delta <= headroom {
+                    near_miss_metrics.push(FailedMetric {
+                        id: id.clone(),
+                        metric: metric.into(),
+                        new_value: n as f64,
+                    });
+                }
             }
             let suffix = if verdict == "ACPT" {
                 accept_suffix(&ctx.accepted, id)
@@ -1180,6 +1299,7 @@ fn compare(
     }
     failing_ids.extend(failed_here);
     out_failed.extend(failed_metrics);
+    out_near_miss.extend(near_miss_metrics);
     failures
 }
 
@@ -1224,6 +1344,14 @@ fn err(msg: &str) -> i32 {
     2
 }
 
+/// Like `err`, but for a `gate accept --only` invocation that recorded
+/// nothing: distinct from `2` (a usage/config error) so a CI step doesn't
+/// mistake "named benches, none eligible" for full success or bad usage.
+fn partial(msg: &str) -> i32 {
+    eprintln!("soothfast: {msg}");
+    3
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1243,6 +1371,7 @@ mod tests {
             pkg: None,
             buildcost_mode: false,
             accepted: gate_lock::Entries::new(),
+            headroom_pct: None,
         }
     }
 
@@ -1262,7 +1391,15 @@ mod tests {
 
     fn gate_failures_with(reference: &Value, current: &Run, ctx: CompareCtx) -> (u32, Vec<String>) {
         let mut failing = Vec::new();
-        let failures = compare(reference, current, "", &ctx, &mut failing, &mut Vec::new());
+        let failures = compare(
+            reference,
+            current,
+            "",
+            &ctx,
+            &mut failing,
+            &mut Vec::new(),
+            &mut Vec::new(),
+        );
         (failures, failing)
     }
 
@@ -1408,13 +1545,143 @@ mod tests {
         assert_eq!(gate_failures_with(&reference, &head, ctx).0, 1);
     }
 
+    fn walltime_accept_reference() -> Value {
+        reference(json!({
+            "fingerprint": "fp-unchanged",
+            "perfcnt": { "instructions": 100000 },
+            "walltime": { "median_ns": 1000.0, "mad_ns": 5.0, "p99_ns": 1100.0 },
+        }))
+    }
+
+    #[test]
+    fn headroom_collects_a_near_miss_metric_within_range() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let mut head = drift_head(Some(stamp("aaaa")), None);
+        // 321107 -> 336520 is +4.8%: under the 5% limit, within 1pt headroom
+        // of it, and past the 1.5pt noise floor.
+        head.items
+            .get_mut("pkg::bt_base_to_htf_index")
+            .unwrap()
+            .instructions = Some(336520);
+        let ctx = CompareCtx {
+            headroom_pct: Some(1.0),
+            ..ctx()
+        };
+        let mut out_failed = Vec::new();
+        let mut out_near_miss = Vec::new();
+        compare(
+            &reference,
+            &head,
+            "",
+            &ctx,
+            &mut Vec::new(),
+            &mut out_failed,
+            &mut out_near_miss,
+        );
+        assert!(out_failed.is_empty());
+        assert_eq!(out_near_miss.len(), 1);
+        assert_eq!(out_near_miss[0].metric, "instructions");
+    }
+
+    #[test]
+    fn headroom_excludes_a_delta_within_range_but_under_the_noise_floor() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let mut head = drift_head(Some(stamp("aaaa")), None);
+        // 321107 -> 324318 is +1.0%: within a wide 4.5pt headroom of the 5%
+        // limit, but under the 1.5pt noise floor.
+        head.items
+            .get_mut("pkg::bt_base_to_htf_index")
+            .unwrap()
+            .instructions = Some(324318);
+        let ctx = CompareCtx {
+            headroom_pct: Some(4.5),
+            ..ctx()
+        };
+        let mut out_near_miss = Vec::new();
+        compare(
+            &reference,
+            &head,
+            "",
+            &ctx,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut out_near_miss,
+        );
+        assert!(out_near_miss.is_empty());
+    }
+
+    #[test]
+    fn headroom_is_off_by_default() {
+        let reference = drift_reference(Some(stamp("aaaa").to_json()));
+        let mut head = drift_head(Some(stamp("aaaa")), None);
+        head.items
+            .get_mut("pkg::bt_base_to_htf_index")
+            .unwrap()
+            .instructions = Some(336520);
+        let mut out_near_miss = Vec::new();
+        compare(
+            &reference,
+            &head,
+            "",
+            &ctx(),
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut out_near_miss,
+        );
+        assert!(out_near_miss.is_empty());
+    }
+
+    #[test]
+    fn accepted_counters_soften_walltime_proportionally() {
+        let reference = walltime_accept_reference();
+        // +25% walltime, within the 17% accepted instructions ratio plus
+        // the 10% normal walltime threshold (27% ceiling).
+        let head = run_with(ItemMetrics {
+            fingerprint: "fp-unchanged".into(),
+            median_ns: Some(1250.0),
+            ..ItemMetrics::default()
+        });
+        let ctx = CompareCtx {
+            accepted: accepted_entries("fp-unchanged", "instructions", 117000.0),
+            ..ctx()
+        };
+        let (failures, failing) = gate_failures_with(&reference, &head, ctx);
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty(), "a SOFT item must not enter triage");
+    }
+
+    #[test]
+    fn walltime_still_fails_past_the_accepted_ceiling() {
+        let reference = walltime_accept_reference();
+        // +30% walltime, past the 27% ceiling: a real wall-clock pathology
+        // the accepted counter growth alone doesn't explain.
+        let head = run_with(ItemMetrics {
+            fingerprint: "fp-unchanged".into(),
+            median_ns: Some(1300.0),
+            ..ItemMetrics::default()
+        });
+        let ctx = CompareCtx {
+            accepted: accepted_entries("fp-unchanged", "instructions", 117000.0),
+            ..ctx()
+        };
+        assert_eq!(gate_failures_with(&reference, &head, ctx).0, 1);
+    }
+
     #[test]
     fn out_failed_collects_failing_metrics_for_accept() {
         let reference = drift_reference(Some(stamp("aaaa").to_json()));
         let head = drift_head(Some(stamp("aaaa")), None);
         let mut failing = Vec::new();
         let mut out: Vec<FailedMetric> = Vec::new();
-        compare(&reference, &head, "", &ctx(), &mut failing, &mut out);
+        compare(
+            &reference,
+            &head,
+            "",
+            &ctx(),
+            &mut failing,
+            &mut out,
+            &mut Vec::new(),
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "pkg::bt_base_to_htf_index");
         assert_eq!(out[0].metric, "instructions");
@@ -1431,7 +1698,15 @@ mod tests {
         };
         let mut failing = Vec::new();
         let mut out: Vec<FailedMetric> = Vec::new();
-        compare(&reference, &head, "", &ctx, &mut failing, &mut out);
+        compare(
+            &reference,
+            &head,
+            "",
+            &ctx,
+            &mut failing,
+            &mut out,
+            &mut Vec::new(),
+        );
         assert!(out.is_empty());
     }
 
