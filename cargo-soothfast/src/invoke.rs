@@ -175,10 +175,17 @@ fn run_records(
     let target = common.target.as_deref().unwrap_or("soothfast");
     let mut cmd = bench_command(common, &args, dir, target_dir, build);
     cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
     let out = cmd.output()?;
     if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let reason = stderr
+            .lines()
+            .find(|l| l.contains("error"))
+            .or_else(|| stderr.trim().lines().last())
+            .unwrap_or("no error output");
         return Err(io::Error::other(format!(
-            "cargo bench failed with {} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
+            "cargo bench failed with {}: {reason} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
             out.status
         )));
     }

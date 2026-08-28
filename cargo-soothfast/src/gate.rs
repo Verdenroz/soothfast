@@ -558,10 +558,12 @@ fn measure_ref_interleaved(
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
     let head_stamp = buildstamp::capture(common.codegen_units_env(), None);
-    let cache_key =
-        (!base_sha.is_empty() && reuse).then(|| runcache::key(&base_sha, &head_stamp, common));
+    // Computed regardless of `reuse`: a fresh measurement is worth storing
+    // even for an invocation that declined to trust an existing one.
+    let cache_key = (!base_sha.is_empty()).then(|| runcache::key(&base_sha, &head_stamp, common));
 
-    if let Some(k) = &cache_key
+    if reuse
+        && let Some(k) = &cache_key
         && let Some(doc) = runcache::load(k, &base_sha)
     {
         println!("gate: reusing the measured merge-base {base_sha}");
@@ -670,9 +672,9 @@ fn measure_ref_interleaved(
     if let Some(k) = &cache_key {
         runcache::store(k, &reference);
     }
-    // Keyed by machine code as well as by commit, so a later merge-base
-    // that builds the same binary hits even if it was never gated.
-    if reuse && let Some((head_digest, base_digest)) = &digests {
+    // Keyed by machine code too, so a later merge-base building the same
+    // binary hits even if never gated. Stored regardless of `reuse`.
+    if let Some((head_digest, base_digest)) = &digests {
         runcache::store(&runcache::key(base_digest, &head_stamp, common), &reference);
         runcache::store(
             &runcache::key(head_digest, &head_stamp, common),
