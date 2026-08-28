@@ -1077,6 +1077,26 @@ pub fn sync_harness_versions(wt: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Copy an untracked `.cargo/config.toml` (or legacy `.cargo/config`) into
+/// the worktree. `git worktree add` only checks out tracked content, so a
+/// local file that shapes rustflags would otherwise silently vanish from
+/// the reference build. A tracked config is left alone: it's the commit's
+/// real content, which may differ on purpose.
+pub fn sync_untracked_cargo_config(wt: &Path) -> Result<(), String> {
+    let root = workspace_root().map_err(|e| e.to_string())?;
+    for name in [".cargo/config.toml", ".cargo/config"] {
+        let src = root.join(name);
+        if !src.exists() || git(&["ls-files", "--error-unmatch", name]).is_ok() {
+            continue;
+        }
+        let dst = wt.join(name);
+        std::fs::create_dir_all(dst.parent().expect("config path has a parent"))
+            .map_err(|e| e.to_string())?;
+        std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Effective cargo target directory (respects CARGO_TARGET_DIR and
 /// .cargo/config.toml), optionally for a build rooted in another worktree.
 pub fn target_dir(dir: Option<&Path>) -> io::Result<PathBuf> {

@@ -253,6 +253,7 @@ fn resolve(g: &GateArgs) -> Result<Option<(Value, Run, bool)>, String> {
             // graph un-timed first: the worktree's target dir starts cold,
             // and dep compilation isn't this package's build cost.
             let base = invoke::with_merge_base_worktree(refname, |wt| {
+                invoke::sync_untracked_cargo_config(wt)?;
                 let warm = std::process::Command::new("cargo")
                     .args(["build", "--release", "-p", &pkg])
                     .current_dir(wt)
@@ -590,6 +591,9 @@ fn measure_ref_interleaved(
         {
             return Ok((Ref::NoBenchTarget, None));
         }
+        // A local .cargo/config.toml (untracked, e.g. a linker pin) wouldn't
+        // otherwise reach the worktree and would read as a false mismatch.
+        invoke::sync_untracked_cargo_config(wt)?;
         // Both bench binaries must embed the same soothfast harness: a
         // measurement-protocol change between the two locked versions would
         // otherwise be reported as a regression in the measured project.
