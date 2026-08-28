@@ -280,13 +280,48 @@ of <code>FAIL</code>:</p>
 <li>**The ceiling is one-sided, anchored at the accepted value, not a band around it.** A metric at or under the accepted number always passes, no matter how far below the <em>original</em> reference it lands — a follow-up fix that claws back most of an accepted regression is an improvement, not a new review target.</li>
 <li><strong>It expires on its own.</strong> The next <code>--save-baseline</code> (<code>gate</code> or <code>measure</code>) that captures the accepted value as the new normal removes the lock entry for that bench automatically. There is nothing to clean up by hand, and nothing left over once the accepted state ships.</li>
 </ul>
-<p><code>gate accept</code> refuses a bench that isn't currently failing — accepting
-ahead of an actual regression would let the lock file fill with speculative
-headroom instead of a record of what really shifted. If the reference side
-moves past the reviewed commit before the accept is consumed, the entry
-goes stale and the next <code>gate</code> fails again with a <code>NOTE</code> pointing back at
-<code>gate accept</code> — the review was against a specific old state, and that state
-moved.</p>
+<p><code>gate accept</code> refuses a bench that isn't currently failing, unless it also
+clears <code>--headroom</code> (below) — accepting ahead of an actual regression would
+otherwise let the lock file fill with speculative headroom instead of a
+record of what really shifted. If the reference side moves past the
+reviewed commit before the accept is consumed, the entry goes stale and the
+next <code>gate</code> fails again with a <code>NOTE</code> pointing back at <code>gate accept</code> — the
+review was against a specific old state, and that state moved.</p>
+<h2 id="accepting-a-near-threshold-population">Accepting a near-threshold population<a class="anchor" href="#accepting-a-near-threshold-population" aria-label="Link to this section">#</a></h2>
+<p>One change can legitimately move a broad population of benches at once — a
+shared-code refactor, say — leaving some sitting just under the threshold
+with ordinary run-to-run measurement noise. Since <code>accept</code> only ever
+records what's failing <em>right now</em>, a different subset of that population
+flips over on every fresh <code>gate</code> run, and the lock file never converges.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast gate accept -p mylib --against-ref origin/master \
+    --justification &quot;shared parser rewrite&quot; --headroom 1
+</code></pre></figure>
+<p><code>--headroom PCT</code> also records a passing metric within <code>PCT</code> points of its
+threshold, as long as its delta first clears a noise floor (3x the same
+deterministic-counter or walltime noise margin <code>gate</code> already scales its
+own thresholds by) — a bench parked near the line by chance measurement
+wobble, with no real delta, never qualifies. <code>--only</code>/<code>-p</code>/<code>--filter</code>
+scoping still narrows what a headroom sweep can touch.</p>
+<p>Naming a bench via <code>--only</code> that isn't in the recordable set (failing, or
+headroom-eligible) is a skip, not a hard stop: <code>gate accept</code> still records
+everything else, still writes <code>soothfast-gate.lock</code>, and prints a <code>WARN</code>
+for the name it skipped. The exit code says which happened: <code>0</code> means every
+named bench (or, with no <code>--only</code>, everything failing or headroom-eligible)
+was recorded; <code>3</code> means at least one named bench was skipped, including the
+case where none of them qualified — never <code>0</code>, so a CI step chained as
+<code>gate accept ... || [ $? -eq 3 ]</code> can tell "some entries missing" from
+"nothing happened."</p>
+<h2 id="walltime-alongside-an-accepted-bench">Walltime alongside an accepted bench<a class="anchor" href="#walltime-alongside-an-accepted-bench" aria-label="Link to this section">#</a></h2>
+<p>Accepting a bench's instructions or <code>callgrind_ir</code> doesn't automatically
+cover its walltime. Walltime is noisy enough on its own (15–20% run to run
+on a shared CI runner) that freezing one accept-time sample as a ceiling
+would make future noise more likely to trip, not less. Instead, once a
+bench's deterministic counters are accepted and still match the reference,
+walltime is allowed to run hot up to that accepted growth plus the normal
+walltime threshold: counters accepted at +17% permit walltime up to roughly
++27% before it fails on its own. A walltime move that just tracks the
+already-reviewed cost doesn't need a second review; a wall-clock-only
+regression (lock contention, syscalls) past that ceiling still does.</p>
 <h2 id="reusing-the-gate-s-measurement">Reusing the gate's measurement<a class="anchor" href="#reusing-the-gate-s-measurement" aria-label="Link to this section">#</a></h2>
 <p><code>--save-baseline NAME</code> persists the head run a passing gate just measured,
 exactly as <code>measure --save-baseline</code> would, so a deploy pipeline that needs
@@ -335,6 +370,10 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l2" href="#ratchets">Ratchets</a></li>
   
     <li><a class="toc-l2" href="#accepting-an-intentional-shift">Accepting an intentional shift</a></li>
+  
+    <li><a class="toc-l2" href="#accepting-a-near-threshold-population">Accepting a near-threshold population</a></li>
+  
+    <li><a class="toc-l2" href="#walltime-alongside-an-accepted-bench">Walltime alongside an accepted bench</a></li>
   
     <li><a class="toc-l2" href="#reusing-the-gate-s-measurement">Reusing the gate&#39;s measurement</a></li>
   
