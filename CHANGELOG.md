@@ -1,13 +1,83 @@
 # Changelog
 
-## Unreleased (draft vs v0.1.19)
+## 0.2.0 - 2026-08-30
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+Four gaps a consumer hit in practice, closed. Bind fingerprints no longer
+go stale when someone edits a comment, `spec probe` can reach a `POST`
+route and lock what passed when an upstream flakes, and release notes lead
+with what merged, grouped by type and carrying their pull requests, with
+section icons a repo can override in its own `soothfast.toml`.
+
+Intel macOS gets a prebuilt binary again. v0.1.19 shipped four of five:
+that job was pinned to a retired runner image, so it was never scheduled
+and timed out a day later as cancelled, failing nothing and uploading
+nothing. It now cross-compiles on the arm64 runner, and a check counts
+what actually attached.
+
+The minor bump is deliberate: two public items changed incompatibly, and
+under `0.x` cargo treats a patch bump as compatible, so shipping this as
+`0.1.20` would have handed a direct dependent a compile error on a routine
+`cargo update`.
+
+### Upgrade notes
+
+**If you commit a `soothfast.lock`, it needs a one-time re-accept.** A
+bind fingerprint used to hash every byte of an item's source span,
+comments included, so rewording a `//` inside a bound function reported
+the prose as STALE saying "code changed under this prose" when no code
+had. Ordinary comments are now stripped before hashing. `///` and `//!`
+still count, because a doc comment on a field is part of the contract the
+prose is bound to.
+
+Changing the hash input invalidates every existing lock. You do not have
+to work out which pages are affected: run `docs check` and it names the
+command for each one. First it reports the format itself, once per
+invocation, until your first accept rewrites the lock at v2:
+
+```
+FAIL  soothfast.lock is format v1, this build derives v2: fingerprints
+      are not comparable across formats, so re-verify each bind, then
+      `docs accept`
+```
+
+After that first accept the format line is gone for good, and each page
+you have not reached yet reports `not locked` and names the package that
+owns it. **Re-verify the prose, then accept once per package, with
+explicit paths.** A full-scope accept (no paths) errors on the first bind
+outside the named package, so a repo whose binds span several crates
+cannot migrate in one command. This repo's nine binds
+took five invocations; yours will differ:
+
+```console
+$ cargo soothfast docs accept -p soothfast         README.md docs/index.md
+$ cargo soothfast docs accept -p soothfast-measure docs/measuring.md docs/gating.md
+$ cargo soothfast docs accept -p soothfast-docs    docs/living-docs.md
+$ cargo soothfast docs accept -p soothfast-spec    docs/spec.md
+$ cargo soothfast docs accept -p soothfast-sdk     docs/sdk.md
+```
+
+Order does not matter. Only fingerprints move: no prose is rewritten. A
+lock written by a *newer* build is refused rather than overwritten, so an
+older CLI cannot silently delete a teammate's accepted binds.
+
+**Library API.** Two items changed incompatibly. Neither affects the CLI
+or `soothfast` itself, only code depending on the engine crates directly:
+
+- `soothfast_docs::lockfile::read` now returns `Lock` (the binds plus the
+  format version they were written under) instead of `Binds`. Reach for
+  `.binds` where you had the map, and `lockfile::comparable` where you
+  want entries a fresh accept may merge over.
+- `soothfast_report::changelog::DraftInputs` gains two required fields.
+  Pass `changes: &[]` and `icons: &Icons::default()` to keep the previous
+  behavior; both work inline in the struct literal.
+
+Nothing else needs action. Measurement baselines and `soothfast-gate.lock`
+are unaffected: they key on the macro-side fingerprint, which never saw
+comments in the first place, so `soothfast.lock` is the only file that
+moved.
 <!-- /soothfast:notes -->
 
 ### ✨ Features

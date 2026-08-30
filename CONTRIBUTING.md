@@ -205,10 +205,20 @@ To cut a release:
    released section and left alone, so this rename is what turns the draft
    into that release's permanent changelog entry.
 2. Bump `version` in the workspace `[workspace.package]` table (`Cargo.toml`)
-   to match.
-3. Tag the merge commit `vX.Y.Z` and push the tag. `release.yml` verifies the
+   to match. On a minor or major bump, raise the intra-workspace
+   requirements in `[workspace.dependencies]` too: they are caret ranges, so
+   a `0.1.x` entry excludes `0.2.0` and the workspace stops resolving.
+3. Read the section you are about to freeze and check it lists what the
+   release actually contains. `changelog.yml` regenerates against the tree
+   its run checked out, so a regeneration that started before the last merge
+   lands a section that is correct for a tree that no longer exists. Verify
+   the artifact, never the process that produced it. If you cut more than
+   once, diff the new section against the previous cut: a correction that
+   only ever landed in the frozen section is reverted silently by the next
+   cut, and an absence is what reading misses.
+4. Tag the merge commit `vX.Y.Z` and push the tag. `release.yml` verifies the
    tag matches the workspace version, runs checks, extracts the matching
    `## X.Y.Z` section for the GitHub Release notes, and publishes.
-4. The `publish` job waits on the `release` environment's required
+5. The `publish` job waits on the `release` environment's required
    reviewers before it touches crates.io — approve the deployment when
    you're ready.
