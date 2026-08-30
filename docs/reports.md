@@ -78,16 +78,33 @@ same way it scopes a measured run: other packages' entries and buildcost
 pseudo-items in the shared baseline file stay out.
 
 `cargo soothfast report changelog -p mylib --against-ref v1.0` merges a
-fresh "Unreleased" section into `CHANGELOG.md` in place, holding the public
-API diff against `v1.0` plus the current perf table. Every `## [released]`
-section already there survives. Re-running it is idempotent: it replaces the
-`Unreleased` section rather than appending a duplicate.
+fresh "Unreleased" section into `CHANGELOG.md` in place. Every
+`## [released]` section already there survives. Re-running it is idempotent:
+it replaces the `Unreleased` section rather than appending a duplicate.
+
+The draft leads with what merged since `v1.0`, grouped into Features, Fixes,
+Performance, Documentation and Internal by each commit's conventional type,
+each entry carrying the pull request its subject named. That comes from
+`git log`, not a forge API, since every merge lands as a squash whose
+subject already holds the number. Release and changelog bookkeeping commits
+are dropped so a release does not list its own paperwork.
+
+Below a rule sit the derived sections, evidence rather than narrative: the
+public API diff against `v1.0`, and the measured movement past gate
+thresholds. A section with nothing to report is omitted rather than shipped
+holding a sentence saying so, and a draft with nothing at all to report is
+its heading alone.
 
 Hand-written prose survives the same regeneration by living inside a
 `<!-- soothfast:notes -->` / `<!-- /soothfast:notes -->` pair anywhere in the
 Unreleased section. Add it once; every later run carries it forward, spliced
 back in right after the heading, until the section is renamed to a real
 version and frozen like the rest of the released history.
+
+A section with no notes yet gets that pair with commented-out prompts for
+the two things no measurement supplies: what the release means for someone
+using it, and what a consumer has to do. They stay comments until someone
+writes into them, so an untouched block renders as nothing.
 
 Pass several `-p PKG` flags to cover more than one crate, and leave
 `--against-ref` off entirely for a first release, where there is no earlier

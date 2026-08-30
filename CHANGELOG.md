@@ -42,6 +42,7 @@ hasn't moved past the reviewed commit, treating the accepted value as a
 one-sided ceiling rather than widening the bench's tolerance permanently.
 The entry is pruned automatically once a real baseline captures the
 accepted cost as the new normal.
+<!-- /soothfast:notes -->
 
 ### API surface
 
@@ -77,6 +78,7 @@ skip the pin; measurement commands (`measure`, `gate`, `trend`,
 Discovery artifacts also land in `target/debug` instead of sharing
 the bench profile's directory, so jobs that mix discovery and
 measurement no longer invalidate each other's build caches.
+<!-- /soothfast:notes -->
 
 ### API surface
 
@@ -107,6 +109,7 @@ independently of the active one, set alongside
 `SOOTHFAST_RUSTDOC_TOOLCHAIN` so a job running both `spec`/`docs` and
 rustdoc-JSON commands compiles its dependency graph once instead of
 twice. `measure`/`gate` are unaffected unless a caller sets it.
+<!-- /soothfast:notes -->
 
 ### API surface
 
@@ -193,6 +196,7 @@ re-measures a merge-base it has already measured. Runs are kept under
 code, so a merge-base that was never gated still hits whenever an earlier
 commit built the same binary. Counters carry across runs and the clock
 does not, so `walltime` softens against a reused reference.
+<!-- /soothfast:notes -->
 
 ### API surface
 
@@ -222,6 +226,7 @@ breaking findings pass on a semver-major bump of `info.version` in the
 same diff and fail otherwise, so the acknowledgment is priced where
 consumers already look. `--allow-breaking` stays as the blanket override
 for coordinated releases and versionless dialects.
+<!-- /soothfast:notes -->
 
 ### API surface
 
@@ -245,6 +250,7 @@ against a committed `probes.lock`, spec-declared coverage of fields never
 populated, structure against the response schema, and per-probe sanity
 assertions. Accepting folds observations back into the lock with the same
 no-delete-to-go-green discipline as the perf baseline.
+<!-- /soothfast:notes -->
 
 ### API surface
 
@@ -284,6 +290,7 @@ drifted past the metric's threshold get a labeled line, capped at a
 colorblind-validated palette with the overflow counted in the footer.
 Walltime is fleet-relative, so a runner-speed shift that moves every
 item together no longer reads as a fleet of regressions.
+<!-- /soothfast:notes -->
 
 ### API surface
 
@@ -310,6 +317,7 @@ check. Every parsed file must re-render byte-identically, so a stale or
 hand-edited base fails loudly rather than diffing wrong. The walltime
 gate also now requires both round pairs to fail before reporting a
 regression.
+<!-- /soothfast:notes -->
 
 ### API surface
 
@@ -336,6 +344,7 @@ Sites published with `docs gh-deploy` now include a `.nojekyll` marker.
 GitHub Pages otherwise runs branch-published sites through Jekyll, which
 strips underscore-prefixed paths like `_soothfast/` and served the site
 without its stylesheets.
+<!-- /soothfast:notes -->
 
 ### API surface
 

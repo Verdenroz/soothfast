@@ -285,7 +285,15 @@ fn changelog_cmd(args: &[String]) -> i32 {
         },
         None => None,
     };
+    let changes = match &a.against_ref {
+        Some(refname) => match merged_changes(refname) {
+            Ok(c) => c,
+            Err(e) => return err(&e),
+        },
+        None => Vec::new(),
+    };
     let text = changelog::draft(&changelog::DraftInputs {
+        changes: &changes,
         api: match &a.against_ref {
             Some(refname) => changelog::ApiSection::Diff {
                 against: refname,
@@ -306,6 +314,16 @@ fn changelog_cmd(args: &[String]) -> i32 {
     }
     println!("report: regenerated {}", path.display());
     0
+}
+
+/// Conventional-commit subjects merged since `refname`, newest first. Read
+/// from git rather than a forge API: every merge lands as a squash whose
+/// subject already carries its pull request number.
+fn merged_changes(refname: &str) -> Result<Vec<changelog::Change>, String> {
+    let range = format!("{refname}..HEAD");
+    let log = invoke::git(&["log", "--format=%s", &range]).map_err(|e| e.to_string())?;
+    let subjects: Vec<String> = log.lines().map(str::to_string).collect();
+    Ok(changelog::changes_from_subjects(&subjects))
 }
 
 /// True only for the specific race the guard exists to catch: a release PR
@@ -348,6 +366,16 @@ fn changelog_already_cut(existing: &str, against_ref: Option<&str>) -> bool {
 
 const NOTES_START: &str = "<!-- soothfast:notes -->";
 const NOTES_END: &str = "<!-- /soothfast:notes -->";
+
+/// Prompts for the sections a reader wants and no measurement can supply.
+/// Commented out so an unfilled block renders as nothing.
+const NOTES_SCAFFOLD: &str = "\
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. \"Nothing\" is a useful answer. -->
+";
 
 /// A maintainer's hand-written prose survives regeneration by living inside
 /// a `soothfast:notes` marker pair in the Unreleased section; everything
@@ -399,8 +427,8 @@ fn merge_changelog(existing: &str, draft: &str) -> String {
         doc.push('\n');
     }
     doc.push('\n');
-    match extract_notes(&unreleased) {
-        Some(notes) if !notes.is_empty() => {
+    match extract_notes(&unreleased).filter(|n| !n.is_empty()) {
+        Some(notes) => {
             // Splice right after the heading line, ahead of the bot's own
             // API-surface/Performance sections.
             let (heading, rest) = draft.split_once('\n').unwrap_or((draft, ""));
@@ -416,7 +444,17 @@ fn merge_changelog(existing: &str, draft: &str) -> String {
             doc.push('\n');
             doc.push_str(rest.trim_start_matches('\n'));
         }
-        _ => doc.push_str(draft),
+        None => {
+            let (heading, rest) = draft.split_once('\n').unwrap_or((draft, ""));
+            doc.push_str(heading);
+            doc.push_str("\n\n");
+            doc.push_str(NOTES_START);
+            doc.push('\n');
+            doc.push_str(NOTES_SCAFFOLD);
+            doc.push_str(NOTES_END);
+            doc.push_str("\n\n");
+            doc.push_str(rest.trim_start_matches('\n'));
+        }
     }
     doc.push('\n');
     if !released.is_empty() {
@@ -560,13 +598,25 @@ mod tests {
     }
 
     #[test]
-    fn no_notes_marker_behaves_exactly_as_before() {
+    fn a_section_with_no_notes_yet_gets_the_scaffold() {
         let existing = "# Changelog\n\n## Unreleased (draft vs abc)\n\nold\n";
-        let draft = "## Unreleased (draft vs def)\n\nnew";
-        assert_eq!(
-            merge_changelog(existing, draft),
-            format!("# Changelog\n\n{draft}\n")
-        );
+        let merged = merge_changelog(existing, "## Unreleased (draft vs def)\n\nnew");
+        assert!(!merged.contains("old"), "{merged}");
+        assert!(merged.contains("new"), "{merged}");
+        assert!(merged.contains("<!-- ### Overview -->"), "{merged}");
+        assert!(merged.contains("<!-- ### Upgrade notes -->"), "{merged}");
+        let notes = merged.find("<!-- soothfast:notes -->").unwrap();
+        assert!(notes < merged.find("new").unwrap(), "{merged}");
+    }
+
+    #[test]
+    fn the_scaffold_is_not_written_over_prose_that_exists() {
+        let existing = "# Changelog\n\n## Unreleased (draft vs abc)\n\n\
+            <!-- soothfast:notes -->\n### Overview\n\nwhat shipped\n\
+            <!-- /soothfast:notes -->\n\nold\n";
+        let merged = merge_changelog(existing, "## Unreleased (draft vs def)\n\nnew");
+        assert!(merged.contains("what shipped"), "{merged}");
+        assert!(!merged.contains("<!-- ### Overview -->"), "{merged}");
     }
 
     #[test]
