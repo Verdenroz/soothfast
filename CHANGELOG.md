@@ -30,6 +30,11 @@
 
 - Size --headroom to real jitter, not one run (#117)
 
+### 📦 Dependencies
+
+- Bump ossf/scorecard-action from 2.4.3 to 2.4.4 (#139)
+- Bump taiki-e/install-action from 2.85.13 to 2.86.6 (#137)
+
 ---
 
 ### 🔍 API surface
