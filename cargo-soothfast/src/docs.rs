@@ -387,9 +387,9 @@ fn accept(a: &DocsArgs) -> i32 {
     let existing = if full_scope {
         lockfile::Binds::new()
     } else {
-        match lockfile::read(&scanned.root) {
-            Ok(l) => lockfile::comparable(l),
-            Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
+        match lockfile::read(&scanned.root).and_then(lockfile::comparable) {
+            Ok(binds) => binds,
+            Err(e) => return err(&e),
         }
     };
     let binds = lockfile::merge(&existing, &fresh, full_scope);

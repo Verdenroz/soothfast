@@ -74,15 +74,28 @@ pub fn merge(existing: &Binds, fresh: &Binds, full_scope: bool) -> Binds {
     }
 }
 
-/// The entries of `lock` a fresh accept may merge over. Fingerprints from
-/// another format are not comparable to what this build derives, so they are
-/// dropped instead of being carried under a stamp claiming they are current;
-/// their pages read as unlocked until their own `docs accept` runs.
-pub fn comparable(lock: Lock) -> Binds {
+/// The entries of `lock` a fresh accept may merge over.
+///
+/// Fingerprints from an older format are not comparable to what this build
+/// derives, so they are dropped rather than carried under a stamp claiming
+/// they are current; their pages read as unlocked until their own
+/// `docs accept` runs, which is what lets a repo migrate one accept at a
+/// time.
+///
+/// A lock from a *newer* format is equally incomparable but is not this
+/// build's to discard, so it is refused instead. The asymmetry is the point:
+/// an older entry is worthless, a newer one is someone else's valid work.
+pub fn comparable(lock: Lock) -> Result<Binds, String> {
+    if lock.version > VERSION {
+        return Err(format!(
+            "{LOCKFILE} is format v{}, this build writes v{VERSION}: upgrade cargo-soothfast rather than overwriting a newer lock",
+            lock.version
+        ));
+    }
     if lock.version == VERSION {
-        lock.binds
+        Ok(lock.binds)
     } else {
-        Binds::new()
+        Ok(Binds::new())
     }
 }
 
@@ -108,12 +121,12 @@ mod tests {
     }
 
     #[test]
-    fn entries_from_another_format_are_not_merged_over() {
+    fn entries_from_an_older_format_are_not_merged_over() {
         let lock = Lock {
             version: VERSION - 1,
             binds: binds(&[("a::x", "1111")]),
         };
-        assert!(comparable(lock).is_empty());
+        assert!(comparable(lock).unwrap().is_empty());
     }
 
     #[test]
@@ -122,7 +135,16 @@ mod tests {
             version: VERSION,
             binds: binds(&[("a::x", "1111")]),
         };
-        assert_eq!(comparable(lock).len(), 1);
+        assert_eq!(comparable(lock).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_newer_lock_is_refused_rather_than_overwritten() {
+        let lock = Lock {
+            version: VERSION + 1,
+            binds: binds(&[("a::x", "1111")]),
+        };
+        assert!(comparable(lock).is_err());
     }
 
     #[test]
