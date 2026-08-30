@@ -46,6 +46,15 @@ pub struct Change {
     pub pr: Option<u32>,
 }
 
+/// Subjects the repo's own bots commit, matched whole. A prefix would be
+/// tidier and would also swallow a real `regenerate ...` feature, which is
+/// the worse failure: a stray bot line is visible, a missing feature is not.
+const BOT_SUBJECTS: [&str; 3] = [
+    "regenerate CHANGELOG.md",
+    "regenerate API specs",
+    "regenerate derived docs",
+];
+
 /// Reader-facing sections, in the order a release renders them. Anything
 /// whose type is missing here lands under the last entry.
 const SECTIONS: [(&str, &[&str]); 5] = [
@@ -73,8 +82,7 @@ pub fn changes_from_subjects(subjects: &[String]) -> Vec<Change> {
                 None => (rest, None),
             };
             let subject = subject.trim();
-            let bookkeeping =
-                subject.starts_with("release v") || subject.starts_with("regenerate ");
+            let bookkeeping = subject.starts_with("release v") || BOT_SUBJECTS.contains(&subject);
             (!bookkeeping).then(|| Change {
                 kind: kind.to_string(),
                 subject: subject.to_string(),
@@ -188,7 +196,12 @@ impl Icons {
                 ));
             }
         }
-        Ok(Icons { overrides })
+        Ok(Icons {
+            overrides: overrides
+                .into_iter()
+                .map(|(name, icon)| (name.to_ascii_lowercase(), icon))
+                .collect(),
+        })
     }
 
     fn get(&self, section: &str) -> &str {
@@ -521,6 +534,29 @@ mod tests {
         let rendered = super::sections(&changes, &icons);
         assert!(rendered.contains("### A Features"), "{rendered}");
         assert!(rendered.contains("### \u{1F41B} Fixes"), "{rendered}");
+    }
+
+    #[test]
+    fn a_capitalized_section_name_is_honored_rather_than_quietly_ignored() {
+        let icons =
+            Icons::new(BTreeMap::from([("Features".to_string(), "A".to_string())])).unwrap();
+        let changes = changes_from_subjects(&subjects(&["feat: add a thing"]));
+        let rendered = super::sections(&changes, &icons);
+        assert!(rendered.contains("### A Features"), "{rendered}");
+    }
+
+    #[test]
+    fn a_real_feature_that_regenerates_something_is_not_mistaken_for_a_bot() {
+        let changes = changes_from_subjects(&subjects(&[
+            "feat: regenerate SDK clients on a spec change",
+            "docs: regenerate derived docs (#126)",
+            "chore: regenerate API specs (#99)",
+        ]));
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            changes[0].subject,
+            "regenerate SDK clients on a spec change"
+        );
     }
 
     #[test]
