@@ -142,8 +142,13 @@ fn sections(changes: &[Change]) -> String {
 }
 
 /// Commit subjects are imperative and lowercase; a release note reads as a
-/// list of sentences.
+/// list of sentences. A subject opening on an identifier is left alone,
+/// since `soothfast.lock` is not a word to capitalize.
 fn sentence_case(subject: &str) -> String {
+    let first_token = subject.split_whitespace().next().unwrap_or_default();
+    if first_token.contains(['.', '_', '(', ':']) {
+        return subject.to_string();
+    }
     let mut chars = subject.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
@@ -340,8 +345,7 @@ mod tests {
             new_baseline: &new,
             thresholds: gate_thresholds(),
         });
-        assert!(!text.contains("Gate movement"), "{text}");
-        assert!(!text.contains("median_ns"), "{text}");
+        assert_eq!(text.trim(), "## Unreleased (draft vs v1.0.0)");
     }
 
     /// The deterministic metrics are the point: they must still land.
@@ -451,6 +455,22 @@ mod tests {
         );
         assert_eq!(changes[0].pr, Some(110));
         assert_eq!(changes[1].pr, Some(113));
+    }
+
+    #[test]
+    fn a_subject_opening_on_an_identifier_keeps_its_case() {
+        let changes = changes_from_subjects(&subjects(&[
+            "fix: soothfast.lock moves to v2",
+            "fix: keep_alive is honored",
+            "fix: resume changelog regen",
+        ]));
+        let rendered = super::sections(&changes);
+        assert!(
+            rendered.contains("- soothfast.lock moves to v2"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("- keep_alive is honored"), "{rendered}");
+        assert!(rendered.contains("- Resume changelog regen"), "{rendered}");
     }
 
     #[test]
