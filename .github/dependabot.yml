@@ -41,7 +41,7 @@ updates:
     assignees:
       - "Verdenroz"
     commit-message:
-      prefix: "ci"
+      prefix: "deps"
     labels:
       - "dependencies"
       - "ci"

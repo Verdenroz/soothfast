@@ -177,7 +177,8 @@ PRs that add features or fix bugs should include tests. PRs that only touch docu
 <optional body — explain the why, not the what>
 ```
 
-Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`
+Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`,
+`deps`
 
 Examples:
 ```
