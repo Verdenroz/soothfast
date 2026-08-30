@@ -74,6 +74,18 @@ pub fn merge(existing: &Binds, fresh: &Binds, full_scope: bool) -> Binds {
     }
 }
 
+/// The entries of `lock` a fresh accept may merge over. Fingerprints from
+/// another format are not comparable to what this build derives, so they are
+/// dropped instead of being carried under a stamp claiming they are current;
+/// their pages read as unlocked until their own `docs accept` runs.
+pub fn comparable(lock: Lock) -> Binds {
+    if lock.version == VERSION {
+        lock.binds
+    } else {
+        Binds::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +105,24 @@ mod tests {
         assert_eq!(merged.get("a::x").map(String::as_str), Some("9999"));
         assert_eq!(merged.get("b::y").map(String::as_str), Some("2222"));
         assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn entries_from_another_format_are_not_merged_over() {
+        let lock = Lock {
+            version: VERSION - 1,
+            binds: binds(&[("a::x", "1111")]),
+        };
+        assert!(comparable(lock).is_empty());
+    }
+
+    #[test]
+    fn entries_from_this_format_survive_a_partial_accept() {
+        let lock = Lock {
+            version: VERSION,
+            binds: binds(&[("a::x", "1111")]),
+        };
+        assert_eq!(comparable(lock).len(), 1);
     }
 
     #[test]

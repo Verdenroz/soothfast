@@ -106,7 +106,7 @@ fn quoted_end(src: &[char], mut i: usize) -> usize {
 /// protect, so it reports `None` and is copied one char at a time.
 fn char_literal_end(src: &[char], i: usize) -> Option<usize> {
     if src.get(i + 1) == Some(&'\\') {
-        let mut j = i + 2;
+        let mut j = i + 3;
         while j < src.len() && src[j] != '\'' {
             j += 1;
         }
@@ -199,6 +199,15 @@ mod tests {
     }
 
     #[test]
+    fn an_escaped_quote_char_literal_does_not_swallow_the_code_after_it() {
+        let src = "match c { '\\'' => 1, '\\\\' => 2 } // drop\nlet k = 1;";
+        let out = strip(src);
+        assert!(out.contains("'\\'' => 1"), "{out}");
+        assert!(out.contains("let k = 1;"), "{out}");
+        assert!(!out.contains("drop"));
+    }
+
+    #[test]
     fn lifetimes_are_not_char_literals() {
         let src = "fn f<'a>(x: &'a str) -> &'a str { x } // drop";
         let out = strip(src);
@@ -223,5 +232,22 @@ mod tests {
     #[test]
     fn an_empty_block_comment_is_not_a_doc_comment() {
         assert_eq!(strip("a/**/b").trim(), "a b");
+    }
+
+    #[test]
+    fn stripping_real_sources_twice_changes_nothing_the_second_time() {
+        let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(src_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let once = strip(&text);
+            assert_eq!(strip(&once), once, "not idempotent on {}", path.display());
+            checked += 1;
+        }
+        assert!(checked > 0);
     }
 }

@@ -226,10 +226,15 @@ fn check(a: &DocsArgs) -> i32 {
             Ok(l) => l,
             Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
         };
-        if lock.version < lockfile::VERSION && !lock.binds.is_empty() {
+        if lock.version != lockfile::VERSION && !lock.binds.is_empty() {
             failures += 1;
+            let advice = if lock.version < lockfile::VERSION {
+                "re-verify each bind, then `docs accept`"
+            } else {
+                "upgrade cargo-soothfast to match"
+            };
             println!(
-                "FAIL  {} is format v{}, this build writes v{}: fingerprints are derived differently, so every bind needs one re-verify, then `docs accept`",
+                "FAIL  {} is format v{}, this build derives v{}: fingerprints are not comparable across formats, so {advice}",
                 lockfile::LOCKFILE,
                 lock.version,
                 lockfile::VERSION
@@ -383,7 +388,7 @@ fn accept(a: &DocsArgs) -> i32 {
         lockfile::Binds::new()
     } else {
         match lockfile::read(&scanned.root) {
-            Ok(l) => l.binds,
+            Ok(l) => lockfile::comparable(l),
             Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
         }
     };
