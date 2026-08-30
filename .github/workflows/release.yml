@@ -247,8 +247,11 @@ jobs:
       contents: write # upload the release asset
     strategy:
       fail-fast: false
-      # Mirrors soothfast-sdk's Target::DEFAULT matrix (target.rs): one native
-      # runner per platform, since cross-compiling is only free for the host.
+      # Mirrors soothfast-sdk's Target::DEFAULT matrix (target.rs). Intel
+      # macOS cross-compiles on the arm64 runner: the macOS SDK carries both
+      # architectures, and a job pinned to the retired Intel image is never
+      # scheduled at all — it sits queued until GitHub times it out a day
+      # later, cancelled, having produced no binary and no failure.
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
@@ -256,7 +259,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-latest
           - target: aarch64-apple-darwin
             runner: macos-latest
           - target: x86_64-pc-windows-msvc
@@ -293,3 +296,36 @@ jobs:
           ASSET="cargo-soothfast-v${VERSION}-${TARGET}.tgz"
           tar -C "target/${TARGET}/release" -czf "$ASSET" "$BIN"
           gh release upload "$TAG" "$ASSET" --clobber
+
+  # A cancelled matrix job uploads nothing and fails nothing, so a release can
+  # complete a binary short. Count what actually landed instead of trusting
+  # the run's colour. `always()` because a cancelled dependency would
+  # otherwise skip this job — the exact case it exists to catch.
+  assets:
+    name: Every prebuilt binary is attached
+    runs-on: ubuntu-latest
+    needs: [resolve, binaries]
+    if: always() && needs.resolve.result == 'success'
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Count the attached binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          # One per entry in the binaries matrix above.
+          EXPECTED: 5
+        run: |
+          FOUND=$(gh release view "$TAG" --repo "$REPO" --json assets \
+            --jq '[.assets[] | select(.name | endswith(".tgz"))] | length')
+          echo "attached: $FOUND, expected: $EXPECTED"
+          if [ "$FOUND" -ne "$EXPECTED" ]; then
+            gh release view "$TAG" --repo "$REPO" --json assets \
+              --jq '.assets[].name' || true
+            echo "::error::$TAG has $FOUND prebuilt binaries, expected $EXPECTED"
+            exit 1
+          fi
