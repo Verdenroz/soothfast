@@ -494,6 +494,7 @@ which is exactly how serde key mismatches and hand-copied structs fail.
 <code>spec probe</code> closes that gap by asking the running server.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast spec probe -p myserver            # gate against probes.lock
 <span class="tok-kw">$ </span>cargo soothfast spec probe -p myserver --accept   # re-lock after a deliberate change
+<span class="tok-kw">$ </span>cargo soothfast spec probe -p myserver --accept-passing   # lock what passed
 </code></pre></figure>
 <p>The package declares its probes in <code>probes.toml</code> next to the spec:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>[probes]
@@ -506,7 +507,25 @@ name = &quot;quote&quot;
 path = &quot;/v2/quote/AAPL&quot;
 sometimes = [&quot;preMarket*&quot;]                  # operator-pinned intermittent fields
 assert = [&quot;regularMarketPrice &gt; 0&quot;, &quot;candles#len &gt;= 1&quot;]
+
+[[probe]]
+name = &quot;backtest&quot;
+path = &quot;/v2/backtest/AAPL&quot;
+method = &quot;POST&quot;                             # defaults to GET
+status = 201
+body = &quot;{\&quot;strategy\&quot;: \&quot;sma_crossover\&quot;}&quot;      # sent as application/json
 </code></pre></figure>
+<p><code>method</code> and <code>body</code> cover a non-<code>GET</code> route. A body spans more lines than
+the manifest parser joins, so an array of fragments is accepted too:
+<code>body = [&quot;{&quot;, &quot;\&quot;strategy\&quot;: \&quot;sma_crossover\&quot;&quot;, &quot;}&quot;]</code>. A response with no
+content is probed like any other; it simply populates nothing, so an
+endpoint that stops returning data still reads as a regression. Only a
+status that cannot carry one (<code>204</code>, <code>205</code>, <code>304</code>) may answer empty:
+anywhere else an empty body fails the probe rather than skipping the
+shape check and assertions it declared.</p>
+<p>Every run ends with how much of the spec the manifest reaches — <code>N of M
+spec route(s) covered by a probe</code> — so an unprobed route is visible
+without failing anyone's build.</p>
 <p>Each probe's response is held to four checks:</p>
 <ul>
 <li><strong>Population</strong> — the response is flattened to dotted paths (array indices collapse to <code>[]</code>) and diffed against the committed <code>probes.lock</code>. The lock records a <em>class</em> per field: <code>always</code> (populated in every accepted run — going null fails the gate) or <code>sometimes</code> (observed both ways — never gated). Repeated <code>--accept</code> runs demote flapping fields to <code>sometimes</code> permanently, so the lock converges on the stable contract instead of ratcheting on one lucky run.</li>
@@ -520,6 +539,16 @@ assert = [&quot;regularMarketPrice &gt; 0&quot;, &quot;candles#len &gt;= 1&quot;
 manifest no longer declares fails the gate until <code>--allow-gone</code> drops it —
 the same no-delete-to-go-green rule as the perf baseline, and a run with
 failing shape checks or assertions is never accepted into the lock.</p>
+<p><code>--accept-passing</code> relaxes that last rule for one case: probes fire at live
+upstreams, so a manifest large enough will rarely see every probe pass at
+once, and an all-or-nothing accept leaves newly declared probes unlocked
+indefinitely. It locks the probes that passed, leaves the rest at their
+existing values, still prints every failure and still exits non-zero. It
+never drops a locked probe the manifest stopped declaring — that still
+takes <code>--allow-gone</code>, so a partial write cannot delete anything. A probe
+the manifest has dropped therefore keeps failing every <code>--accept-passing</code>
+run until <code>--allow-gone</code> retires it; that is the no-delete rule holding,
+not a stuck gate.</p>
 <p>Live upstreams make probe runs non-deterministic, so the gate belongs in a
 scheduled workflow that files an issue on failure, not in PR CI.</p>
 
