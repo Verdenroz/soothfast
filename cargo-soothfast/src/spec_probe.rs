@@ -72,6 +72,10 @@ struct Manifest {
     probes: Vec<Probe>,
 }
 
+/// Statuses whose responses carry no body, so an empty one is the contract
+/// rather than a missing answer.
+const NO_CONTENT_STATUSES: [u16; 3] = [204, 205, 304];
+
 pub fn run(args: &[String]) -> i32 {
     let mut common = CommonArgs::default();
     let mut accept = false;
@@ -245,6 +249,10 @@ fn probe_in(
         // A no-content answer has nothing to parse. It still reaches the
         // lock, so an endpoint that stops returning data reads as a
         // regression rather than a pass.
+        //
+        // Only a status that cannot carry content may answer empty. Anywhere
+        // else an empty body would skip every declared check in silence, and
+        // on a first accept would lock a broken endpoint as the baseline.
         let value: Option<Value> = if body.iter().all(u8::is_ascii_whitespace) {
             None
         } else {
@@ -277,6 +285,10 @@ fn probe_in(
                     problems.push(format!("assert: {reason}"));
                 }
             }
+        } else if !NO_CONTENT_STATUSES.contains(&entry.status)
+            && (!entry.asserts.is_empty() || (spec.is_some() && entry.shape))
+        {
+            problems.push("empty body: declared expectations could not be evaluated".to_string());
         }
 
         let observed = value.as_ref().map(population::populate).unwrap_or_default();
@@ -825,6 +837,22 @@ status = 404
         assert_eq!(code, 0);
         let lock = std::fs::read_to_string(dir.join("probes.lock")).unwrap();
         assert!(lock.contains("remove"), "{lock}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_empty_body_fails_a_probe_that_declared_expectations() {
+        let server = fake_server(vec![("/items", 200, "")], 1);
+        let dir = pkg_with(
+            "[[probe]]\nname = \"list\"\npath = \"/items\"\nassert = [\"total > 0\"]\n",
+            None,
+        );
+        let code = probe_in(&dir, true, false, false, Some(&server.base), None).unwrap();
+        assert_eq!(code, 1);
+        assert!(
+            !dir.join("probes.lock").exists(),
+            "a broken endpoint was locked"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

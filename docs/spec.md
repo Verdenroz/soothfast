@@ -498,7 +498,10 @@ body = "{\"strategy\": \"sma_crossover\"}"      # sent as application/json
 the manifest parser joins, so an array of fragments is accepted too:
 `body = ["{", "\"strategy\": \"sma_crossover\"", "}"]`. A response with no
 content is probed like any other; it simply populates nothing, so an
-endpoint that stops returning data still reads as a regression.
+endpoint that stops returning data still reads as a regression. Only a
+status that cannot carry one (`204`, `205`, `304`) may answer empty:
+anywhere else an empty body fails the probe rather than skipping the
+shape check and assertions it declared.
 
 Every run ends with how much of the spec the manifest reaches — `N of M
 spec route(s) covered by a probe` — so an unprobed route is visible
@@ -541,7 +544,10 @@ once, and an all-or-nothing accept leaves newly declared probes unlocked
 indefinitely. It locks the probes that passed, leaves the rest at their
 existing values, still prints every failure and still exits non-zero. It
 never drops a locked probe the manifest stopped declaring — that still
-takes `--allow-gone`, so a partial write cannot delete anything.
+takes `--allow-gone`, so a partial write cannot delete anything. A probe
+the manifest has dropped therefore keeps failing every `--accept-passing`
+run until `--allow-gone` retires it; that is the no-delete rule holding,
+not a stuck gate.
 
 Live upstreams make probe runs non-deterministic, so the gate belongs in a
 scheduled workflow that files an issue on failure, not in PR CI.
