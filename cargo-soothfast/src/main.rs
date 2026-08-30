@@ -8,6 +8,7 @@
 
 mod buildcost;
 mod buildstamp;
+mod changelog_config;
 mod coverage;
 mod docs;
 mod docs_support;

@@ -292,8 +292,13 @@ fn changelog_cmd(args: &[String]) -> i32 {
         },
         None => Vec::new(),
     };
+    let icons = match crate::changelog_config::load(&root) {
+        Ok(i) => i,
+        Err(e) => return err(&e),
+    };
     let text = changelog::draft(&changelog::DraftInputs {
         changes: &changes,
+        icons: &icons,
         api: match &a.against_ref {
             Some(refname) => changelog::ApiSection::Diff {
                 against: refname,

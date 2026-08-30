@@ -580,6 +580,15 @@ One merged change, read off a conventional-commit subject.
 
 Inputs already computed by the CLI (API section, two baselines).
 
+#### `pub struct Icons`
+
+Section icons, keyed by the lowercased section name a release renders
+(`features`, `fixes`, `performance`, `documentation`, `internal`).
+
+A repo overrides any subset through `[changelog.icons]` in its
+`soothfast.toml`; whatever it leaves out keeps the shipped default, so a
+consumer never has to restate the whole vocabulary to change one glyph.
+
 #### `pub struct PerfThresholds`
 
 Per-metric movement a delta table is willing to report, as percentages.
@@ -596,8 +605,9 @@ where a human reads the verdict against a live noise floor.
 
 #### `pub fn changes_from_subjects(subjects: &[String]) -> Vec<Change>`
 
-Parse `type: subject (#N)` subjects. Release and changelog bookkeeping
-commits are dropped, since a release listing its own paperwork is noise.
+Parse `type: subject (#N)` subjects. Release commits and the bots that
+regenerate derived artifacts are dropped, since a release listing its own
+paperwork is noise.
 
 #### `pub fn draft(inputs: &DraftInputs) -> String`
 

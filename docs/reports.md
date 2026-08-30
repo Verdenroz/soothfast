@@ -86,8 +86,19 @@ The draft leads with what merged since `v1.0`, grouped into Features, Fixes,
 Performance, Documentation and Internal by each commit's conventional type,
 each entry carrying the pull request its subject named. That comes from
 `git log`, not a forge API, since every merge lands as a squash whose
-subject already holds the number. Release and changelog bookkeeping commits
-are dropped so a release does not list its own paperwork.
+subject already holds the number. Release commits, and the bots that
+regenerate derived artifacts, are dropped so a release does not list its own
+paperwork.
+
+The section icons come from a shipped default. Override any subset in
+`soothfast.toml`; a name that is not a section is an error rather than a
+silent default:
+
+```toml
+[changelog.icons]
+features = "📐"
+performance = "⏱"
+```
 
 Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against `v1.0`, and the measured movement past gate

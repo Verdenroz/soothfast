@@ -46,6 +46,15 @@ pub struct Change {
     pub pr: Option<u32>,
 }
 
+/// Subjects the repo's own bots commit, matched whole. A prefix would be
+/// tidier and would also swallow a real `regenerate ...` feature, which is
+/// the worse failure: a stray bot line is visible, a missing feature is not.
+const BOT_SUBJECTS: [&str; 3] = [
+    "regenerate CHANGELOG.md",
+    "regenerate API specs",
+    "regenerate derived docs",
+];
+
 /// Reader-facing sections, in the order a release renders them. Anything
 /// whose type is missing here lands under the last entry.
 const SECTIONS: [(&str, &[&str]); 5] = [
@@ -56,8 +65,9 @@ const SECTIONS: [(&str, &[&str]); 5] = [
     ("Internal", &["refactor", "chore", "test", "ci"]),
 ];
 
-/// Parse `type: subject (#N)` subjects. Release and changelog bookkeeping
-/// commits are dropped, since a release listing its own paperwork is noise.
+/// Parse `type: subject (#N)` subjects. Release commits and the bots that
+/// regenerate derived artifacts are dropped, since a release listing its own
+/// paperwork is noise.
 pub fn changes_from_subjects(subjects: &[String]) -> Vec<Change> {
     subjects
         .iter()
@@ -72,8 +82,7 @@ pub fn changes_from_subjects(subjects: &[String]) -> Vec<Change> {
                 None => (rest, None),
             };
             let subject = subject.trim();
-            let bookkeeping =
-                subject.starts_with("release v") || subject.starts_with("regenerate CHANGELOG");
+            let bookkeeping = subject.starts_with("release v") || BOT_SUBJECTS.contains(&subject);
             (!bookkeeping).then(|| Change {
                 kind: kind.to_string(),
                 subject: subject.to_string(),
@@ -88,6 +97,8 @@ pub struct DraftInputs<'a> {
     pub api: ApiSection<'a>,
     /// Merged changes since the reference, newest first.
     pub changes: &'a [Change],
+    /// Section icons; `Icons::default()` for the shipped set.
+    pub icons: &'a Icons,
     /// Reference baseline (older) — None renders current-only.
     pub old_baseline: Option<&'a Value>,
     pub new_baseline: &'a Value,
@@ -102,7 +113,7 @@ pub fn draft(inputs: &DraftInputs) -> String {
         ApiSection::Initial(_) => "Unreleased (initial public surface)".to_string(),
     };
     let mut out = format!("## {heading}\n\n");
-    out.push_str(&sections(inputs.changes));
+    out.push_str(&sections(inputs.changes, inputs.icons));
 
     let api = api_section(&inputs.api);
     let perf = perf_section(inputs);
@@ -121,14 +132,14 @@ pub fn draft(inputs: &DraftInputs) -> String {
 
 /// One `### <emoji> <name>` block per type that has changes, omitting the
 /// rest so an empty section never ships.
-fn sections(changes: &[Change]) -> String {
+fn sections(changes: &[Change], icons: &Icons) -> String {
     let mut out = String::new();
     for (name, kinds) in SECTIONS {
         let mut entries = changes.iter().filter(|c| kinds.contains(&c.kind.as_str()));
         let Some(first) = entries.next() else {
             continue;
         };
-        out.push_str(&format!("### {} {name}\n\n", section_icon(name)));
+        out.push_str(&format!("### {} {name}\n\n", icons.get(name)));
         for change in std::iter::once(first).chain(entries) {
             let subject = sentence_case(&change.subject);
             match change.pr {
@@ -158,7 +169,50 @@ fn sentence_case(subject: &str) -> String {
     }
 }
 
-fn section_icon(name: &str) -> &'static str {
+/// Section icons, keyed by the lowercased section name a release renders
+/// (`features`, `fixes`, `performance`, `documentation`, `internal`).
+///
+/// A repo overrides any subset through `[changelog.icons]` in its
+/// `soothfast.toml`; whatever it leaves out keeps the shipped default, so a
+/// consumer never has to restate the whole vocabulary to change one glyph.
+#[derive(Debug, Default)]
+pub struct Icons {
+    overrides: BTreeMap<String, String>,
+}
+
+impl Icons {
+    /// Build from configured pairs, rejecting a name that is not a section.
+    /// A typo silently keeping the default is how config drifts from intent.
+    pub fn new(overrides: BTreeMap<String, String>) -> Result<Icons, String> {
+        for name in overrides.keys() {
+            if !SECTIONS
+                .iter()
+                .any(|(section, _)| section.eq_ignore_ascii_case(name))
+            {
+                let known: Vec<&str> = SECTIONS.iter().map(|(s, _)| *s).collect();
+                return Err(format!(
+                    "`{name}` is not a changelog section; expected one of {}",
+                    known.join(", ").to_lowercase()
+                ));
+            }
+        }
+        Ok(Icons {
+            overrides: overrides
+                .into_iter()
+                .map(|(name, icon)| (name.to_ascii_lowercase(), icon))
+                .collect(),
+        })
+    }
+
+    fn get(&self, section: &str) -> &str {
+        self.overrides
+            .get(&section.to_ascii_lowercase())
+            .map(String::as_str)
+            .unwrap_or_else(|| default_icon(section))
+    }
+}
+
+fn default_icon(name: &str) -> &'static str {
     match name {
         "Features" => "\u{2728}",
         "Fixes" => "\u{1F41B}",
@@ -264,9 +318,13 @@ fn inventory(entries: &[SurfaceEntry]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
 
-    use super::{ApiSection, Change, DraftInputs, PerfThresholds, changes_from_subjects, draft};
+    use super::{
+        ApiSection, Change, DraftInputs, Icons, PerfThresholds, changes_from_subjects, draft,
+    };
     use crate::llms::SurfaceEntry;
 
     /// The values `cargo-soothfast` passes from its gate constants.
@@ -298,6 +356,7 @@ mod tests {
         let new = json!({ "items": { "demo::f": { "perfcnt": { "instructions": 90 } } } });
         let text = draft(&DraftInputs {
             changes: &[],
+            icons: &Icons::default(),
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "ADDED    demo::g\n",
@@ -316,6 +375,7 @@ mod tests {
         let new = json!({ "items": {} });
         let text = draft(&DraftInputs {
             changes: &[],
+            icons: &Icons::default(),
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "# a\nsurface: no public API changes\n\n# b\nADDED    b::x\n",
@@ -339,6 +399,7 @@ mod tests {
             "walltime": { "median_ns": 324972.0 }, "alloc": { "allocs": 6 } } } });
         let text = draft(&DraftInputs {
             changes: &[],
+            icons: &Icons::default(),
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "",
@@ -359,6 +420,7 @@ mod tests {
             "walltime": { "median_ns": 200.0 }, "alloc": { "allocs": 120 } } } });
         let text = draft(&DraftInputs {
             changes: &[],
+            icons: &Icons::default(),
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "",
@@ -379,6 +441,7 @@ mod tests {
         let new = json!({ "items": {} });
         let unchanged = draft(&DraftInputs {
             changes: &[],
+            icons: &Icons::default(),
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "",
@@ -393,6 +456,7 @@ mod tests {
         let items = [entry("demo", "demo::f", "fn", "Does a thing.")];
         let initial = draft(&DraftInputs {
             changes: &[],
+            icons: &Icons::default(),
             api: ApiSection::Initial(&items),
             old_baseline: None,
             new_baseline: &new,
@@ -415,6 +479,7 @@ mod tests {
         let new = json!({ "items": {} });
         let text = draft(&DraftInputs {
             changes: &[],
+            icons: &Icons::default(),
             api: ApiSection::Initial(&[]),
             old_baseline: None,
             new_baseline: &new,
@@ -429,6 +494,7 @@ mod tests {
         let old = json!({ "items": {} });
         let text = draft(&DraftInputs {
             changes: &[],
+            icons: &Icons::default(),
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "",
@@ -447,6 +513,7 @@ mod tests {
             "fix: sync untracked config into gate worktrees (#113)",
             "chore: release v0.1.19 (#112)",
             "docs: regenerate CHANGELOG.md (#115)",
+            "docs: regenerate derived docs (#126)",
             "not a conventional subject",
         ]));
         assert_eq!(changes.len(), 2);
@@ -460,13 +527,52 @@ mod tests {
     }
 
     #[test]
+    fn a_configured_icon_replaces_only_the_section_it_names() {
+        let changes = changes_from_subjects(&subjects(&["feat: add a thing", "fix: mend a thing"]));
+        let icons =
+            Icons::new(BTreeMap::from([("features".to_string(), "A".to_string())])).unwrap();
+        let rendered = super::sections(&changes, &icons);
+        assert!(rendered.contains("### A Features"), "{rendered}");
+        assert!(rendered.contains("### \u{1F41B} Fixes"), "{rendered}");
+    }
+
+    #[test]
+    fn a_capitalized_section_name_is_honored_rather_than_quietly_ignored() {
+        let icons =
+            Icons::new(BTreeMap::from([("Features".to_string(), "A".to_string())])).unwrap();
+        let changes = changes_from_subjects(&subjects(&["feat: add a thing"]));
+        let rendered = super::sections(&changes, &icons);
+        assert!(rendered.contains("### A Features"), "{rendered}");
+    }
+
+    #[test]
+    fn a_real_feature_that_regenerates_something_is_not_mistaken_for_a_bot() {
+        let changes = changes_from_subjects(&subjects(&[
+            "feat: regenerate SDK clients on a spec change",
+            "docs: regenerate derived docs (#126)",
+            "chore: regenerate API specs (#99)",
+        ]));
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            changes[0].subject,
+            "regenerate SDK clients on a spec change"
+        );
+    }
+
+    #[test]
+    fn an_icon_for_something_that_is_not_a_section_is_rejected() {
+        let bad = Icons::new(BTreeMap::from([("feature".to_string(), "A".to_string())]));
+        assert!(bad.unwrap_err().contains("not a changelog section"));
+    }
+
+    #[test]
     fn a_subject_opening_on_an_identifier_keeps_its_case() {
         let changes = changes_from_subjects(&subjects(&[
             "fix: soothfast.lock moves to v2",
             "fix: keep_alive is honored",
             "fix: resume changelog regen",
         ]));
-        let rendered = super::sections(&changes);
+        let rendered = super::sections(&changes, &Icons::default());
         assert!(
             rendered.contains("- soothfast.lock moves to v2"),
             "{rendered}"
@@ -492,6 +598,7 @@ mod tests {
         }];
         let text = draft(&DraftInputs {
             changes: &changes,
+            icons: &Icons::default(),
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "",
