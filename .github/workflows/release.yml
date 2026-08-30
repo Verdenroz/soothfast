@@ -247,6 +247,9 @@ jobs:
       contents: write # upload the release asset
     strategy:
       fail-fast: false
+      # Adding or removing a target here means updating EXPECTED in the
+      # `assets` job below, which asserts one attached binary per entry.
+      #
       # Mirrors soothfast-sdk's Target::DEFAULT matrix (target.rs). Intel
       # macOS cross-compiles on the arm64 runner: the macOS SDK carries both
       # architectures, and a job pinned to the retired Intel image is never
