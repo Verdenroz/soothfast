@@ -469,6 +469,7 @@ which is exactly how serde key mismatches and hand-copied structs fail.
 ```console
 $ cargo soothfast spec probe -p myserver            # gate against probes.lock
 $ cargo soothfast spec probe -p myserver --accept   # re-lock after a deliberate change
+$ cargo soothfast spec probe -p myserver --accept-passing   # lock what passed
 ```
 
 The package declares its probes in `probes.toml` next to the spec:
@@ -484,7 +485,24 @@ name = "quote"
 path = "/v2/quote/AAPL"
 sometimes = ["preMarket*"]                  # operator-pinned intermittent fields
 assert = ["regularMarketPrice > 0", "candles#len >= 1"]
+
+[[probe]]
+name = "backtest"
+path = "/v2/backtest/AAPL"
+method = "POST"                             # defaults to GET
+status = 201
+body = "{\"strategy\": \"sma_crossover\"}"      # sent as application/json
 ```
+
+`method` and `body` cover a non-`GET` route. A body spans more lines than
+the manifest parser joins, so an array of fragments is accepted too:
+`body = ["{", "\"strategy\": \"sma_crossover\"", "}"]`. A response with no
+content is probed like any other; it simply populates nothing, so an
+endpoint that stops returning data still reads as a regression.
+
+Every run ends with how much of the spec the manifest reaches — `N of M
+spec route(s) covered by a probe` — so an unprobed route is visible
+without failing anyone's build.
 
 Each probe's response is held to four checks:
 
@@ -516,6 +534,14 @@ The server is launched from `command` with `env` applied and must announce
 manifest no longer declares fails the gate until `--allow-gone` drops it —
 the same no-delete-to-go-green rule as the perf baseline, and a run with
 failing shape checks or assertions is never accepted into the lock.
+
+`--accept-passing` relaxes that last rule for one case: probes fire at live
+upstreams, so a manifest large enough will rarely see every probe pass at
+once, and an all-or-nothing accept leaves newly declared probes unlocked
+indefinitely. It locks the probes that passed, leaves the rest at their
+existing values, still prints every failure and still exits non-zero. It
+never drops a locked probe the manifest stopped declaring — that still
+takes `--allow-gone`, so a partial write cannot delete anything.
 
 Live upstreams make probe runs non-deterministic, so the gate belongs in a
 scheduled workflow that files an issue on failure, not in PR CI.

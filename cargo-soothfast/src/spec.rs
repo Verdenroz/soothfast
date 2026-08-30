@@ -75,7 +75,7 @@ pub fn run(args: &[String]) -> i32 {
                  cargo soothfast spec check -p PKG\n\
                  cargo soothfast spec check-proto -p PKG --proto FILE --message NAME --source FILE --struct NAME\n\
                  cargo soothfast spec html -p PKG [--features F] [--target NAME] [--out DIR]\n\
-                 cargo soothfast spec probe -p PKG [--accept] [--allow-gone] [--base-url URL] [--filter SUBSTR]"
+                 cargo soothfast spec probe -p PKG [--accept] [--accept-passing] [--allow-gone] [--base-url URL] [--filter SUBSTR]"
             );
             2
         }

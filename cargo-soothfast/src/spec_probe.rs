@@ -12,6 +12,11 @@
 //! `--accept` folds the observed population back into the lock — the same
 //! accept discipline as living docs, with the same rule that a run with
 //! failing shape checks or assertions is never accepted.
+//!
+//! `--accept-passing` locks the probes that passed and leaves the rest at
+//! their existing values, for a manifest whose live upstreams fail often
+//! enough that a whole-run accept rarely lands. It still reports every
+//! failure and still exits non-zero.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -48,6 +53,10 @@ struct Header {
 struct Probe {
     name: String,
     path: String,
+    /// Request verb, upper-cased at parse time. Defaults to `GET`.
+    method: String,
+    /// Request body, sent as `application/json`. Absent means no body.
+    body: Option<String>,
     status: u16,
     /// Fields pinned intermittent by the operator; `*` suffix matches a
     /// prefix.
@@ -66,6 +75,7 @@ struct Manifest {
 pub fn run(args: &[String]) -> i32 {
     let mut common = CommonArgs::default();
     let mut accept = false;
+    let mut accept_passing = false;
     let mut allow_gone = false;
     let mut base_url = None;
     let mut filter = None;
@@ -73,6 +83,7 @@ pub fn run(args: &[String]) -> i32 {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--accept" => accept = true,
+            "--accept-passing" => accept_passing = true,
             "--allow-gone" => allow_gone = true,
             "--base-url" => match it.next() {
                 Some(u) => base_url = Some(u.clone()),
@@ -103,6 +114,7 @@ pub fn run(args: &[String]) -> i32 {
     match probe(
         &pkg,
         accept,
+        accept_passing,
         allow_gone,
         base_url.as_deref(),
         filter.as_deref(),
@@ -118,21 +130,44 @@ pub fn run(args: &[String]) -> i32 {
 fn probe(
     pkg: &str,
     accept: bool,
+    accept_passing: bool,
     allow_gone: bool,
     base_url: Option<&str>,
     filter: Option<&str>,
 ) -> Result<i32, String> {
     let pkg_dir = invoke::pkg_dir(pkg).map_err(|e| e.to_string())?;
+    probe_in(
+        &pkg_dir,
+        accept,
+        accept_passing,
+        allow_gone,
+        base_url,
+        filter,
+    )
+}
+
+fn probe_in(
+    pkg_dir: &Path,
+    accept: bool,
+    accept_passing: bool,
+    allow_gone: bool,
+    base_url: Option<&str>,
+    filter: Option<&str>,
+) -> Result<i32, String> {
     let manifest_path = pkg_dir.join("probes.toml");
     let manifest_text = std::fs::read_to_string(&manifest_path)
         .map_err(|e| format!("cannot read {}: {e}", manifest_path.display()))?;
     let manifest = parse_manifest(&manifest_text)?;
 
+    let mut routes = Vec::new();
     let spec = match &manifest.header.spec {
         Some(file) => {
             let path = pkg_dir.join(file);
             let text = std::fs::read_to_string(&path)
                 .map_err(|e| format!("cannot read spec {}: {e}", path.display()))?;
+            if let Some(kind) = soothfast_spec::sniff_kind(file, &text) {
+                routes = soothfast_spec::providers::parse(kind, &text).unwrap_or_default();
+            }
             Some(serialize::from_text(&text).map_err(|e| format!("{file}: {e}"))?)
         }
         None => None,
@@ -148,17 +183,29 @@ fn probe(
     let base = match base_url {
         Some(url) => url.trim_end_matches('/').to_string(),
         None => {
-            let launched = launch(&manifest.header, &pkg_dir)?;
+            let launched = launch(&manifest.header, pkg_dir)?;
             let url = launched.base_url.clone();
             _server = launched;
             url
         }
     };
 
+    let accepting = accept || accept_passing;
     let declared: Vec<String> = manifest.probes.iter().map(|p| p.name.clone()).collect();
-    let gone = baseline.retain_probes(&declared);
+    let gone: Vec<String> = baseline
+        .probes
+        .keys()
+        .filter(|name| !declared.contains(name))
+        .cloned()
+        .collect();
+    // A partial write must not delete a locked probe as a side effect of an
+    // unrelated failure, so only a full accept or --allow-gone sweeps them.
+    let drop_gone = allow_gone || accept;
+    if drop_gone {
+        baseline.retain_probes(&declared);
+    }
     let mut failures = 0u32;
-    if !gone.is_empty() && !accept && !allow_gone {
+    if !gone.is_empty() && !drop_gone {
         for name in &gone {
             failures += 1;
             println!(
@@ -168,6 +215,7 @@ fn probe(
     }
 
     let mut probed = 0usize;
+    let mut accepted = 0usize;
     for entry in &manifest.probes {
         if let Some(f) = filter
             && !entry.name.contains(f)
@@ -175,7 +223,17 @@ fn probe(
             continue;
         }
         probed += 1;
-        let (status, body) = get(&base, &entry.path)?;
+        let (status, body) = match request(&base, &entry.method, &entry.path, entry.body.as_deref())
+        {
+            Ok(response) => response,
+            Err(e) => {
+                // One unreachable endpoint must not discard the rest of
+                // the run the way an early return would.
+                failures += 1;
+                println!("FAIL  {}: {e}", entry.name);
+                continue;
+            }
+        };
         if status != entry.status {
             failures += 1;
             println!(
@@ -184,37 +242,47 @@ fn probe(
             );
             continue;
         }
-        let value: Value = match serde_json::from_slice(&body) {
-            Ok(v) => v,
-            Err(e) => {
-                failures += 1;
-                println!("FAIL  {}: {} body is not JSON: {e}", entry.name, entry.path);
-                continue;
+        // A no-content answer has nothing to parse. It still reaches the
+        // lock, so an endpoint that stops returning data reads as a
+        // regression rather than a pass.
+        let value: Option<Value> = if body.iter().all(u8::is_ascii_whitespace) {
+            None
+        } else {
+            match serde_json::from_slice(&body) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    failures += 1;
+                    println!("FAIL  {}: {} body is not JSON: {e}", entry.name, entry.path);
+                    continue;
+                }
             }
         };
 
         let mut problems = Vec::new();
         let mut declared = None;
-        if let Some(spec) = spec.as_ref().filter(|_| entry.shape) {
-            match shape::response_schema(spec, "GET", &entry.path, entry.status) {
-                Some(schema) => {
-                    for v in shape::validate(&value, schema, spec) {
-                        problems.push(format!("shape: {} — {}", v.path, v.message));
+        if let Some(value) = &value {
+            if let Some(spec) = spec.as_ref().filter(|_| entry.shape) {
+                match shape::response_schema(spec, &entry.method, &entry.path, entry.status) {
+                    Some(schema) => {
+                        for v in shape::validate(value, schema, spec) {
+                            problems.push(format!("shape: {} — {}", v.path, v.message));
+                        }
+                        declared = Some(coverage::declared_paths(schema, spec));
                     }
-                    declared = Some(coverage::declared_paths(schema, spec));
+                    None => problems.push("shape: no response schema in spec".to_string()),
                 }
-                None => problems.push("shape: no response schema in spec".to_string()),
             }
-        }
-        for assertion in &entry.asserts {
-            if let Err(reason) = assertion.check(&value) {
-                problems.push(format!("assert: {reason}"));
+            for assertion in &entry.asserts {
+                if let Err(reason) = assertion.check(value) {
+                    problems.push(format!("assert: {reason}"));
+                }
             }
         }
 
-        let observed = population::populate(&value);
-        if accept {
+        let observed = value.as_ref().map(population::populate).unwrap_or_default();
+        if accepting {
             if problems.is_empty() {
+                accepted += 1;
                 baseline.accept(&entry.name, &observed, declared.as_ref());
                 println!(
                     "probe: {} — accepted ({} fields{})",
@@ -263,14 +331,30 @@ fn probe(
     if probed == 0 {
         return Err("no probes matched".into());
     }
-    if accept {
-        if failures > 0 {
+    if !routes.is_empty() {
+        let covered = routes
+            .iter()
+            .filter(|op| manifest.probes.iter().any(|p| probe_covers(p, op)))
+            .count();
+        println!(
+            "spec probe: {covered} of {} spec route(s) covered by a probe",
+            routes.len()
+        );
+    }
+    if accepting {
+        if failures > 0 && !accept_passing {
             println!("spec probe: NOT accepted ({failures} problem(s))");
             return Ok(1);
         }
         std::fs::write(&lock_path, baseline.render())
             .map_err(|e| format!("cannot write {}: {e}", lock_path.display()))?;
-        println!("spec probe: accepted {probed} probe(s) into probes.lock");
+        if failures > 0 {
+            println!(
+                "spec probe: accepted {accepted} of {probed} probe(s), {failures} left as they were"
+            );
+            return Ok(1);
+        }
+        println!("spec probe: accepted {accepted} probe(s) into probes.lock");
         return Ok(0);
     }
     if failures > 0 {
@@ -280,6 +364,14 @@ fn probe(
         println!("spec probe: passed ({probed} probe(s))");
         Ok(0)
     }
+}
+
+/// Whether `entry` exercises `op`: same verb, and a path the route's
+/// template accepts.
+fn probe_covers(entry: &Probe, op: &soothfast_spec::DeclaredOp) -> bool {
+    let path = entry.path.split('?').next().unwrap_or(&entry.path);
+    let concrete: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    entry.method.eq_ignore_ascii_case(&op.method) && shape::template_matches(&op.path, &concrete)
 }
 
 fn uncovered_note(baseline: &Baseline, probe: &str) -> String {
@@ -313,6 +405,8 @@ fn parse_manifest(text: &str) -> Result<Manifest, String> {
             probes.push(Probe {
                 name: String::new(),
                 path: String::new(),
+                method: "GET".to_string(),
+                body: None,
                 status: 200,
                 sometimes: Vec::new(),
                 asserts: Vec::new(),
@@ -384,6 +478,11 @@ fn set_probe(entry: &mut Probe, key: &str, value: TomlValue) -> Result<(), Strin
     match (key, value) {
         ("name", TomlValue::Str(s)) => entry.name = s,
         ("path", TomlValue::Str(s)) => entry.path = s,
+        ("method", TomlValue::Str(s)) => entry.method = s.to_ascii_uppercase(),
+        // A body spans more lines than the mini-TOML parser joins, so an
+        // array of fragments is accepted alongside a single-line string.
+        ("body", TomlValue::Str(s)) => entry.body = Some(s),
+        ("body", TomlValue::StrArray(a)) => entry.body = Some(a.join("\n")),
         ("status", TomlValue::Int(n)) if (100..=599).contains(&n) => entry.status = n as u16,
         ("sometimes", TomlValue::StrArray(a)) => entry.sometimes = a,
         ("shape", TomlValue::Bool(b)) => entry.shape = b,
@@ -462,10 +561,15 @@ fn launch(header: &Header, pkg_dir: &Path) -> Result<Server, String> {
     Ok(Server { child, base_url })
 }
 
-/// One HTTP/1.1 GET against a loopback server. Hand-rolled over
+/// One HTTP/1.1 request against a loopback server. Hand-rolled over
 /// `TcpStream` in keeping with the dependency budget — no TLS, no
 /// keep-alive, `Connection: close` and read to completion.
-fn get(base: &str, path: &str) -> Result<(u16, Vec<u8>), String> {
+fn request(
+    base: &str,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> Result<(u16, Vec<u8>), String> {
     let authority = base
         .strip_prefix("http://")
         .ok_or_else(|| format!("only http:// base URLs are probed, got {base}"))?;
@@ -475,11 +579,22 @@ fn get(base: &str, path: &str) -> Result<(u16, Vec<u8>), String> {
         .set_read_timeout(Some(Duration::from_secs(120)))
         .map_err(|e| e.to_string())?;
     let mut stream = stream;
-    write!(
-        stream,
-        "GET {path} HTTP/1.1\r\nHost: {authority}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
-    )
-    .map_err(|e| format!("send {path}: {e}"))?;
+    let mut head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nAccept: application/json\r\nConnection: close\r\n"
+    );
+    if let Some(body) = body {
+        head.push_str("Content-Type: application/json\r\n");
+        head.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
+    head.push_str("\r\n");
+    stream
+        .write_all(head.as_bytes())
+        .map_err(|e| format!("send {path}: {e}"))?;
+    if let Some(body) = body {
+        stream
+            .write_all(body.as_bytes())
+            .map_err(|e| format!("send {path}: {e}"))?;
+    }
 
     let mut reader = BufReader::new(stream);
     let mut status_line = String::new();
@@ -602,5 +717,170 @@ status = 404
         assert!(parse_manifest("[site]\nname = \"x\"\n").is_err());
         assert!(parse_manifest("[probes]\nbogus = 1\n").is_err());
         assert!(parse_manifest("[[probe]]\nname = \"a\"\npath = \"/x\"\nbogus = 1\n").is_err());
+    }
+
+    use std::io::BufWriter;
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    struct Fake {
+        base: String,
+        seen: Arc<Mutex<Vec<String>>>,
+    }
+
+    /// Serve `replies` (path -> status, body) over `connections` requests,
+    /// then stop listening so a later probe sees a refused connection.
+    fn fake_server(replies: Vec<(&'static str, u16, &'static str)>, connections: usize) -> Fake {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for _ in 0..connections {
+                let Ok((stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut head = String::new();
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    if let Some((name, value)) = line.trim_end().split_once(':')
+                        && name.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                    if line.trim_end().is_empty() {
+                        break;
+                    }
+                    head.push_str(&line);
+                }
+                let mut body = vec![0u8; length];
+                let _ = reader.read_exact(&mut body);
+                head.push_str(std::str::from_utf8(&body).unwrap_or(""));
+
+                let path = head.split_whitespace().nth(1).unwrap_or("/").to_string();
+                recorder.lock().unwrap().push(head);
+
+                let (status, payload) = replies
+                    .iter()
+                    .find(|(p, _, _)| *p == path)
+                    .map(|(_, s, b)| (*s, *b))
+                    .unwrap_or((404, ""));
+                let mut out = BufWriter::new(stream);
+                let _ = write!(
+                    out,
+                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                    payload.len()
+                );
+                let _ = out.flush();
+            }
+        });
+        Fake { base, seen }
+    }
+
+    fn pkg_with(manifest: &str, lock: Option<&str>) -> std::path::PathBuf {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("soothfast-probe-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("probes.toml"), manifest).unwrap();
+        if let Some(lock) = lock {
+            std::fs::write(dir.join("probes.lock"), lock).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn a_post_probe_sends_its_verb_and_body() {
+        let server = fake_server(vec![("/items", 201, "{\"id\":7}")], 1);
+        let dir = pkg_with(
+            "[[probe]]\nname = \"create\"\npath = \"/items\"\nmethod = \"post\"\nbody = \"{\\\"n\\\": 1}\"\nstatus = 201\n",
+            None,
+        );
+        let code = probe_in(&dir, true, false, false, Some(&server.base), None).unwrap();
+        assert_eq!(code, 0);
+
+        let seen = server.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].starts_with("POST /items HTTP/1.1"), "{}", seen[0]);
+        assert!(seen[0].contains("Content-Type: application/json"));
+        assert!(seen[0].contains("Content-Length: 8"));
+        assert!(seen[0].ends_with("{\"n\": 1}"), "{}", seen[0]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_no_content_response_is_probed_rather_than_failing_to_parse() {
+        let server = fake_server(vec![("/items/1", 204, "")], 1);
+        let dir = pkg_with(
+            "[[probe]]\nname = \"remove\"\npath = \"/items/1\"\nmethod = \"DELETE\"\nstatus = 204\n",
+            None,
+        );
+        let code = probe_in(&dir, true, false, false, Some(&server.base), None).unwrap();
+        assert_eq!(code, 0);
+        let lock = std::fs::read_to_string(dir.join("probes.lock")).unwrap();
+        assert!(lock.contains("remove"), "{lock}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const TWO_PROBES: &str = "\
+[[probe]]
+name = \"good\"
+path = \"/good\"
+
+[[probe]]
+name = \"flaky\"
+path = \"/flaky\"
+";
+
+    #[test]
+    fn accept_passing_locks_the_probes_that_passed() {
+        let server = fake_server(vec![("/good", 200, "{\"a\":1}"), ("/flaky", 500, "{}")], 2);
+        let dir = pkg_with(TWO_PROBES, None);
+        let code = probe_in(&dir, false, true, false, Some(&server.base), None).unwrap();
+        assert_eq!(code, 1);
+        let lock = std::fs::read_to_string(dir.join("probes.lock")).unwrap();
+        assert!(lock.contains("good"), "{lock}");
+        assert!(!lock.contains("flaky"), "{lock}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_plain_accept_still_writes_nothing_when_a_probe_fails() {
+        let server = fake_server(vec![("/good", 200, "{\"a\":1}"), ("/flaky", 500, "{}")], 2);
+        let dir = pkg_with(TWO_PROBES, None);
+        let code = probe_in(&dir, true, false, false, Some(&server.base), None).unwrap();
+        assert_eq!(code, 1);
+        assert!(!dir.join("probes.lock").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_partial_accept_does_not_silently_drop_a_locked_probe() {
+        let server = fake_server(vec![("/good", 200, "{\"a\":1}"), ("/flaky", 500, "{}")], 2);
+        let existing = "{\n  \"version\": 1,\n  \"probes\": {\n    \"retired\": { \"fields\": { \"z\": \"always\" } }\n  }\n}\n";
+        let dir = pkg_with(TWO_PROBES, Some(existing));
+        let code = probe_in(&dir, false, true, false, Some(&server.base), None).unwrap();
+        assert_eq!(code, 1);
+        let lock = std::fs::read_to_string(dir.join("probes.lock")).unwrap();
+        assert!(
+            lock.contains("retired"),
+            "a locked probe was deleted: {lock}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreachable_probe_fails_alone_instead_of_aborting_the_run() {
+        let server = fake_server(vec![("/good", 200, "{\"a\":1}")], 1);
+        let dir = pkg_with(TWO_PROBES, None);
+        let code = probe_in(&dir, false, false, false, Some(&server.base), None).unwrap();
+        assert_eq!(code, 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -42,7 +42,9 @@ pub fn response_schema<'a>(
         .get("schema")
 }
 
-fn template_matches(template: &str, concrete: &[&str]) -> bool {
+/// Whether a path template matches concrete path segments, treating any
+/// `{seg}` as a wildcard. Segment counts must agree.
+pub fn template_matches(template: &str, concrete: &[&str]) -> bool {
     let segments: Vec<&str> = template.split('/').filter(|s| !s.is_empty()).collect();
     segments.len() == concrete.len()
         && segments
