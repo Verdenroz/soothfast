@@ -116,6 +116,7 @@ jobs:
       - run: bin/cargo-soothfast docs check -p soothfast-measure --baseline self docs/measuring.md docs/gating.md
       - run: bin/cargo-soothfast docs check -p soothfast-docs --baseline self docs/living-docs.md
       - run: bin/cargo-soothfast docs check -p soothfast-spec --baseline self docs/spec.md
+      - run: bin/cargo-soothfast docs check -p soothfast-sdk --baseline self docs/sdk.md
       - run: bin/cargo-soothfast docs check -p soothfast-report --baseline self docs/reports.md
       - name: Public API doc coverage must stay complete
         run: |

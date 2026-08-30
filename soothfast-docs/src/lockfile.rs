@@ -13,12 +13,30 @@ pub const LOCKFILE: &str = "soothfast.lock";
 /// item path → fingerprint (hex).
 pub type Binds = BTreeMap<String, String>;
 
-/// Read accepted binds from `root`'s lockfile; a missing file is an empty
-/// map, not an error (a fresh repo has accepted nothing yet).
-pub fn read(root: &Path) -> Result<Binds, String> {
+/// Current lockfile format. Bumped whenever the fingerprint input changes, so
+/// a lock written by an older release reports as needing one re-accept rather
+/// than as prose that drifted.
+pub const VERSION: u64 = 2;
+
+/// Accepted binds, and the format version they were written under.
+#[derive(Debug, Default)]
+pub struct Lock {
+    /// Format on disk. A lockfile that does not exist yet reports [`VERSION`].
+    pub version: u64,
+    /// item path → fingerprint (hex).
+    pub binds: Binds,
+}
+
+/// Read `root`'s lockfile. A missing file is an empty map at the current
+/// version, not an error (a fresh repo has accepted nothing yet). A file
+/// without a `version` key predates the field and reads as v1.
+pub fn read(root: &Path) -> Result<Lock, String> {
     let path = root.join(LOCKFILE);
     if !path.exists() {
-        return Ok(Binds::new());
+        return Ok(Lock {
+            version: VERSION,
+            binds: Binds::new(),
+        });
     }
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let doc: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
@@ -30,12 +48,15 @@ pub fn read(root: &Path) -> Result<Binds, String> {
             }
         }
     }
-    Ok(binds)
+    Ok(Lock {
+        version: doc["version"].as_u64().unwrap_or(1),
+        binds,
+    })
 }
 
 /// Persist `binds` to `root`'s lockfile as stable, pretty-printed JSON.
 pub fn write(root: &Path, binds: &Binds) -> Result<(), String> {
-    let doc = json!({ "version": 1, "binds": binds });
+    let doc = json!({ "version": VERSION, "binds": binds });
     let text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     std::fs::write(root.join(LOCKFILE), text + "\n").map_err(|e| e.to_string())
 }
@@ -50,6 +71,33 @@ pub fn merge(existing: &Binds, fresh: &Binds, full_scope: bool) -> Binds {
         let mut merged = existing.clone();
         merged.extend(fresh.iter().map(|(k, v)| (k.clone(), v.clone())));
         merged
+    }
+}
+
+/// The entries of `lock` a fresh accept may merge over.
+///
+/// Fingerprints from an older format are not comparable to what this build
+/// derives, so they are dropped rather than carried under a stamp claiming
+/// they are current; their pages read as unlocked until their own
+/// `docs accept` runs, which is what lets a repo migrate one accept at a
+/// time.
+///
+/// A lock from a *newer* format is equally incomparable but is not this
+/// build's to discard, so it is refused instead. The asymmetry is the point:
+/// an older entry is worthless, a newer one is someone else's valid work.
+/// Accepting is deliberately stricter than checking here: a check against a
+/// newer lock only misreports, while an accept would overwrite it.
+pub fn comparable(lock: Lock) -> Result<Binds, String> {
+    if lock.version > VERSION {
+        return Err(format!(
+            "{LOCKFILE} is format v{}, this build writes v{VERSION}: upgrade cargo-soothfast rather than overwriting a newer lock",
+            lock.version
+        ));
+    }
+    if lock.version == VERSION {
+        Ok(lock.binds)
+    } else {
+        Ok(Binds::new())
     }
 }
 
@@ -72,6 +120,33 @@ mod tests {
         assert_eq!(merged.get("a::x").map(String::as_str), Some("9999"));
         assert_eq!(merged.get("b::y").map(String::as_str), Some("2222"));
         assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn entries_from_an_older_format_are_not_merged_over() {
+        let lock = Lock {
+            version: VERSION - 1,
+            binds: binds(&[("a::x", "1111")]),
+        };
+        assert!(comparable(lock).unwrap().is_empty());
+    }
+
+    #[test]
+    fn entries_from_this_format_survive_a_partial_accept() {
+        let lock = Lock {
+            version: VERSION,
+            binds: binds(&[("a::x", "1111")]),
+        };
+        assert_eq!(comparable(lock).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_newer_lock_is_refused_rather_than_overwritten() {
+        let lock = Lock {
+            version: VERSION + 1,
+            binds: binds(&[("a::x", "1111")]),
+        };
+        assert!(comparable(lock).is_err());
     }
 
     #[test]

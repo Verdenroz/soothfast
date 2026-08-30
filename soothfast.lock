@@ -1,14 +1,14 @@
 {
   "binds": {
     "soothfast::keep": "40ed41ef7edb6071",
-    "soothfast_docs::markdown::scan": "dd1c726e26918840",
+    "soothfast_docs::markdown::scan": "ac718f572d84a79b",
     "soothfast_measure::stats::summarize": "fee68b1d78b7c283",
     "soothfast_measure::sweep::evaluate": "25adff41bf8c1e86",
     "soothfast_sdk::envtemplate::markdown_table": "d3886fe4ba7e0ad2",
-    "soothfast_sdk::envtemplate::parse": "5f6bff5285d396b3",
+    "soothfast_sdk::envtemplate::parse": "33fe374fa5b16c64",
     "soothfast_sdk::lower::lower": "477d9f02d053157d",
     "soothfast_spec::openapi::diff::diff": "62368d178ce6bc49",
     "soothfast_spec::reconcile::reconcile": "0e17d5defc0e63ac"
   },
-  "version": 1
+  "version": 2
 }

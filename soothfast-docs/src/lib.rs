@@ -10,6 +10,8 @@
 //! - numbers can't rot: quantitative claims in prose evaluate against the
 //!   latest measurement baseline ([`claims`]).
 
+mod comments;
+
 pub mod claims;
 pub mod diff;
 pub mod gentests;

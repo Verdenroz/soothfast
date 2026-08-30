@@ -9,10 +9,12 @@ page is itself checked by the mechanism it describes.
 <!-- soothfast:bind soothfast_docs::markdown::scan -->
 `<!-- soothfast:bind path::to::item -->` marks the prose that follows as a
 claim about that item's *behavior*. `cargo soothfast docs accept` records
-the item's current source fingerprint (FNV-1a over its normalized token
-stream) in `soothfast.lock`. `cargo soothfast docs check` recomputes it and
-fails the build as soon as it no longer matches, which means the code
-changed under prose nobody re-read.
+the item's current source fingerprint (FNV-1a over its source span, with
+ordinary comments stripped and whitespace normalized) in `soothfast.lock`.
+`cargo soothfast docs check` recomputes it and fails the build as soon as it
+no longer matches, which means the code changed under prose nobody re-read.
+Rewording a `//` comment inside the item leaves the fingerprint alone; a
+`///` on a field does not, because that states part of the contract.
 
 A marker the scanner cannot read is an error rather than a skipped line.
 That covers an unterminated marker, or one naming a kind other than `bind`
@@ -26,11 +28,12 @@ marker silently would report a green check for a claim nothing evaluated.
 <!-- /soothfast:bind -->
 ```
 
-`soothfast.lock` is plain JSON: `{"version": 1, "binds": {"item::path":
+`soothfast.lock` is plain JSON: `{"version": 2, "binds": {"item::path":
 "<16-hex-digit fingerprint>"}}`. Running `docs accept` with explicit PATHS
 merges into the existing lock, so binds outside that scope survive. Running
 it with no PATHS replaces the whole map, which is how dead binds get
-dropped.
+dropped. A lock written under an older `version` reports as needing one
+re-accept rather than as prose that drifted.
 
 ## Claims: numbers checked against a real run
 
