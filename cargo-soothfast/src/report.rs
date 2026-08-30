@@ -334,7 +334,9 @@ fn changelog_already_cut(existing: &str, against_ref: Option<&str>) -> bool {
         .next()
         .unwrap_or("")
         .trim_start_matches('[')
-        .trim_end_matches(']');
+        .split(']')
+        .next()
+        .unwrap_or("");
     match against_ref {
         Some(r) => heading_version != r.trim_start_matches('v'),
         // No tag at all reachable from HEAD only happens for a repo's very
@@ -472,6 +474,12 @@ mod tests {
         // Keep-a-Changelog repos bracket the version in the heading.
         assert!(!changelog_already_cut(
             "# Changelog\n\n## [3.0.0] - 2026-08-30\n\n- shipped\n",
+            Some("v3.0.0")
+        ));
+        // Generators that link the version to a compare view close the
+        // bracket mid-token, so the version has to be cut at the `]`.
+        assert!(!changelog_already_cut(
+            "# Changelog\n\n## [3.0.0](https://github.com/o/r/compare/v2.9.0...v3.0.0) - 2026-08-30\n\n- shipped\n",
             Some("v3.0.0")
         ));
     }
