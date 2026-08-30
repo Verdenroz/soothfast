@@ -139,10 +139,12 @@ page is itself checked by the mechanism it describes.</p>
 <div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_docs::markdown::scan"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">scan</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
 <p><code>&lt;!-- soothfast:bind path::to::item --&gt;</code> marks the prose that follows as a
 claim about that item's <em>behavior</em>. <code>cargo soothfast docs accept</code> records
-the item's current source fingerprint (FNV-1a over its normalized token
-stream) in <code>soothfast.lock</code>. <code>cargo soothfast docs check</code> recomputes it and
-fails the build as soon as it no longer matches, which means the code
-changed under prose nobody re-read.</p>
+the item's current source fingerprint (FNV-1a over its source span, with
+ordinary comments stripped and whitespace normalized) in <code>soothfast.lock</code>.
+<code>cargo soothfast docs check</code> recomputes it and fails the build as soon as it
+no longer matches, which means the code changed under prose nobody re-read.
+Rewording a <code>//</code> comment inside the item leaves the fingerprint alone; a
+<code>///</code> on a field does not, because that states part of the contract.</p>
 <p>A marker the scanner cannot read is an error rather than a skipped line.
 That covers an unterminated marker, or one naming a kind other than <code>bind</code>
 or <code>claim</code>. Trailing whitespace after <code>--&gt;</code> is fine. Dropping a malformed
@@ -151,11 +153,12 @@ marker silently would report a green check for a claim nothing evaluated.</p>
 `sorted` returns a new, ascending-order vector; the input is untouched.
 &lt;!-- /soothfast:bind --&gt;
 </code></pre></figure>
-<p><code>soothfast.lock</code> is plain JSON: <code>{&quot;version&quot;: 1, &quot;binds&quot;: {&quot;item::path&quot;:
+<p><code>soothfast.lock</code> is plain JSON: <code>{&quot;version&quot;: 2, &quot;binds&quot;: {&quot;item::path&quot;:
 &quot;&lt;16-hex-digit fingerprint&gt;&quot;}}</code>. Running <code>docs accept</code> with explicit PATHS
 merges into the existing lock, so binds outside that scope survive. Running
 it with no PATHS replaces the whole map, which is how dead binds get
-dropped.</p>
+dropped. A lock written under an older <code>version</code> reports as needing one
+re-accept rather than as prose that drifted.</p>
 <h2 id="claims-numbers-checked-against-a-real-run">Claims: numbers checked against a real run<a class="anchor" href="#claims-numbers-checked-against-a-real-run" aria-label="Link to this section">#</a></h2>
 <p>A claim marker looks like
 <code>&lt;!-- soothfast:claim item.backend.metric &lt;op&gt; value[unit] --&gt;</code>. It takes
@@ -166,7 +169,7 @@ taken as-is, and underscores are allowed for readability, as in <code>25_000</co
 <code>docs check</code> evaluates the expression against
 <code>baseline[&quot;items&quot;][item][backend][metric]</code> and fails if the metric is
 missing or the comparison does not hold.</p>
-<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 243 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.84" y2="11" class="chip-scale-fill" style="--fill-len:0.84"/><circle cx="8.84" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.84"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
+<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 255 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.88" y2="11" class="chip-scale-fill" style="--fill-len:0.88"/><circle cx="8.88" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.88"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
 <p>Parsing one claim expression, the exact work <code>docs check</code> does per marker on
 this page, costs under 50µs at the tail.</p>
 <h2 id="fence-tags-on-rust-code-blocks">Fence tags on rust code blocks<a class="anchor" href="#fence-tags-on-rust-code-blocks" aria-label="Link to this section">#</a></h2>

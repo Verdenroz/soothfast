@@ -156,7 +156,7 @@ compared against a fixed bound.</p>
 </code></pre></figure>
 <p>Parse <code>demo::lcg_checksum.perfcnt.instructions &lt; 25000</code> (units on the
 bound: ns/us/ms/s multiply into ns; bare numbers stay raw).</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">p99</span><span class="ev-detail">p99 243ns &lt;= 50000ns</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_claim_parse`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">234</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">243</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">6</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">170</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">p99</span><span class="ev-detail">p99 255ns &lt;= 50000ns</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_claim_parse`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">243</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">255</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">6</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">170</span></div></div></div>
 <h2 id="soothfast-docs-diff"><code>soothfast_docs::diff</code><a class="anchor" href="#soothfast-docs-diff" aria-label="Link to this section">#</a></h2>
 <h3 id="surfacediff-struct"><code>SurfaceDiff</code> <sup>struct</sup><a class="anchor" href="#surfacediff-struct" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SurfaceDiff</span>
@@ -203,6 +203,30 @@ blocks (all ignored / non-rust / capture).</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">LOCKFILE</span>: &amp;<span class="tok-ty">str</span> = <span class="tok-str">&quot;soothfast.lock&quot;</span>
 </code></pre></figure>
 <p>Lockfile name, resolved relative to the workspace root.</p>
+<h3 id="lock-struct"><code>Lock</code> <sup>struct</sup><a class="anchor" href="#lock-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Lock</span>
+</code></pre></figure>
+<p>Accepted binds, and the format version they were written under.</p>
+<h3 id="version-constant"><code>VERSION</code> <sup>constant</sup><a class="anchor" href="#version-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">VERSION</span>: <span class="tok-ty">u64</span> = <span class="tok-num">2</span>
+</code></pre></figure>
+<p>Current lockfile format. Bumped whenever the fingerprint input changes, so
+a lock written by an older release reports as needing one re-accept rather
+than as prose that drifted.</p>
+<h3 id="comparable-function"><code>comparable</code> <sup>function</sup><a class="anchor" href="#comparable-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">comparable</span>(lock: <span class="tok-ty">Lock</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Binds</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>The entries of <code>lock</code> a fresh accept may merge over.</p>
+<p>Fingerprints from an older format are not comparable to what this build
+derives, so they are dropped rather than carried under a stamp claiming
+they are current; their pages read as unlocked until their own
+<code>docs accept</code> runs, which is what lets a repo migrate one accept at a
+time.</p>
+<p>A lock from a <em>newer</em> format is equally incomparable but is not this
+build's to discard, so it is refused instead. The asymmetry is the point:
+an older entry is worthless, a newer one is someone else's valid work.
+Accepting is deliberately stricter than checking here: a check against a
+newer lock only misreports, while an accept would overwrite it.</p>
 <h3 id="merge-function"><code>merge</code> <sup>function</sup><a class="anchor" href="#merge-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">merge</span>(existing: &amp;<span class="tok-ty">Binds</span>, fresh: &amp;<span class="tok-ty">Binds</span>, full_scope: <span class="tok-ty">bool</span>) -&gt; <span class="tok-ty">Binds</span>
 </code></pre></figure>
@@ -210,10 +234,11 @@ blocks (all ignored / non-rust / capture).</p>
 the map outright, dropping binds that no longer exist anywhere; a partial
 (explicit-paths) accept must preserve out-of-scope entries.</p>
 <h3 id="read-function"><code>read</code> <sup>function</sup><a class="anchor" href="#read-function" aria-label="Link to this section">#</a></h3>
-<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">read</span>(root: &amp;<span class="tok-ty">Path</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Binds</span>, <span class="tok-ty">String</span>&gt;
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">read</span>(root: &amp;<span class="tok-ty">Path</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Lock</span>, <span class="tok-ty">String</span>&gt;
 </code></pre></figure>
-<p>Read accepted binds from <code>root</code>'s lockfile; a missing file is an empty
-map, not an error (a fresh repo has accepted nothing yet).</p>
+<p>Read <code>root</code>'s lockfile. A missing file is an empty map at the current
+version, not an error (a fresh repo has accepted nothing yet). A file
+without a <code>version</code> key predates the field and reads as v1.</p>
 <h3 id="write-function"><code>write</code> <sup>function</sup><a class="anchor" href="#write-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">write</span>(root: &amp;<span class="tok-ty">Path</span>, binds: &amp;<span class="tok-ty">Binds</span>) -&gt; <span class="tok-ty">Result</span>&lt;(), <span class="tok-ty">String</span>&gt;
 </code></pre></figure>
@@ -242,7 +267,7 @@ plus <code>soothfast:bind</code> / <code>soothfast:claim</code> markers, in docu
 <p>Scan one markdown text. Closing markers (<code>&lt;!-- /soothfast:... --&gt;</code>) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.05 over sizes [512, 2048, 8192] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_markdown_scan`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">420434</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">440992</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4114</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">338400</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.05 over sizes [512, 2048, 8192] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_markdown_scan`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">449811</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">453728</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4114</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">338400</span></div></div></div>
 <h3 id="splice-output-function"><code>splice_output</code> <sup>function</sup><a class="anchor" href="#splice-output-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">splice_output</span>( text: &amp;<span class="tok-ty">str</span>, nth_capture: <span class="tok-ty">usize</span>, output: &amp;<span class="tok-ty">str</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Option</span>&lt;<span class="tok-ty">String</span>&gt;, <span class="tok-ty">String</span>&gt;
 </code></pre></figure>
@@ -344,6 +369,12 @@ relative filenames in spans (the directory rustdoc ran in).</p>
     <li><a class="toc-l3" href="#binds-type-alias">Binds type_alias</a></li>
   
     <li><a class="toc-l3" href="#lockfile-constant">LOCKFILE constant</a></li>
+  
+    <li><a class="toc-l3" href="#lock-struct">Lock struct</a></li>
+  
+    <li><a class="toc-l3" href="#version-constant">VERSION constant</a></li>
+  
+    <li><a class="toc-l3" href="#comparable-function">comparable function</a></li>
   
     <li><a class="toc-l3" href="#merge-function">merge function</a></li>
   
