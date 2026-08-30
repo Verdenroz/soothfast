@@ -178,7 +178,7 @@ fresh "Unreleased" section into <code>CHANGELOG.md</code> in place. Every
 <code>## [released]</code> section already there survives. Re-running it is idempotent:
 it replaces the <code>Unreleased</code> section rather than appending a duplicate.</p>
 <p>The draft leads with what merged since <code>v1.0</code>, grouped into Features, Fixes,
-Performance, Documentation and Internal by each commit's conventional type,
+Performance, Documentation, Dependencies and Internal by each commit's type,
 each entry carrying the pull request its subject named. That comes from
 <code>git log</code>, not a forge API, since every merge lands as a squash whose
 subject already holds the number. Release commits, and the bots that
