@@ -337,7 +337,7 @@ gates all of this; see `.github/dependabot.yml` for the automated dependency
   imported. Justify any new dependency in the PR description; it must also
   satisfy `deny.toml` (crates.io only, no wildcard versions, allowed licenses).
 - Commit format: `<type>: <short description>` with types `feat`, `fix`,
-  `refactor`, `docs`, `test`, `chore`, `perf`, `ci`.
+  `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `deps`.
 
 ## Mechanism Design Principle
 

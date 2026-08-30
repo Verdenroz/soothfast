@@ -83,7 +83,7 @@ fresh "Unreleased" section into `CHANGELOG.md` in place. Every
 it replaces the `Unreleased` section rather than appending a duplicate.
 
 The draft leads with what merged since `v1.0`, grouped into Features, Fixes,
-Performance, Documentation and Internal by each commit's conventional type,
+Performance, Documentation, Dependencies and Internal by each commit's type,
 each entry carrying the pull request its subject named. That comes from
 `git log`, not a forge API, since every merge lands as a squash whose
 subject already holds the number. Release commits, and the bots that

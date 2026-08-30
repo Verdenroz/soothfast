@@ -57,11 +57,12 @@ const BOT_SUBJECTS: [&str; 3] = [
 
 /// Reader-facing sections, in the order a release renders them. Anything
 /// whose type is missing here lands under the last entry.
-const SECTIONS: [(&str, &[&str]); 5] = [
+const SECTIONS: [(&str, &[&str]); 6] = [
     ("Features", &["feat"]),
     ("Fixes", &["fix"]),
     ("Performance", &["perf"]),
     ("Documentation", &["docs"]),
+    ("Dependencies", &["deps"]),
     ("Internal", &["refactor", "chore", "test", "ci"]),
 ];
 
@@ -218,6 +219,7 @@ fn default_icon(name: &str) -> &'static str {
         "Fixes" => "\u{1F41B}",
         "Performance" => "\u{26A1}",
         "Documentation" => "\u{1F4DD}",
+        "Dependencies" => "\u{1F4E6}",
         _ => "\u{1F527}",
     }
 }
@@ -543,6 +545,32 @@ mod tests {
         let changes = changes_from_subjects(&subjects(&["feat: add a thing"]));
         let rendered = super::sections(&changes, &icons);
         assert!(rendered.contains("### A Features"), "{rendered}");
+    }
+
+    #[test]
+    fn dependency_bumps_get_their_own_section_rather_than_vanishing() {
+        let changes = changes_from_subjects(&subjects(&[
+            "deps: bump linkme from 0.3.36 to 0.3.37 (#85)",
+            "deps: bump actions/download-artifact from 4.3.0 to 8.0.1 (#90)",
+            "ci: harden the gate workflow (#91)",
+        ]));
+        let rendered = super::sections(&changes, &Icons::default());
+        assert!(rendered.contains("\u{1F4E6} Dependencies"), "{rendered}");
+        assert!(
+            rendered.contains("- Bump linkme from 0.3.36 to 0.3.37 (#85)"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("- Bump actions/download-artifact from 4.3.0 to 8.0.1 (#90)"),
+            "{rendered}"
+        );
+        let deps = rendered.find("Dependencies").unwrap();
+        let internal = rendered.find("Internal").unwrap();
+        assert!(deps < internal, "dependencies should precede internal");
+        assert!(
+            rendered.contains("- Harden the gate workflow (#91)"),
+            "{rendered}"
+        );
     }
 
     #[test]
