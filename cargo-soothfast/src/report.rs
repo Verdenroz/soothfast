@@ -329,7 +329,12 @@ fn changelog_already_cut(existing: &str, against_ref: Option<&str>) -> bool {
     if heading.starts_with("Unreleased") || heading.starts_with("[Unreleased]") {
         return false;
     }
-    let heading_version = heading.split_whitespace().next().unwrap_or("");
+    let heading_version = heading
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_start_matches('[')
+        .trim_end_matches(']');
     match against_ref {
         Some(r) => heading_version != r.trim_start_matches('v'),
         // No tag at all reachable from HEAD only happens for a repo's very
@@ -463,6 +468,11 @@ mod tests {
         assert!(!changelog_already_cut(
             "# Changelog\n\n## 0.1.3 - 2026-08-09\n\n- shipped\n",
             Some("v0.1.3")
+        ));
+        // Keep-a-Changelog repos bracket the version in the heading.
+        assert!(!changelog_already_cut(
+            "# Changelog\n\n## [3.0.0] - 2026-08-30\n\n- shipped\n",
+            Some("v3.0.0")
         ));
     }
 
