@@ -41,7 +41,9 @@ fn assemble(
     };
     // A missing lockfile is fine (no binds yet); a corrupt one is not —
     // rendering every bind as "not locked" would misstate verification.
-    let binds = lockfile::read(root).map_err(|e| format!("cannot read soothfast.lock: {e}"))?;
+    let binds = lockfile::read(root)
+        .map_err(|e| format!("cannot read soothfast.lock: {e}"))?
+        .binds;
 
     let mut plugins: Vec<Box<dyn soothfast_site::SitePlugin>> =
         vec![Box::new(evidence::Evidence::new(baseline_data, binds))];

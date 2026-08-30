@@ -226,35 +226,45 @@ fn check(a: &DocsArgs) -> i32 {
             Ok(l) => l,
             Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
         };
-        for (file, doc, _) in &scanned.docs {
-            for bind in &doc.binds {
-                let Some(info) = surf.items.get(&bind.item) else {
-                    failures += 1;
-                    println!(
-                        "FAIL  {file}:{} bind {}: item not found in crate",
-                        bind.line, bind.item
-                    );
-                    continue;
-                };
-                let current = format!("{:016x}", info.fingerprint);
-                match lock.get(&bind.item) {
-                    None => {
+        if lock.version < lockfile::VERSION && !lock.binds.is_empty() {
+            failures += 1;
+            println!(
+                "FAIL  {} is format v{}, this build writes v{}: fingerprints are derived differently, so every bind needs one re-verify, then `docs accept`",
+                lockfile::LOCKFILE,
+                lock.version,
+                lockfile::VERSION
+            );
+        } else {
+            for (file, doc, _) in &scanned.docs {
+                for bind in &doc.binds {
+                    let Some(info) = surf.items.get(&bind.item) else {
                         failures += 1;
                         println!(
-                            "FAIL  {file}:{} bind {}: not locked — verify the prose, then `cargo soothfast docs accept -p {}`",
-                            bind.line,
-                            bind.item,
-                            a.pkg.as_deref().unwrap_or("PKG")
-                        );
-                    }
-                    Some(locked) if *locked != current => {
-                        failures += 1;
-                        println!(
-                            "FAIL  {file}:{} bind {}: STALE — code changed under this prose; re-verify, then `docs accept`",
+                            "FAIL  {file}:{} bind {}: item not found in crate",
                             bind.line, bind.item
                         );
+                        continue;
+                    };
+                    let current = format!("{:016x}", info.fingerprint);
+                    match lock.binds.get(&bind.item) {
+                        None => {
+                            failures += 1;
+                            println!(
+                                "FAIL  {file}:{} bind {}: not locked — verify the prose, then `cargo soothfast docs accept -p {}`",
+                                bind.line,
+                                bind.item,
+                                a.pkg.as_deref().unwrap_or("PKG")
+                            );
+                        }
+                        Some(locked) if *locked != current => {
+                            failures += 1;
+                            println!(
+                                "FAIL  {file}:{} bind {}: STALE — code changed under this prose; re-verify, then `docs accept`",
+                                bind.line, bind.item
+                            );
+                        }
+                        Some(_) => println!("ok    {file}:{} bind {}", bind.line, bind.item),
                     }
-                    Some(_) => println!("ok    {file}:{} bind {}", bind.line, bind.item),
                 }
             }
         }
@@ -373,7 +383,7 @@ fn accept(a: &DocsArgs) -> i32 {
         lockfile::Binds::new()
     } else {
         match lockfile::read(&scanned.root) {
-            Ok(b) => b,
+            Ok(l) => l.binds,
             Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
         }
     };

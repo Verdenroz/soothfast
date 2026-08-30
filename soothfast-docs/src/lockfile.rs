@@ -13,12 +13,30 @@ pub const LOCKFILE: &str = "soothfast.lock";
 /// item path → fingerprint (hex).
 pub type Binds = BTreeMap<String, String>;
 
-/// Read accepted binds from `root`'s lockfile; a missing file is an empty
-/// map, not an error (a fresh repo has accepted nothing yet).
-pub fn read(root: &Path) -> Result<Binds, String> {
+/// Current lockfile format. Bumped whenever the fingerprint input changes, so
+/// a lock written by an older release reports as needing one re-accept rather
+/// than as prose that drifted.
+pub const VERSION: u64 = 2;
+
+/// Accepted binds, and the format version they were written under.
+#[derive(Debug, Default)]
+pub struct Lock {
+    /// Format on disk. A lockfile that does not exist yet reports [`VERSION`].
+    pub version: u64,
+    /// item path → fingerprint (hex).
+    pub binds: Binds,
+}
+
+/// Read `root`'s lockfile. A missing file is an empty map at the current
+/// version, not an error (a fresh repo has accepted nothing yet). A file
+/// without a `version` key predates the field and reads as v1.
+pub fn read(root: &Path) -> Result<Lock, String> {
     let path = root.join(LOCKFILE);
     if !path.exists() {
-        return Ok(Binds::new());
+        return Ok(Lock {
+            version: VERSION,
+            binds: Binds::new(),
+        });
     }
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let doc: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
@@ -30,12 +48,15 @@ pub fn read(root: &Path) -> Result<Binds, String> {
             }
         }
     }
-    Ok(binds)
+    Ok(Lock {
+        version: doc["version"].as_u64().unwrap_or(1),
+        binds,
+    })
 }
 
 /// Persist `binds` to `root`'s lockfile as stable, pretty-printed JSON.
 pub fn write(root: &Path, binds: &Binds) -> Result<(), String> {
-    let doc = json!({ "version": 1, "binds": binds });
+    let doc = json!({ "version": VERSION, "binds": binds });
     let text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     std::fs::write(root.join(LOCKFILE), text + "\n").map_err(|e| e.to_string())
 }

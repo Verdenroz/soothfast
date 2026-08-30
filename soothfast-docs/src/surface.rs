@@ -1,9 +1,10 @@
 //! Public API surface from rustdoc JSON: item paths, span-derived
 //! fingerprints, doc presence, and literal source signatures.
 //!
-//! Fingerprints hash the item's *source span text* (whitespace-normalized),
-//! not rustdoc's structured types — rustdoc item ids shift across builds and
-//! would churn a structure-based hash.
+//! Fingerprints hash the item's *source span text* (ordinary comments
+//! stripped, then whitespace-normalized), not rustdoc's structured types —
+//! rustdoc item ids shift across builds and would churn a structure-based
+//! hash.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -17,7 +18,7 @@ use serde_json::Value;
 pub struct ItemInfo {
     /// Rustdoc item kind (`function`, `struct`, `module`, ...).
     pub kind: String,
-    /// FNV-1a of the whitespace-normalized span source.
+    /// FNV-1a of the span source, comments stripped then whitespace-normalized.
     pub fingerprint: u64,
     /// Declaration text (span up to the first `{` or `;`), normalized.
     pub signature: String,
@@ -277,7 +278,7 @@ fn span_fingerprint(
     if bl == 0 || el > lines.len() || bl > el {
         return None;
     }
-    let source = lines[bl - 1..el].join("\n");
+    let source = crate::comments::strip(&lines[bl - 1..el].join("\n"));
     let normalized: String = source.split_whitespace().collect::<Vec<_>>().join(" ");
     let sig_end = normalized
         .find('{')
@@ -430,5 +431,52 @@ mod tests {
             ("myc::A", item("struct", 7)),
         ]);
         assert_eq!(surf.grouped().len(), 2);
+    }
+
+    fn fingerprint_of(tag: &str, source: &str) -> (u64, String) {
+        let dir = std::env::temp_dir().join(format!(
+            "soothfast-fingerprint-{}-{tag}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("lib.rs"), source).unwrap();
+        let span = json!({
+            "filename": "lib.rs",
+            "begin": [1, 0],
+            "end": [source.lines().count(), 0],
+        });
+        let got = span_fingerprint(&span, &dir, &mut HashMap::new()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        got
+    }
+
+    #[test]
+    fn a_comment_only_edit_does_not_move_the_fingerprint() {
+        let plain = fingerprint_of("plain", "pub struct S {\n    a: u8,\n}\n");
+        let noted = fingerprint_of(
+            "noted",
+            "pub struct S {\n    // widened for the wire format\n    a: u8,\n}\n",
+        );
+        assert_eq!(plain.0, noted.0);
+    }
+
+    #[test]
+    fn a_field_change_still_moves_the_fingerprint() {
+        let before = fingerprint_of("before", "pub struct S {\n    a: u8,\n}\n");
+        let after = fingerprint_of("after", "pub struct S {\n    a: u16,\n}\n");
+        assert_ne!(before.0, after.0);
+    }
+
+    #[test]
+    fn a_doc_comment_on_a_field_is_part_of_the_fingerprint() {
+        let before = fingerprint_of(
+            "doc-before",
+            "pub struct S {\n    /// count\n    a: u8,\n}\n",
+        );
+        let after = fingerprint_of(
+            "doc-after",
+            "pub struct S {\n    /// total\n    a: u8,\n}\n",
+        );
+        assert_ne!(before.0, after.0);
     }
 }
