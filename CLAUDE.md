@@ -302,8 +302,10 @@ claim being enforced, not a bug in the check.
 - `changelog.yml` — on push to `master`, regenerates the living
   `CHANGELOG.md` and lands it through a bot-opened, auto-squash-merged PR on
   `bot/changelog-update`. It skips runs whose actor already ends in `[bot]`,
-  which is what stops its own merge from retriggering it. Commits
-  authenticate with a short-lived token from a repo-installed GitHub App
+  which is what stops its own merge from retriggering it. Per-merge is
+  affordable because the derived sections drop out when the API surface and
+  the gate are quiet, so a run has nothing to say unless something merged.
+  Commits authenticate with a short-lived token from a repo-installed App
   (`actions/create-github-app-token`, `CHANGELOG_APP_CLIENT_ID` /
   `CHANGELOG_APP_PRIVATE_KEY`) rather than the default `GITHUB_TOKEN` —
   GitHub gates every subsequent workflow run on a PR behind manual approval
