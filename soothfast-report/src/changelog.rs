@@ -111,8 +111,6 @@ pub fn draft(inputs: &DraftInputs) -> String {
         out.push('\n');
         return out;
     }
-    // The derived sections sit below a rule: they are evidence for the
-    // release, not the story of it.
     out.push_str("---\n\n");
     out.push_str(&api);
     out.push_str(&perf);

@@ -444,9 +444,6 @@ fn merge_changelog(existing: &str, draft: &str) -> String {
             doc.push('\n');
             doc.push_str(rest.trim_start_matches('\n'));
         }
-        // A fresh section gets the prompts commented out, so whoever cuts
-        // the release has the shape in front of them and an untouched block
-        // still renders as nothing.
         None => {
             let (heading, rest) = draft.split_once('\n').unwrap_or((draft, ""));
             doc.push_str(heading);
