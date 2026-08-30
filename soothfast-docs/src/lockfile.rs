@@ -85,6 +85,8 @@ pub fn merge(existing: &Binds, fresh: &Binds, full_scope: bool) -> Binds {
 /// A lock from a *newer* format is equally incomparable but is not this
 /// build's to discard, so it is refused instead. The asymmetry is the point:
 /// an older entry is worthless, a newer one is someone else's valid work.
+/// Accepting is deliberately stricter than checking here: a check against a
+/// newer lock only misreports, while an accept would overwrite it.
 pub fn comparable(lock: Lock) -> Result<Binds, String> {
     if lock.version > VERSION {
         return Err(format!(
