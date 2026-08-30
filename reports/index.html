@@ -181,8 +181,15 @@ it replaces the <code>Unreleased</code> section rather than appending a duplicat
 Performance, Documentation and Internal by each commit's conventional type,
 each entry carrying the pull request its subject named. That comes from
 <code>git log</code>, not a forge API, since every merge lands as a squash whose
-subject already holds the number. Release and changelog bookkeeping commits
-are dropped so a release does not list its own paperwork.</p>
+subject already holds the number. Release commits, and the bots that
+regenerate derived artifacts, are dropped so a release does not list its own
+paperwork.</p>
+<p>The section icons come from a shipped default. Override any subset in
+<code>soothfast.toml</code>; a name that is not a section is an error rather than a
+silent default:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[changelog.icons]</span>
+<span class="tok-ty">features </span>=<span class="tok-str"> &quot;📐&quot;</span>
+<span class="tok-ty">performance </span>=<span class="tok-str"> &quot;⏱&quot;</span></code></pre></figure>
 <p>Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against <code>v1.0</code>, and the measured movement past gate
 thresholds. A section with nothing to report is omitted rather than shipped
