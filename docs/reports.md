@@ -86,8 +86,9 @@ The draft leads with what merged since `v1.0`, grouped into Features, Fixes,
 Performance, Documentation and Internal by each commit's conventional type,
 each entry carrying the pull request its subject named. That comes from
 `git log`, not a forge API, since every merge lands as a squash whose
-subject already holds the number. Release and changelog bookkeeping commits
-are dropped so a release does not list its own paperwork.
+subject already holds the number. Release commits, and the bots that
+regenerate derived artifacts, are dropped so a release does not list its own
+paperwork.
 
 Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against `v1.0`, and the measured movement past gate

@@ -56,8 +56,9 @@ const SECTIONS: [(&str, &[&str]); 5] = [
     ("Internal", &["refactor", "chore", "test", "ci"]),
 ];
 
-/// Parse `type: subject (#N)` subjects. Release and changelog bookkeeping
-/// commits are dropped, since a release listing its own paperwork is noise.
+/// Parse `type: subject (#N)` subjects. Release commits and the bots that
+/// regenerate derived artifacts are dropped, since a release listing its own
+/// paperwork is noise.
 pub fn changes_from_subjects(subjects: &[String]) -> Vec<Change> {
     subjects
         .iter()
@@ -73,7 +74,7 @@ pub fn changes_from_subjects(subjects: &[String]) -> Vec<Change> {
             };
             let subject = subject.trim();
             let bookkeeping =
-                subject.starts_with("release v") || subject.starts_with("regenerate CHANGELOG");
+                subject.starts_with("release v") || subject.starts_with("regenerate ");
             (!bookkeeping).then(|| Change {
                 kind: kind.to_string(),
                 subject: subject.to_string(),
@@ -447,6 +448,7 @@ mod tests {
             "fix: sync untracked config into gate worktrees (#113)",
             "chore: release v0.1.19 (#112)",
             "docs: regenerate CHANGELOG.md (#115)",
+            "docs: regenerate derived docs (#126)",
             "not a conventional subject",
         ]));
         assert_eq!(changes.len(), 2);
