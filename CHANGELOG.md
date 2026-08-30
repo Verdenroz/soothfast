@@ -4,7 +4,18 @@
 
 ### API surface
 
-No public API changes.
+```
+# soothfast-docs
+ADDED    soothfast_docs::lockfile::Lock
+ADDED    soothfast_docs::lockfile::VERSION
+ADDED    soothfast_docs::lockfile::comparable
+CHANGED  soothfast_docs::lockfile::read (signature)
+CHANGED  soothfast_docs::lockfile::write (body)
+CHANGED  soothfast_docs::surface::ItemInfo (body)
+
+# soothfast-spec
+ADDED    soothfast_spec::probe::shape::template_matches
+```
 
 ### Performance
 
