@@ -32,6 +32,9 @@
 
 ### 📦 Dependencies
 
+- Bump step-security/harden-runner from 2.20.0 to 2.21.0 (#138)
+- Bump github/codeql-action/upload-sarif from 4.37.0 to 4.37.8 (#140)
+- Bump Swatinem/rust-cache from 2.9.1 to 2.9.2 (#141)
 - Bump ossf/scorecard-action from 2.4.3 to 2.4.4 (#139)
 - Bump taiki-e/install-action from 2.85.13 to 2.86.6 (#137)
 
