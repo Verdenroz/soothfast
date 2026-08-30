@@ -2,7 +2,35 @@
 
 ## Unreleased (draft vs v0.1.19)
 
-### API surface
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### ✨ Features
+
+- Lead release notes with what merged (#128)
+- Probe non-GET routes and lock what passed (#125)
+- Gate accept headroom, partial --only, walltime downgrade (#116)
+
+### 🐛 Fixes
+
+- Stop hashing comments in bind fingerprints (#124)
+- Resume changelog regen on bracketed headings (#121)
+- Gate accept cache reuse and swallowed cargo stderr (#114)
+- Sync untracked .cargo/config.toml into gate worktrees (#113)
+
+### 📝 Documentation
+
+- Regenerate derived docs (#126)
+- Size --headroom to real jitter, not one run (#117)
+
+---
+
+### 🔍 API surface
 
 ```
 # soothfast-docs
@@ -15,13 +43,13 @@ CHANGED  soothfast_docs::surface::ItemInfo (body)
 
 # soothfast-spec
 ADDED    soothfast_spec::probe::shape::template_matches
+
+# soothfast-report
+ADDED    soothfast_report::changelog::Change
+ADDED    soothfast_report::changelog::changes_from_subjects
+CHANGED  soothfast_report::changelog::DraftInputs (body)
+CHANGED  soothfast_report::changelog::draft (body)
 ```
-
-### Performance
-
-| item | metric | was | now | delta |
-|---|---|---:|---:|---:|
-| _no movement past gate thresholds_ | | | | |
 
 
 ## 0.1.19 - 2026-08-27
