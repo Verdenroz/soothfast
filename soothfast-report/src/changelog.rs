@@ -36,9 +36,58 @@ pub struct PerfThresholds {
     pub allocs_pct: f64,
 }
 
+/// One merged change, read off a conventional-commit subject.
+pub struct Change {
+    /// Commit type: `feat`, `fix`, `perf`, `docs`, and the rest.
+    pub kind: String,
+    /// Subject line with the type prefix and pull request number removed.
+    pub subject: String,
+    /// Pull request the subject ended with, when it named one.
+    pub pr: Option<u32>,
+}
+
+/// Reader-facing sections, in the order a release renders them. Anything
+/// whose type is missing here lands under the last entry.
+const SECTIONS: [(&str, &[&str]); 5] = [
+    ("Features", &["feat"]),
+    ("Fixes", &["fix"]),
+    ("Performance", &["perf"]),
+    ("Documentation", &["docs"]),
+    ("Internal", &["refactor", "chore", "test", "ci"]),
+];
+
+/// Parse `type: subject (#N)` subjects. Release and changelog bookkeeping
+/// commits are dropped, since a release listing its own paperwork is noise.
+pub fn changes_from_subjects(subjects: &[String]) -> Vec<Change> {
+    subjects
+        .iter()
+        .filter_map(|line| {
+            let (kind, rest) = line.split_once(": ")?;
+            if !SECTIONS.iter().any(|(_, kinds)| kinds.contains(&kind)) {
+                return None;
+            }
+            let rest = rest.trim();
+            let (subject, pr) = match rest.rsplit_once(" (#") {
+                Some((head, tail)) => (head, tail.strip_suffix(')').and_then(|n| n.parse().ok())),
+                None => (rest, None),
+            };
+            let subject = subject.trim();
+            let bookkeeping =
+                subject.starts_with("release v") || subject.starts_with("regenerate CHANGELOG");
+            (!bookkeeping).then(|| Change {
+                kind: kind.to_string(),
+                subject: subject.to_string(),
+                pr,
+            })
+        })
+        .collect()
+}
+
 /// Inputs already computed by the CLI (API section, two baselines).
 pub struct DraftInputs<'a> {
     pub api: ApiSection<'a>,
+    /// Merged changes since the reference, newest first.
+    pub changes: &'a [Change],
     /// Reference baseline (older) — None renders current-only.
     pub old_baseline: Option<&'a Value>,
     pub new_baseline: &'a Value,
@@ -52,23 +101,86 @@ pub fn draft(inputs: &DraftInputs) -> String {
         ApiSection::Diff { against, .. } => format!("Unreleased (draft vs {against})"),
         ApiSection::Initial(_) => "Unreleased (initial public surface)".to_string(),
     };
-    let mut out = format!("## {heading}\n\n### API surface\n\n");
-    match &inputs.api {
-        ApiSection::Diff { text, .. } if is_empty_diff(text) => {
-            out.push_str("No public API changes.\n");
-        }
-        ApiSection::Diff { text, .. } => {
-            out.push_str("```\n");
-            out.push_str(text.trim_end());
-            out.push_str("\n```\n");
-        }
-        ApiSection::Initial([]) => {
-            out.push_str("No public items found: nothing was extracted to describe.\n");
-        }
-        ApiSection::Initial(entries) => out.push_str(&inventory(entries)),
-    }
+    let mut out = format!("## {heading}\n\n");
+    out.push_str(&sections(inputs.changes));
 
-    out.push_str("\n### Performance\n\n");
+    let api = api_section(&inputs.api);
+    let perf = perf_section(inputs);
+    if api.is_empty() && perf.is_empty() {
+        out.truncate(out.trim_end().len());
+        out.push('\n');
+        return out;
+    }
+    // The derived sections sit below a rule: they are evidence for the
+    // release, not the story of it.
+    out.push_str("---\n\n");
+    out.push_str(&api);
+    out.push_str(&perf);
+    out.truncate(out.trim_end().len());
+    out.push('\n');
+    out
+}
+
+/// One `### <emoji> <name>` block per type that has changes, omitting the
+/// rest so an empty section never ships.
+fn sections(changes: &[Change]) -> String {
+    let mut out = String::new();
+    for (name, kinds) in SECTIONS {
+        let mut entries = changes.iter().filter(|c| kinds.contains(&c.kind.as_str()));
+        let Some(first) = entries.next() else {
+            continue;
+        };
+        out.push_str(&format!("### {} {name}\n\n", section_icon(name)));
+        for change in std::iter::once(first).chain(entries) {
+            let subject = sentence_case(&change.subject);
+            match change.pr {
+                Some(pr) => out.push_str(&format!("- {subject} (#{pr})\n")),
+                None => out.push_str(&format!("- {subject}\n")),
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Commit subjects are imperative and lowercase; a release note reads as a
+/// list of sentences.
+fn sentence_case(subject: &str) -> String {
+    let mut chars = subject.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+fn section_icon(name: &str) -> &'static str {
+    match name {
+        "Features" => "\u{2728}",
+        "Fixes" => "\u{1F41B}",
+        "Performance" => "\u{26A1}",
+        "Documentation" => "\u{1F4DD}",
+        _ => "\u{1F527}",
+    }
+}
+
+/// The API surface block, empty when there is nothing to report.
+fn api_section(api: &ApiSection) -> String {
+    let body = match api {
+        ApiSection::Diff { text, .. } if is_empty_diff(text) => return String::new(),
+        ApiSection::Diff { text, .. } => format!("```\n{}\n```\n", text.trim_end()),
+        // An initial surface with nothing in it is a real finding, not an
+        // empty section: the extraction produced nothing to describe.
+        ApiSection::Initial([]) => {
+            "No public items found: nothing was extracted to describe.\n".to_string()
+        }
+        ApiSection::Initial(entries) => inventory(entries),
+    };
+    format!("### \u{1F50D} API surface\n\n{body}\n")
+}
+
+/// The measured-movement table, empty when nothing moved past a threshold.
+fn perf_section(inputs: &DraftInputs) -> String {
+    let mut out = String::new();
     match inputs.old_baseline {
         None => {
             out.push_str(&crate::perf_table::markdown(inputs.new_baseline));
@@ -83,8 +195,7 @@ pub fn draft(inputs: &DraftInputs) -> String {
                 ),
                 ("allocs", ["alloc", "allocs"], t.allocs_pct),
             ];
-            out.push_str("| item | metric | was | now | delta |\n|---|---|---:|---:|---:|\n");
-            let mut any = false;
+            let mut rows = String::new();
             let empty = serde_json::Map::new();
             let new_items = inputs.new_baseline["items"].as_object().unwrap_or(&empty);
             for (id, m) in new_items {
@@ -96,20 +207,21 @@ pub fn draft(inputs: &DraftInputs) -> String {
                     {
                         let delta = (n - o) / o * 100.0;
                         if delta.abs() >= *threshold {
-                            any = true;
-                            out.push_str(&format!(
+                            rows.push_str(&format!(
                                 "| `{id}` | {label} | {o:.1} | {n:.1} | {delta:+.1}% |\n"
                             ));
                         }
                     }
                 }
             }
-            if !any {
-                out.push_str("| _no movement past gate thresholds_ | | | | |\n");
+            if rows.is_empty() {
+                return String::new();
             }
+            out.push_str("| item | metric | was | now | delta |\n|---|---|---:|---:|---:|\n");
+            out.push_str(&rows);
         }
     }
-    out
+    format!("### \u{1F4CA} Gate movement\n\n{out}")
 }
 
 /// A diff the surface engine produced no findings for.
@@ -149,7 +261,7 @@ fn inventory(entries: &[SurfaceEntry]) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::{ApiSection, DraftInputs, PerfThresholds, draft};
+    use super::{ApiSection, Change, DraftInputs, PerfThresholds, changes_from_subjects, draft};
     use crate::llms::SurfaceEntry;
 
     /// The values `cargo-soothfast` passes from its gate constants.
@@ -171,11 +283,16 @@ mod tests {
         }
     }
 
+    fn subjects(lines: &[&str]) -> Vec<String> {
+        lines.iter().map(|l| l.to_string()).collect()
+    }
+
     #[test]
     fn drafts_diff_and_deltas() {
         let old = json!({ "items": { "demo::f": { "perfcnt": { "instructions": 100 } } } });
         let new = json!({ "items": { "demo::f": { "perfcnt": { "instructions": 90 } } } });
         let text = draft(&DraftInputs {
+            changes: &[],
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "ADDED    demo::g\n",
@@ -193,6 +310,7 @@ mod tests {
     fn an_unchanged_crates_sentinel_must_not_hide_findings() {
         let new = json!({ "items": {} });
         let text = draft(&DraftInputs {
+            changes: &[],
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "# a\nsurface: no public API changes\n\n# b\nADDED    b::x\n",
@@ -215,6 +333,7 @@ mod tests {
         let new = json!({ "items": { "demo::f": {
             "walltime": { "median_ns": 324972.0 }, "alloc": { "allocs": 6 } } } });
         let text = draft(&DraftInputs {
+            changes: &[],
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "",
@@ -223,7 +342,7 @@ mod tests {
             new_baseline: &new,
             thresholds: gate_thresholds(),
         });
-        assert!(text.contains("no movement past gate thresholds"), "{text}");
+        assert!(!text.contains("Gate movement"), "{text}");
         assert!(!text.contains("median_ns"), "{text}");
     }
 
@@ -235,6 +354,7 @@ mod tests {
         let new = json!({ "items": { "demo::f": {
             "walltime": { "median_ns": 200.0 }, "alloc": { "allocs": 120 } } } });
         let text = draft(&DraftInputs {
+            changes: &[],
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "",
@@ -254,6 +374,7 @@ mod tests {
     fn nothing_to_compare_against_does_not_claim_nothing_changed() {
         let new = json!({ "items": {} });
         let unchanged = draft(&DraftInputs {
+            changes: &[],
             api: ApiSection::Diff {
                 against: "v1.0.0",
                 text: "",
@@ -262,16 +383,18 @@ mod tests {
             new_baseline: &new,
             thresholds: gate_thresholds(),
         });
-        assert!(unchanged.contains("No public API changes."));
+        assert!(!unchanged.contains("API surface"), "{unchanged}");
+        assert!(unchanged.contains("draft vs v1.0.0"), "{unchanged}");
 
         let items = [entry("demo", "demo::f", "fn", "Does a thing.")];
         let initial = draft(&DraftInputs {
+            changes: &[],
             api: ApiSection::Initial(&items),
             old_baseline: None,
             new_baseline: &new,
             thresholds: gate_thresholds(),
         });
-        assert!(!initial.contains("No public API changes."), "{initial}");
+        assert!(initial.contains("API surface"), "{initial}");
         assert!(initial.contains("initial public surface"), "{initial}");
         assert!(
             initial.contains("1 public items across 1 crates"),
@@ -287,11 +410,79 @@ mod tests {
     fn an_empty_initial_surface_says_so_rather_than_looking_calm() {
         let new = json!({ "items": {} });
         let text = draft(&DraftInputs {
+            changes: &[],
             api: ApiSection::Initial(&[]),
             old_baseline: None,
             new_baseline: &new,
             thresholds: gate_thresholds(),
         });
         assert!(text.contains("No public items found"), "{text}");
+    }
+
+    #[test]
+    fn a_release_with_nothing_to_report_renders_only_its_heading() {
+        let new = json!({ "items": {} });
+        let old = json!({ "items": {} });
+        let text = draft(&DraftInputs {
+            changes: &[],
+            api: ApiSection::Diff {
+                against: "v1.0.0",
+                text: "",
+            },
+            old_baseline: Some(&old),
+            new_baseline: &new,
+            thresholds: gate_thresholds(),
+        });
+        assert_eq!(text.trim(), "## Unreleased (draft vs v1.0.0)");
+    }
+
+    #[test]
+    fn subjects_group_by_type_and_carry_their_pull_request() {
+        let changes = changes_from_subjects(&subjects(&[
+            "feat: add gate accept for reviewed regressions (#110)",
+            "fix: sync untracked config into gate worktrees (#113)",
+            "chore: release v0.1.19 (#112)",
+            "docs: regenerate CHANGELOG.md (#115)",
+            "not a conventional subject",
+        ]));
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].kind, "feat");
+        assert_eq!(
+            changes[0].subject,
+            "add gate accept for reviewed regressions"
+        );
+        assert_eq!(changes[0].pr, Some(110));
+        assert_eq!(changes[1].pr, Some(113));
+    }
+
+    #[test]
+    fn a_subject_without_a_pull_request_still_lists() {
+        let changes = changes_from_subjects(&subjects(&["fix: land a direct commit"]));
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].pr, None);
+    }
+
+    #[test]
+    fn only_the_types_with_changes_get_a_section() {
+        let new = json!({ "items": {} });
+        let changes = vec![Change {
+            kind: "fix".into(),
+            subject: "stop hashing comments".into(),
+            pr: Some(124),
+        }];
+        let text = draft(&DraftInputs {
+            changes: &changes,
+            api: ApiSection::Diff {
+                against: "v1.0.0",
+                text: "",
+            },
+            old_baseline: None,
+            new_baseline: &new,
+            thresholds: gate_thresholds(),
+        });
+        assert!(text.contains("Fixes"), "{text}");
+        assert!(text.contains("- Stop hashing comments (#124)"), "{text}");
+        assert!(!text.contains("Features"), "{text}");
+        assert!(!text.contains("Internal"), "{text}");
     }
 }
