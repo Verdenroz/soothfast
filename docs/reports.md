@@ -90,6 +90,16 @@ subject already holds the number. Release commits, and the bots that
 regenerate derived artifacts, are dropped so a release does not list its own
 paperwork.
 
+The section icons come from a shipped default. Override any subset in
+`soothfast.toml`; a name that is not a section is an error rather than a
+silent default:
+
+```toml
+[changelog.icons]
+features = "📐"
+performance = "⏱"
+```
+
 Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against `v1.0`, and the measured movement past gate
 thresholds. A section with nothing to report is omitted rather than shipped
