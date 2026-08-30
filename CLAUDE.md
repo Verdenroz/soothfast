@@ -299,12 +299,10 @@ claim being enforced, not a bug in the check.
 - `soothfast-gate.yml` — reusable workflow; runs `cargo soothfast gate` for a
   given package against the PR's merge-base, uploads `.soothfast/triage/` on
   failure, and posts/updates a PR comment with the gate output.
-- `changelog.yml` — on a same-repo PR, regenerates the living `CHANGELOG.md`
-  and commits straight onto the PR's own branch (`paths-ignore: CHANGELOG.md`
-  stops that commit from retriggering the job). Runs pre-merge rather than
-  after, on purpose: the Performance section embeds freshly measured
-  numbers that drift slightly on every run, so triggering on push-to-master
-  would open a near-noise-only bot PR after almost every merge. Commits
+- `changelog.yml` — on push to `master`, regenerates the living
+  `CHANGELOG.md` and lands it through a bot-opened, auto-squash-merged PR on
+  `bot/changelog-update`. It skips runs whose actor already ends in `[bot]`,
+  which is what stops its own merge from retriggering it. Commits
   authenticate with a short-lived token from a repo-installed GitHub App
   (`actions/create-github-app-token`, `CHANGELOG_APP_CLIENT_ID` /
   `CHANGELOG_APP_PRIVATE_KEY`) rather than the default `GITHUB_TOKEN` —
