@@ -143,7 +143,9 @@ fn sections(changes: &[Change]) -> String {
 
 /// Commit subjects are imperative and lowercase; a release note reads as a
 /// list of sentences. A subject opening on an identifier is left alone,
-/// since `soothfast.lock` is not a word to capitalize.
+/// since `soothfast.lock` is not a word to capitalize. `-` is deliberately
+/// not in that set: `cargo-soothfast` and `version-coupled` are the same
+/// shape, and the ordinary word is the commoner case.
 fn sentence_case(subject: &str) -> String {
     let first_token = subject.split_whitespace().next().unwrap_or_default();
     if first_token.contains(['.', '_', '(', ':']) {
