@@ -20,6 +20,7 @@
 
 ### 🐛 Fixes
 
+- Build the Intel macOS binary on a live runner (#134)
 - Stop hashing comments in bind fingerprints (#124)
 - Resume changelog regen on bracketed headings (#121)
 - Gate accept cache reuse and swallowed cargo stderr (#114)
