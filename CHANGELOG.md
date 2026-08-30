@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Give dependency updates their own section (#135)
 - Let a repo configure its changelog section icons (#132)
 - Lead release notes with what merged (#128)
 - Probe non-GET routes and lock what passed (#125)
