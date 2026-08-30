@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Let a repo configure its changelog section icons (#132)
 - Lead release notes with what merged (#128)
 - Probe non-GET routes and lock what passed (#125)
 - Gate accept headroom, partial --only, walltime downgrade (#116)
@@ -25,7 +26,6 @@
 
 ### 📝 Documentation
 
-- Regenerate derived docs (#126)
 - Size --headroom to real jitter, not one run (#117)
 
 ---
@@ -46,6 +46,7 @@ ADDED    soothfast_spec::probe::shape::template_matches
 
 # soothfast-report
 ADDED    soothfast_report::changelog::Change
+ADDED    soothfast_report::changelog::Icons
 ADDED    soothfast_report::changelog::changes_from_subjects
 CHANGED  soothfast_report::changelog::DraftInputs (body)
 CHANGED  soothfast_report::changelog::draft (body)
