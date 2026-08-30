@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Give dependency updates their own section (#135)
 - Let a repo configure its changelog section icons (#132)
 - Lead release notes with what merged (#128)
 - Probe non-GET routes and lock what passed (#125)
@@ -19,6 +20,7 @@
 
 ### 🐛 Fixes
 
+- Build the Intel macOS binary on a live runner (#134)
 - Stop hashing comments in bind fingerprints (#124)
 - Resume changelog regen on bracketed headings (#121)
 - Gate accept cache reuse and swallowed cargo stderr (#114)
