@@ -3,6 +3,7 @@
 //! time is soft (see gate.rs thresholds). Combos are a declared matrix
 //! (`--features-matrix "default;full;a,b"`), never the powerset.
 
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
@@ -10,37 +11,40 @@ use crate::invoke::{ItemMetrics, Run};
 
 /// Measure each combo: `cargo clean -p PKG` then a timed release build,
 /// artifact size taken as the largest emitted file for the package.
-pub fn measure(pkg: &str, matrix: &str) -> Result<Run, String> {
-    measure_in(pkg, matrix, None)
+pub fn measure(pkg: &str, matrix: &str, target_dir: Option<&Path>) -> Result<Run, String> {
+    measure_in(pkg, matrix, None, target_dir)
 }
 
 /// Like [`measure`], but built from another directory (a merge-base
 /// worktree) so `gate --backend buildcost --against-ref` can compare.
-pub fn measure_in(pkg: &str, matrix: &str, dir: Option<&std::path::Path>) -> Result<Run, String> {
+pub fn measure_in(
+    pkg: &str,
+    matrix: &str,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+) -> Result<Run, String> {
+    warm_dependencies(pkg, dir, target_dir)?;
     let mut run = Run::default();
     for combo in matrix.split(';').map(str::trim).filter(|c| !c.is_empty()) {
-        let mut clean_cmd = Command::new("cargo");
-        clean_cmd.args(["clean", "--release", "-p", pkg]);
-        if let Some(d) = dir {
-            clean_cmd.current_dir(d);
-        }
-        let clean = clean_cmd.status().map_err(|e| e.to_string())?;
+        let clean = cargo(&["clean", "--release", "-p", pkg], dir, target_dir)
+            .status()
+            .map_err(|e| e.to_string())?;
         if !clean.success() {
             return Err(format!("cargo clean failed for {pkg}"));
         }
 
-        let mut cmd = Command::new("cargo");
-        cmd.args([
-            "build",
-            "--release",
-            "-p",
-            pkg,
-            "--message-format",
-            "json-render-diagnostics",
-        ]);
-        if let Some(d) = dir {
-            cmd.current_dir(d);
-        }
+        let mut cmd = cargo(
+            &[
+                "build",
+                "--release",
+                "-p",
+                pkg,
+                "--message-format",
+                "json-render-diagnostics",
+            ],
+            dir,
+            target_dir,
+        );
         match combo {
             "default" => {}
             "none" => {
@@ -99,4 +103,33 @@ pub fn measure_in(pkg: &str, matrix: &str, dir: Option<&std::path::Path>) -> Res
         );
     }
     Ok(run)
+}
+
+fn cargo(args: &[&str], dir: Option<&Path>, target_dir: Option<&Path>) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.args(args);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    if let Some(td) = target_dir {
+        cmd.env("CARGO_TARGET_DIR", td);
+    }
+    cmd
+}
+
+/// Build once untimed. `clean -p` drops only this package, so on a cold
+/// target dir the dependencies would otherwise compile inside the timed
+/// window and the number would measure the machine's history.
+fn warm_dependencies(
+    pkg: &str,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+) -> Result<(), String> {
+    let warm = cargo(&["build", "--release", "-p", pkg], dir, target_dir)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if warm.success() {
+        return Ok(());
+    }
+    Err(format!("warmup build failed for {pkg}"))
 }

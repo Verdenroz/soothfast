@@ -254,22 +254,13 @@ fn resolve(g: &GateArgs) -> Result<Option<(Value, Run, bool)>, String> {
         let Some(pkg) = g.common.pkg.clone() else {
             return Err("--backend buildcost requires -p PKG".into());
         };
-        let current = crate::buildcost::measure(&pkg, &g.matrix)?;
+        let head_target = invoke::buildcost_target_dir().map_err(|e| e.to_string())?;
+        let current = crate::buildcost::measure(&pkg, &g.matrix, Some(&head_target))?;
         let reference = if let Some(refname) = &g.against_ref {
-            // Merge-base build cost, measured in a worktree. Warm the dep
-            // graph un-timed first: the worktree's target dir starts cold,
-            // and dep compilation isn't this package's build cost.
+            let base_target = invoke::buildcost_base_target_dir().map_err(|e| e.to_string())?;
             let base = invoke::with_merge_base_worktree(refname, |wt| {
                 invoke::sync_untracked_cargo_config(wt)?;
-                let warm = std::process::Command::new("cargo")
-                    .args(["build", "--release", "-p", &pkg])
-                    .current_dir(wt)
-                    .status()
-                    .map_err(|e| e.to_string())?;
-                if !warm.success() {
-                    return Err(format!("merge-base warmup build failed for {pkg}"));
-                }
-                crate::buildcost::measure_in(&pkg, &g.matrix, Some(wt))
+                crate::buildcost::measure_in(&pkg, &g.matrix, Some(wt), Some(&base_target))
             })?;
             let mut doc = serde_json::json!({ "version": 1 });
             doc["items"] = invoke::run_to_items_value(&base);

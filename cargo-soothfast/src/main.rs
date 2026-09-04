@@ -169,7 +169,11 @@ fn cmd_measure(args: &[String]) -> i32 {
         let Some(pkg) = common.pkg.clone() else {
             return arg_err("--backend buildcost requires -p PKG");
         };
-        match buildcost::measure(&pkg, &matrix) {
+        let target_dir = match invoke::buildcost_target_dir() {
+            Ok(d) => d,
+            Err(e) => return arg_err(&e.to_string()),
+        };
+        match buildcost::measure(&pkg, &matrix, Some(&target_dir)) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("soothfast: {e}");

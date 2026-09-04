@@ -1199,6 +1199,21 @@ pub fn worktree_target_dir() -> io::Result<PathBuf> {
     Ok(target_dir(None)?.join("soothfast-worktree"))
 }
 
+/// Buildcost's own target dir. `cargo clean -p` drops every artifact of the
+/// package under the profile dir whatever its hash, so a dir shared with the
+/// bench gate would lose the gate's copies on each buildcost leg.
+pub fn buildcost_target_dir() -> io::Result<PathBuf> {
+    Ok(target_dir(None)?.join("soothfast-buildcost"))
+}
+
+/// The merge-base side of [`buildcost_target_dir`], kept beside the parent
+/// target dir so it outlives the worktree the sources are checked out in.
+/// Separate from the head dir for the reason [`worktree_target_dir`] gives:
+/// a member hashes to the same `-C metadata` from either checkout.
+pub fn buildcost_base_target_dir() -> io::Result<PathBuf> {
+    Ok(target_dir(None)?.join("soothfast-buildcost-base"))
+}
+
 /// Run a git command in the workspace root, returning trimmed stdout.
 pub fn git(args: &[&str]) -> io::Result<String> {
     let root = workspace_root()?;
