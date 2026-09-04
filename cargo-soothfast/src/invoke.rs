@@ -246,6 +246,9 @@ pub fn bench_executable(
 ) -> Option<PathBuf> {
     let target = common.target.as_deref().unwrap_or("soothfast");
     let mut cmd = Command::new("cargo");
+    if let Some(toolchain) = bench_toolchain() {
+        cmd.arg(format!("+{toolchain}"));
+    }
     cmd.args(["bench", "--no-run", "--message-format=json"]);
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
