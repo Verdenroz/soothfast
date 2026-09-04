@@ -40,9 +40,7 @@ baselines: ## Measure every self-bench crate into the "self" baseline
 	done
 
 gate: ## Merge-base gates vs $(BASE): self-benches + build cost
-	@for crate in $(BENCH_CRATES); do \
-		$(SOOTHFAST) gate -p $$crate --against-ref $(BASE) || exit 1; \
-	done
+	$(SOOTHFAST) gate $(addprefix -p ,$(BENCH_CRATES)) --against-ref $(BASE)
 	$(SOOTHFAST) gate -p soothfast --backend buildcost --against-ref $(BASE)
 	$(SOOTHFAST) gate -p cargo-soothfast --backend buildcost --against-ref $(BASE)
 

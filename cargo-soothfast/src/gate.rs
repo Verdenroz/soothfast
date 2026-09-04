@@ -76,6 +76,10 @@ pub fn run(args: &[String]) -> i32 {
     if args.first().map(String::as_str) == Some("accept") {
         return accept_cmd(&args[1..]);
     }
+    let packages = packages_in(args);
+    if packages.len() > 1 {
+        return run_each(args, &packages);
+    }
     let mut g = GateArgs {
         common: CommonArgs::default(),
         baseline: "base".into(),
@@ -243,6 +247,91 @@ pub fn run(args: &[String]) -> i32 {
         println!("gate: passed ({} item(s))", current.items.len());
         0
     }
+}
+
+/// Gate each package in turn, after building every bench target together.
+fn run_each(args: &[String], packages: &[String]) -> i32 {
+    let mut common = CommonArgs::default();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        common.try_parse(a, &mut it);
+    }
+    common.pkg = None;
+    if let Err(e) = gate_config::apply(&mut common) {
+        return err(&e);
+    }
+    // `--features` names one package's features; across several cargo wants
+    // `pkg/feature`, so leave those builds to the per-package legs.
+    if common.features.is_none() {
+        prebuild_both_sides(packages, &common, args);
+    }
+
+    let mut worst = 0;
+    for pkg in packages {
+        let rc = run(&with_package(args, pkg));
+        if rc != 0 {
+            worst = rc;
+        }
+    }
+    worst
+}
+
+/// Build every bench target once per side. After a rebase the merge-base
+/// side is the expensive one, at release with codegen-units pinned to 1.
+fn prebuild_both_sides(packages: &[String], common: &CommonArgs, args: &[String]) {
+    let _ = invoke::prebuild_benches(packages, common, None, None);
+    let Some(refname) = against_ref_in(args) else {
+        return;
+    };
+    let Ok(target) = invoke::worktree_target_dir() else {
+        return;
+    };
+    let _ = invoke::with_merge_base_worktree(&refname, |wt| {
+        invoke::sync_untracked_cargo_config(wt)?;
+        invoke::sync_harness_versions(wt)?;
+        let _ = invoke::prebuild_benches(packages, common, Some(wt), Some(&target));
+        Ok(())
+    });
+}
+
+fn against_ref_in(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--against-ref" {
+            return it.next().cloned();
+        }
+    }
+    None
+}
+
+/// Packages named by repeated `-p`, in the order given.
+fn packages_in(args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if matches!(a.as_str(), "-p" | "--package")
+            && let Some(p) = it.next()
+        {
+            out.push(p.clone());
+        }
+    }
+    out
+}
+
+/// `args` with every `-p` collapsed to the single named package.
+fn with_package(args: &[String], pkg: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if matches!(a.as_str(), "-p" | "--package") {
+            it.next();
+            continue;
+        }
+        out.push(a.clone());
+    }
+    out.push("-p".into());
+    out.push(pkg.into());
+    out
 }
 
 /// Resolve the comparison pair for a gate run: reference doc, current run,

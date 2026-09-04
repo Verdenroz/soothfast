@@ -85,6 +85,7 @@ fn bench_build_command(
     dir: Option<&Path>,
     target_dir: Option<&Path>,
     build: Build,
+    pkgs: &[&str],
 ) -> Command {
     let mut cmd = Command::new("cargo");
     if let Some(toolchain) = bench_toolchain() {
@@ -104,7 +105,7 @@ fn bench_build_command(
             cmd.args(["--profile", "dev"]);
         }
     }
-    if let Some(p) = &common.pkg {
+    for p in pkgs {
         cmd.args(["-p", p]);
     }
     // Cargo-level flag: must precede the `--` separating runner args.
@@ -126,7 +127,8 @@ fn bench_command(
     target_dir: Option<&Path>,
     build: Build,
 ) -> Command {
-    let mut cmd = bench_build_command(common, dir, target_dir, build);
+    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+    let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs);
     cmd.arg("--");
     if let Some(f) = &common.filter {
         cmd.args(["--filter", f]);
@@ -250,6 +252,21 @@ pub fn run_bench(common: &CommonArgs, extra: &[&str]) -> io::Result<Vec<Value>> 
     run_bench_in(common, extra, None)
 }
 
+/// Build several packages' bench targets in one cargo invocation. Built one
+/// at a time they serialize, each paying its own critical path.
+pub fn prebuild_benches(
+    pkgs: &[String],
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+) -> io::Result<()> {
+    let names: Vec<&str> = pkgs.iter().map(String::as_str).collect();
+    bench_build_command(common, dir, target_dir, Build::Measure, &names)
+        .args(["--no-run"])
+        .status()?;
+    Ok(())
+}
+
 /// Path of the compiled bench executable, via `cargo bench --no-run`'s JSON
 /// messages. `None` on any failure: callers fall through to a normal
 /// measured run, which surfaces the real error.
@@ -259,7 +276,8 @@ pub fn bench_executable(
     target_dir: Option<&Path>,
 ) -> Option<PathBuf> {
     let target = common.target.as_deref().unwrap_or("soothfast");
-    let mut cmd = bench_build_command(common, dir, target_dir, Build::Measure);
+    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+    let mut cmd = bench_build_command(common, dir, target_dir, Build::Measure, &pkgs);
     cmd.args(["--no-run", "--message-format=json"]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
