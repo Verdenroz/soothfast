@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.2.0)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### ⚡ Performance
+
+- Reuse the gate's worktree, binaries, and rustdoc output (#156)
+
+
 ## 0.2.0 - 2026-08-30
 
 <!-- soothfast:notes -->
