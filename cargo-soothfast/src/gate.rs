@@ -652,7 +652,7 @@ fn measure_ref_interleaved(
 
         if digests.as_ref().is_some_and(|(head, base)| head == base) {
             println!(
-                "gate: bench binaries identical (.text match) — no measurable change possible"
+                "gate: bench binaries identical (code and data match) — no measurable change possible"
             );
             // Head shares that machine code, so the cached run is its
             // measurement too, and the next commit can reuse it from HEAD.
@@ -802,33 +802,60 @@ fn bench_text_digests(
         return None;
     }
     let digest = |p: &std::path::Path| {
-        text_section_bytes(p).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
+        loaded_section_bytes(p).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
     };
     Some((digest(&head)?, digest(&base)?))
 }
 
-/// The executable's `.text` section, extracted with objcopy. Whole-file
-/// comparison would never match: debug info embeds the absolute build path,
-/// and the two sides build in different directories.
-fn text_section_bytes(exe: &std::path::Path) -> Option<Vec<u8>> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let out = std::env::temp_dir().join(format!(
-        "soothfast-text-{}-{}.bin",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed),
-    ));
-    let status = std::process::Command::new("objcopy")
-        .args(["-O", "binary", "--only-section=.text"])
+/// Every allocatable section carrying file contents, name-tagged and
+/// concatenated. Whole-file comparison would never match: debug info embeds
+/// the absolute build path, and the two sides build in different directories.
+fn loaded_section_bytes(exe: &std::path::Path) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("objdump")
+        .arg("-h")
         .arg(exe)
-        .arg(&out)
-        .status();
-    let bytes = match status {
-        Ok(s) if s.success() => std::fs::read(&out).ok(),
-        _ => None,
-    };
-    let _ = std::fs::remove_file(&out);
-    bytes.filter(|b| !b.is_empty())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let image = std::fs::read(exe).ok()?;
+    let listing = String::from_utf8_lossy(&out.stdout);
+    let mut lines = listing.lines();
+    let mut buf = Vec::new();
+    while let Some(header) = lines.next() {
+        let Some((name, size, offset)) = section_header(header) else {
+            continue;
+        };
+        let flags = lines.next()?;
+        if !digestible(name, flags) {
+            continue;
+        }
+        let bytes = image.get(offset..offset.checked_add(size)?)?;
+        buf.extend_from_slice(name.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(bytes);
+    }
+    (!buf.is_empty()).then_some(buf)
+}
+
+/// Sections that carry the binary's identity: loaded into the image and
+/// backed by file contents. `.note.gnu.build-id` is a hash of the whole
+/// output, debug info included, so it differs between builds of identical
+/// code.
+fn digestible(name: &str, flags: &str) -> bool {
+    flags.contains("ALLOC") && flags.contains("CONTENTS") && name != ".note.gnu.build-id"
+}
+
+/// `Idx Name Size VMA LMA File-off Algn` from one `objdump -h` header line.
+fn section_header(line: &str) -> Option<(&str, usize, usize)> {
+    let f: Vec<&str> = line.split_whitespace().collect();
+    if f.len() < 7 || f[0].parse::<u32>().is_err() {
+        return None;
+    }
+    let size = usize::from_str_radix(f[2], 16).ok()?;
+    let offset = usize::from_str_radix(f[5], 16).ok()?;
+    Some((f[1], size, offset))
 }
 
 /// Fold a side's timing-only second round into its full first round. A
@@ -1355,8 +1382,8 @@ fn partial(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare,
-        identical_pass_args, save_verdict, text_section_bytes, walltime_limit,
+        CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare, digestible,
+        identical_pass_args, loaded_section_bytes, save_verdict, walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
@@ -2032,32 +2059,56 @@ mod tests {
     }
 
     #[test]
-    fn text_extraction_returns_none_for_a_non_elf_file() {
+    fn section_extraction_returns_none_for_a_non_elf_file() {
         let path = std::env::temp_dir().join(format!("soothfast-not-elf-{}", std::process::id()));
         std::fs::write(&path, b"just text, no sections").unwrap();
-        assert_eq!(text_section_bytes(&path), None);
+        assert_eq!(loaded_section_bytes(&path), None);
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn text_extraction_returns_none_for_a_missing_file() {
+    fn section_extraction_returns_none_for_a_missing_file() {
         assert_eq!(
-            text_section_bytes(std::path::Path::new("/nonexistent/soothfast-bench")),
+            loaded_section_bytes(std::path::Path::new("/nonexistent/soothfast-bench")),
             None
         );
     }
 
     #[test]
-    fn an_executable_text_section_matches_itself() {
-        let objcopy_present = std::process::Command::new("objcopy")
-            .arg("--version")
-            .output()
-            .is_ok_and(|o| o.status.success());
-        if !objcopy_present {
+    fn an_executable_matches_itself() {
+        if !objdump_present() {
             return;
         }
         let exe = std::env::current_exe().unwrap();
-        let a = text_section_bytes(&exe).expect("test binary has a .text section");
-        assert_eq!(Some(a), text_section_bytes(&exe));
+        let a = loaded_section_bytes(&exe).expect("test binary has loadable sections");
+        assert_eq!(Some(a), loaded_section_bytes(&exe));
+    }
+
+    #[test]
+    fn the_digest_covers_more_than_the_text_section() {
+        if !objdump_present() {
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        let all = loaded_section_bytes(&exe).unwrap();
+        assert!(all.windows(8).any(|w| w == b".rodata\0"));
+        assert!(all.windows(6).any(|w| w == b".text\0"));
+    }
+
+    #[test]
+    fn the_build_id_note_is_not_digestible() {
+        const LOADED: &str = "CONTENTS, ALLOC, LOAD, READONLY, DATA";
+        assert!(!digestible(".note.gnu.build-id", LOADED));
+        assert!(digestible(".text", "CONTENTS, ALLOC, LOAD, READONLY, CODE"));
+        assert!(digestible("linkme_MEASURED", LOADED));
+        assert!(!digestible(".bss", "ALLOC"));
+        assert!(!digestible(".debug_info", "CONTENTS, READONLY, DEBUGGING"));
+    }
+
+    fn objdump_present() -> bool {
+        std::process::Command::new("objdump")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
     }
 }

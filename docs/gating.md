@@ -23,9 +23,9 @@ drift. Deterministic gating counters (perf instructions, callgrind Ir) do
 not drift, so they are collected once per side in the first round; the
 second round re-measures only the timing-sensitive backends, and the
 per-metric minimum across a side's rounds is its comparison value. When the
-two sides' bench binaries have byte-identical `.text` sections, no
-measurable change is possible and the gate short-circuits to a single cheap
-pass whose assertions still run. This is
+two sides' bench binaries have byte-identical loaded sections, code and
+data alike, no measurable change is possible and the gate short-circuits to a
+single cheap pass whose assertions still run. This is
 what `make gate` runs against `origin/master` for
 every crate in `BENCH_CRATES`, and it is why merge-base gating has no
 baseline file that can go stale in version control.
@@ -57,8 +57,8 @@ gate: reusing the measured merge-base 1aa6c4de39f9408a4279b9f9d78a6a8ed0de6a39
 The commit is not the only key. A merge-base that was never gated has no run
 under its commit, which on master is most of them, since the gate usually runs
 only on benchmarkable changes. Once such a reference is built, its machine code
-is checked against the cache as well: a byte-identical `.text` under the same
-conditions is the same measurement, whichever commit produced it.
+is checked against the cache as well: byte-identical loaded sections under the
+same conditions are the same measurement, whichever commit produced it.
 
 ```console
 gate: reusing a run measured from the same merge-base binary
