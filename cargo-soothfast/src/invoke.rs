@@ -863,6 +863,19 @@ fn cache_meta_path(json_path: &Path) -> PathBuf {
     json_path.with_extension("json.soothfast-cache")
 }
 
+/// Cache slot for one rustdoc configuration. rustdoc always writes
+/// `<pkg>.json`, so a private-items extraction and a public one of the same
+/// crate evict each other unless each is kept under its own name.
+fn cached_json_path(json_path: &Path, features: Option<&str>, visibility: Visibility) -> PathBuf {
+    let scope = format!(
+        "{}\u{1}{}",
+        features.unwrap_or(""),
+        visibility == Visibility::Private
+    );
+    let key = soothfast_registry::fnv1a(scope.as_bytes());
+    json_path.with_extension(format!("{key:016x}.json"))
+}
+
 /// A prior extraction at `json_path`, if it was built with the same flags
 /// requested now and is no older than the source it covers. Every failure
 /// mode (missing sidecar, unreadable JSON, unresolvable source tree) falls
@@ -936,7 +949,8 @@ pub fn rustdoc_json_in(
         .join("doc")
         .join(format!("{}.json", pkg.replace('-', "_")));
 
-    if let Some(doc) = read_fresh_cache(&json_path, pkg, dir, features, visibility, &toolchain) {
+    let cached = cached_json_path(&json_path, features, visibility);
+    if let Some(doc) = read_fresh_cache(&cached, pkg, dir, features, visibility, &toolchain) {
         return Ok((doc, root));
     }
 
@@ -966,7 +980,8 @@ pub fn rustdoc_json_in(
     warn_on_format_version(&doc);
     // Best-effort: a failed cache write only costs a future redundant
     // rebuild, not correctness, so it must not fail the extraction itself.
-    let _ = write_cache_meta(&json_path, features, visibility, &toolchain);
+    let _ = std::fs::copy(&json_path, &cached);
+    let _ = write_cache_meta(&cached, features, visibility, &toolchain);
     Ok((doc, root))
 }
 
@@ -1372,6 +1387,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         );
         let base = no_source.replace("0.1.7", "0.1.5");
         assert!(harness_mismatches(&no_source, &base).is_empty());
+    }
+
+    #[test]
+    fn each_rustdoc_configuration_gets_its_own_cache_slot() {
+        let json = std::path::Path::new("/t/doc/soothfast_spec.json");
+        let public = super::cached_json_path(json, None, super::Visibility::Public);
+        let private = super::cached_json_path(json, None, super::Visibility::Private);
+        let featured = super::cached_json_path(json, Some("runner"), super::Visibility::Public);
+        assert_ne!(public, private);
+        assert_ne!(public, featured);
+        assert_ne!(private, featured);
+        assert_eq!(
+            public,
+            super::cached_json_path(json, None, super::Visibility::Public)
+        );
     }
 
     #[test]
