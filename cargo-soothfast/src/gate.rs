@@ -690,8 +690,8 @@ fn measure_ref_interleaved(
     {
         println!("gate: reusing the measured merge-base {base_sha}");
         let head = match head_from_runcache(common, &head_stamp, head_dig.as_deref()) {
-            Some(head) => {
-                println!("gate: reusing HEAD's own already-measured run");
+            Some((head, from)) => {
+                println!("gate: reusing HEAD's own run, measured from {from}");
                 head
             }
             None => measure(None, &[])?,
@@ -775,7 +775,7 @@ fn measure_ref_interleaved(
         }
         Ref::Cached(doc) => {
             let head = match head_from_runcache(common, &head_stamp, head_dig.as_deref()) {
-                Some(head) => head,
+                Some((head, _)) => head,
                 None => measure(None, &[])?,
             };
             cache_head(common, &head_stamp, &head, head_dig.as_deref());
@@ -819,10 +819,10 @@ fn head_from_runcache(
     common: &CommonArgs,
     stamp: &buildstamp::BuildStamp,
     digest: Option<&str>,
-) -> Option<Run> {
+) -> Option<(Run, String)> {
     let (key, measured_from) = head_cache_key(common, stamp, digest)?;
     let doc = runcache::load(&key, &measured_from)?;
-    Some(invoke::run_from_items_value(&doc["items"]))
+    Some((invoke::run_from_items_value(&doc["items"]), measured_from))
 }
 
 /// Cache key for HEAD's own run, and the label saying what it was measured
