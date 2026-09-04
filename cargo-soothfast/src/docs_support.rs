@@ -63,20 +63,11 @@ pub fn surface_diff_text(
 ) -> Result<String, String> {
     let (new_surf, _) = load(pkg, features)?;
 
-    let sha = invoke::git(&["merge-base", "HEAD", refname]).map_err(|e| e.to_string())?;
-    let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-    let wt = root.join(".soothfast").join("worktrees").join(&sha);
-    if !wt.exists() {
-        invoke::git(&["worktree", "add", "--detach", wt.to_str().unwrap(), &sha])
-            .map_err(|e| e.to_string())?;
-    }
-    // Build the old surface BEFORE removing the worktree: span fingerprints
-    // read source files from it.
-    let old = invoke::rustdoc_json_in(pkg, Some(&wt), features, invoke::Visibility::Public)
-        .map_err(|e| e.to_string());
-    let old_surf = old.map(|(doc, wt_root)| surface::from_rustdoc(&doc, &wt_root));
-    let _ = invoke::git(&["worktree", "remove", "--force", wt.to_str().unwrap()]);
-    let old_surf = old_surf.map_err(|e| format!("cannot build surface at {sha}: {e}"))?;
+    let old_surf = invoke::with_merge_base_worktree(refname, |wt| {
+        invoke::rustdoc_json_in(pkg, Some(wt), features, invoke::Visibility::Public)
+            .map(|(doc, wt_root)| surface::from_rustdoc(&doc, &wt_root))
+            .map_err(|e| format!("cannot build surface at the merge-base: {e}"))
+    })?;
 
     let d = diff::compare(&old_surf, &new_surf);
     Ok(if d.is_empty() {
