@@ -189,7 +189,10 @@ fn cmd_measure(args: &[String]) -> i32 {
             }
         };
         let mut run = invoke::collect(&records);
-        run.build = Some(buildstamp::capture(common.codegen_units_env(), None));
+        run.build = Some(buildstamp::capture(
+            common.codegen_units_stamp().as_deref(),
+            None,
+        ));
         if let Some(b) = &run.gating_backend {
             println!("env: gating backend = {b}");
         }

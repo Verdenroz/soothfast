@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
 use serde_json::{Value, json};
@@ -54,6 +55,12 @@ impl CommonArgs {
             None => Some(CANONICAL_CODEGEN_UNITS),
         }
     }
+
+    /// The pin as a build stamp records it: value and scope together, so a
+    /// baseline taken under a different scope cannot read as comparable.
+    pub fn codegen_units_stamp(&self) -> Option<String> {
+        self.codegen_units_env().map(|n| format!("{n}/members"))
+    }
 }
 
 /// Codegen partitioning varies with unrelated edits: rustc reassigns modules
@@ -86,24 +93,27 @@ fn bench_build_command(
     target_dir: Option<&Path>,
     build: Build,
     pkgs: &[&str],
-) -> Command {
+) -> io::Result<Command> {
     let mut cmd = Command::new("cargo");
     if let Some(toolchain) = bench_toolchain() {
         cmd.arg(format!("+{toolchain}"));
+    }
+    if let Build::Measure = build
+        && let Some(n) = common.codegen_units_env()
+    {
+        for member in workspace_members(dir)? {
+            cmd.arg("--config");
+            cmd.arg(format!(
+                "profile.bench.package.\"{member}\".codegen-units={n}"
+            ));
+        }
     }
     cmd.arg("bench");
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
     }
-    match build {
-        Build::Measure => {
-            if let Some(n) = common.codegen_units_env() {
-                cmd.env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", n);
-            }
-        }
-        Build::Discover => {
-            cmd.args(["--profile", "dev"]);
-        }
+    if let Build::Discover = build {
+        cmd.args(["--profile", "dev"]);
     }
     for p in pkgs {
         cmd.args(["-p", p]);
@@ -117,7 +127,21 @@ fn bench_build_command(
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
-    cmd
+    Ok(cmd)
+}
+
+/// Workspace member names, resolved once per tree. A gate that cannot name
+/// them cannot pin them, and a build stamp claiming a pin that did not
+/// happen would compare as if it had.
+fn workspace_members(dir: Option<&Path>) -> io::Result<Vec<String>> {
+    static HEAD: OnceLock<io::Result<Vec<String>>> = OnceLock::new();
+    if dir.is_some() {
+        return crate::workspace::members(dir);
+    }
+    match HEAD.get_or_init(|| crate::workspace::members(None)) {
+        Ok(names) => Ok(names.clone()),
+        Err(e) => Err(io::Error::other(e.to_string())),
+    }
 }
 
 fn bench_command(
@@ -126,9 +150,9 @@ fn bench_command(
     dir: Option<&Path>,
     target_dir: Option<&Path>,
     build: Build,
-) -> Command {
+) -> io::Result<Command> {
     let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-    let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs);
+    let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs)?;
     cmd.arg("--");
     if let Some(f) = &common.filter {
         cmd.args(["--filter", f]);
@@ -140,7 +164,7 @@ fn bench_command(
         cmd.args(["--samples", s]);
     }
     cmd.args(extra);
-    cmd
+    Ok(cmd)
 }
 
 /// Run the bench binary with `--json` (optionally in another worktree) and
@@ -189,7 +213,7 @@ fn run_records(
     let mut args = vec!["--json"];
     args.extend_from_slice(extra);
     let target = common.target.as_deref().unwrap_or("soothfast");
-    let mut cmd = bench_command(common, &args, dir, target_dir, build);
+    let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     let out = cmd.output()?;
@@ -225,7 +249,7 @@ fn run_records(
 
 /// Run the bench binary in raw (non-JSON) mode and capture stdout as text.
 pub fn run_bench_raw(common: &CommonArgs, extra: &[&str]) -> io::Result<String> {
-    let mut cmd = bench_command(common, extra, None, None, Build::Measure);
+    let mut cmd = bench_command(common, extra, None, None, Build::Measure)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     let out = cmd.output()?;
@@ -261,7 +285,7 @@ pub fn prebuild_benches(
     target_dir: Option<&Path>,
 ) -> io::Result<()> {
     let names: Vec<&str> = pkgs.iter().map(String::as_str).collect();
-    bench_build_command(common, dir, target_dir, Build::Measure, &names)
+    bench_build_command(common, dir, target_dir, Build::Measure, &names)?
         .args(["--no-run"])
         .status()?;
     Ok(())
@@ -277,7 +301,7 @@ pub fn bench_executable(
 ) -> Option<PathBuf> {
     let target = common.target.as_deref().unwrap_or("soothfast");
     let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-    let mut cmd = bench_build_command(common, dir, target_dir, Build::Measure, &pkgs);
+    let mut cmd = bench_build_command(common, dir, target_dir, Build::Measure, &pkgs).ok()?;
     cmd.args(["--no-run", "--message-format=json"]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());

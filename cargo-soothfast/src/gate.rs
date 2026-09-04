@@ -374,7 +374,10 @@ fn resolve(g: &GateArgs) -> Result<Option<(Value, Run, bool)>, String> {
     }
     let records = invoke::run_bench(&g.common, &[]).map_err(|e| e.to_string())?;
     let mut current = invoke::collect(&records);
-    current.build = Some(buildstamp::capture(g.common.codegen_units_env(), None));
+    current.build = Some(buildstamp::capture(
+        g.common.codegen_units_stamp().as_deref(),
+        None,
+    ));
     let baseline = invoke::load_baseline(&g.baseline)
         .map_err(|e| format!("failed to load baseline: {e}"))?
         .ok_or_else(|| {
@@ -669,14 +672,17 @@ fn measure_ref_interleaved(
         let td = dir.and(wt_target.as_deref());
         let recs = invoke::run_bench_dir(common, extra, dir, td).map_err(|e| e.to_string())?;
         let mut run = invoke::collect(&recs);
-        run.build = Some(buildstamp::capture(common.codegen_units_env(), dir));
+        run.build = Some(buildstamp::capture(
+            common.codegen_units_stamp().as_deref(),
+            dir,
+        ));
         Ok(run)
     };
 
     let base_sha = invoke::git(&["merge-base", "HEAD", refname])
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    let head_stamp = buildstamp::capture(common.codegen_units_env(), None);
+    let head_stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
     // Naming HEAD's binary costs a no-run build plus an objdump, so it is
     // taken once and threaded to every lookup and store below.
     let head_dig = head_digest(common);
