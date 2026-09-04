@@ -808,28 +808,52 @@ fn measure_ref_interleaved(
     }))
 }
 
-/// HEAD's own measurement, if a clean-tree run already cached one under this
-/// commit and these conditions — e.g. the `gate` run `gate accept` follows
-/// moments later. Avoids paying for a second full measurement of the same
-/// commit just to build the accept report.
+/// HEAD's own measurement, if a run already cached one under this binary and
+/// these conditions, e.g. the `gate` run `gate accept` follows moments later.
+/// Avoids a second full measurement of the same code just to build the
+/// accept report.
 fn head_from_runcache(common: &CommonArgs, stamp: &buildstamp::BuildStamp) -> Option<Run> {
-    if !invoke::tree_is_clean() {
-        return None;
-    }
-    let sha = invoke::git(&["rev-parse", "HEAD"]).ok()?;
-    let sha = sha.trim();
-    let doc = runcache::load(&runcache::key(sha, stamp, common), sha)?;
+    let (key, measured_from) = head_cache_key(common, stamp)?;
+    let doc = runcache::load(&key, &measured_from)?;
     Some(invoke::run_from_items_value(&doc["items"]))
 }
 
-/// Keep HEAD's run so the next commit's gate finds its reference already
-/// measured. Only from a clean tree, where HEAD's SHA names what was built.
+/// Cache key for HEAD's own run, and the label saying what it was measured
+/// from. A dirty tree has no commit naming what was built, but the bench
+/// binary integrates every input that decides the numbers, so it can name
+/// its own measurement when the commit cannot.
+fn head_cache_key(common: &CommonArgs, stamp: &buildstamp::BuildStamp) -> Option<(String, String)> {
+    if invoke::tree_is_clean()
+        && let Ok(sha) = invoke::git(&["rev-parse", "HEAD"])
+    {
+        let sha = sha.trim().to_string();
+        return Some((runcache::key(&sha, stamp, common), sha));
+    }
+    let digest = head_digest(common)?;
+    Some((
+        runcache::key(&digest, stamp, common),
+        format!("binary {digest}"),
+    ))
+}
+
+/// Digest of HEAD's own bench binary.
+fn head_digest(common: &CommonArgs) -> Option<String> {
+    let exe = invoke::bench_executable(common, None, None)?;
+    loaded_section_bytes(&exe).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
+}
+
+/// Keep HEAD's run so the next gate finds its reference already measured.
+/// Stored under the bench binary's digest always, and under HEAD's SHA as
+/// well when the tree is clean enough for the commit to name what was built.
 fn cache_head(common: &CommonArgs, stamp: &buildstamp::BuildStamp, head: &Run) {
     cache_head_doc(common, stamp, &ref_doc(head));
 }
 
 /// Keep `doc` as HEAD's measurement.
 fn cache_head_doc(common: &CommonArgs, stamp: &buildstamp::BuildStamp, doc: &Value) {
+    if let Some(digest) = head_digest(common) {
+        runcache::store(&runcache::key(&digest, stamp, common), doc);
+    }
     if !invoke::tree_is_clean() {
         return;
     }
