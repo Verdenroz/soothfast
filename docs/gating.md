@@ -23,9 +23,9 @@ drift. Deterministic gating counters (perf instructions, callgrind Ir) do
 not drift, so they are collected once per side in the first round; the
 second round re-measures only the timing-sensitive backends, and the
 per-metric minimum across a side's rounds is its comparison value. When the
-two sides' bench binaries have byte-identical `.text` sections, no
-measurable change is possible and the gate short-circuits to a single cheap
-pass whose assertions still run. This is
+two sides' bench binaries have byte-identical loaded sections, code and
+data alike, no measurable change is possible and the gate short-circuits to a
+single cheap pass whose assertions still run. This is
 what `make gate` runs against `origin/master` for
 every crate in `BENCH_CRATES`, and it is why merge-base gating has no
 baseline file that can go stale in version control.
@@ -57,8 +57,8 @@ gate: reusing the measured merge-base 1aa6c4de39f9408a4279b9f9d78a6a8ed0de6a39
 The commit is not the only key. A merge-base that was never gated has no run
 under its commit, which on master is most of them, since the gate usually runs
 only on benchmarkable changes. Once such a reference is built, its machine code
-is checked against the cache as well: a byte-identical `.text` under the same
-conditions is the same measurement, whichever commit produced it.
+is checked against the cache as well: byte-identical loaded sections under the
+same conditions are the same measurement, whichever commit produced it.
 
 ```console
 gate: reusing a run measured from the same merge-base binary
@@ -118,23 +118,28 @@ decisions. Rust compilation is not function-local: at the stock
 anywhere repartitions them, moving inlining and register allocation in
 functions nobody touched. An untouched bench can then report several percent.
 
-So the gate pins it. Every measurement build runs with `codegen-units = 1`,
-on both sides of a comparison, whatever the checked-out tree's profile says.
-One unit cannot be repartitioned. This costs build time, which is the price
-of a comparison that means something; `--codegen-units N` or `inherit` opts
-out, as does
+So the gate pins it. Every measurement build compiles the workspace's own
+crates with `codegen-units = 1`, on both sides of a comparison, whatever the
+checked-out tree's profile says. One unit cannot be repartitioned. This costs
+build time, which is the price of a comparison that means something;
+`--codegen-units N` or `inherit` opts out, as does
 
 ```toml
 [gate]
 codegen-units = "inherit"
 ```
 
-Pinning cannot reach everything. A `[profile.bench.package.mycrate]` table
-still wins over the gate's setting, and `RUSTFLAGS`, `.cargo/config.toml` and
-the rustc version all change codegen too. Every run therefore records what it
-was built with, printed as `build=<digest>` in the gate banner. When the two
-sides disagree the gate says which field differs and downgrades the
-deterministic counters to SOFT for that comparison:
+Dependencies are left alone. They are identical on both sides, so they
+already partition identically, and pinning them as well would compile the
+whole graph a second time for nothing.
+
+Pinning cannot reach everything. `RUSTFLAGS`, `.cargo/config.toml` and the
+rustc version all change codegen and none of them is the gate's to set. A
+`[profile.bench.package.mycrate]` table does not override it: the gate's
+value arrives as config, which outranks the manifest. Every run therefore
+records what it was built with, printed as `build=<digest>` in the gate
+banner. When the two sides disagree the gate says which field differs and
+downgrades the deterministic counters to SOFT for that comparison:
 
 ```console
 gate: build settings differ: profiles (7b1f.. -> 22c0..) — deterministic counters softened

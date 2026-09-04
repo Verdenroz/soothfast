@@ -32,6 +32,31 @@ fn metadata(dir: Option<&Path>) -> io::Result<Value> {
     Ok(serde_json::from_slice(&out.stdout)?)
 }
 
+/// Every member of this workspace, in name order. `--no-deps` lists exactly
+/// the workspace's own packages, so no dependency can reach the result.
+pub fn members(dir: Option<&Path>) -> io::Result<Vec<String>> {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["metadata", "--no-deps", "--format-version", "1"]);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    let out = cmd.output()?;
+    if !out.status.success() {
+        return Err(io::Error::other("cargo metadata failed"));
+    }
+    let md: Value = serde_json::from_slice(&out.stdout)?;
+    let mut names: Vec<String> = md["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p["name"].as_str().map(String::from))
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
 /// Workspace members `pkg` depends on, transitively, in name order.
 ///
 /// Only members with a plain library target qualify: a proc-macro crate's

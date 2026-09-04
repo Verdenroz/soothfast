@@ -76,6 +76,10 @@ pub fn run(args: &[String]) -> i32 {
     if args.first().map(String::as_str) == Some("accept") {
         return accept_cmd(&args[1..]);
     }
+    let packages = packages_in(args);
+    if packages.len() > 1 {
+        return run_each(args, &packages);
+    }
     let mut g = GateArgs {
         common: CommonArgs::default(),
         baseline: "base".into(),
@@ -245,6 +249,91 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
+/// Gate each package in turn, after building every bench target together.
+fn run_each(args: &[String], packages: &[String]) -> i32 {
+    let mut common = CommonArgs::default();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        common.try_parse(a, &mut it);
+    }
+    common.pkg = None;
+    if let Err(e) = gate_config::apply(&mut common) {
+        return err(&e);
+    }
+    // `--features` names one package's features; across several cargo wants
+    // `pkg/feature`, so leave those builds to the per-package legs.
+    if common.features.is_none() {
+        prebuild_both_sides(packages, &common, args);
+    }
+
+    let mut worst = 0;
+    for pkg in packages {
+        let rc = run(&with_package(args, pkg));
+        if rc != 0 {
+            worst = rc;
+        }
+    }
+    worst
+}
+
+/// Build every bench target once per side. After a rebase the merge-base
+/// side is the expensive one, at release with codegen-units pinned to 1.
+fn prebuild_both_sides(packages: &[String], common: &CommonArgs, args: &[String]) {
+    let _ = invoke::prebuild_benches(packages, common, None, None);
+    let Some(refname) = against_ref_in(args) else {
+        return;
+    };
+    let Ok(target) = invoke::worktree_target_dir() else {
+        return;
+    };
+    let _ = invoke::with_merge_base_worktree(&refname, |wt| {
+        invoke::sync_untracked_cargo_config(wt)?;
+        invoke::sync_harness_versions(wt)?;
+        let _ = invoke::prebuild_benches(packages, common, Some(wt), Some(&target));
+        Ok(())
+    });
+}
+
+fn against_ref_in(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == "--against-ref" {
+            return it.next().cloned();
+        }
+    }
+    None
+}
+
+/// Packages named by repeated `-p`, in the order given.
+fn packages_in(args: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if matches!(a.as_str(), "-p" | "--package")
+            && let Some(p) = it.next()
+        {
+            out.push(p.clone());
+        }
+    }
+    out
+}
+
+/// `args` with every `-p` collapsed to the single named package.
+fn with_package(args: &[String], pkg: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if matches!(a.as_str(), "-p" | "--package") {
+            it.next();
+            continue;
+        }
+        out.push(a.clone());
+    }
+    out.push("-p".into());
+    out.push(pkg.into());
+    out
+}
+
 /// Resolve the comparison pair for a gate run: reference doc, current run,
 /// and whether the current run was a short-circuited identical-binaries
 /// pass. `Ok(None)` only in `--against-ref` mode: a crate newly measured has
@@ -254,22 +343,13 @@ fn resolve(g: &GateArgs) -> Result<Option<(Value, Run, bool)>, String> {
         let Some(pkg) = g.common.pkg.clone() else {
             return Err("--backend buildcost requires -p PKG".into());
         };
-        let current = crate::buildcost::measure(&pkg, &g.matrix)?;
+        let head_target = invoke::buildcost_target_dir().map_err(|e| e.to_string())?;
+        let current = crate::buildcost::measure(&pkg, &g.matrix, Some(&head_target))?;
         let reference = if let Some(refname) = &g.against_ref {
-            // Merge-base build cost, measured in a worktree. Warm the dep
-            // graph un-timed first: the worktree's target dir starts cold,
-            // and dep compilation isn't this package's build cost.
+            let base_target = invoke::buildcost_base_target_dir().map_err(|e| e.to_string())?;
             let base = invoke::with_merge_base_worktree(refname, |wt| {
                 invoke::sync_untracked_cargo_config(wt)?;
-                let warm = std::process::Command::new("cargo")
-                    .args(["build", "--release", "-p", &pkg])
-                    .current_dir(wt)
-                    .status()
-                    .map_err(|e| e.to_string())?;
-                if !warm.success() {
-                    return Err(format!("merge-base warmup build failed for {pkg}"));
-                }
-                crate::buildcost::measure_in(&pkg, &g.matrix, Some(wt))
+                crate::buildcost::measure_in(&pkg, &g.matrix, Some(wt), Some(&base_target))
             })?;
             let mut doc = serde_json::json!({ "version": 1 });
             doc["items"] = invoke::run_to_items_value(&base);
@@ -294,7 +374,10 @@ fn resolve(g: &GateArgs) -> Result<Option<(Value, Run, bool)>, String> {
     }
     let records = invoke::run_bench(&g.common, &[]).map_err(|e| e.to_string())?;
     let mut current = invoke::collect(&records);
-    current.build = Some(buildstamp::capture(g.common.codegen_units_env(), None));
+    current.build = Some(buildstamp::capture(
+        g.common.codegen_units_stamp().as_deref(),
+        None,
+    ));
     let baseline = invoke::load_baseline(&g.baseline)
         .map_err(|e| format!("failed to load baseline: {e}"))?
         .ok_or_else(|| {
@@ -589,14 +672,20 @@ fn measure_ref_interleaved(
         let td = dir.and(wt_target.as_deref());
         let recs = invoke::run_bench_dir(common, extra, dir, td).map_err(|e| e.to_string())?;
         let mut run = invoke::collect(&recs);
-        run.build = Some(buildstamp::capture(common.codegen_units_env(), dir));
+        run.build = Some(buildstamp::capture(
+            common.codegen_units_stamp().as_deref(),
+            dir,
+        ));
         Ok(run)
     };
 
     let base_sha = invoke::git(&["merge-base", "HEAD", refname])
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    let head_stamp = buildstamp::capture(common.codegen_units_env(), None);
+    let head_stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+    // Naming HEAD's binary costs a no-run build plus an objdump, so it is
+    // taken once and threaded to every lookup and store below.
+    let head_dig = head_digest(common);
     // Computed regardless of `reuse`: a fresh measurement is worth storing
     // even for an invocation that declined to trust an existing one.
     let cache_key = (!base_sha.is_empty()).then(|| runcache::key(&base_sha, &head_stamp, common));
@@ -606,14 +695,14 @@ fn measure_ref_interleaved(
         && let Some(doc) = runcache::load(k, &base_sha)
     {
         println!("gate: reusing the measured merge-base {base_sha}");
-        let head = match head_from_runcache(common, &head_stamp) {
-            Some(head) => {
-                println!("gate: reusing HEAD's own already-measured run");
+        let head = match head_from_runcache(common, &head_stamp, head_dig.as_deref()) {
+            Some((head, from)) => {
+                println!("gate: reusing HEAD's own run, measured from {from}");
                 head
             }
             None => measure(None, &[])?,
         };
-        cache_head(common, &head_stamp, &head);
+        cache_head(common, &head_stamp, &head, head_dig.as_deref());
         return Ok(Some(RefPair {
             reference: doc,
             current: head,
@@ -652,12 +741,12 @@ fn measure_ref_interleaved(
 
         if digests.as_ref().is_some_and(|(head, base)| head == base) {
             println!(
-                "gate: bench binaries identical (.text match) — no measurable change possible"
+                "gate: bench binaries identical (code and data match) — no measurable change possible"
             );
             // Head shares that machine code, so the cached run is its
             // measurement too, and the next commit can reuse it from HEAD.
             if let Some(doc) = &by_binary {
-                cache_head_doc(common, &head_stamp, doc);
+                cache_head_doc(common, &head_stamp, doc, head_dig.as_deref());
             }
             let args = identical_pass_args(common.backend.as_deref());
             return Ok((Ref::IdenticalBinaries(measure(None, args)), digests));
@@ -691,11 +780,11 @@ fn measure_ref_interleaved(
             }));
         }
         Ref::Cached(doc) => {
-            let head = match head_from_runcache(common, &head_stamp) {
-                Some(head) => head,
+            let head = match head_from_runcache(common, &head_stamp, head_dig.as_deref()) {
+                Some((head, _)) => head,
                 None => measure(None, &[])?,
             };
-            cache_head(common, &head_stamp, &head);
+            cache_head(common, &head_stamp, &head, head_dig.as_deref());
             return Ok(Some(RefPair {
                 reference: doc,
                 current: head,
@@ -720,7 +809,7 @@ fn measure_ref_interleaved(
             &ref_doc(&head),
         );
     }
-    cache_head(common, &head_stamp, &head);
+    cache_head(common, &head_stamp, &head, head_dig.as_deref());
     Ok(Some(RefPair {
         reference,
         current: head,
@@ -728,28 +817,70 @@ fn measure_ref_interleaved(
     }))
 }
 
-/// HEAD's own measurement, if a clean-tree run already cached one under this
-/// commit and these conditions — e.g. the `gate` run `gate accept` follows
-/// moments later. Avoids paying for a second full measurement of the same
-/// commit just to build the accept report.
-fn head_from_runcache(common: &CommonArgs, stamp: &buildstamp::BuildStamp) -> Option<Run> {
-    if !invoke::tree_is_clean() {
-        return None;
-    }
-    let sha = invoke::git(&["rev-parse", "HEAD"]).ok()?;
-    let sha = sha.trim();
-    let doc = runcache::load(&runcache::key(sha, stamp, common), sha)?;
-    Some(invoke::run_from_items_value(&doc["items"]))
+/// HEAD's own measurement, if a run already cached one under this binary and
+/// these conditions, e.g. the `gate` run `gate accept` follows moments later.
+/// Avoids a second full measurement of the same code just to build the
+/// accept report.
+fn head_from_runcache(
+    common: &CommonArgs,
+    stamp: &buildstamp::BuildStamp,
+    digest: Option<&str>,
+) -> Option<(Run, String)> {
+    let (key, measured_from) = head_cache_key(common, stamp, digest)?;
+    let doc = runcache::load(&key, &measured_from)?;
+    Some((invoke::run_from_items_value(&doc["items"]), measured_from))
 }
 
-/// Keep HEAD's run so the next commit's gate finds its reference already
-/// measured. Only from a clean tree, where HEAD's SHA names what was built.
-fn cache_head(common: &CommonArgs, stamp: &buildstamp::BuildStamp, head: &Run) {
-    cache_head_doc(common, stamp, &ref_doc(head));
+/// Cache key for HEAD's own run, and the label saying what it was measured
+/// from. A dirty tree has no commit naming what was built, but the bench
+/// binary integrates every input that decides the numbers, so it can name
+/// its own measurement when the commit cannot.
+fn head_cache_key(
+    common: &CommonArgs,
+    stamp: &buildstamp::BuildStamp,
+    digest: Option<&str>,
+) -> Option<(String, String)> {
+    if invoke::tree_is_clean()
+        && let Ok(sha) = invoke::git(&["rev-parse", "HEAD"])
+    {
+        let sha = sha.trim().to_string();
+        return Some((runcache::key(&sha, stamp, common), sha));
+    }
+    let digest = digest?;
+    Some((
+        runcache::key(digest, stamp, common),
+        format!("binary {digest}"),
+    ))
+}
+
+/// Digest of HEAD's own bench binary.
+fn head_digest(common: &CommonArgs) -> Option<String> {
+    let exe = invoke::bench_executable(common, None, None)?;
+    loaded_section_bytes(&exe).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
+}
+
+/// Keep HEAD's run so the next gate finds its reference already measured.
+/// Stored under the bench binary's digest always, and under HEAD's SHA as
+/// well when the tree is clean enough for the commit to name what was built.
+fn cache_head(
+    common: &CommonArgs,
+    stamp: &buildstamp::BuildStamp,
+    head: &Run,
+    digest: Option<&str>,
+) {
+    cache_head_doc(common, stamp, &ref_doc(head), digest);
 }
 
 /// Keep `doc` as HEAD's measurement.
-fn cache_head_doc(common: &CommonArgs, stamp: &buildstamp::BuildStamp, doc: &Value) {
+fn cache_head_doc(
+    common: &CommonArgs,
+    stamp: &buildstamp::BuildStamp,
+    doc: &Value,
+    digest: Option<&str>,
+) {
+    if let Some(digest) = digest {
+        runcache::store(&runcache::key(digest, stamp, common), doc);
+    }
     if !invoke::tree_is_clean() {
         return;
     }
@@ -802,33 +933,60 @@ fn bench_text_digests(
         return None;
     }
     let digest = |p: &std::path::Path| {
-        text_section_bytes(p).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
+        loaded_section_bytes(p).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
     };
     Some((digest(&head)?, digest(&base)?))
 }
 
-/// The executable's `.text` section, extracted with objcopy. Whole-file
-/// comparison would never match: debug info embeds the absolute build path,
-/// and the two sides build in different directories.
-fn text_section_bytes(exe: &std::path::Path) -> Option<Vec<u8>> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let out = std::env::temp_dir().join(format!(
-        "soothfast-text-{}-{}.bin",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed),
-    ));
-    let status = std::process::Command::new("objcopy")
-        .args(["-O", "binary", "--only-section=.text"])
+/// Every allocatable section carrying file contents, name-tagged and
+/// concatenated. Whole-file comparison would never match: debug info embeds
+/// the absolute build path, and the two sides build in different directories.
+fn loaded_section_bytes(exe: &std::path::Path) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("objdump")
+        .arg("-h")
         .arg(exe)
-        .arg(&out)
-        .status();
-    let bytes = match status {
-        Ok(s) if s.success() => std::fs::read(&out).ok(),
-        _ => None,
-    };
-    let _ = std::fs::remove_file(&out);
-    bytes.filter(|b| !b.is_empty())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let image = std::fs::read(exe).ok()?;
+    let listing = String::from_utf8_lossy(&out.stdout);
+    let mut lines = listing.lines();
+    let mut buf = Vec::new();
+    while let Some(header) = lines.next() {
+        let Some((name, size, offset)) = section_header(header) else {
+            continue;
+        };
+        let flags = lines.next()?;
+        if !digestible(name, flags) {
+            continue;
+        }
+        let bytes = image.get(offset..offset.checked_add(size)?)?;
+        buf.extend_from_slice(name.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(bytes);
+    }
+    (!buf.is_empty()).then_some(buf)
+}
+
+/// Sections that carry the binary's identity: loaded into the image and
+/// backed by file contents. `.note.gnu.build-id` is a hash of the whole
+/// output, debug info included, so it differs between builds of identical
+/// code.
+fn digestible(name: &str, flags: &str) -> bool {
+    flags.contains("ALLOC") && flags.contains("CONTENTS") && name != ".note.gnu.build-id"
+}
+
+/// `Idx Name Size VMA LMA File-off Algn` from one `objdump -h` header line.
+fn section_header(line: &str) -> Option<(&str, usize, usize)> {
+    let f: Vec<&str> = line.split_whitespace().collect();
+    if f.len() < 7 || f[0].parse::<u32>().is_err() {
+        return None;
+    }
+    let size = usize::from_str_radix(f[2], 16).ok()?;
+    let offset = usize::from_str_radix(f[5], 16).ok()?;
+    Some((f[1], size, offset))
 }
 
 /// Fold a side's timing-only second round into its full first round. A
@@ -1355,8 +1513,8 @@ fn partial(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare,
-        identical_pass_args, save_verdict, text_section_bytes, walltime_limit,
+        CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare, digestible,
+        identical_pass_args, loaded_section_bytes, save_verdict, walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
@@ -2032,32 +2190,56 @@ mod tests {
     }
 
     #[test]
-    fn text_extraction_returns_none_for_a_non_elf_file() {
+    fn section_extraction_returns_none_for_a_non_elf_file() {
         let path = std::env::temp_dir().join(format!("soothfast-not-elf-{}", std::process::id()));
         std::fs::write(&path, b"just text, no sections").unwrap();
-        assert_eq!(text_section_bytes(&path), None);
+        assert_eq!(loaded_section_bytes(&path), None);
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn text_extraction_returns_none_for_a_missing_file() {
+    fn section_extraction_returns_none_for_a_missing_file() {
         assert_eq!(
-            text_section_bytes(std::path::Path::new("/nonexistent/soothfast-bench")),
+            loaded_section_bytes(std::path::Path::new("/nonexistent/soothfast-bench")),
             None
         );
     }
 
     #[test]
-    fn an_executable_text_section_matches_itself() {
-        let objcopy_present = std::process::Command::new("objcopy")
-            .arg("--version")
-            .output()
-            .is_ok_and(|o| o.status.success());
-        if !objcopy_present {
+    fn an_executable_matches_itself() {
+        if !objdump_present() {
             return;
         }
         let exe = std::env::current_exe().unwrap();
-        let a = text_section_bytes(&exe).expect("test binary has a .text section");
-        assert_eq!(Some(a), text_section_bytes(&exe));
+        let a = loaded_section_bytes(&exe).expect("test binary has loadable sections");
+        assert_eq!(Some(a), loaded_section_bytes(&exe));
+    }
+
+    #[test]
+    fn the_digest_covers_more_than_the_text_section() {
+        if !objdump_present() {
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        let all = loaded_section_bytes(&exe).unwrap();
+        assert!(all.windows(8).any(|w| w == b".rodata\0"));
+        assert!(all.windows(6).any(|w| w == b".text\0"));
+    }
+
+    #[test]
+    fn the_build_id_note_is_not_digestible() {
+        const LOADED: &str = "CONTENTS, ALLOC, LOAD, READONLY, DATA";
+        assert!(!digestible(".note.gnu.build-id", LOADED));
+        assert!(digestible(".text", "CONTENTS, ALLOC, LOAD, READONLY, CODE"));
+        assert!(digestible("linkme_MEASURED", LOADED));
+        assert!(!digestible(".bss", "ALLOC"));
+        assert!(!digestible(".debug_info", "CONTENTS, READONLY, DEBUGGING"));
+    }
+
+    fn objdump_present() -> bool {
+        std::process::Command::new("objdump")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
     }
 }

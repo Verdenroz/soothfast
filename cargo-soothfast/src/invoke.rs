@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
 use serde_json::{Value, json};
@@ -54,6 +55,12 @@ impl CommonArgs {
             None => Some(CANONICAL_CODEGEN_UNITS),
         }
     }
+
+    /// The pin as a build stamp records it: value and scope together, so a
+    /// baseline taken under a different scope cannot read as comparable.
+    pub fn codegen_units_stamp(&self) -> Option<String> {
+        self.codegen_units_env().map(|n| format!("{n}/members"))
+    }
 }
 
 /// Codegen partitioning varies with unrelated edits: rustc reassigns modules
@@ -77,32 +84,38 @@ enum Build {
     Discover,
 }
 
-fn bench_command(
+/// `cargo bench` carrying every input that selects which binary gets built.
+/// Both the measured run and the `--no-run` digest probe go through here, so
+/// they cannot drift into building different binaries.
+fn bench_build_command(
     common: &CommonArgs,
-    extra: &[&str],
     dir: Option<&Path>,
     target_dir: Option<&Path>,
     build: Build,
-) -> Command {
+    pkgs: &[&str],
+) -> io::Result<Command> {
     let mut cmd = Command::new("cargo");
     if let Some(toolchain) = bench_toolchain() {
         cmd.arg(format!("+{toolchain}"));
+    }
+    if let Build::Measure = build
+        && let Some(n) = common.codegen_units_env()
+    {
+        for member in workspace_members(dir)? {
+            cmd.arg("--config");
+            cmd.arg(format!(
+                "profile.bench.package.\"{member}\".codegen-units={n}"
+            ));
+        }
     }
     cmd.arg("bench");
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
     }
-    match build {
-        Build::Measure => {
-            if let Some(n) = common.codegen_units_env() {
-                cmd.env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", n);
-            }
-        }
-        Build::Discover => {
-            cmd.args(["--profile", "dev"]);
-        }
+    if let Build::Discover = build {
+        cmd.args(["--profile", "dev"]);
     }
-    if let Some(p) = &common.pkg {
+    for p in pkgs {
         cmd.args(["-p", p]);
     }
     // Cargo-level flag: must precede the `--` separating runner args.
@@ -110,7 +123,37 @@ fn bench_command(
         cmd.args(["--features", f]);
     }
     let target = common.target.as_deref().unwrap_or("soothfast");
-    cmd.args(["--bench", target, "--"]);
+    cmd.args(["--bench", target]);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    Ok(cmd)
+}
+
+/// Workspace member names, resolved once per tree. A gate that cannot name
+/// them cannot pin them, and a build stamp claiming a pin that did not
+/// happen would compare as if it had.
+fn workspace_members(dir: Option<&Path>) -> io::Result<Vec<String>> {
+    static HEAD: OnceLock<io::Result<Vec<String>>> = OnceLock::new();
+    if dir.is_some() {
+        return crate::workspace::members(dir);
+    }
+    match HEAD.get_or_init(|| crate::workspace::members(None)) {
+        Ok(names) => Ok(names.clone()),
+        Err(e) => Err(io::Error::other(e.to_string())),
+    }
+}
+
+fn bench_command(
+    common: &CommonArgs,
+    extra: &[&str],
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+) -> io::Result<Command> {
+    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+    let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs)?;
+    cmd.arg("--");
     if let Some(f) = &common.filter {
         cmd.args(["--filter", f]);
     }
@@ -121,10 +164,7 @@ fn bench_command(
         cmd.args(["--samples", s]);
     }
     cmd.args(extra);
-    if let Some(d) = dir {
-        cmd.current_dir(d);
-    }
-    cmd
+    Ok(cmd)
 }
 
 /// Run the bench binary with `--json` (optionally in another worktree) and
@@ -173,7 +213,7 @@ fn run_records(
     let mut args = vec!["--json"];
     args.extend_from_slice(extra);
     let target = common.target.as_deref().unwrap_or("soothfast");
-    let mut cmd = bench_command(common, &args, dir, target_dir, build);
+    let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     let out = cmd.output()?;
@@ -209,7 +249,7 @@ fn run_records(
 
 /// Run the bench binary in raw (non-JSON) mode and capture stdout as text.
 pub fn run_bench_raw(common: &CommonArgs, extra: &[&str]) -> io::Result<String> {
-    let mut cmd = bench_command(common, extra, None, None, Build::Measure);
+    let mut cmd = bench_command(common, extra, None, None, Build::Measure)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     let out = cmd.output()?;
@@ -236,6 +276,21 @@ pub fn run_bench(common: &CommonArgs, extra: &[&str]) -> io::Result<Vec<Value>> 
     run_bench_in(common, extra, None)
 }
 
+/// Build several packages' bench targets in one cargo invocation. Built one
+/// at a time they serialize, each paying its own critical path.
+pub fn prebuild_benches(
+    pkgs: &[String],
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+) -> io::Result<()> {
+    let names: Vec<&str> = pkgs.iter().map(String::as_str).collect();
+    bench_build_command(common, dir, target_dir, Build::Measure, &names)?
+        .args(["--no-run"])
+        .status()?;
+    Ok(())
+}
+
 /// Path of the compiled bench executable, via `cargo bench --no-run`'s JSON
 /// messages. `None` on any failure: callers fall through to a normal
 /// measured run, which surfaces the real error.
@@ -245,26 +300,11 @@ pub fn bench_executable(
     target_dir: Option<&Path>,
 ) -> Option<PathBuf> {
     let target = common.target.as_deref().unwrap_or("soothfast");
-    let mut cmd = Command::new("cargo");
-    cmd.args(["bench", "--no-run", "--message-format=json"]);
-    if let Some(td) = target_dir {
-        cmd.env("CARGO_TARGET_DIR", td);
-    }
-    if let Some(n) = common.codegen_units_env() {
-        cmd.env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", n);
-    }
-    if let Some(p) = &common.pkg {
-        cmd.args(["-p", p]);
-    }
-    if let Some(f) = &common.features {
-        cmd.args(["--features", f]);
-    }
-    cmd.args(["--bench", target]);
+    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+    let mut cmd = bench_build_command(common, dir, target_dir, Build::Measure, &pkgs).ok()?;
+    cmd.args(["--no-run", "--message-format=json"]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
-    if let Some(d) = dir {
-        cmd.current_dir(d);
-    }
     let out = cmd.output().ok()?;
     if !out.status.success() {
         return None;
@@ -472,7 +512,17 @@ pub fn run_from_items_value(items: &Value) -> Run {
 }
 
 /// Workspace root (parent of the workspace Cargo.toml), via cargo itself.
+/// Resolved once: `git()` calls this on every invocation, and the root
+/// cannot move under a running process.
 pub fn workspace_root() -> io::Result<PathBuf> {
+    static ROOT: OnceLock<io::Result<PathBuf>> = OnceLock::new();
+    match ROOT.get_or_init(locate_workspace_root) {
+        Ok(root) => Ok(root.clone()),
+        Err(e) => Err(io::Error::other(e.to_string())),
+    }
+}
+
+fn locate_workspace_root() -> io::Result<PathBuf> {
     let out = Command::new("cargo")
         .args(["locate-project", "--workspace", "--message-format", "plain"])
         .output()?;
@@ -847,6 +897,19 @@ fn cache_meta_path(json_path: &Path) -> PathBuf {
     json_path.with_extension("json.soothfast-cache")
 }
 
+/// Cache slot for one rustdoc configuration. rustdoc always writes
+/// `<pkg>.json`, so a private-items extraction and a public one of the same
+/// crate evict each other unless each is kept under its own name.
+fn cached_json_path(json_path: &Path, features: Option<&str>, visibility: Visibility) -> PathBuf {
+    let scope = format!(
+        "{}\u{1}{}",
+        features.unwrap_or(""),
+        visibility == Visibility::Private
+    );
+    let key = soothfast_registry::fnv1a(scope.as_bytes());
+    json_path.with_extension(format!("{key:016x}.json"))
+}
+
 /// A prior extraction at `json_path`, if it was built with the same flags
 /// requested now and is no older than the source it covers. Every failure
 /// mode (missing sidecar, unreadable JSON, unresolvable source tree) falls
@@ -920,7 +983,8 @@ pub fn rustdoc_json_in(
         .join("doc")
         .join(format!("{}.json", pkg.replace('-', "_")));
 
-    if let Some(doc) = read_fresh_cache(&json_path, pkg, dir, features, visibility, &toolchain) {
+    let cached = cached_json_path(&json_path, features, visibility);
+    if let Some(doc) = read_fresh_cache(&cached, pkg, dir, features, visibility, &toolchain) {
         return Ok((doc, root));
     }
 
@@ -950,28 +1014,96 @@ pub fn rustdoc_json_in(
     warn_on_format_version(&doc);
     // Best-effort: a failed cache write only costs a future redundant
     // rebuild, not correctness, so it must not fail the extraction itself.
-    let _ = write_cache_meta(&json_path, features, visibility, &toolchain);
+    let _ = std::fs::copy(&json_path, &cached);
+    let _ = write_cache_meta(&cached, features, visibility, &toolchain);
     Ok((doc, root))
 }
 
-/// Check out the merge-base of HEAD and `refname` in a temp worktree, run
-/// `f` against it, then remove the worktree (best effort).
+/// Check out the merge-base of HEAD and `refname` under
+/// `.soothfast/worktrees/<sha>` and run `f` against it.
+///
+/// The checkout is kept between runs. Re-creating it would rewrite every
+/// file's mtime, and cargo's freshness for path dependencies is mtime-based,
+/// so the shared worktree target dir would rebuild every workspace member.
 pub fn with_merge_base_worktree<T>(
     refname: &str,
     f: impl FnOnce(&Path) -> Result<T, String>,
 ) -> Result<T, String> {
     let sha = git(&["merge-base", "HEAD", refname]).map_err(|e| e.to_string())?;
     let root = workspace_root().map_err(|e| e.to_string())?;
-    let wt = root.join(".soothfast").join("worktrees").join(&sha);
+    let dir = root.join(".soothfast").join("worktrees");
+    let wt = dir.join(&sha);
     let wt_str = wt
         .to_str()
         .ok_or_else(|| "worktree path is not UTF-8".to_string())?;
-    if !wt.exists() {
+
+    // A worktree whose directory was deleted stays registered, and `add`
+    // refuses the path until the registration is pruned.
+    let _ = git(&["worktree", "prune"]);
+    discard_worktrees_except(&dir, &sha);
+
+    if is_worktree_root(&wt) {
+        git(&["-C", wt_str, "checkout", "--force", "--detach", &sha]).map_err(|e| e.to_string())?;
+        git(&["-C", wt_str, "clean", "-fd"]).map_err(|e| e.to_string())?;
+    } else {
+        let _ = std::fs::remove_dir_all(&wt);
         git(&["worktree", "add", "--detach", wt_str, &sha]).map_err(|e| e.to_string())?;
     }
-    let result = f(&wt);
-    let _ = git(&["worktree", "remove", "--force", wt_str]);
-    result
+    verify_worktree(wt_str, &sha)?;
+    f(&wt)
+}
+
+/// Whether `wt` is itself the root of a linked worktree. Testing for a
+/// reachable git dir would accept any directory inside the repository and
+/// send a later `checkout` at the main checkout instead.
+fn is_worktree_root(wt: &Path) -> bool {
+    if !wt.join(".git").is_file() {
+        return false;
+    }
+    let Some(wt_str) = wt.to_str() else {
+        return false;
+    };
+    git(&["-C", wt_str, "rev-parse", "--show-toplevel"])
+        .is_ok_and(|top| same_path(Path::new(&top), wt))
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// The reference side is only worth measuring if the tree it measures is the
+/// merge-base, so a reused checkout has to prove it still is.
+fn verify_worktree(wt: &str, sha: &str) -> Result<(), String> {
+    let head = git(&["-C", wt, "rev-parse", "HEAD"]).map_err(|e| e.to_string())?;
+    if head != sha {
+        return Err(format!("worktree {wt} is at {head}, not merge-base {sha}"));
+    }
+    match git(&["-C", wt, "status", "--porcelain"]) {
+        Ok(out) if out.is_empty() => Ok(()),
+        Ok(_) => Err(format!("worktree {wt} has local changes; delete it")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Drop checkouts of every other merge-base, so a rebased branch does not
+/// leave one behind per base it has had.
+fn discard_worktrees_except(dir: &Path, keep: &str) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name() == std::ffi::OsStr::new(keep) {
+            continue;
+        }
+        if let Some(path) = entry.path().to_str() {
+            let _ = git(&["worktree", "remove", "--force", path]);
+        }
+        let _ = std::fs::remove_dir_all(entry.path());
+    }
+    let _ = git(&["worktree", "prune"]);
 }
 
 /// One `[[package]]` entry from a Cargo.lock.
@@ -1134,6 +1266,21 @@ pub fn worktree_target_dir() -> io::Result<PathBuf> {
     Ok(target_dir(None)?.join("soothfast-worktree"))
 }
 
+/// Buildcost's own target dir. `cargo clean -p` drops every artifact of the
+/// package under the profile dir whatever its hash, so a dir shared with the
+/// bench gate would lose the gate's copies on each buildcost leg.
+pub fn buildcost_target_dir() -> io::Result<PathBuf> {
+    Ok(target_dir(None)?.join("soothfast-buildcost"))
+}
+
+/// The merge-base side of [`buildcost_target_dir`], kept beside the parent
+/// target dir so it outlives the worktree the sources are checked out in.
+/// Separate from the head dir for the reason [`worktree_target_dir`] gives:
+/// a member hashes to the same `-C metadata` from either checkout.
+pub fn buildcost_base_target_dir() -> io::Result<PathBuf> {
+    Ok(target_dir(None)?.join("soothfast-buildcost-base"))
+}
+
 /// Run a git command in the workspace root, returning trimmed stdout.
 pub fn git(args: &[&str]) -> io::Result<String> {
     let root = workspace_root()?;
@@ -1274,5 +1421,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         );
         let base = no_source.replace("0.1.7", "0.1.5");
         assert!(harness_mismatches(&no_source, &base).is_empty());
+    }
+
+    #[test]
+    fn each_rustdoc_configuration_gets_its_own_cache_slot() {
+        let json = std::path::Path::new("/t/doc/soothfast_spec.json");
+        let public = super::cached_json_path(json, None, super::Visibility::Public);
+        let private = super::cached_json_path(json, None, super::Visibility::Private);
+        let featured = super::cached_json_path(json, Some("runner"), super::Visibility::Public);
+        assert_ne!(public, private);
+        assert_ne!(public, featured);
+        assert_ne!(private, featured);
+        assert_eq!(
+            public,
+            super::cached_json_path(json, None, super::Visibility::Public)
+        );
+    }
+
+    #[test]
+    fn a_plain_directory_in_the_repo_is_not_a_worktree_root() {
+        let Ok(root) = super::workspace_root() else {
+            return;
+        };
+        assert!(!super::is_worktree_root(&root.join("cargo-soothfast")));
+        assert!(!super::is_worktree_root(&root));
     }
 }

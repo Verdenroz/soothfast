@@ -5,12 +5,9 @@
 
 CARGO := cargo
 # Run the workspace's own cargo-soothfast so no installation is required.
-# Debug build: docs/spec/coverage commands aren't perf-sensitive, and this
-# reuses the incremental cache `make check`'s test/clippy already warmed.
+# Debug: measurement runs in the bench binary and buildcost times a child
+# cargo, so the CLI's optimization level reaches no measured number.
 SOOTHFAST ?= $(CARGO) run -p cargo-soothfast --
-# Release build, for commands whose numbers are the point. Overridable so
-# CI can point it at a binary built once and shared across jobs.
-SOOTHFAST_RELEASE ?= $(CARGO) run --release -p cargo-soothfast --
 BASE ?= origin/master
 
 # rustdoc JSON is nightly-only and its format changes frequently
@@ -39,15 +36,13 @@ check: ## fmt + clippy (-D warnings) + tests (--all-features: exercises the runn
 
 baselines: ## Measure every self-bench crate into the "self" baseline
 	@for crate in $(BENCH_CRATES); do \
-		$(SOOTHFAST_RELEASE) measure -p $$crate --save-baseline self || exit 1; \
+		$(SOOTHFAST) measure -p $$crate --save-baseline self || exit 1; \
 	done
 
 gate: ## Merge-base gates vs $(BASE): self-benches + build cost
-	@for crate in $(BENCH_CRATES); do \
-		$(SOOTHFAST_RELEASE) gate -p $$crate --against-ref $(BASE) || exit 1; \
-	done
-	$(SOOTHFAST_RELEASE) gate -p soothfast --backend buildcost --against-ref $(BASE)
-	$(SOOTHFAST_RELEASE) gate -p cargo-soothfast --backend buildcost --against-ref $(BASE)
+	$(SOOTHFAST) gate $(addprefix -p ,$(BENCH_CRATES)) --against-ref $(BASE)
+	$(SOOTHFAST) gate -p soothfast --backend buildcost --against-ref $(BASE)
+	$(SOOTHFAST) gate -p cargo-soothfast --backend buildcost --against-ref $(BASE)
 
 spec: ## Regenerate every mode = "generate" spec file from the code
 	$(SOOTHFAST) spec gen -p soothfast-spec
