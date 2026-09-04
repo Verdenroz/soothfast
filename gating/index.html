@@ -150,9 +150,9 @@ drift. Deterministic gating counters (perf instructions, callgrind Ir) do
 not drift, so they are collected once per side in the first round; the
 second round re-measures only the timing-sensitive backends, and the
 per-metric minimum across a side's rounds is its comparison value. When the
-two sides' bench binaries have byte-identical <code>.text</code> sections, no
-measurable change is possible and the gate short-circuits to a single cheap
-pass whose assertions still run. This is
+two sides' bench binaries have byte-identical loaded sections, code and
+data alike, no measurable change is possible and the gate short-circuits to a
+single cheap pass whose assertions still run. This is
 what <code>make gate</code> runs against <code>origin/master</code> for
 every crate in <code>BENCH_CRATES</code>, and it is why merge-base gating has no
 baseline file that can go stale in version control.</p>
@@ -178,8 +178,8 @@ the worktree is never built:</p>
 <p>The commit is not the only key. A merge-base that was never gated has no run
 under its commit, which on master is most of them, since the gate usually runs
 only on benchmarkable changes. Once such a reference is built, its machine code
-is checked against the cache as well: a byte-identical <code>.text</code> under the same
-conditions is the same measurement, whichever commit produced it.</p>
+is checked against the cache as well: byte-identical loaded sections under the
+same conditions are the same measurement, whichever commit produced it.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: reusing a run measured from the same merge-base binary
 </code></pre></figure>
 <p>That second key saves the measurement and not the build, because the binary is
@@ -228,19 +228,23 @@ decisions. Rust compilation is not function-local: at the stock
 <code>codegen-units = 16</code> rustc spreads modules over 16 units, and adding code
 anywhere repartitions them, moving inlining and register allocation in
 functions nobody touched. An untouched bench can then report several percent.</p>
-<p>So the gate pins it. Every measurement build runs with <code>codegen-units = 1</code>,
-on both sides of a comparison, whatever the checked-out tree's profile says.
-One unit cannot be repartitioned. This costs build time, which is the price
-of a comparison that means something; <code>--codegen-units N</code> or <code>inherit</code> opts
-out, as does</p>
+<p>So the gate pins it. Every measurement build compiles the workspace's own
+crates with <code>codegen-units = 1</code>, on both sides of a comparison, whatever the
+checked-out tree's profile says. One unit cannot be repartitioned. This costs
+build time, which is the price of a comparison that means something;
+<code>--codegen-units N</code> or <code>inherit</code> opts out, as does</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[gate]</span>
 <span class="tok-ty">codegen-units </span>=<span class="tok-str"> &quot;inherit&quot;</span></code></pre></figure>
-<p>Pinning cannot reach everything. A <code>[profile.bench.package.mycrate]</code> table
-still wins over the gate's setting, and <code>RUSTFLAGS</code>, <code>.cargo/config.toml</code> and
-the rustc version all change codegen too. Every run therefore records what it
-was built with, printed as <code>build=&lt;digest&gt;</code> in the gate banner. When the two
-sides disagree the gate says which field differs and downgrades the
-deterministic counters to SOFT for that comparison:</p>
+<p>Dependencies are left alone. They are identical on both sides, so they
+already partition identically, and pinning them as well would compile the
+whole graph a second time for nothing.</p>
+<p>Pinning cannot reach everything. <code>RUSTFLAGS</code>, <code>.cargo/config.toml</code> and the
+rustc version all change codegen and none of them is the gate's to set. A
+<code>[profile.bench.package.mycrate]</code> table does not override it: the gate's
+value arrives as config, which outranks the manifest. Every run therefore
+records what it was built with, printed as <code>build=&lt;digest&gt;</code> in the gate
+banner. When the two sides disagree the gate says which field differs and
+downgrades the deterministic counters to SOFT for that comparison:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: build settings differ: profiles (7b1f.. -&gt; 22c0..) — deterministic counters softened
 SOFT  ind_alma instructions 81076.0 -&gt; 107851.0 (+33.0%)
 </code></pre></figure>
