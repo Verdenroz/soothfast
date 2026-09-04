@@ -77,9 +77,11 @@ enum Build {
     Discover,
 }
 
-fn bench_command(
+/// `cargo bench` carrying every input that selects which binary gets built.
+/// Both the measured run and the `--no-run` digest probe go through here, so
+/// they cannot drift into building different binaries.
+fn bench_build_command(
     common: &CommonArgs,
-    extra: &[&str],
     dir: Option<&Path>,
     target_dir: Option<&Path>,
     build: Build,
@@ -110,7 +112,22 @@ fn bench_command(
         cmd.args(["--features", f]);
     }
     let target = common.target.as_deref().unwrap_or("soothfast");
-    cmd.args(["--bench", target, "--"]);
+    cmd.args(["--bench", target]);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    cmd
+}
+
+fn bench_command(
+    common: &CommonArgs,
+    extra: &[&str],
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+) -> Command {
+    let mut cmd = bench_build_command(common, dir, target_dir, build);
+    cmd.arg("--");
     if let Some(f) = &common.filter {
         cmd.args(["--filter", f]);
     }
@@ -121,9 +138,6 @@ fn bench_command(
         cmd.args(["--samples", s]);
     }
     cmd.args(extra);
-    if let Some(d) = dir {
-        cmd.current_dir(d);
-    }
     cmd
 }
 
@@ -245,29 +259,10 @@ pub fn bench_executable(
     target_dir: Option<&Path>,
 ) -> Option<PathBuf> {
     let target = common.target.as_deref().unwrap_or("soothfast");
-    let mut cmd = Command::new("cargo");
-    if let Some(toolchain) = bench_toolchain() {
-        cmd.arg(format!("+{toolchain}"));
-    }
-    cmd.args(["bench", "--no-run", "--message-format=json"]);
-    if let Some(td) = target_dir {
-        cmd.env("CARGO_TARGET_DIR", td);
-    }
-    if let Some(n) = common.codegen_units_env() {
-        cmd.env("CARGO_PROFILE_BENCH_CODEGEN_UNITS", n);
-    }
-    if let Some(p) = &common.pkg {
-        cmd.args(["-p", p]);
-    }
-    if let Some(f) = &common.features {
-        cmd.args(["--features", f]);
-    }
-    cmd.args(["--bench", target]);
+    let mut cmd = bench_build_command(common, dir, target_dir, Build::Measure);
+    cmd.args(["--no-run", "--message-format=json"]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
-    if let Some(d) = dir {
-        cmd.current_dir(d);
-    }
     let out = cmd.output().ok()?;
     if !out.status.success() {
         return None;
