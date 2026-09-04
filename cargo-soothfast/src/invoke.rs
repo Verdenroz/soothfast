@@ -512,7 +512,17 @@ pub fn run_from_items_value(items: &Value) -> Run {
 }
 
 /// Workspace root (parent of the workspace Cargo.toml), via cargo itself.
+/// Resolved once: `git()` calls this on every invocation, and the root
+/// cannot move under a running process.
 pub fn workspace_root() -> io::Result<PathBuf> {
+    static ROOT: OnceLock<io::Result<PathBuf>> = OnceLock::new();
+    match ROOT.get_or_init(locate_workspace_root) {
+        Ok(root) => Ok(root.clone()),
+        Err(e) => Err(io::Error::other(e.to_string())),
+    }
+}
+
+fn locate_workspace_root() -> io::Result<PathBuf> {
     let out = Command::new("cargo")
         .args(["locate-project", "--workspace", "--message-format", "plain"])
         .output()?;
