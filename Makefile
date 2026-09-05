@@ -1,5 +1,5 @@
 # Developer workflow: compositions of the cargo / cargo soothfast commands CI runs.
-.PHONY: help check baselines gate spec spec-gate ci docs docs-pages llms-gate clean print-%
+.PHONY: help check bot-check baselines gate spec spec-gate ci docs docs-pages llms-gate clean print-%
 
 .DEFAULT_GOAL := help
 
@@ -33,6 +33,11 @@ check: ## fmt + clippy (-D warnings) + tests (--all-features: exercises the runn
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
 	$(CARGO) test --workspace --all-features
+
+bot-check: ## Type-check + test the soothfast-bot Worker, shellcheck the action scripts
+	npm --prefix bot run check
+	npm --prefix bot test
+	shellcheck action/*.sh
 
 baselines: ## Measure every self-bench crate into the "self" baseline
 	@for crate in $(BENCH_CRATES); do \

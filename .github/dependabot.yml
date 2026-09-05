@@ -45,3 +45,22 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+
+  - package-ecosystem: "npm"
+    directory: "/bot"
+    schedule:
+      interval: "monthly"
+      time: "09:00"
+      timezone: "UTC"
+    target-branch: "master"
+    cooldown:
+      default-days: 7
+    assignees:
+      - "Verdenroz"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

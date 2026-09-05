@@ -1,0 +1,13 @@
+{
+  "name": "soothfast-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test 'test/*.test.ts'"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260905.1",
+    "typescript": "^5.9.3"
+  }
+}
