@@ -180,7 +180,7 @@ Scan one markdown text. Closing markers (`<!-- /soothfast:... -->`) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.
 
-**Measured:** 436021ns median, 4114 allocs/iter
+**Measured:** 434842ns median, 4114 allocs/iter
 
 #### `pub fn splice_output( text: &str, nth_capture: usize, output: &str, ) -> Result<Option<String>, String>`
 
@@ -375,7 +375,7 @@ Robust summary of one sample set.
 
 Summarize a non-empty sample set. Sorts in place.
 
-**Measured:** 667992ns median, 4 allocs/iter
+**Measured:** 667834ns median, 4 allocs/iter
 
 #### `pub const DRIFT_LIMIT: f64 = 2.5`
 
@@ -523,7 +523,7 @@ FNV-1a 64-bit hash.
 STABILITY CONTRACT: fingerprints are compared across builds and stored in
 lockfiles, so this algorithm is frozen. Do not change constants or logic.
 
-**Measured:** 81496ns median, 0 allocs/iter
+**Measured:** 81579ns median, 0 allocs/iter
 
 #### `pub fn measured_items() -> &'static [MeasuredItem]`
 
@@ -623,7 +623,7 @@ Render `llms.txt`: every public item grouped by crate, with its full
 doc comment and measured facts attributed via `covers` (or direct id)
 matching.
 
-**Measured:** 312559ns median, 7191 allocs/iter
+**Measured:** 314620ns median, 7191 allocs/iter
 
 #### `pub struct Row`
 
@@ -637,7 +637,7 @@ One measured item's metrics, each `None` when that backend didn't run.
 
 `rows` rendered as a GitHub-flavored markdown table.
 
-**Measured:** 847428ns median, 8204 allocs/iter
+**Measured:** 847672ns median, 8204 allocs/iter
 
 #### `pub fn rows(baseline: &Value) -> Vec<Row>`
 
@@ -699,7 +699,7 @@ conflict the dialect emitters refuse.
 `kind` decides only how wire names are *spelled* — every typing question
 is answered the same way for every target.
 
-**Measured:** 1421786ns median, 23907 allocs/iter
+**Measured:** 1445849ns median, 23907 allocs/iter
 
 #### `pub struct Field`
 
@@ -824,7 +824,7 @@ Evidence renderer over one baseline + the bind lockfile.
 
 Highlight `code` for `lang`. Always returns escaped HTML.
 
-**Measured:** 3189307ns median, 88069 allocs/iter
+**Measured:** 3178594ns median, 88069 allocs/iter
 
 #### `pub type CodeHook<'a> = &'a dyn Fn(&str, &[String], &str) -> Option<String>`
 
@@ -853,7 +853,7 @@ language label and highlighted body.
 
 Render one markdown document.
 
-**Measured:** 3080433ns median, 68118 allocs/iter
+**Measured:** 3094518ns median, 68118 allocs/iter
 
 #### `pub enum Missing`
 
@@ -1098,13 +1098,13 @@ Compare two generated documents, oldest first.
 Returns every difference found, breaking ones first, then by location so
 output is stable between runs.
 
-**Measured:** 5301069ns median, 77722 allocs/iter
+**Measured:** 5884395ns median, 77722 allocs/iter
 
 #### `pub fn document(info: &Info, ops: &[Operation]) -> Document`
 
 Assemble an OpenAPI 3.1 document.
 
-**Measured:** 1899211ns median, 30152 allocs/iter
+**Measured:** 1973725ns median, 30152 allocs/iter
 
 #### `pub struct Assertion`
 
@@ -1405,7 +1405,7 @@ of one document should not disagree about what comes first.
 
 Render a document as YAML, with well-known keys in conventional order.
 
-**Measured:** 6528000ns median, 74277 allocs/iter
+**Measured:** 6687895ns median, 74277 allocs/iter
 
 #### `pub fn sniff_kind(filename: &str, text: &str) -> Option<SpecKind>`
 
