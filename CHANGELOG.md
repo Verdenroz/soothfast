@@ -27,6 +27,10 @@
 
 ### 📦 Dependencies
 
+- Bump github/codeql-action/upload-sarif from 4.37.8 to 4.37.9 (#170)
+- Bump zizmorcore/zizmor-action from 0.6.2 to 0.6.3 (#168)
+- Bump taiki-e/install-action from 2.86.7 to 2.87.2 (#171)
+- Bump step-security/harden-runner from 2.21.0 to 2.21.1 (#169)
 - Bump dtolnay/rust-toolchain to current stable (#166)
 - Bump taiki-e/install-action from 2.86.6 to 2.86.7 (#152)
 - Bump astral-sh/setup-uv from 6.4.3 to 10.0.1 (#151)
