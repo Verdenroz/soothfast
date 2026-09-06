@@ -28,7 +28,7 @@ try { var t = localStorage.getItem("soothfast-theme");
 </svg>
 </span>
       <span class="brand-name">soothfast</span>
-      <span class="brand-ver">v0.3.0</span>
+      <span class="brand-ver">v0.3.1</span>
     </a>
     
     <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
@@ -367,7 +367,7 @@ adjustable per <code>[[spec]]</code> entry:</p>
 <span class="tok-ty">path </span>=<span class="tok-str"> &quot;openapi.yaml&quot;</span>
 <span class="tok-ty">mode </span>=<span class="tok-str"> &quot;generate&quot;</span>
 <span class="tok-ty">workspace_types </span>= true               # the default; false reports gaps instead
-<span class="tok-ty">workspace_crates </span>=<span class="tok-str"> [&quot;finance-query&quot;] # default: every workspace dep of the package</span></code></pre></figure>
+<span class="tok-ty">workspace_crates </span>=<span class="tok-str"> [&quot;mylib-core&quot;] # default: every workspace dep of the package</span></code></pre></figure>
 <p>A crate that fails to document warns and is skipped, leaving its types to
 report as gaps rather than failing the run. That covers a missing nightly
 toolchain, a compile error, or a member that is not a library.</p>
