@@ -56,6 +56,11 @@ export interface GitHubApi {
     head: string,
     token: string,
   ): Promise<Comparison>;
+  tagObject(
+    repository: string,
+    sha: string,
+    token: string,
+  ): Promise<string | undefined>;
   listComments(
     repository: string,
     issue: number,
@@ -234,6 +239,14 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
     async updateComment(repository, id, body, token) {
       const path = `/repos/${repository}/issues/comments/${id}`;
       return expectOk(await call<IssueComment>("PATCH", path, token, { body }));
+    },
+    async tagObject(repository, sha, token) {
+      const result = await call<{ object: { sha: string } }>(
+        "GET",
+        `/repos/${repository}/git/tags/${sha}`,
+        token,
+      );
+      return result.status === 404 ? undefined : expectOk(result).object.sha;
     },
     async revoke(token) {
       expectOk(await call<undefined>("DELETE", "/installation/token", token));

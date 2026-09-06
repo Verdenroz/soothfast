@@ -41,6 +41,7 @@ function fakeGitHub(
     defaultBranch?: string;
     compareStatus?: string;
     comments?: IssueComment[];
+    tagObjects?: Record<string, string>;
   } = {},
 ): Fake {
   const fake: Fake = {
@@ -65,6 +66,9 @@ function fakeGitHub(
       async compare(_repository, _base, head) {
         fake.compared.push(head);
         return { status: opts.compareStatus ?? "diverged" };
+      },
+      async tagObject(_repository, sha) {
+        return opts.tagObjects?.[sha];
       },
       async listComments() {
         return fake.comments;
@@ -287,6 +291,20 @@ test("a tag is judged by the commit that ran, not the tag name", async () => {
   assert.equal(status, 200);
   assert.equal(body.token, "ghs_minted");
   assert.deepEqual(fake.compared, [claims().sha]);
+});
+
+test("an annotated tag's object sha is peeled to its commit before the compare", async () => {
+  const objectSha = "9999999999999999999999999999999999999999";
+  const fake = fakeGitHub({
+    compareStatus: "behind",
+    tagObjects: { [objectSha]: "abc123" },
+  });
+  const { status } = await request(
+    { ref: "refs/tags/v1.0.0", sha: objectSha },
+    fake,
+  );
+  assert.equal(status, 200);
+  assert.deepEqual(fake.compared, ["abc123"]);
 });
 
 test("a tag whose commit is off the default branch is refused and revoked", async () => {
