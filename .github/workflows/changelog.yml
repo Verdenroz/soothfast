@@ -55,8 +55,6 @@ jobs:
       # Minted after the build so no step that compiles the tree holds it.
       - name: Mint a soothfast-bot token
         id: bot
-        env:
-          BROKER: https://soothfast-bot.verdenroz.workers.dev
         run: action/bot-token.sh
       - name: Land the regenerated changelog
         env:
