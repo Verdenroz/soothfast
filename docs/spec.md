@@ -309,7 +309,7 @@ adjustable per `[[spec]]` entry:
 path = "openapi.yaml"
 mode = "generate"
 workspace_types = true               # the default; false reports gaps instead
-workspace_crates = ["finance-query"] # default: every workspace dep of the package
+workspace_crates = ["mylib-core"] # default: every workspace dep of the package
 ```
 
 A crate that fails to document warns and is skipped, leaving its types to

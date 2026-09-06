@@ -1,13 +1,27 @@
 # Changelog
 
-## Unreleased (draft vs v0.3.0)
+## 0.3.1 - 2026-09-06
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+A follow-up to 0.3.0 for repositories whose layout the one-step action could
+not yet run as declared. The action now passes Cargo features through to the
+gate, the baseline measurement, and spec generation, with a separate feature
+set for the changelog's API surface; it can diff the changelog over crates
+that have no bench target; and `regen-run` lands any other derived file (an
+SDK, a rendered report) through the same bot pull request. The broker now
+judges an annotated tag by the commit under it, so a release from such a tag
+cannot fail on the tag object.
+
+### Upgrade notes
+
+Nothing changes for a job that already runs 0.3.0. A bench target that
+declares `required-features` needs `features:` on the step; a crate with an
+API but no bench needs `changelog-packages:`; a repository whose derived
+files come from `sdk gen` or a custom command moves that command into
+`regen-run:` with its output paths in `regen-paths:`, both required
+together. See `docs/ci.md` for the input table.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
@@ -24,7 +38,7 @@
 <!-- soothfast:notes -->
 ### Overview
 
-soothfast now installs into another repository the way codecov does: one
+soothfast now installs into another repository with one
 `uses: Verdenroz/soothfast@v0.3.0` step in an existing workflow, the
 Soothfast Bot GitHub App installed once, and no secrets. On pull requests the
 step gates every bench-carrying package against the base branch and posts the
