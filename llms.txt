@@ -61,7 +61,7 @@ Evaluate against a baseline document; returns (holds, actual value).
 Parse `demo::lcg_checksum.perfcnt.instructions < 25000` (units on the
 bound: ns/us/ms/s multiply into ns; bare numbers stay raw).
 
-**Measured:** 243ns median, 6 allocs/iter
+**Measured:** 250ns median, 6 allocs/iter
 
 #### `pub struct SurfaceDiff`
 
@@ -180,7 +180,7 @@ Scan one markdown text. Closing markers (`<!-- /soothfast:... -->`) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.
 
-**Measured:** 399275ns median, 4114 allocs/iter
+**Measured:** 430961ns median, 4114 allocs/iter
 
 #### `pub fn splice_output( text: &str, nth_capture: usize, output: &str, ) -> Result<Option<String>, String>`
 
@@ -375,7 +375,7 @@ Robust summary of one sample set.
 
 Summarize a non-empty sample set. Sorts in place.
 
-**Measured:** 544383ns median, 4 allocs/iter
+**Measured:** 662093ns median, 4 allocs/iter
 
 #### `pub const DRIFT_LIMIT: f64 = 2.5`
 
@@ -396,7 +396,7 @@ Cost model for a claimed class at size n.
 
 Evaluate measured values (one per size, same order) against a claim.
 
-**Measured:** 21ns median, 0 allocs/iter
+**Measured:** 25ns median, 0 allocs/iter
 
 #### `pub const DEFAULT_SAMPLES: u32 = 31`
 
@@ -510,7 +510,7 @@ Minimal std-only executor with poll/wake counting: enough to measure how
 a future *behaves* (polls to completion, wake traffic) deterministically.
 No spawns, no timers — a tokio-instrumented backend is future work.
 
-**Measured:** 348ns median, 1 allocs/iter, 9 polls/iter
+**Measured:** 142ns median, 1 allocs/iter, 9 polls/iter
 
 #### `pub fn fixture_items() -> &'static [FixtureItem]`
 
@@ -523,7 +523,7 @@ FNV-1a 64-bit hash.
 STABILITY CONTRACT: fingerprints are compared across builds and stored in
 lockfiles, so this algorithm is frozen. Do not change constants or logic.
 
-**Measured:** 75507ns median, 0 allocs/iter
+**Measured:** 81517ns median, 0 allocs/iter
 
 #### `pub fn measured_items() -> &'static [MeasuredItem]`
 
@@ -583,7 +583,8 @@ Inputs already computed by the CLI (API section, two baselines).
 #### `pub struct Icons`
 
 Section icons, keyed by the lowercased section name a release renders
-(`features`, `fixes`, `performance`, `documentation`, `internal`).
+(`breaking changes`, `features`, `fixes`, `performance`, `documentation`,
+`dependencies`, `internal`).
 
 A repo overrides any subset through `[changelog.icons]` in its
 `soothfast.toml`; whatever it leaves out keeps the shipped default, so a
@@ -605,13 +606,18 @@ where a human reads the verdict against a live noise floor.
 
 #### `pub fn changes_from_subjects(subjects: &[String]) -> Vec<Change>`
 
-Parse `type: subject (#N)` subjects. Release commits and the bots that
-regenerate derived artifacts are dropped, since a release listing its own
-paperwork is noise.
+Parse `type(scope)!: subject (#N)` subjects. Release commits and the bots
+that regenerate derived artifacts are dropped, since a release listing
+its own paperwork is noise.
 
 #### `pub fn draft(inputs: &DraftInputs) -> String`
 
 Render the "Unreleased" draft section: API surface + perf table.
+
+#### `pub fn unparsed_subjects(subjects: &[String]) -> Vec<&str>`
+
+Subjects that are not conventional commits of a known type: the ones a
+release would otherwise drop in silence.
 
 #### `pub struct SurfaceEntry`
 
@@ -623,7 +629,7 @@ Render `llms.txt`: every public item grouped by crate, with its full
 doc comment and measured facts attributed via `covers` (or direct id)
 matching.
 
-**Measured:** 313702ns median, 7191 allocs/iter
+**Measured:** 302518ns median, 7191 allocs/iter
 
 #### `pub struct Row`
 
@@ -637,7 +643,7 @@ One measured item's metrics, each `None` when that backend didn't run.
 
 `rows` rendered as a GitHub-flavored markdown table.
 
-**Measured:** 853237ns median, 8204 allocs/iter
+**Measured:** 838104ns median, 8204 allocs/iter
 
 #### `pub fn rows(baseline: &Value) -> Vec<Row>`
 
@@ -699,7 +705,7 @@ conflict the dialect emitters refuse.
 `kind` decides only how wire names are *spelled* — every typing question
 is answered the same way for every target.
 
-**Measured:** 1358448ns median, 23907 allocs/iter
+**Measured:** 1418547ns median, 23907 allocs/iter
 
 #### `pub struct Field`
 
@@ -824,7 +830,7 @@ Evidence renderer over one baseline + the bind lockfile.
 
 Highlight `code` for `lang`. Always returns escaped HTML.
 
-**Measured:** 2985210ns median, 88069 allocs/iter
+**Measured:** 3205772ns median, 88069 allocs/iter
 
 #### `pub type CodeHook<'a> = &'a dyn Fn(&str, &[String], &str) -> Option<String>`
 
@@ -853,7 +859,7 @@ language label and highlighted body.
 
 Render one markdown document.
 
-**Measured:** 3032559ns median, 68118 allocs/iter
+**Measured:** 3051463ns median, 68118 allocs/iter
 
 #### `pub enum Missing`
 
@@ -1098,13 +1104,13 @@ Compare two generated documents, oldest first.
 Returns every difference found, breaking ones first, then by location so
 output is stable between runs.
 
-**Measured:** 6083010ns median, 77722 allocs/iter
+**Measured:** 5278642ns median, 77722 allocs/iter
 
 #### `pub fn document(info: &Info, ops: &[Operation]) -> Document`
 
 Assemble an OpenAPI 3.1 document.
 
-**Measured:** 2089100ns median, 30152 allocs/iter
+**Measured:** 1929772ns median, 30152 allocs/iter
 
 #### `pub struct Assertion`
 
@@ -1405,7 +1411,7 @@ of one document should not disagree about what comes first.
 
 Render a document as YAML, with well-known keys in conventional order.
 
-**Measured:** 6262774ns median, 74277 allocs/iter
+**Measured:** 6312732ns median, 74277 allocs/iter
 
 #### `pub fn sniff_kind(filename: &str, text: &str) -> Option<SpecKind>`
 
