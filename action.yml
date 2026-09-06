@@ -73,6 +73,39 @@ inputs:
     description: Token broker URL. Empty uses the default in action/oidc.sh.
     required: false
     default: ""
+  features:
+    description: >-
+      Cargo features passed as `--features` to the gate, the baseline
+      measurement, and spec generation. A bench target with
+      `required-features` needs them here.
+    required: false
+    default: ""
+  changelog-features:
+    description: >-
+      Features for `report changelog`, which decide what the API surface
+      contains. Empty uses `features`.
+    required: false
+    default: ""
+  changelog-packages:
+    description: >-
+      Space-separated packages whose API surface `report changelog` diffs.
+      Empty uses `packages`; set it when crates without a bench target
+      still ship an API.
+    required: false
+    default: ""
+  regen-run:
+    description: >-
+      Shell run on the default branch after the built-in regeneration, for
+      derived files the inputs above do not cover (an `sdk gen`, a rendered
+      report). `$SOOTHFAST` names the cargo-soothfast this step installed.
+      Whatever it changes under `regen-paths` lands in the same pull
+      request; `regen-paths` is required with it.
+    required: false
+    default: ""
+  regen-paths:
+    description: Space-separated pathspecs `regen-run` may change.
+    required: false
+    default: ""
 
 outputs:
   version:
@@ -144,7 +177,7 @@ runs:
       shell: bash
       env:
         GATE: ${{ inputs.gate }}
-        REGEN: ${{ inputs.changelog == 'true' || inputs.spec != '' }}
+        REGEN: ${{ inputs.changelog == 'true' || inputs.spec != '' || inputs.regen-run != '' }}
         PACKAGES: ${{ inputs.packages }}
         RUSTDOC_TOOLCHAIN: ${{ inputs.rustdoc-toolchain }}
         GH_TOKEN: ${{ inputs.token }}
@@ -161,6 +194,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         BROKER: ${{ inputs.broker }}
+        FEATURES: ${{ inputs.features }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
     - name: Upload triage artifacts
       if: steps.gate.outputs.failed == 'true'
@@ -186,6 +220,11 @@ runs:
         BASELINE: ${{ inputs.baseline }}
         CHANGELOG: ${{ inputs.changelog }}
         SPEC: ${{ inputs.spec }}
+        FEATURES: ${{ inputs.features }}
+        CHANGELOG_FEATURES: ${{ inputs.changelog-features }}
+        CHANGELOG_PACKAGES: ${{ inputs.changelog-packages }}
+        REGEN_RUN: ${{ inputs.regen-run }}
+        REGEN_PATHS: ${{ inputs.regen-paths }}
       run: "$GITHUB_ACTION_PATH/action/regen.sh"
     # Minted after everything that compiles the tree has run.
     - name: Mint a soothfast-bot token

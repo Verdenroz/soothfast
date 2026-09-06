@@ -114,10 +114,15 @@ installed on is refused.
 
 | Input | Default | Meaning |
 |---|---|---|
-| `packages` | every package with a bench target named `soothfast` | Space-separated packages to gate and measure. The same list feeds `report changelog`; pass it explicitly when the crates whose API ships differ from the ones with benches. |
+| `packages` | every package with a bench target named `soothfast` | Space-separated packages to gate and measure. `report changelog` uses the same list unless `changelog-packages` says otherwise. |
 | `gate` | `true` | Run the gate on pull requests. |
 | `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes. |
 | `spec` | none | Space-separated packages whose `mode = "generate"` specs to regenerate. |
+| `features` | none | Cargo features for the gate, the baseline measurement, and spec generation. A bench target with `required-features` needs them here. |
+| `changelog-packages` | `packages` | Packages whose API surface `report changelog` diffs. Set it when a crate without a bench target still ships an API. |
+| `changelog-features` | `features` | Features for `report changelog`, which decide what the API surface diff contains. Set it wider than `features` when gating under the full feature set is too heavy. |
+| `regen-run` | none | Shell run on the default branch after the built-in regeneration, for derived files the inputs above do not cover. `$SOOTHFAST` is the `cargo-soothfast` this step installed, so `"$SOOTHFAST" sdk gen -p mylib` works whether the CLI came from the install or from `binary`. Requires `regen-paths`. |
+| `regen-paths` | none | Space-separated pathspecs `regen-run` may change; they land in the same pull request. Required with `regen-run`; without it the step fails rather than discarding the changes. |
 | `baseline` | `base` | Baseline name the regeneration measures into. |
 | `rustdoc-toolchain` | the nightly the release was tested with | Toolchain for rustdoc JSON. A floating `nightly` can change the JSON format under the API diff. |
 | `version` | from `Cargo.lock` | `cargo-soothfast` version to install. |
