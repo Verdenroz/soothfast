@@ -43,12 +43,12 @@ under `name`.
 
 ### soothfast-docs
 
-#### `pub struct Claim`
+#### `pub struct Claim { pub item: String, pub backend: String, pub metric: String, pub op: Op, pub bound: f64 }`
 
 One parsed `soothfast:claim` expression: a measured metric of an item,
 compared against a fixed bound.
 
-#### `pub enum Op`
+#### `pub enum Op { Lt, Le, Gt, Ge }`
 
 Comparison operator of a claim expression (`<`, `<=`, `>`, `>=`).
 
@@ -61,9 +61,9 @@ Evaluate against a baseline document; returns (holds, actual value).
 Parse `demo::lcg_checksum.perfcnt.instructions < 25000` (units on the
 bound: ns/us/ms/s multiply into ns; bare numbers stay raw).
 
-**Measured:** 239ns median, 6 allocs/iter
+**Measured:** 201ns median, 6 allocs/iter
 
-#### `pub struct SurfaceDiff`
+#### `pub struct SurfaceDiff { pub added: Vec<String>, pub removed: Vec<String>, pub changed: Vec<(String, bool)> }`
 
 Public-API delta between two [`Surface`] snapshots, by item path.
 
@@ -107,7 +107,7 @@ item path → fingerprint (hex).
 
 Lockfile name, resolved relative to the workspace root.
 
-#### `pub struct Lock`
+#### `pub struct Lock { pub version: u64, pub binds: Binds }`
 
 Accepted binds, and the format version they were written under.
 
@@ -149,15 +149,15 @@ without a `version` key predates the field and reads as v1.
 
 Persist `binds` to `root`'s lockfile as stable, pretty-printed JSON.
 
-#### `pub struct Bind`
+#### `pub struct Bind { pub item: String, pub line: usize }`
 
 `<!-- soothfast:bind path::to::item -->`
 
-#### `pub struct ClaimMarker`
+#### `pub struct ClaimMarker { pub expr: String, pub line: usize }`
 
 `<!-- soothfast:claim item.backend.metric < value -->`
 
-#### `pub struct CodeBlock`
+#### `pub struct CodeBlock { pub index: usize, pub lang: String, pub tags: Vec<String>, pub code: String, pub line: usize, pub close_line: usize, pub ticks: usize }`
 
 One fenced code block.
 
@@ -169,7 +169,7 @@ would split into a separate fence tag) when a block needs more than one
 feature to compile. Empty when the block has no `feature=` tag; `scan`
 rejects a tag whose value names no feature.
 
-#### `pub struct Doc`
+#### `pub struct Doc { pub blocks: Vec<CodeBlock>, pub binds: Vec<Bind>, pub claims: Vec<ClaimMarker> }`
 
 Everything [`scan`] extracts from one markdown file: fenced code blocks
 plus `soothfast:bind` / `soothfast:claim` markers, in document order.
@@ -180,7 +180,7 @@ Scan one markdown text. Closing markers (`<!-- /soothfast:... -->`) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.
 
-**Measured:** 428579ns median, 4114 allocs/iter
+**Measured:** 327160ns median, 4114 allocs/iter
 
 #### `pub fn splice_output( text: &str, nth_capture: usize, output: &str, ) -> Result<Option<String>, String>`
 
@@ -202,7 +202,7 @@ renderer only supports inline links. Drop each definition line and inline
 it into the shorthand `[`Foo::bar`]` references it defines. Doesn't handle
 the separate `[text][label]` reference form — not seen in practice here.
 
-#### `pub struct ItemGroup<'a>`
+#### `pub struct ItemGroup<'a> { pub representative: &'a String, pub aliases: Vec<&'a String> }`
 
 One distinct item, grouped by (kind, fingerprint) to collapse the extra
 path keys `alias_reexports` adds for the same underlying function —
@@ -210,13 +210,13 @@ path keys `alias_reexports` adds for the same underlying function —
 every spelling (for lookups, since a `covers=` tag may name any of them).
 Un-fingerprinted items (span unreadable) are never merged with others.
 
-#### `pub struct ItemInfo`
+#### `pub struct ItemInfo { pub kind: String, pub fingerprint: u64, pub signature: String, pub has_docs: bool }`
 
 What the surface records about one public item — enough to detect any
 change to it (fingerprint), classify the change (signature), and audit
 coverage (kind, has_docs).
 
-#### `pub struct Surface`
+#### `pub struct Surface { pub items: BTreeMap<String, ItemInfo> }`
 
 Public items keyed by full path (`crate::module::item`).
 
@@ -305,7 +305,7 @@ fn route_list_by_sector() {}
 
 #### `pub struct CountingAllocator`
 
-#### `pub struct AllocMeasurement`
+#### `pub struct AllocMeasurement { pub allocs: u64, pub bytes: u64 }`
 
 Per-iteration allocation counts for one item.
 
@@ -318,7 +318,7 @@ Counting global allocator; installed by `soothfast::bench_main!`.
 Measure one workload iteration's allocations: warm once (lazy statics,
 allocator pools), then take the minimum over a few single-iteration runs.
 
-#### `pub struct AsyncMeasurement`
+#### `pub struct AsyncMeasurement { pub polls: u64, pub wakes: u64 }`
 
 Per-iteration async behavior for one item.
 
@@ -347,7 +347,7 @@ enough: an AVX-512-compiled glibc loader SIGILLs before main().
 
 #### `pub fn main()`
 
-#### `pub struct PerfMeasurement`
+#### `pub struct PerfMeasurement { pub instructions: u64, pub cycles: u64, pub cache_refs: u64 }`
 
 Per-iteration counter values for one item.
 
@@ -367,7 +367,7 @@ Can this environment open an instructions counter on itself?
 
 Entry point installed by `soothfast::bench_main!`.
 
-#### `pub struct Summary`
+#### `pub struct Summary { pub median: f64, pub mad: f64, pub min: f64, pub max: f64 }`
 
 Robust summary of one sample set.
 
@@ -375,7 +375,7 @@ Robust summary of one sample set.
 
 Summarize a non-empty sample set. Sorts in place.
 
-**Measured:** 669369ns median, 4 allocs/iter
+**Measured:** 544009ns median, 4 allocs/iter
 
 #### `pub const DRIFT_LIMIT: f64 = 2.5`
 
@@ -383,7 +383,7 @@ Growth beyond the claim must stay under this factor across the sweep.
 2.5x tolerates n vs n log n ambiguity (~1.4x over a 16x size range)
 while catching n -> n^2 (16x) the day it happens.
 
-#### `pub struct SweepOutcome`
+#### `pub struct SweepOutcome { pub drift: f64, pub ok: bool }`
 
 Verdict of one complexity sweep: how far measured growth strayed from
 the claimed class, and whether it stayed within [`DRIFT_LIMIT`].
@@ -396,13 +396,13 @@ Cost model for a claimed class at size n.
 
 Evaluate measured values (one per size, same order) against a claim.
 
-**Measured:** 25ns median, 0 allocs/iter
+**Measured:** 14ns median, 0 allocs/iter
 
 #### `pub const DEFAULT_SAMPLES: u32 = 31`
 
 Default sample count; odd so the median is a real observation.
 
-#### `pub struct WallMeasurement`
+#### `pub struct WallMeasurement { pub summary: Summary, pub p99_ns: f64, pub samples: u32, pub iters: u64 }`
 
 Wall-clock summary for one item, in ns per iteration.
 
@@ -419,12 +419,12 @@ Measure one item: pilot run to pick `iters`, then `samples` timed loops.
 
 ### soothfast-registry
 
-#### `pub struct Assertions`
+#### `pub struct Assertions { pub max_allocs: Option<u64>, pub p99_ns: Option<u64>, pub complexity: Option<&'static str> }`
 
 Checked performance claims attached to a measured item.
 Evaluated by the runner after measurement; violations fail CI.
 
-#### `pub struct Bencher<'a>`
+#### `pub struct Bencher<'a> {  }`
 
 Single-use measurement context handed to registered runner glue.
 
@@ -445,7 +445,7 @@ counting executor (polls/wakes feed the `asyncexec` backend).
 
 All fixtures registered with `#[soothfast::fixture]`.
 
-#### `pub struct FixtureItem`
+#### `pub struct FixtureItem { pub id: &'static str, pub fingerprint: u64 }`
 
 A deterministic input-builder registered via `#[soothfast::fixture]`.
 
@@ -457,7 +457,7 @@ All items registered with `#[soothfast::measured]` / `#[soothfast::bench]`.
 
 All mock seams registered with `#[soothfast::mock_seam]`.
 
-#### `pub struct MeasuredItem`
+#### `pub struct MeasuredItem { pub pkg: &'static str, pub module_path: &'static str, pub name: &'static str, pub group: &'static str, pub fingerprint: u64, pub covers: &'static str, pub setup: Option<&'static str>, pub runner: fn(&mut Bencher), pub assertions: Assertions, pub sizes: &'static [usize], pub sized_runner: Option<fn(&mut Bencher, usize)>, pub is_async: bool, pub tolerance_pct: Option<f64> }`
 
 A benchmarked item registered via `#[soothfast::measured]` or `#[soothfast::bench]`.
 
@@ -478,7 +478,7 @@ crate they bring (mockito, wiremock, a hand-rolled stub server, ...).
 Teardown is ordinary `Drop` on the concrete type — no separate teardown
 method is needed.
 
-#### `pub struct MockSeamItem`
+#### `pub struct MockSeamItem { pub id: &'static str, pub fingerprint: u64, pub setup: fn(&str) -> Box<dyn MockSeam> }`
 
 A mock-backend setup fn registered via `#[soothfast::mock_seam]`.
 
@@ -486,7 +486,7 @@ A mock-backend setup fn registered via `#[soothfast::mock_seam]`.
 
 All routes registered with `#[soothfast::route]`.
 
-#### `pub struct RouteItem`
+#### `pub struct RouteItem { pub id: &'static str, pub spec: &'static str, pub operation: &'static str, pub method: &'static str, pub path: &'static str, pub request: Option<&'static str>, pub response: Option<&'static str>, pub status: Option<u16>, pub params: Option<&'static str>, pub path_params: Option<&'static str>, pub summary: Option<&'static str> }`
 
 A declared route/operation registered via `#[soothfast::route]` — the
 code-side half of spec reconciliation (`cargo soothfast spec check`).
@@ -510,7 +510,7 @@ Minimal std-only executor with poll/wake counting: enough to measure how
 a future *behaves* (polls to completion, wake traffic) deterministically.
 No spawns, no timers — a tokio-instrumented backend is future work.
 
-**Measured:** 142ns median, 1 allocs/iter, 9 polls/iter
+**Measured:** 322ns median, 1 allocs/iter, 9 polls/iter
 
 #### `pub fn fixture_items() -> &'static [FixtureItem]`
 
@@ -523,7 +523,7 @@ FNV-1a 64-bit hash.
 STABILITY CONTRACT: fingerprints are compared across builds and stored in
 lockfiles, so this algorithm is frozen. Do not change constants or logic.
 
-**Measured:** 81525ns median, 0 allocs/iter
+**Measured:** 73300ns median, 0 allocs/iter
 
 #### `pub fn measured_items() -> &'static [MeasuredItem]`
 
@@ -563,7 +563,7 @@ Green ≥ 90, yellow ≥ 70, red below.
 Render endpoint JSON (as produced by the builders above) as a flat SVG
 badge: dark instrument-panel label segment, evidence-colored message.
 
-#### `pub enum ApiSection<'a>`
+#### `pub enum ApiSection<'a> { Diff { against: &'a str, text: &'a str }, Initial(&'a [SurfaceEntry]) }`
 
 What the API section has to report.
 
@@ -572,15 +572,15 @@ The two cases are separate types rather than an empty-string convention:
 same in prose but mean opposite things, and a changelog that confuses
 them reports calm where it had no input at all.
 
-#### `pub struct Change`
+#### `pub struct Change { pub kind: String, pub scope: Option<String>, pub breaking: bool, pub subject: String, pub pr: Option<u32> }`
 
 One merged change, read off a conventional-commit subject.
 
-#### `pub struct DraftInputs<'a>`
+#### `pub struct DraftInputs<'a> { pub api: ApiSection<'a>, pub changes: &'a [Change], pub icons: &'a Icons, pub old_baseline: Option<&'a Value>, pub new_baseline: &'a Value, pub thresholds: PerfThresholds }`
 
 Inputs already computed by the CLI (API section, two baselines).
 
-#### `pub struct Icons`
+#### `pub struct Icons {  }`
 
 Section icons, keyed by the lowercased section name a release renders
 (`breaking changes`, `features`, `fixes`, `performance`, `documentation`,
@@ -590,7 +590,7 @@ A repo overrides any subset through `[changelog.icons]` in its
 `soothfast.toml`; whatever it leaves out keeps the shipped default, so a
 consumer never has to restate the whole vocabulary to change one glyph.
 
-#### `pub struct PerfThresholds`
+#### `pub struct PerfThresholds { pub instructions_pct: f64, pub allocs_pct: f64 }`
 
 Per-metric movement a delta table is willing to report, as percentages.
 
@@ -619,7 +619,7 @@ Render the "Unreleased" draft section: API surface + perf table.
 Subjects that are not conventional commits of a known type: the ones a
 release would otherwise drop in silence.
 
-#### `pub struct SurfaceEntry`
+#### `pub struct SurfaceEntry { pub path: String, pub kind: String, pub signature: String, pub pkg: String, pub summary: String, pub docs: String }`
 
 One public item as fed by the CLI (from the docs-engine surface).
 
@@ -629,9 +629,9 @@ Render `llms.txt`: every public item grouped by crate, with its full
 doc comment and measured facts attributed via `covers` (or direct id)
 matching.
 
-**Measured:** 302721ns median, 7191 allocs/iter
+**Measured:** 247668ns median, 7191 allocs/iter
 
-#### `pub struct Row`
+#### `pub struct Row { pub id: String, pub instructions: Option<u64>, pub median_ns: Option<f64>, pub p99_ns: Option<f64>, pub allocs: Option<u64>, pub polls: Option<u64> }`
 
 One measured item's metrics, each `None` when that backend didn't run.
 
@@ -643,7 +643,7 @@ One measured item's metrics, each `None` when that backend didn't run.
 
 `rows` rendered as a GitHub-flavored markdown table.
 
-**Measured:** 848391ns median, 8204 allocs/iter
+**Measured:** 746482ns median, 8204 allocs/iter
 
 #### `pub fn rows(baseline: &Value) -> Vec<Row>`
 
@@ -663,19 +663,19 @@ Render one metric's chart; None when fewer than 2 points exist.
 
 ### soothfast-sdk
 
-#### `pub struct SdkFileSet`
+#### `pub struct SdkFileSet { pub files: BTreeMap<String, String>, pub notes: Vec<String> }`
 
 Rendered SDK files, keyed by path relative to the output directory.
 
-#### `pub enum SdkKind`
+#### `pub enum SdkKind { Python, TypeScript }`
 
 A language the SDK engine can emit.
 
-#### `pub struct SdkOptions`
+#### `pub struct SdkOptions { pub package: String, pub module: String, pub version: String, pub base_url: Option<String>, pub embed: Option<String>, pub embed_args: Vec<String>, pub embed_env: BTreeMap<String, String>, pub embed_env_vars: Vec<envtemplate::EnvVar>, pub targets: Vec<String>, pub description: Option<String>, pub repository: Option<String>, pub paginated: Vec<String>, pub cursor_param: String, pub limit_param: String }`
 
 Everything an emitter needs that the operations don't carry.
 
-#### `pub struct EnvVar`
+#### `pub struct EnvVar { pub name: String, pub doc: Vec<String>, pub default: Option<String> }`
 
 One environment variable the embedded server reads.
 
@@ -705,55 +705,55 @@ conflict the dialect emitters refuse.
 `kind` decides only how wire names are *spelled* — every typing question
 is answered the same way for every target.
 
-**Measured:** 1457371ns median, 23907 allocs/iter
+**Measured:** 1099624ns median, 23907 allocs/iter
 
-#### `pub struct Field`
+#### `pub struct Field { pub attr: String, pub wire: String, pub ty: Ty, pub required: bool, pub doc: Option<String> }`
 
 One field of a [`Model`].
 
-#### `pub struct Method`
+#### `pub struct Method { pub name: String, pub operation_id: String, pub http_method: String, pub path: String, pub doc: Option<String>, pub params: Vec<Param>, pub body: Option<Ty>, pub ok: Ty, pub ok_status: u16, pub paginated: bool }`
 
 One client method, lowered from an operation.
 
-#### `pub struct Model`
+#### `pub struct Model { pub name: String, pub doc: Option<String>, pub fields: Vec<Field> }`
 
 A named object schema, emitted as a class/interface.
 
-#### `pub struct Param`
+#### `pub struct Param { pub attr: String, pub wire: String, pub location: ParamLoc, pub ty: Ty, pub required: bool, pub doc: Option<String> }`
 
 One parameter of a [`Method`].
 
-#### `pub enum ParamLoc`
+#### `pub enum ParamLoc { Query, Path, Header }`
 
 Where a request parameter travels.
 
-#### `pub struct Sdk`
+#### `pub struct Sdk { pub models: Vec<Model>, pub aliases: Vec<(String, Ty)>, pub methods: Vec<Method>, pub notes: Vec<String> }`
 
 The whole lowered SDK.
 
-#### `pub enum Ty`
+#### `pub enum Ty { Str, Int, Float, Bool, Any, Unit, List(Box<Ty>), Map(Box<Ty>), Optional(Box<Ty>), Named(String), Union(Vec<Ty>), Literal(Vec<String>) }`
 
 A wire type, lowered from JSON Schema.
 
-#### `pub struct Target`
+#### `pub struct Target { pub triple: &'static str, pub os: &'static str, pub cpu: &'static str, pub libc: Option<&'static str>, pub wheel_platform: &'static str, pub exe_suffix: &'static str }`
 
 One cross-compilation target and how each ecosystem names it.
 
 ### soothfast-site
 
-#### `pub struct BuildInput`
+#### `pub struct BuildInput { pub root: PathBuf, pub config: SiteConfig, pub plugins: Vec<Box<dyn SitePlugin>>, pub missing_nav_page: nav::Missing }`
 
-#### `pub struct BuildReport`
+#### `pub struct BuildReport { pub pages: usize, pub assets: usize, pub warnings: Vec<String> }`
 
-#### `pub struct SiteConfig`
+#### `pub struct SiteConfig { pub name: String, pub version: String, pub repo: String, pub logo: Option<String>, pub favicon: Option<String>, pub docs_dir: PathBuf, pub out_dir: PathBuf, pub theme_dir: Option<PathBuf>, pub extra_css: Vec<String>, pub extra_js: Vec<String>, pub search: bool, pub nav: Vec<NavGroup>, pub theme: ThemeConfig }`
 
 #### `pub trait SitePlugin`
 
-#### `pub struct BuildInput`
+#### `pub struct BuildInput { pub root: PathBuf, pub config: SiteConfig, pub plugins: Vec<Box<dyn SitePlugin>>, pub missing_nav_page: nav::Missing }`
 
 Everything a build needs; the CLI assembles this.
 
-#### `pub struct BuildReport`
+#### `pub struct BuildReport { pub pages: usize, pub assets: usize, pub warnings: Vec<String> }`
 
 What happened, for the CLI to report.
 
@@ -762,11 +762,11 @@ What happened, for the CLI to report.
 Build the whole site. Any page failing to render fails the build —
 a half-broken published site is worse than a red command.
 
-#### `pub struct Role`
+#### `pub struct Role { pub light: RoleTones, pub dark: RoleTones }`
 
 A role's light and dark tones together, as derived from one seed color.
 
-#### `pub struct RoleTones`
+#### `pub struct RoleTones { pub base: String, pub on: String, pub container: String, pub on_container: String }`
 
 One Material-style color role, resolved to concrete hex values for a
 single scheme (light or dark).
@@ -801,15 +801,15 @@ single scheme's tones are computed).
 Render a channel triple as `#RRGGBB`, the form CSS custom properties
 and the theme files are written in.
 
-#### `pub struct NavGroup`
+#### `pub struct NavGroup { pub title: String, pub pages: Vec<String> }`
 
 One nav group in the sidebar: a titled list of markdown pages.
 
-#### `pub struct SiteConfig`
+#### `pub struct SiteConfig { pub name: String, pub version: String, pub repo: String, pub logo: Option<String>, pub favicon: Option<String>, pub docs_dir: PathBuf, pub out_dir: PathBuf, pub theme_dir: Option<PathBuf>, pub extra_css: Vec<String>, pub extra_js: Vec<String>, pub search: bool, pub nav: Vec<NavGroup>, pub theme: ThemeConfig }`
 
 The `[site]` section of `soothfast.toml`, with defaults for every field.
 
-#### `pub struct ThemeConfig`
+#### `pub struct ThemeConfig { pub primary: Option<String>, pub secondary: Option<String>, pub tertiary: Option<String>, pub background: Option<String> }`
 
 The `[site.theme]` section: seed hex colors for the brand roles. Any
 unset field keeps the built-in "gauge indigo" default from `tokens.css`.
@@ -822,7 +822,7 @@ with the full light+dark Material role set derived from each seed
 Parse `soothfast.toml` text into a config. Unknown keys under `[site]` are
 errors: silently ignored config is how sites drift from intent.
 
-#### `pub struct Evidence`
+#### `pub struct Evidence {  }`
 
 Evidence renderer over one baseline + the bind lockfile.
 
@@ -830,23 +830,23 @@ Evidence renderer over one baseline + the bind lockfile.
 
 Highlight `code` for `lang`. Always returns escaped HTML.
 
-**Measured:** 3256477ns median, 88069 allocs/iter
+**Measured:** 2559880ns median, 88069 allocs/iter
 
 #### `pub type CodeHook<'a> = &'a dyn Fn(&str, &[String], &str) -> Option<String>`
 
 Custom renderer for one fenced block: (lang, tags, code) → HTML, or
 None to fall back to the default `<pre>` + highlight rendering.
 
-#### `pub struct Heading`
+#### `pub struct Heading { pub level: u8, pub id: String, pub text: String }`
 
 One collected heading, for the on-page table of contents.
 
-#### `pub struct Options<'a>`
+#### `pub struct Options<'a> { pub link: &'a dyn Fn(&str) -> String, pub code: CodeHook<'a> }`
 
 Render hooks: link rewriting and custom code-block rendering, so the
 build pipeline (and plugins) stay out of the parser.
 
-#### `pub struct Rendered`
+#### `pub struct Rendered { pub html: String, pub title: Option<String>, pub toc: Vec<Heading> }`
 
 A rendered page body.
 
@@ -859,9 +859,9 @@ language label and highlighted body.
 
 Render one markdown document.
 
-**Measured:** 3057061ns median, 68118 allocs/iter
+**Measured:** 2512479ns median, 68118 allocs/iter
 
-#### `pub enum Missing`
+#### `pub enum Missing { Fail, Warn }`
 
 What to do about a nav entry naming a page the build did not find.
 
@@ -870,7 +870,7 @@ that links nowhere is drift and should fail. Writing docs is a different
 activity: the page you are about to add does not exist yet, and stopping
 the dev server over it helps nobody.
 
-#### `pub struct PageMeta`
+#### `pub struct PageMeta { pub src: String, pub route: String, pub title: String }`
 
 Minimal facts about a discovered page, gathered before rendering.
 
@@ -896,11 +896,11 @@ Copy of the nav with `current: true` stamped on the active page and a
 ready-to-use `href` per page (relative to the page being rendered), so
 the template highlights and links without any logic of its own.
 
-#### `pub struct PageRecord`
+#### `pub struct PageRecord { pub src: String, pub route: String, pub title: String, pub html: String }`
 
 A fully rendered page, as seen by end-of-build events.
 
-#### `pub struct PageRef<'a>`
+#### `pub struct PageRef<'a> { pub src: &'a str, pub route: &'a str }`
 
 Identity of the page an event concerns.
 
@@ -921,7 +921,7 @@ Run one markdown-rewrite pass through all plugins, in order.
 
 Search index builder.
 
-#### `pub struct Server`
+#### `pub struct Server {  }`
 
 A bound dev server, not yet running (split from `run` so callers and
 tests can learn the actual address before the loop starts).
@@ -939,11 +939,11 @@ Escape text for HTML element and attribute contexts.
 Render `source` against `ctx`. Values are looked up by dot path
 (`page.title`); a bare `.` names the current `for` item.
 
-#### `pub struct Theme`
+#### `pub struct Theme {  }`
 
 A resolved theme: defaults plus user overrides.
 
-#### `pub enum TomlValue`
+#### `pub enum TomlValue { Str(String), Bool(bool), Int(i64), Float(String), StrArray(Vec<String>), Table(std::collections::BTreeMap<String, TomlValue>) }`
 
 A parsed TOML scalar, string array, or inline table.
 
@@ -963,15 +963,15 @@ Parse a scalar value: string, bool, or string array.
 
 ### soothfast-spec
 
-#### `pub struct DeclaredOp`
+#### `pub struct DeclaredOp { pub operation: String, pub method: String, pub path: String }`
 
 One operation a spec declares.
 
-#### `pub struct RouteDecl`
+#### `pub struct RouteDecl { pub id: String, pub operation: String, pub method: String, pub path: String }`
 
 One `#[soothfast::route]` annotation from the code.
 
-#### `pub enum SpecKind`
+#### `pub enum SpecKind { OpenApi, AsyncApi, GraphQl, McpTools }`
 
 Spec dialects soothfast reads and writes.
 
@@ -990,15 +990,15 @@ Compare two generated documents, oldest first.
 
 Assemble an AsyncAPI 3.0 document.
 
-#### `pub struct Change`
+#### `pub struct Change { pub severity: Severity, pub at: String, pub detail: String }`
 
 One difference between two versions of a spec.
 
-#### `pub enum Direction`
+#### `pub enum Direction { Request, Response }`
 
 Which way the data flows, which decides what "required" costs.
 
-#### `pub struct SchemaDiff<'a>`
+#### `pub struct SchemaDiff<'a> {  }`
 
 Compares schemas belonging to two revisions of a document.
 
@@ -1006,7 +1006,7 @@ Both documents are held because a `$ref` only means anything relative to
 the document it came from: the same pointer can name different shapes on
 either side of the comparison.
 
-#### `pub enum Severity`
+#### `pub enum Severity { Additive, Breaking }`
 
 Whether a change can break an existing consumer.
 
@@ -1045,15 +1045,15 @@ The `required` names of an object schema.
 Order a diff for reporting: breaking first, then by location, so output is
 stable between runs.
 
-#### `pub struct Document`
+#### `pub struct Document { pub value: Value, pub conflicts: Vec<String>, pub notes: Vec<String> }`
 
 A rendered document plus anything that had to be reconciled to build it.
 
-#### `pub struct Info`
+#### `pub struct Info { pub title: String, pub version: String, pub description: Option<String>, pub servers: Vec<String> }`
 
 Document metadata that no amount of code reading can derive.
 
-#### `pub struct Operation`
+#### `pub struct Operation { pub operation_id: String, pub method: String, pub path: String, pub summary: Option<String>, pub shape: RouteShape }`
 
 One operation to emit, pairing spec identity with the inferred shape.
 
@@ -1104,31 +1104,31 @@ Compare two generated documents, oldest first.
 Returns every difference found, breaking ones first, then by location so
 output is stable between runs.
 
-**Measured:** 5178018ns median, 77722 allocs/iter
+**Measured:** 4922610ns median, 77722 allocs/iter
 
 #### `pub fn document(info: &Info, ops: &[Operation]) -> Document`
 
 Assemble an OpenAPI 3.1 document.
 
-**Measured:** 1916911ns median, 30152 allocs/iter
+**Measured:** 1788357ns median, 30152 allocs/iter
 
-#### `pub struct Assertion`
+#### `pub struct Assertion {  }`
 
 One parsed assertion, kept with its source line for reporting.
 
-#### `pub struct Baseline`
+#### `pub struct Baseline { pub probes: BTreeMap<String, ProbeLock> }`
 
 The lock file: probe name → locked state.
 
-#### `pub enum Class`
+#### `pub enum Class { Always, Sometimes }`
 
 A field's population class across accepted runs.
 
-#### `pub struct Findings`
+#### `pub struct Findings { pub regressed: Vec<String>, pub new_fields: Vec<String>, pub uncovered: Vec<String> }`
 
 One probe's gate findings against the lock.
 
-#### `pub struct ProbeLock`
+#### `pub struct ProbeLock { pub fields: BTreeMap<String, Class>, pub uncovered: BTreeSet<String> }`
 
 One probe's locked state.
 
@@ -1147,7 +1147,7 @@ Flatten `value` into path → populated. Paths are dotted, arrays
 collapse to `[]`, and a path already seen stays populated once any
 occurrence carried data.
 
-#### `pub struct Violation`
+#### `pub struct Violation { pub path: String, pub message: String }`
 
 One structural disagreement between response and schema.
 
@@ -1167,12 +1167,12 @@ Whether a path template matches concrete path segments, treating any
 Validate `value` against `schema`, resolving `$ref`s through the
 spec's `components/schemas`. Returns every violation found.
 
-#### `pub struct ProtoField`
+#### `pub struct ProtoField { pub name: String, pub ty: String, pub tag: u32 }`
 
 One field, from either a `.proto` message or a struct's `#[prost(..)]`
 attributes. `ty` is the bare type token (`"string"`, `"sint64"`, ...).
 
-#### `pub struct ProtoReconciliation`
+#### `pub struct ProtoReconciliation { pub missing_code: Vec<ProtoField>, pub missing_spec: Vec<ProtoField>, pub mismatched: Vec<(ProtoField, ProtoField, String)>, pub matched: usize }`
 
 Outcome of matching struct fields to a `.proto` message by tag number.
 
@@ -1200,7 +1200,7 @@ Parse one spec document into the operations it declares, dispatching on
 dialect: OpenAPI, AsyncAPI, and MCP tool schemas are YAML-or-JSON;
 GraphQL is SDL text.
 
-#### `pub struct Reconciliation`
+#### `pub struct Reconciliation { pub missing_handler: Vec<DeclaredOp>, pub missing_spec: Vec<RouteDecl>, pub mismatched: Vec<(RouteDecl, DeclaredOp, String)>, pub matched: usize }`
 
 Outcome of matching `#[route]` declarations against a spec's operations:
 what's missing on each side, what disagrees, and what lined up.
@@ -1210,32 +1210,32 @@ what's missing on each side, what disagrees, and what lined up.
 Match routes to declared operations by operation id, then check that
 method and path agree where the route states them.
 
-#### `pub struct Docs<'a>`
+#### `pub struct Docs<'a> {  }`
 
-#### `pub struct Extraction`
+#### `pub struct Extraction { pub schema: Value, pub components: BTreeMap<String, Value>, pub gaps: Vec<Gap>, pub aux_resolved: BTreeSet<String> }`
 
 A schema plus everything it referenced and everything it could not see.
 
-#### `pub struct Extractors`
+#### `pub struct Extractors {  }`
 
-#### `pub enum Gap`
+#### `pub enum Gap { Erased { at: String, bound: String, }, CustomSerializer { at: String, with: String, }, UnmappedForeign { at: String, path: String, }, UnknownRenameRule { at: String, rule: String }, StrippedFields { at: String }, TransparentWithoutArgument { at: String, path: String, arg: usize, }, ComplexFieldArgument { at: String, argument: String, } }`
 
 A place the extractor could not derive a shape, and why.
 
 Every gap names the exact type or field so the report is actionable, and
 carries an open schema rather than a guessed one.
 
-#### `pub struct Overrides`
+#### `pub struct Overrides { pub request: Option<String>, pub response: Option<String>, pub status: Option<u16>, pub params: Option<String>, pub path_params: Option<String> }`
 
-#### `pub struct Resolver<'a>`
+#### `pub struct Resolver<'a> { pub components: BTreeMap<String, Value>, pub gaps: Vec<Gap>, pub aux_resolved: BTreeSet<String> }`
 
-#### `pub struct RouteShape`
+#### `pub struct RouteShape { pub summary: Option<String>, pub request: Option<RequestBody>, pub parameters: Vec<Parameter>, pub responses: BTreeMap<String, Response>, pub components: BTreeMap<String, Value>, pub gaps: Vec<Gap>, pub aux_resolved: BTreeSet<String> }`
 
-#### `pub enum TypeMapping`
+#### `pub enum TypeMapping { Literal(Value), Transparent { arg: usize, } }`
 
-#### `pub struct TypeTable`
+#### `pub struct TypeTable {  }`
 
-#### `pub struct Docs<'a>`
+#### `pub struct Docs<'a> {  }`
 
 The rustdoc documents a resolution may walk: the package's own, plus zero
 or more workspace-local crates its types can be defined in.
@@ -1254,7 +1254,7 @@ type may actually be defined in. Used for the
 `#[route(response = "...")]` override; signature-driven extraction goes
 through [`Resolver::resolve`] directly.
 
-#### `pub enum TypeMapping`
+#### `pub enum TypeMapping { Literal(Value), Transparent { arg: usize, } }`
 
 What a table entry says about a type it cannot walk.
 
@@ -1263,19 +1263,19 @@ Most entries are a literal schema, but a *transparent newtype wrapper*
 own — it is exactly its type argument, so no literal can describe it
 without erasing whatever it wraps.
 
-#### `pub struct TypeTable`
+#### `pub struct TypeTable {  }`
 
 Built-in and user-supplied mappings from canonical type path to schema.
 
-#### `pub struct ContainerAttrs`
+#### `pub struct ContainerAttrs { pub rename_fields: Option<Rename>, pub rename_items: Option<Rename>, pub unknown_rename_rule: Option<String>, pub present: bool }`
 
 Container-level `#[graphql(...)]` options that change wire names.
 
-#### `pub struct FieldAttrs`
+#### `pub struct FieldAttrs { pub name: Option<String>, pub skip: bool }`
 
 Field-level `#[graphql(...)]` options.
 
-#### `pub enum Rename`
+#### `pub enum Rename { Lower, Upper, Pascal, Camel, Snake, ScreamingSnake }`
 
 How a container renames every field or enum item beneath it.
 
@@ -1303,34 +1303,34 @@ The wire name of a field: `name` if given, else the container's rule.
 
 The wire name of an enum item: `name` if given, else the container's rule.
 
-#### `pub struct Extractors`
+#### `pub struct Extractors {  }`
 
 Maps extractor wrapper types to the role they play.
 
-#### `pub struct Overrides`
+#### `pub struct Overrides { pub request: Option<String>, pub response: Option<String>, pub status: Option<u16>, pub params: Option<String>, pub path_params: Option<String> }`
 
 Attribute overrides for what inference cannot see.
 
 `request` and `response` take a type name, or `[Type]` for a bare
 array of it.
 
-#### `pub struct Parameter`
+#### `pub struct Parameter { pub name: String, pub location: String, pub required: bool, pub schema: Value }`
 
 One query, path or header parameter.
 
-#### `pub struct RequestBody`
+#### `pub struct RequestBody { pub content_type: String, pub schema: Value, pub required: bool }`
 
 A request body and the content type it arrives as.
 
-#### `pub struct Response`
+#### `pub struct Response { pub content_type: String, pub schema: Value, pub headers: Vec<String>, pub description: Option<String> }`
 
 One response, keyed by status code in [`RouteShape`].
 
-#### `pub enum Role`
+#### `pub enum Role { Body(String), Query, Path, Header, Ignored }`
 
 What a handler parameter contributes to the wire contract.
 
-#### `pub struct RouteShape`
+#### `pub struct RouteShape { pub summary: Option<String>, pub request: Option<RequestBody>, pub parameters: Vec<Parameter>, pub responses: BTreeMap<String, Response>, pub components: BTreeMap<String, Value>, pub gaps: Vec<Gap>, pub aux_resolved: BTreeSet<String> }`
 
 Everything a handler signature says about its wire contract.
 
@@ -1342,15 +1342,15 @@ Infer the wire contract of one handler.
 `route_path` the URL template, whose `{placeholders}` name tuple path
 parameters that the Rust signature leaves positional.
 
-#### `pub struct ContainerAttrs`
+#### `pub struct ContainerAttrs { pub rename: Option<String>, pub rename_all: Option<Rename>, pub tag: Option<String>, pub content: Option<String>, pub untagged: bool, pub transparent: bool, pub deny_unknown_fields: bool, pub unknown_rename_all: Option<String> }`
 
 Container-level serde options that change the emitted schema.
 
-#### `pub struct FieldAttrs`
+#### `pub struct FieldAttrs { pub rename: Option<String>, pub skip: bool, pub flatten: bool, pub default: bool, pub custom_serializer: Option<String> }`
 
 Field-level serde options that change the emitted schema.
 
-#### `pub enum Rename`
+#### `pub enum Rename { Lower, Upper, Pascal, Camel, Snake, ScreamingSnake, Kebab, ScreamingKebab }`
 
 How a container renames every field or variant beneath it.
 
@@ -1374,7 +1374,7 @@ The wire name of a field, applying `rename` then the container rule.
 
 The wire name of a variant, applying `rename` then the container rule.
 
-#### `pub struct Resolver<'a>`
+#### `pub struct Resolver<'a> { pub components: BTreeMap<String, Value>, pub gaps: Vec<Gap>, pub aux_resolved: BTreeSet<String> }`
 
 Walks rustdoc JSON, emitting JSON Schema and collecting [`Gap`]s.
 
@@ -1411,7 +1411,7 @@ of one document should not disagree about what comes first.
 
 Render a document as YAML, with well-known keys in conventional order.
 
-**Measured:** 6342645ns median, 74277 allocs/iter
+**Measured:** 5311691ns median, 74277 allocs/iter
 
 #### `pub fn sniff_kind(filename: &str, text: &str) -> Option<SpecKind>`
 
