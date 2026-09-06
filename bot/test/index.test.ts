@@ -154,3 +154,13 @@ test("other routes are 404 and missing bearer is 401", async () => {
   );
   assert.equal(noAuth.status, 401);
 });
+
+test("a failing revoke on the wrong branch still refuses with 403", async () => {
+  const fake = fakeGitHub({ defaultBranch: "master" });
+  fake.github.revoke = async () => {
+    throw new Error("network down");
+  };
+  const { status, body } = await request({}, fake);
+  assert.equal(status, 403);
+  assert.match(body.reason ?? "", /not the default branch/);
+});

@@ -121,6 +121,16 @@ export async function appJwt(
   return `${input}.${bytesToBase64Url(new Uint8Array(signature))}`;
 }
 
+// GitHub 5xx pages and proxy interstitials are HTML; surface them as the
+// error message instead of a JSON parse exception.
+function parseBody(text: string): unknown {
+  try {
+    return text ? JSON.parse(text) : undefined;
+  } catch {
+    return { message: text.slice(0, 200) };
+  }
+}
+
 export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
   const call = async <T>(
     method: string,
@@ -139,8 +149,10 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    const json = response.status === 204 ? undefined : await response.json();
-    return { status: response.status, json: json as T };
+    return {
+      status: response.status,
+      json: parseBody(await response.text()) as T,
+    };
   };
   const expectOk = <T>(result: { status: number; json: T }): T => {
     if (result.status < 200 || result.status >= 300) {

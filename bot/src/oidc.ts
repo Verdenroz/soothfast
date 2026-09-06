@@ -13,11 +13,12 @@ export class OidcError extends Error {}
 
 const RS256 = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
 const SKEW_SECONDS = 60;
-const JWKS_REFETCH_SECONDS = 60;
+const JWKS_REFETCH_MS = 60_000;
+const JWKS_MAX_AGE_MS = 6 * 60 * 60_000;
 
 interface Jws {
   header: { alg?: string; kid?: string };
-  payload: OidcClaims;
+  payload: Record<string, unknown>;
   signingInput: Uint8Array;
   signature: Uint8Array;
 }
@@ -36,6 +37,29 @@ function decode(token: string): Jws {
   } catch {
     throw new OidcError("token segments are not base64url JSON");
   }
+}
+
+const isString = (v: unknown): v is string => typeof v === "string";
+const isNumber = (v: unknown): v is number => typeof v === "number";
+
+function asClaims(payload: Record<string, unknown>): OidcClaims {
+  const strings = [
+    "iss",
+    "repository",
+    "repository_id",
+    "ref",
+    "event_name",
+  ] as const;
+  const wellFormed =
+    strings.every((k) => isString(payload[k])) &&
+    isNumber(payload.exp) &&
+    isNumber(payload.iat) &&
+    (payload.nbf === undefined || isNumber(payload.nbf)) &&
+    (payload.environment === undefined || isString(payload.environment)) &&
+    (isString(payload.aud) ||
+      (Array.isArray(payload.aud) && payload.aud.every(isString)));
+  if (!wellFormed) throw new OidcError("token claims are malformed");
+  return payload as unknown as OidcClaims;
 }
 
 export async function verifyOidc(
@@ -59,7 +83,7 @@ export async function verifyOidc(
   );
   if (!valid) throw new OidcError("signature does not verify");
 
-  const claims = jws.payload;
+  const claims = asClaims(jws.payload);
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   if (claims.exp <= now - SKEW_SECONDS)
     throw new OidcError("token has expired");
@@ -78,9 +102,12 @@ interface JwksDocument {
   keys: (JsonWebKey & { kid: string })[];
 }
 
-// One refetch per minute at most: an unknown kid may be a new GitHub key
-// or a garbage token, and the second must not turn into a JWKS fetch per request.
-export function githubJwks(fetchFn: typeof fetch = fetch): JwksLookup {
+// Unknown kids refetch at most once a minute: a new GitHub key and a garbage
+// token look the same, and the second must not become a fetch per request.
+export function githubJwks(
+  fetchFn: typeof fetch = fetch,
+  now: () => number = Date.now,
+): JwksLookup {
   let keys = new Map<string, JsonWebKey>();
   let fetchedAt = 0;
   const load = async () => {
@@ -93,10 +120,11 @@ export function githubJwks(fetchFn: typeof fetch = fetch): JwksLookup {
       await fetchFn(config.jwks_uri)
     ).json()) as JwksDocument;
     keys = new Map(jwks.keys.map((k) => [k.kid, k]));
-    fetchedAt = Date.now();
+    fetchedAt = now();
   };
   return async (kid) => {
-    if (!keys.has(kid) && Date.now() - fetchedAt > JWKS_REFETCH_SECONDS * 1000)
+    const age = now() - fetchedAt;
+    if (age > JWKS_MAX_AGE_MS || (!keys.has(kid) && age > JWKS_REFETCH_MS))
       await load();
     return keys.get(kid);
   };

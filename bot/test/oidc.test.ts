@@ -124,3 +124,54 @@ test("githubJwks fetches discovery then keys and caches by kid", async () => {
     "https://jwks.example/keys",
   ]);
 });
+
+test("token without exp is refused as malformed", async () => {
+  const { exp: _exp, ...rest } = claims();
+  await rejects(
+    await signJwt(keys.privateKey, header, { ...rest }),
+    /malformed/,
+  );
+});
+
+test("token with a non-string ref is refused as malformed", async () => {
+  const forged = { ...claims(), ref: 42 } as unknown as Record<string, unknown>;
+  await rejects(await signJwt(keys.privateKey, header, forged), /malformed/);
+});
+
+test("githubJwks refetches a known kid once the cache is older than six hours", async () => {
+  let fetches = 0;
+  const fetchFn = (async (url: string | URL | Request) => {
+    const body = String(url).endsWith("openid-configuration")
+      ? { jwks_uri: "https://jwks.example/keys" }
+      : (fetches++, { keys: [keys.jwk] });
+    return new Response(JSON.stringify(body));
+  }) as typeof fetch;
+  let clock = 1_000_000;
+  const lookup = githubJwks(fetchFn, () => clock);
+  await lookup(KID);
+  clock += 5 * 60 * 60_000;
+  await lookup(KID);
+  assert.equal(fetches, 1);
+  clock += 2 * 60 * 60_000;
+  await lookup(KID);
+  assert.equal(fetches, 2);
+});
+
+test("githubJwks throttles unknown kids to one refetch a minute", async () => {
+  let fetches = 0;
+  const fetchFn = (async (url: string | URL | Request) => {
+    const body = String(url).endsWith("openid-configuration")
+      ? { jwks_uri: "https://jwks.example/keys" }
+      : (fetches++, { keys: [keys.jwk] });
+    return new Response(JSON.stringify(body));
+  }) as typeof fetch;
+  let clock = 1_000_000;
+  const lookup = githubJwks(fetchFn, () => clock);
+  await lookup("missing");
+  clock += 30_000;
+  await lookup("missing");
+  assert.equal(fetches, 1);
+  clock += 31_000;
+  await lookup("missing");
+  assert.equal(fetches, 2);
+});

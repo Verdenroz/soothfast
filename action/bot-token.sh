@@ -11,10 +11,10 @@ if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
   exit 1
 fi
 
-oidc=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+oidc=$(curl -sSf --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
   "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=soothfast-bot" | jq -r .value)
 
-response=$(curl -sS -w '\n%{http_code}' -X POST "$BROKER/token" -H "Authorization: Bearer $oidc")
+response=$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "$BROKER/token" -H "Authorization: Bearer $oidc")
 status=${response##*$'\n'}
 body=${response%$'\n'*}
 
@@ -23,7 +23,10 @@ if [ "$status" != 200 ]; then
   exit 1
 fi
 
-token=$(jq -r .token <<<"$body")
+token=$(jq -er .token <<<"$body") || {
+  echo "::error::soothfast-bot returned no token"
+  exit 1
+}
 echo "::add-mask::$token"
 {
   echo "token=$token"

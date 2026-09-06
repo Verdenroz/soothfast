@@ -165,3 +165,15 @@ test("unexpected statuses surface as GitHubError", async () => {
       /Bad credentials/.test(e.message),
   );
 });
+
+test("a non-JSON error body becomes the GitHubError message", async () => {
+  const fetchFn = (async () =>
+    new Response("<html>Bad gateway</html>", { status: 502 })) as typeof fetch;
+  await assert.rejects(
+    githubApi(fetchFn).appSlug("jwt"),
+    (e: unknown) =>
+      e instanceof GitHubError &&
+      e.status === 502 &&
+      /Bad gateway/.test(e.message),
+  );
+});

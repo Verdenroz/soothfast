@@ -70,13 +70,35 @@ export async function handle(
   return mint(claims, env, deps);
 }
 
+let cachedKey: { pem: string; key: CryptoKey } | undefined;
+let cachedSlug: { clientId: string; slug: string } | undefined;
+
+async function privateKey(pem: string): Promise<CryptoKey> {
+  if (cachedKey?.pem !== pem)
+    cachedKey = { pem, key: await importPrivateKey(pem) };
+  return cachedKey.key;
+}
+
+async function appSlug(
+  github: GitHubApi,
+  clientId: string,
+  jwt: string,
+): Promise<string> {
+  if (cachedSlug?.clientId !== clientId)
+    cachedSlug = { clientId, slug: await github.appSlug(jwt) };
+  return cachedSlug.slug;
+}
+
 async function mint(
   claims: OidcClaims,
   env: Env,
   deps: Deps,
 ): Promise<Response> {
-  const key = await importPrivateKey(env.GITHUB_APP_PRIVATE_KEY);
-  const jwt = await appJwt(env.GITHUB_APP_CLIENT_ID, key, deps.now?.());
+  const jwt = await appJwt(
+    env.GITHUB_APP_CLIENT_ID,
+    await privateKey(env.GITHUB_APP_PRIVATE_KEY),
+    deps.now?.(),
+  );
   const installation = await deps.github.installationFor(
     claims.repository,
     jwt,
@@ -99,10 +121,12 @@ async function mint(
   );
   const branch = decideBranch(claims.ref, repository.default_branch);
   if (!branch.ok) {
-    await deps.github.revoke(minted.token);
+    await deps.github
+      .revoke(minted.token)
+      .catch((e: unknown) => console.error("revoke failed", e));
     return denied(403, branch.reason, claims);
   }
-  const slug = await deps.github.appSlug(jwt);
+  const slug = await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt);
   return json(200, {
     token: minted.token,
     expires_at: minted.expires_at,
@@ -117,7 +141,8 @@ export default {
     return handle(request, env, deps).catch((e: unknown) => {
       if (e instanceof GitHubError)
         return json(502, { reason: `GitHub API ${e.status}: ${e.message}` });
-      throw e;
+      console.error(e);
+      return json(500, { reason: "internal error" });
     });
   },
 } satisfies ExportedHandler<Env>;

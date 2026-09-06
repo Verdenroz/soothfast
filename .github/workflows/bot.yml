@@ -10,7 +10,7 @@ on:
 permissions: {}
 
 jobs:
-  check:
+  bot-check:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,7 +38,10 @@ jobs:
   # credential this repo keeps for it.
   deploy:
     if: github.event_name == 'push'
-    needs: [check]
+    needs: [bot-check]
+    concurrency:
+      group: bot-deploy
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: bot
     permissions:
@@ -55,3 +58,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: bot
+          wranglerVersion: 4.129.0
