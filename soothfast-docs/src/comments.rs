@@ -8,16 +8,30 @@
 /// tokens can't fuse. String, raw-string and char literals pass through
 /// verbatim, so a `//` inside `"http://host"` is not mistaken for a comment.
 pub fn strip(source: &str) -> String {
+    strip_with(source, true)
+}
+
+/// Remove doc comments as well: the shape of a declaration with no prose
+/// in it, for reading `pub` off a member.
+pub fn strip_all(source: &str) -> String {
+    strip_with(source, false)
+}
+
+fn strip_with(source: &str, keep_docs: bool) -> String {
     let src: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
     let mut i = 0;
     while i < src.len() {
         let end = match kind_at(&src, i) {
-            Some(Token::Doc(end)) | Some(Token::Literal(end)) => {
+            Some(Token::Doc(end)) if keep_docs => {
                 out.extend(&src[i..end]);
                 end
             }
-            Some(Token::Comment(end)) => {
+            Some(Token::Literal(end)) => {
+                out.extend(&src[i..end]);
+                end
+            }
+            Some(Token::Comment(end)) | Some(Token::Doc(end)) => {
                 out.push(' ');
                 end
             }

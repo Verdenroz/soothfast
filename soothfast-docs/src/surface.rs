@@ -20,7 +20,9 @@ pub struct ItemInfo {
     pub kind: String,
     /// FNV-1a of the span source, comments stripped then whitespace-normalized.
     pub fingerprint: u64,
-    /// Declaration text (span up to the first `{` or `;`), normalized.
+    /// Declaration text, normalized: the span up to the first `{` or `;`,
+    /// except that a struct or union keeps its `pub` fields and an enum its
+    /// variants, since those are what a consumer writes against.
     pub signature: String,
     /// Whether the item carries a `///` doc comment.
     pub has_docs: bool,
@@ -120,7 +122,7 @@ pub fn from_rustdoc(doc: &Value, source_root: &Path) -> Surface {
         };
 
         let (fingerprint, signature) =
-            span_fingerprint(&item["span"], source_root, &mut file_cache)
+            span_fingerprint(&item["span"], kind, source_root, &mut file_cache)
                 .unwrap_or((0, String::new()));
         let has_docs = item["docs"].as_str().is_some_and(|d| !d.trim().is_empty());
 
@@ -251,8 +253,14 @@ fn item_path(paths: &serde_json::Map<String, Value>, id: &str) -> Option<String>
     )
 }
 
+/// Kinds whose braces enclose part of the public contract rather than an
+/// implementation: every enum variant, and a struct's or union's `pub`
+/// fields.
+const MEMBER_KINDS: [&str; 3] = ["struct", "enum", "union"];
+
 fn span_fingerprint(
     span: &Value,
+    kind: &str,
     root: &Path,
     cache: &mut HashMap<String, Vec<String>>,
 ) -> Option<(u64, String)> {
@@ -278,14 +286,94 @@ fn span_fingerprint(
     if bl == 0 || el > lines.len() || bl > el {
         return None;
     }
-    let source = crate::comments::strip(&lines[bl - 1..el].join("\n"));
-    let normalized: String = source.split_whitespace().collect::<Vec<_>>().join(" ");
-    let sig_end = normalized
+    let span_text = lines[bl - 1..el].join("\n");
+    let normalized = normalize(&crate::comments::strip(&span_text));
+    // Doc comments are part of the fingerprint (prose is bound to them)
+    // but not of the signature, where they would hide a member's `pub`.
+    let bare = normalize(&crate::comments::strip_all(&span_text));
+    let sig_end = bare
         .find('{')
-        .or_else(|| normalized.find(';'))
-        .unwrap_or(normalized.len());
-    let signature = normalized[..sig_end].trim().to_string();
+        .or_else(|| bare.find(';'))
+        .unwrap_or(bare.len());
+    let declaration = bare[..sig_end].trim();
+    let signature = if MEMBER_KINDS.contains(&kind) {
+        member_signature(declaration, &bare[sig_end..], kind == "enum")
+    } else {
+        declaration.to_string()
+    };
     Some((soothfast_registry::fnv1a(normalized.as_bytes()), signature))
+}
+
+fn normalize(source: &str) -> String {
+    source.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Declaration plus the members a consumer can name: every variant of an
+/// enum, only the `pub` fields of a struct or union. A private field edit is
+/// a body change, a public one is not.
+fn member_signature(declaration: &str, rest: &str, all_public: bool) -> String {
+    let Some(body) = rest
+        .strip_prefix('{')
+        .and_then(|inner| inner.trim_end().strip_suffix('}'))
+    else {
+        return declaration.to_string();
+    };
+    let members: Vec<String> = split_top_level(body)
+        .into_iter()
+        .map(|member| strip_attributes(member.trim()).to_string())
+        .filter(|member| !member.is_empty() && (all_public || member.starts_with("pub ")))
+        .collect();
+    format!("{declaration} {{ {} }}", members.join(", "))
+}
+
+/// Split on commas outside brackets, so `HashMap<K, V>` stays one member.
+/// The `>` of a `->` return arrow is not a bracket.
+fn split_top_level(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    let mut prev = ' ';
+    for (i, c) in text.char_indices() {
+        match c {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' if prev == '-' => {}
+            '>' | ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&text[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        prev = c;
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// Drop leading `#[...]` attributes so `#[serde(rename = "x")] pub a: u8`
+/// is recognised as public.
+fn strip_attributes(member: &str) -> &str {
+    let mut rest = member;
+    while let Some(after) = rest.strip_prefix("#[") {
+        let mut depth = 1;
+        let mut end = None;
+        for (i, c) in after.char_indices() {
+            depth += match c {
+                '[' => 1,
+                ']' => -1,
+                _ => 0,
+            };
+            if depth == 0 {
+                end = Some(i + 1);
+                break;
+            }
+        }
+        match end {
+            Some(e) => rest = after[e..].trim_start(),
+            None => break,
+        }
+    }
+    rest
 }
 
 #[cfg(test)]
@@ -434,6 +522,10 @@ mod tests {
     }
 
     fn fingerprint_of(tag: &str, source: &str) -> (u64, String) {
+        fingerprint_of_kind(tag, "struct", source)
+    }
+
+    fn fingerprint_of_kind(tag: &str, kind: &str, source: &str) -> (u64, String) {
         let dir = std::env::temp_dir().join(format!(
             "soothfast-fingerprint-{}-{tag}",
             std::process::id()
@@ -445,7 +537,7 @@ mod tests {
             "begin": [1, 0],
             "end": [source.lines().count(), 0],
         });
-        let got = span_fingerprint(&span, &dir, &mut HashMap::new()).unwrap();
+        let got = span_fingerprint(&span, kind, &dir, &mut HashMap::new()).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         got
     }
@@ -465,6 +557,108 @@ mod tests {
         let before = fingerprint_of("before", "pub struct S {\n    a: u8,\n}\n");
         let after = fingerprint_of("after", "pub struct S {\n    a: u16,\n}\n");
         assert_ne!(before.0, after.0);
+    }
+
+    #[test]
+    fn a_struct_field_addition_changes_the_signature() {
+        let before = fingerprint_of_kind(
+            "sig-before",
+            "struct",
+            "pub struct S {\n    pub a: u8,\n}\n",
+        );
+        let after = fingerprint_of_kind(
+            "sig-after",
+            "struct",
+            "pub struct S {\n    pub a: u8,\n    pub b: u8,\n}\n",
+        );
+        assert_ne!(before.1, after.1);
+        assert_eq!(after.1, "pub struct S { pub a: u8, pub b: u8 }");
+    }
+
+    #[test]
+    fn a_private_field_edit_is_body_only() {
+        let before = fingerprint_of_kind(
+            "priv-before",
+            "struct",
+            "pub struct S {\n    pub a: u8,\n    b: u8,\n}\n",
+        );
+        let after = fingerprint_of_kind(
+            "priv-after",
+            "struct",
+            "pub struct S {\n    pub a: u8,\n    b: u16,\n    c: u8,\n}\n",
+        );
+        assert_ne!(before.0, after.0);
+        assert_eq!(before.1, after.1);
+        assert_eq!(before.1, "pub struct S { pub a: u8 }");
+    }
+
+    #[test]
+    fn generic_fields_and_attributes_are_read_as_members() {
+        let got = fingerprint_of_kind(
+            "generic",
+            "struct",
+            "pub struct S {\n    #[serde(rename = \"m\")]\n    pub map: HashMap<String, Vec<u8>>,\n    pub(crate) hidden: u8,\n}\n",
+        );
+        assert_eq!(got.1, "pub struct S { pub map: HashMap<String, Vec<u8>> }");
+    }
+
+    #[test]
+    fn a_documented_public_field_counts_as_signature() {
+        let before = fingerprint_of_kind(
+            "pubdoc-before",
+            "struct",
+            "pub struct S {\n    /// count\n    pub a: u8,\n}\n",
+        );
+        let after = fingerprint_of_kind(
+            "pubdoc-after",
+            "struct",
+            "pub struct S {\n    /// count\n    pub a: u8,\n    /// total\n    pub b: u8,\n}\n",
+        );
+        assert_ne!(before.1, after.1);
+        assert_eq!(after.1, "pub struct S { pub a: u8, pub b: u8 }");
+    }
+
+    #[test]
+    fn a_variant_doc_edit_moves_the_fingerprint_but_not_the_signature() {
+        let before = fingerprint_of_kind(
+            "vdoc-before",
+            "enum",
+            "pub enum E {\n    /// first\n    A,\n    B,\n}\n",
+        );
+        let after = fingerprint_of_kind(
+            "vdoc-after",
+            "enum",
+            "pub enum E {\n    /// the first\n    A,\n    B,\n}\n",
+        );
+        assert_ne!(before.0, after.0);
+        assert_eq!(before.1, after.1);
+        assert_eq!(before.1, "pub enum E { A, B }");
+    }
+
+    #[test]
+    fn a_function_pointer_field_does_not_swallow_its_neighbours() {
+        let got = fingerprint_of_kind(
+            "fnptr",
+            "struct",
+            "pub struct S {\n    pub f: fn(u8) -> u8,\n    pub g: u8,\n}\n",
+        );
+        assert_eq!(got.1, "pub struct S { pub f: fn(u8) -> u8, pub g: u8 }");
+    }
+
+    #[test]
+    fn an_enum_variant_addition_changes_the_signature() {
+        let before = fingerprint_of_kind("var-before", "enum", "pub enum E {\n    A,\n}\n");
+        let after = fingerprint_of_kind("var-after", "enum", "pub enum E {\n    A,\n    B,\n}\n");
+        assert_ne!(before.1, after.1);
+    }
+
+    #[test]
+    fn a_function_body_edit_keeps_its_signature() {
+        let before = fingerprint_of_kind("fn-before", "function", "pub fn f() -> u8 {\n    1\n}\n");
+        let after = fingerprint_of_kind("fn-after", "function", "pub fn f() -> u8 {\n    2\n}\n");
+        assert_ne!(before.0, after.0);
+        assert_eq!(before.1, after.1);
+        assert_eq!(before.1, "pub fn f() -> u8");
     }
 
     #[test]
