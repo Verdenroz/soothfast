@@ -30,6 +30,7 @@
 
 ### 🔧 Internal
 
+- Author the gh-pages commit as soothfast-bot (#174)
 - Move every workflow off the App private key (#163)
 - Land the changelog as soothfast-bot via the broker (#161)
 
