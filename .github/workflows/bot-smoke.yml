@@ -1,0 +1,44 @@
+name: soothfast-bot smoke
+
+# Proves a deployed broker end to end: mint a token for this repo, list
+# what it can see, revoke it. Dispatch on a non-default branch to see the
+# refusal.
+
+on:
+  workflow_dispatch:
+    inputs:
+      broker:
+        description: Broker URL (defaults to the one in action/bot-token.sh)
+        required: false
+        default: ""
+        type: string
+
+permissions: {}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    environment: soothfast-bot
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - id: bot
+        env:
+          BROKER: ${{ inputs.broker }}
+        run: action/bot-token.sh
+      - name: List the token's repositories, then revoke it
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          APP_SLUG: ${{ steps.bot.outputs.app_slug }}
+          EXPIRES_AT: ${{ steps.bot.outputs.expires_at }}
+        run: |
+          echo "minted for ${APP_SLUG}[bot], expires ${EXPIRES_AT}"
+          gh api /installation/repositories --jq '.repositories[].full_name'
+          gh api -X DELETE /installation/token

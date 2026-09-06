@@ -1,0 +1,61 @@
+name: soothfast-bot
+
+on:
+  push:
+    branches: [master]
+    paths: [bot/**, action/**, .github/workflows/bot.yml]
+  pull_request:
+    paths: [bot/**, action/**, .github/workflows/bot.yml]
+
+permissions: {}
+
+jobs:
+  bot-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bot/package-lock.json
+      - run: npm ci
+        working-directory: bot
+      - run: npm run check
+        working-directory: bot
+      - run: npm test
+        working-directory: bot
+      - run: shellcheck action/*.sh
+
+  # The Worker holds the App private key; the deploy token is the only
+  # credential this repo keeps for it.
+  deploy:
+    if: github.event_name == 'push'
+    needs: [bot-check]
+    concurrency:
+      group: bot-deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    environment: bot
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: bot
+          wranglerVersion: 4.129.0
