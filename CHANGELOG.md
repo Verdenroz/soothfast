@@ -10,6 +10,10 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### ✨ Features
+
+- Soothfast-bot OIDC token broker (#160)
+
 ### ⚡ Performance
 
 - Reuse the gate's worktree, binaries, and rustdoc output (#156)
