@@ -10,6 +10,13 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### ✨ Features
+
+- Feature, package, and custom regeneration inputs (#187)
+
+### 🐛 Fixes
+
+- Peel annotated tags in the broker's tag rule (#188)
 
 
 ## 0.3.0 - 2026-09-06
