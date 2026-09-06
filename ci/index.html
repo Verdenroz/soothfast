@@ -225,10 +225,15 @@ installed on is refused.</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Input</th><th>Default</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td><code>packages</code></td><td>every package with a bench target named <code>soothfast</code></td><td>Space-separated packages to gate and measure. The same list feeds <code>report changelog</code>; pass it explicitly when the crates whose API ships differ from the ones with benches.</td></tr>
+<tr><td><code>packages</code></td><td>every package with a bench target named <code>soothfast</code></td><td>Space-separated packages to gate and measure. <code>report changelog</code> uses the same list unless <code>changelog-packages</code> says otherwise.</td></tr>
 <tr><td><code>gate</code></td><td><code>true</code></td><td>Run the gate on pull requests.</td></tr>
 <tr><td><code>changelog</code></td><td><code>true</code></td><td>Regenerate <code>CHANGELOG.md</code> on default-branch pushes.</td></tr>
 <tr><td><code>spec</code></td><td>none</td><td>Space-separated packages whose <code>mode = &quot;generate&quot;</code> specs to regenerate.</td></tr>
+<tr><td><code>features</code></td><td>none</td><td>Cargo features for the gate, the baseline measurement, and spec generation. A bench target with <code>required-features</code> needs them here.</td></tr>
+<tr><td><code>changelog-packages</code></td><td><code>packages</code></td><td>Packages whose API surface <code>report changelog</code> diffs. Set it when a crate without a bench target still ships an API.</td></tr>
+<tr><td><code>changelog-features</code></td><td><code>features</code></td><td>Features for <code>report changelog</code>, which decide what the API surface diff contains. Set it wider than <code>features</code> when gating under the full feature set is too heavy.</td></tr>
+<tr><td><code>regen-run</code></td><td>none</td><td>Shell run on the default branch after the built-in regeneration, for derived files the inputs above do not cover. <code>$SOOTHFAST</code> is the <code>cargo-soothfast</code> this step installed, so <code>&quot;$SOOTHFAST&quot; sdk gen -p mylib</code> works whether the CLI came from the install or from <code>binary</code>. Requires <code>regen-paths</code>.</td></tr>
+<tr><td><code>regen-paths</code></td><td>none</td><td>Space-separated pathspecs <code>regen-run</code> may change; they land in the same pull request. Required with <code>regen-run</code>; without it the step fails rather than discarding the changes.</td></tr>
 <tr><td><code>baseline</code></td><td><code>base</code></td><td>Baseline name the regeneration measures into.</td></tr>
 <tr><td><code>rustdoc-toolchain</code></td><td>the nightly the release was tested with</td><td>Toolchain for rustdoc JSON. A floating <code>nightly</code> can change the JSON format under the API diff.</td></tr>
 <tr><td><code>version</code></td><td>from <code>Cargo.lock</code></td><td><code>cargo-soothfast</code> version to install.</td></tr>
