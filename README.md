@@ -139,33 +139,40 @@ Numbers in prose become gated facts.
 
 ## In CI
 
-A composite action installs the CLI on GitHub Actions, pinned to the
-`soothfast` version in your `Cargo.lock` and cached across runs:
-
-```yaml ignore
-- uses: Verdenroz/soothfast@<tag-or-sha>
-- run: cargo soothfast gate -p mylib --against-ref origin/master
-```
-
-`soothfast-measure` builds into your bench binary from the lock, so an
-unpinned CLI silently outruns it. The `version` input overrides the pin;
-`lockfile` points at a `Cargo.lock` outside the working directory. Outputs
-are `version` and `cache-hit`.
-
-The gate itself, with its PR comment and triage upload, is a reusable
-workflow. Call it once per package from a `pull_request` job; it installs the
-CLI the same way and comments on the PR with `github.token`:
+One step. On pull requests it gates every package with a soothfast bench
+target against the base branch and comments the result. On pushes to the
+default branch it regenerates `CHANGELOG.md` and lands it as a pull request
+authored by soothfast-bot that merges itself once your checks pass.
 
 ```yaml ignore
 jobs:
-  gate:
+  soothfast:
+    runs-on: ubuntu-latest
+    environment: soothfast-bot
     permissions:
       contents: read
       pull-requests: write
-    uses: Verdenroz/soothfast/.github/workflows/soothfast-gate.yml@<tag-or-sha>
-    with:
-      package: mylib
+      id-token: write
+    concurrency:
+      group: soothfast-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Verdenroz/soothfast@<tag-or-sha>
 ```
+
+Two things to set up once: install the
+[Soothfast Bot](https://github.com/apps/soothfast-bot) on the repository, and
+create an environment named `soothfast-bot`. No secrets. The step trades the
+job's OIDC identity for a one-hour bot token scoped to your repository, and
+only a job in that environment on your default branch can do so. Everything
+the action does, every input, and the reusable gate workflow are in
+[docs/ci.md](docs/ci.md).
+
+The CLI it installs is pinned to the `soothfast` version in your `Cargo.lock`
+and cached across runs. `soothfast-measure` builds into your bench binary
+from the lock, so an unpinned CLI silently outruns it.
 
 ## Dogfood
 

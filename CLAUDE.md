@@ -334,9 +334,13 @@ token minted by the broker under `bot/` (a Cloudflare Worker, deployed by
 environment, on a `push`/`workflow_dispatch`/`schedule` event, on the
 repository's default branch, for a repository the App is installed on, and
 scopes the token to that repository. `action/land.sh` then commits, pushes,
-opens or refreshes the bot PR, enables auto-merge, and revokes the token.
+opens or refreshes the bot PR, merges it (queued behind required checks when
+the default branch has any, immediately otherwise), and revokes the token.
 Minting happens after the build step on purpose: no step that compiles the
-tree holds a write token.
+tree holds a write token. The root `action.yml` is the adopter surface: it
+runs `action/bot-token.sh` and `land.sh`, the same two scripts these
+workflows run, plus `prepare.sh`, `gate.sh`, `comment.sh`, and `regen.sh`
+around them; `docs/ci.md` is the adopter-facing description.
 
 All third-party actions are pinned to a full commit SHA (never a mutable
 tag), every job declares explicit least-privilege `permissions:`, every
