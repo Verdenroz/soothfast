@@ -12,9 +12,17 @@ on:
         required: false
         type: string
         default: ""
+      cli-artifact:
+        description: >-
+          Artifact holding a prebuilt cargo-soothfast at bin/cargo-soothfast.
+          Empty installs the release matching the caller's Cargo.lock.
+        required: false
+        type: string
+        default: ""
     secrets:
+      # Unused. Declared so callers that still pass it keep validating.
       CHANGELOG_APP_PRIVATE_KEY:
-        required: true
+        required: false
 
 permissions: {}
 
@@ -23,18 +31,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: write # gate comment
     steps:
       - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
-      - name: Mint a soothfast-bot token
-        id: app-token
-        if: github.event_name == 'pull_request'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.CHANGELOG_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
-          permission-pull-requests: write
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -45,19 +46,22 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # callgrind fallback + triage artifacts for PMU-less runners
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
-      # Built once by ci.yml's build-cli job
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - if: inputs.cli-artifact != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cargo-soothfast-bin
+          name: ${{ inputs.cli-artifact }}
           path: bin
-      - run: chmod +x bin/cargo-soothfast
+      - if: inputs.cli-artifact != ''
+        run: chmod +x bin/cargo-soothfast
+      - if: inputs.cli-artifact == ''
+        uses: Verdenroz/soothfast@ead9d50c79606edcf80a438f8fac73229c01120c # v0.2.0
       - name: Run gate
         id: gate
         run: |
           REF="${INPUTS_BASE_REF}"
           if [ -z "$REF" ]; then REF="origin/${GITHUB_BASE_REF:-master}"; fi
-          bin/cargo-soothfast \
-            gate -p "${INPUTS_PACKAGE}" --against-ref "$REF" | tee gate-output.txt
+          if [ -x bin/cargo-soothfast ]; then set -- bin/cargo-soothfast; else set -- cargo soothfast; fi
+          "$@" gate -p "${INPUTS_PACKAGE}" --against-ref "$REF" | tee gate-output.txt
         env:
           INPUTS_BASE_REF: ${{ inputs.base-ref }}
           INPUTS_PACKAGE: ${{ inputs.package }}
@@ -68,17 +72,27 @@ jobs:
           name: soothfast-triage
           path: .soothfast/triage/
           if-no-files-found: ignore
+      # Fork PRs get a read-only token here; the comment is best effort. The
+      # marker finds our own comment: github.token's author is shared with
+      # every other action in the repo, so --edit-last would hit theirs.
       - name: PR comment with gate results
         if: always() && github.event_name == 'pull_request'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           {
+            echo '<!-- soothfast-gate -->'
             echo '## soothfast gate'
             echo '```'
             tail -n 60 gate-output.txt
             echo '```'
           } > comment.md
-          gh pr comment "${{ github.event.pull_request.number }}" \
-            --body-file comment.md --edit-last --create-if-none
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq '[.[] | select(.body | startswith("<!-- soothfast-gate -->")) | .id][0] // empty')
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -F body=@comment.md >/dev/null
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@comment.md >/dev/null
+          fi

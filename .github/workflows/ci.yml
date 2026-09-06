@@ -131,31 +131,22 @@ jobs:
     if: github.event_name == 'push'
     needs: [build-cli]
     runs-on: ubuntu-latest
-    permissions: {} # all repo access comes from the minted App token below
+    concurrency:
+      group: docs-regen
+      cancel-in-progress: true
+    environment: soothfast-bot
+    permissions:
+      contents: read
+      id-token: write # soothfast-bot token via the broker, see bot/
     env:
       SOOTHFAST: ./bin/cargo-soothfast
     steps:
       - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
-      - name: Mint a soothfast-bot token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          client-id: ${{ vars.CHANGELOG_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-      - name: Get soothfast-bot user id
-        id: app-user
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-        run: echo "id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 # zizmor: ignore[artipacked]
-        with:
-          ref: ${{ github.ref_name }}
-          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -187,28 +178,18 @@ jobs:
           sed '/^\*\*Measured:\*\*/d' llms.txt > target/llms-churn/new.txt
           git show HEAD:llms.txt | sed '/^\*\*Measured:\*\*/d' > target/llms-churn/old.txt
           cmp -s target/llms-churn/old.txt target/llms-churn/new.txt && git checkout -- llms.txt || true
-      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        id: cpr
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          add-paths: |
-            llms.txt
-            README.md
-            docs/**
-          commit-message: "docs: regenerate derived docs"
-          title: "docs: regenerate derived docs"
-          body: Automated regeneration of captured output and reference pages.
-          branch: bot/docs-update
-          delete-branch: true
-          author: >-
-            ${{ steps.app-token.outputs.app-slug }}[bot]
-            <${{ steps.app-user.outputs.id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com>
-      - name: Merge pull request
-        if: steps.cpr.outputs.pull-request-number
+      - name: Mint a soothfast-bot token
+        id: bot
+        run: action/bot-token.sh
+      - name: Land the regenerated docs
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
-        run: gh pr merge --auto --squash --delete-branch "$PR_NUMBER"
+          TOKEN: ${{ steps.bot.outputs.token }}
+          APP_SLUG: ${{ steps.bot.outputs.app_slug }}
+          BRANCH: bot/docs-update
+          TITLE: "docs: regenerate derived docs"
+          BODY: Automated regeneration of captured output and reference pages.
+          PATHS: llms.txt README.md docs
+        run: action/land.sh
 
   # Dogfood: gate each self-bench crate's perf against the PR's merge-base.
   # Keep this package list in sync with Makefile's BENCH_CRATES.
@@ -229,11 +210,11 @@ jobs:
           ]
     permissions:
       contents: read
+      pull-requests: write # gate comment
     uses: ./.github/workflows/soothfast-gate.yml
     with:
       package: ${{ matrix.package }}
-    secrets:
-      CHANGELOG_APP_PRIVATE_KEY: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
+      cli-artifact: cargo-soothfast-bin
 
   # One stable context for branch protection; the per-crate gate legs
   # change names whenever the crate list does.
@@ -259,20 +240,13 @@ jobs:
     needs: [check, docs, build-cli]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # push the built site to gh-pages
     env:
       SOOTHFAST: ./bin/cargo-soothfast
     steps:
       - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
-      - name: Mint a soothfast-bot token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.CHANGELOG_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
-          permission-contents: write
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -295,5 +269,5 @@ jobs:
       - run: bin/cargo-soothfast docs build --baseline self
       - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
-          github_token: ${{ steps.app-token.outputs.token }}
+          github_token: ${{ github.token }}
           publish_dir: ./site

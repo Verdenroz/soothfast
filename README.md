@@ -152,6 +152,21 @@ unpinned CLI silently outruns it. The `version` input overrides the pin;
 `lockfile` points at a `Cargo.lock` outside the working directory. Outputs
 are `version` and `cache-hit`.
 
+The gate itself, with its PR comment and triage upload, is a reusable
+workflow. Call it once per package from a `pull_request` job; it installs the
+CLI the same way and comments on the PR with `github.token`:
+
+```yaml ignore
+jobs:
+  gate:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: Verdenroz/soothfast/.github/workflows/soothfast-gate.yml@<tag-or-sha>
+    with:
+      package: mylib
+```
+
 ## Dogfood
 
 CI runs soothfast on soothfast. Seven crates each carry a bench target

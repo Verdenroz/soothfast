@@ -296,21 +296,24 @@ claim being enforced, not a bug in the check.
   a push.
 - `scorecard.yml` — OSSF Scorecard supply-chain analysis, published to the
   public Scorecard API and uploaded to code scanning as SARIF.
-- `soothfast-gate.yml` — reusable workflow; runs `cargo soothfast gate` for a
-  given package against the PR's merge-base, uploads `.soothfast/triage/` on
-  failure, and posts/updates a PR comment with the gate output.
+- `soothfast-gate.yml` — reusable workflow, callable from any repo; runs
+  `cargo soothfast gate` for a given package against the PR's merge-base,
+  uploads `.soothfast/triage/` on failure, and posts/updates a PR comment
+  with the gate output using `github.token`. `cli-artifact` names a
+  prebuilt CLI uploaded earlier in the run (what `ci.yml` does); without it
+  the root `action.yml` installs the release matching `Cargo.lock`.
+- `bot.yml` / `bot-smoke.yml` — type-check, test, and deploy the
+  soothfast-bot token broker under `bot/` (a Cloudflare Worker holding the
+  App private key), and prove a deployment by minting, listing, and revoking
+  a token. See the "soothfast-bot" section below.
 - `changelog.yml` — on push to `master`, regenerates the living
   `CHANGELOG.md` and lands it through a bot-opened, auto-squash-merged PR on
   `bot/changelog-update`. It skips runs whose actor already ends in `[bot]`,
   which is what stops its own merge from retriggering it. Per-merge is
   affordable because the derived sections drop out when the API surface and
   the gate are quiet, so a run has nothing to say unless something merged.
-  Commits authenticate with a short-lived token from a repo-installed App
-  (`actions/create-github-app-token`, `CHANGELOG_APP_CLIENT_ID` /
-  `CHANGELOG_APP_PRIVATE_KEY`) rather than the default `GITHUB_TOKEN` —
-  GitHub gates every subsequent workflow run on a PR behind manual approval
-  once a `github-actions[bot]`-authored commit lands on it, and an
-  explicitly installed App doesn't trip that gate.
+  A `concurrency` group cancels older regenerations so only the newest tree
+  lands.
 - `spec.yml` — on push to `master`, regenerates `mode = "generate"` spec
   files and lands them via a bot-opened, self-merged PR (the branch ruleset
   blocks direct pushes to `master`), so nobody has to remember to; on PRs,
@@ -319,6 +322,21 @@ claim being enforced, not a bug in the check.
   (`--allow-breaking` releases one deliberately).
 - `release.yml` — on `v*` tag push, runs checks + gate, then publishes all 10
   workspace crates to crates.io in dependency order.
+
+### soothfast-bot
+
+Every write a workflow makes on the bot's behalf (`changelog.yml`, `spec.yml`,
+`ci.yml` docs-regen) is authored by the soothfast-bot GitHub App, but no
+workflow holds the App's private key. The job runs `action/bot-token.sh`,
+which trades the job's GitHub Actions OIDC token for a one-hour installation
+token minted by the broker under `bot/` (a Cloudflare Worker, deployed by
+`bot.yml`). The broker mints only for a job in the `soothfast-bot`
+environment, on a `push`/`workflow_dispatch`/`schedule` event, on the
+repository's default branch, for a repository the App is installed on, and
+scopes the token to that repository. `action/land.sh` then commits, pushes,
+opens or refreshes the bot PR, enables auto-merge, and revokes the token.
+Minting happens after the build step on purpose: no step that compiles the
+tree holds a write token.
 
 All third-party actions are pinned to a full commit SHA (never a mutable
 tag), every job declares explicit least-privilege `permissions:`, every
