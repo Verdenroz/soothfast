@@ -10,7 +10,9 @@ pub struct SurfaceDiff {
     pub added: Vec<String>,
     /// Item paths present only in the old surface.
     pub removed: Vec<String>,
-    /// (path, signature_changed) — false means body-only change.
+    /// (path, signature_changed) — false means body-only change. An enum's
+    /// variants and a struct's or union's `pub` fields count as signature,
+    /// so one added, removed, or retyped is never "body".
     pub changed: Vec<(String, bool)>,
 }
 
