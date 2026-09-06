@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI · soothfast</title>
+<link rel="icon" href="../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../_soothfast/tokens.css">
+<link rel="stylesheet" href="../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.1.0</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../">soothfast</a></li>
+    
+      <li><a href="../measuring/">Measuring</a></li>
+    
+      <li><a href="../gating/">Gating</a></li>
+    
+      <li><a class="active" aria-current="page" href="../ci/">CI</a></li>
+    
+      <li><a href="../living-docs/">Living docs</a></li>
+    
+      <li><a href="../spec/">Specs</a></li>
+    
+      <li><a href="../sdk/">SDKs</a></li>
+    
+      <li><a href="../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="ci">CI<a class="anchor" href="#ci" aria-label="Link to this section">#</a></h1>
+<p>soothfast in another repository is one step in the workflow you already
+have. On a pull request it gates performance against the base branch and
+comments the result. On a push to the default branch it regenerates derived
+files and lands them as a pull request authored by soothfast-bot, which
+merges itself once your checks pass.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">yaml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>jobs:
+  soothfast:
+    runs-on: ubuntu-latest
+    environment: soothfast-bot
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    concurrency:
+      group: soothfast-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Verdenroz/soothfast@&lt;tag-or-sha&gt;
+</code></pre></figure>
+<h2 id="setup">Setup<a class="anchor" href="#setup" aria-label="Link to this section">#</a></h2>
+<p>Two one-time settings, no secrets:</p>
+<ol>
+<li>Install the <a href="https://github.com/apps/soothfast-bot">Soothfast Bot</a> GitHub App on the repository. It asks for Contents and Pull requests write and Metadata read.</li>
+<li>Create an environment named <code>soothfast-bot</code> (Settings, Environments) with no deployment branch policy and no required reviewers. The job above runs on pull requests too, and a branch policy would fail every one of them, the bot's own included. The broker enforces the default-branch rule itself.</li>
+</ol>
+<p>Because the job names an environment, every run of it, pull request or push,
+appears under Environments and Deployments and on the pull request as
+"deployed to soothfast-bot". If you would rather keep pull requests out of the environment, split the
+step into two jobs with the same <code>uses:</code> line: the gate job on
+<code>pull_request</code> without an environment and with <code>changelog: false</code>, and a
+regeneration job on <code>push</code> with the environment and <code>gate: false</code>. That split
+lets you put a default-branch policy on the environment; its cost is that
+gate comments are then posted by github-actions rather than soothfast-bot,
+since only a job in the environment can obtain a bot token.</p>
+<p>Two repository settings decide what happens to the bot's pull request:</p>
+<ul>
+<li>If your default branch has a ruleset or branch protection with required checks, turn on "Allow auto-merge" so the bot can queue its PR behind them. Without rules the bot merges immediately.</li>
+<li>"Automatically delete head branches" removes <code>bot/soothfast-update</code> after the merge. Without it the branch lingers until the next regeneration force-pushes it.</li>
+</ul>
+<p>A ruleset that requires approving reviews applies to the bot too: its PR
+waits for a human.</p>
+<h2 id="what-the-step-does">What the step does<a class="anchor" href="#what-the-step-does" aria-label="Link to this section">#</a></h2>
+<p>Every run installs <code>cargo-soothfast</code> pinned to the <code>soothfast</code> version in
+your <code>Cargo.lock</code>, cached across runs. Pin the action to a release no newer
+than that version: the scripts pass flags the CLI at the action's ref
+understands. Runs that have nothing to do (a push to another branch, a pull
+request with <code>gate: false</code>) stop there. Otherwise the checkout is unshallowed
+so merge-base and tag lookups work.</p>
+<p><strong>On <code>pull_request</code>.</strong> For each package (see <code>packages</code> below) it runs <code>cargo
+soothfast gate -p PKG --against-ref origin/&lt;base&gt;</code> and appends the output to
+one comment on the pull request, updated in place on later pushes. The
+comment shows the last forty lines per package. On a regression it uploads
+<code>.soothfast/triage/</code> as the <code>soothfast-triage</code> artifact and fails the step.
+The comment is posted as soothfast-bot by the broker itself: the job sends
+the text over its OIDC identity and never holds a token, so a pull request
+branch, which runs code nobody has merged, cannot borrow the bot for
+anything else. A pull request from a fork has no OIDC identity; there the
+comment falls back to <code>github.token</code> (github-actions), or is skipped with a
+warning where that token is read-only, and the gate result still decides the
+step.</p>
+<p><strong>On a push to the default branch.</strong> It measures each package into the
+<code>baseline</code> baseline, regenerates <code>CHANGELOG.md</code> against the latest tag (or
+lists the initial surface when there is no tag), regenerates any packages
+named in <code>spec</code>, and lands whatever changed as one pull request on
+<code>bot/soothfast-update</code>. Pushes to other branches do nothing beyond the
+install.</p>
+<p>The bot PR triggers your workflows like any other pull request, this step
+included, which is how its required checks get satisfied. Jobs that skip on a
+<code>[bot]</code> actor count as passed for required checks. If the bot PR is left
+open, your ruleset gave auto-merge nothing to wait on (a pull request rule
+with zero required approvals and no required checks); merge it by hand or
+drop the rule.</p>
+<h2 id="why-the-environment">Why the environment<a class="anchor" href="#why-the-environment" aria-label="Link to this section">#</a></h2>
+<p>The step needs <code>id-token: write</code> to prove its identity to the broker. That
+permission is also common on jobs that publish to crates.io, PyPI, or a cloud
+provider over OIDC. Requiring the <code>soothfast-bot</code> environment means only a
+job that opts in can obtain a bot token; a compromised action in one of those
+other jobs cannot. The broker hands out one kind of token, scoped to your repository for one
+hour and revoked when the step finishes: a landing token (contents and pull
+requests write) for <code>push</code>, <code>workflow_dispatch</code>, or <code>schedule</code> runs on your
+default branch, or on a tag whose commit is already on it. A <code>pull_request</code>
+run from the repository itself gets no token at all; it asks the broker to
+post the gate comment, and the broker does so with a token it holds and
+revokes itself. Every other event, ref, or repository the App is not
+installed on is refused.</p>
+<h2 id="inputs">Inputs<a class="anchor" href="#inputs" aria-label="Link to this section">#</a></h2>
+<div class="tablewrap"><table>
+<thead><tr><th>Input</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>packages</code></td><td>every package with a bench target named <code>soothfast</code></td><td>Space-separated packages to gate and measure. The same list feeds <code>report changelog</code>; pass it explicitly when the crates whose API ships differ from the ones with benches.</td></tr>
+<tr><td><code>gate</code></td><td><code>true</code></td><td>Run the gate on pull requests.</td></tr>
+<tr><td><code>changelog</code></td><td><code>true</code></td><td>Regenerate <code>CHANGELOG.md</code> on default-branch pushes.</td></tr>
+<tr><td><code>spec</code></td><td>none</td><td>Space-separated packages whose <code>mode = &quot;generate&quot;</code> specs to regenerate.</td></tr>
+<tr><td><code>baseline</code></td><td><code>base</code></td><td>Baseline name the regeneration measures into.</td></tr>
+<tr><td><code>rustdoc-toolchain</code></td><td>the nightly the release was tested with</td><td>Toolchain for rustdoc JSON. A floating <code>nightly</code> can change the JSON format under the API diff.</td></tr>
+<tr><td><code>version</code></td><td>from <code>Cargo.lock</code></td><td><code>cargo-soothfast</code> version to install.</td></tr>
+<tr><td><code>lockfile</code></td><td><code>Cargo.lock</code></td><td>Where to read the pinned version.</td></tr>
+<tr><td><code>binary</code></td><td>none</td><td>A prebuilt <code>cargo-soothfast</code>; skips the install.</td></tr>
+<tr><td><code>token</code></td><td><code>github.token</code></td><td>Token for the gate comment and repository lookups.</td></tr>
+<tr><td><code>bot-token</code></td><td>none</td><td>Bring your own soothfast-bot installation token; skips the broker.</td></tr>
+<tr><td><code>bot-slug</code></td><td><code>soothfast-bot</code></td><td>App slug <code>bot-token</code> belongs to, for the commit author.</td></tr>
+<tr><td><code>broker</code></td><td>built in</td><td>Token broker URL.</td></tr>
+</tbody>
+</table></div>
+<p>Outputs are <code>version</code> and <code>cache-hit</code>.</p>
+<h2 id="bringing-your-own-token">Bringing your own token<a class="anchor" href="#bringing-your-own-token" aria-label="Link to this section">#</a></h2>
+<p>If you would rather not depend on the broker, install your own GitHub App
+with Contents write, Pull requests write, and Metadata read, mint an
+installation token in an earlier step (for example with
+<code>actions/create-github-app-token</code>), and pass it as <code>bot-token</code> with the App's
+slug as <code>bot-slug</code>. The <code>id-token: write</code> permission and the environment are
+then unnecessary.</p>
+<h2 id="self-hosted-runners">Self-hosted runners<a class="anchor" href="#self-hosted-runners" aria-label="Link to this section">#</a></h2>
+<p>The scripts use <code>gh</code>, <code>jq</code>, <code>curl</code>, <code>git</code>, and <code>cargo</code>. On Linux the step
+installs <code>valgrind</code> with <code>apt-get</code> when it is missing, for the callgrind
+fallback on machines without performance counters.</p>
+<h2 id="the-gate-on-its-own">The gate on its own<a class="anchor" href="#the-gate-on-its-own" aria-label="Link to this section">#</a></h2>
+<p>The gate, with its comment and triage upload, is also a reusable workflow for
+callers that want it as a separate job or a matrix over packages:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">yaml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>jobs:
+  gate:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: Verdenroz/soothfast/.github/workflows/soothfast-gate.yml@&lt;tag-or-sha&gt;
+    with:
+      package: mylib
+</code></pre></figure>
+<p><code>cli-artifact</code> names an artifact holding a prebuilt CLI at
+<code>bin/cargo-soothfast</code> from earlier in the same run; without it the workflow
+installs the release matching your <code>Cargo.lock</code>.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#setup">Setup</a></li>
+  
+    <li><a class="toc-l2" href="#what-the-step-does">What the step does</a></li>
+  
+    <li><a class="toc-l2" href="#why-the-environment">Why the environment</a></li>
+  
+    <li><a class="toc-l2" href="#inputs">Inputs</a></li>
+  
+    <li><a class="toc-l2" href="#bringing-your-own-token">Bringing your own token</a></li>
+  
+    <li><a class="toc-l2" href="#self-hosted-runners">Self-hosted runners</a></li>
+  
+    <li><a class="toc-l2" href="#the-gate-on-its-own">The gate on its own</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../_soothfast/site.js" defer></script>
+</body>
+</html>
