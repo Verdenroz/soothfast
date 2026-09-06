@@ -273,10 +273,22 @@ jobs:
       - name: Mint a soothfast-bot token
         id: bot
         run: action/bot-token.sh
+      # The Pages action authors the commit as the actor unless told otherwise.
+      - name: Resolve the bot's commit identity
+        id: bot-user
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          APP_SLUG: ${{ steps.bot.outputs.app_slug }}
+        run: |
+          id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+          echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
       - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ steps.bot.outputs.token }}
           publish_dir: ./site
+          user_name: ${{ steps.bot-user.outputs.name }}
+          user_email: ${{ steps.bot-user.outputs.email }}
       - name: Revoke the soothfast-bot token
         if: always() && steps.bot.outputs.token != ''
         env:
