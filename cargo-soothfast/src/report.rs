@@ -328,6 +328,16 @@ fn merged_changes(refname: &str) -> Result<Vec<changelog::Change>, String> {
     let range = format!("{refname}..HEAD");
     let log = invoke::git(&["log", "--format=%s", &range]).map_err(|e| e.to_string())?;
     let subjects: Vec<String> = log.lines().map(str::to_string).collect();
+    let unparsed = changelog::unparsed_subjects(&subjects);
+    if !unparsed.is_empty() {
+        println!(
+            "report: {} subject(s) since {refname} are not conventional commits and are left out:",
+            unparsed.len()
+        );
+        for subject in unparsed {
+            println!("  {subject}");
+        }
+    }
     Ok(changelog::changes_from_subjects(&subjects))
 }
 
