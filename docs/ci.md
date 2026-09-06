@@ -39,12 +39,13 @@ Two one-time settings, no secrets:
 
 Because the job names an environment, every run of it, pull request or push,
 appears under Environments and Deployments and on the pull request as
-"deployed to soothfast-bot". If you would rather keep pull requests out of
-the environment, split the step into two jobs with the same `uses:` line:
-the gate job on `pull_request` without an environment and with `changelog:
-false`, and a regeneration job on `push` with the environment and `gate:
-false`. That split also lets you put a default-branch policy on the
-environment.
+"deployed to soothfast-bot". If you would rather keep pull requests out of the environment, split the
+step into two jobs with the same `uses:` line: the gate job on
+`pull_request` without an environment and with `changelog: false`, and a
+regeneration job on `push` with the environment and `gate: false`. That split
+lets you put a default-branch policy on the environment; its cost is that
+gate comments are then posted by github-actions rather than soothfast-bot,
+since only a job in the environment can obtain a bot token.
 
 Two repository settings decide what happens to the bot's pull request:
 
@@ -72,10 +73,13 @@ soothfast gate -p PKG --against-ref origin/<base>` and appends the output to
 one comment on the pull request, updated in place on later pushes. The
 comment shows the last forty lines per package. On a regression it uploads
 `.soothfast/triage/` as the `soothfast-triage` artifact and fails the step.
-The comment is posted with `github.token`, so on a pull request from a fork,
-where that token is read-only, the comment is skipped with a warning and the
-gate result still decides the step. A fork pull request never receives a bot
-token.
+The comment is posted as soothfast-bot by the broker itself: the job sends
+the text over its OIDC identity and never holds a token, so a pull request
+branch, which runs code nobody has merged, cannot borrow the bot for
+anything else. A pull request from a fork has no OIDC identity; there the
+comment falls back to `github.token` (github-actions), or is skipped with a
+warning where that token is read-only, and the gate result still decides the
+step.
 
 **On a push to the default branch.** It measures each package into the
 `baseline` baseline, regenerates `CHANGELOG.md` against the latest tag (or
@@ -97,11 +101,14 @@ The step needs `id-token: write` to prove its identity to the broker. That
 permission is also common on jobs that publish to crates.io, PyPI, or a cloud
 provider over OIDC. Requiring the `soothfast-bot` environment means only a
 job that opts in can obtain a bot token; a compromised action in one of those
-other jobs cannot. The broker also refuses any event other than `push`,
-`workflow_dispatch`, or `schedule`, any ref other than your default branch,
-and any repository the App is not installed on, and it scopes the token it
-mints to your repository for one hour. The token is revoked when the step
-finishes.
+other jobs cannot. The broker hands out one kind of token, scoped to your repository for one
+hour and revoked when the step finishes: a landing token (contents and pull
+requests write) for `push`, `workflow_dispatch`, or `schedule` runs on your
+default branch, or on a tag whose commit is already on it. A `pull_request`
+run from the repository itself gets no token at all; it asks the broker to
+post the gate comment, and the broker does so with a token it holds and
+revokes itself. Every other event, ref, or repository the App is not
+installed on is refused.
 
 ## Inputs
 

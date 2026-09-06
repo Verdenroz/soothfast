@@ -210,7 +210,8 @@ jobs:
           ]
     permissions:
       contents: read
-      pull-requests: write # gate comment
+      pull-requests: write # gate comment fallback
+      id-token: write # soothfast-bot comment token via the broker
     uses: ./.github/workflows/soothfast-gate.yml
     with:
       package: ${{ matrix.package }}
@@ -239,8 +240,10 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: [check, docs, build-cli]
     runs-on: ubuntu-latest
+    environment: soothfast-bot
     permissions:
-      contents: write # push the built site to gh-pages
+      contents: read
+      id-token: write # soothfast-bot token pushes the built site to gh-pages
     env:
       SOOTHFAST: ./bin/cargo-soothfast
     steps:
@@ -267,7 +270,15 @@ jobs:
       - run: make baselines
       - run: make docs-pages
       - run: bin/cargo-soothfast docs build --baseline self
+      - name: Mint a soothfast-bot token
+        id: bot
+        run: action/bot-token.sh
       - uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
-          github_token: ${{ github.token }}
+          github_token: ${{ steps.bot.outputs.token }}
           publish_dir: ./site
+      - name: Revoke the soothfast-bot token
+        if: always() && steps.bot.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: gh api -X DELETE /installation/token

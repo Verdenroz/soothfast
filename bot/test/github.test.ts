@@ -138,7 +138,15 @@ test("mintToken scopes by repository id and permissions", async () => {
   const { api, calls } = fakeGitHub({
     "POST /app/installations/7/access_tokens": { status: 201, body: minted },
   });
-  assert.deepEqual(await api.mintToken(7, 12345, "jwt"), minted);
+  assert.deepEqual(
+    await api.mintToken(
+      7,
+      12345,
+      { contents: "write", pull_requests: "write" },
+      "jwt",
+    ),
+    minted,
+  );
   assert.deepEqual(calls[0].body, {
     repository_ids: [12345],
     permissions: { contents: "write", pull_requests: "write" },
@@ -175,5 +183,73 @@ test("a non-JSON error body becomes the GitHubError message", async () => {
       e instanceof GitHubError &&
       e.status === 502 &&
       /Bad gateway/.test(e.message),
+  );
+});
+
+test("compare encodes both sides and returns the status", async () => {
+  const { api, calls } = fakeGitHub({
+    "GET /repos/acme/mylib/compare/main...v1.0.0": {
+      status: 200,
+      body: { status: "behind" },
+    },
+  });
+  assert.deepEqual(await api.compare("acme/mylib", "main", "v1.0.0", "ghs_x"), {
+    status: "behind",
+  });
+  assert.equal(calls[0].auth, "Bearer ghs_x");
+});
+
+test("listComments paginates until a short page", async () => {
+  const full = Array.from({ length: 100 }, (_, i) => ({
+    id: i,
+    body: "x",
+    html_url: "",
+  }));
+  const { api, calls } = fakeGitHub({
+    "GET /repos/acme/mylib/issues/7/comments": { status: 200, body: full },
+  });
+  let page = 0;
+  const paged = githubApi((async (
+    url: string | URL | Request,
+    init?: RequestInit,
+  ) => {
+    page++;
+    const body =
+      page === 1
+        ? full
+        : [{ id: 100, body: "<!-- soothfast-gate -->\nhi", html_url: "u" }];
+    void init;
+    void url;
+    return new Response(JSON.stringify(body), { status: 200 });
+  }) as typeof fetch);
+  const all = await paged.listComments("acme/mylib", 7, "ghs_x");
+  assert.equal(all.length, 101);
+  assert.equal(page, 2);
+  void api;
+  void calls;
+});
+
+test("createComment and updateComment send the body", async () => {
+  const { api, calls } = fakeGitHub({
+    "POST /repos/acme/mylib/issues/7/comments": {
+      status: 201,
+      body: { id: 1, body: "b", html_url: "u1" },
+    },
+    "PATCH /repos/acme/mylib/issues/comments/1": {
+      status: 200,
+      body: { id: 1, body: "c", html_url: "u1" },
+    },
+  });
+  assert.equal(
+    (await api.createComment("acme/mylib", 7, "b", "ghs_x")).html_url,
+    "u1",
+  );
+  assert.equal(
+    (await api.updateComment("acme/mylib", 1, "c", "ghs_x")).body,
+    "c",
+  );
+  assert.deepEqual(
+    calls.map((c) => c.body),
+    [{ body: "b" }, { body: "c" }],
   );
 });

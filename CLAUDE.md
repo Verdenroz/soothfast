@@ -331,9 +331,20 @@ workflow holds the App's private key. The job runs `action/bot-token.sh`,
 which trades the job's GitHub Actions OIDC token for a one-hour installation
 token minted by the broker under `bot/` (a Cloudflare Worker, deployed by
 `bot.yml`). The broker mints only for a job in the `soothfast-bot`
-environment, on a `push`/`workflow_dispatch`/`schedule` event, on the
-repository's default branch, for a repository the App is installed on, and
-scopes the token to that repository. `action/land.sh` then commits, pushes,
+environment, for a repository the App is installed on, scoped to that
+repository: a landing token (contents + pull requests write) on a
+`push`/`workflow_dispatch`/`schedule` event on the default branch or on a
+tag whose commit (the OIDC `sha`, never the tag name) is already on it. A
+`pull_request` run gets no token; it POSTs the gate comment text to the
+broker's `/comment`, which posts it as the bot with its own token and
+revokes it. Gate comments, `deploy-docs`' gh-pages push, and the GitHub
+Release all carry the bot identity this way; a fork pull request has no OIDC
+token and its gate comment falls back to `github.token`. This repo's
+`soothfast-bot` environment must have no deployment branch policy: the gate
+runs on `refs/pull/*` and the release on `refs/tags/*`. Anything a bot comment
+quotes from a pull request's build output is untrusted text under a
+write-access author: it stays inside a code fence and fence sequences in it
+are neutralised first. `action/land.sh` then commits, pushes,
 opens or refreshes the bot PR, merges it (queued behind required checks when
 the default branch has any, immediately otherwise), and revokes the token.
 Minting happens after the build step on purpose: no step that compiles the

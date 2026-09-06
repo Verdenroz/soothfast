@@ -48,6 +48,7 @@ function asClaims(payload: Record<string, unknown>): OidcClaims {
     "repository",
     "repository_id",
     "ref",
+    "sha",
     "event_name",
   ] as const;
   const wellFormed =

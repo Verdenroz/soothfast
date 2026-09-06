@@ -7,8 +7,6 @@ import {
 
 const API = "https://api.github.com";
 const RS256 = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
-const TOKEN_PERMISSIONS = { contents: "write", pull_requests: "write" };
-
 export interface Installation {
   id: number;
 }
@@ -20,6 +18,16 @@ export interface InstallationToken {
 
 export interface Repository {
   default_branch: string;
+}
+
+export interface Comparison {
+  status: string;
+}
+
+export interface IssueComment {
+  id: number;
+  body: string;
+  html_url: string;
 }
 
 export class GitHubError extends Error {
@@ -38,9 +46,33 @@ export interface GitHubApi {
   mintToken(
     installationId: number,
     repositoryId: number,
+    permissions: Record<string, string>,
     appJwt: string,
   ): Promise<InstallationToken>;
   repository(repository: string, token: string): Promise<Repository>;
+  compare(
+    repository: string,
+    base: string,
+    head: string,
+    token: string,
+  ): Promise<Comparison>;
+  listComments(
+    repository: string,
+    issue: number,
+    token: string,
+  ): Promise<IssueComment[]>;
+  createComment(
+    repository: string,
+    issue: number,
+    body: string,
+    token: string,
+  ): Promise<IssueComment>;
+  updateComment(
+    repository: string,
+    id: number,
+    body: string,
+    token: string,
+  ): Promise<IssueComment>;
   revoke(token: string): Promise<void>;
   appSlug(appJwt: string): Promise<string>;
 }
@@ -171,11 +203,8 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
       );
       return result.status === 404 ? undefined : expectOk(result);
     },
-    async mintToken(installationId, repositoryId, jwt) {
-      const body = {
-        repository_ids: [repositoryId],
-        permissions: TOKEN_PERMISSIONS,
-      };
+    async mintToken(installationId, repositoryId, permissions, jwt) {
+      const body = { repository_ids: [repositoryId], permissions };
       const path = `/app/installations/${installationId}/access_tokens`;
       return expectOk(await call<InstallationToken>("POST", path, jwt, body));
     },
@@ -183,6 +212,28 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
       return expectOk(
         await call<Repository>("GET", `/repos/${repository}`, token),
       );
+    },
+    async compare(repository, base, head, token) {
+      const path = `/repos/${repository}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
+      return expectOk(await call<Comparison>("GET", path, token));
+    },
+    async listComments(repository, issue, token) {
+      const pages: IssueComment[][] = [];
+      for (let page = 1; ; page++) {
+        const path = `/repos/${repository}/issues/${issue}/comments?per_page=100&page=${page}`;
+        const batch = expectOk(await call<IssueComment[]>("GET", path, token));
+        pages.push(batch);
+        if (batch.length < 100) break;
+      }
+      return pages.flat();
+    },
+    async createComment(repository, issue, body, token) {
+      const path = `/repos/${repository}/issues/${issue}/comments`;
+      return expectOk(await call<IssueComment>("POST", path, token, { body }));
+    },
+    async updateComment(repository, id, body, token) {
+      const path = `/repos/${repository}/issues/comments/${id}`;
+      return expectOk(await call<IssueComment>("PATCH", path, token, { body }));
     },
     async revoke(token) {
       expectOk(await call<undefined>("DELETE", "/installation/token", token));

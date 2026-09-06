@@ -4,29 +4,26 @@
 # Inputs: BROKER (URL, optional). Outputs: token, app_slug, expires_at.
 set -euo pipefail
 
-BROKER=${BROKER:-https://soothfast-bot.verdenroz.workers.dev}
+# shellcheck source=action/oidc.sh
+source "$(dirname "$0")/oidc.sh"
 
-if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-  echo "::error::soothfast-bot needs 'id-token: write' in the job's permissions"
+fail() {
+  echo "::error::$1"
   exit 1
-fi
+}
 
-oidc=$(curl -sSf --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-  "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=soothfast-bot" | jq -r .value)
+oidc=$(oidc_token) || fail "soothfast-bot needs 'id-token: write' in the job's permissions"
 
-response=$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "$BROKER/token" -H "Authorization: Bearer $oidc")
+response=$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "$BROKER/token" -H "Authorization: Bearer $oidc") ||
+  fail "could not reach the broker at $BROKER"
 status=${response##*$'\n'}
 body=${response%$'\n'*}
 
 if [ "$status" != 200 ]; then
-  echo "::error::soothfast-bot refused (HTTP $status): $(jq -r '.reason // .' <<<"$body")"
-  exit 1
+  fail "soothfast-bot refused (HTTP $status): $(jq -r '.reason // .' <<<"$body")"
 fi
 
-token=$(jq -er .token <<<"$body") || {
-  echo "::error::soothfast-bot returned no token"
-  exit 1
-}
+token=$(jq -er .token <<<"$body") || fail "soothfast-bot returned no token"
 echo "::add-mask::$token"
 {
   echo "token=$token"
