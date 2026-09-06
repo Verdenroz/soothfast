@@ -16,6 +16,7 @@
 
 ### 📦 Dependencies
 
+- Bump dtolnay/rust-toolchain to current stable (#166)
 - Bump taiki-e/install-action from 2.86.6 to 2.86.7 (#152)
 - Bump astral-sh/setup-uv from 6.4.3 to 10.0.1 (#151)
 - Bump step-security/harden-runner from 2.20.0 to 2.21.0 (#153)
