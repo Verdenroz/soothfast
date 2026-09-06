@@ -12,6 +12,8 @@
 
 ### ✨ Features
 
+- Soothfast-bot identity for comments, pages, releases (#165)
+- One-step soothfast action with bot landing (#164)
 - Soothfast-bot OIDC token broker (#160)
 
 ### ⚡ Performance
@@ -25,6 +27,11 @@
 - Bump astral-sh/setup-uv from 6.4.3 to 10.0.1 (#151)
 - Bump step-security/harden-runner from 2.20.0 to 2.21.0 (#153)
 - Bump syn from 3.0.3 to 3.0.4 in the all-dependencies group (#150)
+
+### 🔧 Internal
+
+- Move every workflow off the App private key (#163)
+- Land the changelog as soothfast-bot via the broker (#161)
 
 
 ## 0.2.0 - 2026-08-30
