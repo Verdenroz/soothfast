@@ -16,6 +16,10 @@
 - One-step soothfast action with bot landing (#164)
 - Soothfast-bot OIDC token broker (#160)
 
+### 🐛 Fixes
+
+- Keep scoped and breaking subjects in the changelog (#176)
+
 ### ⚡ Performance
 
 - Reuse the gate's worktree, binaries, and rustdoc output (#156)
@@ -33,6 +37,17 @@
 - Author the gh-pages commit as soothfast-bot (#174)
 - Move every workflow off the App private key (#163)
 - Land the changelog as soothfast-bot via the broker (#161)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-report
+ADDED    soothfast_report::changelog::unparsed_subjects
+CHANGED  soothfast_report::changelog::Change (body)
+CHANGED  soothfast_report::changelog::changes_from_subjects (body)
+```
 
 
 ## 0.2.0 - 2026-08-30
