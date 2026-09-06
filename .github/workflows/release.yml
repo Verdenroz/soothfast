@@ -149,11 +149,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
-      - name: Pin the rustdoc toolchain
-        run: |
-          TC=$(make -s print-SOOTHFAST_RUSTDOC_TOOLCHAIN)
-          echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$TC" >> "$GITHUB_ENV"
-          rustup toolchain install "$TC"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           lookup-only: true
@@ -175,6 +170,37 @@ jobs:
             sleep 30
           done
 
+  # The release itself is authored by soothfast-bot; the broker accepts the
+  # tag because its commit is already on master.
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [resolve, publish]
+    environment: soothfast-bot
+    permissions:
+      contents: read
+      id-token: write # soothfast-bot token creates the release
+    outputs:
+      tag: ${{ needs.resolve.outputs.tag }}
+    steps:
+      - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # previous-tag lookup + surface diff need history
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+      - name: Pin the rustdoc toolchain
+        run: |
+          TC=$(make -s print-SOOTHFAST_RUSTDOC_TOOLCHAIN)
+          echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$TC" >> "$GITHUB_ENV"
+          rustup toolchain install "$TC"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          lookup-only: true
       # Dogfood: release assets are produced from this tag's own measurements.
       - name: Produce release report from recorded measurements
         run: |
@@ -217,9 +243,12 @@ jobs:
             printf '%s\n' "$NOTES" > /tmp/release_notes.md
           fi
 
+      - name: Mint a soothfast-bot token
+        id: bot
+        run: action/bot-token.sh
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
           TAG: ${{ needs.resolve.outputs.tag }}
           USE_AUTO: ${{ steps.changelog.outputs.use_auto }}
         run: |
@@ -231,11 +260,16 @@ jobs:
           else
             gh release create "$TAG" --verify-tag --title "$TAG" --notes-file /tmp/release_notes.md $ASSETS
           fi
+      - name: Revoke the soothfast-bot token
+        if: always() && steps.bot.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+        run: gh api -X DELETE /installation/token
 
   binaries:
     name: Prebuilt cargo-soothfast (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
-    needs: [resolve, publish]
+    needs: [resolve, release]
     permissions:
       contents: write # upload the release asset
     strategy:

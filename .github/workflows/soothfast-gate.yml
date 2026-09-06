@@ -29,9 +29,11 @@ permissions: {}
 jobs:
   gate:
     runs-on: ubuntu-latest
+    environment: soothfast-bot
     permissions:
       contents: read
-      pull-requests: write # gate comment
+      pull-requests: write # fallback for the comment when no bot token
+      id-token: write # the broker posts the gate comment as soothfast-bot
     steps:
       - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
@@ -40,6 +42,16 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0 # merge-base needs history
+      # The action scripts at this workflow's own commit, whoever calls it.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ github.job_workflow_sha }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -54,7 +66,10 @@ jobs:
       - if: inputs.cli-artifact != ''
         run: chmod +x bin/cargo-soothfast
       - if: inputs.cli-artifact == ''
-        uses: Verdenroz/soothfast@ead9d50c79606edcf80a438f8fac73229c01120c # v0.2.0
+        uses: ./.soothfast-action
+        with:
+          gate: "false"
+          changelog: "false"
       - name: Run gate
         id: gate
         run: |
@@ -72,27 +87,21 @@ jobs:
           name: soothfast-triage
           path: .soothfast/triage/
           if-no-files-found: ignore
-      # Fork PRs get a read-only token here; the comment is best effort. The
-      # marker finds our own comment: github.token's author is shared with
-      # every other action in the repo, so --edit-last would hit theirs.
+      # The broker posts the comment as soothfast-bot; a fork pull request has
+      # no OIDC token and falls back to github.token. Best effort either way.
       - name: PR comment with gate results
         if: always() && github.event_name == 'pull_request'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKER: "<!-- soothfast-gate -->"
+          BODY_FILE: ${{ runner.temp }}/soothfast-gate-comment.md
         run: |
           {
-            echo '<!-- soothfast-gate -->'
             echo '## soothfast gate'
             echo '```'
-            tail -n 60 gate-output.txt
+            tail -n 60 gate-output.txt | sed 's/```/` ` `/g'
             echo '```'
-          } > comment.md
-          id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
-            --jq '[.[] | select(.body | startswith("<!-- soothfast-gate -->")) | .id][0] // empty')
-          if [ -n "$id" ]; then
-            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -F body=@comment.md >/dev/null
-          else
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@comment.md >/dev/null
-          fi
+          } > "$BODY_FILE"
+          .soothfast-action/action/comment.sh

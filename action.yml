@@ -70,7 +70,7 @@ inputs:
     required: false
     default: soothfast-bot
   broker:
-    description: Token broker URL. Empty uses the default in action/bot-token.sh.
+    description: Token broker URL. Empty uses the default in action/oidc.sh.
     required: false
     default: ""
 
@@ -160,6 +160,7 @@ runs:
         BASE_REF: ${{ github.base_ref }}
         GH_TOKEN: ${{ inputs.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
+        BROKER: ${{ inputs.broker }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
     - name: Upload triage artifacts
       if: steps.gate.outputs.failed == 'true'
