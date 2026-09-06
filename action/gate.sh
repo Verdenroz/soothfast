@@ -5,11 +5,14 @@
 # upload still happen first. Output is untrusted (the PR's own binaries wrote
 # it) and the comment is authored by a write-access identity, so nothing in
 # it may escape the code fence.
-# Inputs: CLI PACKAGES BASE_REF GH_TOKEN PR_NUMBER, BROKER (optional).
+# Inputs: CLI PACKAGES BASE_REF GH_TOKEN PR_NUMBER, BROKER and FEATURES
+# (optional).
 # Output: failed (true|false).
 set -euo pipefail
 
 read -ra pkgs <<<"$PACKAGES"
+features=()
+[ -n "${FEATURES:-}" ] && features=(--features "$FEATURES")
 failed=false
 out_dir="${RUNNER_TEMP:-/tmp}/soothfast-gate"
 mkdir -p "$out_dir"
@@ -17,7 +20,7 @@ mkdir -p "$out_dir"
   echo '## soothfast gate'
   for pkg in "${pkgs[@]}"; do
     out="${out_dir}/${pkg}.txt"
-    "$CLI" gate -p "$pkg" --against-ref "origin/${BASE_REF}" 2>&1 | tee "$out" >&2 || failed=true
+    "$CLI" gate -p "$pkg" --against-ref "origin/${BASE_REF}" "${features[@]}" 2>&1 | tee "$out" >&2 || failed=true
     echo "### ${pkg}"
     echo '```'
     # shellcheck disable=SC2016 # literal backticks, nothing to expand
