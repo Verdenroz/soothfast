@@ -194,10 +194,15 @@ async function decideRef(
 ): Promise<Decision> {
   const repository = await deps.github.repository(claims.repository, token);
   if (claims.ref.startsWith("refs/tags/")) {
+    // An annotated tag's sha names the tag object; judge the commit under it.
+    // Tag objects are immutable, so peeling keeps the sha claim authoritative.
+    const commit =
+      (await deps.github.tagObject(claims.repository, claims.sha, token)) ??
+      claims.sha;
     const comparison = await deps.github.compare(
       claims.repository,
       repository.default_branch,
-      claims.sha,
+      commit,
       token,
     );
     return decideTag(claims.ref, comparison.status);

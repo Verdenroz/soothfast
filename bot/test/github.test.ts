@@ -253,3 +253,18 @@ test("createComment and updateComment send the body", async () => {
     [{ body: "b" }, { body: "c" }],
   );
 });
+
+test("tagObject peels an annotated tag and is undefined for a commit", async () => {
+  const { api } = fakeGitHub({
+    "GET /repos/acme/mylib/git/tags/aaaa": {
+      status: 200,
+      body: { object: { sha: "bbbb", type: "commit" } },
+    },
+    "GET /repos/acme/mylib/git/tags/cccc": {
+      status: 404,
+      body: { message: "Not Found" },
+    },
+  });
+  assert.equal(await api.tagObject("acme/mylib", "aaaa", "ghs_x"), "bbbb");
+  assert.equal(await api.tagObject("acme/mylib", "cccc", "ghs_x"), undefined);
+});
