@@ -1,9 +1,13 @@
-name: Setup cargo-soothfast
+name: soothfast
 description: >-
-  Install the cargo-soothfast CLI, pinned to the soothfast version locked in
-  the caller's Cargo.lock, and cache the binary across workflow runs.
-  soothfast-measure builds into the caller's bench binary from that lock, so
-  an unpinned CLI silently outruns it.
+  Gate performance on pull requests and land regenerated docs as
+  soothfast-bot on the default branch. Installs cargo-soothfast pinned to the
+  soothfast version locked in the caller's Cargo.lock and caches it across
+  runs. soothfast-measure builds into the caller's bench binary from that
+  lock, so an unpinned CLI silently outruns it.
+branding:
+  icon: activity
+  color: purple
 
 inputs:
   version:
@@ -16,6 +20,59 @@ inputs:
     description: Path to the Cargo.lock holding the soothfast version.
     required: false
     default: Cargo.lock
+  binary:
+    description: Prebuilt cargo-soothfast to run instead of installing one.
+    required: false
+    default: ""
+  packages:
+    description: >-
+      Space-separated packages to gate and measure. Empty means every package
+      with a bench target named soothfast.
+    required: false
+    default: ""
+  gate:
+    description: Run the gate on pull requests.
+    required: false
+    default: "true"
+  changelog:
+    description: Regenerate CHANGELOG.md on pushes to the default branch.
+    required: false
+    default: "true"
+  spec:
+    description: >-
+      Space-separated packages whose generate-mode specs are regenerated on
+      pushes to the default branch.
+    required: false
+    default: ""
+  baseline:
+    description: Baseline name the regeneration measures into.
+    required: false
+    default: base
+  rustdoc-toolchain:
+    description: >-
+      Toolchain that produces rustdoc JSON for the changelog. The default is
+      the nightly the released CLI was tested against; the Makefile reads it
+      from here.
+    required: false
+    default: nightly-2026-08-07
+  token:
+    description: Token for the gate comment and repository lookups.
+    required: false
+    default: ${{ github.token }}
+  bot-token:
+    description: >-
+      A soothfast-bot installation token you minted yourself. Skips the
+      broker.
+    required: false
+    default: ""
+  bot-slug:
+    description: App slug that `bot-token` belongs to.
+    required: false
+    default: soothfast-bot
+  broker:
+    description: Token broker URL. Empty uses the default in action/bot-token.sh.
+    required: false
+    default: ""
 
 outputs:
   version:
@@ -28,13 +85,19 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Resolve cargo-soothfast version
+    - name: Resolve cargo-soothfast
       id: resolve
       shell: bash
       env:
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_LOCKFILE: ${{ inputs.lockfile }}
+        INPUT_BINARY: ${{ inputs.binary }}
       run: |
+        if [ -n "$INPUT_BINARY" ]; then
+          echo "bin=$INPUT_BINARY" >> "$GITHUB_OUTPUT"
+          echo "install=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
         version="$INPUT_VERSION"
         if [ -z "$version" ]; then
           version=$(grep -A1 '^name = "soothfast"$' "$INPUT_LOCKFILE" | grep '^version' | cut -d'"' -f2)
@@ -45,19 +108,21 @@ runs:
         fi
         echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "bin=${CARGO_HOME:-$HOME/.cargo}/bin/cargo-soothfast" >> "$GITHUB_OUTPUT"
+        echo "install=true" >> "$GITHUB_OUTPUT"
     - name: Restore cargo-soothfast
+      if: steps.resolve.outputs.install == 'true'
       id: cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.resolve.outputs.bin }}
         key: cargo-soothfast-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.version }}
     - name: Install cargo-binstall
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: steps.resolve.outputs.install == 'true' && steps.cache.outputs.cache-hit != 'true'
       uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
       with:
         tool: cargo-binstall
     - name: Install cargo-soothfast
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: steps.resolve.outputs.install == 'true' && steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         VERSION: ${{ steps.resolve.outputs.version }}
@@ -73,3 +138,70 @@ runs:
           echo "::error::$BIN is missing or not executable after setup"
           exit 1
         fi
+
+    - name: Prepare
+      id: prepare
+      shell: bash
+      env:
+        GATE: ${{ inputs.gate }}
+        REGEN: ${{ inputs.changelog == 'true' || inputs.spec != '' }}
+        PACKAGES: ${{ inputs.packages }}
+        RUSTDOC_TOOLCHAIN: ${{ inputs.rustdoc-toolchain }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: "$GITHUB_ACTION_PATH/action/prepare.sh"
+
+    - name: Gate against the base branch
+      if: github.event_name == 'pull_request' && inputs.gate == 'true'
+      id: gate
+      shell: bash
+      env:
+        CLI: ${{ steps.resolve.outputs.bin }}
+        PACKAGES: ${{ steps.prepare.outputs.packages }}
+        BASE_REF: ${{ github.base_ref }}
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: "$GITHUB_ACTION_PATH/action/gate.sh"
+    - name: Upload triage artifacts
+      if: steps.gate.outputs.failed == 'true'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: soothfast-triage
+        path: .soothfast/triage/
+        if-no-files-found: ignore
+    - name: Fail on a regression
+      if: steps.gate.outputs.failed == 'true'
+      shell: bash
+      run: |
+        echo "::error::soothfast gate failed; see the pull request comment and the soothfast-triage artifact"
+        exit 1
+
+    - name: Regenerate derived files
+      if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true'
+      id: regen
+      shell: bash
+      env:
+        CLI: ${{ steps.resolve.outputs.bin }}
+        PACKAGES: ${{ steps.prepare.outputs.packages }}
+        BASELINE: ${{ inputs.baseline }}
+        CHANGELOG: ${{ inputs.changelog }}
+        SPEC: ${{ inputs.spec }}
+      run: "$GITHUB_ACTION_PATH/action/regen.sh"
+    # Minted after everything that compiles the tree has run.
+    - name: Mint a soothfast-bot token
+      if: steps.regen.outputs.changed == 'true' && inputs.bot-token == ''
+      id: bot
+      shell: bash
+      env:
+        BROKER: ${{ inputs.broker }}
+      run: "$GITHUB_ACTION_PATH/action/bot-token.sh"
+    - name: Land the regenerated files
+      if: steps.regen.outputs.changed == 'true'
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.bot-token || steps.bot.outputs.token }}
+        APP_SLUG: ${{ steps.bot.outputs.app_slug || inputs.bot-slug }}
+        BRANCH: bot/soothfast-update
+        TITLE: "chore: regenerate soothfast outputs"
+        BODY: Automated regeneration by soothfast.
+        PATHS: ${{ steps.regen.outputs.paths }}
+      run: "$GITHUB_ACTION_PATH/action/land.sh"

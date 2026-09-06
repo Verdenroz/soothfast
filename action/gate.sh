@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Gate every package against the pull request's base branch and post the
+# tail of each package's output as one PR comment. Never exits non-zero on a
+# regression: the caller reads the `failed` output so the comment and triage
+# upload still happen first.
+# Inputs: CLI PACKAGES BASE_REF GH_TOKEN PR_NUMBER. Output: failed (true|false).
+set -euo pipefail
+
+read -ra pkgs <<<"$PACKAGES"
+failed=false
+out_dir="${RUNNER_TEMP:-/tmp}/soothfast-gate"
+mkdir -p "$out_dir"
+{
+  echo '## soothfast gate'
+  for pkg in "${pkgs[@]}"; do
+    out="${out_dir}/${pkg}.txt"
+    "$CLI" gate -p "$pkg" --against-ref "origin/${BASE_REF}" 2>&1 | tee "$out" >&2 || failed=true
+    echo "### ${pkg}"
+    echo '```'
+    tail -n 40 "$out"
+    echo '```'
+  done
+} >"${out_dir}/comment.md"
+
+MARKER='<!-- soothfast-gate -->' BODY_FILE="${out_dir}/comment.md" "$(dirname "$0")/comment.sh" ||
+  echo "::warning::could not comment on the pull request (read-only token on a fork?)"
+
+echo "failed=$failed" >>"$GITHUB_OUTPUT"

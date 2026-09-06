@@ -10,8 +10,10 @@ CARGO := cargo
 SOOTHFAST ?= $(CARGO) run -p cargo-soothfast --
 BASE ?= origin/master
 
-# rustdoc JSON is nightly-only and its format changes frequently
-export SOOTHFAST_RUSTDOC_TOOLCHAIN ?= nightly-2026-08-07
+# rustdoc JSON is nightly-only and its format changes frequently. The pin
+# lives in action.yml (the rustdoc-toolchain input default) so adopters and
+# this repo bump it in one place.
+export SOOTHFAST_RUSTDOC_TOOLCHAIN ?= $(shell sed -n 's/^ *default: \(nightly-[0-9-]*\)$$/\1/p' action.yml)
 
 # Self-measuring bench crates; runs merge into the shared "self" baseline.
 BENCH_CRATES := soothfast-registry soothfast-measure soothfast-docs \
