@@ -337,3 +337,18 @@ test("other routes are 404 and missing bearer is 401", async () => {
   );
   assert.equal(noAuth.status, 401);
 });
+
+test("a broker without its secrets says so", async () => {
+  const fake = fakeGitHub();
+  const deps = { jwks: async () => undefined, github: fake.github };
+  const res = await handle(
+    new Request("https://bot.example/token", { method: "POST" }),
+    { GITHUB_APP_CLIENT_ID: "", GITHUB_APP_PRIVATE_KEY: "" },
+    deps,
+  );
+  assert.equal(res.status, 500);
+  assert.match(
+    ((await res.json()) as { reason: string }).reason,
+    /not configured/,
+  );
+});

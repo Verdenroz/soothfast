@@ -65,6 +65,13 @@ export async function handle(
   env: Env,
   deps: Deps,
 ): Promise<Response> {
+  if (!env.GITHUB_APP_CLIENT_ID || !env.GITHUB_APP_PRIVATE_KEY) {
+    console.error("GITHUB_APP_CLIENT_ID or GITHUB_APP_PRIVATE_KEY is not set");
+    return json(500, {
+      reason:
+        "broker is not configured: set GITHUB_APP_CLIENT_ID and GITHUB_APP_PRIVATE_KEY",
+    });
+  }
   const route = request.method === "POST" ? new URL(request.url).pathname : "";
   if (route !== "/token" && route !== "/comment")
     return json(404, { reason: "not found" });
