@@ -21,29 +21,20 @@ jobs:
   generate:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    permissions: {} # all repo access comes from the minted App token below
+    concurrency:
+      group: spec
+      cancel-in-progress: true
+    environment: soothfast-bot
+    permissions:
+      contents: read
+      id-token: write # soothfast-bot token via the broker, see bot/
     steps:
       - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
-      - name: Mint a soothfast-bot token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          client-id: ${{ vars.CHANGELOG_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-      - name: Get soothfast-bot user id
-        id: app-user
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-        run: echo "id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 # zizmor: ignore[artipacked]
-        with:
-          ref: ${{ github.ref_name }}
-          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -57,28 +48,18 @@ jobs:
         run: cargo run --release -p cargo-soothfast -- spec gen -p "$SPEC_PKG"
       # Direct pushes to master are blocked by the branch ruleset, so the bot
       # opens a PR and squash-merges it itself instead.
-      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        id: cpr
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          add-paths: |
-            *.yaml
-            *.yml
-            *.json
-          commit-message: "chore: regenerate API specs"
-          title: "chore: regenerate API specs"
-          body: Automated spec regeneration.
-          branch: bot/spec-update
-          delete-branch: true
-          author: >-
-            ${{ steps.app-token.outputs.app-slug }}[bot]
-            <${{ steps.app-user.outputs.id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com>
-      - name: Merge pull request
-        if: steps.cpr.outputs.pull-request-number
+      - name: Mint a soothfast-bot token
+        id: bot
+        run: action/bot-token.sh
+      - name: Land the regenerated specs
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
-        run: gh pr merge --auto --squash --delete-branch "$PR_NUMBER"
+          TOKEN: ${{ steps.bot.outputs.token }}
+          APP_SLUG: ${{ steps.bot.outputs.app_slug }}
+          BRANCH: bot/spec-update
+          TITLE: "chore: regenerate API specs"
+          BODY: Automated spec regeneration.
+          PATHS: "*.yaml *.yml *.json"
+        run: action/land.sh
 
   # On a PR, prove the committed specs are current and that the API change is
   # backwards compatible with the merge-base.
