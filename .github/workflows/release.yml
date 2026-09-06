@@ -25,10 +25,33 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
+      targets: ${{ steps.targets.outputs.json }}
     steps:
       - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
+      # The one list of prebuilt targets: the binaries matrix builds it and
+      # the assets job checks the release against it, so neither can drift.
+      #
+      # Mirrors soothfast-sdk's Target::DEFAULT matrix (target.rs). Intel
+      # macOS cross-compiles on the arm64 runner: the macOS SDK carries both
+      # architectures, and a job pinned to the retired Intel image is never
+      # scheduled at all, it sits queued until GitHub times it out a day
+      # later, cancelled, having produced no binary and no failure.
+      - name: List the prebuilt targets
+        id: targets
+        run: |
+          json=$(jq -c . <<'EOF'
+          [
+            {"target": "x86_64-unknown-linux-gnu", "runner": "ubuntu-latest"},
+            {"target": "aarch64-unknown-linux-gnu", "runner": "ubuntu-24.04-arm"},
+            {"target": "x86_64-apple-darwin", "runner": "macos-latest"},
+            {"target": "aarch64-apple-darwin", "runner": "macos-latest"},
+            {"target": "x86_64-pc-windows-msvc", "runner": "windows-latest"}
+          ]
+          EOF
+          )
+          echo "json=$json" >> "$GITHUB_OUTPUT"
       - name: Resolve and validate
         id: v
         env:
@@ -274,26 +297,8 @@ jobs:
       contents: write # upload the release asset
     strategy:
       fail-fast: false
-      # Adding or removing a target here means updating EXPECTED in the
-      # `assets` job below, which asserts one attached binary per entry.
-      #
-      # Mirrors soothfast-sdk's Target::DEFAULT matrix (target.rs). Intel
-      # macOS cross-compiles on the arm64 runner: the macOS SDK carries both
-      # architectures, and a job pinned to the retired Intel image is never
-      # scheduled at all — it sits queued until GitHub times it out a day
-      # later, cancelled, having produced no binary and no failure.
       matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
-          - target: x86_64-apple-darwin
-            runner: macos-latest
-          - target: aarch64-apple-darwin
-            runner: macos-latest
-          - target: x86_64-pc-windows-msvc
-            runner: windows-latest
+        include: ${{ fromJSON(needs.resolve.outputs.targets) }}
     steps:
       - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
@@ -342,20 +347,26 @@ jobs:
       - uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
           egress-policy: audit
-      - name: Count the attached binaries
+      - name: Every target's binary is attached
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           TAG: ${{ needs.resolve.outputs.tag }}
-          # One per entry in the binaries matrix above.
-          EXPECTED: 5
+          VERSION: ${{ needs.resolve.outputs.version }}
+          TARGETS: ${{ needs.resolve.outputs.targets }}
         run: |
-          FOUND=$(gh release view "$TAG" --repo "$REPO" --json assets \
-            --jq '[.assets[] | select(.name | endswith(".tgz"))] | length')
-          echo "attached: $FOUND, expected: $EXPECTED"
-          if [ "$FOUND" -ne "$EXPECTED" ]; then
-            gh release view "$TAG" --repo "$REPO" --json assets \
-              --jq '.assets[].name' || true
-            echo "::error::$TAG has $FOUND prebuilt binaries, expected $EXPECTED"
+          expected=$(jq -r --arg v "$VERSION" '.[] | "cargo-soothfast-v\($v)-\(.target).tgz"' <<<"$TARGETS" | sort)
+          attached=$(gh release view "$TAG" --repo "$REPO" --json assets \
+            --jq '.assets[].name | select(endswith(".tgz"))' | sort)
+          missing=$(comm -23 <(echo "$expected") <(echo "$attached"))
+          extra=$(comm -13 <(echo "$expected") <(echo "$attached"))
+          echo "attached: $(grep -c . <<<"$attached"), expected: $(grep -c . <<<"$expected")"
+          if [ -n "$extra" ]; then
+            echo "::warning::$TAG has binaries no target produced:"
+            echo "$extra"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::$TAG is missing prebuilt binaries:"
+            echo "$missing"
             exit 1
           fi
