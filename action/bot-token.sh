@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Exchange this job's GitHub Actions OIDC identity for a one-hour
 # soothfast-bot installation token scoped to this repository.
-# Inputs: BROKER (URL). Outputs: token, app_slug, expires_at.
+# Inputs: BROKER (URL, optional). Outputs: token, app_slug, expires_at.
 set -euo pipefail
 
-: "${BROKER:?BROKER is required}"
+BROKER=${BROKER:-https://soothfast-bot.verdenroz.workers.dev}
 
 if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
   echo "::error::soothfast-bot needs 'id-token: write' in the job's permissions"

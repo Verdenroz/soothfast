@@ -8,8 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       broker:
-        description: Broker URL
-        required: true
+        description: Broker URL (defaults to the one in action/bot-token.sh)
+        required: false
+        default: ""
         type: string
 
 permissions: {}
