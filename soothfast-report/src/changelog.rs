@@ -40,6 +40,10 @@ pub struct PerfThresholds {
 pub struct Change {
     /// Commit type: `feat`, `fix`, `perf`, `docs`, and the rest.
     pub kind: String,
+    /// Conventional-commit scope, the parenthesised part after the type.
+    pub scope: Option<String>,
+    /// The subject carried the `!` breaking-change marker.
+    pub breaking: bool,
     /// Subject line with the type prefix and pull request number removed.
     pub subject: String,
     /// Pull request the subject ended with, when it named one.
@@ -57,40 +61,72 @@ const BOT_SUBJECTS: [&str; 3] = [
 
 /// Reader-facing sections, in the order a release renders them. Anything
 /// whose type is missing here lands under the last entry.
-const SECTIONS: [(&str, &[&str]); 6] = [
+const SECTIONS: [(&str, &[&str]); 7] = [
+    ("Breaking changes", &[]),
     ("Features", &["feat"]),
     ("Fixes", &["fix"]),
     ("Performance", &["perf"]),
     ("Documentation", &["docs"]),
     ("Dependencies", &["deps"]),
-    ("Internal", &["refactor", "chore", "test", "ci"]),
+    ("Internal", &["refactor", "chore", "build", "test", "ci"]),
 ];
 
-/// Parse `type: subject (#N)` subjects. Release commits and the bots that
-/// regenerate derived artifacts are dropped, since a release listing its own
-/// paperwork is noise.
+const BREAKING: &str = "Breaking changes";
+
+/// Parse `type(scope)!: subject (#N)` subjects. Release commits and the bots
+/// that regenerate derived artifacts are dropped, since a release listing
+/// its own paperwork is noise.
 pub fn changes_from_subjects(subjects: &[String]) -> Vec<Change> {
     subjects
         .iter()
-        .filter_map(|line| {
-            let (kind, rest) = line.split_once(": ")?;
-            if !SECTIONS.iter().any(|(_, kinds)| kinds.contains(&kind)) {
-                return None;
-            }
-            let rest = rest.trim();
-            let (subject, pr) = match rest.rsplit_once(" (#") {
-                Some((head, tail)) => (head, tail.strip_suffix(')').and_then(|n| n.parse().ok())),
-                None => (rest, None),
-            };
-            let subject = subject.trim();
-            let bookkeeping = subject.starts_with("release v") || BOT_SUBJECTS.contains(&subject);
-            (!bookkeeping).then(|| Change {
-                kind: kind.to_string(),
-                subject: subject.to_string(),
-                pr,
-            })
-        })
+        .filter_map(|line| parse_subject(line))
+        .filter(|change| !is_bookkeeping(&change.subject))
         .collect()
+}
+
+/// Subjects that are not conventional commits of a known type: the ones a
+/// release would otherwise drop in silence.
+pub fn unparsed_subjects(subjects: &[String]) -> Vec<&str> {
+    subjects
+        .iter()
+        .filter(|line| parse_subject(line).is_none())
+        .map(String::as_str)
+        .collect()
+}
+
+fn is_bookkeeping(subject: &str) -> bool {
+    subject.starts_with("release v") || BOT_SUBJECTS.contains(&subject)
+}
+
+fn parse_subject(line: &str) -> Option<Change> {
+    let (prefix, rest) = line.split_once(": ")?;
+    let (prefix, breaking) = match prefix.strip_suffix('!') {
+        Some(bare) => (bare, true),
+        None => (prefix, false),
+    };
+    let (kind, scope) = match prefix.split_once('(') {
+        Some((kind, scope)) => (kind, Some(scope.strip_suffix(')')?)),
+        None => (prefix, None),
+    };
+    // A `deps` or `deps-dev` scope names the section itself, whatever type
+    // carries it.
+    let is_deps = scope.is_some_and(|s| s == "deps" || s.starts_with("deps-"));
+    let kind = if is_deps { "deps" } else { kind };
+    if !SECTIONS.iter().any(|(_, kinds)| kinds.contains(&kind)) {
+        return None;
+    }
+    let rest = rest.trim();
+    let (subject, pr) = match rest.rsplit_once(" (#") {
+        Some((head, tail)) => (head, tail.strip_suffix(')').and_then(|n| n.parse().ok())),
+        None => (rest, None),
+    };
+    Some(Change {
+        kind: kind.to_string(),
+        scope: scope.filter(|_| !is_deps).map(str::to_string),
+        breaking,
+        subject: subject.trim().to_string(),
+        pr,
+    })
 }
 
 /// Inputs already computed by the CLI (API section, two baselines).
@@ -136,21 +172,35 @@ pub fn draft(inputs: &DraftInputs) -> String {
 fn sections(changes: &[Change], icons: &Icons) -> String {
     let mut out = String::new();
     for (name, kinds) in SECTIONS {
-        let mut entries = changes.iter().filter(|c| kinds.contains(&c.kind.as_str()));
+        let mut entries = changes.iter().filter(|c| {
+            if name == BREAKING {
+                c.breaking
+            } else {
+                !c.breaking && kinds.contains(&c.kind.as_str())
+            }
+        });
         let Some(first) = entries.next() else {
             continue;
         };
         out.push_str(&format!("### {} {name}\n\n", icons.get(name)));
         for change in std::iter::once(first).chain(entries) {
-            let subject = sentence_case(&change.subject);
-            match change.pr {
-                Some(pr) => out.push_str(&format!("- {subject} (#{pr})\n")),
-                None => out.push_str(&format!("- {subject}\n")),
-            }
+            out.push_str(&format!("- {}\n", entry_line(change)));
         }
         out.push('\n');
     }
     out
+}
+
+fn entry_line(change: &Change) -> String {
+    let subject = sentence_case(&change.subject);
+    let scoped = match &change.scope {
+        Some(scope) => format!("{scope}: {subject}"),
+        None => subject,
+    };
+    match change.pr {
+        Some(pr) => format!("{scoped} (#{pr})"),
+        None => scoped,
+    }
 }
 
 /// Commit subjects are imperative and lowercase; a release note reads as a
@@ -171,7 +221,8 @@ fn sentence_case(subject: &str) -> String {
 }
 
 /// Section icons, keyed by the lowercased section name a release renders
-/// (`features`, `fixes`, `performance`, `documentation`, `internal`).
+/// (`breaking changes`, `features`, `fixes`, `performance`, `documentation`,
+/// `dependencies`, `internal`).
 ///
 /// A repo overrides any subset through `[changelog.icons]` in its
 /// `soothfast.toml`; whatever it leaves out keeps the shipped default, so a
@@ -215,6 +266,7 @@ impl Icons {
 
 fn default_icon(name: &str) -> &'static str {
     match name {
+        "Breaking changes" => "\u{1F4A5}",
         "Features" => "\u{2728}",
         "Fixes" => "\u{1F41B}",
         "Performance" => "\u{26A1}",
@@ -326,6 +378,7 @@ mod tests {
 
     use super::{
         ApiSection, Change, DraftInputs, Icons, PerfThresholds, changes_from_subjects, draft,
+        sections, unparsed_subjects,
     };
     use crate::llms::SurfaceEntry;
 
@@ -529,6 +582,63 @@ mod tests {
     }
 
     #[test]
+    fn scoped_subjects_keep_their_section_and_show_the_scope() {
+        let changes = changes_from_subjects(&subjects(&[
+            "feat(api): add grouped daily bars (#1)",
+            "fix(server): drop a stale cache (#2)",
+            "chore(deps): bump serde (#3)",
+            "build(deps): bump tokio (#4)",
+            "build: switch to lld (#5)",
+            "chore(deps-dev): bump typescript (#6)",
+        ]));
+        let kinds: Vec<&str> = changes.iter().map(|c| c.kind.as_str()).collect();
+        assert_eq!(kinds, ["feat", "fix", "deps", "deps", "build", "deps"]);
+        assert_eq!(changes[0].scope.as_deref(), Some("api"));
+        assert_eq!(changes[2].scope, None);
+        assert_eq!(changes[5].scope, None);
+        let text = sections(&changes, &Icons::default());
+        assert!(text.contains("- api: Add grouped daily bars (#1)"));
+        assert!(text.contains("- server: Drop a stale cache (#2)"));
+        assert!(
+            text.contains("### \u{1F4E6} Dependencies\n\n- Bump serde (#3)\n- Bump tokio (#4)\n- Bump typescript (#6)")
+        );
+        assert!(text.contains("### \u{1F527} Internal\n\n- Switch to lld (#5)"));
+    }
+
+    #[test]
+    fn a_breaking_marker_moves_the_entry_to_its_own_section() {
+        let changes = changes_from_subjects(&subjects(&[
+            "feat!: drop the v1 endpoints (#7)",
+            "fix(api)!: rename the cursor field (#8)",
+            "feat: add a thing (#9)",
+        ]));
+        assert!(changes[0].breaking && changes[1].breaking && !changes[2].breaking);
+        let text = sections(&changes, &Icons::default());
+        let breaking = text.find("Breaking changes").unwrap();
+        let features = text.find("Features").unwrap();
+        assert!(breaking < features);
+        assert!(
+            text.contains("- Drop the v1 endpoints (#7)\n- api: Rename the cursor field (#8)\n")
+        );
+        assert!(!text[features..].contains("v1 endpoints"));
+    }
+
+    #[test]
+    fn unparsed_subjects_are_reported_but_paperwork_is_not() {
+        let lines = subjects(&[
+            "feat: add a thing (#1)",
+            "wip: something",
+            "Merge branch 'x'",
+            "chore: release v0.2.0 (#3)",
+            "docs: regenerate CHANGELOG.md (#4)",
+        ]);
+        assert_eq!(
+            unparsed_subjects(&lines),
+            ["wip: something", "Merge branch 'x'"]
+        );
+    }
+
+    #[test]
     fn a_configured_icon_replaces_only_the_section_it_names() {
         let changes = changes_from_subjects(&subjects(&["feat: add a thing", "fix: mend a thing"]));
         let icons =
@@ -621,6 +731,8 @@ mod tests {
         let new = json!({ "items": {} });
         let changes = vec![Change {
             kind: "fix".into(),
+            scope: None,
+            breaking: false,
             subject: "stop hashing comments".into(),
             pr: Some(124),
         }];
