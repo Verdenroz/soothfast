@@ -1,13 +1,39 @@
 # Changelog
 
-## Unreleased (draft vs v0.2.0)
+## 0.3.0 - 2026-09-06
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+soothfast now installs into another repository the way codecov does: one
+`uses: Verdenroz/soothfast@v0.3.0` step in an existing workflow, the
+Soothfast Bot GitHub App installed once, and no secrets. On pull requests the
+step gates every bench-carrying package against the base branch and posts the
+result as soothfast-bot; on pushes to the default branch it regenerates
+`CHANGELOG.md` and any generate-mode specs and lands them as a pull request
+that soothfast-bot opens and merges itself. The credential behind that is a
+one-hour installation token minted by a small broker from the job's own
+GitHub Actions OIDC identity, only for a job in a `soothfast-bot` environment
+on the repository's default branch; a pull request job never holds a token at
+all, the broker posts the comment for it. Release notes now keep scoped and
+breaking conventional-commit subjects, and the API surface block reports a
+public field or variant change as a signature change.
+
+### Upgrade notes
+
+The action now gates pull requests and regenerates on default-branch pushes
+by default. A job that only bumps the tag on the 0.2 `Setup cargo-soothfast`
+step gets a second gate run on pull requests and, on its default branch, a
+regeneration that fails at the token step. To keep the install-only
+behaviour, pass `gate: false` and `changelog: false`. To use the bot, install
+the App, create an environment called `soothfast-bot` with no branch policy,
+give the job `contents: read`, `pull-requests: write`, and `id-token: write`,
+and turn on auto-merge if the default branch has required checks. Callers of
+the reusable `soothfast-gate.yml` no longer need to pass any secret; the
+`CHANGELOG_APP_PRIVATE_KEY` secret is still declared, optional and ignored,
+for this release. `soothfast_report::changelog::Change` gained the public
+fields `scope` and `breaking`; a struct literal built outside the crate needs
+both. See `docs/ci.md`.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
