@@ -18,6 +18,7 @@
 
 ### 🐛 Fixes
 
+- Count struct and enum members as signature (#178)
 - Keep scoped and breaking subjects in the changelog (#176)
 
 ### ⚡ Performance
@@ -34,6 +35,7 @@
 
 ### 🔧 Internal
 
+- Check release binaries against the target list (#177)
 - Author the gh-pages commit as soothfast-bot (#174)
 - Move every workflow off the App private key (#163)
 - Land the changelog as soothfast-bot via the broker (#161)
@@ -43,9 +45,14 @@
 ### 🔍 API surface
 
 ```
+# soothfast-docs
+CHANGED  soothfast_docs::diff::SurfaceDiff (body)
+CHANGED  soothfast_docs::surface::ItemInfo (body)
+CHANGED  soothfast_docs::surface::from_rustdoc (body)
+
 # soothfast-report
 ADDED    soothfast_report::changelog::unparsed_subjects
-CHANGED  soothfast_report::changelog::Change (body)
+CHANGED  soothfast_report::changelog::Change (signature)
 CHANGED  soothfast_report::changelog::changes_from_subjects (body)
 ```
 
