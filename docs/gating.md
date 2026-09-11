@@ -155,6 +155,22 @@ A baseline saved before build stamps existed compares the same way, and says
 to re-save it. `--against-ref` never hits that: both sides are measured fresh
 in the same run.
 
+## Features
+
+A bench target declaring `required-features`, or a crate whose hot paths sit
+behind a feature, needs `--features` on every run. `soothfast.toml` carries it
+once, for `gate`, `measure` and `spec gen` alike:
+
+```toml
+[gate]
+features = "bench-gate"
+```
+
+An explicit `--features` on the command line wins; the file only fills in what
+the command line left unset. The action's `features` input sets the same thing
+for CI, so a repository that configures the file gets one behaviour from a
+hand-run `cargo soothfast gate` and from the action.
+
 ## Ratchets
 
 <!-- soothfast:bind soothfast_measure::sweep::evaluate -->

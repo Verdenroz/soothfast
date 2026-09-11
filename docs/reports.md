@@ -104,6 +104,21 @@ features = "📐"
 performance = "⏱"
 ```
 
+The same file carries the flags `report changelog` would otherwise need on
+every invocation:
+
+```toml
+[changelog]
+features = "full"
+packages = ["core", "server"]
+```
+
+`features` decides what the API surface diff can see: a public item behind a
+feature that is not enabled never shows up in it, so too narrow a set shortens
+the diff with nothing to say it did. It falls back to `[gate] features` when
+absent. `packages` supplies `-p` when the command line gives none. An explicit
+`--features` or `-p` still wins over either.
+
 Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against `v1.0`, and the measured movement past gate
 thresholds. A section with nothing to report is omitted rather than shipped
