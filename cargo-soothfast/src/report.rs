@@ -224,18 +224,34 @@ fn measure_ref(a: &ReportArgs, refname: &str) -> Result<Option<Value>, String> {
 }
 
 fn changelog_cmd(args: &[String]) -> i32 {
-    let a = match parse(args) {
+    let mut a = match parse(args) {
         Ok(a) => a,
         Err(e) => return err(&e),
     };
-    if a.pkg.is_empty() {
-        return err("report changelog needs -p PKG");
-    }
 
     let root = match invoke::workspace_root() {
         Ok(r) => r,
         Err(e) => return err(&e.to_string()),
     };
+    let cfg = match crate::changelog_config::load(&root) {
+        Ok(c) => c,
+        Err(e) => return err(&e),
+    };
+    if a.pkg.is_empty() {
+        a.pkg = cfg.packages;
+    }
+    if a.pkg.is_empty() {
+        return err("report changelog needs -p PKG");
+    }
+    if a.features.is_none() {
+        a.features = match &cfg.features {
+            Some(f) => Some(f.clone()),
+            None => match crate::gate_config::load(&root) {
+                Ok(g) => g.features,
+                Err(e) => return err(&e),
+            },
+        };
+    }
     let path = a.out.clone().unwrap_or_else(|| root.join("CHANGELOG.md"));
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
 
@@ -292,13 +308,9 @@ fn changelog_cmd(args: &[String]) -> i32 {
         },
         None => Vec::new(),
     };
-    let icons = match crate::changelog_config::load(&root) {
-        Ok(i) => i,
-        Err(e) => return err(&e),
-    };
     let text = changelog::draft(&changelog::DraftInputs {
         changes: &changes,
-        icons: &icons,
+        icons: &cfg.icons,
         api: match &a.against_ref {
             Some(refname) => changelog::ApiSection::Diff {
                 against: refname,
