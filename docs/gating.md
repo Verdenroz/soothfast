@@ -155,6 +155,48 @@ A baseline saved before build stamps existed compares the same way, and says
 to re-save it. `--against-ref` never hits that: both sides are measured fresh
 in the same run.
 
+## When the harness moves under a PR
+
+The same argument applies to soothfast itself. A `--against-ref` run builds
+the merge-base's bench binary from the merge-base's lockfile, so a PR that
+bumps soothfast has the reference embedding the old measurement harness and
+HEAD embedding the new one. The harness is inside the measured loop, and a
+protocol change of a few hundred instructions is several percent of a 30K
+bench. That delta is the harness, not your code.
+
+So the gate pins it. Before building the reference it rewrites the
+worktree's lockfile to HEAD's soothfast versions, and when the merge-base's
+own requirement excludes them (`soothfast = "0.2"` cannot take `0.3.1`) it
+widens that requirement in the worktree's manifests and retries. The
+worktree is a throwaway checkout under `.soothfast/worktrees/`, so nothing
+in your tree is touched.
+
+```console
+gate: pinning soothfast 0.2.0 -> 0.3.1 in the merge-base worktree (harness must match HEAD)
+gate: widened the merge-base's soothfast requirements to retry the pin
+```
+
+Pinning can still fail: an offline runner, a yanked version, a requirement
+the rewrite does not recognise. The gate then says so, in the banner, in the
+verdict line, and in `.soothfast/triage/harness-mismatch.txt`:
+
+```console
+gate: HARNESS MISMATCH — the merge-base could not be pinned to HEAD's soothfast (soothfast 0.2.0 -> 0.3.1); deltas below may be the harness, not this change
+FAIL  demo::parse instructions 30104.0 -> 31680.0 (+5.2%)
+gate: FAILED (1 regression(s)) — measured against a different harness (soothfast 0.2.0 -> 0.3.1); pass --allow-harness-change if the harness bump explains it
+```
+
+A regression on such a run fails, and `--allow-harness-change` is what lets
+it pass. Reach for it once you have read the deltas and they are the shape
+of a harness bump: a small uniform shift across every item, nothing
+concentrated in what the PR touched. It waives comparison failures only.
+Checked claims hold HEAD against its own declared numbers, so they fail
+through it.
+
+A run that is otherwise clean still reports the mismatch. Both sides being
+measured with different instruments is not evidence in either direction,
+and a quiet pass would be as wrong as a red verdict.
+
 ## Features
 
 A bench target declaring `required-features`, or a crate whose hot paths sit

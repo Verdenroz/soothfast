@@ -67,6 +67,7 @@ struct GateArgs {
     against_ref: Option<String>,
     deps: bool,
     allow_gone: bool,
+    allow_harness_change: bool,
     matrix: String,
     save_baseline: Option<String>,
     reuse_base: bool,
@@ -87,6 +88,7 @@ pub fn run(args: &[String]) -> i32 {
         against_ref: None,
         deps: false,
         allow_gone: false,
+        allow_harness_change: false,
         matrix: "default".into(),
         save_baseline: None,
         reuse_base: true,
@@ -120,6 +122,7 @@ pub fn run(args: &[String]) -> i32 {
             "--no-reuse-base" => g.reuse_base = false,
             "--deps" => g.deps = true,
             "--allow-gone" => g.allow_gone = true,
+            "--allow-harness-change" => g.allow_harness_change = true,
             other => return err(&format!("unknown gate arg {other:?}")),
         }
     }
@@ -128,11 +131,16 @@ pub fn run(args: &[String]) -> i32 {
         return err(&e);
     }
 
-    let mut failures = 0u32;
+    let mut regressions = 0u32;
     let mut failing_ids: Vec<String> = Vec::new();
 
-    let (reference, current, short_circuited) = match resolve(&g) {
-        Ok(Some(triple)) => triple,
+    let Resolved {
+        reference,
+        current,
+        short_circuited,
+        harness,
+    } = match resolve(&g) {
+        Ok(Some(resolved)) => resolved,
         // Newly measured crate: nothing at the ref to regress against.
         // Passing is the honest answer; failing would make a crate's
         // first bench permanently ungateable until it is already merged.
@@ -154,6 +162,7 @@ pub fn run(args: &[String]) -> i32 {
     if let Some(b) = &current.gating_backend {
         println!("gate: gating backend = {b}");
     }
+    harness_note(&harness);
     let root = invoke::workspace_root().ok();
     let accepted = root
         .as_deref()
@@ -169,7 +178,7 @@ pub fn run(args: &[String]) -> i32 {
         accepted,
         headroom_pct: None,
     };
-    failures += compare(
+    regressions += compare(
         &reference,
         &current,
         "",
@@ -189,7 +198,7 @@ pub fn run(args: &[String]) -> i32 {
                     deps_mode: false,
                     ..ctx.clone()
                 };
-                failures += compare(
+                regressions += compare(
                     &r,
                     &current,
                     "RATCHET ",
@@ -204,14 +213,29 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
-    // Checked claims from the runner.
+    // Checked claims from the runner. They hold HEAD against its own
+    // declared numbers, so the reference harness has no say over them and
+    // --allow-harness-change never reaches them.
+    let mut assertion_failures = 0u32;
     for a in &current.assertions {
         let verdict = if a.ok { "ok" } else { "FAIL" };
         if !a.ok {
-            failures += 1;
+            assertion_failures += 1;
             failing_ids.push(a.id.clone());
         }
         println!("{verdict:<5} {} assert {}: {}", a.id, a.kind, a.detail);
+    }
+
+    if harness_waiver(&harness, g.allow_harness_change, regressions) {
+        println!(
+            "gate: {regressions} regression(s) allowed by --allow-harness-change ({})",
+            harness.unpinned().join(", ")
+        );
+        regressions = 0;
+    }
+    let failures = regressions + assertion_failures;
+    if let Some(r) = &root {
+        triage_harness_note(&r.join(".soothfast").join("triage"), &harness);
     }
 
     write_gate_status(failures);
@@ -241,12 +265,86 @@ pub fn run(args: &[String]) -> i32 {
         // buildcost pseudo-items have no runnable body to profile.
         failing_ids.retain(|id| !id.starts_with("buildcost::"));
         triage(&g.common, &failing_ids);
-        println!("gate: FAILED ({failures} regression(s))");
+        println!(
+            "gate: FAILED ({failures} regression(s)){}",
+            harness_verdict(&harness, regressions > 0)
+        );
         1
     } else {
-        println!("gate: passed ({} item(s))", current.items.len());
+        println!(
+            "gate: passed ({} item(s)){}",
+            current.items.len(),
+            harness_verdict(&harness, false)
+        );
         0
     }
+}
+
+/// Put the mismatch in front of the deltas it may have produced: a
+/// reference built against another harness measures another protocol, so
+/// its numbers are not this change's in either direction.
+fn harness_note(harness: &invoke::HarnessSync) {
+    if harness.is_mismatched() {
+        println!(
+            "gate: HARNESS MISMATCH — the merge-base could not be pinned to HEAD's soothfast ({}); \
+             deltas below may be the harness, not this change",
+            harness.unpinned().join(", ")
+        );
+    }
+}
+
+/// What the verdict line adds about the mismatch. The PR comment carries
+/// only the tail of the output, so the header alone would not reach it.
+fn harness_verdict(harness: &invoke::HarnessSync, regressed: bool) -> String {
+    if !harness.is_mismatched() {
+        return String::new();
+    }
+    let unpinned = harness.unpinned().join(", ");
+    if regressed {
+        format!(
+            " — measured against a different harness ({unpinned}); \
+             pass --allow-harness-change if the harness bump explains it"
+        )
+    } else {
+        format!(
+            " — but measured against a different harness ({unpinned}), \
+             so the comparison is not conclusive"
+        )
+    }
+}
+
+/// Whether a regression measured against an unpinned harness is waived.
+/// Only comparison failures qualify: an assertion holds HEAD against its
+/// own declared numbers, which the reference harness has no say over.
+fn harness_waiver(harness: &invoke::HarnessSync, allow: bool, regressions: u32) -> bool {
+    regressions > 0 && harness.is_mismatched() && allow
+}
+
+/// Leave the mismatch beside the triage reports in `dir`, so a downloaded
+/// artifact carries the reason its numbers may not be the code's. Removed
+/// when the pin held: a stale file would mislabel a valid comparison.
+fn triage_harness_note(dir: &std::path::Path, harness: &invoke::HarnessSync) {
+    let path = dir.join("harness-mismatch.txt");
+    if !harness.is_mismatched() {
+        let _ = std::fs::remove_file(&path);
+        return;
+    }
+    let _ = std::fs::create_dir_all(dir);
+    let unpinned: String = harness
+        .unpinned()
+        .iter()
+        .map(|u| format!("  {u}\n"))
+        .collect();
+    let _ = std::fs::write(
+        &path,
+        format!(
+            "harness mismatch\n\n\
+             The merge-base worktree could not be pinned to HEAD's soothfast versions, so the\n\
+             reference bench embeds a different measurement harness:\n\n\
+             {unpinned}\n\
+             Deltas in this run may be that harness change rather than the measured code.\n"
+        ),
+    );
 }
 
 /// Gate each package in turn, after building every bench target together.
@@ -288,6 +386,8 @@ fn prebuild_both_sides(packages: &[String], common: &CommonArgs, args: &[String]
     };
     let _ = invoke::with_merge_base_worktree(&refname, |wt| {
         invoke::sync_untracked_cargo_config(wt)?;
+        // Warming a build cache decides no verdict. The per-package leg
+        // syncs this worktree again and its outcome is what gets reported.
         invoke::sync_harness_versions(wt)?;
         let _ = invoke::prebuild_benches(packages, common, Some(wt), Some(&target));
         Ok(())
@@ -334,11 +434,21 @@ fn with_package(args: &[String], pkg: &str) -> Vec<String> {
     out
 }
 
-/// Resolve the comparison pair for a gate run: reference doc, current run,
-/// and whether the current run was a short-circuited identical-binaries
-/// pass. `Ok(None)` only in `--against-ref` mode: a crate newly measured has
-/// nothing at the ref to compare against.
-fn resolve(g: &GateArgs) -> Result<Option<(Value, Run, bool)>, String> {
+/// The two sides of one comparison, plus what the reader needs to know
+/// about how much the comparison is worth.
+struct Resolved {
+    reference: Value,
+    current: Run,
+    /// The identical-binaries short circuit ran one timing-only pass, so
+    /// `current` has no gating counters and is not baseline material.
+    short_circuited: bool,
+    harness: invoke::HarnessSync,
+}
+
+/// Measure or load both sides of a gate run as a [`Resolved`]. `Ok(None)`
+/// only in `--against-ref` mode: a crate newly measured has nothing at the
+/// ref to compare against.
+fn resolve(g: &GateArgs) -> Result<Option<Resolved>, String> {
     if g.common.backend.as_deref() == Some("buildcost") {
         let Some(pkg) = g.common.pkg.clone() else {
             return Err("--backend buildcost requires -p PKG".into());
@@ -364,13 +474,15 @@ fn resolve(g: &GateArgs) -> Result<Option<(Value, Run, bool)>, String> {
             }
             baseline
         };
-        return Ok(Some((reference, current, false)));
+        return Ok(Some(Resolved {
+            reference,
+            current,
+            short_circuited: false,
+            harness: invoke::HarnessSync::Matched,
+        }));
     }
     if let Some(refname) = &g.against_ref {
-        return match measure_ref_interleaved(&g.common, refname, g.reuse_base)? {
-            Some(pair) => Ok(Some((pair.reference, pair.current, pair.short_circuited))),
-            None => Ok(None),
-        };
+        return measure_ref_interleaved(&g.common, refname, g.reuse_base);
     }
     let records = invoke::run_bench(&g.common, &[]).map_err(|e| e.to_string())?;
     let mut current = invoke::collect(&records);
@@ -386,7 +498,12 @@ fn resolve(g: &GateArgs) -> Result<Option<(Value, Run, bool)>, String> {
                 g.baseline, g.baseline
             )
         })?;
-    Ok(Some((baseline, current, false)))
+    Ok(Some(Resolved {
+        reference: baseline,
+        current,
+        short_circuited: false,
+        harness: invoke::HarnessSync::Matched,
+    }))
 }
 
 struct AcceptArgs {
@@ -465,18 +582,25 @@ fn accept_cmd(args: &[String]) -> i32 {
         against_ref: a.against_ref,
         deps: false,
         allow_gone: false,
+        allow_harness_change: false,
         matrix: a.matrix,
         save_baseline: None,
         reuse_base: true,
     };
-    let (reference, current, _) = match resolve(&g) {
-        Ok(Some(triple)) => triple,
+    let Resolved {
+        reference,
+        current,
+        harness,
+        ..
+    } = match resolve(&g) {
+        Ok(Some(resolved)) => resolved,
         Ok(None) => {
             println!("gate accept: nothing to compare — nothing to accept");
             return 0;
         }
         Err(e) => return err(&e),
     };
+    harness_note(&harness);
     if current.items.is_empty() {
         return err("measured 0 items — check --filter / registry setup; refusing to accept");
     }
@@ -632,15 +756,6 @@ fn write_gate_status(failures: u32) {
     );
 }
 
-/// A measured (reference, head) pair from the merge-base worktree.
-struct RefPair {
-    reference: Value,
-    current: Run,
-    /// The identical-binaries short circuit ran one timing-only pass, so
-    /// `current` has no gating counters and is not baseline material.
-    short_circuited: bool,
-}
-
 /// Measure the merge-base with HEAD in a temp worktree, interleaving rounds
 /// (head, base, head, base) tango-style so slow environmental drift cancels;
 /// per-metric minima across each side's rounds form the comparison values.
@@ -655,7 +770,7 @@ fn measure_ref_interleaved(
     common: &CommonArgs,
     refname: &str,
     reuse: bool,
-) -> Result<Option<RefPair>, String> {
+) -> Result<Option<Resolved>, String> {
     const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
     enum Ref {
         NoBenchTarget,
@@ -703,7 +818,8 @@ fn measure_ref_interleaved(
             None => measure(None, &[])?,
         };
         cache_head(common, &head_stamp, &head, head_dig.as_deref());
-        return Ok(Some(RefPair {
+        return Ok(Some(Resolved {
+            harness: harness_of(&doc),
             reference: doc,
             current: head,
             short_circuited: false,
@@ -719,7 +835,7 @@ fn measure_ref_interleaved(
         if let Some(pkg) = &pkg
             && !workspace::has_bench_target(pkg, &target, Some(wt)).map_err(|e| e.to_string())?
         {
-            return Ok((Ref::NoBenchTarget, None));
+            return Ok((Ref::NoBenchTarget, None, invoke::HarnessSync::Matched));
         }
         // A local .cargo/config.toml (untracked, e.g. a linker pin) wouldn't
         // otherwise reach the worktree and would read as a false mismatch.
@@ -728,7 +844,7 @@ fn measure_ref_interleaved(
         // measurement-protocol change between the two locked versions would
         // otherwise be reported as a regression in the measured project.
         // Pinning must precede the base build the binary comparison does.
-        invoke::sync_harness_versions(wt)?;
+        let harness = invoke::sync_harness_versions(wt)?;
         let digests = bench_text_digests(common, wt, wt_target.as_deref());
         // A run measured from byte-identical machine code under the same
         // conditions is that binary's measurement, whatever commit built it.
@@ -749,11 +865,15 @@ fn measure_ref_interleaved(
                 cache_head_doc(common, &head_stamp, doc, head_dig.as_deref());
             }
             let args = identical_pass_args(common.backend.as_deref());
-            return Ok((Ref::IdenticalBinaries(measure(None, args)), digests));
+            return Ok((
+                Ref::IdenticalBinaries(measure(None, args)),
+                digests,
+                harness,
+            ));
         }
         if let Some(doc) = by_binary {
             println!("gate: reusing a run measured from the same merge-base binary");
-            return Ok((Ref::Cached(doc), digests));
+            return Ok((Ref::Cached(doc), digests, harness));
         }
         Ok((
             Ref::Rounds(Box::new([
@@ -763,9 +883,10 @@ fn measure_ref_interleaved(
                 measure(Some(wt), TIMING_ONLY),
             ])),
             digests,
+            harness,
         ))
     })?;
-    let (outcome, digests) = outcome;
+    let (outcome, digests, harness) = outcome;
 
     let (base, head) = match outcome {
         Ref::NoBenchTarget => return Ok(None),
@@ -773,10 +894,11 @@ fn measure_ref_interleaved(
         // zero deltas by construction.
         Ref::IdenticalBinaries(run) => {
             let head = run?;
-            return Ok(Some(RefPair {
+            return Ok(Some(Resolved {
                 reference: ref_doc(&head),
                 current: head,
                 short_circuited: true,
+                harness,
             }));
         }
         Ref::Cached(doc) => {
@@ -785,10 +907,11 @@ fn measure_ref_interleaved(
                 None => measure(None, &[])?,
             };
             cache_head(common, &head_stamp, &head, head_dig.as_deref());
-            return Ok(Some(RefPair {
+            return Ok(Some(Resolved {
                 reference: doc,
                 current: head,
                 short_circuited: false,
+                harness,
             }));
         }
         Ref::Rounds(rounds) => {
@@ -796,7 +919,8 @@ fn measure_ref_interleaved(
             (combine_rounds(base1?, base2), combine_rounds(head1?, head2))
         }
     };
-    let reference = ref_doc(&base);
+    let mut reference = ref_doc(&base);
+    mark_harness(&mut reference, &harness);
     if let Some(k) = &cache_key {
         runcache::store(k, &reference);
     }
@@ -810,11 +934,35 @@ fn measure_ref_interleaved(
         );
     }
     cache_head(common, &head_stamp, &head, head_dig.as_deref());
-    Ok(Some(RefPair {
+    Ok(Some(Resolved {
         reference,
         current: head,
         short_circuited: false,
+        harness,
     }))
+}
+
+/// Where a stored reference remembers that its harness could not be pinned,
+/// so a run served from the cache carries the mark of the run that measured
+/// it rather than reading as a clean comparison.
+const HARNESS_KEY: &str = "harness_unpinned";
+
+fn mark_harness(doc: &mut Value, harness: &invoke::HarnessSync) {
+    if harness.is_mismatched() {
+        doc[HARNESS_KEY] = serde_json::json!(harness.unpinned());
+    }
+}
+
+fn harness_of(doc: &Value) -> invoke::HarnessSync {
+    let labels = doc[HARNESS_KEY]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    invoke::HarnessSync::from_unpinned(labels)
 }
 
 /// HEAD's own measurement, if a run already cached one under this binary and
@@ -1518,7 +1666,7 @@ mod tests {
     };
     use crate::buildstamp;
     use crate::gate_lock;
-    use crate::invoke::{ItemMetrics, Run};
+    use crate::invoke::{HarnessSync, ItemMetrics, Run};
     use serde_json::{Value, json};
 
     fn ctx() -> CompareCtx {
@@ -2241,5 +2389,63 @@ mod tests {
             .arg("--version")
             .output()
             .is_ok_and(|o| o.status.success())
+    }
+
+    fn mismatched() -> HarnessSync {
+        HarnessSync::Mismatched(vec!["soothfast 0.2.0 -> 0.3.1".into()])
+    }
+
+    #[test]
+    fn a_regression_on_a_mismatched_harness_names_the_flag_that_waives_it() {
+        let text = super::harness_verdict(&mismatched(), true);
+        assert!(text.contains("--allow-harness-change"));
+        assert!(text.contains("soothfast 0.2.0 -> 0.3.1"));
+    }
+
+    #[test]
+    fn a_clean_run_on_a_mismatched_harness_still_says_so() {
+        let text = super::harness_verdict(&mismatched(), false);
+        assert!(text.contains("different harness"));
+        assert!(text.contains("soothfast 0.2.0 -> 0.3.1"));
+        assert!(!text.contains("--allow-harness-change"));
+        assert!(super::harness_verdict(&HarnessSync::Matched, false).is_empty());
+    }
+
+    #[test]
+    fn the_flag_waives_a_regression_and_nothing_else() {
+        assert!(super::harness_waiver(&mismatched(), true, 1));
+        assert!(!super::harness_waiver(&mismatched(), false, 1));
+        // A pinned reference means a regression is the code's, flag or not.
+        assert!(!super::harness_waiver(&HarnessSync::Matched, true, 1));
+        // Nothing regressed, so there is nothing to waive.
+        assert!(!super::harness_waiver(&mismatched(), true, 0));
+    }
+
+    #[test]
+    fn a_reference_served_from_the_cache_keeps_its_mismatch() {
+        let mut doc = json!({ "version": 1, "items": {} });
+        super::mark_harness(&mut doc, &mismatched());
+        assert_eq!(super::harness_of(&doc), mismatched());
+        let clean = json!({ "version": 1, "items": {} });
+        assert_eq!(super::harness_of(&clean), HarnessSync::Matched);
+    }
+
+    #[test]
+    fn a_stored_reference_is_only_marked_when_the_pin_missed() {
+        let mut doc = json!({ "version": 1, "items": {} });
+        super::mark_harness(&mut doc, &HarnessSync::Matched);
+        assert_eq!(doc, json!({ "version": 1, "items": {} }));
+    }
+
+    #[test]
+    fn the_triage_artifact_carries_the_mismatch_and_drops_it_again() {
+        let dir = std::env::temp_dir().join("soothfast-test-triage-harness");
+        let _ = std::fs::remove_dir_all(&dir);
+        super::triage_harness_note(&dir, &mismatched());
+        let note = std::fs::read_to_string(dir.join("harness-mismatch.txt")).unwrap();
+        assert!(note.contains("soothfast 0.2.0 -> 0.3.1"));
+        super::triage_harness_note(&dir, &HarnessSync::Matched);
+        assert!(!dir.join("harness-mismatch.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
