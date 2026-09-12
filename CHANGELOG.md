@@ -1,13 +1,34 @@
 # Changelog
 
-## Unreleased (draft vs v0.3.1)
+## 0.3.2 - 2026-09-11
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+Settings that had to be repeated on every command line move into
+`soothfast.toml`: the Cargo features a gate, a measurement or spec generation
+builds under, and the features and packages the changelog reads its API
+surface from. The gate stops letting a reference it could not pin decide a
+verdict quietly. When a pull request moves soothfast across a requirement the
+merge-base excludes, the gate rewrites that requirement in its throwaway
+worktree and retries, and when the pin still cannot land it says so in the
+banner, the verdict line and the triage artifact rather than reporting the
+harness delta as the code's. The changelog draft now drops the bot's own
+regeneration commits by author, so a release stops listing the paperwork that
+produced it.
+
+### Upgrade notes
+
+Nothing changes for a repository running 0.3.1 today. Every key and flag here
+is opt-in, and an absent or unchanged `soothfast.toml` behaves exactly as
+before. Three things are worth knowing. A repository that renamed the action's
+`bot-slug` sets `[changelog] bot-author` to match, or its bot's commits keep
+appearing in its changelog. A gate run whose reference harness could not be
+pinned now fails a regression instead of reporting it as the measured code's;
+read the deltas first, and pass `--allow-harness-change` only once they are
+the shape of a harness bump rather than a change. And an unknown key under
+`[gate]` or `[changelog]` is an error, where a `[changelog]` table was
+previously skipped whole.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
