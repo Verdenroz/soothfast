@@ -1,0 +1,17 @@
+{
+  "name": "soothfast-stats-native",
+  "version": "0.3.2",
+  "description": "Robust summary statistics and the FNV-1a fingerprint soothfast gates on",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "binaryName": "soothfast_stats_native"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3"
+  }
+}
