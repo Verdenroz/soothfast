@@ -137,7 +137,7 @@ impl Summary {
     /// Parse a comma-separated sample set.
     #[napi]
     pub fn parse(text: String) -> Result<Summary> {
-        Ok(Summary(::soothfast_demo::Summary::parse(text).map_err(BindErrorString)?))
+        Ok(Summary(::soothfast_demo::Summary::parse(&text).map_err(BindErrorString)?))
     }
 }
 
