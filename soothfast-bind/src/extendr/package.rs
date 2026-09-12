@@ -234,6 +234,9 @@ pub(crate) fn readme(plan: &BindingPlan, opts: &BindOptions) -> String {
          ```r\ninstall.packages(\"{}\", repos = NULL, type = \"source\")\n```\n\n\
          Building it needs a Rust toolchain (`cargo`, `rustc`) on `PATH`; the R \
          package itself has no other system dependency.\n\n\
+         `src/rust/Cargo.toml` depends on the bound crate outside this tree, so \
+         a `R CMD build` tarball of this package alone cannot be installed; \
+         vendor the bound crate under `src/rust` first to make one distributable.\n\n\
          `DESCRIPTION` carries no `License` field: soothfast has no license to \
          put there, so add one before publishing.\n\n\
          A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's \
