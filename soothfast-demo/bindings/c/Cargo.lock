@@ -10,18 +10,18 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "linkme"
-version = "0.3.36"
+version = "0.3.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e83272d46373fb8decca684579ac3e7c8f3d71d4cc3aa693df8759e260ae41cf"
+checksum = "3045e122bd98aef8ec3ad58ce84f0791f64e70163d1a02710af4aa11a4d54cc5"
 dependencies = [
  "linkme-impl",
 ]
 
 [[package]]
 name = "linkme-impl"
-version = "0.3.36"
+version = "0.3.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32d59e20403c7d08fe62b4376edfe5c7fb2ef1e6b1465379686d0f21c8df444b"
+checksum = "77060ebe535362c3da75682cd17b0431017b6e7c5661e714fc69a7ad017d1301"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast"
-version = "0.1.15"
+version = "0.3.2"
 dependencies = [
  "soothfast-macros",
  "soothfast-registry",
@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-demo"
-version = "0.1.15"
+version = "0.3.2"
 dependencies = [
  "soothfast",
  "soothfast-measure",
@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-macros"
-version = "0.1.15"
+version = "0.3.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "soothfast-measure"
-version = "0.1.15"
+version = "0.3.2"
 dependencies = [
  "libc",
  "soothfast-registry",
@@ -82,23 +82,23 @@ dependencies = [
 
 [[package]]
 name = "soothfast-registry"
-version = "0.1.15"
+version = "0.3.2"
 dependencies = [
  "linkme",
 ]
 
 [[package]]
 name = "soothfast-stats-c-cabi"
-version = "0.1.15"
+version = "0.3.2"
 dependencies = [
  "soothfast-demo",
 ]
 
 [[package]]
 name = "syn"
-version = "2.0.119"
+version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
+checksum = "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9"
 dependencies = [
  "proc-macro2",
  "quote",

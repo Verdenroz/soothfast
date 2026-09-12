@@ -6,7 +6,7 @@ build-backend = "maturin"
 
 [project]
 name = "soothfast-stats"
-version = "0.1.15"
+version = "0.3.2"
 requires-python = ">=3.9"
 description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
 
