@@ -16,6 +16,7 @@
 
 ### 🐛 Fixes
 
+- Drop the soothfast bot's own commits from the changelog (#199)
 - Pin the gate harness across an incompatible requirement (#196)
 
 
