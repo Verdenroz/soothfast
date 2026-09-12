@@ -29,10 +29,8 @@ pub(crate) fn run(
         BindKind::Node => napi(glue, targets, release),
         BindKind::CAbi => cargo(glue, targets, release),
         BindKind::Go => go(glue, targets, release),
-        BindKind::Java => java(glue, targets, release),
-        BindKind::Kotlin => {
-            Err("cargo soothfast bind build for kotlin lands in a later commit".into())
-        }
+        BindKind::Java => jvm(glue, targets, release, JAVA),
+        BindKind::Kotlin => jvm(glue, targets, release, KOTLIN),
     }
 }
 
@@ -145,12 +143,42 @@ fn header(glue: &Path) -> Vec<String> {
     artifacts(glue, &["h"]).unwrap_or_default()
 }
 
-/// `cargo build` of the cdylib, same matrix behavior as C, then `javac` and
-/// `jar` on top. A missing JDK tool skips only the packaging step: the
-/// cdylib the matrix already built is still worth reporting.
-fn java(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, String> {
+/// One JVM host language's own tools: where its sources live under
+/// `src/main`, what compiles them, and what to say when that compiler is
+/// missing.
+struct JvmLang {
+    src_dir: &'static str,
+    ext: &'static str,
+    compiler: &'static str,
+    install_hint: &'static str,
+}
+
+const JAVA: JvmLang = JvmLang {
+    src_dir: "java",
+    ext: "java",
+    compiler: "javac",
+    install_hint: "install a JDK",
+};
+
+const KOTLIN: JvmLang = JvmLang {
+    src_dir: "kotlin",
+    ext: "kt",
+    compiler: "kotlinc",
+    install_hint: "install the Kotlin compiler — https://kotlinlang.org/docs/command-line.html",
+};
+
+/// `cargo build` of the cdylib, same matrix behavior as C, then the host
+/// language's own compiler and `jar` on top. A missing compiler skips only
+/// the packaging step: the cdylib the matrix already built is still worth
+/// reporting.
+fn jvm(
+    glue: &Path,
+    targets: &[String],
+    release: bool,
+    lang: JvmLang,
+) -> Result<Vec<String>, String> {
     let mut out = cargo(glue, targets, release)?;
-    match package_jar(glue, targets, release) {
+    match package_jar(glue, targets, release, lang) {
         Ok(jar) => out.push(jar),
         Err(why) => eprintln!("soothfast: skipping jar packaging: {why}"),
     }
@@ -158,28 +186,42 @@ fn java(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, S
     Ok(out)
 }
 
-/// Compiles the Java sources and stages each target's cdylib under
-/// `natives/<os>-<arch>/` inside one jar, the layout a JNI loader expects
-/// when a package bundles more than one platform's library.
-fn package_jar(glue: &Path, targets: &[String], release: bool) -> Result<String, String> {
+/// Compiles the host language's sources and stages each target's cdylib
+/// under `natives/<os>-<arch>/` inside one jar, the layout a JNI loader
+/// expects when a package bundles more than one platform's library.
+fn package_jar(
+    glue: &Path,
+    targets: &[String],
+    release: bool,
+    lang: JvmLang,
+) -> Result<String, String> {
     let mut sources = Vec::new();
-    java_sources(&glue.join("src/main/java"), &mut sources);
+    jvm_sources(
+        &glue.join("src/main").join(lang.src_dir),
+        lang.ext,
+        &mut sources,
+    );
     if sources.is_empty() {
-        return Err("no Java sources under src/main/java".to_string());
+        return Err(format!(
+            "no {} sources under src/main/{}",
+            lang.src_dir, lang.src_dir
+        ));
     }
 
     let classes = glue.join("target/classes");
-    let status = Command::new("javac")
+    let status = Command::new(lang.compiler)
         .arg("-d")
         .arg(&classes)
         .args(&sources)
         .status()
         .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => "`javac` not found — install a JDK".to_string(),
-            _ => format!("cannot run javac: {e}"),
+            std::io::ErrorKind::NotFound => {
+                format!("`{}` not found — {}", lang.compiler, lang.install_hint)
+            }
+            _ => format!("cannot run {}: {e}", lang.compiler),
         })?;
     if !status.success() {
-        return Err("`javac` failed".to_string());
+        return Err(format!("`{}` failed", lang.compiler));
     }
 
     let staging = glue.join("target/jar-staging");
@@ -266,16 +308,17 @@ fn lib_name(glue: &Path) -> Result<String, String> {
     Err("no [lib] name in Cargo.toml".to_string())
 }
 
-/// Every `.java` file under `dir`, however deep the package path nests it.
-fn java_sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+/// Every file with extension `ext` under `dir`, however deep the package
+/// path nests it.
+fn jvm_sources(dir: &Path, ext: &str, out: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         if path.is_dir() {
-            java_sources(&path, out);
-        } else if path.extension().is_some_and(|e| e == "java") {
+            jvm_sources(&path, ext, out);
+        } else if path.extension().is_some_and(|e| e == ext) {
             out.push(path);
         }
     }
@@ -477,6 +520,35 @@ mod tests {
         assert!(
             artifacts.iter().any(|a| a.ends_with(".jar")),
             "no jar among {artifacts:?}"
+        );
+    }
+
+    /// Same shape, over the Kotlin golden. `kotlinc` is absent on this
+    /// machine, so the assertion is the contract the missing-compiler path
+    /// promises rather than a fixed pass/fail: the cdylib still builds
+    /// either way, and a jar appears exactly when `kotlinc` is on `PATH`.
+    #[test]
+    #[ignore = "shells out to cargo, kotlinc and jar"]
+    fn kotlin_build_packages_a_jar_exactly_when_kotlinc_is_available() {
+        let bind_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../soothfast-bind/tests");
+        let scratch = std::env::temp_dir().join(format!(
+            "soothfast-bind-kotlin-build-smoke-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        copy_dir(&bind_dir.join("fixture_crate"), &scratch);
+        let glue = scratch.join("glue");
+        copy_dir(&bind_dir.join("goldens/kotlin"), &glue);
+
+        let artifacts = run(BindKind::Kotlin, &glue, &[], false).expect("builds");
+        let has_jar = artifacts.iter().any(|a| a.ends_with(".jar"));
+        let kotlinc_present = std::process::Command::new("kotlinc")
+            .arg("-version")
+            .output()
+            .is_ok();
+        assert_eq!(
+            has_jar, kotlinc_present,
+            "jar packaging must track kotlinc's presence: {artifacts:?}"
         );
     }
 
