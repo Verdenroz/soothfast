@@ -33,3 +33,9 @@ lang = "java"
 out = "bindings/java"
 package = "io.soothfast.stats"
 description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+
+[[bind]]
+lang = "kotlin"
+out = "bindings/kotlin"
+package = "io.soothfast.statskt"
+description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
