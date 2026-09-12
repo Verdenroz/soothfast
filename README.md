@@ -211,6 +211,7 @@ of allocations per call. Eight is the gated ceiling.
 | `soothfast-docs` | rustdoc JSON ingestion, bind blocks, doc-test generation |
 | `soothfast-spec` | Declared-surface reconciliation: OpenAPI/AsyncAPI/GraphQL/MCP |
 | `soothfast-sdk` | Python and TypeScript client emitters, with optional embedded servers |
+| `soothfast-bind` | Native language bindings: Python, wasm/JS, and C over an exported Rust surface |
 | `soothfast-report` | Renderers: perf tables, trend charts, changelogs, llms.txt |
 | `soothfast-site` | The docs-site engine behind `docs build` |
 | `cargo-soothfast` | The CLI: everything CI calls |

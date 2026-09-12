@@ -48,7 +48,7 @@ Key `cargo-soothfast` subcommands (see `cargo-soothfast/src/main.rs` for the ful
 usage string): `measure`, `gate`, `trend append|render`, `docs
 check|accept|gen-tests|capture|diff|reference|routes|build`, `coverage
 measure|docs`, `spec gen|gate|check|check-proto`, `sdk gen|gate|publish`,
-`report render|changelog`,
+`bind gen|gate|build`, `report render|changelog`,
 `mcp`.
 
 Before pushing, run what CI runs: `make check` and `make gate BASE=master`.
@@ -65,8 +65,8 @@ soothfast-registry  → soothfast-measure → soothfast-docs → soothfast-site
        ↑                                  ↑
 soothfast-macros                      soothfast-spec → soothfast-sdk
        ↑                                  ↑                ↑
-    soothfast (user-facing facade)   soothfast-report      │
-                                          ↑                │
+    soothfast (user-facing facade)   soothfast-report      │   soothfast-bind
+                                          ↑                │        ↑
                                    cargo-soothfast (CLI, everything CI calls)
 ```
 
@@ -240,6 +240,28 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   npm install --no-save ./platforms/acme-items-linux-x64 && npm run build
   node --test ../../../tests/typescript/bundled.test.mjs
   ```
+- **`soothfast-bind`** — the binding engine: turns an annotated Rust surface
+  into packages other languages install and call in-process, no HTTP
+  boundary anywhere. Depends only on `soothfast-registry`.
+  `#[soothfast::export]` never names a language, so
+  `walk.rs`/`resolve.rs` walk rustdoc JSON into one `plan.rs` wrapper model
+  shared by every backend — which types become handle classes, which
+  associated fn builds one, which fields get accessors, what raises —
+  decided once so two backends can't disagree about the same Rust type.
+  `fn_sig.rs`, `adt.rs`, `naming.rs`, and `foreign.rs` mirror soothfast-spec's
+  schema-side helpers on the binding side. Three backends render the plan:
+  `pyo3/` (Python, `buffers.rs` for the buffer-protocol fast path,
+  `asyncrt.rs` for the tokio runtime a bound `async fn` enters per poll),
+  `wasm/` (wasm-bindgen; `linkme` has no wasm32 support, so nothing
+  registers there), and `cabi/` (a `.h`/glue/package trio behind plain
+  `cargo build`, the one backend with no macro to do the marshaling for it,
+  so it's also the one that spells every type twice — `types.rs` keeps the
+  header and the glue from drifting apart). `compat.rs` diffs the bound
+  surface across refs the way `soothfast-spec`'s does; `gap.rs` reports what
+  a target can't spell — a value receiver, a map for C — rather than
+  guessing. Dogfooded by `soothfast-demo`, a `publish = false` workspace
+  member whose committed `bindings/{python,js,c}` make `bind gen --check`
+  meaningful.
 - **`soothfast-report`** — renderers consuming measurement output: perf tables
   (`perf_table.rs`), SVG trend charts (`trend_chart.rs`), badges
   (`badges.rs`), living `CHANGELOG.md` draft generation (`changelog.rs`,
@@ -282,7 +304,9 @@ This repo runs soothfast on itself: `soothfast-registry`, `soothfast-measure`, a
 markers checked against those live measurements in CI (`make ci`). When
 editing measured functions in those three crates, expect `make gate` or the CI
 `docs`/`soothfast-gate` jobs to fail if behavior or cost changes — that's the
-claim being enforced, not a bug in the check.
+claim being enforced, not a bug in the check. `soothfast-demo` dogfoods the
+binding engine the same way: its committed `bindings/{python,js,c}` are
+gated by `bind gen --check` and `bind gate`, not measured.
 
 ### CI workflows (`.github/workflows/`)
 

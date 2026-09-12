@@ -9,7 +9,7 @@ repo = "https://github.com/Verdenroz/soothfast"
 
 [[site.nav]]
 title = "Guide"
-pages = ["index.md", "measuring.md", "gating.md", "ci.md", "living-docs.md", "spec.md", "sdk.md", "reports.md"]
+pages = ["index.md", "measuring.md", "gating.md", "ci.md", "living-docs.md", "spec.md", "sdk.md", "bindings.md", "reports.md"]
 
 [[site.nav]]
 title = "API reference"
