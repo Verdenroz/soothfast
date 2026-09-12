@@ -69,9 +69,6 @@ fn notes(plan: &BindingPlan) -> Vec<String> {
                 .into(),
         );
     }
-    out.extend(crate::plan::transfer_notes(
-        plan,
-        crate::BindKind::CAbi.buffer_support(),
-    ));
+    out.extend(crate::plan::transfer_notes(plan));
     out
 }

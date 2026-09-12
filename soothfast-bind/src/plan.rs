@@ -82,6 +82,10 @@ pub struct BindingPlan {
     /// Free functions, belonging to no class.
     pub functions: Vec<Function>,
     pub gaps: Vec<Gap>,
+    /// What the target language can do with a borrowed buffer, decided once
+    /// at [`lower`] time so [`offloadable`] and [`transfer_notes`] never have
+    /// to be told which language they are answering for.
+    pub buffer_support: BufferSupport,
 }
 
 impl BindingPlan {
@@ -186,12 +190,16 @@ impl Transfer {
 }
 
 /// What a binding layer can do with a [`Transfer::Buffer`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BufferSupport {
     /// A borrowed buffer arrives as a pointer into the caller's memory.
+    #[default]
     ZeroCopy,
     /// Every buffer is copied whatever the signature says.
     AlwaysCopies,
+    /// A borrowed buffer arrives as a pointer into the runtime's heap, and
+    /// the collector is held off until the call returns.
+    Pinned,
 }
 
 /// Whether a call's work can run on a thread holding no interpreter lock.
@@ -201,6 +209,12 @@ pub enum BufferSupport {
 /// the lock would. Everything the call touches has to reach the other
 /// thread, which for a method means the receiver as well as the arguments.
 pub fn offloadable(f: &Function, owner: Option<&Class>, plan: &BindingPlan) -> bool {
+    // A pinned section holds the collector off for its whole duration, so
+    // handing its work to another thread or calling back into the runtime
+    // is off the table regardless of what the call looks like.
+    if plan.buffer_support == BufferSupport::Pinned {
+        return false;
+    }
     let carries_buffer = f
         .params
         .iter()
@@ -236,20 +250,41 @@ fn leaves_alone(param: &Param, plan: &BindingPlan) -> bool {
 ///
 /// Derived from the same model that generates the code, so the advice cannot
 /// drift from what the emitter actually does.
-pub fn transfer_notes(plan: &BindingPlan, support: BufferSupport) -> Vec<String> {
-    // A backend that copies every buffer whatever the signature says has
-    // nothing to act on: taking a borrow saves it no copy, and writing into
-    // the caller's buffer costs it one more.
-    if support != BufferSupport::ZeroCopy {
+pub fn transfer_notes(plan: &BindingPlan) -> Vec<String> {
+    match plan.buffer_support {
+        // A backend that copies every buffer whatever the signature says has
+        // nothing to act on: taking a borrow saves it no copy, and writing
+        // into the caller's buffer costs it one more.
+        BufferSupport::AlwaysCopies => Vec::new(),
+        BufferSupport::Pinned => pinned_note(plan),
+        BufferSupport::ZeroCopy => {
+            let mut notes: Vec<String> = plan
+                .functions()
+                .flat_map(|f| param_notes(f, plan).into_iter().chain(ret_note(f)))
+                .collect();
+            notes.sort();
+            notes.dedup();
+            notes
+        }
+    }
+}
+
+/// One note for the whole package, not one per function: every pinned call
+/// already arrives without a copy, so the only thing left to say is why it
+/// cannot leave the calling thread.
+fn pinned_note(plan: &BindingPlan) -> Vec<String> {
+    let carries_buffer = plan
+        .functions()
+        .flat_map(|f| f.params.iter())
+        .any(|p| matches!(Transfer::of(p, plan), Transfer::Buffer { .. }));
+    if !carries_buffer {
         return Vec::new();
     }
-    let mut notes: Vec<String> = plan
-        .functions()
-        .flat_map(|f| param_notes(f, plan).into_iter().chain(ret_note(f)))
-        .collect();
-    notes.sort();
-    notes.dedup();
-    notes
+    vec![
+        "a pinned buffer blocks the collector for the call; none of its work \
+         can move to another thread or call back into the runtime"
+            .into(),
+    ]
 }
 
 /// A parameter that costs a copy the signature did not have to ask for.
@@ -308,6 +343,7 @@ pub fn lower(
 ) -> Result<BindingPlan, String> {
     let mut plan = BindingPlan {
         gaps,
+        buffer_support: kind.buffer_support(),
         ..BindingPlan::default()
     };
     let lang = kind.name();
@@ -690,4 +726,58 @@ fn referenced_classes(plan: &BindingPlan) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Ownership, Receiver};
+
+    fn buffer_fn() -> Function {
+        Function {
+            symbol: "digest".into(),
+            rust_path: "acme::digest".into(),
+            name: "digest".into(),
+            receiver: Receiver::None,
+            params: vec![Param {
+                name: "data".into(),
+                ty: Ty::List(Box::new(Ty::F64)),
+                ownership: Ownership::Borrowed,
+            }],
+            ret: Ty::Unit,
+            throws: None,
+            is_async: false,
+            doc: None,
+        }
+    }
+
+    fn plan_with(support: BufferSupport, functions: Vec<Function>) -> BindingPlan {
+        BindingPlan {
+            functions,
+            buffer_support: support,
+            ..BindingPlan::default()
+        }
+    }
+
+    #[test]
+    fn a_pinned_call_never_offloads_even_though_zero_copy_would() {
+        let f = buffer_fn();
+        let zero_copy = plan_with(BufferSupport::ZeroCopy, vec![f.clone()]);
+        assert!(offloadable(&f, None, &zero_copy));
+
+        let pinned = plan_with(BufferSupport::Pinned, vec![f]);
+        assert!(!offloadable(&pinned.functions[0], None, &pinned));
+    }
+
+    #[test]
+    fn a_pinned_package_gets_one_note_not_one_per_function() {
+        let plan = plan_with(BufferSupport::Pinned, vec![buffer_fn(), buffer_fn()]);
+        assert_eq!(transfer_notes(&plan).len(), 1);
+    }
+
+    #[test]
+    fn a_pinned_package_with_no_buffer_gets_no_note() {
+        let plan = plan_with(BufferSupport::Pinned, Vec::new());
+        assert!(transfer_notes(&plan).is_empty());
+    }
 }

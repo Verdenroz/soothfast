@@ -44,10 +44,7 @@ pub(crate) fn emit(plan: &BindingPlan, opts: &BindOptions) -> Result<BindFileSet
 /// signatures that cost a copy Python did not have to pay.
 fn notes(plan: &BindingPlan) -> Vec<String> {
     let mut out = shapes(plan);
-    out.extend(crate::plan::transfer_notes(
-        plan,
-        crate::BindKind::Python.buffer_support(),
-    ));
+    out.extend(crate::plan::transfer_notes(plan));
     out
 }
 
