@@ -1,0 +1,112 @@
+name: Bind
+
+# Dogfoods the `bind` action input on soothfast-demo: gates its committed
+# bindings on pull requests and regenerates them through soothfast-bot on
+# pushes to master, the same way spec.yml exercises `spec`.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  BIND_PKG: soothfast-demo
+
+permissions: {}
+
+jobs:
+  build-cli:
+    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --release --locked -p cargo-soothfast
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-soothfast-bin
+          path: target/release/cargo-soothfast
+          retention-days: 1
+
+  gate:
+    if: github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]')
+    needs: [build-cli]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # gate comment fallback
+      id-token: write # soothfast-bot comment token via the broker
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # the gate measures the merge-base
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: bind
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cargo-soothfast-bin
+          path: bin
+      - run: chmod +x bin/cargo-soothfast
+      - uses: ./
+        with:
+          bind: ${{ env.BIND_PKG }}
+          packages: ""
+          changelog: "false"
+          binary: bin/cargo-soothfast
+      # The action's Prepare step installs the pinned rustdoc toolchain
+      # when it runs `bind gate`; this reuses it.
+      - name: Bindings are up to date
+        run: bin/cargo-soothfast bind gen -p "$BIND_PKG" --check
+
+  generate:
+    if: github.event_name == 'push'
+    needs: [build-cli]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: bind
+      cancel-in-progress: true
+    environment: soothfast-bot
+    permissions:
+      contents: read
+      id-token: write # soothfast-bot token via the broker, see bot/
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: bind
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cargo-soothfast-bin
+          path: bin
+      - run: chmod +x bin/cargo-soothfast
+      - uses: ./
+        with:
+          bind: ${{ env.BIND_PKG }}
+          packages: ""
+          changelog: "false"
+          binary: bin/cargo-soothfast
