@@ -3,7 +3,9 @@
 //! `maturin` drives its own build through `pyo3-build-config`, which knows
 //! which interpreter to link against; `wasm-pack` drives cargo plus
 //! wasm-bindgen's post-processor. C has no such tool, so that one is a plain
-//! `cargo build`: the glue crate already declares both library kinds.
+//! `cargo build`: the glue crate already declares both library kinds. Go
+//! rides on that same `cargo build`, then verifies the wrapper compiles
+//! against it with `go vet`/`go build`.
 
 use std::path::Path;
 use std::process::Command;
@@ -24,7 +26,35 @@ pub(crate) fn run(
         BindKind::Python => maturin(glue, targets, release),
         BindKind::Wasm => wasm_pack(glue, targets, release),
         BindKind::CAbi => cargo(glue, targets, release),
+        BindKind::Go => go(glue, targets, release),
     }
+}
+
+/// The C backend's own build, then `go vet`/`go build` over the wrapper
+/// generated against it. A missing `go` toolchain skips the verification
+/// rather than failing the cdylib the cargo build already produced.
+fn go(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, String> {
+    let out = cargo(glue, targets, release)?;
+    for args in [["vet", "./..."], ["build", "./..."]] {
+        let status = Command::new("go")
+            .args(args)
+            .current_dir(glue)
+            .env("CGO_ENABLED", "1")
+            .status();
+        match status {
+            Ok(status) if status.success() => {}
+            Ok(_) => return Err(format!("`go {}` failed", args.join(" "))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!(
+                    "soothfast: `go` not found — https://go.dev/doc/install; \
+                     skipping wrapper verification"
+                );
+                break;
+            }
+            Err(e) => return Err(format!("cannot run go: {e}")),
+        }
+    }
+    Ok(out)
 }
 
 /// One `cargo build` per target, or one untargeted build when none are

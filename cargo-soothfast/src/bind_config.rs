@@ -154,11 +154,21 @@ mod tests {
     fn one_source_surface_reaches_several_languages() {
         let cfg = parse(
             "[[bind]]\nlang = \"python\"\nout = \"py\"\npackage = \"acme-core\"\n\
-             [[bind]]\nlang = \"wasm\"\nout = \"js\"\npackage = \"acme-core\"\n",
+             [[bind]]\nlang = \"wasm\"\nout = \"js\"\npackage = \"acme-core\"\n\
+             [[bind]]\nlang = \"go\"\nout = \"go\"\npackage = \"github.com/acme/core\"\n",
         )
         .expect("parses");
         let langs: Vec<&str> = cfg.entries.iter().map(|e| e.lang.name()).collect();
-        assert_eq!(langs, vec!["python", "wasm"]);
+        assert_eq!(langs, vec!["python", "wasm", "go"]);
+    }
+
+    #[test]
+    fn go_accepts_a_module_path_as_its_package() {
+        let cfg =
+            parse("[[bind]]\nlang = \"go\"\nout = \"go\"\npackage = \"github.com/acme/core\"\n")
+                .expect("parses");
+        assert_eq!(cfg.entries[0].lang, BindKind::Go);
+        assert_eq!(cfg.entries[0].package, "github.com/acme/core");
     }
 
     #[test]
@@ -181,9 +191,9 @@ mod tests {
 
     #[test]
     fn an_unknown_lang_lists_the_ones_that_exist() {
-        let err =
-            parse("[[bind]]\nout = \"o\"\npackage = \"p\"\nlang = \"go\"\n").expect_err("rejected");
-        assert!(err.contains("go"), "{err}");
+        let err = parse("[[bind]]\nout = \"o\"\npackage = \"p\"\nlang = \"ruby\"\n")
+            .expect_err("rejected");
+        assert!(err.contains("ruby"), "{err}");
         assert!(err.contains("python"), "names the alternatives: {err}");
     }
 }
