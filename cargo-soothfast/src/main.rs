@@ -91,6 +91,7 @@ commands:
            python publishes via `uv build` + `uv publish`)
   report   render -p PKG [--out DIR] [--baseline NAME] [--features F]
   report   changelog -p PKG [-p PKG ...] [--against-ref REF] [--features F]
+           [--bot-author NAME]
            (no --against-ref: first release, lists the surface it ships)
   mcp      -p PKG [--baseline NAME] [--features F]   (agent-facing server on stdio)
 

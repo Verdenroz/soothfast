@@ -31,6 +31,7 @@ struct ReportArgs {
     out: Option<PathBuf>,
     against_ref: Option<String>,
     features: Option<String>,
+    bot_author: Option<String>,
 }
 
 fn parse(args: &[String]) -> Result<ReportArgs, String> {
@@ -40,6 +41,7 @@ fn parse(args: &[String]) -> Result<ReportArgs, String> {
         out: None,
         against_ref: None,
         features: None,
+        bot_author: None,
     };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -51,6 +53,7 @@ fn parse(args: &[String]) -> Result<ReportArgs, String> {
             "--out" => a.out = it.next().map(PathBuf::from),
             "--against-ref" => a.against_ref = it.next().cloned(),
             "--features" => a.features = it.next().cloned(),
+            "--bot-author" => a.bot_author = it.next().cloned(),
             other => return Err(format!("unknown report arg {other:?}")),
         }
     }
@@ -301,8 +304,9 @@ fn changelog_cmd(args: &[String]) -> i32 {
         },
         None => None,
     };
+    let bot_author = resolve_bot_author(a.bot_author.take(), cfg.bot_author.as_deref());
     let changes = match &a.against_ref {
-        Some(refname) => match merged_changes(refname) {
+        Some(refname) => match merged_changes(refname, &bot_author) {
             Ok(c) => c,
             Err(e) => return err(&e),
         },
@@ -343,13 +347,39 @@ fn resolve_features(
     cli.or_else(|| changelog.or(gate).map(str::to_string))
 }
 
-/// Conventional-commit subjects merged since `refname`, newest first. Read
-/// from git rather than a forge API: every merge lands as a squash whose
-/// subject already carries its pull request number.
-fn merged_changes(refname: &str) -> Result<Vec<changelog::Change>, String> {
+/// The author `report changelog` leaves out: the command line first, then
+/// `[changelog] bot-author`, then the slug the action ships with.
+fn resolve_bot_author(cli: Option<String>, config: Option<&str>) -> String {
+    cli.unwrap_or_else(|| config.unwrap_or(DEFAULT_BOT_AUTHOR).to_string())
+}
+
+/// Author of the soothfast bot's own commits, as `action/land.sh` commits
+/// them under the default `bot-slug`.
+const DEFAULT_BOT_AUTHOR: &str = "soothfast-bot[bot]";
+
+/// Separates author from subject in the log format below. A unit separator
+/// occurs in neither field.
+const LOG_FIELD_SEP: char = '\u{1f}';
+
+/// Subjects from `%an%x1f%s` log lines, minus the ones `bot_author` wrote.
+/// That one author and no other: `dependabot[bot]` writes real changelog
+/// entries, and a rule matching every `[bot]` would delete them all.
+fn subjects_excluding_author(log: &str, bot_author: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|line| line.split_once(LOG_FIELD_SEP))
+        .filter(|(author, _)| *author != bot_author)
+        .map(|(_, subject)| subject.to_string())
+        .collect()
+}
+
+/// Conventional-commit subjects merged since `refname`, newest first, with
+/// the soothfast bot's own regeneration commits left out. Read from the log
+/// rather than a forge API: every merge lands as a squash whose subject
+/// already carries its pull request number, and whose author survives it.
+fn merged_changes(refname: &str, bot_author: &str) -> Result<Vec<changelog::Change>, String> {
     let range = format!("{refname}..HEAD");
-    let log = invoke::git(&["log", "--format=%s", &range]).map_err(|e| e.to_string())?;
-    let subjects: Vec<String> = log.lines().map(str::to_string).collect();
+    let log = invoke::git(&["log", "--format=%an%x1f%s", &range]).map_err(|e| e.to_string())?;
+    let subjects = subjects_excluding_author(&log, bot_author);
     let unparsed = changelog::unparsed_subjects(&subjects);
     if !unparsed.is_empty() {
         println!(
@@ -509,7 +539,10 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{changelog_already_cut, merge_changelog, resolve_features};
+    use super::{
+        DEFAULT_BOT_AUTHOR, changelog_already_cut, merge_changelog, resolve_bot_author,
+        resolve_features, subjects_excluding_author,
+    };
 
     #[test]
     fn a_release_pr_still_diffing_against_the_previous_tag_is_already_cut() {
@@ -683,5 +716,62 @@ mod tests {
             Some("gate")
         );
         assert_eq!(resolve_features(None, None, None), None);
+    }
+
+    #[test]
+    fn the_bot_s_own_regeneration_commits_are_left_out() {
+        let log = "soothfast-bot[bot]\u{1f}chore: regenerate soothfast outputs (#474)\n\
+                   Harvey Tseng\u{1f}feat: read gate features from soothfast.toml (#475)\n";
+        assert_eq!(
+            subjects_excluding_author(log, DEFAULT_BOT_AUTHOR),
+            ["feat: read gate features from soothfast.toml (#475)"]
+        );
+    }
+
+    #[test]
+    fn dependabot_commits_survive_the_filter() {
+        let log = "dependabot[bot]\u{1f}chore(deps): bump serde from 1.0.2 to 1.0.3 (#476)\n\
+                   soothfast-bot[bot]\u{1f}docs: regenerate CHANGELOG.md (#477)\n";
+        assert_eq!(
+            subjects_excluding_author(log, DEFAULT_BOT_AUTHOR),
+            ["chore(deps): bump serde from 1.0.2 to 1.0.3 (#476)"]
+        );
+    }
+
+    #[test]
+    fn a_renamed_bot_author_filters_in_place_of_the_default() {
+        let log = "acme-bot[bot]\u{1f}chore: regenerate soothfast outputs (#12)\n\
+                   soothfast-bot[bot]\u{1f}feat: ship a thing (#13)\n";
+        assert_eq!(
+            subjects_excluding_author(log, "acme-bot[bot]"),
+            ["feat: ship a thing (#13)"]
+        );
+    }
+
+    #[test]
+    fn an_explicit_bot_author_flag_beats_the_table() {
+        assert_eq!(
+            resolve_bot_author(Some("cli[bot]".into()), Some("toml[bot]")),
+            "cli[bot]"
+        );
+    }
+
+    #[test]
+    fn the_table_fills_in_for_a_repo_that_renamed_the_slug() {
+        assert_eq!(resolve_bot_author(None, Some("toml[bot]")), "toml[bot]");
+    }
+
+    #[test]
+    fn the_shipped_slug_is_the_last_resort() {
+        assert_eq!(resolve_bot_author(None, None), DEFAULT_BOT_AUTHOR);
+    }
+
+    #[test]
+    fn a_subject_the_bot_did_not_write_is_kept_verbatim() {
+        let log = "Harvey Tseng\u{1f}fix(server): drop a cache (#478)\n";
+        assert_eq!(
+            subjects_excluding_author(log, DEFAULT_BOT_AUTHOR),
+            ["fix(server): drop a cache (#478)"]
+        );
     }
 }

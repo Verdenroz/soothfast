@@ -18,6 +18,9 @@ pub struct ChangelogConfig {
     pub features: Option<String>,
     /// Packages `-p` defaults to.
     pub packages: Vec<String>,
+    /// Author whose commits are left out of the draft, for a repo that
+    /// renamed the bot's `bot-slug`.
+    pub bot_author: Option<String>,
 }
 
 enum Table {
@@ -83,6 +86,7 @@ fn set(cfg: &mut ChangelogConfig, key: &str, value: TomlValue) -> Result<(), Str
     match (key, value) {
         ("features", TomlValue::Str(s)) => cfg.features = Some(s),
         ("packages", TomlValue::StrArray(v)) => cfg.packages = v,
+        ("bot-author", TomlValue::Str(s)) => cfg.bot_author = Some(s),
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [changelog]")),
     }
     Ok(())
@@ -133,6 +137,12 @@ mod tests {
         let cfg = parse(text).unwrap();
         assert_eq!(cfg.features.as_deref(), Some("full"));
         assert!(format!("{:?}", cfg.icons).contains('A'));
+    }
+
+    #[test]
+    fn reads_a_renamed_bot_author() {
+        let cfg = parse("[changelog]\nbot-author = \"acme-bot[bot]\"\n").unwrap();
+        assert_eq!(cfg.bot_author.as_deref(), Some("acme-bot[bot]"));
     }
 
     #[test]
