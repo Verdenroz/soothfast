@@ -44,8 +44,11 @@ commands:
   gate     [-p PKG] [--filter S] [--backend B] [--samples N] [--features F]
            [--baseline NAME] [--ratchet NAME] [--against-ref REF] [--deps]
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
-           [--codegen-units N|inherit] [--no-reuse-base]
+           [--codegen-units N|inherit] [--no-reuse-base] [--allow-gone]
+           [--allow-harness-change]
            (--save-baseline persists the measured head run after a pass)
+           (--allow-harness-change passes a run whose reference could not be
+           pinned to HEAD's soothfast, where the delta may be the harness)
            (--codegen-units pins both sides' partitioning; default 1)
            (--no-reuse-base re-measures the reference instead of reusing it)
   gate     accept -p PKG --against-ref REF --justification \"...\"
