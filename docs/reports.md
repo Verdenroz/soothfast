@@ -89,8 +89,8 @@ a prefix on the entry (`fix(server): drop a cache` lists as `server: Drop a
 cache`), a `deps` scope files the entry under Dependencies whatever its type,
 and a subject marked `!` leads the section list under Breaking changes. That
 comes from `git log`, not a forge API, since every merge lands as a squash
-whose subject already holds the number. Release commits, and the bots that
-regenerate derived artifacts, are dropped so a release does not list its own
+whose subject already holds the number. Release commits are dropped, and so
+is everything the soothfast bot authored, so a release does not list its own
 paperwork; any other subject that is not a conventional commit is printed
 when the draft is written, so an omission is visible rather than silent.
 
@@ -111,6 +111,7 @@ every invocation:
 [changelog]
 features = "full"
 packages = ["core", "server"]
+bot-author = "soothfast-bot[bot]"
 ```
 
 `features` decides what the API surface diff can see: a public item behind a
@@ -118,6 +119,14 @@ feature that is not enabled never shows up in it, so too narrow a set shortens
 the diff with nothing to say it did. It falls back to `[gate] features` when
 absent. `packages` supplies `-p` when the command line gives none. An explicit
 `--features` or `-p` still wins over either.
+
+`bot-author` names the commit author whose entries are dropped: the bot that
+lands regenerated artifacts, whose commits are paperwork rather than changes.
+It defaults to `soothfast-bot[bot]`, what the action commits as, so only a
+repo that renamed `bot-slug` has to set it; `--bot-author NAME` overrides it
+for one run. That one author is dropped and no other. Every other bot stays,
+`dependabot[bot]` included: it writes the whole Dependencies section, and a
+rule matching any `[bot]` author would delete it without a word.
 
 Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against `v1.0`, and the measured movement past gate
