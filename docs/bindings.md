@@ -88,15 +88,22 @@ package = "soothfast-stats-native"
 lang = "java"
 out = "bindings/java"
 package = "io.acme.stats"
+
+[[bind]]
+lang = "kotlin"
+out = "bindings/kotlin"
+package = "io.acme.statskt"
 ```
 
-`lang` is `python`, `wasm`, `node`, `c`, `go`, or `java`, each with the short
-forms you would expect (`py`, `js`, `napi`, `cabi`, `golang`, `jni`). `out`
-and `package` are required. For `go`, `package` is the Go module path rather
-than a distribution name; the Go package name is its last element. For
-`java`, `package` is the Java package a caller imports, dotted the normal
-way. `module`, `version`, `description`, `repository`, `targets`, and
-`backend_version` all default to something sensible.
+`lang` is `python`, `wasm`, `node`, `c`, `go`, `java`, or `kotlin`, each with
+the short forms you would expect (`py`, `js`, `napi`, `cabi`, `golang`,
+`jni`, `kt`). `out` and `package` are required. For `go`, `package` is the
+Go module path rather than a distribution name; the Go package name is its
+last element. For `java` and `kotlin`, `package` is the JVM package a
+caller imports, dotted the normal way; the two need distinct packages when
+both bind the same crate, since each stages its own native library under
+its own `Natives`. `module`, `version`, `description`, `repository`,
+`targets`, and `backend_version` all default to something sensible.
 
 ## Commands
 
@@ -104,7 +111,7 @@ way. `module`, `version`, `description`, `repository`, `targets`, and
 cargo soothfast bind gen -p PKG            # write the packages
 cargo soothfast bind gen -p PKG --check    # fail if they are stale
 cargo soothfast bind gate -p PKG           # fail on a consumer-breaking change
-cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar
+cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar
 ```
 
 `bind gen` writes a small Rust glue crate per language and the packaging
@@ -114,11 +121,11 @@ around it. `bind build` hands that crate to the ecosystem's own tool:
 are a dependency of soothfast; they are host tools, like `cargo bench`. Go
 has no such tool: `bind build` runs the C backend's own `cargo build` for the
 cdylib, then verifies the wrapper against it with `go vet`/`go build`. Java
-also rides plain `cargo build`, then `javac` and `jar`, staging each built
-cdylib under `natives/<os>-<arch>/` inside the jar so `Natives` can load
-whichever one matches the JVM it is running under. A missing `javac`/`jar`
-skips only that packaging step; the cdylib the matrix already built is still
-reported.
+and Kotlin both ride that same plain `cargo build`, then `javac` or
+`kotlinc` and `jar`, staging each built cdylib under `natives/<os>-<arch>/`
+inside the jar so `Natives` can load whichever one matches the JVM it is
+running under. A missing `javac`/`kotlinc`/`jar` skips only that packaging
+step; the cdylib the matrix already built is still reported.
 
 ## What the generated code looks like
 
@@ -146,18 +153,18 @@ only in the generated crate.
 
 ## How types cross
 
-| Rust | Python | JavaScript | C | Go | Java |
-| --- | --- | --- | --- | --- | --- |
-| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` |
-| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` |
-| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` |
-| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only |
-| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound |
-| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound |
-| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) |
-| `async fn` | awaitable | `Promise` | not bound | not bound | not bound |
-| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` |
-| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` |
+| Rust | Python | JavaScript | C | Go | Java | Kotlin |
+| --- | --- | --- | --- | --- | --- | --- |
+| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` |
+| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` |
+| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` |
+| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only |
+| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound |
+| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound |
+| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) |
+| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound |
+| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` |
+| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` |
 
 An enum carrying data stays an opaque handle, because neither language has a
 shape for it; that is reported as a note rather than guessed at.
@@ -254,6 +261,40 @@ try (Summary s = new Summary(new double[] {3.0, 1.0, 5.0, 4.0})) {
 
 `async fn` is a gap for Java the same way it is for Go and Node: no runtime
 to hand a future to.
+
+### Kotlin
+
+Kotlin binds the same plan Java does, over the same JNI glue crate: nothing
+in `src/lib.rs` changes, byte for byte, whether `[[bind]] lang` says `java`
+or `kotlin`. What differs is only the source `bind gen` writes to call into
+it. `@JvmStatic external fun` in a `companion object` compiles to the exact
+static native method a `private static native` Java declaration would, so
+the glue links against either without knowing which one is asking:
+
+```kotlin
+Summary(doubleArrayOf(3.0, 1.0, 5.0, 4.0)).use { s ->
+    val median = s.get(Metric.Median)
+    val devs = s.deviationsAll(doubleArrayOf(0.0, 4.0))
+}
+```
+
+- **Nullable types replace `null`-or-handle.** `Option<T>` crosses as `T?`
+  rather than a value Java callers have to remember might be null; a
+  `null` pointer from the native side becomes Kotlin `null` at the
+  boundary, nowhere else.
+- **A field accessor is a `val` property**, read as `s.median` rather than
+  Java's own `s.median()` method call.
+- **A payload-free enum is an `enum class`**, crossing as its ordinal the
+  same both ways as Java's plain enum.
+- **The pointer-wrapping constructor collision is a private nested
+  `object` marker** rather than Java's `Raw` class with a static
+  `INSTANCE`; Kotlin's own singleton objects need no separate accessor.
+- **Free functions are top-level, not static methods on a holder class.**
+  `@file:JvmName("<Module>")` names the file's own compiled class after the
+  module, so the native symbols still land where the glue expects them.
+
+`kotlinc` and `kotlin` are host tools the same way `javac` and the JVM are:
+not a soothfast dependency, just what `bind build` shells out to.
 
 ## C is the one without a framework
 
