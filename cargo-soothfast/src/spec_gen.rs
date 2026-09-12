@@ -13,6 +13,7 @@ use serde_json::Value;
 use soothfast_spec::dialect::{Info, Operation};
 use soothfast_spec::schema::{self, Docs, TypeTable, route_sig};
 
+use crate::gate_config;
 use crate::invoke::{self, CommonArgs, Visibility};
 use crate::spec_config::{self, Mode, SpecEntry};
 use crate::workspace;
@@ -57,6 +58,10 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("soothfast: unknown spec gen arg {a:?}");
             return 2;
         }
+    }
+    if let Err(e) = gate_config::apply(&mut common) {
+        eprintln!("soothfast: {e}");
+        return 2;
     }
     let Some(pkg) = common.pkg.clone() else {
         eprintln!("soothfast: spec gen requires -p PKG");
