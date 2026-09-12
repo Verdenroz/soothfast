@@ -1,10 +1,12 @@
 //! One type, in every spelling the JNI boundary needs.
 //!
-//! A crossing primitive is spelled three times: the Java declaration, the
-//! `jni` crate's array family (`JDoubleArray`, `jdoubleArray`,
-//! `get_double_array_region`), and the raw Rust type the glue reads it as.
-//! Deciding all three here is what keeps the Java source and the Rust glue
-//! from disagreeing about the same value.
+//! A crossing primitive is spelled four times: the Java declaration, the
+//! Kotlin declaration, the `jni` crate's array family (`JDoubleArray`,
+//! `jdoubleArray`, `get_double_array_region`), and the raw Rust type the glue
+//! reads it as. Deciding all four here is what keeps the Java source, the
+//! Kotlin source, and the Rust glue from disagreeing about the same value.
+//! Kotlin escapes a reserved-word identifier the same way Java does, with a
+//! trailing underscore (see [`super::kotlin_ident`]).
 
 use crate::model::Ty;
 use crate::naming;
@@ -22,11 +24,12 @@ pub(crate) fn native_method_name(name: &str) -> String {
 /// How one scalar is spelled on each side of the boundary.
 pub(crate) struct Spelling {
     pub java: &'static str,
+    pub kotlin: &'static str,
     pub rust: &'static str,
 }
 
-fn both(java: &'static str, rust: &'static str) -> Spelling {
-    Spelling { java, rust }
+fn spelling(java: &'static str, kotlin: &'static str, rust: &'static str) -> Spelling {
+    Spelling { java, kotlin, rust }
 }
 
 /// A scalar's spelling, or `None` for a type that is not one.
@@ -35,17 +38,17 @@ fn both(java: &'static str, rust: &'static str) -> Spelling {
 /// the same bits as its signed twin, the same choice `&[u8]` already makes
 /// crossing as `byte[]`.
 pub(crate) fn scalar(ty: &Ty) -> Option<Spelling> {
-    let pair = match ty {
-        Ty::Bool => ("boolean", "bool"),
-        Ty::I8 | Ty::U8 => ("byte", "i8"),
-        Ty::I16 | Ty::U16 => ("short", "i16"),
-        Ty::I32 | Ty::U32 => ("int", "i32"),
-        Ty::I64 | Ty::U64 | Ty::ISize | Ty::USize => ("long", "i64"),
-        Ty::F32 => ("float", "f32"),
-        Ty::F64 => ("double", "f64"),
+    let triple = match ty {
+        Ty::Bool => ("boolean", "Boolean", "bool"),
+        Ty::I8 | Ty::U8 => ("byte", "Byte", "i8"),
+        Ty::I16 | Ty::U16 => ("short", "Short", "i16"),
+        Ty::I32 | Ty::U32 => ("int", "Int", "i32"),
+        Ty::I64 | Ty::U64 | Ty::ISize | Ty::USize => ("long", "Long", "i64"),
+        Ty::F32 => ("float", "Float", "f32"),
+        Ty::F64 => ("double", "Double", "f64"),
         _ => return None,
     };
-    Some(both(pair.0, pair.1))
+    Some(spelling(triple.0, triple.1, triple.2))
 }
 
 /// The element of a contiguous sequence this backend carries pinned, or
@@ -131,6 +134,40 @@ pub(crate) fn native_java_ty(ty: &Ty, plan: &BindingPlan) -> String {
             other => native_java_ty(other, plan),
         },
         _ => java_ty(ty),
+    }
+}
+
+/// The Kotlin type of one value with no exported-type involved, the Kotlin
+/// twin of [`java_ty`]. `Option<Class>` alone crosses as a nullable class
+/// type; every other shape reaching here has already been proven bindable
+/// without one, so it stays non-null.
+pub(crate) fn kotlin_ty(ty: &Ty) -> String {
+    match ty {
+        Ty::Unit => "Unit".into(),
+        Ty::Str => "String".into(),
+        Ty::Class(name) => name.clone(),
+        Ty::Optional(inner) => match &**inner {
+            Ty::Class(name) => format!("{name}?"),
+            other => kotlin_ty(other),
+        },
+        ty if ty.is_primitive() => scalar(ty).expect("checked").kotlin.into(),
+        ty => element(ty)
+            .map(|e| format!("{}Array", e.kotlin))
+            .unwrap_or_default(),
+    }
+}
+
+/// A parameter or return's type as the Kotlin *native declaration* spells
+/// it, the Kotlin twin of [`native_java_ty`].
+pub(crate) fn native_kotlin_ty(ty: &Ty, plan: &BindingPlan) -> String {
+    match ty {
+        Ty::Class(name) if plan.is_mirrored(name) => "Int".into(),
+        Ty::Class(_) => "Long".into(),
+        Ty::Optional(inner) => match &**inner {
+            Ty::Class(_) => "Long".into(),
+            other => native_kotlin_ty(other, plan),
+        },
+        _ => kotlin_ty(ty),
     }
 }
 

@@ -8,6 +8,7 @@
 
 mod glue;
 mod java;
+mod kotlin;
 mod package;
 mod types;
 
@@ -82,6 +83,50 @@ pub(crate) fn java_ident(name: &str) -> String {
     naming::escape(&naming::camel(name), KEYWORDS)
 }
 
+/// Kotlin's hard keywords: the only ones that can never be an identifier.
+/// Its soft keywords (`by`, `get`, `value`, `constructor`, ...) are reserved
+/// only in the declaration position each gives special meaning to, and a
+/// generated name never lands there, so leaving them off keeps a name like
+/// `by` or `value` spelled the same as Java rather than escaped for no
+/// reason.
+const KOTLIN_KEYWORDS: &[&str] = &[
+    "as",
+    "break",
+    "class",
+    "continue",
+    "do",
+    "else",
+    "false",
+    "for",
+    "fun",
+    "if",
+    "in",
+    "interface",
+    "is",
+    "null",
+    "object",
+    "package",
+    "return",
+    "super",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typealias",
+    "typeof",
+    "val",
+    "var",
+    "when",
+    "while",
+];
+
+/// A Rust name as the Kotlin identifier it is exported under. Escaped the
+/// same way as Java, with a trailing underscore, so a name safe in one is
+/// spelled identically in the other wherever the two do not collide.
+pub(crate) fn kotlin_ident(name: &str) -> String {
+    naming::escape(&naming::camel(name), KOTLIN_KEYWORDS)
+}
+
 /// The `<os>-<arch>` a JNI loader stages a target's cdylib under, matching
 /// how `Natives.java` names the same directory from `os.name`/`os.arch` at
 /// runtime. Neither side reads npm's os/cpu naming (`darwin`, `win32`,
@@ -106,7 +151,7 @@ pub(crate) fn native_dir_for_triple(triple: &str) -> String {
 /// sources it hands the JVM.
 pub(crate) fn emit(plan: &BindingPlan, opts: &BindOptions) -> Result<BindFileSet, String> {
     let mut out = BindFileSet {
-        notes: notes(plan),
+        notes: notes(plan, "Java"),
         ..BindFileSet::default()
     };
     let files = &mut out.files;
@@ -120,9 +165,27 @@ pub(crate) fn emit(plan: &BindingPlan, opts: &BindOptions) -> Result<BindFileSet
     Ok(out)
 }
 
-/// Shapes Java cannot take as precisely as the Rust states them, plus what a
-/// pinned buffer forecloses.
-fn notes(plan: &BindingPlan) -> Vec<String> {
+/// Emit a complete Kotlin binding package: the same glue crate [`emit`]
+/// renders, with Kotlin sources in place of Java.
+pub(crate) fn emit_kotlin(plan: &BindingPlan, opts: &BindOptions) -> Result<BindFileSet, String> {
+    let mut out = BindFileSet {
+        notes: notes(plan, "Kotlin"),
+        ..BindFileSet::default()
+    };
+    let files = &mut out.files;
+    files.insert("Cargo.toml".into(), package::cargo_toml(opts));
+    files.insert("README.md".into(), kotlin::readme(plan, opts));
+    files.insert(".gitignore".into(), "target/\n".into());
+    files.insert("src/lib.rs".into(), glue::render(plan, opts));
+    for (path, content) in kotlin::render(plan, opts) {
+        files.insert(path, content);
+    }
+    Ok(out)
+}
+
+/// Shapes the target cannot take as precisely as the Rust states them, plus
+/// what a pinned buffer forecloses.
+fn notes(plan: &BindingPlan, lang: &str) -> Vec<String> {
     let mut out: Vec<String> = plan
         .classes
         .iter()
@@ -130,7 +193,7 @@ fn notes(plan: &BindingPlan) -> Vec<String> {
         .map(|c| {
             format!(
                 "{}: an enum carrying data binds as an opaque handle; its \
-                 variants are not visible from Java",
+                 variants are not visible from {lang}",
                 c.name
             )
         })

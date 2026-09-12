@@ -30,6 +30,9 @@ pub(crate) fn run(
         BindKind::CAbi => cargo(glue, targets, release),
         BindKind::Go => go(glue, targets, release),
         BindKind::Java => java(glue, targets, release),
+        BindKind::Kotlin => {
+            Err("cargo soothfast bind build for kotlin lands in a later commit".into())
+        }
     }
 }
 

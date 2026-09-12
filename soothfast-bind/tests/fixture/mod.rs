@@ -374,3 +374,10 @@ pub fn java_opts() -> BindOptions {
         ..opts()
     }
 }
+
+/// The same dotted package as [`java_opts`]: Kotlin shares Java's JNI glue,
+/// so pointing both at the same package is what makes the glue-identity
+/// test between them meaningful.
+pub fn kotlin_opts() -> BindOptions {
+    java_opts()
+}

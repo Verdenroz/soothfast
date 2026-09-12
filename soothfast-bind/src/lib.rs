@@ -62,6 +62,11 @@ pub enum BindKind {
     /// A `cdylib` behind JNI, plus the Java sources that call it. The first
     /// garbage-collected target: a borrowed buffer reaches it pinned.
     Java,
+    /// The same JNI glue as [`BindKind::Java`], with Kotlin sources in place
+    /// of Java: a `@JvmStatic external fun` in a companion object compiles
+    /// to the same static native method a Java class declares, so one glue
+    /// crate serves both.
+    Kotlin,
 }
 
 impl BindKind {
@@ -73,6 +78,7 @@ impl BindKind {
         BindKind::CAbi,
         BindKind::Go,
         BindKind::Java,
+        BindKind::Kotlin,
     ];
 
     /// Canonical name, as `[[bind]]` config spells it and as
@@ -85,6 +91,7 @@ impl BindKind {
             BindKind::CAbi => "c",
             BindKind::Go => "go",
             BindKind::Java => "java",
+            BindKind::Kotlin => "kotlin",
         }
     }
 
@@ -97,6 +104,7 @@ impl BindKind {
             "c" | "cabi" | "c-abi" => Some(BindKind::CAbi),
             "go" | "golang" => Some(BindKind::Go),
             "java" | "jni" => Some(BindKind::Java),
+            "kotlin" | "kt" => Some(BindKind::Kotlin),
             _ => None,
         }
     }
@@ -118,7 +126,7 @@ impl BindKind {
                 plan::BufferSupport::ZeroCopy
             }
             BindKind::Wasm => plan::BufferSupport::AlwaysCopies,
-            BindKind::Java => plan::BufferSupport::Pinned,
+            BindKind::Java | BindKind::Kotlin => plan::BufferSupport::Pinned,
         }
     }
 
@@ -149,6 +157,7 @@ impl BindKind {
             BindKind::CAbi => cabi::emit(&plan, opts)?,
             BindKind::Go => cgo::emit(&plan, opts)?,
             BindKind::Java => jni::emit(&plan, opts)?,
+            BindKind::Kotlin => jni::emit_kotlin(&plan, opts)?,
         };
         // A repository that trims file endings would otherwise rewrite what
         // was just emitted, and `gen --check` would call it stale forever.

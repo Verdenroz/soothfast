@@ -198,6 +198,14 @@ mod tests {
     }
 
     #[test]
+    fn kotlin_is_a_known_lang() {
+        let cfg =
+            parse("[[bind]]\nlang = \"kotlin\"\nout = \"kotlin\"\npackage = \"io.acme.core\"\n")
+                .expect("parses");
+        assert_eq!(cfg.entries[0].lang, BindKind::Kotlin);
+    }
+
+    #[test]
     fn an_unknown_lang_lists_the_ones_that_exist() {
         let err = parse("[[bind]]\nout = \"o\"\npackage = \"p\"\nlang = \"ruby\"\n")
             .expect_err("rejected");
