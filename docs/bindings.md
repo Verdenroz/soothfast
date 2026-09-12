@@ -360,6 +360,12 @@ bind gate: FAILED (1 breaking change(s) vs origin/master)
 
 `--allow-breaking` releases one deliberately.
 
+Wiring both into CI is one input on the [soothfast
+action](ci.md#inputs): `bind` regenerates and gates a package's bindings on
+the default branch and on pull requests, the same way `spec` does for
+specs. Building the packages themselves is `bind-build`/`bind-target`,
+covered in [Building native bindings](ci.md#building-native-bindings).
+
 ## Two things that will bite you
 
 **The bench target must name the library.** Registrations reach the bench

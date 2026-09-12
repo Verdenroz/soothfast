@@ -50,6 +50,18 @@ inputs:
       pushes to the default branch and gated on pull requests.
     required: false
     default: ""
+  bind-build:
+    description: >-
+      Package whose `[[bind]]` entries to build, independent of gate and
+      regen. Installs no language toolchain: a Python target needs maturin
+      on `PATH`, a wasm target needs wasm-pack, a manylinux target needs the
+      matching container.
+    required: false
+    default: ""
+  bind-target:
+    description: Target triple `bind-build` builds for. Empty builds for the host.
+    required: false
+    default: ""
   baseline:
     description: Baseline name the regeneration measures into.
     required: false
@@ -178,7 +190,17 @@ runs:
           exit 1
         fi
 
+    - name: Build native bindings
+      if: inputs.bind-build != ''
+      shell: bash
+      env:
+        CLI: ${{ steps.resolve.outputs.bin }}
+        PKG: ${{ inputs.bind-build }}
+        TARGET: ${{ inputs.bind-target }}
+      run: "$GITHUB_ACTION_PATH/action/bind-build.sh"
+
     - name: Prepare
+      if: inputs.bind-build == ''
       id: prepare
       shell: bash
       env:
@@ -191,7 +213,7 @@ runs:
       run: "$GITHUB_ACTION_PATH/action/prepare.sh"
 
     - name: Gate against the base branch
-      if: github.event_name == 'pull_request' && inputs.gate == 'true'
+      if: github.event_name == 'pull_request' && inputs.gate == 'true' && inputs.bind-build == ''
       id: gate
       shell: bash
       env:
@@ -205,21 +227,21 @@ runs:
         BIND: ${{ inputs.bind }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
     - name: Upload triage artifacts
-      if: steps.gate.outputs.failed == 'true'
+      if: steps.gate.outputs.failed == 'true' && inputs.bind-build == ''
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: soothfast-triage
         path: .soothfast/triage/
         if-no-files-found: ignore
     - name: Fail on a regression
-      if: steps.gate.outputs.failed == 'true'
+      if: steps.gate.outputs.failed == 'true' && inputs.bind-build == ''
       shell: bash
       run: |
         echo "::error::soothfast gate failed; see the pull request comment and the soothfast-triage artifact"
         exit 1
 
     - name: Regenerate derived files
-      if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true'
+      if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true' && inputs.bind-build == ''
       id: regen
       shell: bash
       env:
@@ -237,14 +259,14 @@ runs:
       run: "$GITHUB_ACTION_PATH/action/regen.sh"
     # Minted after everything that compiles the tree has run.
     - name: Mint a soothfast-bot token
-      if: steps.regen.outputs.changed == 'true' && inputs.bot-token == ''
+      if: steps.regen.outputs.changed == 'true' && inputs.bot-token == '' && inputs.bind-build == ''
       id: bot
       shell: bash
       env:
         BROKER: ${{ inputs.broker }}
       run: "$GITHUB_ACTION_PATH/action/bot-token.sh"
     - name: Land the regenerated files
-      if: steps.regen.outputs.changed == 'true'
+      if: steps.regen.outputs.changed == 'true' && inputs.bind-build == ''
       shell: bash
       env:
         TOKEN: ${{ inputs.bot-token || steps.bot.outputs.token }}

@@ -119,6 +119,8 @@ installed on is refused.
 | `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes. |
 | `spec` | none | Space-separated packages whose `mode = "generate"` specs to regenerate. |
 | `bind` | none | Space-separated packages whose `[[bind]]` entries to regenerate and gate. |
+| `bind-build` | none | Package whose `[[bind]]` entries to build, independent of gate and regen. See [Building native bindings](#building-native-bindings). |
+| `bind-target` | the host | Target triple `bind-build` builds for. |
 | `features` | none | Cargo features for the gate, the baseline measurement, and spec generation. A bench target with `required-features` needs them here. |
 | `changelog-packages` | `packages` | Packages whose API surface `report changelog` diffs. Set it when a crate without a bench target still ships an API. |
 | `changelog-features` | `features` | Features for `report changelog`, which decide what the API surface diff contains. Set it wider than `features` when gating under the full feature set is too heavy. |
@@ -151,22 +153,55 @@ The scripts use `gh`, `jq`, `curl`, `git`, and `cargo`. On Linux the step
 installs `valgrind` with `apt-get` when it is missing, for the callgrind
 fallback on machines without performance counters.
 
-## The gate on its own
+## Building native bindings
 
-The gate, with its comment and triage upload, is also a reusable workflow for
-callers that want it as a separate job or a matrix over packages:
+`bind-build` runs `cargo soothfast bind build` for one package, independent
+of gate and regen: give a matrix leg only `bind-build` and `bind-target` and
+it builds that target and nothing else. The action installs no language
+toolchain itself — a Python target needs `maturin` on `PATH`, a wasm target
+needs `wasm-pack`, and a target claiming a `manylinux` tag needs to build
+inside that image, since the tag is a claim about where the binary was
+linked, not about the code:
 
 ```yaml ignore
 jobs:
-  gate:
-    permissions:
-      contents: read
-      pull-requests: write
-    uses: Verdenroz/soothfast/.github/workflows/soothfast-gate.yml@<tag-or-sha>
-    with:
-      package: mylib
+  bind:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_17_x86_64
+            lang: python
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            lang: python
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            lang: python
+          - target: wasm32-unknown-unknown
+            runner: ubuntu-latest
+            lang: wasm
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # manylinux images have no python or pip on PATH; every interpreter
+      # lives under /opt/python/<tag>.
+      - if: matrix.lang == 'python' && matrix.container
+        run: /opt/python/cp312-cp312/bin/pip install maturin
+      - if: matrix.lang == 'python' && !matrix.container
+        run: pip install maturin
+      - if: matrix.lang == 'wasm'
+        run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+      - uses: Verdenroz/soothfast@<tag-or-sha>
+        with:
+          bind-build: mylib
+          bind-target: ${{ matrix.target }}
 ```
 
-`cli-artifact` names an artifact holding a prebuilt CLI at
-`bin/cargo-soothfast` from earlier in the same run; without it the workflow
-installs the release matching your `Cargo.lock`.
+A C target needs neither: the backend has no external tool of its own, so
+plain `cargo build` is enough.
