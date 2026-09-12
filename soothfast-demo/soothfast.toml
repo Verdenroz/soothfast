@@ -15,3 +15,9 @@ lang = "c"
 out = "bindings/c"
 package = "soothfast-stats-c"
 description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+
+[[bind]]
+lang = "go"
+out = "bindings/gostats"
+package = "github.com/Verdenroz/soothfast/soothfast-demo/bindings/gostats"
+description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
