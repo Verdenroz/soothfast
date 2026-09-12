@@ -10,6 +10,8 @@ install.packages("acme.core", repos = NULL, type = "source")
 
 Building it needs a Rust toolchain (`cargo`, `rustc`) on `PATH`; the R package itself has no other system dependency.
 
+`DESCRIPTION` carries no `License` field: soothfast has no license to put there, so add one before publishing.
+
 A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vector without copying it.
 
 ## Types

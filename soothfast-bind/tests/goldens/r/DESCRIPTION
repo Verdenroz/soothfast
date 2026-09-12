@@ -1,8 +1,7 @@
 Package: acme.core
 Type: Package
-Title: Native bindings
+Title: R bindings for the `acme` crate
 Version: 0.1.0
-Description: Native bindings.
-License: MIT
+Description: R bindings for the `acme` crate.
 Encoding: UTF-8
 SystemRequirements: Cargo (Rust's package manager), rustc

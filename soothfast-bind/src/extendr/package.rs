@@ -13,9 +13,12 @@ use super::types;
 pub(crate) const DEFAULT_VERSION: &str = "0.9";
 
 pub(crate) fn description(opts: &BindOptions) -> String {
-    let title = opts.description.as_deref().unwrap_or("Native bindings");
+    let summary = opts
+        .description
+        .clone()
+        .unwrap_or_else(|| format!("R bindings for the `{}` crate", opts.crate_name));
     format!(
-        "Package: {}\nType: Package\nTitle: {title}\nVersion: {}\nDescription: {title}.\nLicense: MIT\nEncoding: UTF-8\nSystemRequirements: Cargo (Rust's package manager), rustc\n",
+        "Package: {}\nType: Package\nTitle: {summary}\nVersion: {}\nDescription: {summary}.\nEncoding: UTF-8\nSystemRequirements: Cargo (Rust's package manager), rustc\n",
         opts.package, opts.version,
     )
 }
@@ -231,6 +234,8 @@ pub(crate) fn readme(plan: &BindingPlan, opts: &BindOptions) -> String {
          ```r\ninstall.packages(\"{}\", repos = NULL, type = \"source\")\n```\n\n\
          Building it needs a Rust toolchain (`cargo`, `rustc`) on `PATH`; the R \
          package itself has no other system dependency.\n\n\
+         `DESCRIPTION` carries no `License` field: soothfast has no license to \
+         put there, so add one before publishing.\n\n\
          A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's \
          own vector without copying it.\n",
         opts.crate_name, opts.package,
