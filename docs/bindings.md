@@ -98,19 +98,26 @@ package = "io.acme.statskt"
 lang = "r"
 out = "bindings/r"
 package = "acme.stats"
+
+[[bind]]
+lang = "ruby"
+out = "bindings/ruby"
+package = "soothfast-stats"
 ```
 
-`lang` is `python`, `wasm`, `node`, `c`, `go`, `java`, `kotlin`, or `r`, each
-with the short forms you would expect (`py`, `js`, `napi`, `cabi`, `golang`,
-`jni`, `kt`, `extendr`). `out` and `package` are required. For `go`,
-`package` is the Go module path rather than a distribution name; the Go
-package name is its last element. For `java` and `kotlin`, `package` is the
-JVM package a caller imports, dotted the normal way; the two need distinct
-packages when both bind the same crate, since each stages its own native
-library under its own `Natives`. For `r`, `package` is the R package name:
-letters, digits and dots, starting with a letter — no hyphens, since R
-derives its native init routine from that name by replacing every other
-character with `_`. `module`, `version`, `description`, `repository`,
+`lang` is `python`, `wasm`, `node`, `c`, `go`, `java`, `kotlin`, `r`, or
+`ruby`, each with the short forms you would expect (`py`, `js`, `napi`,
+`cabi`, `golang`, `jni`, `kt`, `extendr`, `rb`). `out` and `package` are
+required. For `go`, `package` is the Go module path rather than a
+distribution name; the Go package name is its last element. For `java` and
+`kotlin`, `package` is the JVM package a caller imports, dotted the normal
+way; the two need distinct packages when both bind the same crate, since
+each stages its own native library under its own `Natives`. For `r`,
+`package` is the R package name: letters, digits and dots, starting with a
+letter — no hyphens, since R derives its native init routine from that name
+by replacing every other character with `_`. For `ruby`, `package` is the
+gem name; the Ruby module classes and the package `Error` are defined under
+is derived from it. `module`, `version`, `description`, `repository`,
 `targets`, and `backend_version` all default to something sensible.
 
 ## Commands
@@ -119,7 +126,7 @@ character with `_`. `module`, `version`, `description`, `repository`,
 cargo soothfast bind gen -p PKG            # write the packages
 cargo soothfast bind gen -p PKG --check    # fail if they are stale
 cargo soothfast bind gate -p PKG           # fail on a consumer-breaking change
-cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar / R CMD INSTALL
+cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar / R CMD INSTALL / rake+gem
 ```
 
 `bind gen` writes a small Rust glue crate per language and the packaging
@@ -142,7 +149,10 @@ isolated staging directory before compiling, and `src/rust/Cargo.toml`'s
 path dependency on the bound crate reaches outside the R package's own
 tree — a tarball's staging copy has no sibling to satisfy it. Publishing a
 standalone source package needs the bound crate vendored under `src/rust`
-first, which `bind build` does not do.
+first, which `bind build` does not do. Ruby rides `bundle exec rake
+compile` (`rb_sys`'s own `cargo build` wrapper) and then `gem build`; each
+is reported and skipped on its own, so a machine with only one of
+`bundle`/`gem` installed still hears about the other.
 
 ## What the generated code looks like
 
@@ -170,19 +180,19 @@ only in the generated crate.
 
 ## How types cross
 
-| Rust | Python | JavaScript | C | Go | Java | Kotlin | R |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character |
-| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector |
-| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector |
-| `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked |
-| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` |
-| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound |
-| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound |
-| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) |
-| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound |
-| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` |
-| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string |
+| Rust | Python | JavaScript | C | Go | Java | Kotlin | R | Ruby |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character | `String` |
+| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector | `String` (binary) |
+| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` |
+| `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked | `Integer` |
+| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` | `T \| nil` |
+| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` |
+| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound | `Array` |
+| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises |
+| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound | not bound |
+| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` | handle class |
+| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string | `Symbol` |
 
 An enum carrying data stays an opaque handle, because neither language has a
 shape for it; that is reported as a note rather than guessed at.
@@ -355,6 +365,48 @@ devs <- s$deviations_all(c(0.0, 4.0))
 
 R has no cross-compilation matrix and no distributable tarball either — see
 Commands above for what `bind build` does instead.
+
+### Ruby
+
+magnus wraps each exported type the same way pyo3 and wasm-bindgen do, a
+local newtype around your struct, but registers every method explicitly in
+an `#[magnus::init]` function instead of through an attribute macro over
+the `impl` block. A payload-free enum gets no wrapper at all: it crosses as
+a Ruby `Symbol`, checked against the known variant names on the way in,
+since nothing about a `Symbol` value proves it names one of them:
+
+```ruby
+counter = AcmeCore::Counter.new(0)
+counter.bump(5)
+counter.at(:low)
+```
+
+- **Every buffer is copied, both ways.** A Ruby `Array` boxes each element,
+  so a `Vec<f64>` parameter has to be unboxed one value at a time whether
+  the signature borrows or owns it, and a `String`'s bytes may move under a
+  compacting collector, so there is no pointer to hand over either. `bind
+  gen` gives Ruby the same no-advice verdict it gives wasm, for the same
+  reason: taking a borrow saves no copy here.
+- **A writable buffer still looks mutated to the caller.** `&mut [f64]`
+  converts the incoming `Array` to an owned `Vec`, calls with that, then
+  writes it back into the same `Array` object element by element with
+  `RArray::store`. It costs an extra pass over the buffer that Python's and
+  Node's zero-copy views don't pay, but the caller sees the same mutation
+  either way; gapping the parameter instead would have been cheaper to
+  generate and dishonest about what the signature promises.
+- **A failing call raises `<Module>::Error`**, one exception class per
+  package rather than one per Rust error type: magnus turns any `Err`
+  returned from a bound call into a raised exception on its own, so the
+  glue only has to name the class once.
+- **The package is a gem, not a wheel.** `bind gen` writes the usual
+  `<name>.gemspec`/`Gemfile`/`Rakefile` trio around an `ext/<module>/` glue
+  crate that `rb_sys`'s `create_rust_makefile` builds; `bind build` runs
+  `bundle exec rake compile` and then `gem build`, each reported and
+  skipped on its own so a machine missing one tool still hears about the
+  other.
+
+`async fn` is a gap for Ruby the same way it is for Go, Node and Java: no
+runtime to hand a future to.
 
 ## C is the one without a framework
 
