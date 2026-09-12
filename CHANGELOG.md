@@ -10,6 +10,9 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### ✨ Features
+
+- Read gate and changelog features from soothfast.toml (#195)
 
 
 ## 0.3.1 - 2026-09-06
