@@ -46,6 +46,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `core_digest`
 - `core_greet`
 - `core_normalize`
+- `core_scale_into`
 - `core_stamp`
 
 ## Not bound

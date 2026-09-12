@@ -1,0 +1,8 @@
+Package: acme.core
+Type: Package
+Title: Native bindings
+Version: 0.1.0
+Description: Native bindings.
+License: MIT
+Encoding: UTF-8
+SystemRequirements: Cargo (Rust's package manager), rustc

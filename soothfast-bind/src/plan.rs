@@ -552,7 +552,12 @@ fn bindable(
     if f.is_async
         && matches!(
             kind,
-            BindKind::CAbi | BindKind::Go | BindKind::Node | BindKind::Java | BindKind::Kotlin
+            BindKind::CAbi
+                | BindKind::Go
+                | BindKind::Node
+                | BindKind::Java
+                | BindKind::Kotlin
+                | BindKind::R
         )
     {
         record(
@@ -566,6 +571,7 @@ fn bindable(
                     BindKind::Node => "no Node runtime story yet".into(),
                     BindKind::Java => "no Java runtime story yet".into(),
                     BindKind::Kotlin => "no Kotlin runtime story yet".into(),
+                    BindKind::R => "no R runtime story yet".into(),
                     _ => "C has nothing to await with; expose a blocking wrapper \
                           instead"
                         .into(),
@@ -593,10 +599,11 @@ fn bindable(
     // but nothing in the model says whether a parameter wants it borrowed or
     // owned, and the two need different C. Go calls the same C functions, so
     // it inherits the restriction; Java and Kotlin have no way to name a
-    // different constructor overload for it either.
+    // different constructor overload for it either; R's own handle is an
+    // external pointer with the same borrowed-or-owned ambiguity.
     if matches!(
         kind,
-        BindKind::CAbi | BindKind::Go | BindKind::Java | BindKind::Kotlin
+        BindKind::CAbi | BindKind::Go | BindKind::Java | BindKind::Kotlin | BindKind::R
     ) {
         for param in &f.params {
             if matches!(&param.ty, Ty::Optional(inner) if matches!(**inner, Ty::Class(_))) {
@@ -608,6 +615,28 @@ fn bindable(
                         lang: kind.name(),
                         why: "an optional exported type is taken only as a return; \
                               take it by reference instead"
+                            .into(),
+                    },
+                );
+                return false;
+            }
+        }
+    }
+    // R vectors are copy-on-write values, not caller-owned buffers: writing
+    // through one in place is not something an R caller can safely observe,
+    // since R gives no guarantee the vector it passed is not aliased
+    // elsewhere. A mutable buffer parameter has no honest R spelling.
+    if kind == BindKind::R {
+        for param in &f.params {
+            if param.ownership == Ownership::BorrowedMut && is_buffer_ty(&param.ty) {
+                record(
+                    gaps,
+                    Gap::UnsupportedByBackend {
+                        at: f.id.clone(),
+                        ty: param.ty.render(),
+                        lang: kind.name(),
+                        why: "R vectors are values; an out-parameter cannot be \
+                              written through, return the sequence instead"
                             .into(),
                     },
                 );
@@ -653,6 +682,11 @@ fn unsupported(kind: BindKind, ty: &Ty) -> Option<String> {
         kind,
         BindKind::CAbi | BindKind::Go | BindKind::Java | BindKind::Kotlin
     ) && let Some(why) = unsupported_by_c(ty)
+    {
+        return Some(why);
+    }
+    if kind == BindKind::R
+        && let Some(why) = unsupported_by_r(ty)
     {
         return Some(why);
     }
@@ -709,6 +743,37 @@ fn unsupported_by_c(ty: &Ty) -> Option<String> {
         )),
         _ => None,
     }
+}
+
+/// Why R cannot carry this type, if it cannot.
+///
+/// R has no map or tuple type either, and a sequence of anything but one
+/// primitive has no vector to become. Unlike C, an `Option` of anything the
+/// plan can otherwise carry is not restricted here: it crosses as `NULL` by
+/// hand rather than needing a type of its own.
+fn unsupported_by_r(ty: &Ty) -> Option<String> {
+    match ty {
+        Ty::Map(..) => Some(
+            "R has no map type; return a sequence of pairs, or an exported \
+             type with accessors"
+                .into(),
+        ),
+        Ty::Tuple(_) => {
+            Some("R has no tuple type; return an exported type with named fields".into())
+        }
+        Ty::List(inner) if !inner.is_primitive() => Some(format!(
+            "a sequence of `{}` has no R vector to become; a sequence of one \
+             primitive crosses as a numeric or raw vector",
+            inner.render()
+        )),
+        _ => None,
+    }
+}
+
+/// Whether this type is the one shape a contiguous buffer parameter takes:
+/// a byte string, or a sequence of one primitive.
+fn is_buffer_ty(ty: &Ty) -> bool {
+    matches!(ty, Ty::Bytes) || matches!(ty, Ty::List(inner) if inner.is_primitive())
 }
 
 fn skips(skip: &[String], lang: &str) -> bool {

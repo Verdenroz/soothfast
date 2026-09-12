@@ -7,6 +7,7 @@ private val loadNatives: Unit = Natives.load()
 private external fun nativeDigest(data: ByteArray): ByteArray
 private external fun nativeGreet(name: String): String
 private external fun nativeNormalize(input: DoubleArray, factor: Double): DoubleArray
+private external fun nativeScaleInto(values: DoubleArray, factor: Double, out: DoubleArray): Unit
 private external fun nativeStamp(handle: Long, error: Double, register: ByteArray): Long
 
 fun digest(data: ByteArray): ByteArray {
@@ -19,6 +20,10 @@ fun greet(name: String): String {
 
 fun normalize(input: DoubleArray, factor: Double): DoubleArray {
     return nativeNormalize(input, factor)
+}
+
+fun scaleInto(values: DoubleArray, factor: Double, out: DoubleArray) {
+    nativeScaleInto(values, factor, out)
 }
 
 fun stamp(handle: Long, error: Double, register: ByteArray): Long {

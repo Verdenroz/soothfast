@@ -112,6 +112,11 @@ pub fn normalize(input: Float64Array, factor: f64) -> Float64Array {
     Float64Array::from(::acme::normalize(input.to_vec(), factor))
 }
 
+#[napi(js_name = "scaleInto")]
+pub fn scale_into(values: Float64Array, factor: f64, mut out: Float64Array) -> () {
+    ::acme::scale_into(values.as_ref(), factor, unsafe { out.as_mut() })
+}
+
 #[napi]
 pub fn stamp(handle: BigInt, error: f64, register: Buffer) -> Result<BigInt> {
     let handle = bigint_to_i64(handle, "handle")?;

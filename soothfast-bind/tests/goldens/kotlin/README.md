@@ -39,6 +39,7 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 - `digest`
 - `greet`
 - `normalize`
+- `scaleInto`
 - `stamp`
 
 ## Not bound

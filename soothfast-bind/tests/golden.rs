@@ -7,7 +7,7 @@ mod fixture;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use fixture::{go_opts, java_opts, kotlin_opts, opts, walk};
+use fixture::{go_opts, java_opts, kotlin_opts, opts, r_opts, walk};
 use soothfast_bind::{BindKind, BindOptions};
 
 fn golden_dir(name: &str) -> PathBuf {
@@ -44,7 +44,8 @@ fn walk_dir(dir: &Path, root: &Path, out: &mut BTreeMap<String, String>) {
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if (name.starts_with('.') && name != ".gitignore") || name == "target" {
+        let dotfile = matches!(name.as_str(), ".gitignore" | ".Rbuildignore");
+        if (name.starts_with('.') && !dotfile) || name == "target" {
             continue;
         }
         if path.is_dir() {
@@ -772,4 +773,67 @@ fn a_kotlin_declared_constructor_is_a_secondary_one_disambiguated_by_a_marker() 
     assert!(counter.contains("private object Raw"));
     assert!(counter.contains("private constructor(private val ptr: Long, marker: Raw)"));
     assert!(counter.contains("constructor(start: Long) : this(nativeNew(start), Raw)"));
+}
+
+#[test]
+fn r_goldens() {
+    check_goldens_with(BindKind::R, "r", &r_opts());
+}
+
+#[test]
+fn a_64_bit_integer_gets_one_note_about_crossing_as_a_checked_double() {
+    let notes = emit_set_with(BindKind::R, &r_opts()).notes;
+    let checked: Vec<&String> = notes
+        .iter()
+        .filter(|n| n.contains("R has no 64-bit integer"))
+        .collect();
+    assert_eq!(checked.len(), 1, "expected exactly one note: {notes:?}");
+}
+
+#[test]
+fn a_failing_call_raises_an_r_condition_with_the_rust_message() {
+    let glue = &emit_set_with(BindKind::R, &r_opts()).files["src/rust/src/lib.rs"];
+    assert!(glue.contains("Err(reason) => Err(::std::string::ToString::to_string(&reason)),"));
+}
+
+#[test]
+fn a_plain_enum_crosses_as_a_validated_string_not_an_ordinal() {
+    let glue = &emit_set_with(BindKind::R, &r_opts()).files["src/rust/src/lib.rs"];
+    assert!(glue.contains("\"Low\" => Inner::Low,"));
+    assert!(glue.contains("\"High\" => Inner::High,"));
+    assert!(glue.contains("unknown Level variant"));
+}
+
+#[test]
+fn an_async_method_is_a_gap_with_no_r_runtime_story() {
+    let set = emit_set_with(BindKind::R, &r_opts());
+    assert!(
+        set.gaps
+            .iter()
+            .any(|g| g.contains("no R runtime story yet")),
+        "gaps: {:?}",
+        set.gaps
+    );
+    assert!(!set.files["src/rust/src/lib.rs"].contains("fn refresh"));
+}
+
+#[test]
+fn an_option_of_a_sequence_binds_where_c_gaps_it() {
+    let set = emit_set_with(BindKind::R, &r_opts());
+    assert!(!set.gaps.iter().any(|g| g.contains("trim")));
+    let glue = &set.files["src/rust/src/lib.rs"];
+    assert!(glue.contains("fn trim(input: &[f64]) -> Robj {"));
+}
+
+#[test]
+fn a_mutable_out_parameter_is_a_gap_since_r_vectors_are_values() {
+    let set = emit_set_with(BindKind::R, &r_opts());
+    assert!(
+        set.gaps
+            .iter()
+            .any(|g| g.contains("scale_into") && g.contains("R vectors are values")),
+        "gaps: {:?}",
+        set.gaps
+    );
+    assert!(!set.files["src/rust/src/lib.rs"].contains("fn scale_into"));
 }

@@ -112,6 +112,37 @@ impl BorrowedI64 {
     }
 }
 
+/// A borrowed mutable `f64` sequence. Writing back in place needs a
+/// real writable buffer, so unlike the read side there is no fallback.
+struct BorrowedMutF64(::pyo3::buffer::PyBuffer<f64>);
+
+impl<'py> ::pyo3::FromPyObject<'py> for BorrowedMutF64 {
+    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        let buf = ::pyo3::buffer::PyBuffer::<f64>::get(obj)?;
+        if buf.readonly() {
+            return Err(::pyo3::exceptions::PyTypeError::new_err(
+                "expected a writable buffer",
+            ));
+        }
+        if !buf.is_c_contiguous() {
+            return Err(::pyo3::exceptions::PyTypeError::new_err(
+                "expected a contiguous buffer",
+            ));
+        }
+        Ok(BorrowedMutF64(buf))
+    }
+}
+
+impl BorrowedMutF64 {
+    fn as_mut_slice(&mut self) -> &mut [f64] {
+        // Writability and contiguity were both checked at extraction, so the
+        // pointer addresses exactly `item_count` items and nothing aliases it.
+        unsafe {
+            ::std::slice::from_raw_parts_mut(self.0.buf_ptr() as *mut f64, self.0.item_count())
+        }
+    }
+}
+
 /// An `u8` sequence read through the buffer protocol when the caller
 /// passes a buffer (`array.array`, `memoryview`, numpy), and unboxed element
 /// by element only when it is some other sequence.
@@ -345,6 +376,11 @@ fn normalize(py: Python<'_>, input: BorrowedF64, factor: f64) -> F64Array {
 }
 
 #[pyfunction]
+fn scale_into(py: Python<'_>, values: BorrowedF64, factor: f64, mut out: BorrowedMutF64) -> () {
+    py.detach(|| ::acme::scale_into(values.as_slice(), factor, out.as_mut_slice()))
+}
+
+#[pyfunction]
 fn stamp(py: Python<'_>, handle: i64, error: f64, register: BorrowedU8) -> u64 {
     py.detach(|| ::acme::stamp(handle, error, register.as_slice()))
 }
@@ -365,6 +401,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
+    m.add_function(wrap_pyfunction!(scale_into, m)?)?;
     m.add_function(wrap_pyfunction!(stamp, m)?)?;
     m.add_function(wrap_pyfunction!(trim, m)?)?;
     Ok(())

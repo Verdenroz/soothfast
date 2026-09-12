@@ -93,6 +93,11 @@ pub fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
     ::acme::normalize(input, factor)
 }
 
+#[wasm_bindgen(js_name = scaleInto)]
+pub fn scale_into(values: &[f64], factor: f64, out: &mut [f64]) -> () {
+    ::acme::scale_into(values, factor, out)
+}
+
 #[wasm_bindgen]
 pub fn stamp(handle: i64, error: f64, register: &[u8]) -> u64 {
     ::acme::stamp(handle, error, register)

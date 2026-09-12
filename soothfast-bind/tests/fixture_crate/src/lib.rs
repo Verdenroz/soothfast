@@ -72,3 +72,9 @@ pub fn trim(input: &[f64]) -> Option<Vec<f64>> {
 pub fn greet(name: &str) -> String {
     format!("hello, {name}")
 }
+
+pub fn scale_into(values: &[f64], factor: f64, out: &mut [f64]) {
+    for (value, slot) in values.iter().zip(out.iter_mut()) {
+        *slot = value * factor;
+    }
+}

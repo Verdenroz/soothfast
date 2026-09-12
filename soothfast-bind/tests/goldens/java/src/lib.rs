@@ -242,6 +242,39 @@ pub extern "system" fn Java_acme_core_Core_nativeNormalize<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeScaleInto<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    values: ::jni::objects::JDoubleArray<'local>,
+    factor: f64,
+    out: ::jni::objects::JDoubleArray<'local>
+) {
+    let values: Vec<f64> = {
+        let result = unsafe { env.get_array_elements_critical(&values, ::jni::objects::ReleaseMode::NoCopyBack) };
+        if let Err(ref e) = result {
+        let pending = matches!(e, ::jni::errors::Error::JavaException);
+        let message = e.to_string();
+        drop(result);
+        __throw_unless_pending(&mut env, pending, message);
+        return ;
+    }
+        let guard = result.unwrap();
+        guard.to_vec()
+    };
+    let result = unsafe { env.get_array_elements_critical(&out, ::jni::objects::ReleaseMode::CopyBack) };
+    if let Err(ref e) = result {
+        let pending = matches!(e, ::jni::errors::Error::JavaException);
+        let message = e.to_string();
+        drop(result);
+        __throw_unless_pending(&mut env, pending, message);
+        return ;
+    }
+    let mut out_pin = result.unwrap();
+    ::acme::scale_into(&values, factor, &mut out_pin);
+    drop(out_pin);
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeStamp<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

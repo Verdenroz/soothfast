@@ -21,6 +21,10 @@ public final class Core {
         return nativeNormalize(input, factor);
     }
 
+    public static void scaleInto(double[] values, double factor, double[] out) {
+        nativeScaleInto(values, factor, out);
+    }
+
     public static long stamp(long handle, double error, byte[] register) {
         return nativeStamp(handle, error, register);
     }
@@ -28,5 +32,6 @@ public final class Core {
     private static native byte[] nativeDigest(byte[] data);
     private static native String nativeGreet(String name);
     private static native double[] nativeNormalize(double[] input, double factor);
+    private static native void nativeScaleInto(double[] values, double factor, double[] out);
     private static native long nativeStamp(long handle, double error, byte[] register);
 }

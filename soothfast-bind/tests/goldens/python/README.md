@@ -35,6 +35,7 @@ import acme_core
 - `greet`
 - `index_all`
 - `normalize`
+- `scale_into`
 - `stamp`
 - `trim`
 
