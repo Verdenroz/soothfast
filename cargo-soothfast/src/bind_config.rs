@@ -191,6 +191,13 @@ mod tests {
     }
 
     #[test]
+    fn java_is_a_known_lang() {
+        let cfg = parse("[[bind]]\nlang = \"java\"\nout = \"java\"\npackage = \"io.acme.core\"\n")
+            .expect("parses");
+        assert_eq!(cfg.entries[0].lang, BindKind::Java);
+    }
+
+    #[test]
     fn an_unknown_lang_lists_the_ones_that_exist() {
         let err = parse("[[bind]]\nout = \"o\"\npackage = \"p\"\nlang = \"ruby\"\n")
             .expect_err("rejected");
