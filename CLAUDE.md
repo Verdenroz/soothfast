@@ -320,8 +320,8 @@ gated by `bind gen --check` and `bind gate`, not measured.
   a push.
 - `scorecard.yml` — OSSF Scorecard supply-chain analysis, published to the
   public Scorecard API and uploaded to code scanning as SARIF.
-- `soothfast-gate.yml` — reusable workflow, callable from any repo; runs
-  `cargo soothfast gate` for a given package against the PR's merge-base,
+- `soothfast-gate.yml` — internal reusable workflow; runs `cargo soothfast
+  gate` for a given package against the PR's merge-base,
   uploads `.soothfast/triage/` on failure, and posts/updates a PR comment
   with the gate output using `github.token`. `cli-artifact` names a
   prebuilt CLI uploaded earlier in the run (what `ci.yml` does); without it
@@ -344,7 +344,21 @@ gated by `bind gen --check` and `bind gate`, not measured.
   gates instead — `spec gen --check` fails on a stale committed spec and
   `spec gate` fails on a consumer-breaking change vs the merge-base
   (`--allow-breaking` releases one deliberately).
-- `release.yml` — on `v*` tag push, runs checks + gate, then publishes all 10
+- `bind.yml` — internal dogfood of the root action's `bind` input on
+  `soothfast-demo`: gates its committed bindings on pull requests
+  (`bind gen --check` plus `uses: ./`) and regenerates them through
+  soothfast-bot on pushes to `master`, the same shape as `spec.yml`.
+- `bind-release.yml` — internal reusable workflow; builds a package's
+  `[[bind]]` targets (a Python wheel per platform, one wasm build) and
+  uploads them as artifacts. Each leg builds `cargo-soothfast` from the
+  tree and calls the root action's `bind-build`/`bind-target` inputs; the
+  glibc legs run as `container:` jobs on the manylinux image so the action
+  can run inside, which is why they skip `harden-runner` (unsupported
+  inside a container job) and currently carry tag-pinned, not
+  digest-pinned, images. `release.yml` calls it on a tag as a `bind` job
+  with no downstream `needs:`, so a binding build failure never blocks
+  publishing.
+- `release.yml` — on `v*` tag push, runs checks + gate, then publishes all 11
   workspace crates to crates.io in dependency order.
 
 ### soothfast-bot
