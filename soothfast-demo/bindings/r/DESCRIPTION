@@ -1,0 +1,7 @@
+Package: soothfast.stats
+Type: Package
+Title: Robust summary statistics and the FNV-1a fingerprint soothfast gates on
+Version: 0.3.2
+Description: Robust summary statistics and the FNV-1a fingerprint soothfast gates on.
+Encoding: UTF-8
+SystemRequirements: Cargo (Rust's package manager), rustc
