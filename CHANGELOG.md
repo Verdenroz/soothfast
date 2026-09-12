@@ -14,6 +14,10 @@
 
 - Read gate and changelog features from soothfast.toml (#195)
 
+### 🐛 Fixes
+
+- Pin the gate harness across an incompatible requirement (#196)
+
 
 ## 0.3.1 - 2026-09-06
 
