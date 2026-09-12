@@ -298,6 +298,15 @@ which is the whole distance between 4x and 56x. `bytes` counts: reading
 800 KB as `Vec<u8>` costs 1.6 ms through a buffer against 7.9 ms unboxed one
 byte at a time.
 
+<!-- soothfast:claim soothfast_demo::bench_deviations_all.alloc.allocs <= 1 -->
+`deviations_all` allocates the `Vec<f64>` it returns.
+<!-- /soothfast:claim -->
+
+<!-- soothfast:claim soothfast_demo::bench_deviations_into.alloc.allocs <= 0 -->
+`deviations_into` writes into the caller's own buffer instead and allocates
+nothing.
+<!-- /soothfast:claim -->
+
 **Take the sequence back the same way.** A returned `Vec<f64>` comes back as
 an array class exporting the buffer protocol, so `numpy.asarray(x)` and
 `memoryview(x)` read it without copying, and `x.tolist()` copies only when
@@ -333,6 +342,15 @@ one back crosses no conversion: a field read off `Summary` is ~67 ns in
 Python and ~14 ns in JavaScript. This is the shape polars takes to its
 conclusion, with data living in Rust across a whole query rather than one
 call.
+
+<!-- soothfast:claim soothfast_demo::bench_summary_new.alloc.allocs <= 6 -->
+Building the handle is where that cost is paid: `Summary::new` sorts the
+sample set twice.
+<!-- /soothfast:claim -->
+
+<!-- soothfast:claim soothfast_demo::bench_summary_get.alloc.allocs <= 0 -->
+Reading a statistic back off it allocates nothing at all.
+<!-- /soothfast:claim -->
 
 Numbers here are one machine and are illustrative. Nothing gates them; the
 gated claims in this repo are the ones under `soothfast:claim` markers.

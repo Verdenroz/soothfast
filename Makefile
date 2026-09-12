@@ -17,7 +17,8 @@ export SOOTHFAST_RUSTDOC_TOOLCHAIN ?= $(shell sed -n 's/^ *default: \(nightly-[0
 
 # Self-measuring bench crates; runs merge into the shared "self" baseline.
 BENCH_CRATES := soothfast-registry soothfast-measure soothfast-docs \
-                soothfast-spec soothfast-sdk soothfast-site soothfast-report
+                soothfast-spec soothfast-sdk soothfast-site soothfast-report \
+                soothfast-demo
 # Crates whose API reference the site carries (cargo-soothfast has no lib).
 REF_CRATES := soothfast soothfast-macros soothfast-registry soothfast-measure \
               soothfast-docs soothfast-spec soothfast-sdk soothfast-site \
@@ -69,7 +70,7 @@ ci: check baselines ## Everything PR CI runs: docs gated against this build's ow
 	$(SOOTHFAST) docs check -p soothfast-sdk --baseline self docs/sdk.md
 	$(SOOTHFAST) docs check -p soothfast-report --baseline self docs/reports.md
 	$(SOOTHFAST) docs capture -p soothfast-report --check docs/reports.md
-	$(SOOTHFAST) docs check -p soothfast-demo docs/bindings.md
+	$(SOOTHFAST) docs check -p soothfast-demo --baseline self docs/bindings.md
 	@$(MAKE) llms-gate
 	@echo "All CI checks passed."
 
