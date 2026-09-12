@@ -208,10 +208,9 @@ pub enum BufferSupport {
 /// buffer parameter is that signal: a scalar call costs less than releasing
 /// the lock would. Everything the call touches has to reach the other
 /// thread, which for a method means the receiver as well as the arguments.
+/// Under [`BufferSupport::Pinned`] the answer is always no: a pinned section
+/// cannot leave its thread or re-enter the runtime.
 pub fn offloadable(f: &Function, owner: Option<&Class>, plan: &BindingPlan) -> bool {
-    // A pinned section holds the collector off for its whole duration, so
-    // handing its work to another thread or calling back into the runtime
-    // is off the table regardless of what the call looks like.
     if plan.buffer_support == BufferSupport::Pinned {
         return false;
     }
@@ -550,19 +549,26 @@ fn bindable(
     if f.is_async && f.receiver == Receiver::Exclusive {
         return false;
     }
-    if f.is_async && matches!(kind, BindKind::CAbi | BindKind::Go | BindKind::Node) {
-        let why = match kind {
-            BindKind::Go => "no Go runtime story yet".into(),
-            BindKind::Node => "no Node runtime story yet".into(),
-            _ => "C has nothing to await with; expose a blocking wrapper instead".into(),
-        };
+    if f.is_async
+        && matches!(
+            kind,
+            BindKind::CAbi | BindKind::Go | BindKind::Node | BindKind::Java
+        )
+    {
         record(
             gaps,
             Gap::UnsupportedByBackend {
                 at: f.id.clone(),
                 ty: "async fn".into(),
                 lang: kind.name(),
-                why,
+                why: match kind {
+                    BindKind::Go => "no Go runtime story yet".into(),
+                    BindKind::Node => "no Node runtime story yet".into(),
+                    BindKind::Java => "no Java runtime story yet".into(),
+                    _ => "C has nothing to await with; expose a blocking wrapper \
+                          instead"
+                        .into(),
+                },
             },
         );
         return false;
@@ -585,8 +591,9 @@ fn bindable(
     // An optional exported type crosses back as a pointer that may be null,
     // but nothing in the model says whether a parameter wants it borrowed or
     // owned, and the two need different C. Go calls the same C functions, so
-    // it inherits the restriction.
-    if kind == BindKind::CAbi || kind == BindKind::Go {
+    // it inherits the restriction; Java has no way to name a different
+    // constructor overload for it either.
+    if matches!(kind, BindKind::CAbi | BindKind::Go | BindKind::Java) {
         for param in &f.params {
             if matches!(&param.ty, Ty::Optional(inner) if matches!(**inner, Ty::Class(_))) {
                 record(
@@ -595,7 +602,7 @@ fn bindable(
                         at: f.id.clone(),
                         ty: param.ty.render(),
                         lang: kind.name(),
-                        why: "C takes an optional exported type only as a return; \
+                        why: "an optional exported type is taken only as a return; \
                               take it by reference instead"
                             .into(),
                     },
@@ -635,7 +642,10 @@ fn record(gaps: &mut Vec<Gap>, gap: Gap) {
 
 /// Why a language cannot carry this type, if it cannot.
 fn unsupported(kind: BindKind, ty: &Ty) -> Option<String> {
-    if (kind == BindKind::CAbi || kind == BindKind::Go)
+    // Go calls the same C functions, so it inherits the restriction; Java
+    // has no generic container either, and no more of a story than C does
+    // for a sequence of anything but one primitive.
+    if matches!(kind, BindKind::CAbi | BindKind::Go | BindKind::Java)
         && let Some(why) = unsupported_by_c(ty)
     {
         return Some(why);

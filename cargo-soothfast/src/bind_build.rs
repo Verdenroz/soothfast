@@ -29,6 +29,7 @@ pub(crate) fn run(
         BindKind::Node => napi(glue, targets, release),
         BindKind::CAbi => cargo(glue, targets, release),
         BindKind::Go => go(glue, targets, release),
+        BindKind::Java => Err("cargo soothfast bind build for java lands in a later commit".into()),
     }
 }
 

@@ -353,3 +353,13 @@ pub fn plan_for(kind: BindKind) -> BindingPlan {
     let (surface, gaps) = walk();
     lower(&surface, gaps, &opts(), kind).expect("lowers")
 }
+
+/// `opts()`'s `package` is a distribution name with a hyphen, which every
+/// other backend accepts but Java cannot: `[[bind]] package` there is a
+/// dotted Java package name instead.
+pub fn java_opts() -> BindOptions {
+    BindOptions {
+        package: "acme.core".into(),
+        ..opts()
+    }
+}
