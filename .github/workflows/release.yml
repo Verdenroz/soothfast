@@ -135,13 +135,25 @@ jobs:
           lookup-only: true
       - name: Package each crate in dependency order
         run: |
-          for crate in soothfast-macros soothfast-registry soothfast-measure \
+          for crate in soothfast-macros soothfast-registry soothfast-bind soothfast-measure \
                        soothfast-docs soothfast-spec soothfast-sdk soothfast-report \
                        soothfast-site soothfast cargo-soothfast; do
             echo "::group::cargo package -p $crate"
             cargo package --no-verify --list -p "$crate"
             echo "::endgroup::"
           done
+
+  # Prebuilds the demo package's bindings for this release. Artifacts only,
+  # and nothing downstream needs it: a binding build must never block
+  # crates.io publishing.
+  bind:
+    name: Build demo bindings
+    needs: [checks]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/bind-release.yml
+    with:
+      package: soothfast-demo
 
   publish:
     name: Publish to crates.io
@@ -182,7 +194,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
-          for crate in soothfast-macros soothfast-registry soothfast-measure \
+          for crate in soothfast-macros soothfast-registry soothfast-bind soothfast-measure \
                        soothfast-docs soothfast-spec soothfast-sdk soothfast-report \
                        soothfast-site soothfast cargo-soothfast; do
             echo "::group::cargo publish -p $crate"
