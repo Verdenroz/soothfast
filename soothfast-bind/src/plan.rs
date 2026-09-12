@@ -558,6 +558,7 @@ fn bindable(
                 | BindKind::Java
                 | BindKind::Kotlin
                 | BindKind::R
+                | BindKind::Ruby
         )
     {
         record(
@@ -572,6 +573,7 @@ fn bindable(
                     BindKind::Java => "no Java runtime story yet".into(),
                     BindKind::Kotlin => "no Kotlin runtime story yet".into(),
                     BindKind::R => "no R runtime story yet".into(),
+                    BindKind::Ruby => "no Ruby runtime story yet".into(),
                     _ => "C has nothing to await with; expose a blocking wrapper \
                           instead"
                         .into(),

@@ -404,3 +404,9 @@ pub fn r_opts() -> BindOptions {
         ..opts()
     }
 }
+
+/// `opts()`'s own `package`/`module` split already matches what a gem
+/// needs: `acme-core` is the gem name, `acme_core` the requirable path.
+pub fn ruby_opts() -> BindOptions {
+    opts()
+}

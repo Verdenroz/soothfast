@@ -207,9 +207,9 @@ mod tests {
 
     #[test]
     fn an_unknown_lang_lists_the_ones_that_exist() {
-        let err = parse("[[bind]]\nout = \"o\"\npackage = \"p\"\nlang = \"ruby\"\n")
+        let err = parse("[[bind]]\nout = \"o\"\npackage = \"p\"\nlang = \"cobol\"\n")
             .expect_err("rejected");
-        assert!(err.contains("ruby"), "{err}");
+        assert!(err.contains("cobol"), "{err}");
         assert!(err.contains("python"), "names the alternatives: {err}");
     }
 }
