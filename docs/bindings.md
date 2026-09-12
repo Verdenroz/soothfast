@@ -93,16 +93,24 @@ package = "io.acme.stats"
 lang = "kotlin"
 out = "bindings/kotlin"
 package = "io.acme.statskt"
+
+[[bind]]
+lang = "r"
+out = "bindings/r"
+package = "acme.stats"
 ```
 
-`lang` is `python`, `wasm`, `node`, `c`, `go`, `java`, or `kotlin`, each with
-the short forms you would expect (`py`, `js`, `napi`, `cabi`, `golang`,
-`jni`, `kt`). `out` and `package` are required. For `go`, `package` is the
-Go module path rather than a distribution name; the Go package name is its
-last element. For `java` and `kotlin`, `package` is the JVM package a
-caller imports, dotted the normal way; the two need distinct packages when
-both bind the same crate, since each stages its own native library under
-its own `Natives`. `module`, `version`, `description`, `repository`,
+`lang` is `python`, `wasm`, `node`, `c`, `go`, `java`, `kotlin`, or `r`, each
+with the short forms you would expect (`py`, `js`, `napi`, `cabi`, `golang`,
+`jni`, `kt`, `extendr`). `out` and `package` are required. For `go`,
+`package` is the Go module path rather than a distribution name; the Go
+package name is its last element. For `java` and `kotlin`, `package` is the
+JVM package a caller imports, dotted the normal way; the two need distinct
+packages when both bind the same crate, since each stages its own native
+library under its own `Natives`. For `r`, `package` is the R package name:
+letters, digits and dots, starting with a letter — no hyphens, since R
+derives its native init routine from that name by replacing every other
+character with `_`. `module`, `version`, `description`, `repository`,
 `targets`, and `backend_version` all default to something sensible.
 
 ## Commands
@@ -111,7 +119,7 @@ its own `Natives`. `module`, `version`, `description`, `repository`,
 cargo soothfast bind gen -p PKG            # write the packages
 cargo soothfast bind gen -p PKG --check    # fail if they are stale
 cargo soothfast bind gate -p PKG           # fail on a consumer-breaking change
-cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar
+cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar / R CMD INSTALL
 ```
 
 `bind gen` writes a small Rust glue crate per language and the packaging
@@ -125,7 +133,16 @@ and Kotlin both ride that same plain `cargo build`, then `javac` or
 `kotlinc` and `jar`, staging each built cdylib under `natives/<os>-<arch>/`
 inside the jar so `Natives` can load whichever one matches the JVM it is
 running under. A missing `javac`/`kotlinc`/`jar` skips only that packaging
-step; the cdylib the matrix already built is still reported.
+step; the cdylib the matrix already built is still reported. R has no
+matrix at all: `bind build` runs `R CMD INSTALL` straight from the
+generated source directory into a library under the glue's own
+`target/rlib`, never the user's site library. It never builds the usual
+`R CMD build` tarball first, because `R CMD INSTALL` extracts one into an
+isolated staging directory before compiling, and `src/rust/Cargo.toml`'s
+path dependency on the bound crate reaches outside the R package's own
+tree — a tarball's staging copy has no sibling to satisfy it. Publishing a
+standalone source package needs the bound crate vendored under `src/rust`
+first, which `bind build` does not do.
 
 ## What the generated code looks like
 
@@ -153,18 +170,19 @@ only in the generated crate.
 
 ## How types cross
 
-| Rust | Python | JavaScript | C | Go | Java | Kotlin |
-| --- | --- | --- | --- | --- | --- | --- |
-| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` |
-| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` |
-| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` |
-| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only |
-| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound |
-| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound |
-| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) |
-| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound |
-| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` |
-| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` |
+| Rust | Python | JavaScript | C | Go | Java | Kotlin | R |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character |
+| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector |
+| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector |
+| `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked |
+| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` |
+| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound |
+| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound |
+| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) |
+| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound |
+| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` |
+| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string |
 
 An enum carrying data stays an opaque handle, because neither language has a
 shape for it; that is reported as a note rather than guessed at.
@@ -295,6 +313,48 @@ Summary(doubleArrayOf(3.0, 1.0, 5.0, 4.0)).use { s ->
 
 `kotlinc` and `kotlin` are host tools the same way `javac` and the JVM are:
 not a soothfast dependency, just what `bind build` shells out to.
+
+### R
+
+R is interpreted with boxed scalars and slow loops, so it is where a Rust
+binding wins by the largest ratio. It is also where the boundary is
+cheapest to cross: R's numeric and raw vectors are contiguous and its
+collector never moves an object, so extendr reads a borrowed one
+zero-copy, the same answer as Python and C.
+
+```r
+s <- Summary(c(3.0, 1.0, 5.0, 4.0))
+median <- s$get("Median")
+devs <- s$deviations_all(c(0.0, 4.0))
+```
+
+- **A handle is an external pointer with an S3 class and `$method()`
+  dispatch**, not a wrapper `bind gen` writes by hand: extendr's own
+  `#[extendr] struct` derive gives the local newtype its pointer shape and
+  its class tag. It also registers a finalizer automatically, so unlike
+  Java's `Cleaner` backstop there is no `close()` to forget — R's collector
+  frees the boxed Rust value on its own.
+- **A payload-free enum crosses as a validated string**, not a mirrored
+  ordinal: the glue matches it against the type's own variant names on the
+  way in and raises an R error naming the bad value if it does not match,
+  rather than a mismatched-ordinal panic.
+- **A 64-bit or platform-width integer crosses as a checked double.** R has
+  no 64-bit integer type at all, so `i64`, `u64`, `isize`, and `usize`
+  spell as `f64` at the boundary; a helper rejects the call if the value
+  carries a fraction or falls outside the target type's range rather than
+  truncating it.
+- **`Option<T>` is `NULL` for anything the plan can otherwise carry**, not
+  only an exported type: unlike C, Go, Java, and Kotlin, R has no
+  borrowed-or-owned ambiguity for a plain value, so `bind gen` builds the
+  `Robj` by hand instead of restricting the shape.
+- **A mutable buffer parameter is a gap.** R vectors are copy-on-write
+  values, and nothing about R's calling convention guarantees the vector a
+  caller passed in is not aliased elsewhere, so writing through one in
+  place is not something a caller can safely observe. Return the sequence
+  instead.
+
+R has no cross-compilation matrix and no distributable tarball either — see
+Commands above for what `bind build` does instead.
 
 ## C is the one without a framework
 

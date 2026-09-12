@@ -249,7 +249,7 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   associated fn builds one, which fields get accessors, what raises —
   decided once so two backends can't disagree about the same Rust type.
   `fn_sig.rs`, `adt.rs`, `naming.rs`, and `foreign.rs` mirror soothfast-spec's
-  schema-side helpers on the binding side. Seven backends render the plan:
+  schema-side helpers on the binding side. Eight backends render the plan:
   `pyo3/` (Python, `buffers.rs` for the buffer-protocol fast path,
   `asyncrt.rs` for the tokio runtime a bound `async fn` enters per poll),
   `wasm/` (wasm-bindgen; `linkme` has no wasm32 support, so nothing
@@ -266,11 +266,15 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   out of another's method, and a borrowed buffer reaches it pinned rather
   than copied, the third `BufferSupport` answer a garbage-collected target
   needs, with a Kotlin sibling in `jni/kotlin.rs` rendering the same plan
-  over the same glue). `compat.rs` diffs the bound
+  over the same glue), and `extendr/` (R; R has no 64-bit integer and no
+  generic container, so those cross through a checked double or a
+  hand-built `Robj` rather than the macro's own derive, and a mutable
+  buffer parameter is a gap — an R vector is a copy-on-write value nothing
+  can safely write through). `compat.rs` diffs the bound
   surface across refs the way `soothfast-spec`'s does; `gap.rs` reports what
   a target can't spell — a value receiver, a map for C — rather than
   guessing. Dogfooded by `soothfast-demo`, a `publish = false` workspace
-  member whose committed `bindings/{python,js,c,gostats,node,java,kotlin}`
+  member whose committed `bindings/{python,js,c,gostats,node,java,kotlin,r}`
   make `bind gen --check` meaningful.
 - **`soothfast-report`** — renderers consuming measurement output: perf tables
   (`perf_table.rs`), SVG trend charts (`trend_chart.rs`), badges
