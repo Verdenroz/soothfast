@@ -16,6 +16,7 @@ pub mod foreign;
 pub mod gap;
 pub mod model;
 mod naming;
+mod napi;
 pub mod plan;
 mod pyo3;
 mod resolve;
@@ -46,6 +47,8 @@ pub(crate) const GENERATED_GO: &str =
 pub enum BindKind {
     Python,
     Wasm,
+    /// Node.js, over a napi-rs native addon.
+    Node,
     /// A `cdylib` behind a C header: the substrate every other language's
     /// foreign function interface can already read.
     CAbi,
@@ -58,6 +61,7 @@ impl BindKind {
     pub const ALL: &'static [BindKind] = &[
         BindKind::Python,
         BindKind::Wasm,
+        BindKind::Node,
         BindKind::CAbi,
         BindKind::Go,
     ];
@@ -68,6 +72,7 @@ impl BindKind {
         match self {
             BindKind::Python => "python",
             BindKind::Wasm => "wasm",
+            BindKind::Node => "node",
             BindKind::CAbi => "c",
             BindKind::Go => "go",
         }
@@ -78,6 +83,7 @@ impl BindKind {
         match s {
             "python" | "py" => Some(BindKind::Python),
             "wasm" | "js" | "javascript" => Some(BindKind::Wasm),
+            "node" | "napi" => Some(BindKind::Node),
             "c" | "cabi" | "c-abi" => Some(BindKind::CAbi),
             "go" | "golang" => Some(BindKind::Go),
             _ => None,
@@ -87,14 +93,17 @@ impl BindKind {
     /// What this language can do with a borrowed contiguous buffer.
     ///
     /// Python reaches one through the buffer protocol, so a borrowed slice
-    /// arrives as a pointer, and a C caller hands over a pointer to begin
-    /// with. JavaScript and wasm have separate address spaces, so every
-    /// buffer is copied into linear memory whatever the signature says. cgo
-    /// may pass the backing array of a Go slice of primitives to C for the
-    /// duration of one call, since it holds no Go pointers of its own.
+    /// arrives as a pointer, a C caller hands over a pointer to begin with,
+    /// and a napi typed array is a view into V8's own memory for the
+    /// duration of the call. cgo may pass the backing array of a Go slice of
+    /// primitives to C for the duration of one call, since it holds no Go
+    /// pointers of its own. wasm has a separate address space, so every
+    /// buffer is copied into linear memory whatever the signature says.
     pub fn buffer_support(self) -> plan::BufferSupport {
         match self {
-            BindKind::Python | BindKind::CAbi | BindKind::Go => plan::BufferSupport::ZeroCopy,
+            BindKind::Python | BindKind::CAbi | BindKind::Node | BindKind::Go => {
+                plan::BufferSupport::ZeroCopy
+            }
             BindKind::Wasm => plan::BufferSupport::AlwaysCopies,
         }
     }
@@ -122,6 +131,7 @@ impl BindKind {
         let mut out = match self {
             BindKind::Python => pyo3::emit(&plan, opts)?,
             BindKind::Wasm => wasm::emit(&plan, opts)?,
+            BindKind::Node => napi::emit(&plan, opts)?,
             BindKind::CAbi => cabi::emit(&plan, opts)?,
             BindKind::Go => cgo::emit(&plan, opts)?,
         };

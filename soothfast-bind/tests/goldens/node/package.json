@@ -1,0 +1,16 @@
+{
+  "name": "acme-core",
+  "version": "0.1.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "binaryName": "acme_core"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3"
+  }
+}

@@ -514,9 +514,10 @@ fn bindable(
     if f.is_async && f.receiver == Receiver::Exclusive {
         return false;
     }
-    if f.is_async && (kind == BindKind::CAbi || kind == BindKind::Go) {
+    if f.is_async && matches!(kind, BindKind::CAbi | BindKind::Go | BindKind::Node) {
         let why = match kind {
             BindKind::Go => "no Go runtime story yet".into(),
+            BindKind::Node => "no Node runtime story yet".into(),
             _ => "C has nothing to await with; expose a blocking wrapper instead".into(),
         };
         record(
@@ -609,11 +610,19 @@ fn unsupported(kind: BindKind, ty: &Ty) -> Option<String> {
              struct with named fields"
                 .into(),
         ),
+        Ty::Map(..) if kind == BindKind::Node => Some(
+            "napi-rs carries no map type; return a list of pairs, or a \
+             struct with named fields"
+                .into(),
+        ),
         Ty::Tuple(_) if kind == BindKind::Wasm => Some(
             "wasm-bindgen carries no tuple type; return a struct with named \
              fields"
                 .into(),
         ),
+        Ty::Tuple(_) if kind == BindKind::Node => {
+            Some("napi-rs carries no tuple type; return a struct with named fields".into())
+        }
         Ty::List(inner) | Ty::Optional(inner) => unsupported(kind, inner),
         Ty::Map(key, value) => unsupported(kind, key).or_else(|| unsupported(kind, value)),
         Ty::Tuple(items) => items.iter().find_map(|t| unsupported(kind, t)),

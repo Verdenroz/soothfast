@@ -25,6 +25,7 @@ pub(crate) fn run(
     match kind {
         BindKind::Python => maturin(glue, targets, release),
         BindKind::Wasm => wasm_pack(glue, targets, release),
+        BindKind::Node => Err("cargo soothfast bind build for node lands in a later slice".into()),
         BindKind::CAbi => cargo(glue, targets, release),
         BindKind::Go => go(glue, targets, release),
     }

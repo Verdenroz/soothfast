@@ -350,6 +350,112 @@ fn a_parameter_cannot_collide_with_what_the_backend_generates_around_it() {
 }
 
 #[test]
+fn node_goldens() {
+    check_goldens(BindKind::Node, "node");
+}
+
+#[test]
+fn a_failing_call_throws_through_a_local_error_newtype() {
+    let glue = emit(BindKind::Node)["src/lib.rs"].clone();
+    assert!(glue.contains("struct BindErrorString(::std::string::String);"));
+    assert!(glue.contains("impl ::std::convert::From<BindErrorString> for ::napi::Error"));
+    assert!(glue.contains(".map_err(BindErrorString)?"));
+}
+
+#[test]
+fn a_zero_copy_note_reports_where_node_could_avoid_a_copy() {
+    let node = emit_set(BindKind::Node).notes.join("\n");
+    assert!(node.contains("normalize: returning `Vec<f64>` allocates"));
+}
+
+#[test]
+fn a_bigint_outside_range_fails_the_call_instead_of_truncating() {
+    let glue = emit(BindKind::Node)["src/lib.rs"].clone();
+    assert!(glue.contains("fn bigint_to_i64(value: ::napi::bindgen_prelude::BigInt"));
+    assert!(glue.contains("fn bigint_to_u64(value: ::napi::bindgen_prelude::BigInt"));
+    assert!(glue.contains("let start = bigint_to_i64(start, \"start\")?;"));
+    assert!(glue.contains("pub fn new(start: BigInt) -> Result<Self>"));
+    assert!(glue.contains("pub fn set_value(&mut self, value: BigInt) -> Result<()>"));
+}
+
+#[test]
+fn an_async_method_is_reported_rather_than_bound_for_node() {
+    let set = emit_set(BindKind::Node);
+    assert!(!set.files["src/lib.rs"].contains("fn refresh"));
+    assert!(
+        set.gaps
+            .iter()
+            .any(|g| g.contains("no Node runtime story yet"))
+    );
+}
+
+/// A JS-facing name is a camelCased Rust one, and both backends camelCase
+/// with the same reserved-word list, so the Rust names a plan carries are a
+/// faithful stand-in for what each backend actually exports.
+fn export_names(plan: &soothfast_bind::plan::BindingPlan) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for class in &plan.classes {
+        names.insert(format!("class:{}", class.name));
+        if let Some(ctor) = &class.ctor {
+            names.insert(format!("{}::{}", class.name, ctor.name));
+        }
+        for accessor in &class.accessors {
+            names.insert(format!("{}.{}", class.name, accessor.field));
+        }
+        for method in &class.methods {
+            names.insert(format!("{}::{}", class.name, method.name));
+        }
+        for s in &class.statics {
+            names.insert(format!("{}::{}", class.name, s.name));
+        }
+        for variant in class.variants.iter().flatten() {
+            names.insert(format!("{}::{}", class.name, variant.name));
+        }
+    }
+    for f in &plan.functions {
+        names.insert(format!("fn:{}", f.name));
+    }
+    names
+}
+
+/// The subset of `export_names` that is `async`: wasm binds one as a
+/// `Promise`, Node gaps it entirely for lack of a runtime story.
+fn async_export_names(
+    plan: &soothfast_bind::plan::BindingPlan,
+) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for class in &plan.classes {
+        for method in class
+            .methods
+            .iter()
+            .chain(class.statics.iter())
+            .filter(|f| f.is_async)
+        {
+            names.insert(format!("{}::{}", class.name, method.name));
+        }
+    }
+    for f in plan.functions.iter().filter(|f| f.is_async) {
+        names.insert(format!("fn:{}", f.name));
+    }
+    names
+}
+
+#[test]
+fn node_exports_the_same_names_wasm_does_except_async() {
+    let wasm_plan = fixture::plan_for(BindKind::Wasm);
+    let node_plan = fixture::plan_for(BindKind::Node);
+    let wasm = export_names(&wasm_plan);
+    let node = export_names(&node_plan);
+    assert!(
+        node.is_subset(&wasm),
+        "node exports a name wasm does not: {:?}",
+        node.difference(&wasm).collect::<Vec<_>>()
+    );
+    let missing: std::collections::BTreeSet<String> = wasm.difference(&node).cloned().collect();
+    assert_eq!(missing, async_export_names(&wasm_plan));
+}
+
+#[test]
 fn what_c_cannot_spell_is_reported_rather_than_guessed() {
     let set = emit_set(BindKind::CAbi);
     let gaps = set.gaps.join("\n");
