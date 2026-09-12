@@ -155,11 +155,12 @@ mod tests {
         let cfg = parse(
             "[[bind]]\nlang = \"python\"\nout = \"py\"\npackage = \"acme-core\"\n\
              [[bind]]\nlang = \"wasm\"\nout = \"js\"\npackage = \"acme-core\"\n\
+             [[bind]]\nlang = \"node\"\nout = \"node\"\npackage = \"acme-core\"\n\
              [[bind]]\nlang = \"go\"\nout = \"go\"\npackage = \"github.com/acme/core\"\n",
         )
         .expect("parses");
         let langs: Vec<&str> = cfg.entries.iter().map(|e| e.lang.name()).collect();
-        assert_eq!(langs, vec!["python", "wasm", "go"]);
+        assert_eq!(langs, vec!["python", "wasm", "node", "go"]);
     }
 
     #[test]
