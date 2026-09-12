@@ -6,10 +6,10 @@
 //! interface can read and as the check that the wrapper model really is
 //! language-neutral.
 
-mod glue;
+pub(crate) mod glue;
 mod header;
 mod package;
-mod types;
+pub(crate) mod types;
 
 use crate::naming;
 use crate::plan::BindingPlan;

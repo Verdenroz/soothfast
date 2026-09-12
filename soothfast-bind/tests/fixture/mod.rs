@@ -335,6 +335,20 @@ pub fn opts() -> BindOptions {
     }
 }
 
+/// `opts()`, but with `package` as a Go module path rather than a Cargo
+/// distribution name, the way a `[[bind]] lang = "go"` entry configures it.
+/// `module` is left as `[[bind]]` would default it: hyphens replaced, dots
+/// and slashes untouched, since that default is what the CLI actually hands
+/// the backend when a config leaves `module` unset.
+pub fn go_opts() -> BindOptions {
+    let package = "github.com/acme/core";
+    BindOptions {
+        package: package.into(),
+        module: package.replace('-', "_"),
+        ..opts()
+    }
+}
+
 pub fn plan_for(kind: BindKind) -> BindingPlan {
     let (surface, gaps) = walk();
     lower(&surface, gaps, &opts(), kind).expect("lowers")

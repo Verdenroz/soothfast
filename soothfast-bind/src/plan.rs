@@ -514,16 +514,18 @@ fn bindable(
     if f.is_async && f.receiver == Receiver::Exclusive {
         return false;
     }
-    if f.is_async && kind == BindKind::CAbi {
+    if f.is_async && (kind == BindKind::CAbi || kind == BindKind::Go) {
+        let why = match kind {
+            BindKind::Go => "no Go runtime story yet".into(),
+            _ => "C has nothing to await with; expose a blocking wrapper instead".into(),
+        };
         record(
             gaps,
             Gap::UnsupportedByBackend {
                 at: f.id.clone(),
                 ty: "async fn".into(),
                 lang: kind.name(),
-                why: "C has nothing to await with; expose a blocking wrapper \
-                      instead"
-                    .into(),
+                why,
             },
         );
         return false;
@@ -545,8 +547,9 @@ fn bindable(
     }
     // An optional exported type crosses back as a pointer that may be null,
     // but nothing in the model says whether a parameter wants it borrowed or
-    // owned, and the two need different C.
-    if kind == BindKind::CAbi {
+    // owned, and the two need different C. Go calls the same C functions, so
+    // it inherits the restriction.
+    if kind == BindKind::CAbi || kind == BindKind::Go {
         for param in &f.params {
             if matches!(&param.ty, Ty::Optional(inner) if matches!(**inner, Ty::Class(_))) {
                 record(
@@ -595,7 +598,7 @@ fn record(gaps: &mut Vec<Gap>, gap: Gap) {
 
 /// Why a language cannot carry this type, if it cannot.
 fn unsupported(kind: BindKind, ty: &Ty) -> Option<String> {
-    if kind == BindKind::CAbi
+    if (kind == BindKind::CAbi || kind == BindKind::Go)
         && let Some(why) = unsupported_by_c(ty)
     {
         return Some(why);
