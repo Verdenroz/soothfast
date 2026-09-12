@@ -2,7 +2,8 @@
 # Work out what this run will do and fetch what it needs: the default-branch
 # check, the package list, full history for merge-base and tag lookups, the
 # callgrind fallback, and the rustdoc toolchain when anything regenerates.
-# Inputs: GATE REGEN (true|false) PACKAGES RUSTDOC_TOOLCHAIN GH_TOKEN.
+# Inputs: GATE REGEN (true|false) PACKAGES RUSTDOC_TOOLCHAIN GH_TOKEN, BIND
+# (optional).
 # Outputs: on_default_branch, packages.
 set -euo pipefail
 
@@ -41,7 +42,8 @@ if [ "$(uname -s)" = Linux ] && ! command -v valgrind >/dev/null && command -v a
   sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
 fi
 
-if [ "$regenerating" = true ]; then
+# bind gate reads rustdoc JSON on pull requests too, not just on regen.
+if [ "$regenerating" = true ] || { [ "$gating" = true ] && [ -n "${BIND:-}" ]; }; then
   rustup toolchain install "$RUSTDOC_TOOLCHAIN" --profile minimal
   echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$RUSTDOC_TOOLCHAIN" >>"$GITHUB_ENV"
 fi

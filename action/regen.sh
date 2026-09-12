@@ -3,8 +3,8 @@
 # package, then CHANGELOG.md against the latest tag, any generate-mode specs,
 # and whatever REGEN_RUN produces under REGEN_PATHS.
 # Inputs: CLI PACKAGES BASELINE CHANGELOG (true|false) SPEC (package list),
-# FEATURES, CHANGELOG_FEATURES, CHANGELOG_PACKAGES, REGEN_RUN, REGEN_PATHS
-# (all optional).
+# FEATURES, CHANGELOG_FEATURES, CHANGELOG_PACKAGES, REGEN_RUN, REGEN_PATHS,
+# BIND (package list) (all optional).
 # Outputs: paths (pathspecs for land.sh), changed (true when any of them
 # differs from HEAD, so a no-op run never mints a token).
 set -euo pipefail
@@ -35,6 +35,23 @@ if [ -n "$SPEC" ]; then
     "$CLI" spec gen -p "$pkg" "${features[@]}"
   done
   paths+=('*.yaml' '*.yml' '*.json')
+fi
+
+if [ -n "${BIND:-}" ]; then
+  read -ra binds <<<"$BIND"
+  for pkg in "${binds[@]}"; do
+    pkg_dir=$(cargo metadata --format-version 1 --no-deps |
+      jq -r --arg p "$pkg" '.packages[] | select(.name == $p) | .manifest_path' |
+      xargs dirname)
+    outs=$("$CLI" bind gen -p "$pkg" "${features[@]}" | sed -n 's/^bind gen: \([^ ]*\) \[[^]]*\] .*/\1/p')
+    if [ -z "$outs" ]; then
+      echo "::error::bind gen reported no output directory for $pkg"
+      exit 1
+    fi
+    while IFS= read -r out; do
+      paths+=("${pkg_dir#"$PWD"/}/$out")
+    done <<<"$outs"
+  done
 fi
 
 if [ -n "${REGEN_RUN:-}" ]; then

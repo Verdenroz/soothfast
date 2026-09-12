@@ -118,6 +118,7 @@ installed on is refused.
 | `gate` | `true` | Run the gate on pull requests. |
 | `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes. |
 | `spec` | none | Space-separated packages whose `mode = "generate"` specs to regenerate. |
+| `bind` | none | Space-separated packages whose `[[bind]]` entries to regenerate and gate. |
 | `features` | none | Cargo features for the gate, the baseline measurement, and spec generation. A bench target with `required-features` needs them here. |
 | `changelog-packages` | `packages` | Packages whose API surface `report changelog` diffs. Set it when a crate without a bench target still ships an API. |
 | `changelog-features` | `features` | Features for `report changelog`, which decide what the API surface diff contains. Set it wider than `features` when gating under the full feature set is too heavy. |

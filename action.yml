@@ -44,6 +44,12 @@ inputs:
       pushes to the default branch.
     required: false
     default: ""
+  bind:
+    description: >-
+      Space-separated packages whose `[[bind]]` entries are regenerated on
+      pushes to the default branch and gated on pull requests.
+    required: false
+    default: ""
   baseline:
     description: Baseline name the regeneration measures into.
     required: false
@@ -177,10 +183,11 @@ runs:
       shell: bash
       env:
         GATE: ${{ inputs.gate }}
-        REGEN: ${{ inputs.changelog == 'true' || inputs.spec != '' || inputs.regen-run != '' }}
+        REGEN: ${{ inputs.changelog == 'true' || inputs.spec != '' || inputs.bind != '' || inputs.regen-run != '' }}
         PACKAGES: ${{ inputs.packages }}
         RUSTDOC_TOOLCHAIN: ${{ inputs.rustdoc-toolchain }}
         GH_TOKEN: ${{ inputs.token }}
+        BIND: ${{ inputs.bind }}
       run: "$GITHUB_ACTION_PATH/action/prepare.sh"
 
     - name: Gate against the base branch
@@ -195,6 +202,7 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         BROKER: ${{ inputs.broker }}
         FEATURES: ${{ inputs.features }}
+        BIND: ${{ inputs.bind }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
     - name: Upload triage artifacts
       if: steps.gate.outputs.failed == 'true'
@@ -223,6 +231,7 @@ runs:
         FEATURES: ${{ inputs.features }}
         CHANGELOG_FEATURES: ${{ inputs.changelog-features }}
         CHANGELOG_PACKAGES: ${{ inputs.changelog-packages }}
+        BIND: ${{ inputs.bind }}
         REGEN_RUN: ${{ inputs.regen-run }}
         REGEN_PATHS: ${{ inputs.regen-paths }}
       run: "$GITHUB_ACTION_PATH/action/regen.sh"

@@ -5,12 +5,13 @@
 # upload still happen first. Output is untrusted (the PR's own binaries wrote
 # it) and the comment is authored by a write-access identity, so nothing in
 # it may escape the code fence.
-# Inputs: CLI PACKAGES BASE_REF GH_TOKEN PR_NUMBER, BROKER and FEATURES
+# Inputs: CLI PACKAGES BASE_REF GH_TOKEN PR_NUMBER, BROKER, FEATURES and BIND
 # (optional).
 # Output: failed (true|false).
 set -euo pipefail
 
 read -ra pkgs <<<"$PACKAGES"
+read -ra binds <<<"${BIND:-}"
 features=()
 [ -n "${FEATURES:-}" ] && features=(--features "$FEATURES")
 failed=false
@@ -22,6 +23,15 @@ mkdir -p "$out_dir"
     out="${out_dir}/${pkg}.txt"
     "$CLI" gate -p "$pkg" --against-ref "origin/${BASE_REF}" "${features[@]}" 2>&1 | tee "$out" >&2 || failed=true
     echo "### ${pkg}"
+    echo '```'
+    # shellcheck disable=SC2016 # literal backticks, nothing to expand
+    tail -n 40 "$out" | sed 's/```/` ` `/g'
+    echo '```'
+  done
+  for pkg in "${binds[@]}"; do
+    out="${out_dir}/bind-${pkg}.txt"
+    "$CLI" bind gate -p "$pkg" --base "origin/${BASE_REF}" 2>&1 | tee "$out" >&2 || failed=true
+    echo "### bind: ${pkg}"
     echo '```'
     # shellcheck disable=SC2016 # literal backticks, nothing to expand
     tail -n 40 "$out" | sed 's/```/` ` `/g'
