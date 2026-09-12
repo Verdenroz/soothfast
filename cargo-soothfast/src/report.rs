@@ -224,18 +224,34 @@ fn measure_ref(a: &ReportArgs, refname: &str) -> Result<Option<Value>, String> {
 }
 
 fn changelog_cmd(args: &[String]) -> i32 {
-    let a = match parse(args) {
+    let mut a = match parse(args) {
         Ok(a) => a,
         Err(e) => return err(&e),
     };
-    if a.pkg.is_empty() {
-        return err("report changelog needs -p PKG");
-    }
 
     let root = match invoke::workspace_root() {
         Ok(r) => r,
         Err(e) => return err(&e.to_string()),
     };
+    let cfg = match crate::changelog_config::load(&root) {
+        Ok(c) => c,
+        Err(e) => return err(&e),
+    };
+    if a.pkg.is_empty() {
+        a.pkg = cfg.packages;
+    }
+    if a.pkg.is_empty() {
+        return err("report changelog needs -p PKG");
+    }
+    let gate_cfg = match crate::gate_config::load(&root) {
+        Ok(g) => g,
+        Err(e) => return err(&e),
+    };
+    a.features = resolve_features(
+        a.features.take(),
+        cfg.features.as_deref(),
+        gate_cfg.features.as_deref(),
+    );
     let path = a.out.clone().unwrap_or_else(|| root.join("CHANGELOG.md"));
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
 
@@ -292,13 +308,9 @@ fn changelog_cmd(args: &[String]) -> i32 {
         },
         None => Vec::new(),
     };
-    let icons = match crate::changelog_config::load(&root) {
-        Ok(i) => i,
-        Err(e) => return err(&e),
-    };
     let text = changelog::draft(&changelog::DraftInputs {
         changes: &changes,
-        icons: &icons,
+        icons: &cfg.icons,
         api: match &a.against_ref {
             Some(refname) => changelog::ApiSection::Diff {
                 against: refname,
@@ -319,6 +331,16 @@ fn changelog_cmd(args: &[String]) -> i32 {
     }
     println!("report: regenerated {}", path.display());
     0
+}
+
+/// The features `report changelog` reads the API surface under: the command
+/// line first, then `[changelog] features`, then `[gate] features`.
+fn resolve_features(
+    cli: Option<String>,
+    changelog: Option<&str>,
+    gate: Option<&str>,
+) -> Option<String> {
+    cli.or_else(|| changelog.or(gate).map(str::to_string))
 }
 
 /// Conventional-commit subjects merged since `refname`, newest first. Read
@@ -487,7 +509,7 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{changelog_already_cut, merge_changelog};
+    use super::{changelog_already_cut, merge_changelog, resolve_features};
 
     #[test]
     fn a_release_pr_still_diffing_against_the_previous_tag_is_already_cut() {
@@ -641,5 +663,25 @@ mod tests {
         let merged = merge_changelog(existing, "## Unreleased (draft vs def)\n\nnew");
         assert!(!merged.contains("never closed"));
         assert!(merged.contains("new"));
+    }
+    #[test]
+    fn an_explicit_features_flag_beats_both_tables() {
+        let got = resolve_features(Some("cli".into()), Some("changelog"), Some("gate"));
+        assert_eq!(got.as_deref(), Some("cli"));
+    }
+
+    #[test]
+    fn changelog_features_beat_gate_features() {
+        let got = resolve_features(None, Some("changelog"), Some("gate"));
+        assert_eq!(got.as_deref(), Some("changelog"));
+    }
+
+    #[test]
+    fn gate_features_fill_in_when_nothing_else_does() {
+        assert_eq!(
+            resolve_features(None, None, Some("gate")).as_deref(),
+            Some("gate")
+        );
+        assert_eq!(resolve_features(None, None, None), None);
     }
 }

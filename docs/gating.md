@@ -197,6 +197,22 @@ A run that is otherwise clean still reports the mismatch. Both sides being
 measured with different instruments is not evidence in either direction,
 and a quiet pass would be as wrong as a red verdict.
 
+## Features
+
+A bench target declaring `required-features`, or a crate whose hot paths sit
+behind a feature, needs `--features` on every run. `soothfast.toml` carries it
+once, for `gate`, `measure` and `spec gen` alike:
+
+```toml
+[gate]
+features = "bench-gate"
+```
+
+An explicit `--features` on the command line wins; the file only fills in what
+the command line left unset. The action's `features` input sets the same thing
+for CI, so a repository that configures the file gets one behaviour from a
+hand-run `cargo soothfast gate` and from the action.
+
 ## Ratchets
 
 <!-- soothfast:bind soothfast_measure::sweep::evaluate -->

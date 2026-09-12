@@ -13,6 +13,8 @@ use crate::invoke::{self, CommonArgs};
 #[derive(Default, Debug, PartialEq)]
 pub struct GateConfig {
     pub codegen_units: Option<String>,
+    /// Cargo features every `gate`, `measure` and `spec gen` build carries.
+    pub features: Option<String>,
 }
 
 /// Read `soothfast.toml` from a directory. An absent file just means
@@ -28,13 +30,19 @@ pub fn load(dir: &Path) -> Result<GateConfig, String> {
 
 /// Fill in what the CLI did not set from the repo's `soothfast.toml`.
 pub fn apply(common: &mut CommonArgs) -> Result<(), String> {
-    if common.codegen_units.is_some() {
+    if common.codegen_units.is_some() && common.features.is_some() {
         return Ok(());
     }
     let Ok(root) = invoke::workspace_root() else {
         return Ok(());
     };
-    common.codegen_units = load(&root)?.codegen_units;
+    let cfg = load(&root)?;
+    if common.codegen_units.is_none() {
+        common.codegen_units = cfg.codegen_units;
+    }
+    if common.features.is_none() {
+        common.features = cfg.features;
+    }
     Ok(())
 }
 
@@ -66,6 +74,7 @@ fn set(cfg: &mut GateConfig, key: &str, value: TomlValue) -> Result<(), String> 
     match (key, value) {
         ("codegen-units", TomlValue::Int(n)) => cfg.codegen_units = Some(n.to_string()),
         ("codegen-units", TomlValue::Str(s)) => cfg.codegen_units = Some(s),
+        ("features", TomlValue::Str(s)) => cfg.features = Some(s),
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [gate]")),
     }
     Ok(())
@@ -85,6 +94,17 @@ mod tests {
     fn reads_inherit() {
         let cfg = parse("[gate]\ncodegen-units = \"inherit\"\n").unwrap();
         assert_eq!(cfg.codegen_units.as_deref(), Some("inherit"));
+    }
+
+    #[test]
+    fn reads_features() {
+        let cfg = parse("[gate]\nfeatures = \"bench-gate\"\n").unwrap();
+        assert_eq!(cfg.features.as_deref(), Some("bench-gate"));
+    }
+
+    #[test]
+    fn a_non_string_features_is_an_error() {
+        assert!(parse("[gate]\nfeatures = 3\n").is_err());
     }
 
     #[test]
