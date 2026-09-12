@@ -16,7 +16,9 @@ use crate::plan::BindingPlan;
 use crate::{BindFileSet, BindOptions};
 
 /// The jni crate release the generated glue builds against, unless the
-/// `[[bind]]` entry pins another.
+/// `[[bind]]` entry pins another. 0.22 split `JNIEnv` into owned/unowned
+/// variants and moved every method this glue calls (array access, strings,
+/// `throw_new`) off the type we hold, so it is not a drop-in bump.
 pub(crate) const DEFAULT_VERSION: &str = "0.21";
 
 const KEYWORDS: &[&str] = &[

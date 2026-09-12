@@ -83,14 +83,20 @@ package = "github.com/acme/soothfast-stats"
 lang = "node"
 out = "bindings/node"
 package = "soothfast-stats-native"
+
+[[bind]]
+lang = "java"
+out = "bindings/java"
+package = "io.acme.stats"
 ```
 
-`lang` is `python`, `wasm`, `node`, `c`, or `go`, each with the short forms
-you would expect (`py`, `js`, `napi`, `cabi`, `golang`). `out` and `package`
-are required. For `go`, `package` is the Go module path rather than a
-distribution name; the Go package name is its last element. `module`,
-`version`, `description`, `repository`, `targets`, and `backend_version` all
-default to something sensible.
+`lang` is `python`, `wasm`, `node`, `c`, `go`, or `java`, each with the short
+forms you would expect (`py`, `js`, `napi`, `cabi`, `golang`, `jni`). `out`
+and `package` are required. For `go`, `package` is the Go module path rather
+than a distribution name; the Go package name is its last element. For
+`java`, `package` is the Java package a caller imports, dotted the normal
+way. `module`, `version`, `description`, `repository`, `targets`, and
+`backend_version` all default to something sensible.
 
 ## Commands
 
@@ -98,7 +104,7 @@ default to something sensible.
 cargo soothfast bind gen -p PKG            # write the packages
 cargo soothfast bind gen -p PKG --check    # fail if they are stale
 cargo soothfast bind gate -p PKG           # fail on a consumer-breaking change
-cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go vet+build
+cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar
 ```
 
 `bind gen` writes a small Rust glue crate per language and the packaging
@@ -107,7 +113,12 @@ around it. `bind build` hands that crate to the ecosystem's own tool:
 `npm install` if `node_modules/` is missing) for Node. None of these tools
 are a dependency of soothfast; they are host tools, like `cargo bench`. Go
 has no such tool: `bind build` runs the C backend's own `cargo build` for the
-cdylib, then verifies the wrapper against it with `go vet`/`go build`.
+cdylib, then verifies the wrapper against it with `go vet`/`go build`. Java
+also rides plain `cargo build`, then `javac` and `jar`, staging each built
+cdylib under `natives/<os>-<arch>/` inside the jar so `Natives` can load
+whichever one matches the JVM it is running under. A missing `javac`/`jar`
+skips only that packaging step; the cdylib the matrix already built is still
+reported.
 
 ## What the generated code looks like
 
@@ -135,18 +146,18 @@ only in the generated crate.
 
 ## How types cross
 
-| Rust | Python | JavaScript | C | Go |
-| --- | --- | --- | --- | --- |
-| `String`, `&str` | `str` | `string` | `char *` | `string` |
-| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` |
-| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` |
-| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only |
-| `HashMap<K, V>` | `dict` | not bound | not bound | not bound |
-| `(A, B)` | `tuple` | not bound | not bound | not bound |
-| `Result<T, E>` | raises | throws | `char **error` out-param | `error` |
-| `async fn` | awaitable | `Promise` | not bound | not bound |
-| exported struct | handle class | handle class | opaque pointer | struct with `Close()` |
-| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants |
+| Rust | Python | JavaScript | C | Go | Java |
+| --- | --- | --- | --- | --- | --- |
+| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` |
+| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` |
+| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` |
+| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only |
+| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound |
+| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound |
+| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) |
+| `async fn` | awaitable | `Promise` | not bound | not bound | not bound |
+| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` |
+| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` |
 
 An enum carrying data stays an opaque handle, because neither language has a
 shape for it; that is reported as a note rather than guessed at.
@@ -201,6 +212,48 @@ is a gap for Node the same way it is for Go: no runtime to hand a future to.
 Unlike a wasm-bindgen `.wasm`, which runs unmodified on any platform, a napi
 addon is a native binary: one build per target, which is what `bind build
 --target` is for.
+
+### Java
+
+Java is the first target with a garbage collector rather than a lock or an
+owner: a borrowed buffer reaches it pinned through
+`GetPrimitiveArrayCritical` instead of copied or taken as a raw pointer, the
+third answer `BufferSupport` has. Pinning blocks collection for the call, so
+`bind gen` never calls it offloadable — the buffer notes Python and Node get
+for a signature change do not apply here.
+
+There is also no wrapper type. Every other backend defines a local newtype
+around your struct (`#[pyclass] pub struct Summary(::acme::Summary)`); JNI
+has no such macro, and needs none: a handle boxes your type directly and
+crosses as a bare `long`, since Java's own type checker — not an FFI newtype
+— is what keeps one class's pointer out of another class's method:
+
+```java
+try (Summary s = new Summary(new double[] {3.0, 1.0, 5.0, 4.0})) {
+    double median = s.get(Metric.Median);
+    double[] devs = s.deviationsAll(new double[] {0.0, 4.0});
+}
+```
+
+- **A handle registers with a shared `Cleaner`** on close or collection,
+  whichever comes first; `close()` is idempotent and safe to call twice.
+- **A public constructor is real**, not a disguised factory: `bind gen`
+  generates one that delegates to the package-private pointer-wrapping
+  constructor through a `Raw` marker class, so the two can never collide on
+  the same `(long)` signature.
+- **A failing call throws** the package's own unchecked exception rather
+  than aborting the JVM. The generated crate builds with `panic = "abort"`,
+  the same as C's cdylib, so every fallible JNI call catches its `Result`
+  and throws instead of ever reaching a bare `.expect()`.
+- **The native library loads itself.** Every class touching JNI carries a
+  `static { Natives.load(); }`, and `Natives` looks for the library as a
+  jar resource under `natives/<os>-<arch>/` first — extracting it to a temp
+  file and `System.load`-ing it — before falling back to
+  `System.loadLibrary`, so a package built by `bind build` works with
+  nothing on `java.library.path`.
+
+`async fn` is a gap for Java the same way it is for Go and Node: no runtime
+to hand a future to.
 
 ## C is the one without a framework
 
@@ -494,9 +547,10 @@ Two things a backend declares about itself rather than reading off the plan:
 - `plan::unsupported` says what the target cannot spell. Every answer becomes
   a reported `Gap` and the item is left out, never bound to a guess.
 
-A backend with a lock or a garbage collector will need one more: JNI reaches
-a buffer either pinned, which blocks collection, or copied, which is a third
-answer `BufferSupport` does not yet have.
+A backend with a lock or a garbage collector may need one more:
+`BufferSupport::Pinned` is JNI's own answer, a buffer that stays zero-copy
+but can never be offloaded, since pinning it blocks collection for the
+call. `plan::offloadable` checks for it before anything else.
 
 A language with no Rust bridge crate of its own follows `cgo/` instead:
 render the plan as a wrapper over the C backend's own header and library,

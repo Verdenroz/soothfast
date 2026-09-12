@@ -249,7 +249,7 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   associated fn builds one, which fields get accessors, what raises —
   decided once so two backends can't disagree about the same Rust type.
   `fn_sig.rs`, `adt.rs`, `naming.rs`, and `foreign.rs` mirror soothfast-spec's
-  schema-side helpers on the binding side. Five backends render the plan:
+  schema-side helpers on the binding side. Six backends render the plan:
   `pyo3/` (Python, `buffers.rs` for the buffer-protocol fast path,
   `asyncrt.rs` for the tokio runtime a bound `async fn` enters per poll),
   `wasm/` (wasm-bindgen; `linkme` has no wasm32 support, so nothing
@@ -258,14 +258,19 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   reads both), `cabi/` (a `.h`/glue/package trio behind plain
   `cargo build`, the one backend with no macro to do the marshaling for it,
   so it's also the one that spells every type twice — `types.rs` keeps the
-  header and the glue from drifting apart), and `cgo/` (a Go package
+  header and the glue from drifting apart), `cgo/` (a Go package
   generated over `cabi`'s own header and library, adding only `go.mod` and
-  one wrapper file). `compat.rs` diffs the bound
+  one wrapper file), and `jni/` (Java, over the `jni` crate; no wrapper
+  type, since a handle boxes the crate's own type directly and crosses as
+  a bare `long` with Java's own type checker keeping one class's pointer
+  out of another's method, and a borrowed buffer reaches it pinned rather
+  than copied, the third `BufferSupport` answer a garbage-collected target
+  needs). `compat.rs` diffs the bound
   surface across refs the way `soothfast-spec`'s does; `gap.rs` reports what
   a target can't spell — a value receiver, a map for C — rather than
   guessing. Dogfooded by `soothfast-demo`, a `publish = false` workspace
-  member whose committed `bindings/{python,js,c}` make `bind gen --check`
-  meaningful.
+  member whose committed `bindings/{python,js,c,gostats,node,java}` make
+  `bind gen --check` meaningful.
 - **`soothfast-report`** — renderers consuming measurement output: perf tables
   (`perf_table.rs`), SVG trend charts (`trend_chart.rs`), badges
   (`badges.rs`), living `CHANGELOG.md` draft generation (`changelog.rs`,
