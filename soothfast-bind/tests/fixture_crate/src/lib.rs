@@ -68,3 +68,7 @@ pub fn trim(input: &[f64]) -> Option<Vec<f64>> {
         false => Some(input.to_vec()),
     }
 }
+
+pub fn greet(name: &str) -> String {
+    format!("hello, {name}")
+}

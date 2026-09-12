@@ -11,7 +11,7 @@ npm install acme-core
 ## Use
 
 ```js
-const { Counter, Level, Mode, digest, normalize, stamp, trim } = require("acme-core");
+const { Counter, Level, Mode, digest, greet, normalize, stamp, trim } = require("acme-core");
 ```
 
 ## Classes
@@ -31,6 +31,7 @@ const { Counter, Level, Mode, digest, normalize, stamp, trim } = require("acme-c
 ## Functions
 
 - `digest`
+- `greet`
 - `normalize`
 - `stamp`
 - `trim`

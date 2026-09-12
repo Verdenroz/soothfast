@@ -169,6 +169,31 @@ pub extern "system" fn Java_acme_core_Core_nativeDigest<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeGreet<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    name: ::jni::objects::JString<'local>
+) -> ::jni::sys::jstring {
+    let name: String = match env.get_string(&name) {
+        Ok(v) => v.into(),
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+    };
+    let __out = ::acme::greet(&name);
+    match env.new_string(__out) {
+        Ok(v) => v.into_raw(),
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeNormalize<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

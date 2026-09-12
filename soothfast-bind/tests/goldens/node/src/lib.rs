@@ -103,6 +103,11 @@ pub fn digest(data: Buffer) -> Buffer {
 }
 
 #[napi]
+pub fn greet(name: String) -> String {
+    ::acme::greet(&name)
+}
+
+#[napi]
 pub fn normalize(input: Float64Array, factor: f64) -> Float64Array {
     Float64Array::from(::acme::normalize(input.to_vec(), factor))
 }

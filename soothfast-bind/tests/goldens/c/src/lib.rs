@@ -214,6 +214,11 @@ pub unsafe extern "C" fn acme_core_digest(data: *const u8, data_len: usize) -> A
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_greet(name: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_char {
+    ffi::into_text(::acme::greet(unsafe { ffi::text(name) }))
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_normalize(input: *const f64, input_len: usize, factor: f64) -> AcmeCoreF64Array {
     AcmeCoreF64Array::new(::acme::normalize(unsafe { ffi::slice(input, input_len) }.to_vec(), factor))
 }

@@ -143,6 +143,12 @@ func Digest(data []byte) []byte {
 	return byteSlice(C.core_digest((*C.uint8_t)(unsafe.Pointer(bufPtr(data))), C.size_t(len(data))))
 }
 
+func Greet(name string) string {
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+	return goString(C.core_greet(cName))
+}
+
 func Normalize(input []float64, factor float64) []float64 {
 	return float64Slice(C.core_normalize((*C.double)(unsafe.Pointer(bufPtr(input))), C.size_t(len(input)), C.double(factor)))
 }

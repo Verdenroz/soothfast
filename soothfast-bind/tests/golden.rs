@@ -379,6 +379,17 @@ fn a_bigint_outside_range_fails_the_call_instead_of_truncating() {
 }
 
 #[test]
+fn a_borrowed_string_crosses_by_reference_for_node() {
+    let glue = emit(BindKind::Node)["src/lib.rs"].clone();
+    assert!(glue.contains("pub fn greet(name: String) -> String"));
+    assert!(
+        glue.contains("::acme::greet(&name)"),
+        "napi has no FromNapiValue for &str, but the callee still needs a \
+         reference to what napi hands it as an owned String"
+    );
+}
+
+#[test]
 fn an_async_method_is_reported_rather_than_bound_for_node() {
     let set = emit_set(BindKind::Node);
     assert!(!set.files["src/lib.rs"].contains("fn refresh"));

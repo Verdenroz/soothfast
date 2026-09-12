@@ -468,7 +468,16 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
             None,
             format!("&{name}.0"),
         ),
-        Transfer::Text { .. } => ("String".into(), None, name.clone()),
+        // napi has no `FromNapiValue for &str`: the parameter binds a
+        // `String`, and a borrowed callee gets `&name`.
+        Transfer::Text { borrowed } => (
+            "String".into(),
+            None,
+            match borrowed {
+                true => format!("&{name}"),
+                false => name.clone(),
+            },
+        ),
         Transfer::Buffer {
             ref element,
             borrowed,

@@ -84,6 +84,11 @@ pub fn digest(data: &[u8]) -> Vec<u8> {
 }
 
 #[wasm_bindgen]
+pub fn greet(name: &str) -> String {
+    ::acme::greet(name)
+}
+
+#[wasm_bindgen]
 pub fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
     ::acme::normalize(input, factor)
 }

@@ -51,6 +51,7 @@ int64_t acme_core_counter_bump_all(const acme_core_counter *handle, const int64_
 void acme_core_mode_free(acme_core_mode *handle);
 
 acme_core_u8_array acme_core_digest(const uint8_t *data, size_t data_len);
+char * acme_core_greet(const char *name);
 acme_core_f64_array acme_core_normalize(const double *input, size_t input_len, double factor);
 uint64_t acme_core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register__len);
 

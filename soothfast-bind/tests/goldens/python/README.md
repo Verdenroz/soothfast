@@ -32,6 +32,7 @@ import acme_core
 ## Functions
 
 - `digest`
+- `greet`
 - `index_all`
 - `normalize`
 - `stamp`

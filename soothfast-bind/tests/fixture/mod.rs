@@ -170,6 +170,15 @@ pub fn doc() -> Value {
             false,
         ),
     );
+    insert(
+        12,
+        func(
+            "greet",
+            &[("name", borrowed(prim("str"), false))],
+            path("String", 92, &[]),
+            false,
+        ),
+    );
 
     insert(2, struct_item("Counter", &[20, 21], &[30, 37, 38]));
     insert(37, auto_impl("Send", false));
@@ -275,6 +284,7 @@ pub fn doc() -> Value {
             "8": { "crate_id": 0, "path": ["acme", "merge"], "kind": "function" },
             "9": { "crate_id": 0, "path": ["acme", "trim"], "kind": "function" },
             "11": { "crate_id": 0, "path": ["acme", "stamp"], "kind": "function" },
+            "12": { "crate_id": 0, "path": ["acme", "greet"], "kind": "function" },
             "2": { "crate_id": 0, "path": ["acme", "Counter"], "kind": "struct" },
             "3": { "crate_id": 0, "path": ["acme", "Mode"], "kind": "enum" },
             "4": { "crate_id": 0, "path": ["acme", "Level"], "kind": "enum" },
@@ -308,6 +318,7 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::merge", "fn"),
         record("acme::trim", "fn"),
         record("acme::stamp", "fn"),
+        record("acme::greet", "fn"),
         record("acme::Counter", "struct"),
         record("acme::Mode", "enum"),
         record("acme::Level", "enum"),

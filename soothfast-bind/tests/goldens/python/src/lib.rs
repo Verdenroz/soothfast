@@ -329,6 +329,11 @@ fn digest(py: Python<'_>, data: BorrowedU8) -> Vec<u8> {
 }
 
 #[pyfunction]
+fn greet(name: &str) -> String {
+    ::acme::greet(name)
+}
+
+#[pyfunction]
 fn index_all() -> ::std::collections::HashMap<String, u32> {
     ::acme::index_all()
 }
@@ -357,6 +362,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Level>()?;
     m.add_class::<Mode>()?;
     m.add_function(wrap_pyfunction!(digest, m)?)?;
+    m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(stamp, m)?)?;

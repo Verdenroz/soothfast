@@ -13,6 +13,10 @@ public final class Core {
         return nativeDigest(data);
     }
 
+    public static String greet(String name) {
+        return nativeGreet(name);
+    }
+
     public static double[] normalize(double[] input, double factor) {
         return nativeNormalize(input, factor);
     }
@@ -22,6 +26,7 @@ public final class Core {
     }
 
     private static native byte[] nativeDigest(byte[] data);
+    private static native String nativeGreet(String name);
     private static native double[] nativeNormalize(double[] input, double factor);
     private static native long nativeStamp(long handle, double error, byte[] register);
 }
