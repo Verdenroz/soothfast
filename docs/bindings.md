@@ -73,10 +73,17 @@ package = "soothfast-stats-js"
 lang = "c"
 out = "bindings/c"
 package = "soothfast-stats-c"
+
+[[bind]]
+lang = "go"
+out = "bindings/go"
+package = "github.com/acme/soothfast-stats"
 ```
 
-`lang` is `python`, `wasm`, or `c`, each with the short forms you would
-expect (`py`, `js`, `cabi`). `out` and `package` are required. `module`, `version`, `description`,
+`lang` is `python`, `wasm`, `c`, or `go`, each with the short forms you would
+expect (`py`, `js`, `cabi`, `golang`). `out` and `package` are required. For
+`go`, `package` is the Go module path rather than a distribution name; the
+Go package name is its last element. `module`, `version`, `description`,
 `repository`, `targets`, and `backend_version` all default to something
 sensible.
 
@@ -86,13 +93,15 @@ sensible.
 cargo soothfast bind gen -p PKG            # write the packages
 cargo soothfast bind gen -p PKG --check    # fail if they are stale
 cargo soothfast bind gate -p PKG           # fail on a consumer-breaking change
-cargo soothfast bind build -p PKG          # drive maturin / wasm-pack
+cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / go vet+build
 ```
 
 `bind gen` writes a small Rust glue crate per language and the packaging
 around it. `bind build` hands that crate to the ecosystem's own tool:
 `maturin` for Python, `wasm-pack` for wasm. Neither tool is a dependency of
-soothfast; they are host tools, like `cargo bench`.
+soothfast; they are host tools, like `cargo bench`. Go has no such tool: `bind
+build` runs the C backend's own `cargo build` for the cdylib, then verifies
+the wrapper against it with `go vet`/`go build`.
 
 ## What the generated code looks like
 
@@ -120,18 +129,18 @@ only in the generated crate.
 
 ## How types cross
 
-| Rust | Python | JavaScript | C |
-| --- | --- | --- | --- |
-| `String`, `&str` | `str` | `string` | `char *` |
-| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` |
-| `Vec<T>` | array class | `Array` / typed array | `*_array` struct |
-| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only |
-| `HashMap<K, V>` | `dict` | not bound | not bound |
-| `(A, B)` | `tuple` | not bound | not bound |
-| `Result<T, E>` | raises | throws | `char **error` out-param |
-| `async fn` | awaitable | `Promise` | not bound |
-| exported struct | handle class | handle class | opaque pointer |
-| payload-free enum | `enum` | `enum` | `enum` |
+| Rust | Python | JavaScript | C | Go |
+| --- | --- | --- | --- | --- |
+| `String`, `&str` | `str` | `string` | `char *` | `string` |
+| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` |
+| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` |
+| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only |
+| `HashMap<K, V>` | `dict` | not bound | not bound | not bound |
+| `(A, B)` | `tuple` | not bound | not bound | not bound |
+| `Result<T, E>` | raises | throws | `char **error` out-param | `error` |
+| `async fn` | awaitable | `Promise` | not bound | not bound |
+| exported struct | handle class | handle class | opaque pointer | struct with `Close()` |
+| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants |
 
 An enum carrying data stays an opaque handle, because neither language has a
 shape for it; that is reported as a note rather than guessed at.
@@ -139,6 +148,36 @@ shape for it; that is reported as a note rather than guessed at.
 A method taking `self` by value, or an exported type crossing by value, is
 reported instead of bound: both would copy a value the caller is still
 holding. Take `&self` and return what the caller needs.
+
+### Go
+
+Go's bindings are cgo over the C backend's own header: `bind gen` writes the
+`.h`/glue/package trio C already gets, then a `go.mod` and one `<name>.go`
+declaring `#cgo CFLAGS`/`LDFLAGS` against it. There is no separate `import "C"`
+runtime to learn:
+
+```go
+c := NewCounter(0)
+defer c.Close()
+
+n, err := c.Bump(5)
+```
+
+- **A handle is a struct with an unexported pointer.** `Close` releases it
+  through the C `*_free` and is idempotent; `runtime.SetFinalizer` is the
+  backstop for a caller that forgets to call it.
+- **A slice of one primitive crosses as a pointer and a length**, the same
+  buffer C takes, via `unsafe.Pointer` on the slice's backing array. An empty
+  slice never takes that address, which cgo would reject.
+- **A returned sequence is copied into a Go slice and freed once**, so the
+  caller never has to reach for the C `*_array_free` itself.
+- **The C error mechanism becomes a Go `error`.** A fallible call reads its
+  message off the `char **error` out-parameter and releases it, the same way
+  a returned string is released.
+
+Generated Go is gofmt-clean by construction, checked in the golden suite. An
+`async fn` is a gap for Go (`no Go runtime story yet`): cgo has no reactor to
+hand a future to, unlike wasm-bindgen turning one into a `Promise`.
 
 ## C is the one without a framework
 
@@ -417,3 +456,11 @@ Two things a backend declares about itself rather than reading off the plan:
 A backend with a lock or a garbage collector will need one more: JNI reaches
 a buffer either pinned, which blocks collection, or copied, which is a third
 answer `BufferSupport` does not yet have.
+
+A language with no Rust bridge crate of its own follows `cgo/` instead:
+render the plan as a wrapper over the C backend's own header and library,
+rather than writing a marshaling framework from scratch. That needs a
+`types.rs` mapping the C spelling to the host language's, a package file
+(`go.mod`, `package.json`, whatever that ecosystem expects), and the glue
+renderer that composes them — no Rust of its own, since the C backend already
+built the cdylib every other FFI can read.
