@@ -249,11 +249,13 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   associated fn builds one, which fields get accessors, what raises —
   decided once so two backends can't disagree about the same Rust type.
   `fn_sig.rs`, `adt.rs`, `naming.rs`, and `foreign.rs` mirror soothfast-spec's
-  schema-side helpers on the binding side. Four backends render the plan:
+  schema-side helpers on the binding side. Five backends render the plan:
   `pyo3/` (Python, `buffers.rs` for the buffer-protocol fast path,
   `asyncrt.rs` for the tokio runtime a bound `async fn` enters per poll),
   `wasm/` (wasm-bindgen; `linkme` has no wasm32 support, so nothing
-  registers there), `cabi/` (a `.h`/glue/package trio behind plain
+  registers there), `napi/` (Node.js, over napi-rs; the only backend
+  needing a `package.json` alongside its `Cargo.toml`, since `napi build`
+  reads both), `cabi/` (a `.h`/glue/package trio behind plain
   `cargo build`, the one backend with no macro to do the marshaling for it,
   so it's also the one that spells every type twice — `types.rs` keeps the
   header and the glue from drifting apart), and `cgo/` (a Go package

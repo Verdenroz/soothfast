@@ -78,14 +78,19 @@ package = "soothfast-stats-c"
 lang = "go"
 out = "bindings/go"
 package = "github.com/acme/soothfast-stats"
+
+[[bind]]
+lang = "node"
+out = "bindings/node"
+package = "soothfast-stats-native"
 ```
 
-`lang` is `python`, `wasm`, `c`, or `go`, each with the short forms you would
-expect (`py`, `js`, `cabi`, `golang`). `out` and `package` are required. For
-`go`, `package` is the Go module path rather than a distribution name; the
-Go package name is its last element. `module`, `version`, `description`,
-`repository`, `targets`, and `backend_version` all default to something
-sensible.
+`lang` is `python`, `wasm`, `node`, `c`, or `go`, each with the short forms
+you would expect (`py`, `js`, `napi`, `cabi`, `golang`). `out` and `package`
+are required. For `go`, `package` is the Go module path rather than a
+distribution name; the Go package name is its last element. `module`,
+`version`, `description`, `repository`, `targets`, and `backend_version` all
+default to something sensible.
 
 ## Commands
 
@@ -93,15 +98,16 @@ sensible.
 cargo soothfast bind gen -p PKG            # write the packages
 cargo soothfast bind gen -p PKG --check    # fail if they are stale
 cargo soothfast bind gate -p PKG           # fail on a consumer-breaking change
-cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / go vet+build
+cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go vet+build
 ```
 
 `bind gen` writes a small Rust glue crate per language and the packaging
 around it. `bind build` hands that crate to the ecosystem's own tool:
-`maturin` for Python, `wasm-pack` for wasm. Neither tool is a dependency of
-soothfast; they are host tools, like `cargo bench`. Go has no such tool: `bind
-build` runs the C backend's own `cargo build` for the cdylib, then verifies
-the wrapper against it with `go vet`/`go build`.
+`maturin` for Python, `wasm-pack` for wasm, `napi build` (via `npx`, after an
+`npm install` if `node_modules/` is missing) for Node. None of these tools
+are a dependency of soothfast; they are host tools, like `cargo bench`. Go
+has no such tool: `bind build` runs the C backend's own `cargo build` for the
+cdylib, then verifies the wrapper against it with `go vet`/`go build`.
 
 ## What the generated code looks like
 
@@ -178,6 +184,23 @@ n, err := c.Bump(5)
 Generated Go is gofmt-clean by construction, checked in the golden suite. An
 `async fn` is a gap for Go (`no Go runtime story yet`): cgo has no reactor to
 hand a future to, unlike wasm-bindgen turning one into a `Promise`.
+
+### Node
+
+napi-rs shares pyo3's and wasm-bindgen's shape, an attribute macro over a
+local newtype, but its buffers behave like Python's rather than wasm's: a
+napi typed array is a view into V8's own memory for the call, not a copy
+into linear memory, so the same zero-copy notes `bind gen` gives Python
+apply to Node too. Where it differs from both: a 64-bit integer crosses as a
+JavaScript `BigInt`, checked on the way in — a value that would not fit
+silently fails the call rather than truncating — and the generated package
+ships a `package.json` alongside its `Cargo.toml`, since `napi build` reads
+both to name the compiled addon and the JS loader in front of it. `async fn`
+is a gap for Node the same way it is for Go: no runtime to hand a future to.
+
+Unlike a wasm-bindgen `.wasm`, which runs unmodified on any platform, a napi
+addon is a native binary: one build per target, which is what `bind build
+--target` is for.
 
 ## C is the one without a framework
 
