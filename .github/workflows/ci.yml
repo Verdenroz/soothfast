@@ -116,11 +116,13 @@ jobs:
       - run: bin/cargo-soothfast docs check -p soothfast-docs --baseline self docs/living-docs.md
       - run: bin/cargo-soothfast docs check -p soothfast-spec --baseline self docs/spec.md
       - run: bin/cargo-soothfast docs check -p soothfast-sdk --baseline self docs/sdk.md
+      - run: bin/cargo-soothfast docs check -p soothfast-demo docs/bindings.md
       - run: bin/cargo-soothfast docs check -p soothfast-report --baseline self docs/reports.md
       - name: Public API doc coverage must stay complete
         run: |
           for crate in soothfast soothfast-macros soothfast-registry soothfast-measure \
-                       soothfast-docs soothfast-spec soothfast-sdk soothfast-report soothfast-site; do
+                       soothfast-docs soothfast-spec soothfast-sdk soothfast-bind \
+                       soothfast-report soothfast-site; do
             bin/cargo-soothfast coverage docs -p "$crate" --min 100
           done
 
