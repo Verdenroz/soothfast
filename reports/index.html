@@ -186,8 +186,8 @@ a prefix on the entry (<code>fix(server): drop a cache</code> lists as <code>ser
 cache</code>), a <code>deps</code> scope files the entry under Dependencies whatever its type,
 and a subject marked <code>!</code> leads the section list under Breaking changes. That
 comes from <code>git log</code>, not a forge API, since every merge lands as a squash
-whose subject already holds the number. Release commits, and the bots that
-regenerate derived artifacts, are dropped so a release does not list its own
+whose subject already holds the number. Release commits are dropped, and so
+is everything the soothfast bot authored, so a release does not list its own
 paperwork; any other subject that is not a conventional commit is printed
 when the draft is written, so an omission is visible rather than silent.</p>
 <p>The section icons come from a shipped default. Override any subset in
@@ -200,12 +200,20 @@ silent default:</p>
 every invocation:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[changelog]</span>
 <span class="tok-ty">features </span>=<span class="tok-str"> &quot;full&quot;</span>
-<span class="tok-ty">packages </span>=<span class="tok-str"> [&quot;core&quot;, &quot;server&quot;]</span></code></pre></figure>
+<span class="tok-ty">packages </span>=<span class="tok-str"> [&quot;core&quot;, &quot;server&quot;]</span>
+<span class="tok-ty">bot-author </span>=<span class="tok-str"> &quot;soothfast-bot[bot]&quot;</span></code></pre></figure>
 <p><code>features</code> decides what the API surface diff can see: a public item behind a
 feature that is not enabled never shows up in it, so too narrow a set shortens
 the diff with nothing to say it did. It falls back to <code>[gate] features</code> when
 absent. <code>packages</code> supplies <code>-p</code> when the command line gives none. An explicit
 <code>--features</code> or <code>-p</code> still wins over either.</p>
+<p><code>bot-author</code> names the commit author whose entries are dropped: the bot that
+lands regenerated artifacts, whose commits are paperwork rather than changes.
+It defaults to <code>soothfast-bot[bot]</code>, what the action commits as, so only a
+repo that renamed <code>bot-slug</code> has to set it; <code>--bot-author NAME</code> overrides it
+for one run. That one author is dropped and no other. Every other bot stays,
+<code>dependabot[bot]</code> included: it writes the whole Dependencies section, and a
+rule matching any <code>[bot]</code> author would delete it without a word.</p>
 <p>Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against <code>v1.0</code>, and the measured movement past gate
 thresholds. A section with nothing to report is omitted rather than shipped
