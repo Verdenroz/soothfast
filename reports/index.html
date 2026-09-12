@@ -196,6 +196,16 @@ silent default:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[changelog.icons]</span>
 <span class="tok-ty">features </span>=<span class="tok-str"> &quot;📐&quot;</span>
 <span class="tok-ty">performance </span>=<span class="tok-str"> &quot;⏱&quot;</span></code></pre></figure>
+<p>The same file carries the flags <code>report changelog</code> would otherwise need on
+every invocation:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[changelog]</span>
+<span class="tok-ty">features </span>=<span class="tok-str"> &quot;full&quot;</span>
+<span class="tok-ty">packages </span>=<span class="tok-str"> [&quot;core&quot;, &quot;server&quot;]</span></code></pre></figure>
+<p><code>features</code> decides what the API surface diff can see: a public item behind a
+feature that is not enabled never shows up in it, so too narrow a set shortens
+the diff with nothing to say it did. It falls back to <code>[gate] features</code> when
+absent. <code>packages</code> supplies <code>-p</code> when the command line gives none. An explicit
+<code>--features</code> or <code>-p</code> still wins over either.</p>
 <p>Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against <code>v1.0</code>, and the measured movement past gate
 thresholds. A section with nothing to report is omitted rather than shipped

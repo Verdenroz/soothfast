@@ -257,6 +257,16 @@ codegen does not move them.</p>
 <p>A baseline saved before build stamps existed compares the same way, and says
 to re-save it. <code>--against-ref</code> never hits that: both sides are measured fresh
 in the same run.</p>
+<h2 id="features">Features<a class="anchor" href="#features" aria-label="Link to this section">#</a></h2>
+<p>A bench target declaring <code>required-features</code>, or a crate whose hot paths sit
+behind a feature, needs <code>--features</code> on every run. <code>soothfast.toml</code> carries it
+once, for <code>gate</code>, <code>measure</code> and <code>spec gen</code> alike:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[gate]</span>
+<span class="tok-ty">features </span>=<span class="tok-str"> &quot;bench-gate&quot;</span></code></pre></figure>
+<p>An explicit <code>--features</code> on the command line wins; the file only fills in what
+the command line left unset. The action's <code>features</code> input sets the same thing
+for CI, so a repository that configures the file gets one behaviour from a
+hand-run <code>cargo soothfast gate</code> and from the action.</p>
 <h2 id="ratchets">Ratchets<a class="anchor" href="#ratchets" aria-label="Link to this section">#</a></h2>
 <div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_measure::sweep::evaluate"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">evaluate</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
 <p><code>--ratchet NAME</code> runs a second comparison against a long-lived baseline,
@@ -378,6 +388,8 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l2" href="#thresholds">Thresholds</a></li>
   
     <li><a class="toc-l2" href="#build-settings">Build settings</a></li>
+  
+    <li><a class="toc-l2" href="#features">Features</a></li>
   
     <li><a class="toc-l2" href="#ratchets">Ratchets</a></li>
   
