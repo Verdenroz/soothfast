@@ -1,12 +1,13 @@
 //! A real crate matching `tests/fixture/mod.rs`'s synthetic rustdoc surface.
 //!
-//! The Java golden's `Cargo.toml` depends on `acme` at `..`, the layout
-//! `bind gen` actually produces (the glue crate sits inside the bound
-//! crate's own tree). `java_smoke.rs` copies this crate and the golden into
-//! a scratch directory in that same shape, so it builds the golden's
-//! cdylib for real rather than only comparing its text. Only the items the
-//! plan actually binds need bodies; a gapped one (`with_time`, `merge`,
-//! ...) is never called by generated code, so it is left out.
+//! Every golden's `Cargo.toml` depends on `acme` at `..`, the layout `bind
+//! gen` actually produces (the glue crate sits inside the bound crate's own
+//! tree). `go_smoke.rs`, `node_smoke.rs` and `java_smoke.rs` all copy this
+//! one crate and their own golden into a scratch directory in that shape,
+//! so each builds its golden's cdylib for real rather than only comparing
+//! its text. Only the items the plan actually binds need bodies; a gapped
+//! one (`with_time`, `merge`, ...) is never called by generated code, so it
+//! is left out.
 
 pub struct Counter {
     pub value: i64,
@@ -59,4 +60,11 @@ pub fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
 
 pub fn stamp(handle: i64, error: f64, register: &[u8]) -> u64 {
     handle as u64 + error as u64 + register.len() as u64
+}
+
+pub fn trim(input: &[f64]) -> Option<Vec<f64>> {
+    match input.is_empty() {
+        true => None,
+        false => Some(input.to_vec()),
+    }
 }

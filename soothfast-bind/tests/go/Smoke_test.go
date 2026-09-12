@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestCounterLifecycle(t *testing.T) {
 	c := NewCounter(10)
@@ -25,11 +28,11 @@ func TestCounterLifecycle(t *testing.T) {
 }
 
 func TestBumpErrorPath(t *testing.T) {
-	c := NewCounter(0)
+	c := NewCounter(math.MaxInt64)
 	defer c.Close()
 
-	if _, err := c.Bump(-1); err == nil {
-		t.Fatal("Bump(-1) did not return an error")
+	if _, err := c.Bump(1); err == nil {
+		t.Fatal("Bump(1) past MaxInt64 did not return an error")
 	}
 }
 
@@ -45,7 +48,7 @@ func TestCloseIsIdempotent(t *testing.T) {
 
 func TestFreeFunctions(t *testing.T) {
 	got := Digest([]byte{1, 2, 3})
-	want := []byte{3, 2, 1}
+	want := []byte{2, 3, 4}
 	if len(got) != len(want) {
 		t.Fatalf("Digest length = %d, want %d", len(got), len(want))
 	}

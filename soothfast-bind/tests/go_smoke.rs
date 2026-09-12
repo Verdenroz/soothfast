@@ -6,73 +6,15 @@
 //! `cargo test -p soothfast-bind --test go_smoke -- --ignored`
 //!
 //! The golden's `Cargo.toml` depends on `acme` at `path = ".."`, so this
-//! writes a real crate implementing that surface one directory above the
-//! copied golden, the same layout `bind gen` produces for a real package.
+//! copies `tests/fixture_crate` one directory above the copied golden, the
+//! same layout `bind gen` produces for a real package.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const ACME_CARGO_TOML: &str = "[package]
-name = \"acme\"
-version = \"0.1.0\"
-edition = \"2024\"
-
-[workspace]
-";
-
-const ACME_SRC: &str = "
-pub struct Counter {
-    pub value: i64,
+fn manifest_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).into()
 }
-
-impl Counter {
-    pub fn new(start: i64) -> Self {
-        Counter { value: start }
-    }
-
-    pub fn bump(&self, by: i64) -> Result<i64, String> {
-        if by < 0 {
-            return Err(\"cannot bump by a negative amount\".to_string());
-        }
-        Ok(self.value + by)
-    }
-
-    pub fn bump_all(&self, by: Vec<i64>) -> i64 {
-        self.value + by.iter().sum::<i64>()
-    }
-
-    pub fn at(&self, level: Level) -> i64 {
-        match level {
-            Level::Low => self.value,
-            Level::High => self.value * 2,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum Level {
-    Low,
-    High,
-}
-
-pub enum Mode {
-    Fast,
-    Precise(u32),
-    Custom { level: u8 },
-}
-
-pub fn digest(data: &[u8]) -> Vec<u8> {
-    data.iter().rev().copied().collect()
-}
-
-pub fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
-    input.into_iter().map(|v| v * factor).collect()
-}
-
-pub fn stamp(handle: i64, error: f64, register: &[u8]) -> u64 {
-    handle as u64 + error as u64 + register.len() as u64
-}
-";
 
 fn copy_dir(src: &Path, dst: &Path) {
     std::fs::create_dir_all(dst).expect("makes a directory");
@@ -91,13 +33,11 @@ fn copy_dir(src: &Path, dst: &Path) {
 #[test]
 #[ignore]
 fn the_go_golden_builds_and_runs_against_the_real_cdylib() {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = manifest_dir();
     let root = std::env::temp_dir().join(format!("soothfast-go-smoke-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
 
-    std::fs::create_dir_all(root.join("src")).expect("makes the acme crate dir");
-    std::fs::write(root.join("Cargo.toml"), ACME_CARGO_TOML).expect("writes acme's Cargo.toml");
-    std::fs::write(root.join("src/lib.rs"), ACME_SRC).expect("writes acme's lib.rs");
+    copy_dir(&manifest.join("tests/fixture_crate"), &root);
 
     let glue = root.join("glue");
     copy_dir(&manifest.join("tests/goldens/go"), &glue);
