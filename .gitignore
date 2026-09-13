@@ -12,7 +12,7 @@
 
 # Valgrind / perf debris
 vgcore.*
-core.*
+core.[0-9]*
 callgrind.out.*
 cachegrind.out.*
 massif.out.*
