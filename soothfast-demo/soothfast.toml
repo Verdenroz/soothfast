@@ -62,3 +62,9 @@ lang = "cpp"
 out = "bindings/cpp"
 package = "soothfast::stats"
 description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+
+[[bind]]
+lang = "lua"
+out = "bindings/lua"
+package = "soothfast.stats"
+description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
