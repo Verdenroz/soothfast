@@ -1254,6 +1254,34 @@ fn a_lua_buffer_call_copies_with_no_transfer_notes() {
 }
 
 #[test]
+fn a_returned_array_is_a_metatyped_cdata_not_a_copied_table() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains("ffi.metatype(\"core_f64_array\", {"));
+    assert!(lua.contains("__len = function(self) return tonumber(self.len) end,"));
+    assert!(lua.contains("if key == \"totable\" then"));
+    assert!(lua.contains(
+        "if key < 1 or key > tonumber(self.len) then\n\t\t\t\terror(\"core_f64_array index out of range: \" .. tostring(key))"
+    ));
+    assert!(lua.contains("return ffi.gc(ret, lib.core_f64_array_free)"));
+    assert!(
+        !lua.contains("_to_table"),
+        "the array-to-table copier is gone: returns cross as cdata"
+    );
+}
+
+#[test]
+fn a_buffer_argument_accepts_a_returned_array_with_no_copy() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains("if ffi.istype(\"core_f64_array\", value) then"));
+    assert!(lua.contains("return value.data, tonumber(value.len)"));
+    assert!(
+        !lua.contains("core_i64_array"),
+        "i64 is only ever a buffer element here, never a return: naming an \
+         undeclared array struct in ffi.istype would be a parse error"
+    );
+}
+
+#[test]
 fn a_parameter_named_after_luas_own_raise_builtin_is_escaped() {
     let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
     assert!(lua.contains("function M.stamp(handle, error_, register)"));

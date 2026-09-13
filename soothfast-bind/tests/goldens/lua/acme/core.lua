@@ -64,6 +64,9 @@ local function f64_buf(value)
 	if ffi.istype("double[?]", value) then
 		return value, ffi.sizeof(value) / ffi.sizeof("double")
 	end
+	if ffi.istype("core_f64_array", value) then
+		return value.data, tonumber(value.len)
+	end
 	local n = #value
 	local arr = ffi.new("double[?]", n)
 	for i = 1, n do
@@ -90,6 +93,9 @@ local function u8_buf(value)
 	if ffi.istype("uint8_t[?]", value) then
 		return value, ffi.sizeof(value) / ffi.sizeof("uint8_t")
 	end
+	if ffi.istype("core_u8_array", value) then
+		return value.data, tonumber(value.len)
+	end
 	local n = #value
 	local arr = ffi.new("uint8_t[?]", n)
 	for i = 1, n do
@@ -98,29 +104,55 @@ local function u8_buf(value)
 	return arr, n
 end
 
--- core_f64_array_to_table copies a `f64` sequence this library returned and
--- releases it.
-local function core_f64_array_to_table(arr)
-	local n = tonumber(arr.len)
+-- Copies a `f64` array into a plain table.
+local function core_f64_array_totable(self)
+	local n = tonumber(self.len)
 	local out = {}
 	for i = 1, n do
-		out[i] = arr.data[i - 1]
+		out[i] = self.data[i - 1]
 	end
-	lib.core_f64_array_free(arr)
 	return out
 end
 
--- core_u8_array_to_table copies a `u8` sequence this library returned and
--- releases it.
-local function core_u8_array_to_table(arr)
-	local n = tonumber(arr.len)
+ffi.metatype("core_f64_array", {
+	__len = function(self) return tonumber(self.len) end,
+	__index = function(self, key)
+		if key == "totable" then
+			return core_f64_array_totable
+		end
+		if type(key) == "number" then
+			if key < 1 or key > tonumber(self.len) then
+				error("core_f64_array index out of range: " .. tostring(key))
+			end
+			return self.data[key - 1]
+		end
+	end,
+})
+
+-- Copies a `u8` array into a plain table.
+local function core_u8_array_totable(self)
+	local n = tonumber(self.len)
 	local out = {}
 	for i = 1, n do
-		out[i] = arr.data[i - 1]
+		out[i] = self.data[i - 1]
 	end
-	lib.core_u8_array_free(arr)
 	return out
 end
+
+ffi.metatype("core_u8_array", {
+	__len = function(self) return tonumber(self.len) end,
+	__index = function(self, key)
+		if key == "totable" then
+			return core_u8_array_totable
+		end
+		if type(key) == "number" then
+			if key < 1 or key > tonumber(self.len) then
+				error("core_u8_array index out of range: " .. tostring(key))
+			end
+			return self.data[key - 1]
+		end
+	end,
+})
 
 local M = {}
 
@@ -205,7 +237,7 @@ end
 function M.digest(data)
 	local data_ptr, data_len = u8_buf(data)
 	local ret = lib.core_digest(data_ptr, data_len)
-	return core_u8_array_to_table(ret)
+	return ffi.gc(ret, lib.core_u8_array_free)
 end
 
 function M.find_counter(start)
@@ -221,7 +253,7 @@ end
 function M.normalize(input, factor)
 	local input_ptr, input_len = f64_buf(input)
 	local ret = lib.core_normalize(input_ptr, input_len, factor)
-	return core_f64_array_to_table(ret)
+	return ffi.gc(ret, lib.core_f64_array_free)
 end
 
 function M.peak_level(values)

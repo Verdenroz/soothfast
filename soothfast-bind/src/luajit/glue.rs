@@ -5,7 +5,7 @@
 //! through its `*_free` and registered with `ffi.gc` as a backstop, and a
 //! failing call raises through Lua's own `error`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::GENERATED_LUA;
 use crate::cabi::glue::{arrays, returns_text};
@@ -25,8 +25,9 @@ pub(crate) fn render(plan: &BindingPlan, module: &str) -> String {
     if returns_text(plan) {
         out.push_str(&string_helper(module));
     }
+    let array_elements: BTreeSet<String> = arrays(plan).into_iter().map(|(_, e)| e).collect();
     for element in buffer_elements(plan) {
-        out.push_str(&buffer_helper(&element));
+        out.push_str(&buffer_helper(&element, module, &array_elements));
     }
     for (ty, element) in arrays(plan) {
         out.push_str(&array_helper(&ty, &element, module));
@@ -66,19 +67,34 @@ fn buffer_elements(plan: &BindingPlan) -> Vec<Ty> {
 }
 
 /// Converts a buffer argument into a pointer and a length. A caller already
-/// holding a matching FFI array (built with `ffi.new("<ctype>[?]", n)`)
-/// passes it through unboxed; a plain Lua table is copied into one, boxed
-/// number by boxed number, since a table has no contiguous memory to hand
-/// over.
-fn buffer_helper(element: &Ty) -> String {
+/// holding a matching FFI array (built with `ffi.new("<ctype>[?]", n)`) or a
+/// returned array struct of the same element passes it through unboxed; a
+/// plain Lua table is copied into one, boxed number by boxed number, since a
+/// table has no contiguous memory to hand over.
+///
+/// The array-struct check is only emitted for an element that actually has
+/// one declared in this module's `ffi.cdef` block: naming one that was never
+/// declared (an element used only as a buffer, never as a return) is a
+/// parse error the moment `ffi.istype` sees the string.
+fn buffer_helper(element: &Ty, module: &str, array_elements: &BTreeSet<String>) -> String {
     let spelling = c::scalar(element).expect("checked buffer element");
     let name = format!("{}_buf", spelling.rust);
+    let array_check = match array_elements.contains(&spelling.rust) {
+        true => format!(
+            "\tif ffi.istype(\"{module}_{}_array\", value) then\n\
+             \t\treturn value.data, tonumber(value.len)\n\
+             \tend\n",
+            spelling.rust,
+        ),
+        false => String::new(),
+    };
     format!(
         "local function {name}(value)\n\
          \t-- a VLA cdata array carries no `#`; its instance size does.\n\
          \tif ffi.istype(\"{c}[?]\", value) then\n\
          \t\treturn value, ffi.sizeof(value) / ffi.sizeof(\"{c}\")\n\
          \tend\n\
+         {array_check}\
          \tlocal n = #value\n\
          \tlocal arr = ffi.new(\"{c}[?]\", n)\n\
          \tfor i = 1, n do\n\
@@ -102,28 +118,38 @@ fn string_helper(module: &str) -> String {
     )
 }
 
-/// Copies a returned sequence into a Lua table and releases it.
+/// Registers the array struct as its own cdata type: `#arr` and `arr[i]`
+/// read straight through the returned buffer, and `arr:totable()` copies it
+/// into a plain table for code that wants one. `data`/`len` are real struct
+/// fields, so they resolve before `__index` ever sees them.
 fn array_helper(ty: &Ty, element: &str, module: &str) -> String {
     let c_arr = c::array_c(ty, module);
-    let free = format!("{c_arr}_free");
-    let name = array_to_table_fn(ty, module);
+    let totable = format!("{c_arr}_totable");
     format!(
-        "-- {name} copies a `{element}` sequence this library returned and\n\
-         -- releases it.\n\
-         local function {name}(arr)\n\
-         \tlocal n = tonumber(arr.len)\n\
+        "-- Copies a `{element}` array into a plain table.\n\
+         local function {totable}(self)\n\
+         \tlocal n = tonumber(self.len)\n\
          \tlocal out = {{}}\n\
          \tfor i = 1, n do\n\
-         \t\tout[i] = arr.data[i - 1]\n\
+         \t\tout[i] = self.data[i - 1]\n\
          \tend\n\
-         \tlib.{free}(arr)\n\
          \treturn out\n\
-         end\n\n"
+         end\n\n\
+         ffi.metatype(\"{c_arr}\", {{\n\
+         \t__len = function(self) return tonumber(self.len) end,\n\
+         \t__index = function(self, key)\n\
+         \t\tif key == \"totable\" then\n\
+         \t\t\treturn {totable}\n\
+         \t\tend\n\
+         \t\tif type(key) == \"number\" then\n\
+         \t\t\tif key < 1 or key > tonumber(self.len) then\n\
+         \t\t\t\terror(\"{c_arr} index out of range: \" .. tostring(key))\n\
+         \t\t\tend\n\
+         \t\t\treturn self.data[key - 1]\n\
+         \t\tend\n\
+         \tend,\n\
+         }})\n\n"
     )
-}
-
-fn array_to_table_fn(ty: &Ty, module: &str) -> String {
-    format!("{}_to_table", c::array_c(ty, module))
 }
 
 /// The class table, its metatable, its constructor/destructor pair, and its
@@ -355,7 +381,9 @@ fn returned(expr: &str, ty: &Ty, plan: &BindingPlan, module: &str) -> String {
             ),
             _ => expr.to_string(),
         },
-        ty if c::element(ty).is_some() => format!("{}({expr})", array_to_table_fn(ty, module)),
+        ty if c::element(ty).is_some() => {
+            format!("ffi.gc({expr}, lib.{}_free)", c::array_c(ty, module))
+        }
         _ => expr.to_string(),
     }
 }
