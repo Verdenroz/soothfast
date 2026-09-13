@@ -507,11 +507,15 @@ fn call_arg(param: &Param, plan: &BindingPlan, pinned: Option<&str>) -> String {
     if matches!(Transfer::of(param, plan), Transfer::Handle { .. }) {
         return name;
     }
-    if matches!(
-        Transfer::of(param, plan),
-        Transfer::Text { nullable: true, .. }
-    ) {
-        return format!("{name}.as_deref()");
+    if let Transfer::Text {
+        nullable: true,
+        borrowed,
+    } = Transfer::of(param, plan)
+    {
+        return match borrowed {
+            true => format!("{name}.as_deref()"),
+            false => name,
+        };
     }
     match param.ownership {
         Ownership::BorrowedMut => format!("&mut {name}"),

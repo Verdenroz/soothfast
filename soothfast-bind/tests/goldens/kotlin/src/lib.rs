@@ -179,7 +179,7 @@ pub extern "system" fn Java_acme_core_Core_nativeDescribeOwned<'local>(
         }
         }
     };
-    let __out = ::acme::describe_owned(label.as_deref());
+    let __out = ::acme::describe_owned(label);
     match __out {
         Some(v) => match env.new_string(v) {
             Ok(s) => s.into_raw(),
