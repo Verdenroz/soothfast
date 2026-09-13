@@ -141,6 +141,10 @@ pub struct Param {
     pub name: String,
     pub ty: Ty,
     pub ownership: Ownership,
+    /// Ownership of the value inside `Option<T>`. `Owned` when `ty` isn't
+    /// optional: `Option<T>` is always owned at its own top level, so
+    /// `ownership` alone can't tell `Option<&str>` from `Option<String>`.
+    pub inner_ownership: Ownership,
 }
 
 /// A named field of an exported struct, or of a struct-like enum variant.

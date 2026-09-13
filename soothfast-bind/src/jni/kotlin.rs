@@ -572,6 +572,7 @@ mod tests {
             name: "value".into(),
             ty: Ty::I64,
             ownership: Ownership::Borrowed,
+            inner_ownership: Ownership::Owned,
         };
         let plan = BindingPlan::default();
         assert_eq!(call_arg(&param, &plan, "value"), "value");

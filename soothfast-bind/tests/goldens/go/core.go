@@ -154,6 +154,21 @@ func Describe(label *string) *string {
 	}()
 }
 
+func DescribeOwned(label *string) *string {
+	var cLabel *C.char
+	if label != nil {
+		cLabel = C.CString(*label)
+		defer C.free(unsafe.Pointer(cLabel))
+	}
+	return func() *string {
+		if p := C.core_describe_owned(cLabel); p != nil {
+			v := goString(p)
+			return &v
+		}
+		return nil
+	}()
+}
+
 func Digest(data []byte) []byte {
 	return byteSlice(C.core_digest((*C.uint8_t)(unsafe.Pointer(bufPtr(data))), C.size_t(len(data))))
 }

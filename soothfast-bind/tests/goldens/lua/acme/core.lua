@@ -44,6 +44,8 @@ void core_mode_free(core_mode *handle);
 
 /* `label` may be NULL. May return NULL. */
 char * core_describe(const char *label);
+/* `label` may be NULL. May return NULL. */
+char * core_describe_owned(const char *label);
 core_u8_array core_digest(const uint8_t *data, size_t data_len);
 core_counter * core_find_counter(int64_t start);
 char * core_greet(const char *name);
@@ -264,6 +266,11 @@ end
 
 function M.describe(label)
 	local ret = lib.core_describe(label)
+	return (function() local p = ret; if p == nil then return nil end; return lua_string(p) end)()
+end
+
+function M.describe_owned(label)
+	local ret = lib.core_describe_owned(label)
 	return (function() local p = ret; if p == nil then return nil end; return lua_string(p) end)()
 end
 

@@ -701,11 +701,13 @@ mod tests {
                     name: "values".into(),
                     ty: Ty::List(Box::new(Ty::F64)),
                     ownership: Ownership::Borrowed,
+                    inner_ownership: Ownership::Owned,
                 },
                 Param {
                     name: "out".into(),
                     ty: Ty::List(Box::new(Ty::F64)),
                     ownership: Ownership::BorrowedMut,
+                    inner_ownership: Ownership::Owned,
                 },
             ],
             ret: Ty::Unit,

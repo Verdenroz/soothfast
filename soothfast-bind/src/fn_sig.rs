@@ -36,6 +36,7 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
             name: name.to_string(),
             ty: r.resolve(ty, &at),
             ownership: ownership_of(ty),
+            inner_ownership: inner_ownership_of(ty),
         });
     }
 
@@ -97,6 +98,20 @@ fn ownership_of(ty: &Value) -> Ownership {
     match ty.get("borrowed_ref") {
         Some(r) if r["is_mutable"].as_bool().unwrap_or(false) => Ownership::BorrowedMut,
         Some(_) => Ownership::Borrowed,
+        None => Ownership::Owned,
+    }
+}
+
+/// Ownership of the type argument inside `Option<T>`. `Option<T>` is always
+/// owned at its own top level, so this is the only place that distinguishes
+/// `Option<&str>` from `Option<String>`.
+fn inner_ownership_of(ty: &Value) -> Ownership {
+    let path = ty["resolved_path"]["path"].as_str().unwrap_or_default();
+    if path.rsplit("::").next() != Some("Option") {
+        return Ownership::Owned;
+    }
+    match generic_args(&ty["resolved_path"]).first() {
+        Some(arg) => ownership_of(arg),
         None => Ownership::Owned,
     }
 }

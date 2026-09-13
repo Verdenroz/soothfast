@@ -80,6 +80,12 @@ fn describe(label: Robj) -> ::std::result::Result<Robj, String> {
 }
 
 #[extendr]
+fn describe_owned(label: Option<String>) -> Option<String> {
+    let __out = ::acme::describe_owned(label.as_deref());
+    __out
+}
+
+#[extendr]
 fn digest(data: &[u8]) -> Vec<u8> {
     let __out = ::acme::digest(data);
     __out
@@ -132,6 +138,7 @@ extendr_module! {
     impl Counter;
     impl Mode;
     fn describe;
+    fn describe_owned;
     fn digest;
     fn find_counter;
     fn greet;

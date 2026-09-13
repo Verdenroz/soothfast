@@ -37,6 +37,7 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 ## `Core`
 
 - `describe`
+- `describeOwned`
 - `digest`
 - `findCounter`
 - `greet`

@@ -102,6 +102,11 @@ pub fn describe(label: Option<String>) -> Option<String> {
     ::acme::describe(label.as_deref())
 }
 
+#[napi(js_name = "describeOwned")]
+pub fn describe_owned(label: Option<String>) -> Option<String> {
+    ::acme::describe_owned(label.as_deref())
+}
+
 #[napi]
 pub fn digest(data: Buffer) -> Buffer {
     Buffer::from(::acme::digest(data.as_ref()))

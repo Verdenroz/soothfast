@@ -106,3 +106,7 @@ pub fn find_counter(start: i64) -> Option<Counter> {
 pub fn describe(label: Option<&str>) -> Option<String> {
     label.map(|l| format!("label={l}"))
 }
+
+pub fn describe_owned(label: Option<String>) -> Option<String> {
+    label.map(|l| format!("owned={l}"))
+}

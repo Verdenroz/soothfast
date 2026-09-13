@@ -68,6 +68,10 @@ fn describe(label: Option<String>) -> Option<String> {
     ::acme::describe(label.as_deref())
 }
 
+fn describe_owned(label: Option<String>) -> Option<String> {
+    ::acme::describe_owned(label.as_deref())
+}
+
 fn digest(data: ::magnus::RString) -> ::magnus::RString {
     let data = unsafe { data.as_slice() }.to_vec();
     ::magnus::RString::from_slice(&::acme::digest(&data))
@@ -122,6 +126,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     class.define_method("bump_all", ::magnus::method!(Counter::bump_all, 1))?;
     module.define_class("Mode", ruby.class_object())?;
     module.define_module_function("describe", ::magnus::function!(describe, 1))?;
+    module.define_module_function("describe_owned", ::magnus::function!(describe_owned, 1))?;
     module.define_module_function("digest", ::magnus::function!(digest, 1))?;
     module.define_module_function("find_counter", ::magnus::function!(find_counter, 1))?;
     module.define_module_function("greet", ::magnus::function!(greet, 1))?;

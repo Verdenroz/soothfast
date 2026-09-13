@@ -221,6 +221,16 @@ pub fn doc() -> Value {
         ),
     );
 
+    insert(
+        17,
+        func(
+            "describe_owned",
+            &[("label", path("Option", 93, &[path("String", 92, &[])]))],
+            path("Option", 93, &[path("String", 92, &[])]),
+            false,
+        ),
+    );
+
     insert(2, struct_item("Counter", &[20, 21], &[30, 37, 38]));
     insert(37, auto_impl("Send", false));
     insert(38, auto_impl("Sync", false));
@@ -330,6 +340,7 @@ pub fn doc() -> Value {
             "14": { "crate_id": 0, "path": ["acme", "peak_level"], "kind": "function" },
             "15": { "crate_id": 0, "path": ["acme", "find_counter"], "kind": "function" },
             "16": { "crate_id": 0, "path": ["acme", "describe"], "kind": "function" },
+            "17": { "crate_id": 0, "path": ["acme", "describe_owned"], "kind": "function" },
             "2": { "crate_id": 0, "path": ["acme", "Counter"], "kind": "struct" },
             "3": { "crate_id": 0, "path": ["acme", "Mode"], "kind": "enum" },
             "4": { "crate_id": 0, "path": ["acme", "Level"], "kind": "enum" },
@@ -368,6 +379,7 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::peak_level", "fn"),
         record("acme::find_counter", "fn"),
         record("acme::describe", "fn"),
+        record("acme::describe_owned", "fn"),
         record("acme::Counter", "struct"),
         record("acme::Mode", "enum"),
         record("acme::Level", "enum"),

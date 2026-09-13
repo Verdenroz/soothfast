@@ -32,6 +32,7 @@ import acme_core
 ## Functions
 
 - `describe`
+- `describe_owned`
 - `digest`
 - `find_counter`
 - `greet`

@@ -83,6 +83,11 @@ pub fn describe(label: Option<String>) -> Option<String> {
     ::acme::describe(label.as_deref())
 }
 
+#[wasm_bindgen(js_name = describeOwned)]
+pub fn describe_owned(label: Option<String>) -> Option<String> {
+    ::acme::describe_owned(label.as_deref())
+}
+
 #[wasm_bindgen]
 pub fn digest(data: &[u8]) -> Vec<u8> {
     ::acme::digest(data)

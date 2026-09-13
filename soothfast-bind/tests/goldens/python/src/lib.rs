@@ -360,6 +360,11 @@ fn describe(label: Option<String>) -> Option<String> {
 }
 
 #[pyfunction]
+fn describe_owned(label: Option<String>) -> Option<String> {
+    ::acme::describe_owned(label.as_deref())
+}
+
+#[pyfunction]
 fn digest(py: Python<'_>, data: BorrowedU8) -> Vec<u8> {
     py.detach(|| ::acme::digest(data.as_slice()))
 }
@@ -414,6 +419,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Level>()?;
     m.add_class::<Mode>()?;
     m.add_function(wrap_pyfunction!(describe, m)?)?;
+    m.add_function(wrap_pyfunction!(describe_owned, m)?)?;
     m.add_function(wrap_pyfunction!(digest, m)?)?;
     m.add_function(wrap_pyfunction!(find_counter, m)?)?;
     m.add_function(wrap_pyfunction!(greet, m)?)?;

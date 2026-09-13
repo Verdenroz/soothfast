@@ -177,7 +177,7 @@ impl Transfer {
                 nullable: false,
             },
             Ty::Optional(inner) if **inner == Ty::Str => Transfer::Text {
-                borrowed,
+                borrowed: param.inner_ownership != Ownership::Owned,
                 nullable: true,
             },
             Ty::Bytes => Transfer::Buffer {
@@ -854,6 +854,7 @@ mod tests {
                 name: "data".into(),
                 ty: Ty::List(Box::new(Ty::F64)),
                 ownership: Ownership::Borrowed,
+                inner_ownership: Ownership::Owned,
             }],
             ret: Ty::Unit,
             throws: None,
@@ -890,5 +891,36 @@ mod tests {
     fn a_pinned_package_with_no_buffer_gets_no_note() {
         let plan = plan_with(BufferSupport::Pinned, Vec::new());
         assert!(transfer_notes(&plan).is_empty());
+    }
+
+    #[test]
+    fn optional_str_borrowedness_follows_the_inner_type_not_the_option() {
+        let plan = BindingPlan::default();
+        let optional_ref = Param {
+            name: "label".into(),
+            ty: Ty::Optional(Box::new(Ty::Str)),
+            ownership: Ownership::Owned,
+            inner_ownership: Ownership::Borrowed,
+        };
+        let optional_owned = Param {
+            name: "label".into(),
+            ty: Ty::Optional(Box::new(Ty::Str)),
+            ownership: Ownership::Owned,
+            inner_ownership: Ownership::Owned,
+        };
+        assert_eq!(
+            Transfer::of(&optional_ref, &plan),
+            Transfer::Text {
+                borrowed: true,
+                nullable: true,
+            },
+        );
+        assert_eq!(
+            Transfer::of(&optional_owned, &plan),
+            Transfer::Text {
+                borrowed: false,
+                nullable: true,
+            },
+        );
     }
 }
