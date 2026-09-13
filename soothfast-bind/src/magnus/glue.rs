@@ -501,6 +501,12 @@ fn postludes(planned: &[PlannedParam]) -> Vec<String> {
 fn param_plan(param: &Param, plan: &BindingPlan) -> PlannedParam {
     let name = &param.name;
     match Transfer::of(param, plan) {
+        Transfer::Text { nullable: true, .. } => (
+            signature_ty(&param.ty),
+            None,
+            format!("{name}.as_deref()"),
+            None,
+        ),
         Transfer::Handle { mirrored: true, .. } => {
             let helper = format!("{}_from_symbol", types::snake(&class_name(&param.ty)));
             (

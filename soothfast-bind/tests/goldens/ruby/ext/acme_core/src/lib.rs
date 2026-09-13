@@ -65,7 +65,7 @@ impl Counter {
 pub struct Mode(::std::cell::RefCell<::acme::Mode>);
 
 fn describe(label: Option<String>) -> Option<String> {
-    ::acme::describe(label)
+    ::acme::describe(label.as_deref())
 }
 
 fn digest(data: ::magnus::RString) -> ::magnus::RString {
