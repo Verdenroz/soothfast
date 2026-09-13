@@ -348,9 +348,16 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
             format!("&mut {name}.0"),
         ),
         Transfer::Handle { .. } => (format!("&{}", class_of(&param.ty)), format!("&{name}.0")),
-        Transfer::Text { nullable: true, .. } => {
-            (signature_ty(&param.ty), format!("{name}.as_deref()"))
-        }
+        Transfer::Text {
+            nullable: true,
+            borrowed,
+        } => (
+            signature_ty(&param.ty),
+            match borrowed {
+                true => format!("{name}.as_deref()"),
+                false => name.clone(),
+            },
+        ),
         Transfer::Text {
             borrowed: true,
             nullable: false,

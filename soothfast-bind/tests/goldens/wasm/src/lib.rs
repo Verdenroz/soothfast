@@ -85,7 +85,7 @@ pub fn describe(label: Option<String>) -> Option<String> {
 
 #[wasm_bindgen(js_name = describeOwned)]
 pub fn describe_owned(label: Option<String>) -> Option<String> {
-    ::acme::describe_owned(label.as_deref())
+    ::acme::describe_owned(label)
 }
 
 #[wasm_bindgen]
