@@ -5,10 +5,15 @@
 # upload still happen first. Output is untrusted (the PR's own binaries wrote
 # it) and the comment is authored by a write-access identity, so nothing in
 # it may escape the code fence.
-# Inputs: CLI PACKAGES BASE_REF GH_TOKEN PR_NUMBER, BROKER, FEATURES and BIND
-# (optional).
+# Inputs: CLI PACKAGES BASE_REF GH_TOKEN PR_NUMBER COMMENT_ID, BROKER,
+# FEATURES and BIND (optional).
 # Output: failed (true|false).
 set -euo pipefail
+
+if ! [[ "$COMMENT_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "::error::comment-id must match ^[A-Za-z0-9_-]+\$, got '$COMMENT_ID'"
+  exit 1
+fi
 
 read -ra pkgs <<<"$PACKAGES"
 read -ra binds <<<"${BIND:-}"
@@ -39,7 +44,7 @@ mkdir -p "$out_dir"
   done
 } >"${out_dir}/comment.md"
 
-MARKER='<!-- soothfast-gate -->' BODY_FILE="${out_dir}/comment.md" "$(dirname "$0")/comment.sh" ||
+MARKER="<!-- ${COMMENT_ID} -->" BODY_FILE="${out_dir}/comment.md" "$(dirname "$0")/comment.sh" ||
   echo "::warning::could not comment on the pull request (read-only token on a fork?)"
 
 echo "failed=$failed" >>"$GITHUB_OUTPUT"

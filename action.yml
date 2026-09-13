@@ -34,6 +34,12 @@ inputs:
     description: Run the gate on pull requests.
     required: false
     default: "true"
+  comment-id:
+    description: >-
+      Identifier of the pull-request comment this run creates or updates.
+      Two gates on one pull request need distinct ids.
+    required: false
+    default: soothfast-gate
   changelog:
     description: Regenerate CHANGELOG.md on pushes to the default branch.
     required: false
@@ -225,6 +231,7 @@ runs:
         BROKER: ${{ inputs.broker }}
         FEATURES: ${{ inputs.features }}
         BIND: ${{ inputs.bind }}
+        COMMENT_ID: ${{ inputs.comment-id }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
     - name: Upload triage artifacts
       if: steps.gate.outputs.failed == 'true' && inputs.bind-build == ''
