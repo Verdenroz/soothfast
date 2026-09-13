@@ -85,7 +85,7 @@ pub fn digest(data: &[u8]) -> Vec<u8> {
 
 #[wasm_bindgen(js_name = findCounter)]
 pub fn find_counter(start: i64) -> Option<Counter> {
-    ::acme::find_counter(start)
+    ::acme::find_counter(start).map(Counter)
 }
 
 #[wasm_bindgen]

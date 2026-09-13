@@ -330,6 +330,37 @@ fn the_wasm_manifest_names_no_targets() {
 }
 
 #[test]
+fn an_optional_handle_return_maps_into_its_wrapper_for_wasm() {
+    let glue = emit(BindKind::Wasm)["src/lib.rs"].clone();
+    assert!(glue.contains("pub fn find_counter(start: i64) -> Option<Counter>"));
+    assert!(glue.contains("::acme::find_counter(start).map(Counter)"));
+}
+
+/// The golden's own text cannot show a type mismatch between the promised
+/// return type and what the call actually hands back; only rustc can.
+#[test]
+fn the_wasm_golden_compiles_for_wasm32() {
+    let installed = Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
+        .unwrap_or(false);
+    if !installed {
+        eprintln!("wasm32-unknown-unknown not installed; skipping");
+        return;
+    }
+    let glue = stage_golden("wasm", "wasm");
+    let check = Command::new("cargo")
+        .args(["check", "--target", "wasm32-unknown-unknown"])
+        .current_dir(&glue)
+        .env_remove("CARGO_TARGET_DIR")
+        .status()
+        .expect("runs cargo check");
+    assert!(check.success(), "cargo check failed for the wasm golden");
+    let _ = std::fs::remove_dir_all(glue.parent().expect("has a parent"));
+}
+
+#[test]
 fn c_goldens() {
     check_goldens(BindKind::CAbi, "c");
 }
