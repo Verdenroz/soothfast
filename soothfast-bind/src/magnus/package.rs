@@ -76,6 +76,9 @@ pub(crate) fn lib_entry(module: &str) -> String {
 /// into a fatal Ruby error rather than unwinding past the boundary, so
 /// `panic = "abort"` (JNI's and C's choice) would only turn a caught error
 /// into a crash instead.
+///
+/// The manifest lives at `ext/<module>/Cargo.toml`, two directories below
+/// the package root that `crate_path` is relative to.
 pub(crate) fn cargo_toml(opts: &BindOptions) -> String {
     let version = opts.backend_version.as_deref().unwrap_or(DEFAULT_VERSION);
     format!(
@@ -95,7 +98,7 @@ name = \"{}\"
 crate-type = [\"cdylib\"]
 
 [dependencies]
-{} = {{ path = \"{}\" }}
+{} = {{ path = \"../../{}\" }}
 magnus = \"{version}\"
 rb-sys = \"{RB_SYS_VERSION}\"
 

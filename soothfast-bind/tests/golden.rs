@@ -890,6 +890,12 @@ fn r_goldens() {
 }
 
 #[test]
+fn the_r_manifest_steps_up_past_src_rust_to_the_package_root() {
+    let manifest = &emit_set_with(BindKind::R, &r_opts()).files["src/rust/Cargo.toml"];
+    assert!(manifest.contains("acme = { path = \"../../..\" }"));
+}
+
+#[test]
 fn a_64_bit_integer_gets_one_note_about_crossing_as_a_checked_double() {
     let notes = emit_set_with(BindKind::R, &r_opts()).notes;
     let checked: Vec<&String> = notes
@@ -961,6 +967,12 @@ fn a_mutable_out_parameter_is_a_gap_since_r_vectors_are_values() {
 #[test]
 fn ruby_goldens() {
     check_goldens_with(BindKind::Ruby, "ruby", &ruby_opts());
+}
+
+#[test]
+fn the_ruby_manifest_steps_up_past_ext_module_to_the_package_root() {
+    let manifest = &emit_set_with(BindKind::Ruby, &ruby_opts()).files["ext/acme_core/Cargo.toml"];
+    assert!(manifest.contains("acme = { path = \"../../..\" }"));
 }
 
 #[test]

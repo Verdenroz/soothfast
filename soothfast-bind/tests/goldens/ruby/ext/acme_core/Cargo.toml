@@ -15,7 +15,7 @@ name = "acme_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-acme = { path = ".." }
+acme = { path = "../../.." }
 magnus = "0.8"
 rb-sys = "0.9"
 
