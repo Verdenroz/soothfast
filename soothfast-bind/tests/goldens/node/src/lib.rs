@@ -105,7 +105,7 @@ pub fn digest(data: Buffer) -> Buffer {
 #[napi(js_name = "findCounter")]
 pub fn find_counter(start: BigInt) -> Result<Option<Counter>> {
     let start = bigint_to_i64(start, "start")?;
-    Ok(::acme::find_counter(start))
+    Ok(::acme::find_counter(start).map(Counter))
 }
 
 #[napi]

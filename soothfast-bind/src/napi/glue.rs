@@ -413,6 +413,10 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
             Ty::List(elem) if array_ty(elem).is_some() => {
                 format!("{expr}.map({}::from)", array_ty(elem).expect("checked"))
             }
+            Ty::Class(name) if plan.is_mirrored(name) => {
+                format!("{expr}.map(::std::convert::Into::into)")
+            }
+            Ty::Class(name) => format!("{expr}.map({name})"),
             _ => expr.to_string(),
         },
         _ => expr.to_string(),

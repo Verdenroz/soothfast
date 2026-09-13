@@ -488,6 +488,13 @@ fn an_async_method_is_reported_rather_than_bound_for_node() {
     );
 }
 
+#[test]
+fn an_optional_handle_return_maps_into_its_wrapper_for_node() {
+    let glue = emit(BindKind::Node)["src/lib.rs"].clone();
+    assert!(glue.contains("pub fn find_counter(start: BigInt) -> Result<Option<Counter>>"));
+    assert!(glue.contains("Ok(::acme::find_counter(start).map(Counter))"));
+}
+
 /// A JS-facing name is a camelCased Rust one, and both backends camelCase
 /// with the same reserved-word list, so the Rust names a plan carries are a
 /// faithful stand-in for what each backend actually exports.
