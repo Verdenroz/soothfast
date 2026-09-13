@@ -356,7 +356,7 @@ pub struct Mode(::acme::Mode);
 
 #[pyfunction]
 fn describe(label: Option<String>) -> Option<String> {
-    ::acme::describe(label)
+    ::acme::describe(label.as_deref())
 }
 
 #[pyfunction]
