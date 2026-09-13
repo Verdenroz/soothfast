@@ -133,6 +133,7 @@ fn is_fallible(function: &Function, plan: &BindingPlan) -> bool {
     function.throws.is_some()
         || function.params.iter().any(|p| match Transfer::of(p, plan) {
             Transfer::Handle { mirrored: true, .. } => true,
+            Transfer::Text { nullable: true, .. } => true,
             _ => param_ty_needs_checked_int(&p.ty),
         })
 }
@@ -174,7 +175,7 @@ fn ret_clause(function: &Function, plan: &BindingPlan, fallible: bool) -> String
 /// A parameter's extendr-facing Rust type.
 fn param_ty(param: &Param, plan: &BindingPlan) -> String {
     match Transfer::of(param, plan) {
-        Transfer::Text { nullable: true, .. } => "Option<String>".into(),
+        Transfer::Text { nullable: true, .. } => "Robj".into(),
         Transfer::Text {
             borrowed: true,
             nullable: false,
@@ -230,10 +231,7 @@ fn ret_ty(ty: &Ty, plan: &BindingPlan) -> String {
 }
 
 fn option_inner_ty(ty: &Ty) -> String {
-    match ty {
-        Ty::Str => "String".into(),
-        ty => types::native_scalar(ty).unwrap_or_default().into(),
-    }
+    types::native_scalar(ty).unwrap_or_default().into()
 }
 
 fn buffer_ret_element(ty: &Ty) -> &'static str {
@@ -297,6 +295,7 @@ fn param_prelude(param: &Param, krate: &str, plan: &BindingPlan) -> String {
     let name = &param.name;
     match Transfer::of(param, plan) {
         Transfer::Handle { mirrored: true, .. } => enum_from_str(param, krate, plan),
+        Transfer::Text { nullable: true, .. } => optional_text_prelude(name),
         Transfer::Buffer {
             element, borrowed, ..
         } => buffer_prelude(name, &element, borrowed),
@@ -307,6 +306,15 @@ fn param_prelude(param: &Param, krate: &str, plan: &BindingPlan) -> String {
             None => String::new(),
         },
     }
+}
+
+/// An absent string crosses as R's own `NULL`, matching every other optional
+/// shape; `NA_character_` is accepted as absent too, extendr's own spelling
+/// for "no string" once a value already arrived as a `Robj`.
+fn optional_text_prelude(name: &str) -> String {
+    format!(
+        "    let {name}: Option<String> = match {name}.as_str() {{\n        Some(s) if s.is_na() => None,\n        Some(s) => Some(s.to_string()),\n        None if {name}.is_null() => None,\n        None => return Err(\"`{name}` is not a string\".to_string()),\n    }};\n"
+    )
 }
 
 /// A checked-int element always needs a fresh, converted `Vec`, whatever the

@@ -68,9 +68,15 @@ impl Mode {
 }
 
 #[extendr]
-fn describe(label: Option<String>) -> Option<String> {
+fn describe(label: Robj) -> ::std::result::Result<Robj, String> {
+    let label: Option<String> = match label.as_str() {
+        Some(s) if s.is_na() => None,
+        Some(s) => Some(s.to_string()),
+        None if label.is_null() => None,
+        None => return Err("`label` is not a string".to_string()),
+    };
     let __out = ::acme::describe(label.as_deref());
-    __out
+    Ok(match __out { Some(v) => Robj::from(v), None => ().into() })
 }
 
 #[extendr]

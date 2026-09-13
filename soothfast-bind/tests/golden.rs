@@ -935,6 +935,17 @@ fn an_option_of_a_sequence_binds_where_c_gaps_it() {
 }
 
 #[test]
+fn an_optional_string_crosses_as_null_not_na_in_r() {
+    let set = emit_set_with(BindKind::R, &r_opts());
+    assert!(!set.gaps.iter().any(|g| g.contains("describe")));
+    let glue = &set.files["src/rust/src/lib.rs"];
+    assert!(glue.contains("fn describe(label: Robj) -> ::std::result::Result<Robj, String> {"));
+    assert!(glue.contains("Some(s) if s.is_na() => None,"));
+    assert!(glue.contains("None if label.is_null() => None,"));
+    assert!(glue.contains("Some(v) => Robj::from(v), None => ().into()"));
+}
+
+#[test]
 fn a_mutable_out_parameter_is_a_gap_since_r_vectors_are_values() {
     let set = emit_set_with(BindKind::R, &r_opts());
     assert!(
