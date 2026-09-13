@@ -48,7 +48,7 @@ Key `cargo-soothfast` subcommands (see `cargo-soothfast/src/main.rs` for the ful
 usage string): `measure`, `gate`, `trend append|render`, `docs
 check|accept|gen-tests|capture|diff|reference|routes|build`, `coverage
 measure|docs`, `spec gen|gate|check|check-proto`, `sdk gen|gate|publish`,
-`bind gen|gate|build`, `report render|changelog`,
+`bind gen|gate|build|bench`, `report render|changelog`,
 `mcp`.
 
 Before pushing, run what CI runs: `make check` and `make gate BASE=master`.

@@ -594,6 +594,53 @@ Reading a statistic back off it allocates nothing at all.
 Numbers here are one machine and are illustrative. Nothing gates them; the
 gated claims in this repo are the ones under `soothfast:claim` markers.
 
+## Measuring the boundary
+
+The ratios above come from `cargo soothfast bind bench`, not a stopwatch by
+hand. A `[[bind]]` entry names a script:
+
+```toml
+[[bind]]
+lang = "python"
+out = "bindings/python"
+package = "soothfast-stats"
+bench = "bindings/python/bench.py"
+```
+
+`bench` is a path relative to the package root, in the host language.
+`bind bench` builds that entry the way `bind build` does, then runs the
+script and reads one JSON object per line off its stdout:
+
+```
+{"shape": "batch_buffer", "binding_ns": 101769.0, "host_ns": 11077107.0, "n": 100000}
+```
+
+`binding_ns` and `host_ns` are the best-of-nine medians of one call through
+the binding and of the same computation written in the host language — the
+script owns that measurement, not the harness. Anything else on stdout is
+ignored, so a script is free to log; stderr passes straight through.
+`bind bench` computes the ratio itself (`host_ns / binding_ns`; above 1.0
+means the binding wins), prints a table, and — with `--save-baseline
+NAME` — files each shape into the baseline under
+`<crate>::bind::<lang>::<shape>`, metric `ratio`:
+
+```bash
+cargo soothfast bind bench -p PKG --only python,node --save-baseline self
+```
+
+`--only LANG[,LANG]` (shared with `bind build`) narrows which entries run.
+The command fails if a script exits non-zero, prints the same shape twice,
+or prints no shapes at all; a language whose toolchain isn't on this
+machine is skipped with a named message instead, so one missing tool
+doesn't sink the whole run.
+
+Once saved, a ratio reads like any other measured metric — the Speed
+section above gates four of them this way:
+
+```
+<!-- soothfast:claim soothfast_demo::bind::python::batch_buffer.ratio.ratio >= 60 -->
+```
+
 ## The lock is released where it pays
 
 A Python thread calling into Rust holds the interpreter lock for the whole
