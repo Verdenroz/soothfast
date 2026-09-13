@@ -70,8 +70,10 @@ so merge-base and tag lookups work.
 
 **On `pull_request`.** For each package (see `packages` below) it runs `cargo
 soothfast gate -p PKG --against-ref origin/<base>` and appends the output to
-one comment on the pull request, updated in place on later pushes. The
-comment shows the last forty lines per package. On a regression it uploads
+one comment on the pull request, updated in place on later pushes. Set
+`comment-id` when a workflow calls this action more than once on the same
+pull request, so each gate keeps its own comment. The comment shows the
+last forty lines per package. On a regression it uploads
 `.soothfast/triage/` as the `soothfast-triage` artifact and fails the step.
 The comment is posted as soothfast-bot by the broker itself: the job sends
 the text over its OIDC identity and never holds a token, so a pull request
@@ -116,6 +118,7 @@ installed on is refused.
 |---|---|---|
 | `packages` | every package with a bench target named `soothfast` | Space-separated packages to gate and measure. `report changelog` uses the same list unless `changelog-packages` says otherwise. |
 | `gate` | `true` | Run the gate on pull requests. |
+| `comment-id` | `soothfast-gate` | Identifier of the pull-request comment this run creates or updates. |
 | `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes. |
 | `spec` | none | Space-separated packages whose `mode = "generate"` specs to regenerate. |
 | `bind` | none | Space-separated packages whose `[[bind]]` entries to regenerate and gate. |
