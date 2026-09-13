@@ -68,6 +68,9 @@ found = AcmeCore.find_counter(5)
 raise "find_counter" unless found.value == 5
 raise "find_counter absent" unless AcmeCore.find_counter(-1).nil?
 
+raise "describe" unless AcmeCore.describe("world") == "label=world"
+raise "describe absent" unless AcmeCore.describe(nil).nil?
+
 puts "ok"
 "#;
 

@@ -176,6 +176,8 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "peakLevel=High",
     "findCounter=5",
     "findCounter(missing)=null",
+    "describe=label=world",
+    "describe(none)=null",
 ];
 
 fn kotlin_sources(dir: &Path) -> Vec<PathBuf> {

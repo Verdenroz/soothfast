@@ -31,5 +31,8 @@ public class Smoke {
             System.out.println("findCounter=" + found.value());
         }
         System.out.println("findCounter(missing)=" + Core.findCounter(-1));
+
+        System.out.println("describe=" + Core.describe("world"));
+        System.out.println("describe(none)=" + Core.describe(null));
     }
 }

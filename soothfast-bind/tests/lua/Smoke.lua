@@ -70,4 +70,7 @@ assert(found:value() == 5, "find_counter value")
 found:close()
 assert(acme.find_counter(-1) == nil, "find_counter absent")
 
+assert(acme.describe("world") == "label=world", "describe present")
+assert(acme.describe(nil) == nil, "describe absent")
+
 print("ok")

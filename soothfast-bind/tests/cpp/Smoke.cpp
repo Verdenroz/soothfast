@@ -48,5 +48,8 @@ int main() {
     std::printf("find_counter=%lld\n", static_cast<long long>(found->value()));
     std::printf("find_counter(missing)=%s\n", find_counter(-1).has_value() ? "present" : "none");
 
+    std::printf("describe=%s\n", describe("world").value().c_str());
+    std::printf("describe(none)=%s\n", describe(std::nullopt).has_value() ? "present" : "none");
+
     return 0;
 }

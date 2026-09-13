@@ -95,3 +95,13 @@ func TestPeakLevelAndFindCounter(t *testing.T) {
 		t.Fatal("FindCounter(-1) = non-nil, want nil")
 	}
 }
+
+func TestDescribe(t *testing.T) {
+	label := "world"
+	if got := Describe(&label); got == nil || *got != "label=world" {
+		t.Fatalf("Describe(&label) = %v, want label=world", got)
+	}
+	if got := Describe(nil); got != nil {
+		t.Fatalf("Describe(nil) = %v, want nil", got)
+	}
+}

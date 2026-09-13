@@ -25,3 +25,6 @@ Console.WriteLine($"peakLevel={Core.PeakLevel(new double[] { 0.1, 0.9, 0.3 })}")
 var found = Core.FindCounter(5);
 Console.WriteLine($"findCounter={found.Value}");
 Console.WriteLine($"findCounter(missing)={Core.FindCounter(-1)?.Value.ToString() ?? "null"}");
+
+Console.WriteLine($"describe={Core.Describe("world")}");
+Console.WriteLine($"describe(none)={Core.Describe(null) ?? "null"}");

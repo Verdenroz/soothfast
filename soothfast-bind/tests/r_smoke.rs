@@ -110,4 +110,6 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "peak_level=High",
     "find_counter=5",
     "find_counter(missing)=TRUE",
+    "describe=label=world",
+    "describe(none)=TRUE",
 ];

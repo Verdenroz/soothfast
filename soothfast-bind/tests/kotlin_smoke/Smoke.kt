@@ -25,4 +25,7 @@ fun main() {
     println("peakLevel=${Core.peakLevel(doubleArrayOf(0.1, 0.9, 0.3))}")
     Core.findCounter(5)!!.use { found -> println("findCounter=${found.value}") }
     println("findCounter(missing)=${Core.findCounter(-1)}")
+
+    println("describe=${Core.describe("world")}")
+    println("describe(none)=${Core.describe(null)}")
 }
