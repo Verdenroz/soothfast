@@ -7,9 +7,7 @@ mod fixture;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use fixture::{
-    cpp_opts, go_opts, java_opts, kotlin_opts, lua_opts, opts, r_opts, ruby_opts, walk,
-};
+use fixture::{cpp_opts, go_opts, java_opts, kotlin_opts, lua_opts, opts, r_opts, ruby_opts, walk};
 use soothfast_bind::{BindKind, BindOptions};
 
 fn golden_dir(name: &str) -> PathBuf {

@@ -238,6 +238,21 @@ mod tests {
     }
 
     #[test]
+    fn lua_accepts_a_dotted_require_path_as_its_package() {
+        let cfg = parse("[[bind]]\nlang = \"lua\"\nout = \"lua\"\npackage = \"acme.core\"\n")
+            .expect("parses");
+        assert_eq!(cfg.entries[0].lang, BindKind::Lua);
+        assert_eq!(cfg.entries[0].package, "acme.core");
+    }
+
+    #[test]
+    fn luajit_is_accepted_as_an_alias_for_lua() {
+        let cfg = parse("[[bind]]\nlang = \"luajit\"\nout = \"lua\"\npackage = \"acme\"\n")
+            .expect("parses");
+        assert_eq!(cfg.entries[0].lang, BindKind::Lua);
+    }
+
+    #[test]
     fn an_unknown_lang_lists_the_ones_that_exist() {
         let err = parse("[[bind]]\nout = \"o\"\npackage = \"p\"\nlang = \"cobol\"\n")
             .expect_err("rejected");
