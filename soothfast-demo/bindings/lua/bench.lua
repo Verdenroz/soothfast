@@ -99,8 +99,9 @@ end)
 checksum = checksum + summary:median()
 emit("build_summary", build_binding_ns, build_host_ns, N)
 
--- The fast path: a cdata `double[?]` built once, outside the timed region,
--- so the binding call crosses with no table-to-array copy.
+-- The fast path: a cdata `double[?]` input built once, outside the timed
+-- region, and the returned array consumed as the cdata it already is, with
+-- no table copy on either side.
 local values_cdata = ffi.new("double[?]", N)
 for i = 1, N do
 	values_cdata[i - 1] = values[i]
@@ -133,22 +134,23 @@ local batch_host_table_ns = median_ns(function()
 end)
 emit("batch_buffer_table", batch_binding_table_ns, batch_host_table_ns, N)
 
--- `#out` sizes the scratch cdata array `deviations_into` writes through, so
--- the table must already hold N elements before the first call.
-local out_buf, host_out = {}, {}
+-- The write target is a returned array reused as the output buffer:
+-- `deviations_into` writes straight into its own memory, no copy on
+-- either side.
+local out_arr = summary:deviations_all(values_cdata)
+local host_out = {}
 for i = 1, N do
-	out_buf[i] = 0.0
 	host_out[i] = 0.0
 end
 local into_binding_ns = median_ns(function()
-	summary:deviations_into(values, out_buf)
+	summary:deviations_into(values_cdata, out_arr)
 end)
 local into_host_ns = median_ns(function()
 	for i = 1, N do
 		host_out[i] = dev(values[i], median, mad)
 	end
 end)
-checksum = checksum + out_buf[1] + host_out[1]
+checksum = checksum + out_arr[1] + host_out[1]
 emit("batch_into", into_binding_ns, into_host_ns, N)
 
 local per_binding_total, per_host_total = 0.0, 0.0
