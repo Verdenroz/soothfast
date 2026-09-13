@@ -296,7 +296,7 @@ fn compile_c(
     profile: &str,
     quiet: bool,
 ) -> Result<Vec<String>, String> {
-    let mut args = vec!["build"];
+    let mut args = vec!["build", "--locked"];
     if release {
         args.push("--release");
     }
@@ -707,6 +707,8 @@ fn wasm_pack(
     if release {
         args.push("--release");
     }
+    // Everything after `--` is passed straight through to `cargo build`.
+    args.extend(["--", "--locked"]);
     let mut cmd = Command::new("wasm-pack");
     cmd.args(&args)
         .current_dir(glue)
@@ -781,7 +783,8 @@ fn napi_build_once(
     quiet: bool,
 ) -> Result<(), String> {
     // `--platform` makes `napi build` emit the JS loader package.json's
-    // `main` names; without it only the `.node` file lands.
+    // `main` names; without it only the `.node` file lands. `napi build`
+    // (@napi-rs/cli 3.9.1) has no `--locked` and no cargo passthrough.
     let mut args = vec!["napi", "build", "--platform"];
     if release {
         args.push("--release");
@@ -848,7 +851,7 @@ fn maturin_once(
     release: bool,
     quiet: bool,
 ) -> Result<(), String> {
-    let mut args = vec!["build"];
+    let mut args = vec!["build", "--locked"];
     if release {
         args.push("--release");
     }
@@ -899,6 +902,18 @@ fn artifacts(dir: &Path, extensions: &[&str]) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
 
+    /// `bind gen` always leaves a lockfile beside a cargo-driven glue
+    /// crate's manifest; a bare golden copy has none, and `--locked` needs
+    /// one to build against.
+    fn lock(glue: &Path) {
+        let status = Command::new("cargo")
+            .arg("generate-lockfile")
+            .current_dir(glue)
+            .status()
+            .expect("runs cargo generate-lockfile");
+        assert!(status.success(), "cargo generate-lockfile failed");
+    }
+
     /// Builds `soothfast-bind`'s own Java golden the way `bind build` would,
     /// in the same fixture-crate-at-the-root layout `java_smoke.rs` uses.
     /// Ignored: it shells out to cargo, javac and jar.
@@ -912,6 +927,7 @@ mod tests {
         copy_dir(&bind_dir.join("fixture_crate"), &scratch);
         let glue = scratch.join("glue");
         copy_dir(&bind_dir.join("goldens/java"), &glue);
+        lock(&glue);
 
         let artifacts = run(BindKind::Java, &glue, &[], false, false).expect("builds");
         assert!(
@@ -936,6 +952,7 @@ mod tests {
         copy_dir(&bind_dir.join("fixture_crate"), &scratch);
         let glue = scratch.join("glue");
         copy_dir(&bind_dir.join("goldens/kotlin"), &glue);
+        lock(&glue);
 
         let artifacts = run(BindKind::Kotlin, &glue, &[], false, false).expect("builds");
         let has_jar = artifacts.iter().any(|a| a.ends_with(".jar"));
@@ -991,6 +1008,7 @@ mod tests {
         copy_dir(&bind_dir.join("fixture_crate"), &scratch);
         let glue = scratch.join("glue");
         copy_dir(&bind_dir.join("goldens/cpp"), &glue);
+        lock(&glue);
 
         let artifacts = run(BindKind::Cpp, &glue, &[], false, false).expect("builds");
         assert!(
@@ -1018,6 +1036,7 @@ mod tests {
         copy_dir(&bind_dir.join("fixture_crate"), &scratch);
         let glue = scratch.join("glue");
         copy_dir(&bind_dir.join("goldens/lua"), &glue);
+        lock(&glue);
 
         let artifacts = run(BindKind::Lua, &glue, &[], false, false).expect("builds");
         assert!(
