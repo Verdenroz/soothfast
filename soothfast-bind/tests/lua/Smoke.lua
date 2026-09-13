@@ -17,11 +17,27 @@ counter:close()
 counter:close()
 
 local digest = acme.digest({ 1, 2, 3 })
+assert(#digest == 3, "digest length")
 assert(digest[1] == 2 and digest[2] == 3 and digest[3] == 4, "digest")
 assert(#acme.digest({}) == 0, "empty digest")
 
+local digest_table = digest:totable()
+assert(digest_table[1] == 2 and digest_table[2] == 3 and digest_table[3] == 4, "totable")
+
+for _, bad in ipairs({ 0, -1, 4 }) do
+	local ok, err = pcall(function()
+		return digest[bad]
+	end)
+	assert(not ok, "expected an error at index " .. bad)
+	assert(tostring(err):find("out of range"), "error message: " .. tostring(err))
+end
+
 local norm = acme.normalize({ 1.0, 2.0, 3.0 }, 2.0)
 assert(norm[1] == 2.0 and norm[2] == 4.0 and norm[3] == 6.0, "normalize")
+
+-- A returned array passes back into another call with no copy.
+local renorm = acme.normalize(norm, 1.0)
+assert(renorm[1] == 2.0 and renorm[2] == 4.0 and renorm[3] == 6.0, "normalize a returned array")
 
 assert(acme.greet("world") == "hello, world", "greet")
 
@@ -31,6 +47,14 @@ local ffi = require("ffi")
 local out = ffi.new("double[?]", 3)
 acme.scale_into({ 1.0, 2.0, 3.0 }, 2.0, out)
 assert(out[0] == 2.0 and out[1] == 4.0 and out[2] == 6.0, "scale_into cdata out")
+
+-- A returned array works as a scale_into input too.
+local out_from_norm = ffi.new("double[?]", 3)
+acme.scale_into(norm, 3.0, out_from_norm)
+assert(
+	out_from_norm[0] == 6.0 and out_from_norm[1] == 12.0 and out_from_norm[2] == 18.0,
+	"scale_into from a returned array"
+)
 
 -- A plain table is copied in and the mutation copied back out.
 local out_table = { 0, 0, 0 }
