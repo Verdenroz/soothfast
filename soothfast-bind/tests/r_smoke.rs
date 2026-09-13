@@ -111,5 +111,7 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "find_counter=5",
     "find_counter(missing)=TRUE",
     "describe=label=world",
-    "describe(none)=TRUE",
+    "describe(NULL)=TRUE",
+    "describe(NA)=TRUE",
+    "caught describe: `label` is not a string",
 ];

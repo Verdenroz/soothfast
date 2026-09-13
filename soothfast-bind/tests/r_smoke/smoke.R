@@ -26,4 +26,7 @@ cat("find_counter=", found$value(), "\n", sep = "")
 cat("find_counter(missing)=", is.null(find_counter(-1)), "\n", sep = "")
 
 cat("describe=", describe("world"), "\n", sep = "")
-cat("describe(none)=", is.na(describe(NA_character_)), "\n", sep = "")
+cat("describe(NULL)=", is.null(describe(NULL)), "\n", sep = "")
+cat("describe(NA)=", is.null(describe(NA_character_)), "\n", sep = "")
+describe_err <- tryCatch(describe(42), error = function(e) conditionMessage(e))
+cat("caught describe:", describe_err, "\n")
