@@ -2,7 +2,8 @@ name: Bind
 
 # Dogfoods the `bind` action input on soothfast-demo: gates its committed
 # bindings on pull requests and regenerates them through soothfast-bot on
-# pushes to master, the same way spec.yml exercises `spec`.
+# pushes to master, the same way spec.yml exercises `spec`. `smoke` builds
+# every golden package for real against its host toolchain on pull requests.
 on:
   push:
     branches: [master]
@@ -75,6 +76,86 @@ jobs:
       # when it runs `bind gate`; this reuses it.
       - name: Bindings are up to date
         run: bin/cargo-soothfast bind gen -p "$BIND_PKG" --check
+
+  smoke:
+    # Compiles and runs every soothfast-bind golden package against its real
+    # host toolchain, the CI form of the `#[ignore]`d tests under
+    # soothfast-bind/tests and soothfast-demo/tests/glue_compiles.rs.
+    # Independent of build-cli: it never invokes cargo-soothfast, only cargo
+    # and the host toolchains the goldens already commit.
+    if: github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Fails a missing toolchain instead of skipping it; see
+      # soothfast-bind/tests/support/mod.rs.
+      SOOTHFAST_SMOKE_STRICT: "1"
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: smoke
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: soothfast-bind/tests/goldens/go/go.mod
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: lts/*
+      - uses: r-lib/actions/setup-r@465b7d8e732ca3921382b1674c59bada9cbf3399 # v2.13.0
+      - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: "3.3"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.x"
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y luajit libluajit-5.1-dev
+      # Ubuntu carries no `kotlin` apt package, and the snap tracks a
+      # moving "stable" channel rather than a pinned version, so this
+      # fetches the release archive and checks it against JetBrains' own
+      # published digest instead.
+      - name: Install Kotlin compiler
+        run: |
+          set -euo pipefail
+          curl -fsSL -o kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.4.20/kotlin-compiler-2.4.20.zip
+          echo "59e9ca74c7904ef2c122b12114937673ccce68de820a663f0ed66ccf8799e0b7  kotlinc.zip" | sha256sum -c -
+          unzip -q kotlinc.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/kotlinc/bin" >> "$GITHUB_PATH"
+      - run: cargo test -p soothfast-bind --test golden --locked
+      - name: go smoke
+        run: cargo test -p soothfast-bind --test go_smoke --locked -- --ignored
+      - name: cpp smoke
+        run: cargo test -p soothfast-bind --test cpp_smoke --locked -- --ignored
+      - name: lua smoke
+        run: cargo test -p soothfast-bind --test lua_smoke --locked -- --ignored
+      - name: java smoke
+        run: cargo test -p soothfast-bind --test java_smoke --locked -- --ignored
+      - name: kotlin smoke
+        run: cargo test -p soothfast-bind --test kotlin_smoke --locked -- --ignored
+      - name: r smoke
+        run: cargo test -p soothfast-bind --test r_smoke --locked -- --ignored
+      - name: ruby smoke
+        run: cargo test -p soothfast-bind --test ruby_smoke --locked -- --ignored
+      - name: node smoke
+        run: cargo test -p soothfast-bind --test node_smoke --locked -- --ignored
+      - name: csharp smoke
+        run: cargo test -p soothfast-bind --test csharp_smoke --locked -- --ignored
+      - name: demo glue compiles
+        run: cargo test -p soothfast-demo --test glue_compiles --locked -- --ignored
 
   generate:
     if: github.event_name == 'push'
