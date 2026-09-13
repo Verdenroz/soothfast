@@ -10,8 +10,10 @@ use soothfast_bind::foreign::TypeTable;
 use soothfast_bind::model::Surface;
 use soothfast_bind::{BindFileSet, BindOptions, compat};
 
+use crate::bind_bench;
+use crate::bind_bench_launch;
 use crate::bind_config::{self, BindEntry};
-use crate::invoke::{self, CommonArgs};
+use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::spec_gen;
 
 pub fn run(args: &[String]) -> i32 {
@@ -19,15 +21,32 @@ pub fn run(args: &[String]) -> i32 {
         Some("gen") => run_gen(&args[1..]),
         Some("gate") => run_gate(&args[1..]),
         Some("build") => run_build(&args[1..]),
+        Some("bench") => run_bench(&args[1..]),
         _ => {
             eprintln!(
                 "soothfast: usage: cargo soothfast bind gen -p PKG [--check]\n\
                  cargo soothfast bind gate -p PKG [--base REF] [--allow-breaking]\n\
-                 cargo soothfast bind build -p PKG [--target TRIPLE].. [--debug]"
+                 cargo soothfast bind build -p PKG [--target TRIPLE].. [--only LANG[,LANG]] [--debug]\n\
+                 cargo soothfast bind bench -p PKG [--only LANG[,LANG]] [--save-baseline NAME] [--json]"
             );
             2
         }
     }
+}
+
+/// Parse `--only python,node` into the languages to keep.
+fn parse_only(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whether `entry` is one `--only` was given, keeps.
+fn entry_selected(entry: &BindEntry, only: Option<&[String]>) -> bool {
+    only.is_none_or(|langs| langs.iter().any(|l| l == entry.lang.name()))
 }
 
 fn run_gen(args: &[String]) -> i32 {
@@ -160,6 +179,7 @@ fn package_dir_in(pkg: &str, wt: &Path) -> Result<PathBuf, String> {
 fn run_build(args: &[String]) -> i32 {
     let mut common = CommonArgs::default();
     let mut targets: Vec<String> = Vec::new();
+    let mut only: Option<String> = None;
     let mut release = true;
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -168,6 +188,13 @@ fn run_build(args: &[String]) -> i32 {
                 Some(t) => targets.push(t.clone()),
                 None => {
                     eprintln!("soothfast: --target needs a triple");
+                    return 2;
+                }
+            },
+            "--only" => match it.next() {
+                Some(v) => only = Some(v.clone()),
+                None => {
+                    eprintln!("soothfast: --only needs a language list");
                     return 2;
                 }
             },
@@ -183,7 +210,8 @@ fn run_build(args: &[String]) -> i32 {
         eprintln!("soothfast: bind build requires -p PKG");
         return 2;
     };
-    match build(&pkg, &targets, release) {
+    let only = only.as_deref().map(parse_only);
+    match build(&pkg, &targets, release, only.as_deref()) {
         Ok(code) => code,
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -316,7 +344,12 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
     Ok(0)
 }
 
-fn build(pkg: &str, targets: &[String], release: bool) -> Result<i32, String> {
+fn build(
+    pkg: &str,
+    targets: &[String],
+    release: bool,
+    only: Option<&[String]>,
+) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let cfg = bind_config::load(&meta.dir)?;
     if cfg.entries.is_empty() {
@@ -324,13 +357,13 @@ fn build(pkg: &str, targets: &[String], release: bool) -> Result<i32, String> {
         return Ok(0);
     }
     let mut failed = 0u32;
-    for entry in &cfg.entries {
+    for entry in cfg.entries.iter().filter(|e| entry_selected(e, only)) {
         let glue = meta.dir.join(&entry.out);
         let wanted = match targets.is_empty() {
             true => entry.targets.clone(),
             false => targets.to_vec(),
         };
-        match crate::bind_build::run(entry.lang, &glue, &wanted, release) {
+        match crate::bind_build::run(entry.lang, &glue, &wanted, release, false) {
             Ok(artifacts) => {
                 println!(
                     "bind build: {} [{}] — {} artifact(s)",
@@ -353,4 +386,245 @@ fn build(pkg: &str, targets: &[String], release: bool) -> Result<i32, String> {
         }
     }
     Ok(if failed > 0 { 1 } else { 0 })
+}
+
+fn run_bench(args: &[String]) -> i32 {
+    let mut common = CommonArgs::default();
+    let mut only: Option<String> = None;
+    let mut save_baseline: Option<String> = None;
+    let mut json = false;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--only" => match it.next() {
+                Some(v) => only = Some(v.clone()),
+                None => {
+                    eprintln!("soothfast: --only needs a language list");
+                    return 2;
+                }
+            },
+            "--save-baseline" => match it.next() {
+                Some(n) => save_baseline = Some(n.clone()),
+                None => {
+                    eprintln!("soothfast: --save-baseline needs a name");
+                    return 2;
+                }
+            },
+            "--json" => json = true,
+            _ if common.try_parse(a, &mut it) => {}
+            _ => {
+                eprintln!("soothfast: unknown bind bench arg {a:?}");
+                return 2;
+            }
+        }
+    }
+    let Some(pkg) = common.pkg.clone() else {
+        eprintln!("soothfast: bind bench requires -p PKG");
+        return 2;
+    };
+    let only = only.as_deref().map(parse_only);
+    match bench(&pkg, only.as_deref(), save_baseline.as_deref(), json) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            1
+        }
+    }
+}
+
+/// One shape's measurement, ready to print or file into a baseline.
+struct Row {
+    lang: &'static str,
+    record: bind_bench::BenchRecord,
+    ratio: f64,
+}
+
+fn bench(
+    pkg: &str,
+    only: Option<&[String]>,
+    save_baseline: Option<&str>,
+    json: bool,
+) -> Result<i32, String> {
+    let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
+    let cfg = bind_config::load(&meta.dir)?;
+    let candidates: Vec<&BindEntry> = cfg
+        .entries
+        .iter()
+        .filter(|e| entry_selected(e, only) && e.bench.is_some())
+        .collect();
+    if candidates.is_empty() {
+        println!("bind bench: nothing to bench — no [[bind]] entry has a `bench` script");
+        return Ok(0);
+    }
+
+    let mut rows: Vec<Row> = Vec::new();
+    let mut run = Run::default();
+    let mut failures: Vec<String> = Vec::new();
+    for entry in candidates {
+        let bench_rel = entry.bench.as_ref().expect("filtered for Some above");
+        let glue = meta.dir.join(&entry.out);
+        let script = meta.dir.join(bench_rel);
+        let label = format!("{} [{}]", entry.out, entry.lang.name());
+
+        if let Some((tool, hint)) = bind_bench_launch::missing_tool(entry.lang) {
+            println!("bind bench: skipping {label}: `{tool}` not found — {hint}");
+            continue;
+        }
+        // `bind bench` builds its own target rather than requiring a
+        // separate `bind build` first: a script otherwise fails with a
+        // confusing "cannot find module" instead of a clear build error.
+        // Quiet, so a build tool's own stdout never lands in this
+        // command's table/JSON output.
+        let artifacts = match crate::bind_build::run(entry.lang, &glue, &entry.targets, true, true)
+        {
+            Ok(a) => a,
+            Err(e) => {
+                failures.push(format!("{label}: build failed: {e}"));
+                continue;
+            }
+        };
+        let cmd = match bind_bench_launch::launch(entry.lang, &glue, &script, &artifacts) {
+            Ok(cmd) => cmd,
+            Err(bind_bench_launch::LaunchError::Missing(msg)) => {
+                println!("bind bench: skipping {label}: {msg}");
+                continue;
+            }
+            Err(bind_bench_launch::LaunchError::Failed(msg)) => {
+                failures.push(format!("{label}: {msg}"));
+                continue;
+            }
+        };
+        let records = match run_script(cmd, &label) {
+            Ok(Some(records)) => records,
+            Ok(None) => continue,
+            Err(msg) => {
+                failures.push(msg);
+                continue;
+            }
+        };
+        for record in records {
+            let ratio = bind_bench::ratio(record.binding_ns, record.host_ns);
+            let id = bind_bench::item_id(pkg, entry.lang.name(), &record.shape);
+            run.items.insert(
+                id,
+                ItemMetrics {
+                    ratio: Some(ratio),
+                    binding_ns: Some(record.binding_ns),
+                    host_ns: Some(record.host_ns),
+                    n: Some(record.n),
+                    ..Default::default()
+                },
+            );
+            rows.push(Row {
+                lang: entry.lang.name(),
+                record,
+                ratio,
+            });
+        }
+    }
+
+    print_rows(&rows, json);
+    println!("bind bench: {} shape(s) measured", rows.len());
+    for f in &failures {
+        println!("bind bench: FAILED {f}");
+    }
+
+    if let Some(name) = save_baseline {
+        if run.items.is_empty() {
+            println!("bind bench: nothing measured, not saving baseline {name:?}");
+        } else {
+            let path = invoke::save_baseline(name, &run, invoke::SaveScope::BenchFiltered)
+                .map_err(|e| e.to_string())?;
+            println!("baseline saved: {}", path.display());
+        }
+    }
+    Ok(if failures.is_empty() { 0 } else { 1 })
+}
+
+/// Run one entry's launch command to completion and parse its stdout.
+/// `Ok(None)` means the tool vanished between `launch` building the command
+/// and actually spawning it — rare, but the same "skip, don't fail" verdict
+/// a `Missing` from `launch` gets.
+fn run_script(
+    mut cmd: std::process::Command,
+    label: &str,
+) -> Result<Option<Vec<bind_bench::BenchRecord>>, String> {
+    let out = match cmd.output() {
+        Ok(out) => out,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!(
+                "bind bench: skipping {label}: `{}` not found",
+                cmd.get_program().to_string_lossy()
+            );
+            return Ok(None);
+        }
+        Err(e) => return Err(format!("{label}: cannot run bench script: {e}")),
+    };
+    if !out.status.success() {
+        return Err(format!(
+            "{label} bench script exited with {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    bind_bench::parse_output(&stdout)
+        .map(Some)
+        .map_err(|e| format!("{label}: {e}"))
+}
+
+fn print_rows(rows: &[Row], json: bool) {
+    for row in rows {
+        if json {
+            println!(
+                "{{\"lang\":\"{}\",\"shape\":\"{}\",\"binding_ns\":{},\"host_ns\":{},\"n\":{},\"ratio\":{}}}",
+                row.lang,
+                row.record.shape,
+                row.record.binding_ns,
+                row.record.host_ns,
+                row.record.n,
+                row.ratio
+            );
+        } else {
+            println!(
+                "{:<8} {:<20} binding={:>12.1}ns  host={:>12.1}ns  ratio={:.2}x",
+                row.lang, row.record.shape, row.record.binding_ns, row.record.host_ns, row.ratio
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(lang: &str) -> BindEntry {
+        bind_config::parse(&format!(
+            "[[bind]]\nlang = \"{lang}\"\nout = \"o\"\npackage = \"p\"\n"
+        ))
+        .expect("parses")
+        .entries
+        .remove(0)
+    }
+
+    #[test]
+    fn parse_only_splits_and_trims() {
+        assert_eq!(parse_only("python, node"), vec!["python", "node"]);
+        assert_eq!(parse_only("python,,node,"), vec!["python", "node"]);
+        assert_eq!(parse_only(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn no_only_selects_every_entry() {
+        assert!(entry_selected(&entry("python"), None));
+        assert!(entry_selected(&entry("go"), None));
+    }
+
+    #[test]
+    fn only_keeps_just_the_named_languages() {
+        let wanted = parse_only("python,node");
+        assert!(entry_selected(&entry("python"), Some(&wanted)));
+        assert!(entry_selected(&entry("node"), Some(&wanted)));
+        assert!(!entry_selected(&entry("go"), Some(&wanted)));
+    }
 }

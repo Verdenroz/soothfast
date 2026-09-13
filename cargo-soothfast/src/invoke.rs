@@ -347,6 +347,12 @@ pub struct ItemMetrics {
     /// buildcost pseudo-items
     pub build_ms: Option<u64>,
     pub size_bytes: Option<u64>,
+    /// `bind bench` host-vs-binding speedup (`host_ns / binding_ns`), plus
+    /// the readings it came from.
+    pub ratio: Option<f64>,
+    pub binding_ns: Option<f64>,
+    pub host_ns: Option<f64>,
+    pub n: Option<u64>,
 }
 
 /// One assertion verdict from the runner.
@@ -466,6 +472,9 @@ pub fn run_to_items_value(run: &Run) -> Value {
         if let (Some(ms), Some(sz)) = (m.build_ms, m.size_bytes) {
             entry["buildcost"] = json!({ "build_ms": ms, "size_bytes": sz });
         }
+        if let (Some(r), Some(b), Some(h), Some(n)) = (m.ratio, m.binding_ns, m.host_ns, m.n) {
+            entry["ratio"] = json!({ "ratio": r, "binding_ns": b, "host_ns": h, "n": n });
+        }
         items.insert(id.clone(), entry);
     }
     Value::Object(items)
@@ -505,6 +514,10 @@ pub fn run_from_items_value(items: &Value) -> Run {
                 wakes: v["asyncexec"]["wakes"].as_u64(),
                 build_ms: v["buildcost"]["build_ms"].as_u64(),
                 size_bytes: v["buildcost"]["size_bytes"].as_u64(),
+                ratio: v["ratio"]["ratio"].as_f64(),
+                binding_ns: v["ratio"]["binding_ns"].as_f64(),
+                host_ns: v["ratio"]["host_ns"].as_f64(),
+                n: v["ratio"]["n"].as_u64(),
             },
         );
     }
@@ -597,9 +610,16 @@ pub fn save_baseline(name: &str, run: &Run, scope: SaveScope) -> io::Result<Path
         match scope {
             SaveScope::BenchFull(Some(pkg)) => {
                 let pkg = pkg.replace('-', "_");
-                map.retain(|k, _| k.starts_with("buildcost::") || id_pkg(k) != pkg);
+                // bind bench ids share the package's prefix but come from a
+                // different command (see gate.rs's matching exemption) — a
+                // plain measure save must not erase them.
+                map.retain(|k, _| {
+                    k.starts_with("buildcost::") || k.contains("::bind::") || id_pkg(k) != pkg
+                });
             }
-            SaveScope::BenchFull(None) => map.retain(|k, _| k.starts_with("buildcost::")),
+            SaveScope::BenchFull(None) => {
+                map.retain(|k, _| k.starts_with("buildcost::") || k.contains("::bind::"));
+            }
             SaveScope::Buildcost(Some(pkg)) => map.retain(|k, _| {
                 k.strip_prefix("buildcost::")
                     .is_none_or(|rest| rest.split("::").next() != Some(pkg.as_str()))
@@ -1518,8 +1538,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CommonArgs, ItemMetrics, Run, SaveScope, harness_mismatches, run_from_items_value,
-        run_to_items_value,
+        CommonArgs, ItemMetrics, Run, SaveScope, baseline_path, harness_mismatches, load_baseline,
+        run_from_items_value, run_to_items_value, save_baseline,
     };
 
     #[test]
@@ -1545,6 +1565,10 @@ mod tests {
                 tolerance_pct: Some(8.0),
                 build_ms: None,
                 size_bytes: None,
+                ratio: None,
+                binding_ns: None,
+                host_ns: None,
+                n: None,
             },
         );
         let round_tripped = run_from_items_value(&run_to_items_value(&run));
@@ -1565,6 +1589,89 @@ mod tests {
         assert_eq!(back.polls, original.polls);
         assert_eq!(back.wakes, original.wakes);
         assert_eq!(back.tolerance_pct, original.tolerance_pct);
+    }
+
+    #[test]
+    fn ratio_round_trips_with_full_f64_precision() {
+        let mut run = Run::default();
+        run.items.insert(
+            "pkg::bind::node::batch_buffer".into(),
+            ItemMetrics {
+                ratio: Some(1.0 / 3.0),
+                binding_ns: Some(120.5),
+                host_ns: Some(760.333_333_333),
+                n: Some(100_000),
+                ..Default::default()
+            },
+        );
+        let round_tripped = run_from_items_value(&run_to_items_value(&run));
+        let original = &run.items["pkg::bind::node::batch_buffer"];
+        let back = &round_tripped.items["pkg::bind::node::batch_buffer"];
+        assert_eq!(back.ratio, original.ratio);
+        assert_eq!(back.binding_ns, original.binding_ns);
+        assert_eq!(back.host_ns, original.host_ns);
+        assert_eq!(back.n, original.n);
+    }
+
+    #[test]
+    fn a_baseline_saved_before_ratio_existed_still_decodes() {
+        let items = serde_json::json!({
+            "pkg::bench": { "fingerprint": "fp", "covers": "", "alloc": { "allocs": 1, "bytes": 8 } },
+        });
+        let run = run_from_items_value(&items);
+        let item = &run.items["pkg::bench"];
+        assert_eq!(item.ratio, None);
+        assert_eq!(item.binding_ns, None);
+        assert_eq!(item.host_ns, None);
+        assert_eq!(item.n, None);
+    }
+
+    #[test]
+    fn a_measure_style_save_preserves_bind_bench_records() {
+        let name = "unit-test-bind-preserve";
+        let path = baseline_path(name).expect("baseline path resolves");
+        let _ = std::fs::remove_file(&path);
+
+        let mut bind_run = Run::default();
+        bind_run.items.insert(
+            "pkg::bind::python::build_summary".into(),
+            ItemMetrics {
+                ratio: Some(4.0),
+                binding_ns: Some(10.0),
+                host_ns: Some(40.0),
+                n: Some(100_000),
+                ..Default::default()
+            },
+        );
+        save_baseline(name, &bind_run, SaveScope::BenchFiltered).expect("saves bind records");
+
+        let mut measure_run = Run::default();
+        measure_run.items.insert(
+            "pkg::bench_thing".into(),
+            ItemMetrics {
+                median_ns: Some(50.0),
+                ..Default::default()
+            },
+        );
+        save_baseline(name, &measure_run, SaveScope::BenchFull(Some("pkg".into())))
+            .expect("a measure-style save should not touch bind records");
+
+        let doc = load_baseline(name)
+            .expect("reads")
+            .expect("baseline exists");
+        assert!(
+            doc["items"]["pkg::bind::python::build_summary"]["ratio"]["ratio"]
+                .as_f64()
+                .is_some(),
+            "bind record was dropped: {doc}"
+        );
+        assert!(
+            doc["items"]["pkg::bench_thing"]["walltime"]["median_ns"]
+                .as_f64()
+                .is_some()
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

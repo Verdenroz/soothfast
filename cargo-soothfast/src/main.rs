@@ -8,6 +8,7 @@
 
 mod bind;
 mod bind_bench;
+mod bind_bench_launch;
 mod bind_build;
 mod bind_config;
 mod buildcost;
@@ -97,9 +98,13 @@ commands:
            `#[soothfast::export]` surface, one [[bind]] entry per language)
   bind     gate -p PKG [--base REF] [--allow-breaking]   (compares the
            exported surface itself: a native binding has no spec to gate)
-  bind     build -p PKG [--target TRIPLE].. [--debug]
+  bind     build -p PKG [--target TRIPLE].. [--only LANG[,LANG]] [--debug]
            (drives each language's own packaging tool; python uses maturin,
            wasm uses wasm-pack and has no target matrix)
+  bind     bench -p PKG [--only LANG[,LANG]] [--save-baseline NAME] [--json]
+           (runs each [[bind]] entry's `bench` script against its built
+           package, turning binding-vs-host timing ratios into baseline
+           metrics under item `<crate>::bind::<lang>::<shape>`)
   report   render -p PKG [--out DIR] [--baseline NAME] [--features F]
   report   changelog -p PKG [-p PKG ...] [--against-ref REF] [--features F]
            [--bot-author NAME]

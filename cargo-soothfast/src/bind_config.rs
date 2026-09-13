@@ -31,6 +31,9 @@ pub struct BindEntry {
     pub repository: Option<String>,
     /// Target triples the package is built for.
     pub targets: Vec<String>,
+    /// `bind bench` script, relative to the package root — the same root
+    /// `out` is relative to.
+    pub bench: Option<String>,
 }
 
 impl BindEntry {
@@ -45,6 +48,7 @@ impl BindEntry {
             description: None,
             repository: None,
             targets: Vec::new(),
+            bench: None,
         }
     }
 
@@ -132,6 +136,7 @@ fn set(entry: &mut BindEntry, key: &str, value: TomlValue) -> Result<(), String>
         ("description", TomlValue::Str(s)) => entry.description = Some(s),
         ("repository", TomlValue::Str(s)) => entry.repository = Some(s),
         ("targets", TomlValue::StrArray(a)) => entry.targets = a,
+        ("bench", TomlValue::Str(s)) => entry.bench = Some(s),
         (key, _) => return Err(format!("unknown or mistyped `{key}`")),
     }
     Ok(())
@@ -148,6 +153,19 @@ mod tests {
         assert_eq!(cfg.entries.len(), 1);
         assert_eq!(cfg.entries[0].lang, BindKind::Python);
         assert_eq!(cfg.entries[0].module(), "acme_core");
+    }
+
+    #[test]
+    fn bench_names_a_script_relative_to_the_package_root() {
+        let cfg = parse(
+            "[[bind]]\nout = \"bindings/python\"\npackage = \"acme-core\"\n\
+             bench = \"bindings/python/bench.py\"\n",
+        )
+        .expect("parses");
+        assert_eq!(
+            cfg.entries[0].bench.as_deref(),
+            Some("bindings/python/bench.py")
+        );
     }
 
     #[test]

@@ -19,37 +19,47 @@ use soothfast_sdk::target::Target;
 
 use crate::sdk_build;
 
-/// Build one entry's package, returning the artifacts it produced.
+/// Build one entry's package, returning the artifacts it produced. `quiet`
+/// silences each tool's own stdout, for a caller (`bind bench`) whose own
+/// stdout must carry nothing else.
 pub(crate) fn run(
     kind: BindKind,
     glue: &Path,
     targets: &[String],
     release: bool,
+    quiet: bool,
 ) -> Result<Vec<String>, String> {
     match kind {
-        BindKind::Python => maturin(glue, targets, release),
-        BindKind::Wasm => wasm_pack(glue, targets, release),
-        BindKind::Node => napi(glue, targets, release),
-        BindKind::CAbi => cargo(glue, targets, release),
-        BindKind::Go => go(glue, targets, release),
-        BindKind::Java => jvm(glue, targets, release, JAVA),
-        BindKind::Kotlin => jvm(glue, targets, release, KOTLIN),
-        BindKind::R => r(glue, targets),
-        BindKind::Ruby => ruby(glue, targets),
+        BindKind::Python => maturin(glue, targets, release, quiet),
+        BindKind::Wasm => wasm_pack(glue, targets, release, quiet),
+        BindKind::Node => napi(glue, targets, release, quiet),
+        BindKind::CAbi => cargo(glue, targets, release, quiet),
+        BindKind::Go => go(glue, targets, release, quiet),
+        BindKind::Java => jvm(glue, targets, release, JAVA, quiet),
+        BindKind::Kotlin => jvm(glue, targets, release, KOTLIN, quiet),
+        BindKind::R => r(glue, targets, quiet),
+        BindKind::Ruby => ruby(glue, targets, quiet),
+    }
+}
+
+/// Silences a command's own stdout when `quiet`, so a caller building its
+/// own stdout protocol (`bind bench`'s table or JSON) sees none of it.
+fn hush(cmd: &mut Command, quiet: bool) {
+    if quiet {
+        cmd.stdout(std::process::Stdio::null());
     }
 }
 
 /// The C backend's own build, then `go vet`/`go build` over the wrapper
 /// generated against it. A missing `go` toolchain skips the verification
 /// rather than failing the cdylib the cargo build already produced.
-fn go(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, String> {
-    let out = cargo(glue, targets, release)?;
+fn go(glue: &Path, targets: &[String], release: bool, quiet: bool) -> Result<Vec<String>, String> {
+    let out = cargo(glue, targets, release, quiet)?;
     for args in [["vet", "./..."], ["build", "./..."]] {
-        let status = Command::new("go")
-            .args(args)
-            .current_dir(glue)
-            .env("CGO_ENABLED", "1")
-            .status();
+        let mut cmd = Command::new("go");
+        cmd.args(args).current_dir(glue).env("CGO_ENABLED", "1");
+        hush(&mut cmd, quiet);
+        let status = cmd.status();
         match status {
             Ok(status) if status.success() => {}
             Ok(_) => return Err(format!("`go {}` failed", args.join(" "))),
@@ -80,7 +90,7 @@ fn go(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, Str
 /// R has no cross-compilation matrix of its own to target, so an R package
 /// always builds for the host; `targets` is only ever non-empty here because
 /// a `[[bind]]` entry meant for another language shares this call.
-fn r(glue: &Path, targets: &[String]) -> Result<Vec<String>, String> {
+fn r(glue: &Path, targets: &[String], quiet: bool) -> Result<Vec<String>, String> {
     if !targets.is_empty() {
         eprintln!(
             "soothfast: ignoring --target for r; an R package always builds \
@@ -89,20 +99,20 @@ fn r(glue: &Path, targets: &[String]) -> Result<Vec<String>, String> {
     }
     let library = glue.join("target/rlib");
     std::fs::create_dir_all(&library).map_err(|e| e.to_string())?;
-    let status = Command::new("R")
-        .arg("CMD")
+    let mut cmd = Command::new("R");
+    cmd.arg("CMD")
         .arg("INSTALL")
         .arg("--no-multiarch")
         .arg(format!("--library={}", library.display()))
         .arg(".")
-        .current_dir(glue)
-        .status()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                "`R` not found — install R (https://www.r-project.org)".to_string()
-            }
-            _ => format!("cannot run R: {e}"),
-        })?;
+        .current_dir(glue);
+    hush(&mut cmd, quiet);
+    let status = cmd.status().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            "`R` not found — install R (https://www.r-project.org)".to_string()
+        }
+        _ => format!("cannot run R: {e}"),
+    })?;
     if !status.success() {
         return Err("`R CMD INSTALL` failed".to_string());
     }
@@ -116,7 +126,12 @@ fn r(glue: &Path, targets: &[String]) -> Result<Vec<String>, String> {
 /// failing the run, the same way the SDK's matrix behaves: a machine rarely
 /// carries every cross-linker, and the targets it does carry are still worth
 /// building.
-fn cargo(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, String> {
+fn cargo(
+    glue: &Path,
+    targets: &[String],
+    release: bool,
+    quiet: bool,
+) -> Result<Vec<String>, String> {
     let profile = match release {
         true => "release",
         false => "debug",
@@ -128,7 +143,7 @@ fn cargo(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, 
     let mut out = Vec::new();
     let mut skipped = Vec::new();
     for target in wanted {
-        match compile_c(glue, target, release, profile) {
+        match compile_c(glue, target, release, profile, quiet) {
             Ok(found) => out.extend(found),
             Err(why) => skipped.push(format!("{}: {why}", target.unwrap_or("host"))),
         }
@@ -150,6 +165,7 @@ fn compile_c(
     target: Option<&str>,
     release: bool,
     profile: &str,
+    quiet: bool,
 ) -> Result<Vec<String>, String> {
     let mut args = vec!["build"];
     if release {
@@ -158,14 +174,14 @@ fn compile_c(
     if let Some(triple) = target {
         args.extend(["--target", triple]);
     }
-    let status = Command::new("cargo")
-        .args(&args)
+    let mut cmd = Command::new("cargo");
+    cmd.args(&args)
         .current_dir(glue)
         // The glue crate is its own workspace; an inherited CARGO_TARGET_DIR
         // would move its output where the artifact scan below never looks.
-        .env_remove("CARGO_TARGET_DIR")
-        .status()
-        .map_err(|e| format!("cannot run cargo: {e}"))?;
+        .env_remove("CARGO_TARGET_DIR");
+    hush(&mut cmd, quiet);
+    let status = cmd.status().map_err(|e| format!("cannot run cargo: {e}"))?;
     if !status.success() {
         return Err(match target {
             Some(triple) => format!(
@@ -224,9 +240,10 @@ fn jvm(
     targets: &[String],
     release: bool,
     lang: JvmLang,
+    quiet: bool,
 ) -> Result<Vec<String>, String> {
-    let mut out = cargo(glue, targets, release)?;
-    match package_jar(glue, targets, release, lang) {
+    let mut out = cargo(glue, targets, release, quiet)?;
+    match package_jar(glue, targets, release, lang, quiet) {
         Ok(jar) => out.push(jar),
         Err(why) => eprintln!("soothfast: skipping jar packaging: {why}"),
     }
@@ -242,6 +259,7 @@ fn package_jar(
     targets: &[String],
     release: bool,
     lang: JvmLang,
+    quiet: bool,
 ) -> Result<String, String> {
     let mut sources = Vec::new();
     jvm_sources(
@@ -257,17 +275,15 @@ fn package_jar(
     }
 
     let classes = glue.join("target/classes");
-    let status = Command::new(lang.compiler)
-        .arg("-d")
-        .arg(&classes)
-        .args(&sources)
-        .status()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                format!("`{}` not found — {}", lang.compiler, lang.install_hint)
-            }
-            _ => format!("cannot run {}: {e}", lang.compiler),
-        })?;
+    let mut compile = Command::new(lang.compiler);
+    compile.arg("-d").arg(&classes).args(&sources);
+    hush(&mut compile, quiet);
+    let status = compile.status().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            format!("`{}` not found — {}", lang.compiler, lang.install_hint)
+        }
+        _ => format!("cannot run {}: {e}", lang.compiler),
+    })?;
     if !status.success() {
         return Err(format!("`{}` failed", lang.compiler));
     }
@@ -284,6 +300,7 @@ fn package_jar(
     if staging.join("natives").is_dir() {
         jar_cmd.arg("-C").arg(&staging).arg("natives");
     }
+    hush(&mut jar_cmd, quiet);
     let status = jar_cmd.status().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => "`jar` not found — install a JDK".to_string(),
         _ => format!("cannot run jar: {e}"),
@@ -375,7 +392,7 @@ fn jvm_sources(dir: &Path, ext: &str, out: &mut Vec<std::path::PathBuf>) {
 /// `bundle exec rake compile`, then `gem build`, each reported and skipped on
 /// its own rather than one failure hiding the other: a machine with neither
 /// `bundle` nor `gem` installed should say so about both.
-fn ruby(glue: &Path, targets: &[String]) -> Result<Vec<String>, String> {
+fn ruby(glue: &Path, targets: &[String], quiet: bool) -> Result<Vec<String>, String> {
     if !targets.is_empty() {
         eprintln!(
             "soothfast: ignoring --target for ruby; there is no cross-compiling \
@@ -384,11 +401,11 @@ fn ruby(glue: &Path, targets: &[String]) -> Result<Vec<String>, String> {
     }
     let mut out = Vec::new();
     let mut skipped = Vec::new();
-    match rake_compile(glue) {
+    match rake_compile(glue, quiet) {
         Ok(built) => out.extend(built),
         Err(why) => skipped.push(format!("rake compile: {why}")),
     }
-    match gem_build(glue) {
+    match gem_build(glue, quiet) {
         Ok(gem) => out.push(gem),
         Err(why) => skipped.push(format!("gem build: {why}")),
     }
@@ -403,15 +420,14 @@ fn ruby(glue: &Path, targets: &[String]) -> Result<Vec<String>, String> {
 
 /// `RbSys::ExtensionTask` stages the compiled extension under `lib/<module>/`,
 /// the same directory the generated `Rakefile`'s `ext.lib_dir` names.
-fn rake_compile(glue: &Path) -> Result<Vec<String>, String> {
-    let status = Command::new("bundle")
-        .args(["exec", "rake", "compile"])
-        .current_dir(glue)
-        .status()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => "`bundle` not found — gem install bundler".to_string(),
-            _ => format!("cannot run bundle: {e}"),
-        })?;
+fn rake_compile(glue: &Path, quiet: bool) -> Result<Vec<String>, String> {
+    let mut cmd = Command::new("bundle");
+    cmd.args(["exec", "rake", "compile"]).current_dir(glue);
+    hush(&mut cmd, quiet);
+    let status = cmd.status().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => "`bundle` not found — gem install bundler".to_string(),
+        _ => format!("cannot run bundle: {e}"),
+    })?;
     if !status.success() {
         return Err("`bundle exec rake compile` failed".to_string());
     }
@@ -433,23 +449,20 @@ fn ext_module(glue: &Path) -> Result<String, String> {
 /// `gem build` packages a source gem straight from the `.gemspec`; it needs
 /// no compiled extension of its own, since `spec.extensions` builds one at
 /// install time.
-fn gem_build(glue: &Path) -> Result<String, String> {
+fn gem_build(glue: &Path, quiet: bool) -> Result<String, String> {
     let gemspec = std::fs::read_dir(glue)
         .map_err(|e| e.to_string())?
         .filter_map(Result::ok)
         .map(|e| e.file_name().to_string_lossy().to_string())
         .find(|name| name.ends_with(".gemspec"))
         .ok_or_else(|| "no .gemspec in the package directory".to_string())?;
-    let status = Command::new("gem")
-        .args(["build", &gemspec])
-        .current_dir(glue)
-        .status()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                "`gem` not found — install a Ruby toolchain".to_string()
-            }
-            _ => format!("cannot run gem: {e}"),
-        })?;
+    let mut cmd = Command::new("gem");
+    cmd.args(["build", &gemspec]).current_dir(glue);
+    hush(&mut cmd, quiet);
+    let status = cmd.status().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => "`gem` not found — install a Ruby toolchain".to_string(),
+        _ => format!("cannot run gem: {e}"),
+    })?;
     if !status.success() {
         return Err("`gem build` failed".to_string());
     }
@@ -463,7 +476,12 @@ fn gem_build(glue: &Path) -> Result<String, String> {
 ///
 /// A `.wasm` has no os/cpu/libc axis, so the triples a Python package needs
 /// mean nothing here and naming any is a mistake worth reporting.
-fn wasm_pack(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, String> {
+fn wasm_pack(
+    glue: &Path,
+    targets: &[String],
+    release: bool,
+    quiet: bool,
+) -> Result<Vec<String>, String> {
     if !targets.is_empty() {
         eprintln!(
             "soothfast: ignoring --target for wasm; one .wasm runs on every \
@@ -474,16 +492,19 @@ fn wasm_pack(glue: &Path, targets: &[String], release: bool) -> Result<Vec<Strin
     if release {
         args.push("--release");
     }
-    let status = Command::new("wasm-pack")
-        .args(&args)
+    let mut cmd = Command::new("wasm-pack");
+    cmd.args(&args)
         .current_dir(glue)
-        .status()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                "`wasm-pack` not found — cargo install wasm-pack".to_string()
-            }
-            _ => format!("cannot run wasm-pack: {e}"),
-        })?;
+        // wasm-pack shells out to cargo itself; same CARGO_TARGET_DIR
+        // reasoning as the C backend and maturin.
+        .env_remove("CARGO_TARGET_DIR");
+    hush(&mut cmd, quiet);
+    let status = cmd.status().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            "`wasm-pack` not found — cargo install wasm-pack".to_string()
+        }
+        _ => format!("cannot run wasm-pack: {e}"),
+    })?;
     if !status.success() {
         return Err(format!("`wasm-pack {}` failed", args.join(" ")));
     }
@@ -496,17 +517,22 @@ fn wasm_pack(glue: &Path, targets: &[String], release: bool) -> Result<Vec<Strin
 /// A target whose toolchain is missing is reported and skipped, the same
 /// posture as `maturin`'s matrix: a machine rarely carries every
 /// cross-linker.
-fn napi(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, String> {
+fn napi(
+    glue: &Path,
+    targets: &[String],
+    release: bool,
+    quiet: bool,
+) -> Result<Vec<String>, String> {
     if !glue.join("node_modules").exists() {
-        npm_install(glue)?;
+        npm_install(glue, quiet)?;
     }
 
     let mut failures = Vec::new();
     if targets.is_empty() {
-        napi_build_once(glue, None, release)?;
+        napi_build_once(glue, None, release, quiet)?;
     } else {
         for target in targets {
-            if let Err(e) = napi_build_once(glue, Some(target), release) {
+            if let Err(e) = napi_build_once(glue, Some(target), release, quiet) {
                 failures.push(format!("{target}: {e}"));
             }
         }
@@ -517,24 +543,28 @@ fn napi(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, S
     artifacts(glue, &["node"])
 }
 
-fn npm_install(glue: &Path) -> Result<(), String> {
-    let status = Command::new("npm")
-        .arg("install")
-        .current_dir(glue)
-        .status()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                "`npm` not found — install Node.js (https://nodejs.org)".to_string()
-            }
-            _ => format!("cannot run npm: {e}"),
-        })?;
+fn npm_install(glue: &Path, quiet: bool) -> Result<(), String> {
+    let mut cmd = Command::new("npm");
+    cmd.arg("install").current_dir(glue);
+    hush(&mut cmd, quiet);
+    let status = cmd.status().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            "`npm` not found — install Node.js (https://nodejs.org)".to_string()
+        }
+        _ => format!("cannot run npm: {e}"),
+    })?;
     match status.success() {
         true => Ok(()),
         false => Err("`npm install` failed".to_string()),
     }
 }
 
-fn napi_build_once(glue: &Path, target: Option<&str>, release: bool) -> Result<(), String> {
+fn napi_build_once(
+    glue: &Path,
+    target: Option<&str>,
+    release: bool,
+    quiet: bool,
+) -> Result<(), String> {
     // `--platform` makes `napi build` emit the JS loader package.json's
     // `main` names; without it only the `.node` file lands.
     let mut args = vec!["napi", "build", "--platform"];
@@ -544,16 +574,19 @@ fn napi_build_once(glue: &Path, target: Option<&str>, release: bool) -> Result<(
     if let Some(triple) = target {
         args.extend(["--target", triple]);
     }
-    let status = Command::new("npx")
-        .args(&args)
+    let mut cmd = Command::new("npx");
+    cmd.args(&args)
         .current_dir(glue)
-        .status()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                "`npm`/`npx` not found — install Node.js (https://nodejs.org)".to_string()
-            }
-            _ => format!("cannot run npx: {e}"),
-        })?;
+        // napi build shells out to cargo itself; same CARGO_TARGET_DIR
+        // reasoning as the C backend and maturin.
+        .env_remove("CARGO_TARGET_DIR");
+    hush(&mut cmd, quiet);
+    let status = cmd.status().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            "`npm`/`npx` not found — install Node.js (https://nodejs.org)".to_string()
+        }
+        _ => format!("cannot run npx: {e}"),
+    })?;
     match status.success() {
         true => Ok(()),
         false => Err(format!("`npx {}` failed", args.join(" "))),
@@ -565,7 +598,12 @@ fn napi_build_once(glue: &Path, target: Option<&str>, release: bool) -> Result<(
 ///
 /// A target whose toolchain is missing is reported and skipped: a partial
 /// matrix is a normal local outcome, and CI builds the full one.
-fn maturin(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>, String> {
+fn maturin(
+    glue: &Path,
+    targets: &[String],
+    release: bool,
+    quiet: bool,
+) -> Result<Vec<String>, String> {
     let resolved = Target::matrix(targets)?;
     if !targets.is_empty()
         && let Some(warning) = sdk_build::manylinux_warning(&resolved)
@@ -575,10 +613,10 @@ fn maturin(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>
 
     let mut failures = Vec::new();
     if targets.is_empty() {
-        maturin_once(glue, None, release)?;
+        maturin_once(glue, None, release, quiet)?;
     } else {
         for target in &resolved {
-            if let Err(e) = maturin_once(glue, Some(target.triple), release) {
+            if let Err(e) = maturin_once(glue, Some(target.triple), release, quiet) {
                 failures.push(format!("{}: {e}", target.triple));
             }
         }
@@ -589,7 +627,12 @@ fn maturin(glue: &Path, targets: &[String], release: bool) -> Result<Vec<String>
     artifacts(&glue.join("target/wheels"), &["whl"])
 }
 
-fn maturin_once(glue: &Path, triple: Option<&str>, release: bool) -> Result<(), String> {
+fn maturin_once(
+    glue: &Path,
+    triple: Option<&str>,
+    release: bool,
+    quiet: bool,
+) -> Result<(), String> {
     let mut args = vec!["build"];
     if release {
         args.push("--release");
@@ -597,16 +640,20 @@ fn maturin_once(glue: &Path, triple: Option<&str>, release: bool) -> Result<(), 
     if let Some(triple) = triple {
         args.extend(["--target", triple]);
     }
-    let status = Command::new("maturin")
-        .args(&args)
+    let mut cmd = Command::new("maturin");
+    cmd.args(&args)
         .current_dir(glue)
-        .status()
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                "`maturin` not found — pip install maturin, or uv tool install maturin".to_string()
-            }
-            _ => format!("cannot run maturin: {e}"),
-        })?;
+        // Same reason as the C backend's cargo build: an inherited
+        // CARGO_TARGET_DIR would move the wheel where `artifacts` below
+        // never looks.
+        .env_remove("CARGO_TARGET_DIR");
+    hush(&mut cmd, quiet);
+    let status = cmd.status().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            "`maturin` not found — pip install maturin, or uv tool install maturin".to_string()
+        }
+        _ => format!("cannot run maturin: {e}"),
+    })?;
     if status.success() {
         Ok(())
     } else {
@@ -651,7 +698,7 @@ mod tests {
         let glue = scratch.join("glue");
         copy_dir(&bind_dir.join("goldens/java"), &glue);
 
-        let artifacts = run(BindKind::Java, &glue, &[], false).expect("builds");
+        let artifacts = run(BindKind::Java, &glue, &[], false, false).expect("builds");
         assert!(
             artifacts.iter().any(|a| a.ends_with(".jar")),
             "no jar among {artifacts:?}"
@@ -675,7 +722,7 @@ mod tests {
         let glue = scratch.join("glue");
         copy_dir(&bind_dir.join("goldens/kotlin"), &glue);
 
-        let artifacts = run(BindKind::Kotlin, &glue, &[], false).expect("builds");
+        let artifacts = run(BindKind::Kotlin, &glue, &[], false, false).expect("builds");
         let has_jar = artifacts.iter().any(|a| a.ends_with(".jar"));
         let kotlinc_present = std::process::Command::new("kotlinc")
             .arg("-version")
@@ -703,7 +750,7 @@ mod tests {
         let glue = scratch.join("glue");
         copy_dir(&bind_dir.join("goldens/r"), &glue);
 
-        let artifacts = run(BindKind::R, &glue, &[], false).expect("builds");
+        let artifacts = run(BindKind::R, &glue, &[], false, false).expect("builds");
         assert!(
             artifacts.iter().any(|a| a.ends_with("target/rlib")),
             "no library among {artifacts:?}"

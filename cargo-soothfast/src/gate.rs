@@ -1581,7 +1581,10 @@ fn compare(
                         Some(rest) => rest.split("::").next() != Some(p),
                         None => id.split("::").next() != Some(p.replace('-', "_").as_str()),
                     });
-            if filtered_out || out_of_mode || other_pkg {
+            // bind bench ratios never come out of a cargo bench run, so
+            // their absence from one says nothing.
+            let bind_bench_item = id.contains("::bind::");
+            if filtered_out || out_of_mode || other_pkg || bind_bench_item {
                 continue;
             }
             if ctx.allow_gone {
@@ -1740,6 +1743,36 @@ mod tests {
         });
         run.build = build;
         run
+    }
+
+    #[test]
+    fn a_bind_bench_ratio_absent_from_a_plain_run_is_not_gone() {
+        let old = json!({
+            "version": 1,
+            "items": {
+                "pkg::bt_base_to_htf_index": {
+                    "fingerprint": "fp",
+                    "walltime": { "median_ns": 100.0, "mad_ns": 1.0, "p99_ns": 110.0 },
+                },
+                "pkg::bind::python::build_summary": {
+                    "fingerprint": "",
+                    "ratio": { "ratio": 4.0, "binding_ns": 10.0, "host_ns": 40.0, "n": 100000 },
+                },
+            },
+        });
+        let current = run_with(ItemMetrics {
+            fingerprint: "fp".into(),
+            median_ns: Some(100.0),
+            mad_ns: Some(1.0),
+            p99_ns: Some(110.0),
+            ..Default::default()
+        });
+        let gate_ctx = CompareCtx {
+            pkg: Some("pkg".into()),
+            ..ctx()
+        };
+        let (failures, failing) = gate_failures_with(&old, &current, gate_ctx);
+        assert_eq!(failures, 0, "{failing:?}");
     }
 
     #[test]
