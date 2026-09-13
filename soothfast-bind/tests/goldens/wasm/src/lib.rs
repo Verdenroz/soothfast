@@ -80,7 +80,7 @@ pub struct Mode(::acme::Mode);
 
 #[wasm_bindgen]
 pub fn describe(label: Option<String>) -> Option<String> {
-    ::acme::describe(label)
+    ::acme::describe(label.as_deref())
 }
 
 #[wasm_bindgen]
