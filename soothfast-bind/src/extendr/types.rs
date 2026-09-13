@@ -45,12 +45,6 @@ pub(crate) fn buffer_native(ty: &Ty) -> Option<&'static str> {
     }
 }
 
-/// Whether an `Option<inner>` is one extendr marshals on its own. A string
-/// is not: extendr's own `Option<String>` maps `None` to `NA`, not `NULL`.
-pub(crate) fn option_native(inner: &Ty) -> bool {
-    native_scalar(inner).is_some()
-}
-
 /// The library name every generated file agrees on: the `[lib]` name in
 /// `src/rust/Cargo.toml`, the module in `extendr_module!`, and both halves of
 /// `src/entrypoint.c`. R names the shared object after the package's own

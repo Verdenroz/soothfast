@@ -4,7 +4,8 @@
 //! sequence; the shim only has work to do where R has no exact type at all
 //! (a 64-bit integer, a sequence of one), where a plain enum has to cross as
 //! a validated string instead of a mirrored value, or where a shape needs a
-//! hand-built `Robj` (an `Option` of anything but a plain scalar).
+//! hand-built `Robj` (any `Option`, since extendr's own derive maps `None`
+//! to `NA` rather than the `NULL` every other absent value returns here).
 
 use std::fmt::Write;
 
@@ -220,18 +221,11 @@ fn ret_ty(ty: &Ty, plan: &BindingPlan) -> String {
         Ty::Str => "String".into(),
         Ty::Class(name) if plan.is_mirrored(name) => "String".into(),
         Ty::Class(name) => name.clone(),
-        Ty::Optional(inner) if types::option_native(inner) => {
-            format!("Option<{}>", option_inner_ty(inner))
-        }
         Ty::Optional(_) => "Robj".into(),
         Ty::Bytes => "Vec<u8>".into(),
         Ty::List(inner) => format!("Vec<{}>", buffer_ret_element(inner)),
         ty => scalar_ty(ty),
     }
-}
-
-fn option_inner_ty(ty: &Ty) -> String {
-    types::native_scalar(ty).unwrap_or_default().into()
 }
 
 fn buffer_ret_element(ty: &Ty) -> &'static str {
@@ -356,7 +350,6 @@ fn returned(expr: &str, ty: &Ty, krate: &str, plan: &BindingPlan) -> String {
         Ty::Unit => expr.to_string(),
         Ty::Class(name) if plan.is_mirrored(name) => enum_to_str(expr, name, krate, plan),
         Ty::Class(name) => format!("{name}({expr})"),
-        Ty::Optional(inner) if types::option_native(inner) => expr.to_string(),
         Ty::Optional(inner) => optional_to_robj(expr, inner, krate, plan),
         ty if types::checked_int(ty).is_some() => format!("{expr} as f64"),
         Ty::List(inner) if types::checked_int(inner).is_some() => {
