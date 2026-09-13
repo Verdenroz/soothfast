@@ -268,7 +268,12 @@ fn getter(accessor: &Accessor, plan: &BindingPlan) -> (String, String) {
     let native_name = types::native_method_name(&accessor.field);
     let ty = types::kotlin_ty(&accessor.ty);
     let native_ty = types::native_kotlin_ty(&accessor.ty, plan);
-    let body = wrap_returned(&format!("{native_name}(ptr)"), &accessor.ty, plan);
+    let body = wrap_returned(
+        &format!("{native_name}(ptr)"),
+        &accessor.ty,
+        plan,
+        "            ",
+    );
     let public = format!(
         "\n{}    val {name}: {ty}\n        get() {{\n            {body}\n        }}\n",
         doc(accessor.doc.as_deref(), "    "),
@@ -310,7 +315,7 @@ fn signature(
 ) -> (String, String) {
     let (native, params, native_ret, call) = signature_parts(function, has_receiver, plan);
     let ret = types::kotlin_ty(&function.ret);
-    let body = wrap_returned(&call, &function.ret, plan);
+    let body = wrap_returned(&call, &function.ret, plan, &format!("{indent}    "));
     let ret_clause = if ret == "Unit" {
         String::new()
     } else {
@@ -368,15 +373,17 @@ fn call_arg(param: &Param, plan: &BindingPlan, name: &str) -> String {
 
 /// The call's body, converting whatever the native call returns into the
 /// value the public signature promises. `Unit` needs no `return`; every
-/// other shape does.
-fn wrap_returned(call: &str, ty: &Ty, plan: &BindingPlan) -> String {
+/// other shape does. `indent` is the indent the caller already placed this
+/// body's first line at, so a second statement lines up with the first
+/// rather than the getter template's own fixed depth.
+fn wrap_returned(call: &str, ty: &Ty, plan: &BindingPlan, indent: &str) -> String {
     match ty {
         Ty::Unit => call.to_string(),
         Ty::Class(name) if plan.is_mirrored(name) => format!("return {name}.entries[{call}]"),
         Ty::Class(name) => format!("return {}", wrap_expr(name, call, plan)),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(name) => format!(
-                "val ptr_ = {call}\n            return if (ptr_ == 0L) null else {}",
+                "val ptr_ = {call}\n{indent}return if (ptr_ == 0L) null else {}",
                 wrap_expr(name, "ptr_", plan)
             ),
             _ => format!("return {call}"),

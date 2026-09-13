@@ -876,6 +876,15 @@ fn a_kotlin_declared_constructor_is_a_secondary_one_disambiguated_by_a_marker() 
 }
 
 #[test]
+fn a_kotlin_free_functions_optional_return_lines_up_with_its_own_indent() {
+    let files = emit_set_with(BindKind::Kotlin, &kotlin_opts()).files;
+    let module = &files["src/main/kotlin/acme/core/Core.kt"];
+    assert!(module.contains(
+        "fun findCounter(start: Long): Counter? {\n    val ptr_ = nativeFindCounter(start)\n    return if (ptr_ == 0L) null else Counter(ptr_, Counter.Raw)\n}"
+    ));
+}
+
+#[test]
 fn r_goldens() {
     check_goldens_with(BindKind::R, "r", &r_opts());
 }

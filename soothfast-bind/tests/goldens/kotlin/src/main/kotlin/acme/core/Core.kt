@@ -18,7 +18,7 @@ fun digest(data: ByteArray): ByteArray {
 
 fun findCounter(start: Long): Counter? {
     val ptr_ = nativeFindCounter(start)
-            return if (ptr_ == 0L) null else Counter(ptr_, Counter.Raw)
+    return if (ptr_ == 0L) null else Counter(ptr_, Counter.Raw)
 }
 
 fun greet(name: String): String {
