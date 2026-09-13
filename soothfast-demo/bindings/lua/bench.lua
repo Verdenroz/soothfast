@@ -107,9 +107,14 @@ for i = 1, N do
 	values_cdata[i - 1] = values[i]
 end
 
-local batch_binding
+local batch_binding_first
+-- Closed inside the timed region: a caller who releases promptly pays the
+-- cost of returning memory to the allocator right away, not on a later GC
+-- cycle.
 local batch_binding_ns = median_ns(function()
-	batch_binding = summary:deviations_all(values_cdata)
+	local result = summary:deviations_all(values_cdata)
+	batch_binding_first = result[1]
+	result:close()
 end)
 local batch_host = {}
 local batch_host_ns = median_ns(function()
@@ -117,14 +122,14 @@ local batch_host_ns = median_ns(function()
 		batch_host[i] = dev(values[i], median, mad)
 	end
 end)
-checksum = checksum + batch_binding[1] + batch_host[1]
+checksum = checksum + batch_binding_first + batch_host[1]
 emit("batch_buffer", batch_binding_ns, batch_host_ns, N)
 
 -- The slow path: the same call over a plain table, which the module copies
 -- into a scratch cdata array on the way in and back out on the way out.
-local batch_binding_table
 local batch_binding_table_ns = median_ns(function()
-	batch_binding_table = summary:deviations_all(values)
+	local result = summary:deviations_all(values)
+	result:close()
 end)
 local batch_host_table = {}
 local batch_host_table_ns = median_ns(function()
