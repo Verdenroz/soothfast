@@ -26,11 +26,13 @@ pub unsafe fn text<'a>(data: *const ::std::os::raw::c_char) -> &'a str {
     unsafe { ::std::ffi::CStr::from_ptr(data) }.to_str().unwrap_or("")
 }
 
+/// Invalid UTF-8 on a non-null pointer yields `Some("")`, matching `text`'s
+/// own fallback: only a null pointer means absent.
 pub unsafe fn text_opt<'a>(data: *const ::std::os::raw::c_char) -> Option<&'a str> {
     if data.is_null() {
         return None;
     }
-    unsafe { ::std::ffi::CStr::from_ptr(data) }.to_str().ok()
+    Some(unsafe { ::std::ffi::CStr::from_ptr(data) }.to_str().unwrap_or(""))
 }
 
 pub fn into_text(value: String) -> *mut ::std::os::raw::c_char {
