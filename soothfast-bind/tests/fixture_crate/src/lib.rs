@@ -102,3 +102,7 @@ pub fn find_counter(start: i64) -> Option<Counter> {
         false => None,
     }
 }
+
+pub fn describe(label: Option<&str>) -> Option<String> {
+    label.map(|l| format!("label={l}"))
+}

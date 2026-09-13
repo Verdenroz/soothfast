@@ -130,6 +130,23 @@ pub extern "system" fn Java_acme_core_Mode_nativeFree<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeDescribe<'local>(
+    _env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    label:
+) -> ::jni::sys::jstring {
+    let __out = ::acme::describe(label);
+    match env.new_string(__out) {
+        Ok(v) => v.into_raw(),
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return 0i64;
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeDigest<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

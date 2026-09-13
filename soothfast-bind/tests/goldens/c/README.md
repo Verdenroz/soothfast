@@ -43,6 +43,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 
 ## Functions
 
+- `acme_core_describe`
 - `acme_core_digest`
 - `acme_core_find_counter`
 - `acme_core_greet`
@@ -58,4 +59,4 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - acme::Counter::refresh: `async fn` cannot cross into c: C has nothing to await with; expose a blocking wrapper instead
 - acme::index_all: `HashMap<String, u32>` cannot cross into c: C has no map type; return a sequence of pairs, or an exported type with accessors
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; take it by reference, or add a method returning what the caller needs
-- acme::trim: `Option<Vec<f64>>` cannot cross into c: `Option<Vec<f64>>` has no C spelling; only an optional exported type does, as a pointer that may be null
+- acme::trim: `Option<Vec<f64>>` cannot cross into c: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null

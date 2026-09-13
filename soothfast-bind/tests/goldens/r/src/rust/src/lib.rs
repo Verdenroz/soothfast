@@ -68,6 +68,12 @@ impl Mode {
 }
 
 #[extendr]
+fn describe(label: ) -> Option<String> {
+    let __out = ::acme::describe(label);
+    __out
+}
+
+#[extendr]
 fn digest(data: &[u8]) -> Vec<u8> {
     let __out = ::acme::digest(data);
     __out
@@ -119,6 +125,7 @@ extendr_module! {
     mod acme_core;
     impl Counter;
     impl Mode;
+    fn describe;
     fn digest;
     fn find_counter;
     fn greet;

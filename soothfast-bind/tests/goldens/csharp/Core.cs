@@ -8,6 +8,12 @@ namespace Acme.Core;
 public static class Core
 {
 
+    public static string Describe(string label)
+    {
+        void result = Native.acme_core_describe(label);
+        return result;
+    }
+
     public static byte[] Digest(ReadOnlySpan<byte> data)
     {
         unsafe

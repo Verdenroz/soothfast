@@ -50,6 +50,7 @@ int64_t acme_core_counter_bump_all(const acme_core_counter *handle, const int64_
 /* Release a Mode this library returned. */
 void acme_core_mode_free(acme_core_mode *handle);
 
+void acme_core_describe( label);
 acme_core_u8_array acme_core_digest(const uint8_t *data, size_t data_len);
 acme_core_counter * acme_core_find_counter(int64_t start);
 char * acme_core_greet(const char *name);

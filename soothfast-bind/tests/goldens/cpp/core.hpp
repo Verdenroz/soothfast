@@ -102,6 +102,11 @@ private:
     std::unique_ptr<core_mode, Deleter> handle_;
 };
 
+inline void describe( label) {
+    auto raw_result = core_describe(label);
+    return raw_result;
+}
+
 inline std::vector<uint8_t> digest(std::span<const uint8_t> data) {
     auto raw_result = core_digest(data.data(), data.size());
     return to_vector_u8(raw_result);

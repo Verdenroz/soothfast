@@ -4,6 +4,7 @@
 package acme.core
 
 private val loadNatives: Unit = Natives.load()
+private external fun nativeDescribe(label: String): String
 private external fun nativeDigest(data: ByteArray): ByteArray
 private external fun nativeFindCounter(start: Long): Long
 private external fun nativeGreet(name: String): String
@@ -11,6 +12,10 @@ private external fun nativeNormalize(input: DoubleArray, factor: Double): Double
 private external fun nativePeakLevel(values: DoubleArray): Int
 private external fun nativeScaleInto(values: DoubleArray, factor: Double, out: DoubleArray): Unit
 private external fun nativeStamp(handle: Long, error: Double, register: ByteArray): Long
+
+fun describe(label: String): String {
+    return nativeDescribe(label)
+}
 
 fun digest(data: ByteArray): ByteArray {
     return nativeDigest(data)

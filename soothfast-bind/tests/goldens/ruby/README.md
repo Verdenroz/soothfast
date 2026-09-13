@@ -31,6 +31,7 @@ require "acme_core"
 
 ## `AcmeCore`
 
+- `describe`
 - `digest`
 - `find_counter`
 - `greet`

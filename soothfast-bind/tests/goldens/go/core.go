@@ -139,6 +139,10 @@ func (recv *Mode) Close() error {
 	return nil
 }
 
+func Describe(label )  {
+	return C.core_describe(label)
+}
+
 func Digest(data []byte) []byte {
 	return byteSlice(C.core_digest((*C.uint8_t)(unsafe.Pointer(bufPtr(data))), C.size_t(len(data))))
 }

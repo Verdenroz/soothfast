@@ -98,6 +98,11 @@ impl ::std::convert::From<Level> for ::acme::Level {
 pub struct Mode(::acme::Mode);
 
 #[napi]
+pub fn describe(label: Option<String>) -> Option<String> {
+    ::acme::describe(label)
+}
+
+#[napi]
 pub fn digest(data: Buffer) -> Buffer {
     Buffer::from(::acme::digest(data.as_ref()))
 }

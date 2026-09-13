@@ -1411,3 +1411,32 @@ fn the_csharp_native_declarations_match_the_c_header_symbols() {
         assert!(native.contains(symbol), "Native.cs omits {symbol}");
     }
 }
+
+#[test]
+fn an_optional_string_binds_across_the_c_family() {
+    for kind in [
+        BindKind::CAbi,
+        BindKind::Go,
+        BindKind::Java,
+        BindKind::Kotlin,
+        BindKind::Cpp,
+        BindKind::Lua,
+        BindKind::CSharp,
+    ] {
+        let opts = match kind {
+            BindKind::Go => go_opts(),
+            BindKind::Java => java_opts(),
+            BindKind::Kotlin => kotlin_opts(),
+            BindKind::Cpp => cpp_opts(),
+            BindKind::Lua => lua_opts(),
+            BindKind::CSharp => csharp_opts(),
+            _ => opts(),
+        };
+        let set = emit_set_with(kind, &opts);
+        assert!(
+            !set.gaps.iter().any(|g| g.contains("describe")),
+            "{kind:?} gaps describe: {:?}",
+            set.gaps
+        );
+    }
+}

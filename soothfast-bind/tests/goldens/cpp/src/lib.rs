@@ -209,6 +209,11 @@ pub unsafe extern "C" fn core_mode_free(handle: *mut CoreMode) {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn core_describe(label: ) ->  {
+    ::acme::describe(label)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn core_digest(data: *const u8, data_len: usize) -> CoreU8Array {
     CoreU8Array::new(::acme::digest(unsafe { ffi::slice(data, data_len) }))
 }

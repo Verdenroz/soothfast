@@ -9,6 +9,10 @@ public final class Core {
     private Core() {
     }
 
+    public static String describe(String label) {
+        return nativeDescribe(label);
+    }
+
     public static byte[] digest(byte[] data) {
         return nativeDigest(data);
     }
@@ -38,6 +42,7 @@ public final class Core {
         return nativeStamp(handle, error, register);
     }
 
+    private static native String nativeDescribe(String label);
     private static native byte[] nativeDigest(byte[] data);
     private static native long nativeFindCounter(long start);
     private static native String nativeGreet(String name);

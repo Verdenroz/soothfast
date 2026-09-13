@@ -79,6 +79,11 @@ impl ::std::convert::From<Level> for ::acme::Level {
 pub struct Mode(::acme::Mode);
 
 #[wasm_bindgen]
+pub fn describe(label: Option<String>) -> Option<String> {
+    ::acme::describe(label)
+}
+
+#[wasm_bindgen]
 pub fn digest(data: &[u8]) -> Vec<u8> {
     ::acme::digest(data)
 }

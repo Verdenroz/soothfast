@@ -759,9 +759,9 @@ fn unsupported_by_c(ty: &Ty) -> Option<String> {
              sequence of one primitive crosses as a pointer and a length",
             inner.render()
         )),
-        Ty::Optional(inner) if !matches!(**inner, Ty::Class(_)) => Some(format!(
+        Ty::Optional(inner) if !matches!(**inner, Ty::Class(_) | Ty::Str) => Some(format!(
             "`Option<{}>` has no C spelling; only an optional exported type \
-             does, as a pointer that may be null",
+             or string does, as a pointer that may be null",
             inner.render()
         )),
         _ => None,

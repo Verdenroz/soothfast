@@ -355,6 +355,11 @@ impl ::std::convert::From<Level> for ::acme::Level {
 pub struct Mode(::acme::Mode);
 
 #[pyfunction]
+fn describe(label: Option<String>) -> Option<String> {
+    ::acme::describe(label)
+}
+
+#[pyfunction]
 fn digest(py: Python<'_>, data: BorrowedU8) -> Vec<u8> {
     py.detach(|| ::acme::digest(data.as_slice()))
 }
@@ -408,6 +413,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Counter>()?;
     m.add_class::<Level>()?;
     m.add_class::<Mode>()?;
+    m.add_function(wrap_pyfunction!(describe, m)?)?;
     m.add_function(wrap_pyfunction!(digest, m)?)?;
     m.add_function(wrap_pyfunction!(find_counter, m)?)?;
     m.add_function(wrap_pyfunction!(greet, m)?)?;
