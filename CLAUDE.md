@@ -249,7 +249,7 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   associated fn builds one, which fields get accessors, what raises —
   decided once so two backends can't disagree about the same Rust type.
   `fn_sig.rs`, `adt.rs`, `naming.rs`, and `foreign.rs` mirror soothfast-spec's
-  schema-side helpers on the binding side. Ten backends render the plan:
+  schema-side helpers on the binding side. Eleven backends render the plan:
   `pyo3/` (Python, `buffers.rs` for the buffer-protocol fast path,
   `asyncrt.rs` for the tokio runtime a bound `async fn` enters per poll),
   `wasm/` (wasm-bindgen; `linkme` has no wasm32 support, so nothing
@@ -273,17 +273,22 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   can safely write through), `magnus/` (Ruby, over magnus and rb_sys;
   a Ruby `Array` boxes every element and a `String`'s bytes may move under
   a compacting collector, so every buffer copies and a plain enum crosses
-  as a validated `Symbol` rather than a wrapped class), and `cxx/` (a
+  as a validated `Symbol` rather than a wrapped class), `cxx/` (a
   header-only C++20 wrapper generated over `cabi`'s own header and
   library, `cgo`'s shape again: a handle owns its pointer through a
   `unique_ptr` with a stateless deleter, a throwing call reads the C
   `error` out-parameter and throws, and a plain enum crosses as an `enum
-  class` cast to and from the C one). `compat.rs` diffs the bound surface
-  across refs the way `soothfast-spec`'s does; `gap.rs` reports what a
-  target can't spell — a value receiver, a map for C — rather than
-  guessing. Dogfooded by `soothfast-demo`, a `publish = false`
-  workspace member whose committed
-  `bindings/{python,js,c,gostats,node,java,kotlin,r,ruby,cpp}` make
+  class` cast to and from the C one), and `luajit/` (a `.lua` module
+  reading the C backend's own header through `ffi.cdef` — shared with
+  `cabi::header` so the two cannot drift — since LuaJIT's `ffi` needs no
+  marshaling framework of its own; a buffer copies the same way Ruby's
+  does, except a caller already holding a matching FFI array passes it
+  through unboxed, and a plain enum crosses as a validated string).
+  `compat.rs` diffs the bound surface across refs the way `soothfast-spec`'s
+  does; `gap.rs` reports what a target can't spell — a value receiver, a
+  map for C — rather than guessing. Dogfooded by `soothfast-demo`, a
+  `publish = false` workspace member whose committed
+  `bindings/{python,js,c,gostats,node,java,kotlin,r,ruby,cpp,lua}` make
   `bind gen --check` meaningful.
 - **`soothfast-report`** — renderers consuming measurement output: perf tables
   (`perf_table.rs`), SVG trend charts (`trend_chart.rs`), badges

@@ -108,25 +108,33 @@ package = "soothfast-stats"
 lang = "cpp"
 out = "bindings/cpp"
 package = "acme::stats"
+
+[[bind]]
+lang = "lua"
+out = "bindings/lua"
+package = "acme.stats"
 ```
 
 `lang` is `python`, `wasm`, `node`, `c`, `go`, `java`, `kotlin`, `r`,
-`ruby`, or `cpp`, each with the short forms you would expect (`py`, `js`,
-`napi`, `cabi`, `golang`, `jni`, `kt`, `extendr`, `rb`, `c++`/`cxx`). `out`
-and `package` are required. For `go`, `package` is the Go module path
-rather than a distribution name; the Go package name is its last element.
-For `java` and `kotlin`, `package` is the JVM package a caller imports,
-dotted the normal way; the two need distinct packages when both bind the
-same crate, since each stages its own native library under its own
-`Natives`. For `r`, `package` is the R package name: letters, digits and
-dots, starting with a letter — no hyphens, since R derives its native init
-routine from that name by replacing every other character with `_`. For
-`ruby`, `package` is the gem name; the Ruby module classes and the package
-`Error` are defined under is derived from it. For `cpp`, `package` is a
-`::`-delimited C++ namespace path; the embedded C library's name is its
-last segment, the same way Go's package name is its module path's last
-element. `module`, `version`, `description`, `repository`, `targets`, and
-`backend_version` all default to something sensible.
+`ruby`, `cpp`, or `lua`, each with the short forms you would expect (`py`,
+`js`, `napi`, `cabi`, `golang`, `jni`, `kt`, `extendr`, `rb`, `c++`/`cxx`,
+`luajit`). `out` and `package` are required. For `go`, `package` is the Go
+module path rather than a distribution name; the Go package name is its
+last element. For `java` and `kotlin`, `package` is the JVM package a
+caller imports, dotted the normal way; the two need distinct packages when
+both bind the same crate, since each stages its own native library under
+its own `Natives`. For `r`, `package` is the R package name: letters,
+digits and dots, starting with a letter — no hyphens, since R derives its
+native init routine from that name by replacing every other character
+with `_`. For `ruby`, `package` is the gem name; the Ruby module classes
+and the package `Error` are defined under is derived from it. For `cpp`,
+`package` is a `::`-delimited C++ namespace path; the embedded C library's
+name is its last segment, the same way Go's package name is its module
+path's last element. For `lua`, `package` is the dotted `require` path a
+caller loads it by, e.g. `acme.stats` for `require("acme.stats")`; the
+embedded C crate is named after its last segment the same way `go`'s and
+`cpp`'s are. `module`, `version`, `description`, `repository`, `targets`,
+and `backend_version` all default to something sensible.
 
 ## Commands
 
@@ -134,7 +142,7 @@ element. `module`, `version`, `description`, `repository`, `targets`, and
 cargo soothfast bind gen -p PKG            # write the packages
 cargo soothfast bind gen -p PKG --check    # fail if they are stale
 cargo soothfast bind gate -p PKG           # fail on a consumer-breaking change
-cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar / R CMD INSTALL / rake+gem / c++
+cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar / R CMD INSTALL / rake+gem / c++ / luajit
 ```
 
 `bind gen` writes a small Rust glue crate per language and the packaging
@@ -194,19 +202,19 @@ only in the generated crate.
 
 ## How types cross
 
-| Rust | Python | JavaScript | C | Go | Java | Kotlin | R | Ruby | C++ |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character | `String` | `string_view` in, `string` out |
-| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector | `String` (binary) | `span<const uint8_t>` in, `vector<uint8_t>` out |
-| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` | `span<const T>` in, `vector<T>` out |
-| `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked | `Integer` | `int64_t`, `uint64_t` |
-| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` | `T \| nil` | `optional<T>`, handles only |
-| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` | not bound |
-| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound | `Array` | not bound |
-| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises | throws `Error` |
-| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound | not bound | not bound |
-| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` | handle class | handle class, `unique_ptr` member |
-| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string | `Symbol` | `enum class` |
+| Rust | Python | JavaScript | C | Go | Java | Kotlin | R | Ruby | C++ | Lua |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character | `String` | `string_view` in, `string` out | `string` |
+| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector | `String` (binary) | `span<const uint8_t>` in, `vector<uint8_t>` out | table or FFI array |
+| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` | `span<const T>` in, `vector<T>` out | table or FFI array |
+| `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked | `Integer` | `int64_t`, `uint64_t` | `int64_t`/`uint64_t` cdata |
+| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` | `T \| nil` | `optional<T>`, handles only | nullable pointer, handles only |
+| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` | not bound | not bound |
+| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound | `Array` | not bound | not bound |
+| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises | throws `Error` | `error()` |
+| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound | not bound | not bound | not bound |
+| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` | handle class | handle class, `unique_ptr` member | table with `:close()` |
+| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string | `Symbol` | `enum class` | validated string |
 
 An enum carrying data stays an opaque handle, because neither language has a
 shape for it; that is reported as a note rather than guessed at.
@@ -461,6 +469,46 @@ int64_t n = c.bump(5);
 `async fn` is a gap for C++ the same way it is for Go, Node and Java: no
 runtime to hand a future to. The header must compile clean under `-Wall
 -Wextra -Werror` on both g++ and clang++, checked in the golden suite.
+
+### Lua
+
+LuaJIT's `ffi` reads a C declaration directly, so `bind gen` writes no Rust
+glue for it at all: the package is the C backend's own file set plus one
+`.lua` module. Its `ffi.cdef` block is rendered from the same declaration
+writer the header uses (`cabi::header::declarations`), not by textually
+including the `.h`, which has `#include`s and an `extern "C"` block the
+FFI's own parser cannot read:
+
+```lua
+local acme = require("acme.core")
+
+local counter = acme.Counter.new(0)
+local n = counter:bump(5)
+counter:close()
+```
+
+- **Every buffer copies, the same answer wasm and Ruby give for their own
+  reasons**, since a plain Lua table boxes each element and has no
+  contiguous memory to hand over. The one exception: a caller already
+  holding a matching FFI array — built with `ffi.new("<ctype>[?]", n)` —
+  passes it straight through, checked with `ffi.istype` rather than
+  copied. A VLA array carries no `#`; its length comes from
+  `ffi.sizeof(value) / ffi.sizeof("<ctype>")` instead.
+- **A handle is a table with a `ptr` field**, freed through the C `*_free`
+  and registered with `ffi.gc` as a backstop; `:close()` disarms the
+  finalizer and frees once, so calling it twice is a no-op the same way
+  Go's `Close()` is.
+- **A payload-free enum crosses as a validated string**, not a mirrored
+  ordinal: a lookup table checks it against the type's own variant names
+  on the way in and maps an ordinal back to a name on the way out, the
+  same shape R's and Ruby's validated strings take.
+- **A failing call raises through Lua's own `error`.** The `char **error`
+  out-parameter is read the same way C's caller reads it, then the message
+  is turned into a Lua string and released before the raise, so nothing
+  leaks on the error path either.
+
+`async fn` is a gap for Lua the same way it is for Go, Node, Java, Ruby and
+C++: no runtime to hand a future to.
 
 ## C is the one without a framework
 
