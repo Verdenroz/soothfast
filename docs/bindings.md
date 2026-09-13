@@ -221,7 +221,7 @@ only in the generated crate.
 | `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector | `String` (binary) | `span<const uint8_t>` in, `vector<uint8_t>` out | table or FFI array | `Span<byte>` / `byte[]` |
 | `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` | `span<const T>` in, `vector<T>` out | table or FFI array | `Span<T>` / `T[]` |
 | `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked | `Integer` | `int64_t`, `uint64_t` | `int64_t`/`uint64_t` cdata | `long`, `ulong` |
-| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` | `T \| nil` | `optional<T>`, handles only | nullable pointer, handles only | `null`, handles only |
+| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles and strings | nullable pointer, handles and strings | nullable, handles and strings | `T?`, handles and strings | `T` or `NULL` | `T \| nil` | `optional<T>`, handles and strings | nullable pointer, handles and strings | `null`, handles and strings |
 | `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` | not bound | not bound | not bound |
 | `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound | `Array` | not bound | not bound | not bound |
 | `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises | throws `Error` | `error()` | throws |
@@ -606,8 +606,8 @@ Four rules cover the whole surface:
 - **Nothing is freed for you.** That is the note `bind gen` leads with.
 
 What C has no spelling for is reported rather than guessed: maps, tuples,
-sequences of non-primitives, `Option` of anything but an exported type, and
-`async fn`, which has nothing to await with.
+sequences of non-primitives, `Option` of anything but an exported type or a
+string, and `async fn`, which has nothing to await with.
 
 The generated crate builds with plain `cargo build --release` and ships a
 `.pc` file, so a consumer finds the header and the library through
