@@ -4,7 +4,9 @@
 //! surface is walked once and lowered per language, so a class defined once
 //! in Rust reaches every configured language as the same class.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use soothfast_bind::foreign::TypeTable;
 use soothfast_bind::model::Surface;
@@ -294,6 +296,35 @@ fn crate_path(out: &str) -> String {
     vec![".."; depth].join("/")
 }
 
+/// The directory holding a bound package's own `Cargo.toml`, relative to
+/// `out_dir`. Every backend emits exactly one; R's and Ruby's nest theirs
+/// under `src/rust` or `ext/<module>` instead of the output root.
+fn manifest_dir(out_dir: &Path, files: &BTreeMap<String, String>) -> Option<PathBuf> {
+    let rel = files.keys().find(|k| k.ends_with("Cargo.toml"))?;
+    match Path::new(rel).parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => Some(out_dir.join(parent)),
+        _ => Some(out_dir.to_path_buf()),
+    }
+}
+
+/// `cargo generate-lockfile` reads the registry index only, so this never
+/// needs the target language's own toolchain on the machine.
+fn generate_lockfile(dir: &Path) -> Result<(), String> {
+    let out = Command::new("cargo")
+        .arg("generate-lockfile")
+        .current_dir(dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!(
+            "cargo generate-lockfile failed in {}: {}",
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
 fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let built = build_all(pkg, common, &meta.dir, &meta.version)?;
@@ -320,6 +351,12 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
             } else {
                 spec_gen::write_if_changed(&target, content)?;
             }
+        }
+        if !check_only
+            && let Some(dir) = manifest_dir(&out_dir, &bound.files.files)
+            && !dir.join("Cargo.lock").exists()
+        {
+            generate_lockfile(&dir)?;
         }
         println!(
             "bind gen: {} [{}] — {} file(s), {} gap(s), {} note(s)",
@@ -626,5 +663,29 @@ mod tests {
         assert!(entry_selected(&entry("python"), Some(&wanted)));
         assert!(entry_selected(&entry("node"), Some(&wanted)));
         assert!(!entry_selected(&entry("go"), Some(&wanted)));
+    }
+
+    #[test]
+    fn manifest_dir_is_the_output_root_when_cargo_toml_lives_there() {
+        let files = BTreeMap::from([("Cargo.toml".to_string(), String::new())]);
+        assert_eq!(
+            manifest_dir(Path::new("/out"), &files),
+            Some(PathBuf::from("/out"))
+        );
+    }
+
+    #[test]
+    fn manifest_dir_follows_a_nested_cargo_toml() {
+        let files = BTreeMap::from([("ext/acme_core/Cargo.toml".to_string(), String::new())]);
+        assert_eq!(
+            manifest_dir(Path::new("/out"), &files),
+            Some(PathBuf::from("/out/ext/acme_core"))
+        );
+    }
+
+    #[test]
+    fn manifest_dir_is_none_without_a_cargo_toml() {
+        let files = BTreeMap::from([("README.md".to_string(), String::new())]);
+        assert_eq!(manifest_dir(Path::new("/out"), &files), None);
     }
 }
