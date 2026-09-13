@@ -361,7 +361,7 @@ fn describe(label: Option<String>) -> Option<String> {
 
 #[pyfunction]
 fn describe_owned(label: Option<String>) -> Option<String> {
-    ::acme::describe_owned(label.as_deref())
+    ::acme::describe_owned(label)
 }
 
 #[pyfunction]
