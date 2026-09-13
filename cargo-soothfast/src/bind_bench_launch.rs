@@ -29,7 +29,12 @@ fn required_tools(lang: BindKind) -> &'static [(&'static str, &'static str)] {
             "install the Kotlin compiler — https://kotlinlang.org/docs/command-line.html",
         )],
         BindKind::R => &[("Rscript", "install R (https://www.r-project.org)")],
-        BindKind::CAbi | BindKind::Wasm | BindKind::Ruby | BindKind::Cpp | BindKind::Lua => &[],
+        BindKind::CAbi
+        | BindKind::Wasm
+        | BindKind::Ruby
+        | BindKind::Cpp
+        | BindKind::Lua
+        | BindKind::CSharp => &[],
     }
 }
 
@@ -58,7 +63,7 @@ pub fn launch(
         BindKind::Kotlin => jvm(glue, script, "kotlin", artifacts),
         BindKind::R => Ok(r(glue, script)),
         BindKind::CAbi => Ok(direct(glue, script)),
-        BindKind::Wasm | BindKind::Ruby | BindKind::Cpp | BindKind::Lua => {
+        BindKind::Wasm | BindKind::Ruby | BindKind::Cpp | BindKind::Lua | BindKind::CSharp => {
             Err(LaunchError::Failed(format!(
                 "bind bench has no launcher for {} yet",
                 lang.name()

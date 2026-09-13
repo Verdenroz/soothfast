@@ -436,3 +436,12 @@ pub fn lua_opts() -> BindOptions {
         ..opts()
     }
 }
+
+/// A dotted root namespace, the way a `[[bind]] lang = "csharp"` entry
+/// configures `package`.
+pub fn csharp_opts() -> BindOptions {
+    BindOptions {
+        package: "Acme.Core".into(),
+        ..opts()
+    }
+}

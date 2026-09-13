@@ -43,6 +43,9 @@ pub(crate) fn run(
         BindKind::Ruby => ruby(glue, targets, quiet),
         BindKind::Cpp => cpp(glue, targets, release, quiet),
         BindKind::Lua => lua(glue, targets, release, quiet),
+        BindKind::CSharp => {
+            Err("cargo soothfast bind build for csharp lands in a later commit".into())
+        }
     }
 }
 
