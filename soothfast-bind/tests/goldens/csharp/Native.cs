@@ -95,7 +95,7 @@ internal static class Native
     internal static extern void acme_core_mode_free(IntPtr handle);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void acme_core_describe( label);
+    internal static extern unsafe IntPtr acme_core_describe(byte* label);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe AcmeCoreU8Array acme_core_digest(byte* data, nuint data_len);

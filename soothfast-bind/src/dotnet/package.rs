@@ -4,6 +4,7 @@
 use std::fmt::Write;
 
 use crate::BindOptions;
+use crate::model::Ty;
 use crate::plan::{BindingPlan, Transfer};
 
 use super::types;
@@ -25,6 +26,9 @@ pub(crate) fn csproj(plan: &BindingPlan, opts: &BindOptions) -> String {
     let _ = writeln!(out, "    <Version>{}</Version>", opts.version);
     if needs_unsafe(plan) {
         out.push_str("    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n");
+    }
+    if needs_nullable(plan) {
+        out.push_str("    <Nullable>enable</Nullable>\n");
     }
     if let Some(description) = &opts.description {
         let _ = writeln!(
@@ -55,6 +59,19 @@ fn needs_unsafe(plan: &BindingPlan) -> bool {
             )
         })
     })
+}
+
+/// Whether any call takes or returns a nullable string, the only shape
+/// that needs a `?` the compiler enforces without a nullable context.
+fn needs_nullable(plan: &BindingPlan) -> bool {
+    let is_optional_str = |ty: &Ty| matches!(ty, Ty::Optional(inner) if **inner == Ty::Str);
+    plan.functions()
+        .any(|f| is_optional_str(&f.ret) || f.params.iter().any(|p| is_optional_str(&p.ty)))
+        || plan
+            .classes
+            .iter()
+            .flat_map(|c| c.accessors.iter())
+            .any(|a| is_optional_str(&a.ty))
 }
 
 fn xml_escape(text: &str) -> String {

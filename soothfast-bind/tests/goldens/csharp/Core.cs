@@ -8,10 +8,23 @@ namespace Acme.Core;
 public static class Core
 {
 
-    public static string Describe(string label)
+    public static string? Describe(string? label)
     {
-        void result = Native.acme_core_describe(label);
-        return result;
+        byte[]? labelBytes = label is null ? null : System.Text.Encoding.UTF8.GetBytes(label + "\0");
+        unsafe
+        {
+            fixed (byte* labelPtr = labelBytes)
+            {
+                IntPtr result = Native.acme_core_describe(labelPtr);
+                if (result == IntPtr.Zero)
+                {
+                    return null;
+                }
+                string value = Marshal.PtrToStringUTF8(result) ?? string.Empty;
+                Native.acme_core_string_free(result);
+                return value;
+            }
+        }
     }
 
     public static byte[] Digest(ReadOnlySpan<byte> data)

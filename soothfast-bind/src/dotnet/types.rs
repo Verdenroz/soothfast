@@ -74,6 +74,7 @@ pub(crate) fn native_ty(ty: &Ty, plan: &BindingPlan, module: &str) -> String {
         Ty::Class(_) => "IntPtr".into(),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(_) => "IntPtr".into(),
+            Ty::Str => "IntPtr".into(),
             _ => "void".into(),
         },
         ty if c::element(ty).is_some() => c::array_rust(ty, module),
@@ -90,6 +91,7 @@ pub(crate) fn public_ty(ty: &Ty) -> String {
         Ty::Class(name) => name.clone(),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(name) => name.clone(),
+            Ty::Str => "string?".into(),
             other => public_ty(other),
         },
         ty if ty.is_primitive() => scalar(ty).expect("checked").public.into(),

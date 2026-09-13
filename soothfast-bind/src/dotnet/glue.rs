@@ -503,6 +503,15 @@ fn build_call(
                 pins.push(format!("fixed ({native}* {ptr} = {name})"));
                 args.push(format!("{ptr}, (nuint){name}.Length"));
             }
+            Transfer::Text { nullable: true, .. } => {
+                let bytes = format!("{name}Bytes");
+                let ptr = format!("{name}Ptr");
+                prep.push_str(&format!(
+                    "byte[]? {bytes} = {name} is null ? null : System.Text.Encoding.UTF8.GetBytes({name} + \"\\0\");\n"
+                ));
+                pins.push(format!("fixed (byte* {ptr} = {bytes})"));
+                args.push(ptr);
+            }
             Transfer::Text { .. } => {
                 let bytes = format!("{name}Bytes");
                 let ptr = format!("{name}Ptr");
@@ -574,6 +583,12 @@ fn convert_and_return(ty: &Ty, plan: &BindingPlan, module: &str, var: &str) -> S
             Ty::Class(name) => {
                 format!("return {var} == IntPtr.Zero ? null : new {name}({var});\n")
             }
+            Ty::Str => format!(
+                "if ({var} == IntPtr.Zero)\n{{\n    return null;\n}}\n\
+                 string value = Marshal.PtrToStringUTF8({var}) ?? string.Empty;\n\
+                 Native.{module}_string_free({var});\n\
+                 return value;\n"
+            ),
             _ => format!("return {var};\n"),
         },
         ty if types::element(ty).is_some() => {

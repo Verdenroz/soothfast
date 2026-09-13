@@ -8,6 +8,7 @@
     <AssemblyName>Acme.Core</AssemblyName>
     <Version>0.1.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
