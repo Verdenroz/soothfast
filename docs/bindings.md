@@ -391,7 +391,9 @@ devs <- s$deviations_all(c(0.0, 4.0))
 - **`Option<T>` is `NULL` for anything the plan can otherwise carry**, not
   only an exported type: unlike C, Go, Java, and Kotlin, R has no
   borrowed-or-owned ambiguity for a plain value, so `bind gen` builds the
-  `Robj` by hand instead of restricting the shape.
+  `Robj` by hand instead of restricting the shape. An optional string is
+  `NULL` coming back, and R's own `NA_character_` is also accepted as
+  absent going in.
 - **A mutable buffer parameter is a gap.** R vectors are copy-on-write
   values, and nothing about R's calling convention guarantees the vector a
   caller passed in is not aliased elsewhere, so writing through one in
