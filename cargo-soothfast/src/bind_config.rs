@@ -231,6 +231,13 @@ mod tests {
     }
 
     #[test]
+    fn cpp_is_a_known_lang() {
+        let cfg = parse("[[bind]]\nlang = \"cpp\"\nout = \"cpp\"\npackage = \"acme::core\"\n")
+            .expect("parses");
+        assert_eq!(cfg.entries[0].lang, BindKind::Cpp);
+    }
+
+    #[test]
     fn an_unknown_lang_lists_the_ones_that_exist() {
         let err = parse("[[bind]]\nout = \"o\"\npackage = \"p\"\nlang = \"cobol\"\n")
             .expect_err("rejected");
