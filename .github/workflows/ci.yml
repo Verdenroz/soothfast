@@ -110,6 +110,7 @@ jobs:
           name: cargo-soothfast-bin
           path: bin
       - run: chmod +x bin/cargo-soothfast
+      - run: pip install maturin==1.10.2
       - run: make baselines
       - run: bin/cargo-soothfast docs check -p soothfast --baseline self README.md docs/index.md
       - run: bin/cargo-soothfast docs check -p soothfast-measure --baseline self docs/measuring.md docs/gating.md

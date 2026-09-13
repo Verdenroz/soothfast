@@ -46,6 +46,7 @@ baselines: ## Measure every self-bench crate into the "self" baseline
 	@for crate in $(BENCH_CRATES); do \
 		$(SOOTHFAST) measure -p $$crate --save-baseline self || exit 1; \
 	done
+	$(SOOTHFAST) bind bench -p soothfast-demo --only python,node --save-baseline self
 
 gate: ## Merge-base gates vs $(BASE): self-benches + build cost
 	$(SOOTHFAST) gate $(addprefix -p ,$(BENCH_CRATES)) --against-ref $(BASE)

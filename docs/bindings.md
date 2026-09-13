@@ -481,16 +481,49 @@ function the crossing costs more than the work. What decides whether a
 binding beats the host language is how much data has to be converted to get
 there.
 
-Measured on the dogfood package, 100k `f64`, best of nine runs, against the
-same computation written in the host language. Above 1.0 means the binding
-wins:
+Measured with `cargo soothfast bind bench -p soothfast-demo`, 100k `f64`,
+best of nine runs per shape, against the same computation written in the
+host language. Above 1.0 means the binding wins:
 
-| shape | Python | JavaScript (wasm) |
-| --- | --- | --- |
-| one call per element | 0.9x | 0.2x |
-| batch, plain `list` in | 4.0x | n/a |
-| batch, buffer in and out | 56x | 0.8x |
-| batch, into the caller's buffer | 56x | 0.8x |
+| shape | Python | Node | Go | Java | R |
+| --- | --- | --- | --- | --- | --- |
+| `build_summary` | 11.3x | 9.3x | 5.8x | 0.89x | 2.4x |
+| `batch_buffer` | 123x | 2.1x | 0.46x | 2.7x | 348x |
+| `batch_into` | 146x | 5.1x | 2.0x | 3.4x | n/a |
+| `per_element` | 1.6x | 0.02x | 0.12x | 0.29x | 0.25x |
+
+<!-- soothfast:claim soothfast_demo::bind::python::build_summary.ratio.ratio >= 5 -->
+Python still beats a from-scratch Python sort/MAD by at least 5x building
+the handle.
+<!-- /soothfast:claim -->
+
+<!-- soothfast:claim soothfast_demo::bind::python::batch_buffer.ratio.ratio >= 60 -->
+The buffer path stays at least 60x over a Python loop doing the same
+arithmetic.
+<!-- /soothfast:claim -->
+
+<!-- soothfast:claim soothfast_demo::bind::node::build_summary.ratio.ratio >= 4 -->
+Node beats a from-scratch typed-array sort/MAD building the handle by at
+least 4x.
+<!-- /soothfast:claim -->
+
+<!-- soothfast:claim soothfast_demo::bind::node::batch_buffer.ratio.ratio >= 1 -->
+Node's buffer path still beats the equivalent typed-array loop.
+<!-- /soothfast:claim -->
+
+Python and Node are gated above; Go, Java and R are measured the same way
+but not gated. R has no `batch_into` shape: extendr gaps
+`deviations_into` there (see below). Two of these numbers look backwards
+and are worth a sentence each: Go's `batch_buffer` under 1.0 is the cgo
+call plus the copy-and-free of the returned slice against a Go loop
+compiled straight to native code, and Java's `build_summary` under 1.0 is
+the JDK's own dual-pivot sort matching Rust's on 100k doubles while the
+JNI path still pays a region copy of the input.
+
+wasm is not part of this matrix — this machine has no `wasm-pack` to
+measure it with. Its numbers below are from an earlier by-hand run and
+predate `bind bench`: 0.8x for a batched call, 0.2x for one call per
+element.
 
 **Cross once, not per element.** `deviations` called in a loop is slower than
 never binding at all: the arithmetic is a subtract, an abs and a divide, and
@@ -499,10 +532,10 @@ reaching it costs more than doing it.
 **Hand over a buffer, not a sequence.** Any parameter that is a contiguous
 run of one primitive goes through the buffer protocol in Python, so
 `array.array`, `memoryview` and numpy arrive as a pointer with nothing
-unboxed. A plain `list` still works and is still copied element by element,
-which is the whole distance between 4x and 56x. `bytes` counts: reading
-800 KB as `Vec<u8>` costs 1.6 ms through a buffer against 7.9 ms unboxed one
-byte at a time.
+unboxed. A plain `list` still works but is copied element by element, which
+is most of the gap behind `batch_buffer`'s number above. `bytes` counts:
+reading 800 KB as `Vec<u8>` costs 1.6 ms through a buffer against 7.9 ms
+unboxed one byte at a time.
 
 <!-- soothfast:claim soothfast_demo::bench_deviations_all.alloc.allocs <= 1 -->
 `deviations_all` allocates the `Vec<f64>` it returns.
