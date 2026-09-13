@@ -559,6 +559,7 @@ fn bindable(
                 | BindKind::Kotlin
                 | BindKind::R
                 | BindKind::Ruby
+                | BindKind::Cpp
         )
     {
         record(
@@ -574,6 +575,7 @@ fn bindable(
                     BindKind::Kotlin => "no Kotlin runtime story yet".into(),
                     BindKind::R => "no R runtime story yet".into(),
                     BindKind::Ruby => "no Ruby runtime story yet".into(),
+                    BindKind::Cpp => "no C++ runtime story yet".into(),
                     _ => "C has nothing to await with; expose a blocking wrapper \
                           instead"
                         .into(),
@@ -599,13 +601,19 @@ fn bindable(
     }
     // An optional exported type crosses back as a pointer that may be null,
     // but nothing in the model says whether a parameter wants it borrowed or
-    // owned, and the two need different C. Go calls the same C functions, so
-    // it inherits the restriction; Java and Kotlin have no way to name a
-    // different constructor overload for it either; R's own handle is an
-    // external pointer with the same borrowed-or-owned ambiguity.
+    // owned, and the two need different C. Go and C++ call the same C
+    // functions, so both inherit the restriction; Java and Kotlin have no
+    // way to name a different constructor overload for it either; R's own
+    // handle is an external pointer with the same borrowed-or-owned
+    // ambiguity.
     if matches!(
         kind,
-        BindKind::CAbi | BindKind::Go | BindKind::Java | BindKind::Kotlin | BindKind::R
+        BindKind::CAbi
+            | BindKind::Go
+            | BindKind::Java
+            | BindKind::Kotlin
+            | BindKind::R
+            | BindKind::Cpp
     ) {
         for param in &f.params {
             if matches!(&param.ty, Ty::Optional(inner) if matches!(**inner, Ty::Class(_))) {
@@ -677,12 +685,13 @@ fn record(gaps: &mut Vec<Gap>, gap: Gap) {
 
 /// Why a language cannot carry this type, if it cannot.
 fn unsupported(kind: BindKind, ty: &Ty) -> Option<String> {
-    // Go calls the same C functions, so it inherits the restriction; Java
-    // and Kotlin have no generic container either, and no more of a story
-    // than C does for a sequence of anything but one primitive.
+    // Go and C++ both call the same C functions, so both inherit the
+    // restriction; Java and Kotlin have no generic container either, and no
+    // more of a story than C does for a sequence of anything but one
+    // primitive.
     if matches!(
         kind,
-        BindKind::CAbi | BindKind::Go | BindKind::Java | BindKind::Kotlin
+        BindKind::CAbi | BindKind::Go | BindKind::Java | BindKind::Kotlin | BindKind::Cpp
     ) && let Some(why) = unsupported_by_c(ty)
     {
         return Some(why);

@@ -39,6 +39,7 @@ pub(crate) fn run(
         BindKind::Kotlin => jvm(glue, targets, release, KOTLIN, quiet),
         BindKind::R => r(glue, targets, quiet),
         BindKind::Ruby => ruby(glue, targets, quiet),
+        BindKind::Cpp => Err("cargo soothfast bind build for cpp lands in a later commit".into()),
     }
 }
 

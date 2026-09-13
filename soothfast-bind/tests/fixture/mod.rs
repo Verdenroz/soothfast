@@ -410,3 +410,17 @@ pub fn r_opts() -> BindOptions {
 pub fn ruby_opts() -> BindOptions {
     opts()
 }
+
+/// `opts()`'s `package` is a Cargo distribution name; a `[[bind]] lang =
+/// "cpp"` entry gives it a `::`-delimited C++ namespace path instead.
+/// `module` is left as `[[bind]]` would default it: hyphens replaced, `::`
+/// untouched, since that default is what the CLI actually hands the
+/// backend when a config leaves `module` unset.
+pub fn cpp_opts() -> BindOptions {
+    let package = "acme::core";
+    BindOptions {
+        package: package.into(),
+        module: package.replace('-', "_"),
+        ..opts()
+    }
+}
