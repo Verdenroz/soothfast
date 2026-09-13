@@ -663,9 +663,15 @@ fn a_plain_enum_mirrors_onto_a_typed_int_via_a_shared_c_conversion() {
 }
 
 #[test]
-fn the_emitted_go_is_already_gofmt_clean() {
-    use std::process::Command;
+fn an_optional_handle_return_wraps_a_nullable_pointer_for_go() {
+    let glue = emit_go()["core.go"].clone();
+    assert!(glue.contains("func FindCounter(start int64) *Counter {"));
+    assert!(glue.contains("if p := C.core_find_counter(C.int64_t(start)); p != nil {"));
+    assert!(glue.contains("return wrapCounter(p)"));
+}
 
+#[test]
+fn the_emitted_go_is_already_gofmt_clean() {
     let dir = golden_dir("go");
     let Ok(output) = Command::new("gofmt").arg("-l").arg(&dir).output() else {
         eprintln!("gofmt not on PATH; skipping");

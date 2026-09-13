@@ -372,12 +372,15 @@ fn convert_ret(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
         Ty::Str => format!("goString({expr})"),
         Ty::Class(name) if plan.is_mirrored(name) => format!("{name}({expr})"),
         Ty::Class(name) => format!("wrap{name}({expr})"),
+        // gofmt splits an `if` body onto its own line, so the closure is
+        // spelled pre-wrapped at the depth every call site splices it
+        // into: one tab for the `return` that precedes it.
         Ty::Optional(inner) => match &**inner {
             Ty::Class(name) if plan.is_mirrored(name) => format!(
-                "func() *{name} {{ if p := {expr}; p != nil {{ v := {name}(*p); return &v }}; return nil }}()"
+                "func() *{name} {{\n\t\tif p := {expr}; p != nil {{\n\t\t\tv := {name}(*p)\n\t\t\treturn &v\n\t\t}}\n\t\treturn nil\n\t}}()"
             ),
             Ty::Class(name) => format!(
-                "func() *{name} {{ if p := {expr}; p != nil {{ return wrap{name}(p) }}; return nil }}()"
+                "func() *{name} {{\n\t\tif p := {expr}; p != nil {{\n\t\t\treturn wrap{name}(p)\n\t\t}}\n\t\treturn nil\n\t}}()"
             ),
             _ => expr.to_string(),
         },

@@ -144,7 +144,12 @@ func Digest(data []byte) []byte {
 }
 
 func FindCounter(start int64) *Counter {
-	return func() *Counter { if p := C.core_find_counter(C.int64_t(start)); p != nil { return wrapCounter(p) }; return nil }()
+	return func() *Counter {
+		if p := C.core_find_counter(C.int64_t(start)); p != nil {
+			return wrapCounter(p)
+		}
+		return nil
+	}()
 }
 
 func Greet(name string) string {
