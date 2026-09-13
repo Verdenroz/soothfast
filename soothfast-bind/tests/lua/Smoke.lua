@@ -32,8 +32,23 @@ for _, bad in ipairs({ 0, -1, 4 }) do
 	assert(tostring(err):find("out of range"), "error message: " .. tostring(err))
 end
 
+digest:close()
+digest:close()
+
+local ok_closed, err_closed = pcall(function()
+	return digest[1]
+end)
+assert(not ok_closed, "expected an error reading a closed array")
+assert(tostring(err_closed):find("out of range"), "error message: " .. tostring(err_closed))
+
 local norm = acme.normalize({ 1.0, 2.0, 3.0 }, 2.0)
 assert(norm[1] == 2.0 and norm[2] == 4.0 and norm[3] == 6.0, "normalize")
+
+local ok_frac, err_frac = pcall(function()
+	return norm[1.5]
+end)
+assert(not ok_frac, "expected an error at a non-integer index")
+assert(tostring(err_frac):find("out of range"), "error message: " .. tostring(err_frac))
 
 -- A returned array passes back into another call with no copy.
 local renorm = acme.normalize(norm, 1.0)
