@@ -66,6 +66,9 @@ local function f64_buf(value)
 	if ffi.istype("double[?]", value) then
 		return value, ffi.sizeof(value) / ffi.sizeof("double")
 	end
+	if ffi.istype("stats_f64_array", value) then
+		return value.data, tonumber(value.len)
+	end
 	local n = #value
 	local arr = ffi.new("double[?]", n)
 	for i = 1, n do
@@ -87,17 +90,30 @@ local function u8_buf(value)
 	return arr, n
 end
 
--- stats_f64_array_to_table copies a `f64` sequence this library returned and
--- releases it.
-local function stats_f64_array_to_table(arr)
-	local n = tonumber(arr.len)
+-- Copies a `f64` array into a plain table.
+local function stats_f64_array_totable(self)
+	local n = tonumber(self.len)
 	local out = {}
 	for i = 1, n do
-		out[i] = arr.data[i - 1]
+		out[i] = self.data[i - 1]
 	end
-	lib.stats_f64_array_free(arr)
 	return out
 end
+
+ffi.metatype("stats_f64_array", {
+	__len = function(self) return tonumber(self.len) end,
+	__index = function(self, key)
+		if key == "totable" then
+			return stats_f64_array_totable
+		end
+		if type(key) == "number" then
+			if key < 1 or key > tonumber(self.len) then
+				error("stats_f64_array index out of range: " .. tostring(key))
+			end
+			return self.data[key - 1]
+		end
+	end,
+})
 
 local M = {}
 
@@ -167,7 +183,7 @@ end
 function Summary:deviations_all(values)
 	local values_ptr, values_len = f64_buf(values)
 	local ret = lib.stats_summary_deviations_all(self.ptr, values_ptr, values_len)
-	return stats_f64_array_to_table(ret)
+	return ffi.gc(ret, lib.stats_f64_array_free)
 end
 
 function Summary:deviations_into(values, out)
