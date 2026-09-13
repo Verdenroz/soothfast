@@ -68,8 +68,8 @@ impl Mode {
 }
 
 #[extendr]
-fn describe(label: ) -> Option<String> {
-    let __out = ::acme::describe(label);
+fn describe(label: Option<String>) -> Option<String> {
+    let __out = ::acme::describe(label.as_deref());
     __out
 }
 

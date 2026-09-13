@@ -174,6 +174,7 @@ fn ret_clause(function: &Function, plan: &BindingPlan, fallible: bool) -> String
 /// A parameter's extendr-facing Rust type.
 fn param_ty(param: &Param, plan: &BindingPlan) -> String {
     match Transfer::of(param, plan) {
+        Transfer::Text { nullable: true, .. } => "Option<String>".into(),
         Transfer::Text {
             borrowed: true,
             nullable: false,
@@ -402,6 +403,7 @@ fn call_expr(
 fn call_arg(param: &Param, plan: &BindingPlan) -> String {
     let name = &param.name;
     match Transfer::of(param, plan) {
+        Transfer::Text { nullable: true, .. } => format!("{name}.as_deref()"),
         Transfer::Handle { mirrored: true, .. } => name.clone(),
         Transfer::Handle { writable, .. } => match writable {
             true => format!("&mut {name}.0"),
