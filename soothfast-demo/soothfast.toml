@@ -3,6 +3,7 @@ lang = "python"
 out = "bindings/python"
 package = "soothfast-stats"
 description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+bench = "bindings/python/bench.py"
 
 [[bind]]
 lang = "wasm"
@@ -21,18 +22,21 @@ lang = "go"
 out = "bindings/gostats"
 package = "github.com/Verdenroz/soothfast/soothfast-demo/bindings/gostats"
 description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+bench = "bindings/gostats/bench/bench.go"
 
 [[bind]]
 lang = "node"
 out = "bindings/node"
 package = "soothfast-stats-native"
 description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+bench = "bindings/node/bench.js"
 
 [[bind]]
 lang = "java"
 out = "bindings/java"
 package = "io.soothfast.stats"
 description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+bench = "bindings/java/bench.java"
 
 [[bind]]
 lang = "kotlin"
@@ -45,6 +49,7 @@ lang = "r"
 out = "bindings/r"
 package = "soothfast.stats"
 description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
+bench = "bindings/r/bench.R"
 
 [[bind]]
 lang = "ruby"
