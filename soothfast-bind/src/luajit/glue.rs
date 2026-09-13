@@ -379,6 +379,10 @@ fn returned(expr: &str, ty: &Ty, plan: &BindingPlan, module: &str) -> String {
                  return wrap_{}(p) end)()",
                 c::snake(name)
             ),
+            Ty::Str => format!(
+                "(function() local p = {expr}; if p == nil then return nil end; \
+                 return lua_string(p) end)()"
+            ),
             _ => expr.to_string(),
         },
         ty if c::element(ty).is_some() => {

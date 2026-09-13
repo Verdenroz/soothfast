@@ -50,7 +50,8 @@ int64_t core_counter_bump_all(const core_counter *handle, const int64_t *by, siz
 /* Release a Mode this library returned. */
 void core_mode_free(core_mode *handle);
 
-void core_describe( label);
+/* `label` may be NULL. May return NULL. */
+char * core_describe(const char *label);
 core_u8_array core_digest(const uint8_t *data, size_t data_len);
 core_counter * core_find_counter(int64_t start);
 char * core_greet(const char *name);
