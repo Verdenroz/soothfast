@@ -268,6 +268,7 @@ fn go_signature_params(params: &[Param], plan: &BindingPlan) -> String {
 fn go_param_type(param: &Param, plan: &BindingPlan) -> String {
     match Transfer::of(param, plan) {
         Transfer::Buffer { .. } => format!("[]{}", go::element_go(&param.ty)),
+        Transfer::Text { nullable: true, .. } => "*string".into(),
         Transfer::Text { .. } => "string".into(),
         Transfer::Handle { mirrored: true, .. } => class_name(&param.ty).to_string(),
         Transfer::Handle { .. } => format!("*{}", class_name(&param.ty)),
@@ -283,6 +284,7 @@ fn go_return_type(ty: &Ty, plan: &BindingPlan) -> String {
         Ty::Class(name) => format!("*{name}"),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(name) => format!("*{name}"),
+            Ty::Str => "*string".into(),
             _ => String::new(),
         },
         Ty::Bytes => "[]byte".into(),
@@ -357,10 +359,21 @@ fn c_string_var(param_name: &str) -> String {
 fn text_prep(function: &Function, plan: &BindingPlan) -> String {
     let mut out = String::new();
     for param in &function.params {
-        if let Transfer::Text { .. } = Transfer::of(param, plan) {
-            let cvar = c_string_var(&param.name);
-            let _ = writeln!(out, "\t{cvar} := C.CString({})", ident(&param.name));
-            let _ = writeln!(out, "\tdefer C.free(unsafe.Pointer({cvar}))");
+        let name = ident(&param.name);
+        let cvar = c_string_var(&param.name);
+        match Transfer::of(param, plan) {
+            Transfer::Text { nullable: true, .. } => {
+                let _ = writeln!(out, "\tvar {cvar} *C.char");
+                let _ = writeln!(out, "\tif {name} != nil {{");
+                let _ = writeln!(out, "\t\t{cvar} = C.CString(*{name})");
+                let _ = writeln!(out, "\t\tdefer C.free(unsafe.Pointer({cvar}))");
+                let _ = writeln!(out, "\t}}");
+            }
+            Transfer::Text { .. } => {
+                let _ = writeln!(out, "\t{cvar} := C.CString({name})");
+                let _ = writeln!(out, "\tdefer C.free(unsafe.Pointer({cvar}))");
+            }
+            _ => {}
         }
     }
     out
@@ -381,6 +394,9 @@ fn convert_ret(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
             ),
             Ty::Class(name) => format!(
                 "func() *{name} {{\n\t\tif p := {expr}; p != nil {{\n\t\t\treturn wrap{name}(p)\n\t\t}}\n\t\treturn nil\n\t}}()"
+            ),
+            Ty::Str => format!(
+                "func() *string {{\n\t\tif p := {expr}; p != nil {{\n\t\t\tv := goString(p)\n\t\t\treturn &v\n\t\t}}\n\t\treturn nil\n\t}}()"
             ),
             _ => expr.to_string(),
         },

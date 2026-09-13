@@ -139,8 +139,19 @@ func (recv *Mode) Close() error {
 	return nil
 }
 
-func Describe(label )  {
-	return C.core_describe(label)
+func Describe(label *string) *string {
+	var cLabel *C.char
+	if label != nil {
+		cLabel = C.CString(*label)
+		defer C.free(unsafe.Pointer(cLabel))
+	}
+	return func() *string {
+		if p := C.core_describe(cLabel); p != nil {
+			v := goString(p)
+			return &v
+		}
+		return nil
+	}()
 }
 
 func Digest(data []byte) []byte {
