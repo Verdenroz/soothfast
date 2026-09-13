@@ -392,8 +392,15 @@ fn args(function: &Function, plan: &BindingPlan) -> String {
                         false => format!("{slice}.to_vec()"),
                     }
                 }
-                Transfer::Text { nullable: true, .. } => {
-                    format!("unsafe {{ ffi::text_opt({name}) }}")
+                Transfer::Text {
+                    nullable: true,
+                    borrowed,
+                } => {
+                    let text = format!("unsafe {{ ffi::text_opt({name}) }}");
+                    match borrowed {
+                        true => text,
+                        false => format!("{text}.map(String::from)"),
+                    }
                 }
                 Transfer::Text { borrowed, .. } => {
                     let text = format!("unsafe {{ ffi::text({name}) }}");

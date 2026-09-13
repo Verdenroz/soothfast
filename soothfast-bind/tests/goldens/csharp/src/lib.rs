@@ -222,7 +222,7 @@ pub unsafe extern "C" fn acme_core_describe(label: *const ::std::os::raw::c_char
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_describe_owned(label: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_char {
-    match ::acme::describe_owned(unsafe { ffi::text_opt(label) }) { Some(v) => ffi::into_text(v), None => ::std::ptr::null_mut() }
+    match ::acme::describe_owned(unsafe { ffi::text_opt(label) }.map(String::from)) { Some(v) => ffi::into_text(v), None => ::std::ptr::null_mut() }
 }
 
 #[unsafe(no_mangle)]
