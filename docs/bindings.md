@@ -512,7 +512,8 @@ counter:close()
   through the C buffer, bounds-checked against `#arr`, and `arr:totable()`
   copies it into a plain table for code that wants one; `ipairs` does not
   iterate cdata without `LUA52COMPAT`, so `for i = 1, #arr do` is the
-  idiom. It is freed by `ffi.gc` the same way a handle is.
+  idiom. `ffi.gc` frees it as a backstop, and it can be released
+  explicitly with `:close()` the same way a handle can.
 - **A handle is a table with a `ptr` field**, freed through the C `*_free`
   and registered with `ffi.gc` as a backstop; `:close()` disarms the
   finalizer and frees once, so calling it twice is a no-op the same way
@@ -647,10 +648,10 @@ host language. Above 1.0 means the binding wins:
 
 | shape | Python | Node | Go | Java | R | C++ | Lua |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `build_summary` | 11.3x | 9.3x | 5.8x | 0.89x | 2.4x | 4.77x | 15.9x |
-| `batch_buffer` | 123x | 2.1x | 0.46x | 2.7x | 348x | 1.58x | 0.71x |
-| `batch_into` | 146x | 5.1x | 2.0x | 3.4x | n/a | 2.00x | 1.97x |
-| `per_element` | 1.6x | 0.02x | 0.12x | 0.29x | 0.25x | 0.33x | 0.32x |
+| `build_summary` | 11.3x | 9.3x | 5.8x | 0.89x | 2.4x | 4.77x | 15.6x |
+| `batch_buffer` | 123x | 2.1x | 0.46x | 2.7x | 348x | 1.58x | 1.95x |
+| `batch_into` | 146x | 5.1x | 2.0x | 3.4x | n/a | 2.00x | 1.98x |
+| `per_element` | 1.6x | 0.02x | 0.12x | 0.29x | 0.25x | 0.33x | 0.31x |
 
 <!-- soothfast:claim soothfast_demo::bind::python::build_summary.ratio.ratio >= 5 -->
 Python still beats a from-scratch Python sort/MAD by at least 5x building
@@ -690,20 +691,19 @@ ahead.
 Lua is the other interpreted host. Returning the array struct as cdata
 instead of copying it into a table, freed by `ffi.gc`, flips `batch_into`:
 reusing a previously returned array as the write buffer needs no copy on
-either side, so its 103 µs is the same pure crossing cost C++ pays for the
-identical call (101 µs), and the shape goes from 0.27x to 1.97x.
-`batch_buffer` recovers from 0.37x to 0.71x but still trails: C++ gets the
-same C function's owned return in 127 µs against Lua's 288 µs, and the gap
-is the FFI side of an owned struct-by-value return — LuaJIT drops to its
-interpreter for a call returning a struct by value rather than
-JIT-compiling it — plus `ffi.gc` registering the finalizer and the
-previous result's finalizer running the free under GC. Returning through
-a pointer instead of by value would close that gap but is a C ABI change,
-out of scope here. The plain-table path, reported separately as
-`batch_buffer_table`, is still slower at 0.36x, since it also copies the
-input table into a scratch cdata array on the way in. `build_summary`
-still wins at 15.9x: LuaJIT's own sort over a table of boxed numbers is
-slow enough that even a round trip through Rust's sort comes out ahead.
+either side, so its 104 µs is the same pure crossing cost C++ pays for the
+identical call, and the shape goes from 0.27x to 1.98x. `batch_buffer`
+recovers from 0.37x to 1.95x once the array is released with `:close()`
+instead of left for the collector: with an explicit `:close()`, the
+returned-array call costs the same 105 µs as reusing an output buffer, and
+matches C++'s 127 µs for the identical C function, so none of the earlier
+288 µs was the call convention — it was the collector holding each 800 KB
+result until a later cycle, which made every call page-fault fresh memory
+while the previous result was still held. The plain-table path, reported
+separately as `batch_buffer_table`, still pays its input copy on top and
+stays under 1.0x at 0.56x. `build_summary` still wins at 15.6x: LuaJIT's
+own sort over a table of boxed numbers is slow enough that even a round
+trip through Rust's sort comes out ahead.
 
 wasm is not part of this matrix — this machine has no `wasm-pack` to
 measure it with. Its numbers below are from an earlier by-hand run and
