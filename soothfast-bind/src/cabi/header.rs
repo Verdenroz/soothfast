@@ -24,7 +24,20 @@ pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
          #include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n\
          #ifdef __cplusplus\nextern \"C\" {{\n#endif\n"
     );
+    out.push_str(&declarations(plan, module));
+    let _ = write!(
+        out,
+        "\n#ifdef __cplusplus\n}}\n#endif\n\n#endif /* {guard}_H */\n"
+    );
+    out
+}
 
+/// Every type, array struct, string-release call and function declaration,
+/// with no preprocessor directive around them. Shared with the `luajit`
+/// backend's `ffi.cdef` block, which reads a plain C grammar and cannot
+/// follow an `#include` or an `extern "C"` block the way a compiler does.
+pub(crate) fn declarations(plan: &BindingPlan, module: &str) -> String {
+    let mut out = String::new();
     for class in &plan.classes {
         out.push_str(&declare_type(class, module));
     }
@@ -46,11 +59,6 @@ pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
             out.push_str(&declare(function, None, plan, module));
         }
     }
-
-    let _ = write!(
-        out,
-        "\n#ifdef __cplusplus\n}}\n#endif\n\n#endif /* {guard}_H */\n"
-    );
     out
 }
 

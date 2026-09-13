@@ -560,6 +560,7 @@ fn bindable(
                 | BindKind::R
                 | BindKind::Ruby
                 | BindKind::Cpp
+                | BindKind::Lua
         )
     {
         record(
@@ -576,6 +577,7 @@ fn bindable(
                     BindKind::R => "no R runtime story yet".into(),
                     BindKind::Ruby => "no Ruby runtime story yet".into(),
                     BindKind::Cpp => "no C++ runtime story yet".into(),
+                    BindKind::Lua => "no Lua runtime story yet".into(),
                     _ => "C has nothing to await with; expose a blocking wrapper \
                           instead"
                         .into(),
@@ -601,10 +603,10 @@ fn bindable(
     }
     // An optional exported type crosses back as a pointer that may be null,
     // but nothing in the model says whether a parameter wants it borrowed or
-    // owned, and the two need different C. Go and C++ call the same C
-    // functions, so both inherit the restriction; Java and Kotlin have no
-    // way to name a different constructor overload for it either; R's own
-    // handle is an external pointer with the same borrowed-or-owned
+    // owned, and the two need different C. Go, C++ and Lua call the same C
+    // functions, so all three inherit the restriction; Java and Kotlin have
+    // no way to name a different constructor overload for it either; R's
+    // own handle is an external pointer with the same borrowed-or-owned
     // ambiguity.
     if matches!(
         kind,
@@ -614,6 +616,7 @@ fn bindable(
             | BindKind::Kotlin
             | BindKind::R
             | BindKind::Cpp
+            | BindKind::Lua
     ) {
         for param in &f.params {
             if matches!(&param.ty, Ty::Optional(inner) if matches!(**inner, Ty::Class(_))) {
@@ -685,13 +688,18 @@ fn record(gaps: &mut Vec<Gap>, gap: Gap) {
 
 /// Why a language cannot carry this type, if it cannot.
 fn unsupported(kind: BindKind, ty: &Ty) -> Option<String> {
-    // Go and C++ both call the same C functions, so both inherit the
-    // restriction; Java and Kotlin have no generic container either, and no
-    // more of a story than C does for a sequence of anything but one
+    // Go, C++ and Lua all call the same C functions, so all three inherit
+    // the restriction; Java and Kotlin have no generic container either,
+    // and no more of a story than C does for a sequence of anything but one
     // primitive.
     if matches!(
         kind,
-        BindKind::CAbi | BindKind::Go | BindKind::Java | BindKind::Kotlin | BindKind::Cpp
+        BindKind::CAbi
+            | BindKind::Go
+            | BindKind::Java
+            | BindKind::Kotlin
+            | BindKind::Cpp
+            | BindKind::Lua
     ) && let Some(why) = unsupported_by_c(ty)
     {
         return Some(why);

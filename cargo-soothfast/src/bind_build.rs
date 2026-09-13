@@ -40,6 +40,7 @@ pub(crate) fn run(
         BindKind::R => r(glue, targets, quiet),
         BindKind::Ruby => ruby(glue, targets, quiet),
         BindKind::Cpp => cpp(glue, targets, release, quiet),
+        BindKind::Lua => Err("cargo soothfast bind build for lua lands in a later commit".into()),
     }
 }
 

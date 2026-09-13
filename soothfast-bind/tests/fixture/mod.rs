@@ -424,3 +424,15 @@ pub fn cpp_opts() -> BindOptions {
         ..opts()
     }
 }
+
+/// A dotted `require` path, the way `[[bind]] lang = "lua"` configures
+/// `package`: unlike every other backend, this is not a distribution name.
+/// `module` is left as `[[bind]]` would default it, since the backend
+/// discards it anyway in favor of the path's own last segment.
+pub fn lua_opts() -> BindOptions {
+    BindOptions {
+        package: "acme.core".into(),
+        module: "acme.core".into(),
+        ..opts()
+    }
+}

@@ -7,7 +7,7 @@
 //! language-neutral.
 
 pub(crate) mod glue;
-mod header;
+pub(crate) mod header;
 mod package;
 pub(crate) mod types;
 

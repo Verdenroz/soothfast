@@ -7,7 +7,9 @@ mod fixture;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use fixture::{cpp_opts, go_opts, java_opts, kotlin_opts, opts, r_opts, ruby_opts, walk};
+use fixture::{
+    cpp_opts, go_opts, java_opts, kotlin_opts, lua_opts, opts, r_opts, ruby_opts, walk,
+};
 use soothfast_bind::{BindKind, BindOptions};
 
 fn golden_dir(name: &str) -> PathBuf {
@@ -1052,4 +1054,111 @@ fn the_cpp_header_compiles_clean_under_available_compilers() {
     if checked == 0 {
         eprintln!("neither g++ nor clang++ on PATH; skipping");
     }
+}
+
+#[test]
+fn lua_goldens() {
+    check_goldens_with(BindKind::Lua, "lua", &lua_opts());
+}
+
+#[test]
+fn the_lua_module_lands_at_the_require_paths_own_directory() {
+    let files = emit_set_with(BindKind::Lua, &lua_opts()).files;
+    assert!(files.contains_key("acme/core.lua"), "{:?}", files.keys());
+    assert!(files.contains_key("core.h"));
+    assert!(files.contains_key("core.pc"));
+}
+
+#[test]
+fn the_cdef_block_declares_the_same_symbols_the_header_would() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    for symbol in [
+        "typedef struct core_counter core_counter;",
+        "core_counter * core_counter_new(int64_t start);",
+        "void core_counter_free(core_counter *handle);",
+        "int64_t core_counter_bump(const core_counter *handle, int64_t by, char **error);",
+    ] {
+        assert!(lua.contains(symbol), "cdef omits {symbol}");
+    }
+    assert!(
+        !lua.contains("#include"),
+        "ffi.cdef cannot read a preprocessor directive"
+    );
+    assert!(
+        !lua.contains("extern \"C\""),
+        "ffi.cdef cannot read a C++ linkage block"
+    );
+}
+
+#[test]
+fn a_handle_is_freed_through_ffi_gc_and_an_idempotent_close() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains("ffi.gc(ptr, lib.core_counter_free)"));
+    assert!(lua.contains("function Counter:close()"));
+    assert!(lua.contains("if self.ptr == nil then"));
+    assert!(lua.contains("ffi.gc(self.ptr, nil)"));
+    assert!(lua.contains("lib.core_counter_free(self.ptr)"));
+}
+
+#[test]
+fn a_failing_call_raises_after_freeing_the_message() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains("local err = ffi.new(\"char*[1]\")"));
+    assert!(lua.contains("error(lua_string(err[0]))"));
+    assert!(lua.contains("lib.core_string_free(s)"));
+}
+
+#[test]
+fn a_lua_plain_enum_crosses_as_a_validated_string_not_an_ordinal() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains("local LEVEL_TO_C = { low = 0, high = 1 }"));
+    assert!(lua.contains("invalid Level: "));
+    assert!(
+        !lua.contains("local Level = {}"),
+        "a plain enum gets no wrapper class"
+    );
+}
+
+#[test]
+fn a_buffer_parameter_accepts_a_matching_cdata_array_without_copying() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains("ffi.istype(\"double[?]\", value)"));
+    assert!(lua.contains("return value, ffi.sizeof(value) / ffi.sizeof(\"double\")"));
+}
+
+#[test]
+fn a_writable_buffer_writes_back_into_a_plain_table_only() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains("if type(out) == \"table\" then"));
+    assert!(lua.contains("out[i] = out_ptr[i - 1]"));
+}
+
+#[test]
+fn a_lua_buffer_call_copies_with_no_transfer_notes() {
+    let notes = emit_set_with(BindKind::Lua, &lua_opts()).notes;
+    assert!(
+        notes
+            .iter()
+            .all(|n| !n.contains("would arrive without a copy")
+                && !n.contains("allocates a fresh sequence")),
+        "lua copies every buffer regardless of the signature unless the \
+         caller already holds a matching FFI array: {notes:?}"
+    );
+}
+
+#[test]
+fn a_parameter_named_after_luas_own_raise_builtin_is_escaped() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains("function M.stamp(handle, error_, register)"));
+}
+
+#[test]
+fn an_async_method_is_a_gap_with_no_lua_runtime_story() {
+    let set = emit_set_with(BindKind::Lua, &lua_opts());
+    assert!(!set.files["acme/core.lua"].contains("refresh"));
+    assert!(
+        set.gaps
+            .iter()
+            .any(|g| g.contains("no Lua runtime story yet"))
+    );
 }
