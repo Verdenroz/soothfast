@@ -28,4 +28,7 @@ fun main() {
 
     println("describe=${Core.describe("world")}")
     println("describe(none)=${Core.describe(null)}")
+
+    println("describeOwned=${Core.describeOwned("world")}")
+    println("describeOwned(none)=${Core.describeOwned(null)}")
 }

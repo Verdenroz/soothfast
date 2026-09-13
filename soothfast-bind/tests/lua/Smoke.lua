@@ -88,4 +88,7 @@ assert(acme.find_counter(-1) == nil, "find_counter absent")
 assert(acme.describe("world") == "label=world", "describe present")
 assert(acme.describe(nil) == nil, "describe absent")
 
+assert(acme.describe_owned("world") == "owned=world", "describe_owned present")
+assert(acme.describe_owned(nil) == nil, "describe_owned absent")
+
 print("ok")

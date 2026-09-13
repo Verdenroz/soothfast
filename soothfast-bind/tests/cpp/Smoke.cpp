@@ -51,5 +51,8 @@ int main() {
     std::printf("describe=%s\n", describe("world").value().c_str());
     std::printf("describe(none)=%s\n", describe(std::nullopt).has_value() ? "present" : "none");
 
+    std::printf("describe_owned=%s\n", describe_owned("world").value().c_str());
+    std::printf("describe_owned(none)=%s\n", describe_owned(std::nullopt).has_value() ? "present" : "none");
+
     return 0;
 }

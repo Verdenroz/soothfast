@@ -28,3 +28,6 @@ Console.WriteLine($"findCounter(missing)={Core.FindCounter(-1)?.Value.ToString()
 
 Console.WriteLine($"describe={Core.Describe("world")}");
 Console.WriteLine($"describe(none)={Core.Describe(null) ?? "null"}");
+
+Console.WriteLine($"describeOwned={Core.DescribeOwned("world")}");
+Console.WriteLine($"describeOwned(none)={Core.DescribeOwned(null) ?? "null"}");

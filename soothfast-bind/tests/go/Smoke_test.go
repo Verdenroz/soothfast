@@ -105,3 +105,13 @@ func TestDescribe(t *testing.T) {
 		t.Fatalf("Describe(nil) = %v, want nil", got)
 	}
 }
+
+func TestDescribeOwned(t *testing.T) {
+	label := "world"
+	if got := DescribeOwned(&label); got == nil || *got != "owned=world" {
+		t.Fatalf("DescribeOwned(&label) = %v, want owned=world", got)
+	}
+	if got := DescribeOwned(nil); got != nil {
+		t.Fatalf("DescribeOwned(nil) = %v, want nil", got)
+	}
+}

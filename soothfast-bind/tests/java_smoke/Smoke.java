@@ -34,5 +34,8 @@ public class Smoke {
 
         System.out.println("describe=" + Core.describe("world"));
         System.out.println("describe(none)=" + Core.describe(null));
+
+        System.out.println("describeOwned=" + Core.describeOwned("world"));
+        System.out.println("describeOwned(none)=" + Core.describeOwned(null));
     }
 }

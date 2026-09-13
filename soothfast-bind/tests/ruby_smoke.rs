@@ -64,6 +64,9 @@ raise "find_counter absent" unless AcmeCore.find_counter(-1).nil?
 raise "describe" unless AcmeCore.describe("world") == "label=world"
 raise "describe absent" unless AcmeCore.describe(nil).nil?
 
+raise "describe_owned" unless AcmeCore.describe_owned("world") == "owned=world"
+raise "describe_owned absent" unless AcmeCore.describe_owned(nil).nil?
+
 puts "ok"
 "#;
 

@@ -144,4 +144,6 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "findCounter(missing)=null",
     "describe=label=world",
     "describe(none)=null",
+    "describeOwned=owned=world",
+    "describeOwned(none)=null",
 ];

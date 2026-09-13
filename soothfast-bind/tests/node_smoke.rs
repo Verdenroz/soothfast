@@ -27,7 +27,7 @@ fn scratch_dir() -> PathBuf {
 const SMOKE_TEST_JS: &str = r#"
 const test = require("node:test");
 const assert = require("node:assert");
-const { Counter, Level, digest, normalize, peakLevel, findCounter, describe } = require("./index.js");
+const { Counter, Level, digest, normalize, peakLevel, findCounter, describe, describeOwned } = require("./index.js");
 
 test("a class carries state across calls", () => {
     const counter = new Counter(10n);
@@ -66,6 +66,9 @@ test("a mirrored enum returns by value and an optional handle maps into its wrap
 test("an optional string round-trips through Option<&str> and Option<String>", () => {
     assert.strictEqual(describe("world"), "label=world");
     assert.strictEqual(describe(null), null);
+
+    assert.strictEqual(describeOwned("world"), "owned=world");
+    assert.strictEqual(describeOwned(null), null);
 });
 "#;
 

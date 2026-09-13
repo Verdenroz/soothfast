@@ -114,4 +114,8 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "describe(NULL)=TRUE",
     "describe(NA)=TRUE",
     "caught describe: `label` is not a string",
+    "describe_owned=owned=world",
+    "describe_owned(NULL)=TRUE",
+    "describe_owned(NA)=TRUE",
+    "caught describe_owned: `label` is not a string",
 ];
