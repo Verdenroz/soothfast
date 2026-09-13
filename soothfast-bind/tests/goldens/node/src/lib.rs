@@ -104,7 +104,7 @@ pub fn describe(label: Option<String>) -> Option<String> {
 
 #[napi(js_name = "describeOwned")]
 pub fn describe_owned(label: Option<String>) -> Option<String> {
-    ::acme::describe_owned(label.as_deref())
+    ::acme::describe_owned(label)
 }
 
 #[napi]

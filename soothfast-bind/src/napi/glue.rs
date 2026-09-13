@@ -472,9 +472,17 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
             None,
             format!("&{name}.0"),
         ),
-        Transfer::Text { nullable: true, .. } => {
-            (signature_ty(&param.ty), None, format!("{name}.as_deref()"))
-        }
+        Transfer::Text {
+            nullable: true,
+            borrowed,
+        } => (
+            signature_ty(&param.ty),
+            None,
+            match borrowed {
+                true => format!("{name}.as_deref()"),
+                false => name.clone(),
+            },
+        ),
         // napi has no `FromNapiValue for &str`: the parameter binds a
         // `String`, and a borrowed callee gets `&name`.
         Transfer::Text {
