@@ -15,7 +15,7 @@ name = "soothfast_stats"
 crate-type = ["cdylib"]
 
 [dependencies]
-soothfast-demo = { path = "../.." }
+soothfast-demo = { path = "../../../.." }
 magnus = "0.8"
 rb-sys = "0.9"
 
