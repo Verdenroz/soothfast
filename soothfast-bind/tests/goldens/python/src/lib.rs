@@ -361,7 +361,7 @@ fn digest(py: Python<'_>, data: BorrowedU8) -> Vec<u8> {
 
 #[pyfunction]
 fn find_counter(start: i64) -> Option<Counter> {
-    ::acme::find_counter(start)
+    ::acme::find_counter(start).map(Counter)
 }
 
 #[pyfunction]

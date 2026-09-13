@@ -6,6 +6,7 @@ mod fixture;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use fixture::{
     cpp_opts, csharp_opts, go_opts, java_opts, kotlin_opts, lua_opts, opts, r_opts, ruby_opts, walk,
@@ -61,6 +62,33 @@ fn walk_dir(dir: &Path, root: &Path, out: &mut BTreeMap<String, String>) {
             out.insert(rel, content);
         }
     }
+}
+
+fn copy_dir(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).expect("makes a directory");
+    for entry in std::fs::read_dir(src).expect("reads a golden") {
+        let entry = entry.expect("reads a directory entry");
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir(&path, &target);
+        } else {
+            std::fs::copy(&path, &target).expect("copies a golden file");
+        }
+    }
+}
+
+/// Stage a golden beside a copy of the fixture crate, the layout every
+/// smoke test builds in: the glue crate's `Cargo.toml` depends on `acme` at
+/// `path = ".."`.
+fn stage_golden(lang: &str, tag: &str) -> PathBuf {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::env::temp_dir().join(format!("soothfast-{tag}-check-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_dir(&manifest.join("tests/fixture_crate"), &root);
+    let glue = root.join("glue");
+    copy_dir(&manifest.join("tests/goldens").join(lang), &glue);
+    glue
 }
 
 fn check_goldens(kind: BindKind, name: &str) {
@@ -177,6 +205,32 @@ fn a_scalar_call_keeps_the_lock_rather_than_paying_to_drop_it() {
     let glue = emit(BindKind::Python)["src/lib.rs"].clone();
     assert!(glue.contains("fn bump(&self, by: i64) -> PyResult<i64>"));
     assert!(glue.contains("fn at(&self, level: Level) -> i64"));
+}
+
+#[test]
+fn an_optional_handle_return_maps_into_its_wrapper_for_python() {
+    let glue = emit(BindKind::Python)["src/lib.rs"].clone();
+    assert!(glue.contains("fn find_counter(start: i64) -> Option<Counter>"));
+    assert!(glue.contains("::acme::find_counter(start).map(Counter)"));
+}
+
+/// The golden's own text cannot show a type mismatch between the promised
+/// return type and what the call actually hands back; only rustc can.
+#[test]
+fn the_python_golden_compiles_against_a_real_python() {
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("python3 not on PATH; skipping");
+        return;
+    }
+    let glue = stage_golden("python", "python");
+    let check = Command::new("cargo")
+        .arg("check")
+        .current_dir(&glue)
+        .env_remove("CARGO_TARGET_DIR")
+        .status()
+        .expect("runs cargo check");
+    assert!(check.success(), "cargo check failed for the python golden");
+    let _ = std::fs::remove_dir_all(glue.parent().expect("has a parent"));
 }
 
 #[test]
