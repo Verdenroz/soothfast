@@ -174,8 +174,14 @@ fn ret_clause(function: &Function, plan: &BindingPlan, fallible: bool) -> String
 /// A parameter's extendr-facing Rust type.
 fn param_ty(param: &Param, plan: &BindingPlan) -> String {
     match Transfer::of(param, plan) {
-        Transfer::Text { borrowed: true } => "&str".into(),
-        Transfer::Text { borrowed: false } => "String".into(),
+        Transfer::Text {
+            borrowed: true,
+            nullable: false,
+        } => "&str".into(),
+        Transfer::Text {
+            borrowed: false,
+            nullable: false,
+        } => "String".into(),
         Transfer::Handle { mirrored: true, .. } => "&str".into(),
         Transfer::Handle { writable, .. } => {
             let name = class_name(&param.ty);

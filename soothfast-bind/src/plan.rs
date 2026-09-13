@@ -143,12 +143,12 @@ pub enum Transfer {
     /// A single value. Copying it is free everywhere.
     Scalar,
     /// An exported type the caller keeps hold of.
-    Handle {
-        mirrored: bool,
-        writable: bool,
-    },
+    Handle { mirrored: bool, writable: bool },
     Text {
         borrowed: bool,
+        /// Whether `None` (a null pointer, at the FFI boundary) is a valid
+        /// value: `Ty::Optional(Str)` rather than a plain `Ty::Str`.
+        nullable: bool,
     },
     /// A contiguous run of one primitive: the only shape a language can hope
     /// to hand over without copying.
@@ -172,7 +172,14 @@ impl Transfer {
                 mirrored: plan.is_mirrored(name),
                 writable,
             },
-            Ty::Str => Transfer::Text { borrowed },
+            Ty::Str => Transfer::Text {
+                borrowed,
+                nullable: false,
+            },
+            Ty::Optional(inner) if **inner == Ty::Str => Transfer::Text {
+                borrowed,
+                nullable: true,
+            },
             Ty::Bytes => Transfer::Buffer {
                 element: Ty::U8,
                 borrowed,

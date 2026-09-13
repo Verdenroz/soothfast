@@ -64,12 +64,16 @@ pub(crate) fn arrays(plan: &BindingPlan) -> Vec<(Ty, String)> {
 /// be given a way to release.
 pub(crate) fn returns_text(plan: &BindingPlan) -> bool {
     plan.functions()
-        .any(|f| f.ret == Ty::Str || f.throws.is_some())
+        .any(|f| owns_text(&f.ret) || f.throws.is_some())
         || plan
             .classes
             .iter()
             .flat_map(|c| c.accessors.iter())
-            .any(|a| a.ty == Ty::Str)
+            .any(|a| owns_text(&a.ty))
+}
+
+fn owns_text(ty: &Ty) -> bool {
+    matches!(ty, Ty::Str) || matches!(ty, Ty::Optional(inner) if **inner == Ty::Str)
 }
 
 /// One owned sequence struct, plus the call that releases it.
@@ -388,7 +392,10 @@ fn args(function: &Function, plan: &BindingPlan) -> String {
                         false => format!("{slice}.to_vec()"),
                     }
                 }
-                Transfer::Text { borrowed } => {
+                Transfer::Text { nullable: true, .. } => {
+                    format!("unsafe {{ ffi::text_opt({name}) }}")
+                }
+                Transfer::Text { borrowed, .. } => {
                     let text = format!("unsafe {{ ffi::text({name}) }}");
                     match borrowed {
                         true => text,
@@ -423,6 +430,7 @@ fn returned_rust(ty: &Ty, plan: &BindingPlan, module: &str) -> String {
         Ty::Class(name) => format!("*mut {}", handle_rust(name, module)),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(name) => format!("*mut {}", handle_rust(name, module)),
+            Ty::Str => "*mut ::std::os::raw::c_char".into(),
             _ => String::new(),
         },
         ty if types::element(ty).is_some() => array_rust(ty, module),
@@ -445,6 +453,9 @@ fn returned(expr: &str, ty: &Ty, plan: &BindingPlan, module: &str) -> String {
             Ty::Class(name) => format!(
                 "match {expr} {{ Some(v) => Box::into_raw(Box::new({}(v))), None => ::std::ptr::null_mut() }}",
                 handle_rust(name, module)
+            ),
+            Ty::Str => format!(
+                "match {expr} {{ Some(v) => ffi::into_text(v), None => ::std::ptr::null_mut() }}"
             ),
             _ => expr.to_string(),
         },
@@ -541,6 +552,13 @@ pub unsafe fn text<'a>(data: *const ::std::os::raw::c_char) -> &'a str {
         return "";
     }
     unsafe { ::std::ffi::CStr::from_ptr(data) }.to_str().unwrap_or("")
+}
+
+pub unsafe fn text_opt<'a>(data: *const ::std::os::raw::c_char) -> Option<&'a str> {
+    if data.is_null() {
+        return None;
+    }
+    unsafe { ::std::ffi::CStr::from_ptr(data) }.to_str().ok()
 }
 
 pub fn into_text(value: String) -> *mut ::std::os::raw::c_char {

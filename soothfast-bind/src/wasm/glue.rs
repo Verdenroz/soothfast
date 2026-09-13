@@ -348,7 +348,10 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
             format!("&mut {name}.0"),
         ),
         Transfer::Handle { .. } => (format!("&{}", class_of(&param.ty)), format!("&{name}.0")),
-        Transfer::Text { borrowed: true } => ("&str".into(), name.clone()),
+        Transfer::Text {
+            borrowed: true,
+            nullable: false,
+        } => ("&str".into(), name.clone()),
         Transfer::Buffer {
             element,
             borrowed: true,

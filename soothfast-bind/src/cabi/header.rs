@@ -141,10 +141,36 @@ fn declare(function: &Function, owner: Option<&Class>, plan: &BindingPlan, modul
     };
     format!(
         "{}{} {}({args});\n",
-        comment(function.doc.as_deref(), ""),
+        comment(nullable_doc(function).as_deref(), ""),
         returned_c(&function.ret, plan, module),
         function.symbol,
     )
+}
+
+/// The function's own doc, with a note appended for every optional string
+/// parameter and a `NULL`-capable return: neither has its own comment
+/// syntax to carry that on.
+fn nullable_doc(function: &Function) -> Option<String> {
+    let mut notes: Vec<String> = function
+        .params
+        .iter()
+        .filter(|p| matches!(&p.ty, Ty::Optional(inner) if **inner == Ty::Str))
+        .map(|p| format!("`{}` may be NULL.", super::c_ident(&p.name)))
+        .collect();
+    if matches!(&function.ret, Ty::Optional(inner) if **inner == Ty::Str) {
+        notes.push("May return NULL.".into());
+    }
+    if notes.is_empty() {
+        return function.doc.clone();
+    }
+    let mut text = function.doc.clone().unwrap_or_default();
+    for note in notes {
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        text.push_str(&note);
+    }
+    Some(text)
 }
 
 fn arguments(
@@ -215,6 +241,7 @@ fn returned_c(ty: &Ty, plan: &BindingPlan, module: &str) -> String {
         Ty::Class(name) => format!("{} *", handle_c(name, module)),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(name) => format!("{} *", handle_c(name, module)),
+            Ty::Str => "char *".into(),
             _ => "void".into(),
         },
         ty if types::element(ty).is_some() => array_c(ty, module),

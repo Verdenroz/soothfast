@@ -434,7 +434,10 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
             (format!("PyRefMut<'_, {class}>"), format!("&mut {name}.0"))
         }
         Transfer::Handle { .. } => (format!("PyRef<'_, {class}>"), format!("&{name}.0")),
-        Transfer::Text { borrowed: true } => ("&str".into(), name),
+        Transfer::Text {
+            borrowed: true,
+            nullable: false,
+        } => ("&str".into(), name),
         Transfer::Buffer {
             ref element,
             borrowed,
