@@ -379,7 +379,11 @@ gated by `bind gen --check` and `bind gate`, not measured.
 - `bind.yml` — internal dogfood of the root action's `bind` input on
   `soothfast-demo`: gates its committed bindings on pull requests
   (`bind gen --check` plus `uses: ./`) and regenerates them through
-  soothfast-bot on pushes to `master`, the same shape as `spec.yml`.
+  soothfast-bot on pushes to `master`, the same shape as `spec.yml`; its
+  `smoke` job installs every host toolchain and runs all nine
+  `soothfast-bind` smoke tests plus `soothfast-demo`'s `glue_compiles` for
+  real on pull requests, `SOOTHFAST_SMOKE_STRICT=1` so a missing toolchain
+  fails the job instead of skipping.
 - `bind-release.yml` — internal reusable workflow; builds a package's
   `[[bind]]` targets (a Python wheel per platform, one wasm build) and
   uploads them as artifacts. Each leg builds `cargo-soothfast` from the
