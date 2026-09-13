@@ -1,12 +1,13 @@
 //! Per-language launch for `bind bench`, run after `bind build` has
 //! produced the package a script measures against.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use soothfast_bind::BindKind;
 
 /// Why a script didn't run.
+#[derive(Debug)]
 pub enum LaunchError {
     /// A required tool, or a build artifact it depends on, isn't there;
     /// the caller skips the entry.
@@ -63,12 +64,12 @@ pub fn launch(
         BindKind::Kotlin => jvm(glue, script, "kotlin", artifacts),
         BindKind::R => Ok(r(glue, script)),
         BindKind::CAbi => Ok(direct(glue, script)),
-        BindKind::Wasm | BindKind::Ruby | BindKind::Cpp | BindKind::Lua | BindKind::CSharp => {
-            Err(LaunchError::Failed(format!(
-                "bind bench has no launcher for {} yet",
-                lang.name()
-            )))
-        }
+        BindKind::Cpp => cpp(glue, script, artifacts),
+        BindKind::Lua => lua(glue, script, artifacts),
+        BindKind::Wasm | BindKind::Ruby | BindKind::CSharp => Err(LaunchError::Failed(format!(
+            "bind bench has no launcher for {} yet",
+            lang.name()
+        ))),
     }
 }
 
@@ -197,6 +198,87 @@ fn direct(glue: &Path, script: &Path) -> Command {
     cmd
 }
 
+/// The directory and `-l`-ready name of the shared library `bind build`
+/// left among its artifacts.
+fn shared_library(artifacts: &[String]) -> Result<(PathBuf, String), LaunchError> {
+    let lib = find_artifact(artifacts, ".so")
+        .or_else(|| find_artifact(artifacts, ".dylib"))
+        .ok_or_else(|| {
+            LaunchError::Missing("no shared library among bind build's artifacts".to_string())
+        })?;
+    let path = Path::new(lib);
+    let dir = path
+        .parent()
+        .expect("a built library has a parent dir")
+        .to_path_buf();
+    let name = path
+        .file_stem()
+        .expect("a built library has a name")
+        .to_string_lossy()
+        .trim_start_matches("lib")
+        .to_string();
+    Ok((dir, name))
+}
+
+/// The compiler invocation that links `script` against the shared library
+/// `bind build` already produced, into `bin`.
+fn cpp_compile_command(
+    compiler: &str,
+    glue: &Path,
+    script: &Path,
+    lib_dir: &Path,
+    lib_name: &str,
+    bin: &Path,
+) -> Command {
+    let mut cmd = Command::new(compiler);
+    cmd.args(["-std=c++20", "-O2", "-I"])
+        .arg(glue)
+        .arg(script)
+        .arg("-L")
+        .arg(lib_dir)
+        .arg(format!("-l{lib_name}"))
+        .arg(format!("-Wl,-rpath,{}", lib_dir.display()))
+        .arg("-o")
+        .arg(bin);
+    cmd
+}
+
+/// Compiles the bench source against the built shared library with the same
+/// compiler discovery `bind build`'s cpp path uses, then runs the result.
+fn cpp(glue: &Path, script: &Path, artifacts: &[String]) -> Result<Command, LaunchError> {
+    let compiler = crate::bind_build::cpp_compiler().ok_or_else(|| {
+        LaunchError::Missing("no C++ compiler found ($CXX, c++, g++, clang++)".to_string())
+    })?;
+    let (lib_dir, lib_name) = shared_library(artifacts)?;
+    let bin = glue.join("target/bench-bin");
+    run_setup(
+        cpp_compile_command(&compiler, glue, script, &lib_dir, &lib_name, &bin),
+        &compiler,
+    )?;
+    let mut cmd = Command::new(&bin);
+    cmd.current_dir(glue);
+    Ok(cmd)
+}
+
+/// `luajit <script>`, with `LUA_PATH`/`LD_LIBRARY_PATH` set the way `bind
+/// build`'s own require load check sets them.
+fn lua_command(glue: &Path, script: &Path, lib_dir: &Path) -> Command {
+    let mut cmd = Command::new("luajit");
+    cmd.arg(script)
+        .current_dir(glue)
+        .env("LUA_PATH", "./?.lua;;")
+        .env("LD_LIBRARY_PATH", lib_dir);
+    cmd
+}
+
+fn lua(glue: &Path, script: &Path, artifacts: &[String]) -> Result<Command, LaunchError> {
+    let mut probe = Command::new("luajit");
+    probe.arg("-v");
+    run_setup(probe, "luajit")?;
+    let (lib_dir, _) = shared_library(artifacts)?;
+    Ok(lua_command(glue, script, &lib_dir))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +317,68 @@ mod tests {
                 assert!(!hint.is_empty());
             }
         }
+    }
+
+    #[test]
+    fn shared_library_extracts_dir_and_name_from_a_dylib() {
+        let artifacts = vec!["/out/target/release/libstats.dylib".to_string()];
+        let (dir, name) = shared_library(&artifacts).expect("dylib found");
+        assert_eq!(dir, Path::new("/out/target/release"));
+        assert_eq!(name, "stats");
+    }
+
+    #[test]
+    fn shared_library_is_missing_without_a_built_so_or_dylib() {
+        let artifacts = vec!["/out/target/release/libstats.a".to_string()];
+        let err = shared_library(&artifacts).expect_err("no so or dylib built");
+        assert!(matches!(err, LaunchError::Missing(_)));
+    }
+
+    #[test]
+    fn cpp_compile_command_links_the_built_library_with_an_rpath() {
+        let cmd = cpp_compile_command(
+            "c++",
+            Path::new("/out"),
+            Path::new("/out/bench.cpp"),
+            Path::new("/out/target/release"),
+            "stats",
+            Path::new("/out/target/bench-bin"),
+        );
+        let debug = format!("{cmd:?}");
+        assert!(debug.contains("-std=c++20"), "{debug}");
+        assert!(debug.contains("-lstats"), "{debug}");
+        assert!(debug.contains("-Wl,-rpath,/out/target/release"), "{debug}");
+    }
+
+    #[test]
+    fn cpp_launch_is_missing_without_a_built_shared_library() {
+        let artifacts = vec!["/out/target/release/libstats.a".to_string()];
+        let err = cpp(Path::new("/out"), Path::new("/out/bench.cpp"), &artifacts)
+            .expect_err("no shared library to link");
+        assert!(matches!(err, LaunchError::Missing(_)));
+    }
+
+    #[test]
+    fn lua_command_shape_sets_lua_path_and_ld_library_path() {
+        let cmd = lua_command(
+            Path::new("/out"),
+            Path::new("/out/bench.lua"),
+            Path::new("/out/target/release"),
+        );
+        let debug = format!("{cmd:?}");
+        assert!(debug.contains("luajit"), "{debug}");
+        assert!(debug.contains("LUA_PATH=\"./?.lua;;\""), "{debug}");
+        assert!(
+            debug.contains("LD_LIBRARY_PATH=\"/out/target/release\""),
+            "{debug}"
+        );
+    }
+
+    #[test]
+    fn lua_launch_is_missing_without_a_built_shared_library() {
+        let artifacts = vec!["/out/target/release/libstats.a".to_string()];
+        let err = lua(Path::new("/out"), Path::new("/out/bench.lua"), &artifacts)
+            .expect_err("no shared library to link");
+        assert!(matches!(err, LaunchError::Missing(_)));
     }
 }

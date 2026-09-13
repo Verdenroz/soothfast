@@ -123,7 +123,7 @@ fn cpp(glue: &Path, targets: &[String], release: bool, quiet: bool) -> Result<Ve
 
 /// `$CXX` first, then the usual PATH names, in the order a consumer's own
 /// build would try them.
-fn cpp_compiler() -> Option<String> {
+pub(crate) fn cpp_compiler() -> Option<String> {
     std::env::var("CXX").ok().or_else(|| {
         ["c++", "g++", "clang++"]
             .into_iter()

@@ -174,6 +174,102 @@ fn one_entrys_failure_does_not_hide_another_entrys_results() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A `[[bind]]` entry of `lang`, with a cdylib glue crate at `out` (so `bind
+/// build` has something to compile) and `bench_body` written to `bench_file`
+/// as its bench script.
+fn write_entry_fixture(dir: &Path, lang: &str, out: &str, bench_file: &str, bench_body: &str) {
+    fs::create_dir_all(dir.join(out).join("src")).expect("makes glue dir");
+    fs::write(
+        dir.join(out).join("Cargo.toml"),
+        "[package]\nname = \"fake-glue-2\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [lib]\nname = \"fake_glue_2\"\ncrate-type = [\"cdylib\"]\n",
+    )
+    .expect("writes glue Cargo.toml");
+    fs::write(dir.join(out).join("src/lib.rs"), "").expect("writes glue src/lib.rs");
+    fs::write(dir.join(bench_file), bench_body).expect("writes bench script");
+    let mut soothfast_toml = fs::read_to_string(dir.join("soothfast.toml")).expect("reads config");
+    soothfast_toml.push_str(&format!(
+        "\n[[bind]]\nlang = \"{lang}\"\nout = \"{out}\"\npackage = \"fake-pkg\"\nbench = \"{bench_file}\"\n"
+    ));
+    fs::write(dir.join("soothfast.toml"), soothfast_toml).expect("appends config");
+}
+
+const CANNED_JSON_CPP: &str = r#"#include <cstdio>
+int main() {
+    std::puts("{\"shape\": \"build_summary\", \"binding_ns\": 10.0, \"host_ns\": 40.0, \"n\": 100000}");
+    std::puts("{\"shape\": \"batch_buffer\", \"binding_ns\": 5.0, \"host_ns\": 45.0, \"n\": 100000}");
+    return 0;
+}
+"#;
+
+/// `bind bench` compiles the C++ bench source itself (there is no separate
+/// `bind build` step for the host language); a machine with no C++ compiler
+/// skips the entry rather than failing the run.
+#[test]
+fn measures_a_cpp_entry_or_skips_without_a_compiler() {
+    let dir = std::env::temp_dir().join(format!(
+        "soothfast-bind-bench-cpp-smoke-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    write_fixture(&dir);
+    write_entry_fixture(
+        &dir,
+        "cpp",
+        "bindings/cpp",
+        "bindings/cpp/bench.cpp",
+        CANNED_JSON_CPP,
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_cargo-soothfast"))
+        .args(["bind", "bench", "-p", "fake-pkg", "--only", "cpp"])
+        .current_dir(&dir)
+        .output()
+        .expect("runs cargo-soothfast");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("build_summary") || stdout.contains("skipping"),
+        "{stdout}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+const CANNED_JSON_LUA: &str = r#"print('{"shape": "build_summary", "binding_ns": 10.0, "host_ns": 40.0, "n": 100000}')
+print('{"shape": "batch_buffer", "binding_ns": 5.0, "host_ns": 45.0, "n": 100000}')
+"#;
+
+/// A machine with no `luajit` skips the entry rather than failing the run.
+#[test]
+fn measures_a_lua_entry_or_skips_without_luajit() {
+    let dir = std::env::temp_dir().join(format!(
+        "soothfast-bind-bench-lua-smoke-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&dir);
+    write_fixture(&dir);
+    write_entry_fixture(
+        &dir,
+        "lua",
+        "bindings/lua",
+        "bindings/lua/bench.lua",
+        CANNED_JSON_LUA,
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_cargo-soothfast"))
+        .args(["bind", "bench", "-p", "fake-pkg", "--only", "lua"])
+        .current_dir(&dir)
+        .output()
+        .expect("runs cargo-soothfast");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("build_summary") || stdout.contains("skipping"),
+        "{stdout}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn only_filters_out_a_non_matching_entry() {
     let dir = std::env::temp_dir().join(format!(
