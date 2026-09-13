@@ -99,7 +99,7 @@ pub struct Mode(::acme::Mode);
 
 #[napi]
 pub fn describe(label: Option<String>) -> Option<String> {
-    ::acme::describe(label)
+    ::acme::describe(label.as_deref())
 }
 
 #[napi]
