@@ -253,6 +253,17 @@ mod tests {
     }
 
     #[test]
+    fn csharp_is_a_known_lang_with_its_short_forms() {
+        for name in ["csharp", "cs", "dotnet"] {
+            let cfg = parse(&format!(
+                "[[bind]]\nlang = \"{name}\"\nout = \"csharp\"\npackage = \"Acme.Core\"\n"
+            ))
+            .expect("parses");
+            assert_eq!(cfg.entries[0].lang, BindKind::CSharp);
+        }
+    }
+
+    #[test]
     fn an_unknown_lang_lists_the_ones_that_exist() {
         let err = parse("[[bind]]\nout = \"o\"\npackage = \"p\"\nlang = \"cobol\"\n")
             .expect_err("rejected");
