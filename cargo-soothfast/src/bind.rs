@@ -325,6 +325,18 @@ fn generate_lockfile(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether the manifest in `dir` has no lockfile, or its lockfile no longer
+/// satisfies the manifest. `--locked` alone is the guard: it errors only
+/// when the lockfile would need to change, so this may still reach the
+/// network the same way `generate_lockfile` does on a cold registry cache.
+fn lockfile_stale(dir: &Path) -> bool {
+    !Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--locked"])
+        .current_dir(dir)
+        .output()
+        .is_ok_and(|out| out.status.success())
+}
+
 fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let built = build_all(pkg, common, &meta.dir, &meta.version)?;
@@ -352,11 +364,19 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
                 spec_gen::write_if_changed(&target, content)?;
             }
         }
-        if !check_only
-            && let Some(dir) = manifest_dir(&out_dir, &bound.files.files)
-            && !dir.join("Cargo.lock").exists()
-        {
-            generate_lockfile(&dir)?;
+        if let Some(dir) = manifest_dir(&out_dir, &bound.files.files) {
+            if check_only {
+                if lockfile_stale(&dir) {
+                    stale += 1;
+                    println!(
+                        "STALE {}/Cargo.lock: not locked — run \
+                         `cargo soothfast bind gen -p {pkg}` and commit the result",
+                        bound.entry.out
+                    );
+                }
+            } else if !dir.join("Cargo.lock").exists() {
+                generate_lockfile(&dir)?;
+            }
         }
         println!(
             "bind gen: {} [{}] — {} file(s), {} gap(s), {} note(s)",
@@ -687,5 +707,47 @@ mod tests {
     fn manifest_dir_is_none_without_a_cargo_toml() {
         let files = BTreeMap::from([("README.md".to_string(), String::new())]);
         assert_eq!(manifest_dir(Path::new("/out"), &files), None);
+    }
+
+    fn write_crate(dir: &Path, name: &str, deps: &str) {
+        std::fs::create_dir_all(dir.join("src")).expect("makes dirs");
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+                 [dependencies]\n{deps}"
+            ),
+        )
+        .expect("writes manifest");
+        std::fs::write(dir.join("src/lib.rs"), "").expect("writes src/lib.rs");
+    }
+
+    #[test]
+    fn lockfile_stale_tracks_whether_the_lock_still_satisfies_the_manifest() {
+        let root = std::env::temp_dir().join(format!(
+            "soothfast-bind-lockfile-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        write_crate(&root.join("a"), "a", "");
+        write_crate(&root.join("c"), "c", "");
+        let b = root.join("b");
+        write_crate(&b, "b", "a = { path = \"../a\" }\n");
+
+        assert!(lockfile_stale(&b), "no Cargo.lock yet");
+        generate_lockfile(&b).expect("generates a lockfile");
+        assert!(
+            !lockfile_stale(&b),
+            "a fresh lockfile satisfies its manifest"
+        );
+
+        write_crate(
+            &b,
+            "b",
+            "a = { path = \"../a\" }\nc = { path = \"../c\" }\n",
+        );
+        assert!(lockfile_stale(&b), "the lock predates the new dependency");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
