@@ -141,7 +141,7 @@ fn declare(function: &Function, owner: Option<&Class>, plan: &BindingPlan, modul
     };
     format!(
         "{}{} {}({args});\n",
-        comment(nullable_doc(function).as_deref(), ""),
+        comment(nullable_doc(function, plan).as_deref(), ""),
         returned_c(&function.ret, plan, module),
         function.symbol,
     )
@@ -150,11 +150,11 @@ fn declare(function: &Function, owner: Option<&Class>, plan: &BindingPlan, modul
 /// The function's own doc, with a note appended for every optional string
 /// parameter and a `NULL`-capable return: neither has its own comment
 /// syntax to carry that on.
-fn nullable_doc(function: &Function) -> Option<String> {
+fn nullable_doc(function: &Function, plan: &BindingPlan) -> Option<String> {
     let mut notes: Vec<String> = function
         .params
         .iter()
-        .filter(|p| matches!(&p.ty, Ty::Optional(inner) if **inner == Ty::Str))
+        .filter(|p| matches!(Transfer::of(p, plan), Transfer::Text { nullable: true, .. }))
         .map(|p| format!("`{}` may be NULL.", super::c_ident(&p.name)))
         .collect();
     if matches!(&function.ret, Ty::Optional(inner) if **inner == Ty::Str) {
