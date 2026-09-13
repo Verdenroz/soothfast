@@ -131,18 +131,33 @@ pub extern "system" fn Java_acme_core_Mode_nativeFree<'local>(
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeDescribe<'local>(
-    _env: ::jni::JNIEnv<'local>,
+    mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,
-    label:
+    label: ::jni::objects::JString<'local>
 ) -> ::jni::sys::jstring {
-    let __out = ::acme::describe(label);
-    match env.new_string(__out) {
-        Ok(v) => v.into_raw(),
-        Err(e) => {
+    let label: Option<String> = if label.is_null() {
+        None
+    } else {
+        match env.get_string(&label) {
+            Ok(v) => Some(v.into()),
+            Err(e) => {
             let pending = matches!(e, ::jni::errors::Error::JavaException);
             __throw_unless_pending(&mut env, pending, e.to_string());
-            return 0i64;
+            return ::std::ptr::null_mut();
         }
+        }
+    };
+    let __out = ::acme::describe(label.as_deref());
+    match __out {
+        Some(v) => match env.new_string(v) {
+            Ok(s) => s.into_raw(),
+            Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+        },
+        None => ::std::ptr::null_mut(),
     }
 }
 

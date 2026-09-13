@@ -94,6 +94,7 @@ pub(crate) fn array_sys(java_element: &str) -> String {
 pub(crate) fn native_param_ty(ty: &Ty, plan: &BindingPlan) -> String {
     match ty {
         Ty::Str => "::jni::objects::JString<'local>".into(),
+        Ty::Optional(inner) if **inner == Ty::Str => "::jni::objects::JString<'local>".into(),
         Ty::Class(name) if plan.is_mirrored(name) => "i32".into(),
         Ty::Class(_) => "i64".into(),
         ty if ty.is_primitive() => scalar(ty).expect("checked").rust.into(),
@@ -148,6 +149,7 @@ pub(crate) fn kotlin_ty(ty: &Ty) -> String {
         Ty::Class(name) => name.clone(),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(name) => format!("{name}?"),
+            Ty::Str => "String?".into(),
             other => kotlin_ty(other),
         },
         ty if ty.is_primitive() => scalar(ty).expect("checked").kotlin.into(),
@@ -165,6 +167,7 @@ pub(crate) fn native_kotlin_ty(ty: &Ty, plan: &BindingPlan) -> String {
         Ty::Class(_) => "Long".into(),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(_) => "Long".into(),
+            Ty::Str => "String?".into(),
             other => native_kotlin_ty(other, plan),
         },
         _ => kotlin_ty(ty),

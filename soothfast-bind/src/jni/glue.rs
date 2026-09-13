@@ -155,7 +155,9 @@ fn env_usage(function: &Function, plan: &BindingPlan) -> (bool, bool) {
 }
 
 fn ret_needs_env(ty: &Ty) -> bool {
-    matches!(ty, Ty::Str) || types::element(ty).is_some()
+    matches!(ty, Ty::Str)
+        || matches!(ty, Ty::Optional(inner) if **inner == Ty::Str)
+        || types::element(ty).is_some()
 }
 
 fn env_param(needs_env: bool, needs_mut: bool) -> &'static str {
@@ -306,6 +308,10 @@ fn pinned_param<'a>(function: &'a Function, plan: &BindingPlan) -> Option<&'a st
 fn param_prelude(param: &Param, plan: &BindingPlan, krate: &str, zero: &str) -> String {
     let name = rust_ident(&param.name);
     match Transfer::of(param, plan) {
+        Transfer::Text { nullable: true, .. } => format!(
+            "    let {name}: Option<String> = if {name}.is_null() {{\n        None\n    }} else {{\n        match env.get_string(&{name}) {{\n            Ok(v) => Some(v.into()),\n            {}\n        }}\n    }};\n",
+            err_arm(zero),
+        ),
         Transfer::Text { .. } => format!(
             "    let {name}: String = match env.get_string(&{name}) {{\n        Ok(v) => v.into(),\n        {}\n    }};\n",
             err_arm(zero),
@@ -501,6 +507,12 @@ fn call_arg(param: &Param, plan: &BindingPlan, pinned: Option<&str>) -> String {
     if matches!(Transfer::of(param, plan), Transfer::Handle { .. }) {
         return name;
     }
+    if matches!(
+        Transfer::of(param, plan),
+        Transfer::Text { nullable: true, .. }
+    ) {
+        return format!("{name}.as_deref()");
+    }
     match param.ownership {
         Ownership::BorrowedMut => format!("&mut {name}"),
         Ownership::Borrowed => format!("&{name}"),
@@ -542,6 +554,10 @@ fn returned(expr: &str, ty: &Ty, plan: &BindingPlan, zero: &str) -> String {
         Ty::Optional(inner) => match &**inner {
             Ty::Class(_) => format!(
                 "match {expr} {{ Some(v) => Box::into_raw(Box::new(v)) as i64, None => 0i64 }}"
+            ),
+            Ty::Str => format!(
+                "match {expr} {{\n        Some(v) => match env.new_string(v) {{\n            Ok(s) => s.into_raw(),\n            {}\n        }},\n        None => ::std::ptr::null_mut(),\n    }}",
+                err_arm(zero),
             ),
             other => returned(expr, other, plan, zero),
         },
@@ -586,6 +602,7 @@ fn zero_value(ty: &Ty, plan: &BindingPlan) -> String {
         Ty::Bool => "false".into(),
         Ty::F32 | Ty::F64 => "0.0".into(),
         Ty::Str => "::std::ptr::null_mut()".into(),
+        Ty::Optional(inner) if **inner == Ty::Str => "::std::ptr::null_mut()".into(),
         Ty::Class(name) if plan.is_mirrored(name) => "0".into(),
         Ty::Class(_) | Ty::Optional(_) => "0i64".into(),
         ty if types::element(ty).is_some() => "::std::ptr::null_mut()".into(),
