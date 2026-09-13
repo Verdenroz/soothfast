@@ -9,6 +9,8 @@
 //! one (`with_time`, `merge`, ...) is never called by generated code, so it
 //! is left out.
 
+use std::collections::HashMap;
+
 pub struct Counter {
     pub value: i64,
     #[allow(dead_code)]
@@ -48,6 +50,10 @@ impl Counter {
             Level::High => self.value * 2,
         }
     }
+
+    pub async fn refresh(&self) -> u32 {
+        self.value as u32
+    }
 }
 
 pub fn digest(data: &[u8]) -> Vec<u8> {
@@ -60,6 +66,10 @@ pub fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
 
 pub fn stamp(handle: i64, error: f64, register: &[u8]) -> u64 {
     handle as u64 + error as u64 + register.len() as u64
+}
+
+pub fn index_all() -> HashMap<String, u32> {
+    HashMap::new()
 }
 
 pub fn trim(input: &[f64]) -> Option<Vec<f64>> {
