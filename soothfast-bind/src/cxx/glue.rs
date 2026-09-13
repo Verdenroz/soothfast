@@ -304,9 +304,19 @@ fn throw_check(module: &str, indent: &str) -> String {
 fn text_prep(function: &Function, plan: &BindingPlan, indent: &str) -> String {
     let mut out = String::new();
     for param in &function.params {
-        if let Transfer::Text { .. } = Transfer::of(param, plan) {
-            let name = ident(&param.name);
-            let _ = writeln!(out, "{indent}std::string {name}_owned({name});");
+        let name = ident(&param.name);
+        match Transfer::of(param, plan) {
+            Transfer::Text { nullable: true, .. } => {
+                let _ = writeln!(out, "{indent}std::optional<std::string> {name}_owned;");
+                let _ = writeln!(
+                    out,
+                    "{indent}if ({name}) {{ {name}_owned.emplace(*{name}); }}"
+                );
+            }
+            Transfer::Text { .. } => {
+                let _ = writeln!(out, "{indent}std::string {name}_owned({name});");
+            }
+            _ => {}
         }
     }
     out
@@ -331,6 +341,7 @@ fn cpp_param_type(param: &Param, plan: &BindingPlan) -> String {
                 false => format!("std::span<const {scalar}>"),
             }
         }
+        Transfer::Text { nullable: true, .. } => "std::optional<std::string_view>".into(),
         Transfer::Text { .. } => "std::string_view".into(),
         Transfer::Handle { mirrored: true, .. } => class_name(&param.ty).to_string(),
         Transfer::Handle { writable, .. } => {
@@ -352,6 +363,7 @@ fn cpp_return_type(ty: &Ty) -> String {
         Ty::Class(name) => name.clone(),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(name) => format!("std::optional<{name}>"),
+            Ty::Str => "std::optional<std::string>".into(),
             _ => "void".into(),
         },
         ty if c::element(ty).is_some() => {
@@ -375,6 +387,9 @@ fn returned(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
             Ty::Class(name) => {
                 format!("{expr} != nullptr ? std::optional<{name}>({name}({expr})) : std::nullopt")
             }
+            Ty::Str => format!(
+                "{expr} != nullptr ? std::optional<std::string>(take_string({expr})) : std::nullopt"
+            ),
             _ => expr.to_string(),
         },
         ty if c::element(ty).is_some() => format!("{}({expr})", array_helper_name(ty)),
@@ -404,6 +419,9 @@ fn c_arg(param: &Param, plan: &BindingPlan, module: &str) -> Vec<String> {
     let name = ident(&param.name);
     match Transfer::of(param, plan) {
         Transfer::Buffer { .. } => vec![format!("{name}.data()"), format!("{name}.size()")],
+        Transfer::Text { nullable: true, .. } => {
+            vec![format!("{name}_owned ? {name}_owned->c_str() : nullptr")]
+        }
         Transfer::Text { .. } => vec![format!("{name}_owned.c_str()")],
         Transfer::Handle { mirrored: true, .. } => {
             let c_enum = c::handle_c(class_name(&param.ty), module);

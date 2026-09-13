@@ -102,9 +102,11 @@ private:
     std::unique_ptr<core_mode, Deleter> handle_;
 };
 
-inline void describe( label) {
-    auto raw_result = core_describe(label);
-    return raw_result;
+inline std::optional<std::string> describe(std::optional<std::string_view> label) {
+    std::optional<std::string> label_owned;
+    if (label) { label_owned.emplace(*label); }
+    auto raw_result = core_describe(label_owned ? label_owned->c_str() : nullptr);
+    return raw_result != nullptr ? std::optional<std::string>(take_string(raw_result)) : std::nullopt;
 }
 
 inline std::vector<uint8_t> digest(std::span<const uint8_t> data) {
