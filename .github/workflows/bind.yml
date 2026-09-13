@@ -70,6 +70,7 @@ jobs:
           packages: ""
           changelog: "false"
           binary: bin/cargo-soothfast
+          comment-id: soothfast-bind-gate
       # The action's Prepare step installs the pinned rustdoc toolchain
       # when it runs `bind gate`; this reuses it.
       - name: Bindings are up to date
