@@ -29,6 +29,15 @@ const RESERVED: &[&str] = &[
 pub(crate) fn c_ident(name: &str) -> String {
     naming::escape(&types::snake(name), RESERVED)
 }
+
+/// The C length argument for a buffer parameter.
+///
+/// Escapes `<snake>_len` as one word rather than appending `_len` to
+/// [`c_ident`]'s output, so a reserved-word parameter like `register`
+/// doesn't produce a doubled underscore (`register__len`).
+pub(crate) fn c_len_ident(name: &str) -> String {
+    naming::escape(&format!("{}_len", types::snake(name)), RESERVED)
+}
 use crate::{BindFileSet, BindOptions};
 
 /// Emit a complete C binding package.

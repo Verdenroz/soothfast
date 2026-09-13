@@ -239,6 +239,6 @@ pub unsafe extern "C" fn core_scale_into(values: *const f64, values_len: usize, 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn core_stamp(handle_: i64, error_: f64, register_: *const u8, register__len: usize) -> u64 {
-    ::acme::stamp(handle_, error_, unsafe { ffi::slice(register_, register__len) })
+pub unsafe extern "C" fn core_stamp(handle_: i64, error_: f64, register_: *const u8, register_len: usize) -> u64 {
+    ::acme::stamp(handle_, error_, unsafe { ffi::slice(register_, register_len) })
 }

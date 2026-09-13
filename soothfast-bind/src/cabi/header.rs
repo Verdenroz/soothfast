@@ -186,7 +186,7 @@ fn param_decl(param: &Param, plan: &BindingPlan, module: &str) -> Vec<String> {
                 true => format!("{c} *{name}"),
                 false => format!("const {c} *{name}"),
             };
-            vec![head, format!("size_t {name}_len")]
+            vec![head, format!("size_t {}", super::c_len_ident(&param.name))]
         }
         Transfer::Text { .. } => vec![format!("const char *{name}")],
         Transfer::Handle { mirrored: true, .. } => {

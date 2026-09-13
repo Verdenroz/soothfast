@@ -48,7 +48,7 @@ char * core_greet(const char *name);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);
 core_level core_peak_level(const double *values, size_t values_len);
 void core_scale_into(const double *values, size_t values_len, double factor, double *out, size_t out_len);
-uint64_t core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register__len);
+uint64_t core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register_len);
 ]]
 
 local lib = ffi.load("core")

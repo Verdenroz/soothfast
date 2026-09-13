@@ -342,9 +342,10 @@ fn param_decl(param: &crate::model::Param, plan: &BindingPlan, module: &str) -> 
                 true => "mut",
                 false => "const",
             };
+            let len_name = super::c_len_ident(&param.name);
             vec![
                 format!("{name}: *{mutability} {rust}"),
-                format!("{name}_len: usize"),
+                format!("{len_name}: usize"),
             ]
         }
         Transfer::Text { .. } => vec![format!("{name}: *const ::std::os::raw::c_char")],
@@ -377,9 +378,10 @@ fn args(function: &Function, plan: &BindingPlan) -> String {
                 Transfer::Buffer {
                     borrowed, writable, ..
                 } => {
+                    let len_name = super::c_len_ident(&p.name);
                     let slice = match writable {
-                        true => format!("unsafe {{ ffi::slice_mut({name}, {name}_len) }}"),
-                        false => format!("unsafe {{ ffi::slice({name}, {name}_len) }}"),
+                        true => format!("unsafe {{ ffi::slice_mut({name}, {len_name}) }}"),
+                        false => format!("unsafe {{ ffi::slice({name}, {len_name}) }}"),
                     };
                     match borrowed {
                         true => slice,

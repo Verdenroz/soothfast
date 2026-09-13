@@ -429,7 +429,7 @@ fn a_parameter_cannot_collide_with_what_the_backend_generates_around_it() {
     let glue = &files["src/lib.rs"];
     assert!(glue.contains("acme_core_stamp(handle_: i64, error_: f64, register_: *const u8"));
     assert!(
-        glue.contains("ffi::slice(register_, register__len)"),
+        glue.contains("ffi::slice(register_, register_len)"),
         "a parameter named after a helper must not shadow the helper"
     );
     assert!(

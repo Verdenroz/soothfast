@@ -56,7 +56,7 @@ char * acme_core_greet(const char *name);
 acme_core_f64_array acme_core_normalize(const double *input, size_t input_len, double factor);
 acme_core_level acme_core_peak_level(const double *values, size_t values_len);
 void acme_core_scale_into(const double *values, size_t values_len, double factor, double *out, size_t out_len);
-uint64_t acme_core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register__len);
+uint64_t acme_core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register_len);
 
 #ifdef __cplusplus
 }
