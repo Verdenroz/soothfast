@@ -1260,13 +1260,23 @@ fn a_returned_array_is_a_metatyped_cdata_not_a_copied_table() {
     assert!(lua.contains("__len = function(self) return tonumber(self.len) end,"));
     assert!(lua.contains("if key == \"totable\" then"));
     assert!(lua.contains(
-        "if key < 1 or key > tonumber(self.len) then\n\t\t\t\terror(\"core_f64_array index out of range: \" .. tostring(key))"
+        "if key % 1 ~= 0 or key < 1 or key > tonumber(self.len) then\n\t\t\t\terror(\"core_f64_array index out of range: \" .. tostring(key))"
     ));
     assert!(lua.contains("return ffi.gc(ret, lib.core_f64_array_free)"));
     assert!(
         !lua.contains("_to_table"),
         "the array-to-table copier is gone: returns cross as cdata"
     );
+}
+
+#[test]
+fn a_returned_array_can_be_closed_like_a_handle() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains("local function core_f64_array_close(self)"));
+    assert!(lua.contains("if self.data == nil then"));
+    assert!(lua.contains("ffi.gc(self, nil)\n\tlib.core_f64_array_free(self)"));
+    assert!(lua.contains("self.len = 0\n\tself.data = nil"));
+    assert!(lua.contains("if key == \"close\" then\n\t\t\treturn core_f64_array_close"));
 }
 
 #[test]

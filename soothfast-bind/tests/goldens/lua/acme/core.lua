@@ -116,14 +116,27 @@ local function core_f64_array_totable(self)
 	return out
 end
 
+local function core_f64_array_close(self)
+	if self.data == nil then
+		return
+	end
+	ffi.gc(self, nil)
+	lib.core_f64_array_free(self)
+	self.len = 0
+	self.data = nil
+end
+
 ffi.metatype("core_f64_array", {
 	__len = function(self) return tonumber(self.len) end,
 	__index = function(self, key)
 		if key == "totable" then
 			return core_f64_array_totable
 		end
+		if key == "close" then
+			return core_f64_array_close
+		end
 		if type(key) == "number" then
-			if key < 1 or key > tonumber(self.len) then
+			if key % 1 ~= 0 or key < 1 or key > tonumber(self.len) then
 				error("core_f64_array index out of range: " .. tostring(key))
 			end
 			return self.data[key - 1]
@@ -141,14 +154,27 @@ local function core_u8_array_totable(self)
 	return out
 end
 
+local function core_u8_array_close(self)
+	if self.data == nil then
+		return
+	end
+	ffi.gc(self, nil)
+	lib.core_u8_array_free(self)
+	self.len = 0
+	self.data = nil
+end
+
 ffi.metatype("core_u8_array", {
 	__len = function(self) return tonumber(self.len) end,
 	__index = function(self, key)
 		if key == "totable" then
 			return core_u8_array_totable
 		end
+		if key == "close" then
+			return core_u8_array_close
+		end
 		if type(key) == "number" then
-			if key < 1 or key > tonumber(self.len) then
+			if key % 1 ~= 0 or key < 1 or key > tonumber(self.len) then
 				error("core_u8_array index out of range: " .. tostring(key))
 			end
 			return self.data[key - 1]

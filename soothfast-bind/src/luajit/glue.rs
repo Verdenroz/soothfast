@@ -125,6 +125,7 @@ fn string_helper(module: &str) -> String {
 fn array_helper(ty: &Ty, element: &str, module: &str) -> String {
     let c_arr = c::array_c(ty, module);
     let totable = format!("{c_arr}_totable");
+    let close = format!("{c_arr}_close");
     format!(
         "-- Copies a `{element}` array into a plain table.\n\
          local function {totable}(self)\n\
@@ -135,14 +136,26 @@ fn array_helper(ty: &Ty, element: &str, module: &str) -> String {
          \tend\n\
          \treturn out\n\
          end\n\n\
+         local function {close}(self)\n\
+         \tif self.data == nil then\n\
+         \t\treturn\n\
+         \tend\n\
+         \tffi.gc(self, nil)\n\
+         \tlib.{c_arr}_free(self)\n\
+         \tself.len = 0\n\
+         \tself.data = nil\n\
+         end\n\n\
          ffi.metatype(\"{c_arr}\", {{\n\
          \t__len = function(self) return tonumber(self.len) end,\n\
          \t__index = function(self, key)\n\
          \t\tif key == \"totable\" then\n\
          \t\t\treturn {totable}\n\
          \t\tend\n\
+         \t\tif key == \"close\" then\n\
+         \t\t\treturn {close}\n\
+         \t\tend\n\
          \t\tif type(key) == \"number\" then\n\
-         \t\t\tif key < 1 or key > tonumber(self.len) then\n\
+         \t\t\tif key % 1 ~= 0 or key < 1 or key > tonumber(self.len) then\n\
          \t\t\t\terror(\"{c_arr} index out of range: \" .. tostring(key))\n\
          \t\t\tend\n\
          \t\t\treturn self.data[key - 1]\n\
