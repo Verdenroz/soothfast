@@ -11,6 +11,8 @@
 //! copies `tests/fixture_crate` one directory above the copied golden, the
 //! same layout `bind gen` produces for a real package.
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -29,15 +31,6 @@ fn copy_dir(src: &Path, dst: &Path) {
         } else {
             std::fs::copy(&path, &target).expect("copies a golden file");
         }
-    }
-}
-
-/// `None` when `tool` is on `PATH`; the install hint otherwise, so the
-/// caller can skip with a message rather than fail.
-fn missing(tool: &str, install_hint: &str) -> Option<String> {
-    match Command::new(tool).arg("--version").output() {
-        Ok(_) => None,
-        Err(_) => Some(format!("`{tool}` not found — {install_hint}")),
     }
 }
 
@@ -84,8 +77,8 @@ fn the_ruby_golden_builds_and_runs() {
         ),
         ("bundle", "gem install bundler"),
     ] {
-        if let Some(reason) = missing(tool, hint) {
-            eprintln!("skipping ruby_smoke: {reason}");
+        let available = Command::new(tool).arg("--version").output().is_ok();
+        if !support::require_toolchain(available, tool, hint) {
             return;
         }
     }

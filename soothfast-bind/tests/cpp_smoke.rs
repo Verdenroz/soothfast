@@ -9,6 +9,8 @@
 //! copies `tests/fixture_crate` one directory above the copied golden, the
 //! same layout `bind gen` produces for a real package.
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -44,10 +46,15 @@ fn cpp_compiler() -> Option<String> {
 #[test]
 #[ignore]
 fn the_cpp_golden_builds_and_runs_against_the_real_cdylib() {
-    let Some(compiler) = cpp_compiler() else {
-        eprintln!("no c++ compiler on PATH; skipping");
+    let compiler = cpp_compiler();
+    if !support::require_toolchain(
+        compiler.is_some(),
+        "a C++ compiler (c++/g++/clang++)",
+        "install one and put it on PATH",
+    ) {
         return;
-    };
+    }
+    let compiler = compiler.expect("checked above");
 
     let manifest = manifest_dir();
     let root = std::env::temp_dir().join(format!("soothfast-cpp-smoke-{}", std::process::id()));

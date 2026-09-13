@@ -6,6 +6,8 @@
 //!
 //! Run with: `cargo test -p soothfast-bind --test kotlin_smoke -- --ignored`
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -64,10 +66,11 @@ fn kotlinc_available() -> bool {
 #[test]
 #[ignore = "shells out to cargo, kotlinc and kotlin"]
 fn the_kotlin_golden_builds_and_runs() {
-    if !kotlinc_available() {
-        eprintln!(
-            "skipping: `kotlinc` not found on PATH — https://kotlinlang.org/docs/command-line.html"
-        );
+    if !support::require_toolchain(
+        kotlinc_available(),
+        "kotlinc",
+        "https://kotlinlang.org/docs/command-line.html",
+    ) {
         return;
     }
 

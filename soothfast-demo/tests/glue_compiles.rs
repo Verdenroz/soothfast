@@ -49,15 +49,19 @@ fn find_manifest_dir(dir: &Path, depth: u32) -> Option<PathBuf> {
 ///
 /// Mirrors the detection `soothfast-bind`'s `ruby_smoke` test uses: `rb_sys`
 /// needs Ruby's own headers, which `cargo check` cannot get without `ruby`
-/// on PATH, and that absence is this machine's normal state, not a failure.
+/// on PATH, and that absence is this machine's normal state, not a failure
+/// — unless `SOOTHFAST_SMOKE_STRICT` is set, when CI must not skip silently.
 fn missing_toolchain(pkg: &str) -> Option<String> {
     if pkg != "ruby" {
         return None;
     }
-    match Command::new("ruby").arg("--version").output() {
-        Ok(_) => None,
-        Err(_) => Some("`ruby` not found on PATH".to_string()),
+    if Command::new("ruby").arg("--version").output().is_ok() {
+        return None;
     }
+    if std::env::var_os("SOOTHFAST_SMOKE_STRICT").is_some() {
+        panic!("`ruby` not found on PATH (SOOTHFAST_SMOKE_STRICT is set)");
+    }
+    Some("`ruby` not found on PATH".to_string())
 }
 
 #[test]

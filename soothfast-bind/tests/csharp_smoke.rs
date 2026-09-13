@@ -7,6 +7,8 @@
 //!
 //! Run with: `cargo test -p soothfast-bind --test csharp_smoke -- --ignored`
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -65,8 +67,11 @@ fn dotnet_available() -> bool {
 #[test]
 #[ignore = "shells out to cargo and dotnet"]
 fn the_csharp_golden_builds_and_runs() {
-    if !dotnet_available() {
-        eprintln!("skipping: `dotnet` not found on PATH — https://dotnet.microsoft.com/download");
+    if !support::require_toolchain(
+        dotnet_available(),
+        "dotnet",
+        "https://dotnet.microsoft.com/download",
+    ) {
         return;
     }
 
