@@ -32,9 +32,11 @@ import acme_core
 ## Functions
 
 - `digest`
+- `find_counter`
 - `greet`
 - `index_all`
 - `normalize`
+- `peak_level`
 - `scale_into`
 - `stamp`
 - `trim`

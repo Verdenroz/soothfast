@@ -192,6 +192,24 @@ pub fn doc() -> Value {
             false,
         ),
     );
+    insert(
+        14,
+        func(
+            "peak_level",
+            &[("values", borrowed(json!({ "slice": prim("f64") }), false))],
+            path("Level", 4, &[]),
+            false,
+        ),
+    );
+    insert(
+        15,
+        func(
+            "find_counter",
+            &[("start", prim("i64"))],
+            path("Option", 93, &[path("Counter", 2, &[])]),
+            false,
+        ),
+    );
 
     insert(2, struct_item("Counter", &[20, 21], &[30, 37, 38]));
     insert(37, auto_impl("Send", false));
@@ -299,6 +317,8 @@ pub fn doc() -> Value {
             "11": { "crate_id": 0, "path": ["acme", "stamp"], "kind": "function" },
             "12": { "crate_id": 0, "path": ["acme", "greet"], "kind": "function" },
             "13": { "crate_id": 0, "path": ["acme", "scale_into"], "kind": "function" },
+            "14": { "crate_id": 0, "path": ["acme", "peak_level"], "kind": "function" },
+            "15": { "crate_id": 0, "path": ["acme", "find_counter"], "kind": "function" },
             "2": { "crate_id": 0, "path": ["acme", "Counter"], "kind": "struct" },
             "3": { "crate_id": 0, "path": ["acme", "Mode"], "kind": "enum" },
             "4": { "crate_id": 0, "path": ["acme", "Level"], "kind": "enum" },
@@ -334,6 +354,8 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::stamp", "fn"),
         record("acme::greet", "fn"),
         record("acme::scale_into", "fn"),
+        record("acme::peak_level", "fn"),
+        record("acme::find_counter", "fn"),
         record("acme::Counter", "struct"),
         record("acme::Mode", "enum"),
         record("acme::Level", "enum"),

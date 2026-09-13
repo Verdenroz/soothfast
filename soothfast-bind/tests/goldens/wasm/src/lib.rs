@@ -83,6 +83,11 @@ pub fn digest(data: &[u8]) -> Vec<u8> {
     ::acme::digest(data)
 }
 
+#[wasm_bindgen(js_name = findCounter)]
+pub fn find_counter(start: i64) -> Option<Counter> {
+    ::acme::find_counter(start)
+}
+
 #[wasm_bindgen]
 pub fn greet(name: &str) -> String {
     ::acme::greet(name)
@@ -91,6 +96,11 @@ pub fn greet(name: &str) -> String {
 #[wasm_bindgen]
 pub fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
     ::acme::normalize(input, factor)
+}
+
+#[wasm_bindgen(js_name = peakLevel)]
+pub fn peak_level(values: &[f64]) -> Level {
+    ::acme::peak_level(values).into()
 }
 
 #[wasm_bindgen(js_name = scaleInto)]

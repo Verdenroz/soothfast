@@ -107,6 +107,11 @@ inline std::vector<uint8_t> digest(std::span<const uint8_t> data) {
     return to_vector_u8(raw_result);
 }
 
+inline std::optional<Counter> find_counter(int64_t start) {
+    auto raw_result = core_find_counter(start);
+    return raw_result != nullptr ? std::optional<Counter>(Counter(raw_result)) : std::nullopt;
+}
+
 inline std::string greet(std::string_view name) {
     std::string name_owned(name);
     auto raw_result = core_greet(name_owned.c_str());
@@ -116,6 +121,11 @@ inline std::string greet(std::string_view name) {
 inline std::vector<double> normalize(std::span<const double> input, double factor) {
     auto raw_result = core_normalize(input.data(), input.size(), factor);
     return to_vector_f64(raw_result);
+}
+
+inline Level peak_level(std::span<const double> values) {
+    auto raw_result = core_peak_level(values.data(), values.size());
+    return static_cast<Level>(raw_result);
 }
 
 inline void scale_into(std::span<const double> values, double factor, std::span<double> out) {

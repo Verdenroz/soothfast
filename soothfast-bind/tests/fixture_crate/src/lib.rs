@@ -78,3 +78,17 @@ pub fn scale_into(values: &[f64], factor: f64, out: &mut [f64]) {
         *slot = value * factor;
     }
 }
+
+pub fn peak_level(values: &[f64]) -> Level {
+    match values.iter().any(|v| *v > 0.5) {
+        true => Level::High,
+        false => Level::Low,
+    }
+}
+
+pub fn find_counter(start: i64) -> Option<Counter> {
+    match start >= 0 {
+        true => Some(Counter::new(start)),
+        false => None,
+    }
+}

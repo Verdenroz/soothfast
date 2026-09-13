@@ -169,6 +169,16 @@ pub extern "system" fn Java_acme_core_Core_nativeDigest<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeFindCounter<'local>(
+    _env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    start: i64
+) -> i64 {
+    let __out = ::acme::find_counter(start);
+    match __out { Some(v) => Box::into_raw(Box::new(v)) as i64, None => 0i64 }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeGreet<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,
@@ -239,6 +249,26 @@ pub extern "system" fn Java_acme_core_Core_nativeNormalize<'local>(
             }
             __arr.into_raw()
         }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativePeakLevel<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    values: ::jni::objects::JDoubleArray<'local>
+) -> i32 {
+    let result = unsafe { env.get_array_elements_critical(&values, ::jni::objects::ReleaseMode::NoCopyBack) };
+    if let Err(ref e) = result {
+        let pending = matches!(e, ::jni::errors::Error::JavaException);
+        let message = e.to_string();
+        drop(result);
+        __throw_unless_pending(&mut env, pending, message);
+        return 0;
+    }
+    let values_pin = result.unwrap();
+    let __out = ::acme::peak_level(&values_pin);
+    drop(values_pin);
+    level_to_ordinal(__out)
 }
 
 #[unsafe(no_mangle)]

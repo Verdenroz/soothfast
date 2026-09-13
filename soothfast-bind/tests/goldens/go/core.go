@@ -143,6 +143,10 @@ func Digest(data []byte) []byte {
 	return byteSlice(C.core_digest((*C.uint8_t)(unsafe.Pointer(bufPtr(data))), C.size_t(len(data))))
 }
 
+func FindCounter(start int64) *Counter {
+	return func() *Counter { if p := C.core_find_counter(C.int64_t(start)); p != nil { return wrapCounter(p) }; return nil }()
+}
+
 func Greet(name string) string {
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
@@ -151,6 +155,10 @@ func Greet(name string) string {
 
 func Normalize(input []float64, factor float64) []float64 {
 	return float64Slice(C.core_normalize((*C.double)(unsafe.Pointer(bufPtr(input))), C.size_t(len(input)), C.double(factor)))
+}
+
+func PeakLevel(values []float64) Level {
+	return Level(C.core_peak_level((*C.double)(unsafe.Pointer(bufPtr(values))), C.size_t(len(values))))
 }
 
 func ScaleInto(values []float64, factor float64, out []float64) {

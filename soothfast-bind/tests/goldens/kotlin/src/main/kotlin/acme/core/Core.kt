@@ -5,13 +5,20 @@ package acme.core
 
 private val loadNatives: Unit = Natives.load()
 private external fun nativeDigest(data: ByteArray): ByteArray
+private external fun nativeFindCounter(start: Long): Long
 private external fun nativeGreet(name: String): String
 private external fun nativeNormalize(input: DoubleArray, factor: Double): DoubleArray
+private external fun nativePeakLevel(values: DoubleArray): Int
 private external fun nativeScaleInto(values: DoubleArray, factor: Double, out: DoubleArray): Unit
 private external fun nativeStamp(handle: Long, error: Double, register: ByteArray): Long
 
 fun digest(data: ByteArray): ByteArray {
     return nativeDigest(data)
+}
+
+fun findCounter(start: Long): Counter? {
+    val ptr_ = nativeFindCounter(start)
+            return if (ptr_ == 0L) null else Counter(ptr_, Counter.Raw)
 }
 
 fun greet(name: String): String {
@@ -20,6 +27,10 @@ fun greet(name: String): String {
 
 fun normalize(input: DoubleArray, factor: Double): DoubleArray {
     return nativeNormalize(input, factor)
+}
+
+fun peakLevel(values: DoubleArray): Level {
+    return Level.entries[nativePeakLevel(values)]
 }
 
 fun scaleInto(values: DoubleArray, factor: Double, out: DoubleArray) {

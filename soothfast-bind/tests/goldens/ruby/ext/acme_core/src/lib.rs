@@ -69,6 +69,10 @@ fn digest(data: ::magnus::RString) -> ::magnus::RString {
     ::magnus::RString::from_slice(&::acme::digest(&data))
 }
 
+fn find_counter(start: i64) -> Option<Counter> {
+    (::acme::find_counter(start)).map(|value| Counter(::std::cell::RefCell::new(value)))
+}
+
 fn greet(name: String) -> String {
     ::acme::greet(&name)
 }
@@ -79,6 +83,10 @@ fn index_all() -> ::std::collections::HashMap<String, u32> {
 
 fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
     ::acme::normalize(input, factor)
+}
+
+fn peak_level(ruby: &::magnus::Ruby, values: Vec<f64>) -> ::magnus::Symbol {
+    level_to_symbol(ruby, ::acme::peak_level(&values))
 }
 
 fn scale_into(values: Vec<f64>, factor: f64, out: ::magnus::RArray) -> Result<(), ::magnus::Error> {
@@ -110,9 +118,11 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     class.define_method("bump_all", ::magnus::method!(Counter::bump_all, 1))?;
     module.define_class("Mode", ruby.class_object())?;
     module.define_module_function("digest", ::magnus::function!(digest, 1))?;
+    module.define_module_function("find_counter", ::magnus::function!(find_counter, 1))?;
     module.define_module_function("greet", ::magnus::function!(greet, 1))?;
     module.define_module_function("index_all", ::magnus::function!(index_all, 0))?;
     module.define_module_function("normalize", ::magnus::function!(normalize, 2))?;
+    module.define_module_function("peak_level", ::magnus::function!(peak_level, 1))?;
     module.define_module_function("scale_into", ::magnus::function!(scale_into, 3))?;
     module.define_module_function("stamp", ::magnus::function!(stamp, 3))?;
     module.define_module_function("trim", ::magnus::function!(trim, 1))?;

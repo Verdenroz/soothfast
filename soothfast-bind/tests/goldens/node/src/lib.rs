@@ -102,6 +102,12 @@ pub fn digest(data: Buffer) -> Buffer {
     Buffer::from(::acme::digest(data.as_ref()))
 }
 
+#[napi(js_name = "findCounter")]
+pub fn find_counter(start: BigInt) -> Result<Option<Counter>> {
+    let start = bigint_to_i64(start, "start")?;
+    Ok(::acme::find_counter(start))
+}
+
 #[napi]
 pub fn greet(name: String) -> String {
     ::acme::greet(&name)
@@ -110,6 +116,11 @@ pub fn greet(name: String) -> String {
 #[napi]
 pub fn normalize(input: Float64Array, factor: f64) -> Float64Array {
     Float64Array::from(::acme::normalize(input.to_vec(), factor))
+}
+
+#[napi(js_name = "peakLevel")]
+pub fn peak_level(values: Float64Array) -> Level {
+    ::acme::peak_level(values.as_ref()).into()
 }
 
 #[napi(js_name = "scaleInto")]

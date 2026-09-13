@@ -25,8 +25,10 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 ## Functions
 
 - `digest`
+- `find_counter`
 - `greet`
 - `normalize`
+- `peak_level`
 - `stamp`
 - `trim`
 

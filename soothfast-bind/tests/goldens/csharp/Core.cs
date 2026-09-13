@@ -26,6 +26,12 @@ public static class Core
         }
     }
 
+    public static Counter FindCounter(long start)
+    {
+        IntPtr result = Native.acme_core_find_counter(start);
+        return result == IntPtr.Zero ? null : new Counter(result);
+    }
+
     public static string Greet(string name)
     {
         byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(name + "\0");
@@ -55,6 +61,18 @@ public static class Core
                 }
                 Native.acme_core_f64_array_free(result);
                 return value;
+            }
+        }
+    }
+
+    public static Level PeakLevel(ReadOnlySpan<double> values)
+    {
+        unsafe
+        {
+            fixed (double* valuesPtr = values)
+            {
+                int result = Native.acme_core_peak_level(valuesPtr, (nuint)values.Length);
+                return (Level)result;
             }
         }
     }

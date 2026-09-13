@@ -44,8 +44,10 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 ## Functions
 
 - `core_digest`
+- `core_find_counter`
 - `core_greet`
 - `core_normalize`
+- `core_peak_level`
 - `core_scale_into`
 - `core_stamp`
 

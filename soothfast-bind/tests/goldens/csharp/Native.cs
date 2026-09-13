@@ -98,10 +98,16 @@ internal static class Native
     internal static extern unsafe AcmeCoreU8Array acme_core_digest(byte* data, nuint data_len);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern IntPtr acme_core_find_counter(long start);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe IntPtr acme_core_greet(byte* name);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe AcmeCoreF64Array acme_core_normalize(double* input, nuint input_len, double factor);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe int acme_core_peak_level(double* values, nuint values_len);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe void acme_core_scale_into(double* values, nuint values_len, double factor, double* out_, nuint out__len);

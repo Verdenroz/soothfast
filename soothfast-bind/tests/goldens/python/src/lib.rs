@@ -360,6 +360,11 @@ fn digest(py: Python<'_>, data: BorrowedU8) -> Vec<u8> {
 }
 
 #[pyfunction]
+fn find_counter(start: i64) -> Option<Counter> {
+    ::acme::find_counter(start)
+}
+
+#[pyfunction]
 fn greet(name: &str) -> String {
     ::acme::greet(name)
 }
@@ -373,6 +378,12 @@ fn index_all() -> ::std::collections::HashMap<String, u32> {
 fn normalize(py: Python<'_>, input: BorrowedF64, factor: f64) -> F64Array {
     let out = py.detach(|| ::acme::normalize(input.into_vec(), factor));
     F64Array::new(out)
+}
+
+#[pyfunction]
+fn peak_level(py: Python<'_>, values: BorrowedF64) -> Level {
+    let out = py.detach(|| ::acme::peak_level(values.as_slice()));
+    out.into()
 }
 
 #[pyfunction]
@@ -398,9 +409,11 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Level>()?;
     m.add_class::<Mode>()?;
     m.add_function(wrap_pyfunction!(digest, m)?)?;
+    m.add_function(wrap_pyfunction!(find_counter, m)?)?;
     m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
+    m.add_function(wrap_pyfunction!(peak_level, m)?)?;
     m.add_function(wrap_pyfunction!(scale_into, m)?)?;
     m.add_function(wrap_pyfunction!(stamp, m)?)?;
     m.add_function(wrap_pyfunction!(trim, m)?)?;

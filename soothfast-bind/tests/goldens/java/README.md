@@ -37,8 +37,10 @@ A borrowed buffer parameter (`double[]`, `byte[]`, ...) is read through `GetPrim
 ## `Core`
 
 - `digest`
+- `findCounter`
 - `greet`
 - `normalize`
+- `peakLevel`
 - `scaleInto`
 - `stamp`
 

@@ -13,12 +13,21 @@ public final class Core {
         return nativeDigest(data);
     }
 
+    public static Counter findCounter(long start) {
+        long ptr_ = nativeFindCounter(start);
+        return ptr_ == 0 ? null : new Counter(ptr_, Counter.Raw.INSTANCE);
+    }
+
     public static String greet(String name) {
         return nativeGreet(name);
     }
 
     public static double[] normalize(double[] input, double factor) {
         return nativeNormalize(input, factor);
+    }
+
+    public static Level peakLevel(double[] values) {
+        return Level.values()[nativePeakLevel(values)];
     }
 
     public static void scaleInto(double[] values, double factor, double[] out) {
@@ -30,8 +39,10 @@ public final class Core {
     }
 
     private static native byte[] nativeDigest(byte[] data);
+    private static native long nativeFindCounter(long start);
     private static native String nativeGreet(String name);
     private static native double[] nativeNormalize(double[] input, double factor);
+    private static native int nativePeakLevel(double[] values);
     private static native void nativeScaleInto(double[] values, double factor, double[] out);
     private static native long nativeStamp(long handle, double error, byte[] register);
 }

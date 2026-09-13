@@ -74,6 +74,13 @@ fn digest(data: &[u8]) -> Vec<u8> {
 }
 
 #[extendr]
+fn find_counter(start: f64) -> ::std::result::Result<Robj, String> {
+    let start = __checked_int::<i64>(start, "start")?;
+    let __out = ::acme::find_counter(start);
+    Ok(match __out { Some(v) => Robj::from(Counter(v)), None => ().into() })
+}
+
+#[extendr]
 fn greet(name: &str) -> String {
     let __out = ::acme::greet(name);
     __out
@@ -84,6 +91,15 @@ fn normalize(input: &[f64], factor: f64) -> Vec<f64> {
     let input = input.to_vec();
     let __out = ::acme::normalize(input, factor);
     __out
+}
+
+#[extendr]
+fn peak_level(values: &[f64]) -> String {
+    let __out = ::acme::peak_level(values);
+    match __out {
+        ::acme::Level::Low => "Low".to_string(),
+        ::acme::Level::High => "High".to_string(),
+    }
 }
 
 #[extendr]
@@ -104,8 +120,10 @@ extendr_module! {
     impl Counter;
     impl Mode;
     fn digest;
+    fn find_counter;
     fn greet;
     fn normalize;
+    fn peak_level;
     fn stamp;
     fn trim;
 }

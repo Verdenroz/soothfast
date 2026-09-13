@@ -214,6 +214,11 @@ pub unsafe extern "C" fn acme_core_digest(data: *const u8, data_len: usize) -> A
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_find_counter(start: i64) -> *mut AcmeCoreCounter {
+    match ::acme::find_counter(start) { Some(v) => Box::into_raw(Box::new(AcmeCoreCounter(v))), None => ::std::ptr::null_mut() }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_greet(name: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_char {
     ffi::into_text(::acme::greet(unsafe { ffi::text(name) }))
 }
@@ -221,6 +226,11 @@ pub unsafe extern "C" fn acme_core_greet(name: *const ::std::os::raw::c_char) ->
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_normalize(input: *const f64, input_len: usize, factor: f64) -> AcmeCoreF64Array {
     AcmeCoreF64Array::new(::acme::normalize(unsafe { ffi::slice(input, input_len) }.to_vec(), factor))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_peak_level(values: *const f64, values_len: usize) -> AcmeCoreLevel {
+    ::acme::peak_level(unsafe { ffi::slice(values, values_len) }).into()
 }
 
 #[unsafe(no_mangle)]
