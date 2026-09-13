@@ -501,10 +501,16 @@ fn postludes(planned: &[PlannedParam]) -> Vec<String> {
 fn param_plan(param: &Param, plan: &BindingPlan) -> PlannedParam {
     let name = &param.name;
     match Transfer::of(param, plan) {
-        Transfer::Text { nullable: true, .. } => (
+        Transfer::Text {
+            nullable: true,
+            borrowed,
+        } => (
             signature_ty(&param.ty),
             None,
-            format!("{name}.as_deref()"),
+            match borrowed {
+                true => format!("{name}.as_deref()"),
+                false => name.clone(),
+            },
             None,
         ),
         Transfer::Handle { mirrored: true, .. } => {
