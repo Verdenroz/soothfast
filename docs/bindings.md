@@ -103,22 +103,30 @@ package = "acme.stats"
 lang = "ruby"
 out = "bindings/ruby"
 package = "soothfast-stats"
+
+[[bind]]
+lang = "cpp"
+out = "bindings/cpp"
+package = "acme::stats"
 ```
 
-`lang` is `python`, `wasm`, `node`, `c`, `go`, `java`, `kotlin`, `r`, or
-`ruby`, each with the short forms you would expect (`py`, `js`, `napi`,
-`cabi`, `golang`, `jni`, `kt`, `extendr`, `rb`). `out` and `package` are
-required. For `go`, `package` is the Go module path rather than a
-distribution name; the Go package name is its last element. For `java` and
-`kotlin`, `package` is the JVM package a caller imports, dotted the normal
-way; the two need distinct packages when both bind the same crate, since
-each stages its own native library under its own `Natives`. For `r`,
-`package` is the R package name: letters, digits and dots, starting with a
-letter — no hyphens, since R derives its native init routine from that name
-by replacing every other character with `_`. For `ruby`, `package` is the
-gem name; the Ruby module classes and the package `Error` are defined under
-is derived from it. `module`, `version`, `description`, `repository`,
-`targets`, and `backend_version` all default to something sensible.
+`lang` is `python`, `wasm`, `node`, `c`, `go`, `java`, `kotlin`, `r`,
+`ruby`, or `cpp`, each with the short forms you would expect (`py`, `js`,
+`napi`, `cabi`, `golang`, `jni`, `kt`, `extendr`, `rb`, `c++`/`cxx`). `out`
+and `package` are required. For `go`, `package` is the Go module path
+rather than a distribution name; the Go package name is its last element.
+For `java` and `kotlin`, `package` is the JVM package a caller imports,
+dotted the normal way; the two need distinct packages when both bind the
+same crate, since each stages its own native library under its own
+`Natives`. For `r`, `package` is the R package name: letters, digits and
+dots, starting with a letter — no hyphens, since R derives its native init
+routine from that name by replacing every other character with `_`. For
+`ruby`, `package` is the gem name; the Ruby module classes and the package
+`Error` are defined under is derived from it. For `cpp`, `package` is a
+`::`-delimited C++ namespace path; the embedded C library's name is its
+last segment, the same way Go's package name is its module path's last
+element. `module`, `version`, `description`, `repository`, `targets`, and
+`backend_version` all default to something sensible.
 
 ## Commands
 
@@ -126,7 +134,7 @@ is derived from it. `module`, `version`, `description`, `repository`,
 cargo soothfast bind gen -p PKG            # write the packages
 cargo soothfast bind gen -p PKG --check    # fail if they are stale
 cargo soothfast bind gate -p PKG           # fail on a consumer-breaking change
-cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar / R CMD INSTALL / rake+gem
+cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar / R CMD INSTALL / rake+gem / c++
 ```
 
 `bind gen` writes a small Rust glue crate per language and the packaging
@@ -152,7 +160,13 @@ standalone source package needs the bound crate vendored under `src/rust`
 first, which `bind build` does not do. Ruby rides `bundle exec rake
 compile` (`rb_sys`'s own `cargo build` wrapper) and then `gem build`; each
 is reported and skipped on its own, so a machine with only one of
-`bundle`/`gem` installed still hears about the other.
+`bundle`/`gem` installed still hears about the other. C++ rides the same
+plain `cargo build` as C and Go, then verifies the generated header with a
+syntax-only compile of a small driver (`c++ -std=c++20 -fsyntax-only`,
+preferring `$CXX`, then `c++`, `g++`, `clang++`): a header-only wrapper has
+no library of its own to build, so this is the whole check a consumer's
+build would otherwise catch. A missing compiler skips it, the same
+tolerance `go vet`/`go build` gets when `go` is absent.
 
 ## What the generated code looks like
 
@@ -180,19 +194,19 @@ only in the generated crate.
 
 ## How types cross
 
-| Rust | Python | JavaScript | C | Go | Java | Kotlin | R | Ruby |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character | `String` |
-| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector | `String` (binary) |
-| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` |
-| `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked | `Integer` |
-| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` | `T \| nil` |
-| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` |
-| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound | `Array` |
-| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises |
-| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound | not bound |
-| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` | handle class |
-| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string | `Symbol` |
+| Rust | Python | JavaScript | C | Go | Java | Kotlin | R | Ruby | C++ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character | `String` | `string_view` in, `string` out |
+| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector | `String` (binary) | `span<const uint8_t>` in, `vector<uint8_t>` out |
+| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` | `span<const T>` in, `vector<T>` out |
+| `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked | `Integer` | `int64_t`, `uint64_t` |
+| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` | `T \| nil` | `optional<T>`, handles only |
+| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` | not bound |
+| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound | `Array` | not bound |
+| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises | throws `Error` |
+| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound | not bound | not bound |
+| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` | handle class | handle class, `unique_ptr` member |
+| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string | `Symbol` | `enum class` |
 
 An enum carrying data stays an opaque handle, because neither language has a
 shape for it; that is reported as a note rather than guessed at.
@@ -407,6 +421,46 @@ counter.at(:low)
 
 `async fn` is a gap for Ruby the same way it is for Go, Node and Java: no
 runtime to hand a future to.
+
+### C++
+
+C++'s bindings are header-only, the same wrapper-over-C shape Go takes:
+`bind gen` writes the `.h`/glue/package trio C already gets, then one
+`<name>.hpp` that a consumer `#include`s and links against the same C
+library, no separate runtime to learn:
+
+```cpp
+acme::core::Counter c(0);
+int64_t n = c.bump(5);
+```
+
+- **A handle owns its pointer through a `unique_ptr`** with a stateless
+  deleter calling the C `*_free`, which makes the class move-only for
+  free: a member with a deleted copy constructor makes the compiler
+  delete the class's own, so nothing has to spell `= delete` by hand.
+- **A failing call throws.** The generated code reads the C `char
+  **error` out-parameter, frees the message after copying it, and throws
+  an `Error` (a `std::runtime_error`) built from it — including from a
+  throwing constructor, which delegates to a `construct` factory in its
+  member-initializer list, since a constructor cannot check an
+  out-parameter and bail before its members exist any other way.
+- **A plain enum crosses as an `enum class`**, cast to and from the C
+  enum it mirrors with `static_cast`, rather than carrying the C names
+  into C++.
+- **A borrowed buffer crosses as `std::span`**, `const` for an input and
+  mutable for an out-parameter — the same pointer-and-length C already
+  takes, so this backend answers `buffer_support` the way C does. A
+  returned sequence is copied into a `std::vector` and freed once, the
+  same shape Go's `float64Slice` takes.
+- **A namespace path flattens to one C module name.** `package =
+  "acme::core"` becomes the `namespace acme::core { ... }` the header
+  declares, but the embedded C crate, its header, and its symbols are
+  all named after the path's last segment (`core`), the same way a Go
+  module path's last element becomes its package name.
+
+`async fn` is a gap for C++ the same way it is for Go, Node and Java: no
+runtime to hand a future to. The header must compile clean under `-Wall
+-Wextra -Werror` on both g++ and clang++, checked in the golden suite.
 
 ## C is the one without a framework
 
