@@ -134,4 +134,7 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "digest=[2, 3, 4]",
     "normalize=[2, 4, 6]",
     "stamp=12",
+    "peakLevel=High",
+    "findCounter=5",
+    "findCounter(missing)=null",
 ];

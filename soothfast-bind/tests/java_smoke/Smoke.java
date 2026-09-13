@@ -25,5 +25,11 @@ public class Smoke {
         System.out.println(
                 "normalize=" + Arrays.toString(Core.normalize(new double[] {1.0, 2.0, 3.0}, 2.0)));
         System.out.println("stamp=" + Core.stamp(7, 3.0, new byte[] {9, 9}));
+
+        System.out.println("peakLevel=" + Core.peakLevel(new double[] {0.1, 0.9, 0.3}));
+        try (Counter found = Core.findCounter(5)) {
+            System.out.println("findCounter=" + found.value());
+        }
+        System.out.println("findCounter(missing)=" + Core.findCounter(-1));
     }
 }

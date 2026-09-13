@@ -27,7 +27,7 @@ fn scratch_dir() -> PathBuf {
 const SMOKE_TEST_JS: &str = r#"
 const test = require("node:test");
 const assert = require("node:assert");
-const { Counter, digest, normalize } = require("./index.js");
+const { Counter, Level, digest, normalize, peakLevel, findCounter } = require("./index.js");
 
 test("a class carries state across calls", () => {
     const counter = new Counter(10n);
@@ -50,6 +50,17 @@ test("a failing call throws a JavaScript Error", () => {
 
 test("a BigInt outside i64 range is rejected rather than truncated", () => {
     assert.throws(() => new Counter(2n ** 100n));
+});
+
+test("a mirrored enum returns by value and an optional handle maps into its wrapper", () => {
+    assert.strictEqual(peakLevel(Float64Array.from([0.1, 0.9, 0.3])), Level.High);
+    assert.strictEqual(peakLevel(Float64Array.from([0.1, 0.2])), Level.Low);
+
+    const found = findCounter(5n);
+    assert.notStrictEqual(found, null);
+    assert.strictEqual(found.value, 5n);
+
+    assert.strictEqual(findCounter(-1n), null);
 });
 "#;
 

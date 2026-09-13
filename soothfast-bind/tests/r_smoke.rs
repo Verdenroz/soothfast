@@ -107,4 +107,7 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "trim(empty)=TRUE",
     "trim=1 2",
     "caught: unknown Level variant",
+    "peak_level=High",
+    "find_counter=5",
+    "find_counter(missing)=TRUE",
 ];

@@ -73,3 +73,25 @@ func TestEmptyBuffer(t *testing.T) {
 		t.Fatalf("Digest(nil) = %v, want empty", got)
 	}
 }
+
+func TestPeakLevelAndFindCounter(t *testing.T) {
+	if got := PeakLevel([]float64{0.1, 0.9, 0.3}); got != LevelHigh {
+		t.Fatalf("PeakLevel = %v, want LevelHigh", got)
+	}
+	if got := PeakLevel([]float64{0.1, 0.2}); got != LevelLow {
+		t.Fatalf("PeakLevel = %v, want LevelLow", got)
+	}
+
+	found := FindCounter(5)
+	if found == nil {
+		t.Fatal("FindCounter(5) = nil, want a counter")
+	}
+	defer found.Close()
+	if got := found.Value(); got != 5 {
+		t.Fatalf("FindCounter(5).Value() = %d, want 5", got)
+	}
+
+	if got := FindCounter(-1); got != nil {
+		t.Fatal("FindCounter(-1) = non-nil, want nil")
+	}
+}

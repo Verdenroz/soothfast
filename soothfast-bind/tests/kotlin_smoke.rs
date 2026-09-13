@@ -173,6 +173,9 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "digest=[2, 3, 4]",
     "normalize=[2.0, 4.0, 6.0]",
     "stamp=12",
+    "peakLevel=High",
+    "findCounter=5",
+    "findCounter(missing)=null",
 ];
 
 fn kotlin_sources(dir: &Path) -> Vec<PathBuf> {

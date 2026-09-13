@@ -19,3 +19,8 @@ cat("trim=", paste(trim(c(1, 2)), collapse = " "), "\n", sep = "")
 
 err <- tryCatch(x$at("Bogus"), error = function(e) conditionMessage(e))
 cat("caught:", err, "\n")
+
+cat("peak_level=", peak_level(c(0.1, 0.9, 0.3)), "\n", sep = "")
+found <- find_counter(5)
+cat("find_counter=", found$value(), "\n", sep = "")
+cat("find_counter(missing)=", is.null(find_counter(-1)), "\n", sep = "")

@@ -41,5 +41,12 @@ int main() {
 
     std::printf("stamp=%llu\n", static_cast<unsigned long long>(stamp(1, 2.0, data)));
 
+    std::vector<double> peaked{0.1, 0.9, 0.3};
+    std::printf("peak_level=%s\n", peak_level(peaked) == Level::High ? "High" : "Low");
+
+    auto found = find_counter(5);
+    std::printf("find_counter=%lld\n", static_cast<long long>(found->value()));
+    std::printf("find_counter(missing)=%s\n", find_counter(-1).has_value() ? "present" : "none");
+
     return 0;
 }

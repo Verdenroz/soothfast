@@ -37,4 +37,13 @@ local out_table = { 0, 0, 0 }
 acme.scale_into({ 1.0, 2.0, 3.0 }, 3.0, out_table)
 assert(out_table[1] == 3.0 and out_table[2] == 6.0 and out_table[3] == 9.0, "scale_into table out")
 
+assert(acme.peak_level({ 0.1, 0.9, 0.3 }) == "high", "peak_level high")
+assert(acme.peak_level({ 0.1, 0.2 }) == "low", "peak_level low")
+
+local found = acme.find_counter(5)
+assert(found ~= nil, "find_counter present")
+assert(found:value() == 5, "find_counter value")
+found:close()
+assert(acme.find_counter(-1) == nil, "find_counter absent")
+
 print("ok")

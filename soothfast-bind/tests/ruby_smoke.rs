@@ -62,6 +62,12 @@ raise "digest" unless AcmeCore.digest("abc".b) == "bcd".b
 raise "normalize" unless AcmeCore.normalize([1.0, 2.0], 2.0) == [2.0, 4.0]
 raise "greet" unless AcmeCore.greet("world") == "hello, world"
 
+raise "peak_level" unless AcmeCore.peak_level([0.1, 0.9, 0.3]) == :high
+
+found = AcmeCore.find_counter(5)
+raise "find_counter" unless found.value == 5
+raise "find_counter absent" unless AcmeCore.find_counter(-1).nil?
+
 puts "ok"
 "#;
 

@@ -115,4 +115,7 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "normalize=[2, 4, 6]",
     "greet=hello, C++",
     "stamp=6",
+    "peak_level=High",
+    "find_counter=5",
+    "find_counter(missing)=none",
 ];
