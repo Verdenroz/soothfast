@@ -113,28 +113,37 @@ package = "acme::stats"
 lang = "lua"
 out = "bindings/lua"
 package = "acme.stats"
+
+[[bind]]
+lang = "csharp"
+out = "bindings/csharp"
+package = "Acme.Stats"
 ```
 
 `lang` is `python`, `wasm`, `node`, `c`, `go`, `java`, `kotlin`, `r`,
-`ruby`, `cpp`, or `lua`, each with the short forms you would expect (`py`,
-`js`, `napi`, `cabi`, `golang`, `jni`, `kt`, `extendr`, `rb`, `c++`/`cxx`,
-`luajit`). `out` and `package` are required. For `go`, `package` is the Go
-module path rather than a distribution name; the Go package name is its
-last element. For `java` and `kotlin`, `package` is the JVM package a
-caller imports, dotted the normal way; the two need distinct packages when
-both bind the same crate, since each stages its own native library under
-its own `Natives`. For `r`, `package` is the R package name: letters,
-digits and dots, starting with a letter — no hyphens, since R derives its
-native init routine from that name by replacing every other character
-with `_`. For `ruby`, `package` is the gem name; the Ruby module classes
-and the package `Error` are defined under is derived from it. For `cpp`,
-`package` is a `::`-delimited C++ namespace path; the embedded C library's
-name is its last segment, the same way Go's package name is its module
-path's last element. For `lua`, `package` is the dotted `require` path a
-caller loads it by, e.g. `acme.stats` for `require("acme.stats")`; the
-embedded C crate is named after its last segment the same way `go`'s and
-`cpp`'s are. `module`, `version`, `description`, `repository`, `targets`,
-and `backend_version` all default to something sensible.
+`ruby`, `cpp`, `lua`, or `csharp`, each with the short forms you would
+expect (`py`, `js`, `napi`, `cabi`, `golang`, `jni`, `kt`, `extendr`, `rb`,
+`c++`/`cxx`, `luajit`, `cs`/`dotnet`). `out` and `package` are required.
+For `go`, `package` is the Go module path rather than a distribution name;
+the Go package name is its last element. For `java` and `kotlin`,
+`package` is the JVM package a caller imports, dotted the normal way; the
+two need distinct packages when both bind the same crate, since each
+stages its own native library under its own `Natives`. For `r`, `package`
+is the R package name: letters, digits and dots, starting with a letter —
+no hyphens, since R derives its native init routine from that name by
+replacing every other character with `_`. For `ruby`, `package` is the gem
+name; the Ruby module classes and the package `Error` are defined under is
+derived from it. For `cpp`, `package` is a `::`-delimited C++ namespace
+path; the embedded C library's name is its last segment, the same way
+Go's package name is its module path's last element. For `lua`, `package`
+is the dotted `require` path a caller loads it by, e.g. `acme.stats` for
+`require("acme.stats")`; the embedded C crate is named after its last
+segment the same way `go`'s and `cpp`'s are. For `csharp`, `package` is
+the root namespace, dotted like Java's; the assembly name and the
+`.csproj` file are named after it, and the embedded C crate's own name is
+derived from it the same way Go's is: the whole namespace, snake_cased.
+`module`, `version`, `description`, `repository`, `targets`, and
+`backend_version` all default to something sensible.
 
 ## Commands
 
@@ -142,7 +151,7 @@ and `backend_version` all default to something sensible.
 cargo soothfast bind gen -p PKG            # write the packages
 cargo soothfast bind gen -p PKG --check    # fail if they are stale
 cargo soothfast bind gate -p PKG           # fail on a consumer-breaking change
-cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar / R CMD INSTALL / rake+gem / c++ / luajit
+cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / go / javac+jar / kotlinc+jar / R CMD INSTALL / rake+gem / c++ / luajit / dotnet build
 ```
 
 `bind gen` writes a small Rust glue crate per language and the packaging
@@ -174,7 +183,11 @@ syntax-only compile of a small driver (`c++ -std=c++20 -fsyntax-only`,
 preferring `$CXX`, then `c++`, `g++`, `clang++`): a header-only wrapper has
 no library of its own to build, so this is the whole check a consumer's
 build would otherwise catch. A missing compiler skips it, the same
-tolerance `go vet`/`go build` gets when `go` is absent.
+tolerance `go vet`/`go build` gets when `go` is absent. C# rides the same
+`cargo build` matrix Go and the JVM backends do, staging each target's
+cdylib under `runtimes/<rid>/native/` (the layout `Native.cs`'s own
+resolver probes) before running `dotnet build`; a missing `dotnet` skips
+only that step, the same posture as a missing `javac`.
 
 ## What the generated code looks like
 
@@ -202,19 +215,19 @@ only in the generated crate.
 
 ## How types cross
 
-| Rust | Python | JavaScript | C | Go | Java | Kotlin | R | Ruby | C++ | Lua |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character | `String` | `string_view` in, `string` out | `string` |
-| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector | `String` (binary) | `span<const uint8_t>` in, `vector<uint8_t>` out | table or FFI array |
-| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` | `span<const T>` in, `vector<T>` out | table or FFI array |
-| `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked | `Integer` | `int64_t`, `uint64_t` | `int64_t`/`uint64_t` cdata |
-| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` | `T \| nil` | `optional<T>`, handles only | nullable pointer, handles only |
-| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` | not bound | not bound |
-| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound | `Array` | not bound | not bound |
-| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises | throws `Error` | `error()` |
-| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound | not bound | not bound | not bound |
-| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` | handle class | handle class, `unique_ptr` member | table with `:close()` |
-| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string | `Symbol` | `enum class` | validated string |
+| Rust | Python | JavaScript | C | Go | Java | Kotlin | R | Ruby | C++ | Lua | C# |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character | `String` | `string_view` in, `string` out | `string` | `string` |
+| `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector | `String` (binary) | `span<const uint8_t>` in, `vector<uint8_t>` out | table or FFI array | `Span<byte>` / `byte[]` |
+| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` | `span<const T>` in, `vector<T>` out | table or FFI array | `Span<T>` / `T[]` |
+| `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked | `Integer` | `int64_t`, `uint64_t` | `int64_t`/`uint64_t` cdata | `long`, `ulong` |
+| `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles only | nullable pointer, handles only | nullable, handles only | `T?`, handles only | `T` or `NULL` | `T \| nil` | `optional<T>`, handles only | nullable pointer, handles only | `null`, handles only |
+| `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` | not bound | not bound | not bound |
+| `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound | `Array` | not bound | not bound | not bound |
+| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises | throws `Error` | `error()` | throws |
+| `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound | not bound | not bound | not bound | not bound |
+| exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` | handle class | handle class, `unique_ptr` member | table with `:close()` | `SafeHandle`, `IDisposable` |
+| payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string | `Symbol` | `enum class` | validated string | `enum` |
 
 An enum carrying data stays an opaque handle, because neither language has a
 shape for it; that is reported as a note rather than guessed at.
@@ -509,6 +522,45 @@ counter:close()
 
 `async fn` is a gap for Lua the same way it is for Go, Node, Java, Ruby and
 C++: no runtime to hand a future to.
+
+### C#
+
+C#'s bindings are the same wrapper-over-C shape Go's are: `bind gen` writes
+the `.h`/glue/package trio C already gets, then a `.csproj` and the C#
+sources that call into it. Unlike Go, there is no calling-convention macro
+either — `[DllImport]` is metadata the runtime reads, not code generation —
+so every extern declaration is written out here the same way the C backend
+writes its own header:
+
+```csharp
+using (var s = new Summary(new double[] { 3.0, 1.0, 5.0, 4.0 }))
+{
+    double median = s.Get(Metric.Median);
+    double[] devs = s.DeviationsAll(new double[] { 0.0, 4.0 });
+}
+```
+
+- **A handle is a `SafeHandle` subclass**, its `ReleaseHandle` calling the C
+  `*_free`; the class implementing `IDisposable` over it is what a `using`
+  block, or an explicit `Dispose()`, actually releases.
+- **A borrowed buffer parameter is pinned with `fixed`**, the P/Invoke
+  marshaller's own answer to the same question Java's `GetPrimitiveArrayCritical`
+  answers: no copy, but the call cannot hand its work to another thread or
+  call back into the runtime while the buffer is pinned.
+- **A failing call throws `<Module>Exception`**, one exception type per
+  package rather than one per Rust error type, the same choice Ruby makes:
+  the generated call reads the `char **error` out-parameter, copies the
+  message, frees it, and throws.
+- **The native library resolves itself.** A module initializer installs a
+  `NativeLibrary.SetDllImportResolver` callback that probes
+  `runtimes/<rid>/native/` (where `bind build` stages each target) before
+  falling back to the platform's own search, so a package built by
+  `bind build` works with nothing on `LD_LIBRARY_PATH`.
+- **A payload-free enum mirrors onto a C# `enum`**, crossing as an explicit
+  cast to and from the same ordinal the C header assigns it.
+
+`async fn` is a gap for C# the same way it is for Go, Node, Java, Kotlin,
+Ruby, C++ and Lua: no runtime to hand a future to.
 
 ## C is the one without a framework
 
