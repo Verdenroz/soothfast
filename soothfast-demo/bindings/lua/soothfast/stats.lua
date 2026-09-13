@@ -100,14 +100,27 @@ local function stats_f64_array_totable(self)
 	return out
 end
 
+local function stats_f64_array_close(self)
+	if self.data == nil then
+		return
+	end
+	ffi.gc(self, nil)
+	lib.stats_f64_array_free(self)
+	self.len = 0
+	self.data = nil
+end
+
 ffi.metatype("stats_f64_array", {
 	__len = function(self) return tonumber(self.len) end,
 	__index = function(self, key)
 		if key == "totable" then
 			return stats_f64_array_totable
 		end
+		if key == "close" then
+			return stats_f64_array_close
+		end
 		if type(key) == "number" then
-			if key < 1 or key > tonumber(self.len) then
+			if key % 1 ~= 0 or key < 1 or key > tonumber(self.len) then
 				error("stats_f64_array index out of range: " .. tostring(key))
 			end
 			return self.data[key - 1]
