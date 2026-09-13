@@ -7,6 +7,7 @@
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod bind;
+mod bind_bench;
 mod bind_build;
 mod bind_config;
 mod buildcost;
