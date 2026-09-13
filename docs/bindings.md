@@ -639,12 +639,12 @@ Measured with `cargo soothfast bind bench -p soothfast-demo`, 100k `f64`,
 best of nine runs per shape, against the same computation written in the
 host language. Above 1.0 means the binding wins:
 
-| shape | Python | Node | Go | Java | R |
-| --- | --- | --- | --- | --- | --- |
-| `build_summary` | 11.3x | 9.3x | 5.8x | 0.89x | 2.4x |
-| `batch_buffer` | 123x | 2.1x | 0.46x | 2.7x | 348x |
-| `batch_into` | 146x | 5.1x | 2.0x | 3.4x | n/a |
-| `per_element` | 1.6x | 0.02x | 0.12x | 0.29x | 0.25x |
+| shape | Python | Node | Go | Java | R | C++ | Lua |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `build_summary` | 11.3x | 9.3x | 5.8x | 0.89x | 2.4x | 4.77x | 16.1x |
+| `batch_buffer` | 123x | 2.1x | 0.46x | 2.7x | 348x | 1.58x | 0.37x |
+| `batch_into` | 146x | 5.1x | 2.0x | 3.4x | n/a | 2.00x | 0.27x |
+| `per_element` | 1.6x | 0.02x | 0.12x | 0.29x | 0.25x | 0.33x | 0.31x |
 
 <!-- soothfast:claim soothfast_demo::bind::python::build_summary.ratio.ratio >= 5 -->
 Python still beats a from-scratch Python sort/MAD by at least 5x building
@@ -665,14 +665,32 @@ least 4x.
 Node's buffer path still beats the equivalent typed-array loop.
 <!-- /soothfast:claim -->
 
-Python and Node are gated above; Go, Java and R are measured the same way
-but not gated. R has no `batch_into` shape: extendr gaps
+Python and Node are gated above; Go, Java, R, C++ and Lua are measured the
+same way but not gated. R has no `batch_into` shape: extendr gaps
 `deviations_into` there (see below). Two of these numbers look backwards
 and are worth a sentence each: Go's `batch_buffer` under 1.0 is the cgo
 call plus the copy-and-free of the returned slice against a Go loop
 compiled straight to native code, and Java's `build_summary` under 1.0 is
 the JDK's own dual-pivot sort matching Rust's on 100k doubles while the
 JNI path still pays a region copy of the input.
+
+C++ is the floor: a compiled host calling the C ABI directly, with no
+marshalling layer at all, so its ratios are the cost of the crossing
+itself — about 6 ns per call against roughly 2 ns for the host's own
+inlined loop, which is why `per_element` lands under 1.0x while both
+batch shapes, amortizing that one crossing over 100k elements, come out
+ahead.
+
+Lua is the other interpreted host, and every batch shape loses today:
+`batch_buffer`'s 0.37x is the cdata path, already paying the sequence
+copy back into a Lua table one element at a time
+(`stats_f64_array_to_table`); the plain-table path, reported separately
+as `batch_buffer_table`, is slower still at 0.26x, since it also copies
+the input table into a scratch cdata array on the way in. Returning a
+cdata array instead of a table — zero-copy, freed by `ffi.gc` — would
+flip both rows; nothing here does that yet. `build_summary` still wins
+at 16.1x: LuaJIT's own sort over a table of boxed numbers is slow enough
+that even a round trip through Rust's sort comes out ahead.
 
 wasm is not part of this matrix — this machine has no `wasm-pack` to
 measure it with. Its numbers below are from an earlier by-hand run and
@@ -786,7 +804,10 @@ cargo soothfast bind bench -p PKG --only python,node --save-baseline self
 The command fails if a script exits non-zero, prints the same shape twice,
 or prints no shapes at all; a language whose toolchain isn't on this
 machine is skipped with a named message instead, so one missing tool
-doesn't sink the whole run.
+doesn't sink the whole run. `bind bench` can launch Python, Node, Go, the
+JVM, R, the C ABI directly, C++ (compiled with the same compiler
+discovery `bind build` uses) and, as of this measurement, Lua; wasm, Ruby
+and C# still have no launcher of their own.
 
 Once saved, a ratio reads like any other measured metric — the Speed
 section above gates four of them this way:
