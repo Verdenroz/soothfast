@@ -277,7 +277,7 @@ mod tests {
     fn a_manylinux_tag_built_outside_the_container_is_called_out() {
         let warning =
             manylinux_warning_for(&targets(&["x86_64-unknown-linux-gnu"]), false).expect("warned");
-        assert!(warning.contains("manylinux_2_17_x86_64"), "{warning}");
+        assert!(warning.contains("manylinux_2_28_x86_64"), "{warning}");
     }
 
     #[test]
@@ -357,7 +357,7 @@ mod tests {
         let out = scratch("wheels");
         std::fs::create_dir_all(out.join("dist")).expect("dist");
         for name in [
-            "acme_items-1.2.3-py3-none-manylinux_2_17_x86_64.whl",
+            "acme_items-1.2.3-py3-none-manylinux_2_28_x86_64.whl",
             "acme_items-1.2.3-py3-none-macosx_11_0_arm64.whl",
             "acme_items-1.2.3.tar.gz",
         ] {

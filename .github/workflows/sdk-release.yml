@@ -42,10 +42,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            manylinux: quay.io/pypa/manylinux_2_17_x86_64
+            manylinux: quay.io/pypa/manylinux_2_28_x86_64
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
-            manylinux: quay.io/pypa/manylinux_2_17_aarch64
+            manylinux: quay.io/pypa/manylinux_2_28_aarch64
           # Cross-compiled on the arm64 runner; the Intel image is retired.
           - target: x86_64-apple-darwin
             runner: macos-latest
@@ -70,7 +70,7 @@ jobs:
           key: ${{ matrix.target }}
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
-      # A manylinux_2_17 tag is a claim about glibc at link time, so the
+      # A manylinux_2_28 tag is a claim about glibc at link time, so the
       # glibc targets build in the image that makes it true. `sdk build`
       # reads AUDITWHEEL_PLAT to confirm; without it, it warns.
       # Expansions go through the environment, never into the shell text:

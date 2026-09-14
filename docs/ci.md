@@ -174,7 +174,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            container: quay.io/pypa/manylinux_2_17_x86_64
+            container: quay.io/pypa/manylinux_2_28_x86_64
             lang: python
           - target: aarch64-apple-darwin
             runner: macos-latest

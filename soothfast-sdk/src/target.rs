@@ -51,7 +51,7 @@ impl Target {
             os: "linux",
             cpu: "arm64",
             libc: Some("glibc"),
-            wheel_platform: "manylinux_2_17_aarch64",
+            wheel_platform: "manylinux_2_28_aarch64",
             exe_suffix: "",
         },
         Target {
@@ -83,7 +83,7 @@ impl Target {
             os: "linux",
             cpu: "x64",
             libc: Some("glibc"),
-            wheel_platform: "manylinux_2_17_x86_64",
+            wheel_platform: "manylinux_2_28_x86_64",
             exe_suffix: "",
         },
         Target {
