@@ -591,18 +591,20 @@ fn convert_and_return(ty: &Ty, plan: &BindingPlan, module: &str, var: &str) -> S
             ),
             _ => format!("return {var};\n"),
         },
-        ty if types::element(ty).is_some() => {
-            let public = types::element(ty).expect("checked").public;
-            let free = format!("{}_free", c::array_c(ty, module));
-            format!(
-                "{public}[] value = new {public}[{var}.Len];\n\
-                 if ({var}.Len > 0)\n\
-                 {{\n    Marshal.Copy({var}.Data, value, 0, (int){var}.Len);\n}}\n\
-                 Native.{free}({var});\n\
-                 return value;\n"
-            )
-        }
-        _ => format!("return {var};\n"),
+        ty => match types::element(ty) {
+            Some(spelling) => {
+                let public = spelling.public;
+                let free = format!("{}_free", c::array_c(ty, module));
+                format!(
+                    "{public}[] value = new {public}[{var}.Len];\n\
+                     if ({var}.Len > 0)\n\
+                     {{\n    Marshal.Copy({var}.Data, value, 0, (int){var}.Len);\n}}\n\
+                     Native.{free}({var});\n\
+                     return value;\n"
+                )
+            }
+            None => format!("return {var};\n"),
+        },
     }
 }
 
