@@ -207,17 +207,14 @@ fn shared_library(artifacts: &[String]) -> Result<(PathBuf, String), LaunchError
             LaunchError::Missing("no shared library among bind build's artifacts".to_string())
         })?;
     let path = Path::new(lib);
-    let dir = path
-        .parent()
-        .expect("a built library has a parent dir")
-        .to_path_buf();
-    let name = path
-        .file_stem()
-        .expect("a built library has a name")
-        .to_string_lossy()
-        .trim_start_matches("lib")
-        .to_string();
-    Ok((dir, name))
+    let Some(dir) = path.parent() else {
+        return Err(LaunchError::Failed(format!("{lib}: no parent directory")));
+    };
+    let Some(name) = path.file_stem() else {
+        return Err(LaunchError::Failed(format!("{lib}: no file name")));
+    };
+    let name = name.to_string_lossy().trim_start_matches("lib").to_string();
+    Ok((dir.to_path_buf(), name))
 }
 
 /// The compiler invocation that links `script` against the shared library

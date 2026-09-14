@@ -504,10 +504,11 @@ fn bench(
 ) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let cfg = bind_config::load(&meta.dir)?;
-    let candidates: Vec<&BindEntry> = cfg
+    let candidates: Vec<(&BindEntry, &String)> = cfg
         .entries
         .iter()
-        .filter(|e| entry_selected(e, only) && e.bench.is_some())
+        .filter(|e| entry_selected(e, only))
+        .filter_map(|e| e.bench.as_ref().map(|bench| (e, bench)))
         .collect();
     if candidates.is_empty() {
         println!("bind bench: nothing to bench — no [[bind]] entry has a `bench` script");
@@ -517,8 +518,7 @@ fn bench(
     let mut rows: Vec<Row> = Vec::new();
     let mut run = Run::default();
     let mut failures: Vec<String> = Vec::new();
-    for entry in candidates {
-        let bench_rel = entry.bench.as_ref().expect("filtered for Some above");
+    for (entry, bench_rel) in candidates {
         let glue = meta.dir.join(&entry.out);
         let script = meta.dir.join(bench_rel);
         let label = format!("{} [{}]", entry.out, entry.lang.name());

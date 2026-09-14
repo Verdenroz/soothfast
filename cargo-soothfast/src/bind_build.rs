@@ -98,10 +98,10 @@ fn cpp(glue: &Path, targets: &[String], release: bool, quiet: bool) -> Result<Ve
         );
         return Ok(out);
     };
-    let header_name = Path::new(&header)
-        .file_name()
-        .expect("a built header has a name")
-        .to_string_lossy();
+    let Some(header_name) = Path::new(&header).file_name() else {
+        return Err(format!("{header}: built header has no file name"));
+    };
+    let header_name = header_name.to_string_lossy();
     let target = glue.join("target");
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
     let check = target.join("check.cpp");
@@ -469,7 +469,9 @@ fn stage_natives(
         };
         let arch_dir = staging.join("natives").join(arch);
         std::fs::create_dir_all(&arch_dir).map_err(|e| e.to_string())?;
-        let name = lib.file_name().expect("a built library has a name");
+        let Some(name) = lib.file_name() else {
+            return Err(format!("{}: built library has no file name", lib.display()));
+        };
         std::fs::copy(&lib, arch_dir.join(name)).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -562,7 +564,9 @@ fn stage_dotnet_natives(glue: &Path, targets: &[String], release: bool) -> Resul
         };
         let native_dir = glue.join("runtimes").join(rid).join("native");
         std::fs::create_dir_all(&native_dir).map_err(|e| e.to_string())?;
-        let name = lib.file_name().expect("a built library has a name");
+        let Some(name) = lib.file_name() else {
+            return Err(format!("{}: built library has no file name", lib.display()));
+        };
         std::fs::copy(&lib, native_dir.join(name)).map_err(|e| e.to_string())?;
     }
     Ok(())
