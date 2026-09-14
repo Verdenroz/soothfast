@@ -9,7 +9,8 @@ fn runtime() -> &'static ::tokio::runtime::Runtime {
     static RUNTIME: ::std::sync::OnceLock<::tokio::runtime::Runtime> =
         ::std::sync::OnceLock::new();
     RUNTIME.get_or_init(|| {
-        ::tokio::runtime::Runtime::new().expect("start the binding runtime")
+        ::tokio::runtime::Runtime::new()
+            .unwrap_or_else(|e| panic!("start the binding runtime: {e}"))
     })
 }
 

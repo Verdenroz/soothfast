@@ -53,7 +53,7 @@ fn error_static(module: &str) -> String {
          ::magnus::value::Lazy::new(|ruby| {{\n    \
          ruby.define_module(\"{module}\")\n        \
          .and_then(|m| m.define_error(\"Error\", ruby.exception_standard_error()))\n        \
-         .expect(\"defines {module}::Error\")\n}});\n"
+         .unwrap_or_else(|e| panic!(\"defines {module}::Error: {{e}}\"))\n}});\n"
     )
 }
 
