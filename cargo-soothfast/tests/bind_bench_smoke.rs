@@ -9,6 +9,17 @@ use std::process::Command;
 /// `bind bench` builds its target before launching a script (the same
 /// `bind build` a real `[[bind]]` entry goes through), so the `c` glue
 /// directory needs a real, if trivial, cdylib crate — not just a script.
+/// `bind build` passes `--locked`, so a fixture glue crate needs the lockfile
+/// `bind gen` would have written beside its manifest.
+fn lock(glue: &Path) {
+    let status = Command::new("cargo")
+        .arg("generate-lockfile")
+        .current_dir(glue)
+        .status()
+        .expect("runs cargo generate-lockfile");
+    assert!(status.success(), "cargo generate-lockfile failed");
+}
+
 fn write_fixture(dir: &Path) {
     fs::create_dir_all(dir.join("src")).expect("makes src dir");
     fs::create_dir_all(dir.join("bindings/c/src")).expect("makes glue dir");
@@ -31,6 +42,7 @@ fn write_fixture(dir: &Path) {
     )
     .expect("writes glue Cargo.toml");
     fs::write(dir.join("bindings/c/src/lib.rs"), "").expect("writes glue src/lib.rs");
+    lock(&dir.join("bindings/c"));
 
     let script = dir.join("bench.sh");
     fs::write(
@@ -138,6 +150,7 @@ fn add_failing_entry(dir: &Path) {
     )
     .expect("writes second glue Cargo.toml");
     fs::write(dir.join("bindings/c2/src/lib.rs"), "").expect("writes second glue src/lib.rs");
+    lock(&dir.join("bindings/c2"));
 
     let script = dir.join("bench_fails.sh");
     fs::write(&script, "#!/bin/sh\nexit 1\n").expect("writes bench_fails.sh");
@@ -186,6 +199,7 @@ fn write_entry_fixture(dir: &Path, lang: &str, out: &str, bench_file: &str, benc
     )
     .expect("writes glue Cargo.toml");
     fs::write(dir.join(out).join("src/lib.rs"), "").expect("writes glue src/lib.rs");
+    lock(&dir.join(out));
     fs::write(dir.join(bench_file), bench_body).expect("writes bench script");
     let mut soothfast_toml = fs::read_to_string(dir.join("soothfast.toml")).expect("reads config");
     soothfast_toml.push_str(&format!(
