@@ -48,7 +48,7 @@ fn compile_one(
     release: bool,
     target_dir: &Path,
 ) -> Result<PathBuf, String> {
-    let mut cmd = Command::new("cargo");
+    let mut cmd = crate::invoke::cargo_command();
     // `-p` is not optional: without it cargo resolves `--bin` against the
     // workspace's default-run packages, and a server that lives in a
     // non-default member is simply not found.

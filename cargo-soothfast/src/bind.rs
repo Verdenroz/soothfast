@@ -310,7 +310,7 @@ fn manifest_dir(out_dir: &Path, files: &BTreeMap<String, String>) -> Option<Path
 /// `cargo generate-lockfile` reads the registry index only, so this never
 /// needs the target language's own toolchain on the machine.
 fn generate_lockfile(dir: &Path) -> Result<(), String> {
-    let out = Command::new("cargo")
+    let out = crate::invoke::cargo_command()
         .arg("generate-lockfile")
         .current_dir(dir)
         .output()
@@ -330,7 +330,7 @@ fn generate_lockfile(dir: &Path) -> Result<(), String> {
 /// when the lockfile would need to change, so this may still reach the
 /// network the same way `generate_lockfile` does on a cold registry cache.
 fn lockfile_stale(dir: &Path) -> bool {
-    !Command::new("cargo")
+    !crate::invoke::cargo_command()
         .args(["metadata", "--format-version", "1", "--locked"])
         .current_dir(dir)
         .output()
@@ -603,7 +603,7 @@ fn bench(
 /// and actually spawning it — rare, but the same "skip, don't fail" verdict
 /// a `Missing` from `launch` gets.
 fn run_script(
-    mut cmd: std::process::Command,
+    mut cmd: Command,
     label: &str,
 ) -> Result<Option<Vec<bind_bench::BenchRecord>>, String> {
     let out = match cmd.output() {

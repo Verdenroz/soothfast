@@ -10,6 +10,17 @@ use std::time::SystemTime;
 
 use serde_json::{Value, json};
 
+/// A `cargo` invocation using the binary that launched this process (cargo
+/// sets `CARGO` for subcommands and for `cargo run`/`test`/`bench`), falling
+/// back to PATH resolution so calls still work outside a cargo-run context.
+pub fn cargo_command() -> Command {
+    cargo_command_from(std::env::var_os("CARGO"))
+}
+
+fn cargo_command_from(cargo_env: Option<std::ffi::OsString>) -> Command {
+    Command::new(cargo_env.unwrap_or_else(|| "cargo".into()))
+}
+
 /// Flags shared by `measure` and `gate`.
 #[derive(Default, Clone)]
 pub struct CommonArgs {
@@ -94,7 +105,7 @@ fn bench_build_command(
     build: Build,
     pkgs: &[&str],
 ) -> io::Result<Command> {
-    let mut cmd = Command::new("cargo");
+    let mut cmd = cargo_command();
     if let Some(toolchain) = bench_toolchain() {
         cmd.arg(format!("+{toolchain}"));
     }
@@ -536,7 +547,7 @@ pub fn workspace_root() -> io::Result<PathBuf> {
 }
 
 fn locate_workspace_root() -> io::Result<PathBuf> {
-    let out = Command::new("cargo")
+    let out = cargo_command()
         .args(["locate-project", "--workspace", "--message-format", "plain"])
         .output()?;
     if !out.status.success() {
@@ -704,7 +715,7 @@ pub struct PkgMeta {
 }
 
 pub fn pkg_meta(pkg: &str) -> io::Result<PkgMeta> {
-    let out = Command::new("cargo")
+    let out = cargo_command()
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .stdout(Stdio::piped())
         .output()?;
@@ -791,7 +802,7 @@ fn warn_on_format_version(doc: &Value) {
 /// `pkg`'s rustdoc JSON without touching `pkg`'s own files (e.g. through a
 /// re-exported type).
 fn local_crate_dirs(pkg: &str, dir: Option<&Path>) -> io::Result<Vec<PathBuf>> {
-    let mut cmd = Command::new("cargo");
+    let mut cmd = cargo_command();
     cmd.args(["metadata", "--format-version", "1"]);
     cmd.stdout(Stdio::piped());
     if let Some(d) = dir {
@@ -1008,7 +1019,7 @@ pub fn rustdoc_json_in(
         return Ok((doc, root));
     }
 
-    let mut cmd = Command::new("cargo");
+    let mut cmd = cargo_command();
     cmd.args([&format!("+{toolchain}"), "rustdoc", "-p", pkg, "--lib"]);
     // Feature-gated items are invisible to the surface unless enabled.
     if let Some(f) = features {
@@ -1291,7 +1302,7 @@ pub fn sync_harness_versions(wt: &Path) -> Result<HarnessSync, String> {
 /// Cargo's precise pin, run in the worktree. `Ok(None)` when it landed,
 /// `Ok(Some(stderr))` when cargo refused it.
 fn pin_precise(wt: &Path, name: &str, from: &str, to: &str) -> Result<Option<String>, String> {
-    let out = Command::new("cargo")
+    let out = cargo_command()
         .args(["update", "-p", &format!("{name}@{from}"), "--precise", to])
         .current_dir(wt)
         .output()
@@ -1472,7 +1483,7 @@ pub fn sync_untracked_cargo_config(wt: &Path) -> Result<(), String> {
 /// Effective cargo target directory (respects CARGO_TARGET_DIR and
 /// .cargo/config.toml), optionally for a build rooted in another worktree.
 pub fn target_dir(dir: Option<&Path>) -> io::Result<PathBuf> {
-    let mut cmd = Command::new("cargo");
+    let mut cmd = cargo_command();
     cmd.args(["metadata", "--no-deps", "--format-version", "1"]);
     cmd.stdout(Stdio::piped());
     if let Some(d) = dir {
@@ -1538,9 +1549,21 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CommonArgs, ItemMetrics, Run, SaveScope, baseline_path, harness_mismatches, load_baseline,
-        run_from_items_value, run_to_items_value, save_baseline,
+        CommonArgs, ItemMetrics, Run, SaveScope, baseline_path, cargo_command_from,
+        harness_mismatches, load_baseline, run_from_items_value, run_to_items_value, save_baseline,
     };
+
+    #[test]
+    fn cargo_command_uses_the_cargo_env_var_when_set() {
+        let cmd = cargo_command_from(Some("/opt/rust/bin/cargo".into()));
+        assert_eq!(cmd.get_program(), "/opt/rust/bin/cargo");
+    }
+
+    #[test]
+    fn cargo_command_falls_back_to_path_resolution() {
+        let cmd = cargo_command_from(None);
+        assert_eq!(cmd.get_program(), "cargo");
+    }
 
     #[test]
     fn run_from_items_value_round_trips_run_to_items_value() {

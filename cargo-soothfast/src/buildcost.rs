@@ -106,7 +106,7 @@ pub fn measure_in(
 }
 
 fn cargo(args: &[&str], dir: Option<&Path>, target_dir: Option<&Path>) -> Command {
-    let mut cmd = Command::new("cargo");
+    let mut cmd = crate::invoke::cargo_command();
     cmd.args(args);
     if let Some(d) = dir {
         cmd.current_dir(d);

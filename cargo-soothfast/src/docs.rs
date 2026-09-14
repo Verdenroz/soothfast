@@ -570,7 +570,7 @@ fn capture(a: &DocsArgs) -> i32 {
         }
         let mut current = text.clone();
         for (n, (name, _)) in examples.iter().enumerate() {
-            let mut cmd = std::process::Command::new("cargo");
+            let mut cmd = crate::invoke::cargo_command();
             cmd.args(["run", "-q", "-p", &pkg, "--example", name]);
             if let Some(features) = &a.features {
                 cmd.args(["--features", features]);

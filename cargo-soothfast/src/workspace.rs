@@ -9,13 +9,13 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::io;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
 
 /// `cargo metadata` for a tree, with the resolved dependency graph.
 fn metadata(dir: Option<&Path>) -> io::Result<Value> {
-    let mut cmd = Command::new("cargo");
+    let mut cmd = crate::invoke::cargo_command();
     cmd.args(["metadata", "--format-version", "1"]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -35,7 +35,7 @@ fn metadata(dir: Option<&Path>) -> io::Result<Value> {
 /// Every member of this workspace, in name order. `--no-deps` lists exactly
 /// the workspace's own packages, so no dependency can reach the result.
 pub fn members(dir: Option<&Path>) -> io::Result<Vec<String>> {
-    let mut cmd = Command::new("cargo");
+    let mut cmd = crate::invoke::cargo_command();
     cmd.args(["metadata", "--no-deps", "--format-version", "1"]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());

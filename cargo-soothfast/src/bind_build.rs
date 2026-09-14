@@ -303,7 +303,7 @@ fn compile_c(
     if let Some(triple) = target {
         args.extend(["--target", triple]);
     }
-    let mut cmd = Command::new("cargo");
+    let mut cmd = crate::invoke::cargo_command();
     cmd.args(&args)
         .current_dir(glue)
         // The glue crate is its own workspace; an inherited CARGO_TARGET_DIR
@@ -906,7 +906,7 @@ mod tests {
     /// crate's manifest; a bare golden copy has none, and `--locked` needs
     /// one to build against.
     fn lock(glue: &Path) {
-        let status = Command::new("cargo")
+        let status = crate::invoke::cargo_command()
             .arg("generate-lockfile")
             .current_dir(glue)
             .status()
