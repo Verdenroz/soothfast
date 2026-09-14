@@ -37,6 +37,7 @@ import acme_core
 - `find_counter`
 - `greet`
 - `index_all`
+- `maybe_ratio`
 - `normalize`
 - `peak_level`
 - `scale_into`

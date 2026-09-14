@@ -52,5 +52,6 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 - acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::Counter::refresh: `async fn` cannot cross into kotlin: no Kotlin runtime story yet
 - acme::index_all: `HashMap<String, u32>` cannot cross into kotlin: C has no map type; return a sequence of pairs, or an exported type with accessors
+- acme::maybe_ratio: `Option<f64>` cannot cross into kotlin: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; take it by reference, or add a method returning what the caller needs
 - acme::trim: `Option<Vec<f64>>` cannot cross into kotlin: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null

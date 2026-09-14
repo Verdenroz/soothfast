@@ -123,6 +123,11 @@ pub fn greet(name: String) -> String {
     ::acme::greet(&name)
 }
 
+#[napi(js_name = "maybeRatio")]
+pub fn maybe_ratio(value: f64) -> Option<f64> {
+    ::acme::maybe_ratio(value)
+}
+
 #[napi]
 pub fn normalize(input: Float64Array, factor: f64) -> Float64Array {
     Float64Array::from(::acme::normalize(input.to_vec(), factor))

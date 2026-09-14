@@ -111,6 +111,12 @@ fn greet(name: &str) -> String {
 }
 
 #[extendr]
+fn maybe_ratio(value: f64) -> Robj {
+    let __out = ::acme::maybe_ratio(value);
+    match __out { Some(v) => Robj::from(v), None => ().into() }
+}
+
+#[extendr]
 fn normalize(input: &[f64], factor: f64) -> Vec<f64> {
     let input = input.to_vec();
     let __out = ::acme::normalize(input, factor);
@@ -148,6 +154,7 @@ extendr_module! {
     fn digest;
     fn find_counter;
     fn greet;
+    fn maybe_ratio;
     fn normalize;
     fn peak_level;
     fn stamp;

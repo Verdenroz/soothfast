@@ -385,6 +385,11 @@ fn index_all() -> ::std::collections::HashMap<String, u32> {
 }
 
 #[pyfunction]
+fn maybe_ratio(value: f64) -> Option<f64> {
+    ::acme::maybe_ratio(value)
+}
+
+#[pyfunction]
 fn normalize(py: Python<'_>, input: BorrowedF64, factor: f64) -> F64Array {
     let out = py.detach(|| ::acme::normalize(input.into_vec(), factor));
     F64Array::new(out)
@@ -424,6 +429,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(find_counter, m)?)?;
     m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;
+    m.add_function(wrap_pyfunction!(maybe_ratio, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(peak_level, m)?)?;
     m.add_function(wrap_pyfunction!(scale_into, m)?)?;

@@ -103,6 +103,11 @@ pub fn greet(name: &str) -> String {
     ::acme::greet(name)
 }
 
+#[wasm_bindgen(js_name = maybeRatio)]
+pub fn maybe_ratio(value: f64) -> Option<f64> {
+    ::acme::maybe_ratio(value)
+}
+
 #[wasm_bindgen]
 pub fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
     ::acme::normalize(input, factor)

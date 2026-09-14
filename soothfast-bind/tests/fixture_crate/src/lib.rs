@@ -110,3 +110,10 @@ pub fn describe(label: Option<&str>) -> Option<String> {
 pub fn describe_owned(label: Option<String>) -> Option<String> {
     label.map(|l| format!("owned={l}"))
 }
+
+pub fn maybe_ratio(value: f64) -> Option<f64> {
+    match value > 0.0 {
+        true => Some(1.0 / value),
+        false => None,
+    }
+}
