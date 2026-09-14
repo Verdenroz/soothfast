@@ -29,7 +29,6 @@ fn rust_ident(name: &str) -> String {
 /// Every call that can fail throws through this rather than repeating the
 /// same "unless a Java exception is already pending" check inline.
 const PRELUDE: &str = "
-#[allow(dead_code)]
 fn __throw_unless_pending(env: &mut ::jni::JNIEnv, pending: bool, message: String) {
     if !pending {
         let _ = env.throw_new(\"java/lang/RuntimeException\", message);
@@ -37,15 +36,36 @@ fn __throw_unless_pending(env: &mut ::jni::JNIEnv, pending: bool, message: Strin
 }
 ";
 
+/// Whether anything in the surface can produce the kind of failure that
+/// throws through [`PRELUDE`]'s helper: a text or buffer parameter, or a
+/// string/sequence return, each read through `env`'s fallible calls.
+fn needs_throw_helper(plan: &BindingPlan) -> bool {
+    plan.functions().any(|f| {
+        ret_needs_env(&f.ret)
+            || f.params.iter().any(|p| {
+                matches!(
+                    Transfer::of(p, plan),
+                    Transfer::Text { .. } | Transfer::Buffer { .. }
+                )
+            })
+    }) || plan
+        .classes
+        .iter()
+        .flat_map(|c| c.accessors.iter())
+        .any(|a| ret_needs_env(&a.ty))
+}
+
 /// Render the glue crate body.
 pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
     let krate = format!("::{}", opts.crate_name);
     let mut out = String::from(GENERATED_RS);
-    out.push_str(PRELUDE);
+    if needs_throw_helper(plan) {
+        out.push_str(PRELUDE);
+    }
 
     for class in &plan.classes {
         if class.is_plain_enum() {
-            out.push_str(&enum_conversions(class, &krate));
+            out.push_str(&enum_conversions(class, &krate, plan));
         }
     }
     for class in plan.classes.iter().filter(|c| !c.is_plain_enum()) {
@@ -57,9 +77,31 @@ pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
     out
 }
 
+/// Whether anything returns `name` by value, or reads it from a field: the
+/// only two ways `{name}_to_ordinal` gets called.
+fn needs_to_ordinal(name: &str, plan: &BindingPlan) -> bool {
+    plan.functions()
+        .any(|f| matches!(&f.ret, Ty::Class(n) if n == name))
+        || plan
+            .classes
+            .iter()
+            .flat_map(|c| c.accessors.iter())
+            .any(|a| matches!(&a.ty, Ty::Class(n) if n == name))
+}
+
+/// Whether anything takes `name` by value as a parameter: the only way
+/// `{name}_from_ordinal` gets called.
+fn needs_from_ordinal(name: &str, plan: &BindingPlan) -> bool {
+    plan.functions()
+        .flat_map(|f| f.params.iter())
+        .any(|p| matches!(&p.ty, Ty::Class(n) if n == name))
+}
+
 /// A payload-free enum crosses as its ordinal; both directions are decided
 /// once here, in declaration order, matching the Java enum's own ordinals.
-fn enum_conversions(class: &Class, krate: &str) -> String {
+/// Only the directions the surface actually uses are emitted, so neither
+/// conversion ever sits unused.
+fn enum_conversions(class: &Class, krate: &str, plan: &BindingPlan) -> String {
     let inner = inner_path(&class.rust_path, krate);
     let name = types::snake(&class.name);
     let names: Vec<&str> = class
@@ -68,15 +110,28 @@ fn enum_conversions(class: &Class, krate: &str) -> String {
         .flatten()
         .map(|v| v.name.as_str())
         .collect();
-    let mut to_arms = String::new();
-    let mut from_arms = String::new();
-    for (i, variant) in names.iter().enumerate() {
-        let _ = writeln!(to_arms, "        {inner}::{variant} => {i},");
-        let _ = writeln!(from_arms, "        {i} => {inner}::{variant},");
+    let mut out = String::new();
+    if needs_to_ordinal(&class.name, plan) {
+        let mut to_arms = String::new();
+        for (i, variant) in names.iter().enumerate() {
+            let _ = writeln!(to_arms, "        {inner}::{variant} => {i},");
+        }
+        let _ = write!(
+            out,
+            "\nfn {name}_to_ordinal(value: {inner}) -> i32 {{\n    match value {{\n{to_arms}    }}\n}}\n"
+        );
     }
-    format!(
-        "\n#[allow(dead_code)]\nfn {name}_to_ordinal(value: {inner}) -> i32 {{\n    match value {{\n{to_arms}    }}\n}}\n\n#[allow(dead_code)]\nfn {name}_from_ordinal(value: i32) -> {inner} {{\n    match value {{\n{from_arms}        _ => unreachable!(\"Java only ever sends back one of this enum's own ordinals\"),\n    }}\n}}\n"
-    )
+    if needs_from_ordinal(&class.name, plan) {
+        let mut from_arms = String::new();
+        for (i, variant) in names.iter().enumerate() {
+            let _ = writeln!(from_arms, "        {i} => Ok({inner}::{variant}),");
+        }
+        let _ = write!(
+            out,
+            "\nfn {name}_from_ordinal(value: i32) -> Result<{inner}, i32> {{\n    match value {{\n{from_arms}        other => Err(other),\n    }}\n}}\n"
+        );
+    }
+    out
 }
 
 fn class_block(class: &Class, krate: &str, plan: &BindingPlan, opts: &BindOptions) -> String {
@@ -148,7 +203,9 @@ fn env_usage(function: &Function, plan: &BindingPlan) -> (bool, bool) {
         || function.params.iter().any(|p| {
             matches!(
                 Transfer::of(p, plan),
-                Transfer::Text { .. } | Transfer::Buffer { .. }
+                Transfer::Text { .. }
+                    | Transfer::Buffer { .. }
+                    | Transfer::Handle { mirrored: true, .. }
             )
         });
     (needs_env, needs_env)
@@ -317,8 +374,11 @@ fn param_prelude(param: &Param, plan: &BindingPlan, krate: &str, zero: &str) -> 
         } => owned_buffer_stmt(&name, element, zero),
         Transfer::Buffer { element, .. } => copied_buffer_stmt(&name, element, zero),
         Transfer::Handle { mirrored: true, .. } => {
-            let class = types::snake(&class_name(&param.ty));
-            format!("    let {name} = {class}_from_ordinal({name});\n")
+            let snake = types::snake(&class_name(&param.ty));
+            let class = class_name(&param.ty);
+            format!(
+                "    let {name} = match {snake}_from_ordinal({name}) {{\n        Ok(v) => v,\n        Err(other) => {{\n            let _ = env.throw_new(\"java/lang/IllegalArgumentException\", format!(\"invalid {class} ordinal: {{other}}\"));\n            return {zero};\n        }}\n    }};\n"
+            )
         }
         Transfer::Handle { writable, .. } => {
             let class = class_name(&param.ty);
@@ -363,11 +423,11 @@ fn copied_buffer_stmt(name: &str, element: Primitive, zero: &str) -> String {
     format!(
         "    let {name}: Vec<{natural}> = {{\n\
          \x20       let result = unsafe {{ env.get_array_elements_critical(&{name}, ::jni::objects::ReleaseMode::NoCopyBack) }};\n\
-         \x20       {err_block}\n\
-         \x20       let guard = result.unwrap();\n\
+         {err_block}\n\
+         \x20       let guard = result.unwrap_or_else(|_| unreachable!(\"checked above\"));\n\
          \x20       {cast}\n\
          \x20   }};\n",
-        err_block = critical_err_block(zero),
+        err_block = critical_err_block(zero, "        "),
     )
 }
 
@@ -380,9 +440,9 @@ fn pin_stmt(param: &Param, plan: &BindingPlan, zero: &str) -> String {
     let binding = if writable { "let mut" } else { "let" };
     format!(
         "    let result = unsafe {{ env.get_array_elements_critical(&{name}, ::jni::objects::ReleaseMode::{mode}) }};\n\
-         \x20   {err_block}\n\
-         \x20   {binding} {name}_pin = result.unwrap();\n",
-        err_block = critical_err_block(zero),
+         {err_block}\n\
+         \x20   {binding} {name}_pin = result.unwrap_or_else(|_| unreachable!(\"checked above\"));\n",
+        err_block = critical_err_block(zero, "    "),
     )
 }
 
@@ -390,16 +450,18 @@ fn pin_stmt(param: &Param, plan: &BindingPlan, zero: &str) -> String {
 /// fallible call here can throw straight out of its own `Err` arm, but
 /// `AutoElementsCritical`'s `Ok` value borrows `env` itself, so the borrow
 /// checker won't let `env` be reborrowed to throw until the `Result`
-/// holding that borrow is dropped first.
-fn critical_err_block(zero: &str) -> String {
+/// holding that borrow is dropped first. `indent` matches the caller's own
+/// block so the leading comment lines up with the `if` below it.
+fn critical_err_block(zero: &str, indent: &str) -> String {
     format!(
-        "if let Err(ref e) = result {{\n        \
-         let pending = matches!(e, ::jni::errors::Error::JavaException);\n        \
-         let message = e.to_string();\n        \
-         drop(result);\n        \
-         __throw_unless_pending(&mut env, pending, message);\n        \
-         return {zero};\n    \
-         }}"
+        "{indent}// env stays borrowed until result is dropped, so this can't throw as a plain match arm.\n\
+         {indent}if let Err(ref e) = result {{\n\
+         {indent}    let pending = matches!(e, ::jni::errors::Error::JavaException);\n\
+         {indent}    let message = e.to_string();\n\
+         {indent}    drop(result);\n\
+         {indent}    __throw_unless_pending(&mut env, pending, message);\n\
+         {indent}    return {zero};\n\
+         {indent}}}"
     )
 }
 
