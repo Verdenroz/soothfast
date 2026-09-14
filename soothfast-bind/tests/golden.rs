@@ -1155,16 +1155,23 @@ fn the_cpp_header_compiles_clean_under_available_compilers() {
     use std::process::Command;
 
     let dir = golden_dir("cpp");
-    let scratch =
-        std::env::temp_dir().join(format!("soothfast-bind-cpp-check-{}", std::process::id()));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let scratch = std::env::temp_dir().join(format!(
+        "soothfast-bind-cpp-check-{}-{nanos}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&scratch).expect("makes scratch dir");
     let check = scratch.join("check.cpp");
     std::fs::write(&check, "#include \"core.hpp\"\n").expect("writes check.cpp");
 
     let mut checked = 0;
     for compiler in ["g++", "clang++"] {
+        let args = ["-std=c++20", "-Wall", "-Wextra", "-Werror", "-fsyntax-only"];
         let output = Command::new(compiler)
-            .args(["-std=c++20", "-Wall", "-Wextra", "-Werror", "-fsyntax-only"])
+            .args(args)
             .arg("-I")
             .arg(&dir)
             .arg(&check)
@@ -1176,7 +1183,11 @@ fn the_cpp_header_compiles_clean_under_available_compilers() {
         checked += 1;
         assert!(
             output.status.success(),
-            "{compiler} -fsyntax-only failed:\n{}",
+            "{compiler} {} -I {} {} exited with {}\nstderr:\n{}",
+            args.join(" "),
+            dir.display(),
+            check.display(),
+            output.status,
             String::from_utf8_lossy(&output.stderr)
         );
     }
