@@ -42,10 +42,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            manylinux: quay.io/pypa/manylinux_2_28_x86_64
+            manylinux: quay.io/pypa/manylinux_2_28_x86_64@sha256:53390351aeb4688114b02c36a23b3e6ce1166ee9b7afc5df1a4f776354fc764c
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
-            manylinux: quay.io/pypa/manylinux_2_28_aarch64
+            manylinux: quay.io/pypa/manylinux_2_28_aarch64@sha256:ad74e53b713f3b07d8c889c526dc0c6500da9827b45e38739570875fef52e28f
           # Cross-compiled on the arm64 runner; the Intel image is retired.
           - target: x86_64-apple-darwin
             runner: macos-latest
