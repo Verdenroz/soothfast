@@ -80,9 +80,15 @@ fn describe(label: Robj) -> ::std::result::Result<Robj, String> {
 }
 
 #[extendr]
-fn describe_owned(label: Option<String>) -> Option<String> {
-    let __out = ::acme::describe_owned(label.as_deref());
-    __out
+fn describe_owned(label: Robj) -> ::std::result::Result<Robj, String> {
+    let label: Option<String> = match label.as_str() {
+        Some(s) if s.is_na() => None,
+        Some(s) => Some(s.to_string()),
+        None if label.is_null() => None,
+        None => return Err("`label` is not a string".to_string()),
+    };
+    let __out = ::acme::describe_owned(label);
+    Ok(match __out { Some(v) => Robj::from(v), None => ().into() })
 }
 
 #[extendr]

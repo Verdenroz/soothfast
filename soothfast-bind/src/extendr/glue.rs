@@ -404,7 +404,13 @@ fn call_expr(
 fn call_arg(param: &Param, plan: &BindingPlan) -> String {
     let name = &param.name;
     match Transfer::of(param, plan) {
-        Transfer::Text { nullable: true, .. } => format!("{name}.as_deref()"),
+        Transfer::Text {
+            nullable: true,
+            borrowed,
+        } => match borrowed {
+            true => format!("{name}.as_deref()"),
+            false => name.clone(),
+        },
         Transfer::Handle { mirrored: true, .. } => name.clone(),
         Transfer::Handle { writable, .. } => match writable {
             true => format!("&mut {name}.0"),
