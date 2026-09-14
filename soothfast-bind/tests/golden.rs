@@ -1473,3 +1473,61 @@ fn an_optional_string_binds_across_the_c_family() {
         );
     }
 }
+
+#[test]
+fn an_optional_scalar_is_a_gap_across_the_c_family() {
+    for kind in [
+        BindKind::CAbi,
+        BindKind::Go,
+        BindKind::Java,
+        BindKind::Kotlin,
+        BindKind::Cpp,
+        BindKind::Lua,
+        BindKind::CSharp,
+    ] {
+        let opts = match kind {
+            BindKind::Go => go_opts(),
+            BindKind::Java => java_opts(),
+            BindKind::Kotlin => kotlin_opts(),
+            BindKind::Cpp => cpp_opts(),
+            BindKind::Lua => lua_opts(),
+            BindKind::CSharp => csharp_opts(),
+            _ => opts(),
+        };
+        let set = emit_set_with(kind, &opts);
+        assert!(
+            set.gaps.iter().any(|g| g.contains("maybe_ratio")),
+            "{kind:?} does not gap maybe_ratio: {:?}",
+            set.gaps
+        );
+        assert!(
+            !set.files
+                .iter()
+                .any(|(name, f)| name != "README.md" && f.contains("maybe_ratio")),
+            "{kind:?} emitted a symbol for maybe_ratio"
+        );
+    }
+}
+
+#[test]
+fn an_optional_scalar_binds_natively_outside_the_c_family() {
+    for kind in [
+        BindKind::Python,
+        BindKind::Wasm,
+        BindKind::Node,
+        BindKind::Ruby,
+        BindKind::R,
+    ] {
+        let opts = match kind {
+            BindKind::Ruby => ruby_opts(),
+            BindKind::R => r_opts(),
+            _ => opts(),
+        };
+        let set = emit_set_with(kind, &opts);
+        assert!(
+            !set.gaps.iter().any(|g| g.contains("maybe_ratio")),
+            "{kind:?} gaps maybe_ratio: {:?}",
+            set.gaps
+        );
+    }
+}
