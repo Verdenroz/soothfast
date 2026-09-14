@@ -4,7 +4,7 @@
 //! once as Rust writes it in the `extern "C"` shim. Deciding both in one
 //! place is what keeps the two files describing the same ABI.
 
-use crate::model::Ty;
+use crate::model::{Primitive, Ty};
 use crate::plan::BindingPlan;
 
 /// How one type is spelled on each side of the boundary.
@@ -20,28 +20,30 @@ fn both(c: &str, rust: &str) -> Spelling {
     }
 }
 
-/// A scalar's spelling, or `None` for a type that is not one.
-///
-/// `bool` is included: the C `_Bool` and Rust `bool` agree on one byte, which
-/// is the guarantee `#[repr(C)]` rests on.
-pub(crate) fn scalar(ty: &Ty) -> Option<Spelling> {
-    let pair = match ty {
-        Ty::Bool => ("bool", "bool"),
-        Ty::I8 => ("int8_t", "i8"),
-        Ty::I16 => ("int16_t", "i16"),
-        Ty::I32 => ("int32_t", "i32"),
-        Ty::I64 => ("int64_t", "i64"),
-        Ty::ISize => ("ptrdiff_t", "isize"),
-        Ty::U8 => ("uint8_t", "u8"),
-        Ty::U16 => ("uint16_t", "u16"),
-        Ty::U32 => ("uint32_t", "u32"),
-        Ty::U64 => ("uint64_t", "u64"),
-        Ty::USize => ("size_t", "usize"),
-        Ty::F32 => ("float", "f32"),
-        Ty::F64 => ("double", "f64"),
-        _ => return None,
+/// A primitive's spelling. `bool` is included: the C `_Bool` and Rust `bool`
+/// agree on one byte, which is the guarantee `#[repr(C)]` rests on.
+pub(crate) fn scalar_of(p: Primitive) -> Spelling {
+    let pair = match p {
+        Primitive::Bool => ("bool", "bool"),
+        Primitive::I8 => ("int8_t", "i8"),
+        Primitive::I16 => ("int16_t", "i16"),
+        Primitive::I32 => ("int32_t", "i32"),
+        Primitive::I64 => ("int64_t", "i64"),
+        Primitive::ISize => ("ptrdiff_t", "isize"),
+        Primitive::U8 => ("uint8_t", "u8"),
+        Primitive::U16 => ("uint16_t", "u16"),
+        Primitive::U32 => ("uint32_t", "u32"),
+        Primitive::U64 => ("uint64_t", "u64"),
+        Primitive::USize => ("size_t", "usize"),
+        Primitive::F32 => ("float", "f32"),
+        Primitive::F64 => ("double", "f64"),
     };
-    Some(both(pair.0, pair.1))
+    both(pair.0, pair.1)
+}
+
+/// A scalar's spelling, or `None` for a type that is not one.
+pub(crate) fn scalar(ty: &Ty) -> Option<Spelling> {
+    ty.primitive().map(scalar_of)
 }
 
 /// The element of a contiguous sequence this backend carries as a pointer

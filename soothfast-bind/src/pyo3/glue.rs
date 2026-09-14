@@ -449,11 +449,11 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
             nullable: false,
         } => ("&str".into(), name),
         Transfer::Buffer {
-            ref element,
+            element,
             borrowed,
             writable,
-        } if buffered(element).is_some() => {
-            let view = view_name(element, writable);
+        } if buffered(&element.into()).is_some() => {
+            let view = view_name(&element.into(), writable);
             let handoff = match (borrowed, writable) {
                 (true, true) => format!("{name}.as_mut_slice()"),
                 (true, false) => format!("{name}.as_slice()"),
@@ -474,7 +474,7 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
 fn needs_mut(param: &Param, plan: &BindingPlan) -> bool {
     matches!(
         Transfer::of(param, plan),
-        Transfer::Buffer { ref element, writable: true, .. } if buffered(element).is_some()
+        Transfer::Buffer { element, writable: true, .. } if buffered(&element.into()).is_some()
     )
 }
 

@@ -45,19 +45,13 @@ pub(crate) fn arrays(plan: &BindingPlan) -> Vec<(Ty, String)> {
         .iter()
         .flat_map(|c| c.accessors.iter())
         .map(|a| &a.ty);
-    let mut wanted: BTreeMap<String, Ty> = BTreeMap::new();
+    let mut wanted: BTreeMap<String, (Ty, String)> = BTreeMap::new();
     for ty in returns.chain(fields) {
-        if types::element(ty).is_some() {
-            wanted.insert(ty.render(), ty.clone());
+        if let Some(spelling) = types::element(ty) {
+            wanted.insert(ty.render(), (ty.clone(), spelling.rust));
         }
     }
-    wanted
-        .into_values()
-        .map(|ty| {
-            let element = types::element(&ty).expect("checked").rust;
-            (ty, element)
-        })
-        .collect()
+    wanted.into_values().collect()
 }
 
 /// Whether anything comes back as an owned string, which the caller has to
@@ -337,11 +331,9 @@ fn param_decl(param: &crate::model::Param, plan: &BindingPlan, module: &str) -> 
     let name = super::c_ident(&param.name);
     match Transfer::of(param, plan) {
         Transfer::Buffer {
-            ref element,
-            writable,
-            ..
+            element, writable, ..
         } => {
-            let rust = types::scalar(element).map(|s| s.rust).unwrap_or_default();
+            let rust = types::scalar_of(element).rust;
             let mutability = match writable {
                 true => "mut",
                 false => "const",

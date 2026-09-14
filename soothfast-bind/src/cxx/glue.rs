@@ -335,7 +335,7 @@ fn cpp_param_type(param: &Param, plan: &BindingPlan) -> String {
         Transfer::Buffer {
             element, writable, ..
         } => {
-            let scalar = c::scalar(&element).map(|s| s.c).unwrap_or_default();
+            let scalar = c::scalar_of(element).c;
             match writable {
                 true => format!("std::span<{scalar}>"),
                 false => format!("std::span<const {scalar}>"),

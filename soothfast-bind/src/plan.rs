@@ -11,8 +11,8 @@ use std::iter::once;
 
 use crate::gap::Gap;
 use crate::model::{
-    ExportedFn, ExportedType, Field, Ownership, Param, Receiver, Surface, Ty, TypeKind, Variant,
-    is_plain,
+    ExportedFn, ExportedType, Field, Ownership, Param, Primitive, Receiver, Surface, Ty, TypeKind,
+    Variant, is_plain,
 };
 use crate::{BindKind, BindOptions};
 
@@ -153,7 +153,7 @@ pub enum Transfer {
     /// A contiguous run of one primitive: the only shape a language can hope
     /// to hand over without copying.
     Buffer {
-        element: Ty,
+        element: Primitive,
         borrowed: bool,
         writable: bool,
     },
@@ -181,14 +181,17 @@ impl Transfer {
                 nullable: true,
             },
             Ty::Bytes => Transfer::Buffer {
-                element: Ty::U8,
+                element: Primitive::U8,
                 borrowed,
                 writable,
             },
-            Ty::List(inner) if inner.is_primitive() => Transfer::Buffer {
-                element: (**inner).clone(),
-                borrowed,
-                writable,
+            Ty::List(inner) => match inner.primitive() {
+                Some(element) => Transfer::Buffer {
+                    element,
+                    borrowed,
+                    writable,
+                },
+                None => Transfer::Collection,
             },
             ty if ty.is_primitive() || *ty == Ty::Unit => Transfer::Scalar,
             _ => Transfer::Collection,

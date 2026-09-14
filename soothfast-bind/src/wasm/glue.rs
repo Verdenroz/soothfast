@@ -369,7 +369,7 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
         } => {
             let mutability = if writable { "mut " } else { "" };
             (
-                format!("&{mutability}[{}]", signature_ty(&element)),
+                format!("&{mutability}[{}]", signature_ty(&element.into())),
                 name.clone(),
             )
         }

@@ -410,9 +410,10 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
         },
         Ty::Optional(inner) => match &**inner {
             Ty::Bytes => format!("{expr}.map(Buffer::from)"),
-            Ty::List(elem) if array_ty(elem).is_some() => {
-                format!("{expr}.map({}::from)", array_ty(elem).expect("checked"))
-            }
+            Ty::List(elem) => match array_ty(elem) {
+                Some(arr) => format!("{expr}.map({arr}::from)"),
+                None => expr.to_string(),
+            },
             Ty::Class(name) if plan.is_mirrored(name) => {
                 format!("{expr}.map(::std::convert::Into::into)")
             }
@@ -460,6 +461,11 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
         Ty::Class(c) => c.clone(),
         _ => String::new(),
     };
+    let by_ownership = || match param.ownership {
+        Ownership::Owned => (signature_ty(&param.ty), None, name.clone()),
+        Ownership::Borrowed => (signature_ty(&param.ty), None, format!("&{name}")),
+        Ownership::BorrowedMut => (signature_ty(&param.ty), None, format!("&mut {name}")),
+    };
     match Transfer::of(param, plan) {
         Transfer::Handle { mirrored: true, .. } => {
             (class_of(&param.ty), None, format!("{name}.into()"))
@@ -497,27 +503,25 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
             },
         ),
         Transfer::Buffer {
-            ref element,
+            element,
             borrowed,
             writable,
-        } if buffer_ty(element).is_some() => {
-            let ty = buffer_ty(element).expect("checked");
-            let handoff = match (borrowed, writable) {
-                (_, true) => format!("unsafe {{ {name}.as_mut() }}"),
-                (true, false) => format!("{name}.as_ref()"),
-                (false, false) => format!("{name}.to_vec()"),
-            };
-            (ty.to_string(), None, handoff)
-        }
+        } => match buffer_ty(&element.into()) {
+            Some(ty) => {
+                let handoff = match (borrowed, writable) {
+                    (_, true) => format!("unsafe {{ {name}.as_mut() }}"),
+                    (true, false) => format!("{name}.as_ref()"),
+                    (false, false) => format!("{name}.to_vec()"),
+                };
+                (ty.to_string(), None, handoff)
+            }
+            None => by_ownership(),
+        },
         _ if is_bigint_ty(&param.ty) => {
             let (prelude, arg) = convert_scalar(name, &param.ty, plan);
             ("BigInt".into(), prelude, arg)
         }
-        _ => match param.ownership {
-            Ownership::Owned => (signature_ty(&param.ty), None, name.clone()),
-            Ownership::Borrowed => (signature_ty(&param.ty), None, format!("&{name}")),
-            Ownership::BorrowedMut => (signature_ty(&param.ty), None, format!("&mut {name}")),
-        },
+        _ => by_ownership(),
     }
 }
 

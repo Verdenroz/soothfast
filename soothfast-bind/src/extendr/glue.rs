@@ -193,7 +193,7 @@ fn param_ty(param: &Param, plan: &BindingPlan) -> String {
                 false => format!("&{name}"),
             }
         }
-        Transfer::Buffer { element, .. } => buffer_param_ty(&element),
+        Transfer::Buffer { element, .. } => buffer_param_ty(&element.into()),
         _ => scalar_ty(&param.ty),
     }
 }
@@ -292,7 +292,7 @@ fn param_prelude(param: &Param, krate: &str, plan: &BindingPlan) -> String {
         Transfer::Text { nullable: true, .. } => optional_text_prelude(name),
         Transfer::Buffer {
             element, borrowed, ..
-        } => buffer_prelude(name, &element, borrowed),
+        } => buffer_prelude(name, &element.into(), borrowed),
         _ => match types::checked_int(&param.ty) {
             Some(rust) => {
                 format!("    let {name} = __checked_int::<{rust}>({name}, \"{name}\")?;\n")
@@ -330,11 +330,9 @@ fn buffer_prelude(name: &str, element: &Ty, borrowed: bool) -> String {
 fn enum_from_str(param: &Param, krate: &str, plan: &BindingPlan) -> String {
     let name = &param.name;
     let class_name = class_name(&param.ty);
-    let class = plan
-        .classes
-        .iter()
-        .find(|c| c.name == class_name)
-        .expect("mirrored handle names a known class");
+    let Some(class) = plan.classes.iter().find(|c| c.name == class_name) else {
+        unreachable!("is_mirrored({class_name}) named a class not in the plan")
+    };
     let inner = inner_path(&class.rust_path, krate);
     let mut arms = String::new();
     for variant in class.variants.iter().flatten() {
@@ -360,11 +358,9 @@ fn returned(expr: &str, ty: &Ty, krate: &str, plan: &BindingPlan) -> String {
 }
 
 fn enum_to_str(expr: &str, name: &str, krate: &str, plan: &BindingPlan) -> String {
-    let class = plan
-        .classes
-        .iter()
-        .find(|c| c.name == name)
-        .expect("mirrored return names a known class");
+    let Some(class) = plan.classes.iter().find(|c| c.name == name) else {
+        unreachable!("is_mirrored({name}) named a class not in the plan")
+    };
     let inner = inner_path(&class.rust_path, krate);
     let mut arms = String::new();
     for variant in class.variants.iter().flatten() {
@@ -420,7 +416,7 @@ fn call_arg(param: &Param, plan: &BindingPlan) -> String {
         // `Vec`; a call that wants it borrowed still needs the reference.
         Transfer::Buffer {
             element, borrowed, ..
-        } if borrowed && types::checked_int(&element).is_some() => format!("&{name}"),
+        } if borrowed && types::checked_int(&element.into()).is_some() => format!("&{name}"),
         _ => name.clone(),
     }
 }

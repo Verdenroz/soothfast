@@ -50,6 +50,7 @@ pub(crate) fn views(plan: &BindingPlan) -> Vec<String> {
         else {
             continue;
         };
+        let element: Ty = element.into();
         let Some(rust) = buffered(&element) else {
             continue;
         };

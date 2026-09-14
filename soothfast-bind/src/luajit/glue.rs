@@ -11,7 +11,7 @@ use crate::GENERATED_LUA;
 use crate::cabi::glue::{arrays, returns_text};
 use crate::cabi::header;
 use crate::cabi::types as c;
-use crate::model::{Param, Receiver, Ty};
+use crate::model::{Param, Primitive, Receiver, Ty};
 use crate::plan::{Accessor, BindingPlan, Class, Function, Transfer};
 
 use super::types::lua_ident;
@@ -27,7 +27,7 @@ pub(crate) fn render(plan: &BindingPlan, module: &str) -> String {
     }
     let array_elements: BTreeSet<String> = arrays(plan).into_iter().map(|(_, e)| e).collect();
     for element in buffer_elements(plan) {
-        out.push_str(&buffer_helper(&element, module, &array_elements));
+        out.push_str(&buffer_helper(element, module, &array_elements));
     }
     for (ty, element) in arrays(plan) {
         out.push_str(&array_helper(&ty, &element, module));
@@ -54,8 +54,8 @@ pub(crate) fn render(plan: &BindingPlan, module: &str) -> String {
 
 /// Every scalar a buffer parameter is built from, each needing its own
 /// `<elem>_buf` conversion helper.
-fn buffer_elements(plan: &BindingPlan) -> Vec<Ty> {
-    let mut wanted: BTreeMap<String, Ty> = BTreeMap::new();
+fn buffer_elements(plan: &BindingPlan) -> Vec<Primitive> {
+    let mut wanted: BTreeMap<&'static str, Primitive> = BTreeMap::new();
     for f in plan.functions() {
         for param in &f.params {
             if let Transfer::Buffer { element, .. } = Transfer::of(param, plan) {
@@ -76,8 +76,8 @@ fn buffer_elements(plan: &BindingPlan) -> Vec<Ty> {
 /// one declared in this module's `ffi.cdef` block: naming one that was never
 /// declared (an element used only as a buffer, never as a return) is a
 /// parse error the moment `ffi.istype` sees the string.
-fn buffer_helper(element: &Ty, module: &str, array_elements: &BTreeSet<String>) -> String {
-    let spelling = c::scalar(element).expect("checked buffer element");
+fn buffer_helper(element: Primitive, module: &str, array_elements: &BTreeSet<String>) -> String {
+    let spelling = c::scalar_of(element);
     let name = format!("{}_buf", spelling.rust);
     let array_check = match array_elements.contains(&spelling.rust) {
         true => format!(
@@ -298,7 +298,7 @@ fn function_body(
 
     for param in &function.params {
         if let Transfer::Buffer { element, .. } = Transfer::of(param, plan) {
-            let helper = format!("{}_buf", c::scalar(&element).expect("checked").rust);
+            let helper = format!("{}_buf", c::scalar_of(element).rust);
             let name = lua_ident(&param.name);
             lines.push(format!("\tlocal {name}_ptr, {name}_len = {helper}({name})"));
         }

@@ -37,6 +37,71 @@ pub enum Ty {
     Opaque(String),
 }
 
+/// A scalar `Ty` a binding layer can carry as-is: the subset every
+/// backend's own spelling table covers exhaustively, so a `Transfer::Buffer`
+/// element can never fail the lookup that turns it into one language's
+/// native type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Primitive {
+    Bool,
+    I8,
+    I16,
+    I32,
+    I64,
+    ISize,
+    U8,
+    U16,
+    U32,
+    U64,
+    USize,
+    F32,
+    F64,
+}
+
+impl Primitive {
+    /// How the type reads in Rust, the same spelling [`Ty::render`] gives
+    /// its own primitive variants.
+    pub fn render(&self) -> &'static str {
+        match self {
+            Primitive::Bool => "bool",
+            Primitive::I8 => "i8",
+            Primitive::I16 => "i16",
+            Primitive::I32 => "i32",
+            Primitive::I64 => "i64",
+            Primitive::ISize => "isize",
+            Primitive::U8 => "u8",
+            Primitive::U16 => "u16",
+            Primitive::U32 => "u32",
+            Primitive::U64 => "u64",
+            Primitive::USize => "usize",
+            Primitive::F32 => "f32",
+            Primitive::F64 => "f64",
+        }
+    }
+}
+
+/// The `Ty` leaf this primitive came from, for a backend whose own scalar
+/// table still takes the general `&Ty` a return type or field can be.
+impl From<Primitive> for Ty {
+    fn from(p: Primitive) -> Ty {
+        match p {
+            Primitive::Bool => Ty::Bool,
+            Primitive::I8 => Ty::I8,
+            Primitive::I16 => Ty::I16,
+            Primitive::I32 => Ty::I32,
+            Primitive::I64 => Ty::I64,
+            Primitive::ISize => Ty::ISize,
+            Primitive::U8 => Ty::U8,
+            Primitive::U16 => Ty::U16,
+            Primitive::U32 => Ty::U32,
+            Primitive::U64 => Ty::U64,
+            Primitive::USize => Ty::USize,
+            Primitive::F32 => Ty::F32,
+            Primitive::F64 => Ty::F64,
+        }
+    }
+}
+
 impl Ty {
     /// Whether this type, or anything inside it, has no known mapping.
     pub fn has_opaque(&self) -> bool {
@@ -79,24 +144,30 @@ impl Ty {
         }
     }
 
+    /// This type's [`Primitive`], or `None` for anything a binding layer
+    /// cannot carry as-is.
+    pub fn primitive(&self) -> Option<Primitive> {
+        Some(match self {
+            Ty::Bool => Primitive::Bool,
+            Ty::I8 => Primitive::I8,
+            Ty::I16 => Primitive::I16,
+            Ty::I32 => Primitive::I32,
+            Ty::I64 => Primitive::I64,
+            Ty::ISize => Primitive::ISize,
+            Ty::U8 => Primitive::U8,
+            Ty::U16 => Primitive::U16,
+            Ty::U32 => Primitive::U32,
+            Ty::U64 => Primitive::U64,
+            Ty::USize => Primitive::USize,
+            Ty::F32 => Primitive::F32,
+            Ty::F64 => Primitive::F64,
+            _ => return None,
+        })
+    }
+
     /// Whether this is a scalar a binding layer can carry as-is.
     pub fn is_primitive(&self) -> bool {
-        matches!(
-            self,
-            Ty::Bool
-                | Ty::I8
-                | Ty::I16
-                | Ty::I32
-                | Ty::I64
-                | Ty::ISize
-                | Ty::U8
-                | Ty::U16
-                | Ty::U32
-                | Ty::U64
-                | Ty::USize
-                | Ty::F32
-                | Ty::F64
-        )
+        self.primitive().is_some()
     }
 
     /// Every exported type named anywhere inside this one.

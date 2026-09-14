@@ -337,7 +337,7 @@ fn c_arg(param: &Param, plan: &BindingPlan) -> String {
     let name = ident(&param.name);
     match Transfer::of(param, plan) {
         Transfer::Buffer { element, .. } => {
-            let c_elem = c::scalar(&element).map_or(String::new(), |s| s.c);
+            let c_elem = c::scalar_of(element).c;
             format!("(*C.{c_elem})(unsafe.Pointer(bufPtr({name}))), C.size_t(len({name}))")
         }
         Transfer::Text { .. } => c_string_var(&param.name),

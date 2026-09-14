@@ -6,7 +6,7 @@
 //! header P/Invoke calls against.
 
 use crate::cabi::types as c;
-use crate::model::Ty;
+use crate::model::{Primitive, Ty};
 use crate::plan::BindingPlan;
 
 /// A scalar's blittable P/Invoke spelling and its public C# spelling.
@@ -27,27 +27,31 @@ fn both(spelling: &'static str) -> Spelling {
     }
 }
 
-/// A scalar's spelling, or `None` for a type that is not one.
-pub(crate) fn scalar(ty: &Ty) -> Option<Spelling> {
-    match ty {
-        Ty::Bool => Some(Spelling {
+/// A primitive's blittable P/Invoke spelling and its public C# spelling.
+pub(crate) fn scalar_of(p: Primitive) -> Spelling {
+    match p {
+        Primitive::Bool => Spelling {
             native: "byte",
             public: "bool",
-        }),
-        Ty::I8 => Some(both("sbyte")),
-        Ty::I16 => Some(both("short")),
-        Ty::I32 => Some(both("int")),
-        Ty::I64 => Some(both("long")),
-        Ty::ISize => Some(both("nint")),
-        Ty::U8 => Some(both("byte")),
-        Ty::U16 => Some(both("ushort")),
-        Ty::U32 => Some(both("uint")),
-        Ty::U64 => Some(both("ulong")),
-        Ty::USize => Some(both("nuint")),
-        Ty::F32 => Some(both("float")),
-        Ty::F64 => Some(both("double")),
-        _ => None,
+        },
+        Primitive::I8 => both("sbyte"),
+        Primitive::I16 => both("short"),
+        Primitive::I32 => both("int"),
+        Primitive::I64 => both("long"),
+        Primitive::ISize => both("nint"),
+        Primitive::U8 => both("byte"),
+        Primitive::U16 => both("ushort"),
+        Primitive::U32 => both("uint"),
+        Primitive::U64 => both("ulong"),
+        Primitive::USize => both("nuint"),
+        Primitive::F32 => both("float"),
+        Primitive::F64 => both("double"),
     }
+}
+
+/// A scalar's spelling, or `None` for a type that is not one.
+pub(crate) fn scalar(ty: &Ty) -> Option<Spelling> {
+    ty.primitive().map(scalar_of)
 }
 
 /// The element of a contiguous sequence this backend carries pinned, or
@@ -94,17 +98,17 @@ pub(crate) fn public_ty(ty: &Ty) -> String {
             Ty::Str => "string?".into(),
             other => public_ty(other),
         },
-        ty if ty.is_primitive() => scalar(ty).expect("checked").public.into(),
-        ty => element(ty)
-            .map(|e| format!("{}[]", e.public))
+        ty => scalar(ty)
+            .map(|s| s.public.into())
+            .or_else(|| element(ty).map(|e| format!("{}[]", e.public)))
             .unwrap_or_default(),
     }
 }
 
 /// A buffer parameter's public type: a view over the caller's own memory
 /// rather than a copy, mutable only when the signature borrows it that way.
-pub(crate) fn buffer_public_ty(element: &Ty, writable: bool) -> String {
-    let public = scalar(element).expect("buffer element is a scalar").public;
+pub(crate) fn buffer_public_ty(element: Primitive, writable: bool) -> String {
+    let public = scalar_of(element).public;
     match writable {
         true => format!("Span<{public}>"),
         false => format!("ReadOnlySpan<{public}>"),

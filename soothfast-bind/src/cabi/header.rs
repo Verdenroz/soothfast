@@ -203,11 +203,9 @@ fn param_decl(param: &Param, plan: &BindingPlan, module: &str) -> Vec<String> {
     let name = super::c_ident(&param.name);
     match Transfer::of(param, plan) {
         Transfer::Buffer {
-            ref element,
-            writable,
-            ..
+            element, writable, ..
         } => {
-            let c = types::scalar(element).map(|s| s.c).unwrap_or_default();
+            let c = types::scalar_of(element).c;
             let head = match writable {
                 true => format!("{c} *{name}"),
                 false => format!("const {c} *{name}"),

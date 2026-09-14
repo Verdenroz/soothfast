@@ -142,7 +142,7 @@ fn native_params(
         let name = super::ident(&param.name);
         match Transfer::of(param, plan) {
             Transfer::Buffer { element, .. } => {
-                let native = types::scalar(&element).expect("checked").native;
+                let native = types::scalar_of(element).native;
                 out.push(format!("{native}* {name}"));
                 out.push(format!("nuint {name}_len"));
                 needs_unsafe = true;
@@ -441,7 +441,7 @@ fn public_params(function: &Function, plan: &BindingPlan) -> String {
             let ty = match Transfer::of(p, plan) {
                 Transfer::Buffer {
                     element, writable, ..
-                } => types::buffer_public_ty(&element, writable),
+                } => types::buffer_public_ty(element, writable),
                 _ => types::public_ty(&p.ty),
             };
             format!("{ty} {name}")
@@ -499,7 +499,7 @@ fn build_call(
         match Transfer::of(param, plan) {
             Transfer::Buffer { element, .. } => {
                 let ptr = format!("{name}Ptr");
-                let native = types::scalar(&element).expect("checked").native;
+                let native = types::scalar_of(element).native;
                 pins.push(format!("fixed ({native}* {ptr} = {name})"));
                 args.push(format!("{ptr}, (nuint){name}.Length"));
             }

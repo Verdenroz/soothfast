@@ -8,7 +8,7 @@
 //! Kotlin escapes a reserved-word identifier the same way Java does, with a
 //! trailing underscore (see [`super::kotlin_ident`]).
 
-use crate::model::Ty;
+use crate::model::{Primitive, Ty};
 use crate::naming;
 use crate::plan::BindingPlan;
 
@@ -32,23 +32,27 @@ fn spelling(java: &'static str, kotlin: &'static str, rust: &'static str) -> Spe
     Spelling { java, kotlin, rust }
 }
 
-/// A scalar's spelling, or `None` for a type that is not one.
-///
-/// Java has no unsigned integer type, so each unsigned width reinterprets
-/// the same bits as its signed twin, the same choice `&[u8]` already makes
-/// crossing as `byte[]`.
-pub(crate) fn scalar(ty: &Ty) -> Option<Spelling> {
-    let triple = match ty {
-        Ty::Bool => ("boolean", "Boolean", "bool"),
-        Ty::I8 | Ty::U8 => ("byte", "Byte", "i8"),
-        Ty::I16 | Ty::U16 => ("short", "Short", "i16"),
-        Ty::I32 | Ty::U32 => ("int", "Int", "i32"),
-        Ty::I64 | Ty::U64 | Ty::ISize | Ty::USize => ("long", "Long", "i64"),
-        Ty::F32 => ("float", "Float", "f32"),
-        Ty::F64 => ("double", "Double", "f64"),
-        _ => return None,
+/// A primitive's spelling. Java has no unsigned integer type, so each
+/// unsigned width reinterprets the same bits as its signed twin, the same
+/// choice `&[u8]` already makes crossing as `byte[]`.
+pub(crate) fn scalar_of(p: Primitive) -> Spelling {
+    let triple = match p {
+        Primitive::Bool => ("boolean", "Boolean", "bool"),
+        Primitive::I8 | Primitive::U8 => ("byte", "Byte", "i8"),
+        Primitive::I16 | Primitive::U16 => ("short", "Short", "i16"),
+        Primitive::I32 | Primitive::U32 => ("int", "Int", "i32"),
+        Primitive::I64 | Primitive::U64 | Primitive::ISize | Primitive::USize => {
+            ("long", "Long", "i64")
+        }
+        Primitive::F32 => ("float", "Float", "f32"),
+        Primitive::F64 => ("double", "Double", "f64"),
     };
-    Some(spelling(triple.0, triple.1, triple.2))
+    spelling(triple.0, triple.1, triple.2)
+}
+
+/// A scalar's spelling, or `None` for a type that is not one.
+pub(crate) fn scalar(ty: &Ty) -> Option<Spelling> {
+    ty.primitive().map(scalar_of)
 }
 
 /// The element of a contiguous sequence this backend carries pinned, or
@@ -71,9 +75,9 @@ pub(crate) fn java_ty(ty: &Ty) -> String {
         Ty::Str => "String".into(),
         Ty::Class(name) => name.clone(),
         Ty::Optional(inner) => java_ty(inner),
-        ty if ty.is_primitive() => scalar(ty).expect("checked").java.into(),
-        ty => element(ty)
-            .map(|e| format!("{}[]", e.java))
+        ty => scalar(ty)
+            .map(|s| s.java.into())
+            .or_else(|| element(ty).map(|e| format!("{}[]", e.java)))
             .unwrap_or_default(),
     }
 }
@@ -97,9 +101,11 @@ pub(crate) fn native_param_ty(ty: &Ty, plan: &BindingPlan) -> String {
         Ty::Optional(inner) if **inner == Ty::Str => "::jni::objects::JString<'local>".into(),
         Ty::Class(name) if plan.is_mirrored(name) => "i32".into(),
         Ty::Class(_) => "i64".into(),
-        ty if ty.is_primitive() => scalar(ty).expect("checked").rust.into(),
-        ty => element(ty)
-            .map(|e| format!("::jni::objects::{}<'local>", array_class(e.java)))
+        ty => scalar(ty)
+            .map(|s| s.rust.into())
+            .or_else(|| {
+                element(ty).map(|e| format!("::jni::objects::{}<'local>", array_class(e.java)))
+            })
             .unwrap_or_default(),
     }
 }
@@ -116,9 +122,9 @@ pub(crate) fn native_return_ty(ty: &Ty, plan: &BindingPlan) -> String {
             Ty::Class(_) => "i64".into(),
             other => native_return_ty(other, plan),
         },
-        ty if ty.is_primitive() => scalar(ty).expect("checked").rust.into(),
-        ty => element(ty)
-            .map(|e| format!("::jni::sys::{}", array_sys(e.java)))
+        ty => scalar(ty)
+            .map(|s| s.rust.into())
+            .or_else(|| element(ty).map(|e| format!("::jni::sys::{}", array_sys(e.java))))
             .unwrap_or_default(),
     }
 }
@@ -152,9 +158,9 @@ pub(crate) fn kotlin_ty(ty: &Ty) -> String {
             Ty::Str => "String?".into(),
             other => kotlin_ty(other),
         },
-        ty if ty.is_primitive() => scalar(ty).expect("checked").kotlin.into(),
-        ty => element(ty)
-            .map(|e| format!("{}Array", e.kotlin))
+        ty => scalar(ty)
+            .map(|s| s.kotlin.into())
+            .or_else(|| element(ty).map(|e| format!("{}Array", e.kotlin)))
             .unwrap_or_default(),
     }
 }
