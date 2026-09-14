@@ -27,7 +27,7 @@ fn scratch_dir() -> PathBuf {
 const SMOKE_TEST_JS: &str = r#"
 const test = require("node:test");
 const assert = require("node:assert");
-const { Counter, Level, digest, normalize, peakLevel, findCounter, describe, describeOwned } = require("./index.js");
+const { Counter, Level, digest, normalize, peakLevel, findCounter, describe, describeOwned, maybeRatio } = require("./index.js");
 
 test("a class carries state across calls", () => {
     const counter = new Counter(10n);
@@ -69,6 +69,11 @@ test("an optional string round-trips through Option<&str> and Option<String>", (
 
     assert.strictEqual(describeOwned("world"), "owned=world");
     assert.strictEqual(describeOwned(null), null);
+});
+
+test("an optional scalar round-trips through Option<f64>", () => {
+    assert.strictEqual(maybeRatio(4), 0.25);
+    assert.strictEqual(maybeRatio(-1), null);
 });
 "#;
 

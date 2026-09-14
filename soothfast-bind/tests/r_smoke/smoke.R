@@ -36,3 +36,6 @@ cat("describe_owned(NULL)=", is.null(describe_owned(NULL)), "\n", sep = "")
 cat("describe_owned(NA)=", is.null(describe_owned(NA_character_)), "\n", sep = "")
 describe_owned_err <- tryCatch(describe_owned(42), error = function(e) conditionMessage(e))
 cat("caught describe_owned:", describe_owned_err, "\n")
+
+cat("maybe_ratio=", maybe_ratio(4), "\n", sep = "")
+cat("maybe_ratio(-1)=", is.null(maybe_ratio(-1)), "\n", sep = "")

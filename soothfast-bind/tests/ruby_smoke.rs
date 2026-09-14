@@ -67,6 +67,9 @@ raise "describe absent" unless AcmeCore.describe(nil).nil?
 raise "describe_owned" unless AcmeCore.describe_owned("world") == "owned=world"
 raise "describe_owned absent" unless AcmeCore.describe_owned(nil).nil?
 
+raise "maybe_ratio" unless AcmeCore.maybe_ratio(4) == 0.25
+raise "maybe_ratio absent" unless AcmeCore.maybe_ratio(-1).nil?
+
 puts "ok"
 "#;
 

@@ -118,4 +118,6 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "describe_owned(NULL)=TRUE",
     "describe_owned(NA)=TRUE",
     "caught describe_owned: `label` is not a string",
+    "maybe_ratio=0.25",
+    "maybe_ratio(-1)=TRUE",
 ];
