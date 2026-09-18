@@ -9,10 +9,16 @@
 use std::collections::BTreeSet;
 use std::iter::once;
 
+mod transfer;
+mod unsupported;
+
+pub use transfer::{BufferSupport, Transfer, offloadable, transfer_notes};
+use unsupported::unsupported;
+
 use crate::gap::Gap;
 use crate::model::{
-    ExportedFn, ExportedType, Field, Ownership, Param, Primitive, Receiver, Surface, Ty, TypeKind,
-    Variant, is_plain,
+    ExportedFn, ExportedType, Field, Ownership, Param, Receiver, Surface, Ty, TypeKind, Variant,
+    is_plain,
 };
 use crate::{BindKind, BindOptions};
 
@@ -129,214 +135,6 @@ impl BindingPlan {
             _ => true,
         }
     }
-}
-
-/// How one parameter's data moves across the boundary.
-///
-/// The classification is language-neutral; what each language can *do* with
-/// it is not. A borrowed buffer reaches Python and a C ABI as a pointer, is
-/// pinned or copied through JNI depending on the call used, and is always
-/// copied into wasm, which has its own address space. Naming the shape once
-/// keeps every backend answering the same question.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Transfer {
-    /// A single value. Copying it is free everywhere.
-    Scalar,
-    /// An exported type the caller keeps hold of.
-    Handle { mirrored: bool, writable: bool },
-    Text {
-        borrowed: bool,
-        /// Whether `None` (a null pointer, at the FFI boundary) is a valid
-        /// value: `Ty::Optional(Str)` rather than a plain `Ty::Str`.
-        nullable: bool,
-    },
-    /// A contiguous run of one primitive: the only shape a language can hope
-    /// to hand over without copying.
-    Buffer {
-        element: Primitive,
-        borrowed: bool,
-        writable: bool,
-    },
-    /// A collection the target has to walk element by element whatever
-    /// happens.
-    Collection,
-}
-
-impl Transfer {
-    /// Classify one parameter.
-    pub fn of(param: &Param, plan: &BindingPlan) -> Transfer {
-        let writable = param.ownership == Ownership::BorrowedMut;
-        let borrowed = param.ownership != Ownership::Owned;
-        match &param.ty {
-            Ty::Class(name) => Transfer::Handle {
-                mirrored: plan.is_mirrored(name),
-                writable,
-            },
-            Ty::Str => Transfer::Text {
-                borrowed,
-                nullable: false,
-            },
-            Ty::Optional(inner) if **inner == Ty::Str => Transfer::Text {
-                borrowed: param.inner_ownership != Ownership::Owned,
-                nullable: true,
-            },
-            Ty::Bytes => Transfer::Buffer {
-                element: Primitive::U8,
-                borrowed,
-                writable,
-            },
-            Ty::List(inner) => match inner.primitive() {
-                Some(element) => Transfer::Buffer {
-                    element,
-                    borrowed,
-                    writable,
-                },
-                None => Transfer::Collection,
-            },
-            ty if ty.is_primitive() || *ty == Ty::Unit => Transfer::Scalar,
-            _ => Transfer::Collection,
-        }
-    }
-}
-
-/// What a binding layer can do with a [`Transfer::Buffer`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BufferSupport {
-    /// A borrowed buffer arrives as a pointer into the caller's memory.
-    #[default]
-    ZeroCopy,
-    /// Every buffer is copied whatever the signature says.
-    AlwaysCopies,
-    /// A borrowed buffer arrives as a pointer into the runtime's heap, and
-    /// the collector is held off until the call returns.
-    Pinned,
-}
-
-/// Whether a call's work can run on a thread holding no interpreter lock.
-///
-/// Worth asking only where enough crosses to pay for the handover, and a
-/// buffer parameter is that signal: a scalar call costs less than releasing
-/// the lock would. Everything the call touches has to reach the other
-/// thread, which for a method means the receiver as well as the arguments.
-/// Under [`BufferSupport::Pinned`] the answer is always no: a pinned section
-/// cannot leave its thread or re-enter the runtime.
-pub fn offloadable(f: &Function, owner: Option<&Class>, plan: &BindingPlan) -> bool {
-    if plan.buffer_support == BufferSupport::Pinned {
-        return false;
-    }
-    let carries_buffer = f
-        .params
-        .iter()
-        .any(|p| matches!(Transfer::of(p, plan), Transfer::Buffer { .. }));
-    if f.is_async || !carries_buffer {
-        return false;
-    }
-    let receiver = match f.receiver {
-        Receiver::None => true,
-        Receiver::Shared => owner.is_some_and(|c| c.sync),
-        Receiver::Exclusive => owner.is_some_and(|c| c.send),
-        Receiver::Consuming => false,
-    };
-    receiver
-        && f.params.iter().all(|p| leaves_alone(p, plan))
-        && plan.sendable(&f.ret)
-        && f.throws.as_ref().is_none_or(|e| plan.sendable(e))
-}
-
-/// Whether one parameter reaches another thread on its own.
-///
-/// A handle held by reference stays behind: it borrows a Python object, and
-/// reading one is the thing the lock protects. A mirrored enum crossed by
-/// value is just a number by the time it gets here.
-fn leaves_alone(param: &Param, plan: &BindingPlan) -> bool {
-    match Transfer::of(param, plan) {
-        Transfer::Handle { mirrored, .. } => mirrored,
-        _ => plan.sendable(&param.ty),
-    }
-}
-
-/// Notes about shapes that cost more than the signature had to.
-///
-/// Derived from the same model that generates the code, so the advice cannot
-/// drift from what the emitter actually does.
-pub fn transfer_notes(plan: &BindingPlan) -> Vec<String> {
-    match plan.buffer_support {
-        // A backend that copies every buffer whatever the signature says has
-        // nothing to act on: taking a borrow saves it no copy, and writing
-        // into the caller's buffer costs it one more.
-        BufferSupport::AlwaysCopies => Vec::new(),
-        BufferSupport::Pinned => pinned_note(plan),
-        BufferSupport::ZeroCopy => {
-            let mut notes: Vec<String> = plan
-                .functions()
-                .flat_map(|f| param_notes(f, plan).into_iter().chain(ret_note(f)))
-                .collect();
-            notes.sort();
-            notes.dedup();
-            notes
-        }
-    }
-}
-
-/// One note for the whole package, not one per function: every pinned call
-/// already arrives without a copy, so the only thing left to say is why it
-/// cannot leave the calling thread.
-fn pinned_note(plan: &BindingPlan) -> Vec<String> {
-    let carries_buffer = plan
-        .functions()
-        .flat_map(|f| f.params.iter())
-        .any(|p| matches!(Transfer::of(p, plan), Transfer::Buffer { .. }));
-    if !carries_buffer {
-        return Vec::new();
-    }
-    vec![
-        "a pinned buffer blocks the collector for the call; none of its work \
-         can move to another thread or call back into the runtime"
-            .into(),
-    ]
-}
-
-/// A parameter that costs a copy the signature did not have to ask for.
-fn param_notes(f: &Function, plan: &BindingPlan) -> Vec<String> {
-    f.params
-        .iter()
-        .filter_map(|p| match Transfer::of(p, plan) {
-            Transfer::Buffer {
-                element,
-                borrowed: false,
-                ..
-            } => Some(format!(
-                "{}: `{}` is taken by value, so every call copies it; `&[{}]` \
-                 would arrive without a copy",
-                f.name,
-                p.name,
-                element.render()
-            )),
-            _ => None,
-        })
-        .collect()
-}
-
-/// A returned sequence, which allocates one per call.
-///
-/// Worth saying only where the caller's own buffer arrives without a copy,
-/// which is what makes writing through an `&mut [T]` cheaper than handing
-/// back a fresh one. The gain shows up once the sequence outgrows the
-/// allocator's fast path.
-fn ret_note(f: &Function) -> Option<String> {
-    let Ty::List(element) = &f.ret else {
-        return None;
-    };
-    if !element.is_primitive() {
-        return None;
-    }
-    Some(format!(
-        "{}: returning `Vec<{}>` allocates a fresh sequence per call; an \
-         `&mut [{}]` parameter would let the caller reuse one",
-        f.name,
-        element.render(),
-        element.render()
-    ))
 }
 
 /// Lower the exported surface for one language.
@@ -556,48 +354,76 @@ fn bindable(
     if f.receiver == Receiver::Consuming {
         return false;
     }
-    if f.is_async && f.receiver == Receiver::Exclusive {
+    if async_is_blocked(f, kind, gaps) {
         return false;
     }
-    if f.is_async
-        && matches!(
-            kind,
-            BindKind::CAbi
-                | BindKind::Go
-                | BindKind::Node
-                | BindKind::Java
-                | BindKind::Kotlin
-                | BindKind::R
-                | BindKind::Ruby
-                | BindKind::Cpp
-                | BindKind::Lua
-                | BindKind::CSharp
-        )
-    {
-        record(
-            gaps,
-            Gap::UnsupportedByBackend {
-                at: f.id.clone(),
-                ty: "async fn".into(),
-                lang: kind.name(),
-                why: match kind {
-                    BindKind::Go => "no Go runtime story yet".into(),
-                    BindKind::Node => "no Node runtime story yet".into(),
-                    BindKind::Java => "no Java runtime story yet".into(),
-                    BindKind::Kotlin => "no Kotlin runtime story yet".into(),
-                    BindKind::R => "no R runtime story yet".into(),
-                    BindKind::Ruby => "no Ruby runtime story yet".into(),
-                    BindKind::Cpp => "no C++ runtime story yet".into(),
-                    BindKind::Lua => "no Lua runtime story yet".into(),
-                    BindKind::CSharp => "no .NET async story yet".into(),
-                    _ => "C has nothing to await with; expose a blocking wrapper \
-                          instead"
-                        .into(),
-                },
+    if owned_handle_param_is_blocked(f, mirrored, gaps) {
+        return false;
+    }
+    if optional_handle_param_is_blocked(f, kind, gaps) {
+        return false;
+    }
+    if r_mutable_buffer_param_is_blocked(f, kind, gaps) {
+        return false;
+    }
+    every_type_is_carriable(f, kind, gaps)
+}
+
+/// `async fn` needs a runtime story per backend, and never on an exclusive
+/// receiver: driving a future from `&mut self` would need to hold the borrow
+/// across every await point.
+fn async_is_blocked(f: &ExportedFn, kind: BindKind, gaps: &mut Vec<Gap>) -> bool {
+    if !f.is_async {
+        return false;
+    }
+    if f.receiver == Receiver::Exclusive {
+        return true;
+    }
+    if !matches!(
+        kind,
+        BindKind::CAbi
+            | BindKind::Go
+            | BindKind::Node
+            | BindKind::Java
+            | BindKind::Kotlin
+            | BindKind::R
+            | BindKind::Ruby
+            | BindKind::Cpp
+            | BindKind::Lua
+            | BindKind::CSharp
+    ) {
+        return false;
+    }
+    record(
+        gaps,
+        Gap::UnsupportedByBackend {
+            at: f.id.clone(),
+            ty: "async fn".into(),
+            lang: kind.name(),
+            why: match kind {
+                BindKind::Go => "no Go runtime story yet".into(),
+                BindKind::Node => "no Node runtime story yet".into(),
+                BindKind::Java => "no Java runtime story yet".into(),
+                BindKind::Kotlin => "no Kotlin runtime story yet".into(),
+                BindKind::R => "no R runtime story yet".into(),
+                BindKind::Ruby => "no Ruby runtime story yet".into(),
+                BindKind::Cpp => "no C++ runtime story yet".into(),
+                BindKind::Lua => "no Lua runtime story yet".into(),
+                BindKind::CSharp => "no .NET async story yet".into(),
+                _ => "C has nothing to await with; expose a blocking wrapper \
+                      instead"
+                    .into(),
             },
-        );
-        return false;
-    }
+        },
+    );
+    true
+}
+
+fn owned_handle_param_is_blocked(
+    f: &ExportedFn,
+    mirrored: &BTreeSet<String>,
+    gaps: &mut Vec<Gap>,
+) -> bool {
     for param in &f.params {
         if let Ty::Class(name) = &param.ty
             && param.ownership == Ownership::Owned
@@ -610,17 +436,20 @@ fn bindable(
                     ty: name.clone(),
                 },
             );
-            return false;
+            return true;
         }
     }
-    // An optional exported type crosses back as a pointer that may be null,
-    // but nothing in the model says whether a parameter wants it borrowed or
-    // owned, and the two need different C. Go, C++, Lua and C# all call the
-    // same C functions, so each inherits the restriction; Java and Kotlin
-    // have no way to name a different constructor overload for it either;
-    // R's own handle is an external pointer with the same borrowed-or-owned
-    // ambiguity.
-    if matches!(
+    false
+}
+
+/// An optional exported type crosses back as a pointer that may be null, but
+/// nothing in the model says whether a parameter wants it borrowed or owned,
+/// and the two need different C. Go, C++, Lua and C# all call the same C
+/// functions, so each inherits the restriction; Java and Kotlin have no way
+/// to name a different constructor overload for it either; R's own handle is
+/// an external pointer with the same borrowed-or-owned ambiguity.
+fn optional_handle_param_is_blocked(f: &ExportedFn, kind: BindKind, gaps: &mut Vec<Gap>) -> bool {
+    if !matches!(
         kind,
         BindKind::CAbi
             | BindKind::Go
@@ -631,47 +460,57 @@ fn bindable(
             | BindKind::Lua
             | BindKind::CSharp
     ) {
-        for param in &f.params {
-            if matches!(&param.ty, Ty::Optional(inner) if matches!(**inner, Ty::Class(_))) {
-                record(
-                    gaps,
-                    Gap::UnsupportedByBackend {
-                        at: f.id.clone(),
-                        ty: param.ty.render(),
-                        lang: kind.name(),
-                        why: "an optional exported type is taken only as a return; \
-                              take it by reference instead"
-                            .into(),
-                    },
-                );
-                return false;
-            }
+        return false;
+    }
+    for param in &f.params {
+        if matches!(&param.ty, Ty::Optional(inner) if matches!(**inner, Ty::Class(_))) {
+            record(
+                gaps,
+                Gap::UnsupportedByBackend {
+                    at: f.id.clone(),
+                    ty: param.ty.render(),
+                    lang: kind.name(),
+                    why: "an optional exported type is taken only as a return; \
+                          take it by reference instead"
+                        .into(),
+                },
+            );
+            return true;
         }
     }
-    // R vectors are copy-on-write values, not caller-owned buffers: writing
-    // through one in place is not something an R caller can safely observe,
-    // since R gives no guarantee the vector it passed is not aliased
-    // elsewhere. A mutable buffer parameter has no honest R spelling.
-    if kind == BindKind::R {
-        for param in &f.params {
-            if param.ownership == Ownership::BorrowedMut && is_buffer_ty(&param.ty) {
-                record(
-                    gaps,
-                    Gap::UnsupportedByBackend {
-                        at: f.id.clone(),
-                        ty: param.ty.render(),
-                        lang: kind.name(),
-                        why: "R vectors are values; an out-parameter cannot be \
-                              written through, return the sequence instead"
-                            .into(),
-                    },
-                );
-                return false;
-            }
+    false
+}
+
+/// R vectors are copy-on-write values, not caller-owned buffers: writing
+/// through one in place is not something an R caller can safely observe,
+/// since R gives no guarantee the vector it passed is not aliased elsewhere.
+/// A mutable buffer parameter has no honest R spelling.
+fn r_mutable_buffer_param_is_blocked(f: &ExportedFn, kind: BindKind, gaps: &mut Vec<Gap>) -> bool {
+    if kind != BindKind::R {
+        return false;
+    }
+    for param in &f.params {
+        if param.ownership == Ownership::BorrowedMut && is_buffer_ty(&param.ty) {
+            record(
+                gaps,
+                Gap::UnsupportedByBackend {
+                    at: f.id.clone(),
+                    ty: param.ty.render(),
+                    lang: kind.name(),
+                    why: "R vectors are values; an out-parameter cannot be \
+                          written through, return the sequence instead"
+                        .into(),
+                },
+            );
+            return true;
         }
     }
-    // `throws` is deliberately absent: an error crosses as a message, so its
-    // type never has to be one the target language can carry.
+    false
+}
+
+/// `throws` is deliberately absent: an error crosses as a message, so its
+/// type never has to be one the target language can carry.
+fn every_type_is_carriable(f: &ExportedFn, kind: BindKind, gaps: &mut Vec<Gap>) -> bool {
     let tys = f.params.iter().map(|p| &p.ty).chain(once(&f.ret));
     for ty in tys {
         if ty.has_opaque() {
@@ -699,112 +538,8 @@ fn record(gaps: &mut Vec<Gap>, gap: Gap) {
     }
 }
 
-/// Why a language cannot carry this type, if it cannot.
-fn unsupported(kind: BindKind, ty: &Ty) -> Option<String> {
-    // Go, C++, Lua and C# all call the same C functions, so each inherits
-    // the restriction; Java and Kotlin have no generic container either,
-    // and no more of a story than C does for a sequence of anything but one
-    // primitive.
-    if matches!(
-        kind,
-        BindKind::CAbi
-            | BindKind::Go
-            | BindKind::Java
-            | BindKind::Kotlin
-            | BindKind::Cpp
-            | BindKind::Lua
-            | BindKind::CSharp
-    ) && let Some(why) = unsupported_by_c(ty)
-    {
-        return Some(why);
-    }
-    if kind == BindKind::R
-        && let Some(why) = unsupported_by_r(ty)
-    {
-        return Some(why);
-    }
-    match ty {
-        Ty::Map(..) if kind == BindKind::Wasm => Some(
-            "wasm-bindgen carries no map type; return a list of pairs, or a \
-             struct with named fields"
-                .into(),
-        ),
-        Ty::Map(..) if kind == BindKind::Node => Some(
-            "napi-rs carries no map type; return a list of pairs, or a \
-             struct with named fields"
-                .into(),
-        ),
-        Ty::Tuple(_) if kind == BindKind::Wasm => Some(
-            "wasm-bindgen carries no tuple type; return a struct with named \
-             fields"
-                .into(),
-        ),
-        Ty::Tuple(_) if kind == BindKind::Node => {
-            Some("napi-rs carries no tuple type; return a struct with named fields".into())
-        }
-        Ty::List(inner) | Ty::Optional(inner) => unsupported(kind, inner),
-        Ty::Map(key, value) => unsupported(kind, key).or_else(|| unsupported(kind, value)),
-        Ty::Tuple(items) => items.iter().find_map(|t| unsupported(kind, t)),
-        _ => None,
-    }
-}
-
-/// Why C cannot carry this type, if it cannot.
-///
-/// C has no generic container, so anything that is not a scalar, a string, a
-/// handle or a contiguous run of one primitive would need a bespoke struct
-/// and a bespoke way to release it. Those are reported rather than guessed.
-fn unsupported_by_c(ty: &Ty) -> Option<String> {
-    match ty {
-        Ty::Map(..) => Some(
-            "C has no map type; return a sequence of pairs, or an exported \
-             type with accessors"
-                .into(),
-        ),
-        Ty::Tuple(_) => {
-            Some("C has no tuple type; return an exported type with named fields".into())
-        }
-        Ty::List(inner) if !inner.is_primitive() => Some(format!(
-            "a sequence of `{}` has no C spelling that owns its elements; a \
-             sequence of one primitive crosses as a pointer and a length",
-            inner.render()
-        )),
-        Ty::Optional(inner) if !matches!(**inner, Ty::Class(_) | Ty::Str) => Some(format!(
-            "`Option<{}>` has no C spelling; only an optional exported type \
-             or string does, as a pointer that may be null",
-            inner.render()
-        )),
-        _ => None,
-    }
-}
-
-/// Why R cannot carry this type, if it cannot.
-///
-/// R has no map or tuple type either, and a sequence of anything but one
-/// primitive has no vector to become. Unlike C, an `Option` of anything the
-/// plan can otherwise carry is not restricted here: it crosses as `NULL` by
-/// hand rather than needing a type of its own.
-fn unsupported_by_r(ty: &Ty) -> Option<String> {
-    match ty {
-        Ty::Map(..) => Some(
-            "R has no map type; return a sequence of pairs, or an exported \
-             type with accessors"
-                .into(),
-        ),
-        Ty::Tuple(_) => {
-            Some("R has no tuple type; return an exported type with named fields".into())
-        }
-        Ty::List(inner) if !inner.is_primitive() => Some(format!(
-            "a sequence of `{}` has no R vector to become; a sequence of one \
-             primitive crosses as a numeric or raw vector",
-            inner.render()
-        )),
-        _ => None,
-    }
-}
-
-/// Whether this type is the one shape a contiguous buffer parameter takes:
-/// a byte string, or a sequence of one primitive.
+/// Whether this type is the one shape a contiguous buffer parameter takes: a
+/// byte string, or a sequence of one primitive.
 fn is_buffer_ty(ty: &Ty) -> bool {
     matches!(ty, Ty::Bytes) || matches!(ty, Ty::List(inner) if inner.is_primitive())
 }
