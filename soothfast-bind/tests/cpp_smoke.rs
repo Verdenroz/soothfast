@@ -56,30 +56,46 @@ fn the_cpp_golden_builds_and_runs_against_the_real_cdylib() {
     }
     let compiler = compiler.expect("checked above");
 
+    let root = build_scratch();
+    let glue = root.join("glue");
+
+    build_cdylib(&glue);
+    let binary = compile_smoke(&compiler, &glue);
+
+    let stdout = run_smoke(&binary);
+    assert_expected_output(&stdout);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn build_scratch() -> PathBuf {
     let manifest = manifest_dir();
     let root = std::env::temp_dir().join(format!("soothfast-cpp-smoke-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
 
     copy_dir(&manifest.join("tests/fixture_crate"), &root);
+    copy_dir(&manifest.join("tests/goldens/cpp"), &root.join("glue"));
+    root
+}
 
-    let glue = root.join("glue");
-    copy_dir(&manifest.join("tests/goldens/cpp"), &glue);
-
+fn build_cdylib(glue: &Path) {
     let build = Command::new("cargo")
         .args(["build", "--release"])
-        .current_dir(&glue)
+        .current_dir(glue)
         .env_remove("CARGO_TARGET_DIR")
         .status()
         .expect("runs cargo build");
     assert!(build.success(), "cargo build --release failed");
+}
 
+fn compile_smoke(compiler: &str, glue: &Path) -> PathBuf {
     let lib_dir = glue.join("target/release");
     let binary = glue.join("smoke");
-    let compile = Command::new(&compiler)
+    let compile = Command::new(compiler)
         .arg("-std=c++20")
-        .arg(manifest.join("tests/cpp/Smoke.cpp"))
+        .arg(manifest_dir().join("tests/cpp/Smoke.cpp"))
         .arg("-I")
-        .arg(&glue)
+        .arg(glue)
         .arg("-L")
         .arg(&lib_dir)
         .arg("-lcore")
@@ -89,8 +105,11 @@ fn the_cpp_golden_builds_and_runs_against_the_real_cdylib() {
         .status()
         .expect("runs the c++ compiler");
     assert!(compile.success(), "{compiler} failed to compile Smoke.cpp");
+    binary
+}
 
-    let output = Command::new(&binary)
+fn run_smoke(binary: &Path) -> String {
+    let output = Command::new(binary)
         .output()
         .expect("runs the smoke binary");
     assert!(
@@ -99,16 +118,16 @@ fn the_cpp_golden_builds_and_runs_against_the_real_cdylib() {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+fn assert_expected_output(stdout: &str) {
     for expected in EXPECTED_OUTPUT {
         assert!(
             stdout.contains(expected),
             "missing {expected:?} in: {stdout}"
         );
     }
-
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 const EXPECTED_OUTPUT: &[&str] = &[

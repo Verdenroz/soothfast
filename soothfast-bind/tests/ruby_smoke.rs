@@ -14,7 +14,7 @@
 mod support;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 fn manifest_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).into()
@@ -89,41 +89,13 @@ fn the_ruby_golden_builds_and_runs() {
         }
     }
 
-    let root = std::env::temp_dir().join(format!("soothfast-ruby-smoke-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    copy_dir(&manifest_dir().join("tests/fixture_crate"), &root);
+    let root = build_scratch();
     let glue = root.join("glue");
-    copy_dir(&manifest_dir().join("tests/goldens/ruby"), &glue);
 
-    let local_install = Command::new("bundle")
-        .args(["install", "--local"])
-        .current_dir(&glue)
-        .status()
-        .expect("runs bundle install --local");
-    if !local_install.success() {
-        let status = Command::new("bundle")
-            .arg("install")
-            .current_dir(&glue)
-            .status()
-            .expect("runs bundle install");
-        assert!(status.success(), "bundle install failed");
-    }
+    bundle_install(&glue);
+    rake_compile(&glue);
 
-    let compile = Command::new("bundle")
-        .args(["exec", "rake", "compile"])
-        .current_dir(&glue)
-        .status()
-        .expect("runs bundle exec rake compile");
-    assert!(compile.success(), "rake compile failed");
-
-    let script = glue.join("smoke.rb");
-    std::fs::write(&script, SMOKE_SCRIPT).expect("writes smoke script");
-    let output = Command::new("ruby")
-        .arg("-Ilib")
-        .arg(&script)
-        .current_dir(&glue)
-        .output()
-        .expect("runs ruby");
+    let output = run_smoke_script(&glue);
     assert!(
         output.status.success(),
         "ruby exited {:?}: {}",
@@ -133,4 +105,51 @@ fn the_ruby_golden_builds_and_runs() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("ok"));
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+fn build_scratch() -> PathBuf {
+    let root = std::env::temp_dir().join(format!("soothfast-ruby-smoke-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    copy_dir(&manifest_dir().join("tests/fixture_crate"), &root);
+    copy_dir(
+        &manifest_dir().join("tests/goldens/ruby"),
+        &root.join("glue"),
+    );
+    root
+}
+
+fn bundle_install(glue: &Path) {
+    let local_install = Command::new("bundle")
+        .args(["install", "--local"])
+        .current_dir(glue)
+        .status()
+        .expect("runs bundle install --local");
+    if !local_install.success() {
+        let status = Command::new("bundle")
+            .arg("install")
+            .current_dir(glue)
+            .status()
+            .expect("runs bundle install");
+        assert!(status.success(), "bundle install failed");
+    }
+}
+
+fn rake_compile(glue: &Path) {
+    let compile = Command::new("bundle")
+        .args(["exec", "rake", "compile"])
+        .current_dir(glue)
+        .status()
+        .expect("runs bundle exec rake compile");
+    assert!(compile.success(), "rake compile failed");
+}
+
+fn run_smoke_script(glue: &Path) -> Output {
+    let script = glue.join("smoke.rb");
+    std::fs::write(&script, SMOKE_SCRIPT).expect("writes smoke script");
+    Command::new("ruby")
+        .arg("-Ilib")
+        .arg(&script)
+        .current_dir(glue)
+        .output()
+        .expect("runs ruby")
 }

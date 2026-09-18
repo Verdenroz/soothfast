@@ -90,13 +90,8 @@ pub fn variant(name: &str, kind: Value) -> Value {
     })
 }
 
-/// `acme`, with a free fn, a struct and its inherent impl, and an enum.
-pub fn doc() -> Value {
-    let mut index = Map::new();
-    let mut insert = |id: u64, item: Value| {
-        index.insert(id.to_string(), item);
-    };
-
+/// The crate's free functions: `normalize` through `maybe_ratio`.
+fn free_functions(insert: &mut impl FnMut(u64, Value)) {
     insert(
         1,
         func(
@@ -210,7 +205,10 @@ pub fn doc() -> Value {
             false,
         ),
     );
+}
 
+/// The crate's free functions that take or return an `Option`.
+fn optional_free_functions(insert: &mut impl FnMut(u64, Value)) {
     insert(
         16,
         func(
@@ -240,13 +238,20 @@ pub fn doc() -> Value {
             false,
         ),
     );
+}
 
+/// `Counter`, its fields and its auto-trait impls. The inherent impl block
+/// and its methods are [`methods`]'s to insert.
+fn structs(insert: &mut impl FnMut(u64, Value)) {
     insert(2, struct_item("Counter", &[20, 21], &[30, 37, 38]));
     insert(37, auto_impl("Send", false));
     insert(38, auto_impl("Sync", false));
     insert(20, field("value", prim("i64"), true));
     insert(21, field("label", path("String", 92, &[]), false));
+}
 
+/// `Counter`'s inherent impl block and every method on it.
+fn methods(insert: &mut impl FnMut(u64, Value)) {
     insert(
         30,
         json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
@@ -317,7 +322,10 @@ pub fn doc() -> Value {
             false,
         ),
     );
+}
 
+/// `Level`, a payload-free enum, and `Mode`, one that carries data.
+fn enums(insert: &mut impl FnMut(u64, Value)) {
     insert(4, enum_item("Level", &[45, 46]));
     insert(45, variant("Low", json!("plain")));
     insert(46, variant("High", json!("plain")));
@@ -334,6 +342,20 @@ pub fn doc() -> Value {
         ),
     );
     insert(44, field("level", prim("u8"), true));
+}
+
+/// `acme`, with a free fn, a struct and its inherent impl, and an enum.
+pub fn doc() -> Value {
+    let mut index = Map::new();
+    let mut insert = |id: u64, item: Value| {
+        index.insert(id.to_string(), item);
+    };
+
+    free_functions(&mut insert);
+    optional_free_functions(&mut insert);
+    structs(&mut insert);
+    methods(&mut insert);
+    enums(&mut insert);
 
     json!({
         "index": index,

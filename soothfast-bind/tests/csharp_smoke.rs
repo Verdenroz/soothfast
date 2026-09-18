@@ -78,9 +78,17 @@ fn the_csharp_golden_builds_and_runs() {
     let scratch = build_scratch();
     let glue = scratch.join("glue");
 
+    let cdylib = build_cdylib(&glue);
+    let smoke_dll = build_dotnet_smoke(&glue, &cdylib);
+
+    let stdout = run_dotnet(&smoke_dll);
+    assert_expected_output(&stdout);
+}
+
+fn build_cdylib(glue: &Path) -> PathBuf {
     let status = Command::new("cargo")
         .arg("build")
-        .current_dir(&glue)
+        .current_dir(glue)
         .env_remove("CARGO_TARGET_DIR")
         .status()
         .expect("run cargo");
@@ -92,7 +100,10 @@ fn the_csharp_golden_builds_and_runs() {
         .map(|name| lib_dir.join(name))
         .find(|p| p.exists());
     assert!(cdylib.is_some(), "no cdylib built in {}", lib_dir.display());
+    cdylib.unwrap()
+}
 
+fn build_dotnet_smoke(glue: &Path, cdylib: &Path) -> PathBuf {
     let smoke = glue.join("smoke");
     copy_dir(&smoke_dir(), &smoke);
 
@@ -104,13 +115,14 @@ fn the_csharp_golden_builds_and_runs() {
     assert!(status.success(), "dotnet build failed");
 
     let output_dir = smoke.join("bin/Debug/net8.0");
-    let cdylib = cdylib.unwrap();
     let cdylib_name = cdylib.file_name().expect("cdylib has a name");
-    std::fs::copy(&cdylib, output_dir.join(cdylib_name)).expect("copies cdylib");
+    std::fs::copy(cdylib, output_dir.join(cdylib_name)).expect("copies cdylib");
+    output_dir.join("Smoke.dll")
+}
 
-    let smoke_dll = output_dir.join("Smoke.dll");
+fn run_dotnet(smoke_dll: &Path) -> String {
     let output = Command::new("dotnet")
-        .arg(&smoke_dll)
+        .arg(smoke_dll)
         .output()
         .expect("run dotnet");
     assert!(
@@ -119,8 +131,10 @@ fn the_csharp_golden_builds_and_runs() {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+fn assert_expected_output(stdout: &str) {
     for expected in EXPECTED_OUTPUT {
         assert!(
             stdout.contains(expected),

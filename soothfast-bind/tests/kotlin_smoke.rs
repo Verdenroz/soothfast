@@ -77,9 +77,24 @@ fn the_kotlin_golden_builds_and_runs() {
     let scratch = build_scratch();
     let glue = scratch.join("glue");
 
+    let cdylib = build_cdylib(&glue);
+    let lib_dir = glue.join("target/debug");
+    let classes = compile_kotlin(&glue);
+
+    let stdout = run_with_library_path(&classes, &lib_dir);
+    assert_expected_output(&stdout, "");
+
+    // Proves the jar-resource loading path, not just java.library.path: a
+    // consumer who only has the jar on their classpath must still work.
+    let jar_path = stage_jar(&glue, &classes, &cdylib);
+    let stdout = run_via_jar(&jar_path);
+    assert_expected_output(&stdout, " jar-only run");
+}
+
+fn build_cdylib(glue: &Path) -> PathBuf {
     let status = Command::new("cargo")
         .arg("build")
-        .current_dir(&glue)
+        .current_dir(glue)
         .env_remove("CARGO_TARGET_DIR")
         .status()
         .expect("run cargo");
@@ -91,7 +106,10 @@ fn the_kotlin_golden_builds_and_runs() {
         .map(|name| lib_dir.join(name))
         .find(|p| p.exists());
     assert!(cdylib.is_some(), "no cdylib built in {}", lib_dir.display());
+    cdylib.unwrap()
+}
 
+fn compile_kotlin(glue: &Path) -> PathBuf {
     let classes = glue.join("target/smoke-classes");
     std::fs::create_dir_all(&classes).expect("makes dir");
 
@@ -101,12 +119,15 @@ fn the_kotlin_golden_builds_and_runs() {
     kotlinc.arg(smoke_source());
     let status = kotlinc.status().expect("run kotlinc");
     assert!(status.success(), "kotlinc failed");
+    classes
+}
 
+fn run_with_library_path(classes: &Path, lib_dir: &Path) -> String {
     let output = Command::new("kotlin")
         .arg("-J--enable-native-access=ALL-UNNAMED")
         .arg(format!("-J-Djava.library.path={}", lib_dir.display()))
         .arg("-cp")
-        .arg(&classes)
+        .arg(classes)
         .arg("SmokeKt")
         .output()
         .expect("run kotlin");
@@ -116,37 +137,32 @@ fn the_kotlin_golden_builds_and_runs() {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for expected in EXPECTED_OUTPUT {
-        assert!(
-            stdout.contains(expected),
-            "missing {expected:?} in: {stdout}"
-        );
-    }
-
-    // Proves the jar-resource loading path, not just java.library.path: a
-    // consumer who only has the jar on their classpath must still work.
+fn stage_jar(glue: &Path, classes: &Path, cdylib: &Path) -> PathBuf {
     let jar_staging = glue.join("target/smoke-jar-staging");
     let native_dir = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     let natives_dir = jar_staging.join("natives").join(&native_dir);
     std::fs::create_dir_all(&natives_dir).expect("makes dir");
-    let cdylib = cdylib.unwrap();
     let cdylib_name = cdylib.file_name().expect("cdylib has a name");
-    std::fs::copy(&cdylib, natives_dir.join(cdylib_name)).expect("copies cdylib");
+    std::fs::copy(cdylib, natives_dir.join(cdylib_name)).expect("copies cdylib");
 
     let jar_path = glue.join("target/smoke.jar");
     let mut jar_cmd = Command::new("jar");
     jar_cmd.arg("--create").arg("--file").arg(&jar_path);
-    jar_cmd.arg("-C").arg(&classes).arg(".");
+    jar_cmd.arg("-C").arg(classes).arg(".");
     jar_cmd.arg("-C").arg(&jar_staging).arg("natives");
     let status = jar_cmd.status().expect("run jar");
     assert!(status.success(), "jar failed");
+    jar_path
+}
 
+fn run_via_jar(jar_path: &Path) -> String {
     let output = Command::new("kotlin")
         .arg("-J--enable-native-access=ALL-UNNAMED")
         .arg("-cp")
-        .arg(&jar_path)
+        .arg(jar_path)
         .arg("SmokeKt")
         .output()
         .expect("run kotlin");
@@ -156,12 +172,14 @@ fn the_kotlin_golden_builds_and_runs() {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+fn assert_expected_output(stdout: &str, label: &str) {
     for expected in EXPECTED_OUTPUT {
         assert!(
             stdout.contains(expected),
-            "missing {expected:?} in jar-only run: {stdout}"
+            "missing {expected:?} in{label}: {stdout}"
         );
     }
 }
