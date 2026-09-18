@@ -21,6 +21,15 @@ fn cargo_command_from(cargo_env: Option<std::ffi::OsString>) -> Command {
     Command::new(cargo_env.unwrap_or_else(|| "cargo".into()))
 }
 
+/// A `cargo` invocation under a named rustup toolchain. `CARGO` names the
+/// toolchain's own binary, which rejects `+toolchain`; only the rustup proxy
+/// understands it, so this goes through `rustup run` instead.
+pub fn cargo_command_in(toolchain: &str) -> Command {
+    let mut cmd = Command::new("rustup");
+    cmd.args(["run", toolchain, "cargo"]);
+    cmd
+}
+
 /// Flags shared by `measure` and `gate`.
 #[derive(Default, Clone)]
 pub struct CommonArgs {
@@ -105,10 +114,10 @@ fn bench_build_command(
     build: Build,
     pkgs: &[&str],
 ) -> io::Result<Command> {
-    let mut cmd = cargo_command();
-    if let Some(toolchain) = bench_toolchain() {
-        cmd.arg(format!("+{toolchain}"));
-    }
+    let mut cmd = match bench_toolchain() {
+        Some(toolchain) => cargo_command_in(&toolchain),
+        None => cargo_command(),
+    };
     if let Build::Measure = build
         && let Some(n) = common.codegen_units_env()
     {
@@ -1019,8 +1028,8 @@ pub fn rustdoc_json_in(
         return Ok((doc, root));
     }
 
-    let mut cmd = cargo_command();
-    cmd.args([&format!("+{toolchain}"), "rustdoc", "-p", pkg, "--lib"]);
+    let mut cmd = cargo_command_in(&toolchain);
+    cmd.args(["rustdoc", "-p", pkg, "--lib"]);
     // Feature-gated items are invisible to the surface unless enabled.
     if let Some(f) = features {
         cmd.args(["--features", f]);
@@ -1550,13 +1559,22 @@ mod tests {
 
     use super::{
         CommonArgs, ItemMetrics, Run, SaveScope, baseline_path, cargo_command_from,
-        harness_mismatches, load_baseline, run_from_items_value, run_to_items_value, save_baseline,
+        cargo_command_in, harness_mismatches, load_baseline, run_from_items_value,
+        run_to_items_value, save_baseline,
     };
 
     #[test]
     fn cargo_command_uses_the_cargo_env_var_when_set() {
         let cmd = cargo_command_from(Some("/opt/rust/bin/cargo".into()));
         assert_eq!(cmd.get_program(), "/opt/rust/bin/cargo");
+    }
+
+    #[test]
+    fn a_toolchain_request_goes_through_the_rustup_proxy_not_cargo_env() {
+        let cmd = cargo_command_in("nightly-2026-01-01");
+        assert_eq!(cmd.get_program(), "rustup");
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(args, ["run", "nightly-2026-01-01", "cargo"]);
     }
 
     #[test]
