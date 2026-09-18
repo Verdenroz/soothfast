@@ -195,11 +195,11 @@ jobs:
       # manylinux images have no python or pip on PATH; every interpreter
       # lives under /opt/python/<tag>.
       - if: matrix.lang == 'python' && matrix.container
-        run: /opt/python/cp312-cp312/bin/pip install maturin
+        run: /opt/python/cp312-cp312/bin/pip install maturin==1.10.2
       - if: matrix.lang == 'python' && !matrix.container
-        run: pip install maturin
+        run: pip install maturin==1.10.2
       - if: matrix.lang == 'wasm'
-        run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+        run: cargo install wasm-pack --locked --version 0.15.0
       - uses: Verdenroz/soothfast@<tag-or-sha>
         with:
           bind-build: mylib
