@@ -93,6 +93,11 @@ pub fn digest(data: &[u8]) -> Vec<u8> {
     ::acme::digest(data)
 }
 
+#[wasm_bindgen]
+pub fn fail(message: &str) -> Result<i64, JsValue> {
+    Ok(::acme::fail(message).map_err(BindErrorString)?)
+}
+
 #[wasm_bindgen(js_name = findCounter)]
 pub fn find_counter(start: i64) -> Option<Counter> {
     ::acme::find_counter(start).map(Counter)

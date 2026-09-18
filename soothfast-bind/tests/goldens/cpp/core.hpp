@@ -121,6 +121,18 @@ inline std::vector<uint8_t> digest(std::span<const uint8_t> data) {
     return to_vector_u8(raw_result);
 }
 
+inline int64_t fail(std::string_view message) {
+    std::string message_owned(message);
+    char *error = nullptr;
+    auto raw_result = core_fail(message_owned.c_str(), &error);
+    if (error != nullptr) {
+        std::string message(error);
+        core_string_free(error);
+        throw Error(message);
+    }
+    return raw_result;
+}
+
 inline std::optional<Counter> find_counter(int64_t start) {
     auto raw_result = core_find_counter(start);
     return raw_result != nullptr ? std::optional<Counter>(Counter(raw_result)) : std::nullopt;

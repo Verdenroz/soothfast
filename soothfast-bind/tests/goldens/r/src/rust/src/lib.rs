@@ -98,6 +98,14 @@ fn digest(data: &[u8]) -> Vec<u8> {
 }
 
 #[extendr]
+fn fail(message: &str) -> ::std::result::Result<f64, String> {
+    match ::acme::fail(message) {
+        Ok(value) => Ok(value as f64),
+        Err(reason) => Err(::std::string::ToString::to_string(&reason)),
+    }
+}
+
+#[extendr]
 fn find_counter(start: f64) -> ::std::result::Result<Robj, String> {
     let start = __checked_int::<i64>(start, "start")?;
     let __out = ::acme::find_counter(start);
@@ -152,6 +160,7 @@ extendr_module! {
     fn describe;
     fn describe_owned;
     fn digest;
+    fn fail;
     fn find_counter;
     fn greet;
     fn maybe_ratio;

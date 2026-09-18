@@ -236,6 +236,20 @@ pub unsafe extern "C" fn acme_core_digest(data: *const u8, data_len: usize) -> A
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_fail(message: *const ::std::os::raw::c_char, error: *mut *mut ::std::os::raw::c_char) -> i64 {
+    match ::acme::fail(unsafe { ffi::text(message) }) {
+        Ok(value) => {
+            unsafe { ffi::clear(error) };
+            value
+        }
+        Err(reason) => {
+            unsafe { ffi::report(error, &reason) };
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_find_counter(start: i64) -> *mut AcmeCoreCounter {
     match ::acme::find_counter(start) { Some(v) => Box::into_raw(Box::new(AcmeCoreCounter(v))), None => ::std::ptr::null_mut() }
 }

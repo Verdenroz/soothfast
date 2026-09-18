@@ -240,6 +240,20 @@ fn optional_free_functions(insert: &mut impl FnMut(u64, Value)) {
     );
 }
 
+/// The crate's free functions that always fail, for exercising the error
+/// path itself rather than any particular return shape.
+fn failing_free_functions(insert: &mut impl FnMut(u64, Value)) {
+    insert(
+        19,
+        func(
+            "fail",
+            &[("message", borrowed(prim("str"), false))],
+            path("Result", 93, &[prim("i64"), path("String", 92, &[])]),
+            false,
+        ),
+    );
+}
+
 /// `Counter`, its fields and its auto-trait impls. The inherent impl block
 /// and its methods are [`methods`]'s to insert.
 fn structs(insert: &mut impl FnMut(u64, Value)) {
@@ -361,6 +375,7 @@ pub fn doc() -> Value {
 
     free_functions(&mut insert);
     optional_free_functions(&mut insert);
+    failing_free_functions(&mut insert);
     structs(&mut insert);
     methods(&mut insert);
     enums(&mut insert);
@@ -382,6 +397,7 @@ pub fn doc() -> Value {
             "16": { "crate_id": 0, "path": ["acme", "describe"], "kind": "function" },
             "17": { "crate_id": 0, "path": ["acme", "describe_owned"], "kind": "function" },
             "18": { "crate_id": 0, "path": ["acme", "maybe_ratio"], "kind": "function" },
+            "19": { "crate_id": 0, "path": ["acme", "fail"], "kind": "function" },
             "2": { "crate_id": 0, "path": ["acme", "Counter"], "kind": "struct" },
             "3": { "crate_id": 0, "path": ["acme", "Mode"], "kind": "enum" },
             "4": { "crate_id": 0, "path": ["acme", "Level"], "kind": "enum" },
@@ -422,6 +438,7 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::describe", "fn"),
         record("acme::describe_owned", "fn"),
         record("acme::maybe_ratio", "fn"),
+        record("acme::fail", "fn"),
         record("acme::Counter", "struct"),
         record("acme::Mode", "enum"),
         record("acme::Level", "enum"),

@@ -55,6 +55,7 @@ char * acme_core_describe(const char *label);
 /* `label` may be NULL. May return NULL. */
 char * acme_core_describe_owned(const char *label);
 acme_core_u8_array acme_core_digest(const uint8_t *data, size_t data_len);
+int64_t acme_core_fail(const char *message, char **error);
 acme_core_counter * acme_core_find_counter(int64_t start);
 char * acme_core_greet(const char *name);
 acme_core_f64_array acme_core_normalize(const double *input, size_t input_len, double factor);

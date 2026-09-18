@@ -54,5 +54,12 @@ int main() {
     std::printf("describe_owned=%s\n", describe_owned("world").value().c_str());
     std::printf("describe_owned(none)=%s\n", describe_owned(std::nullopt).has_value() ? "present" : "none");
 
+    try {
+        fail("bad byte");
+        std::printf("fail: no exception thrown\n");
+    } catch (const Error &e) {
+        std::printf("fail caught: %s\n", e.what());
+    }
+
     return 0;
 }

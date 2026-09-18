@@ -77,6 +77,10 @@ fn digest(data: ::magnus::RString) -> ::magnus::RString {
     ::magnus::RString::from_slice(&::acme::digest(&data))
 }
 
+fn fail(ruby: &::magnus::Ruby, message: String) -> Result<i64, ::magnus::Error> {
+    Ok(::acme::fail(&message).map_err(|reason| ::magnus::Error::new(ruby.get_inner(&ERROR), ::std::string::ToString::to_string(&reason)))?)
+}
+
 fn find_counter(start: i64) -> Option<Counter> {
     (::acme::find_counter(start)).map(|value| Counter(::std::cell::RefCell::new(value)))
 }
@@ -132,6 +136,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("describe", ::magnus::function!(describe, 1))?;
     module.define_module_function("describe_owned", ::magnus::function!(describe_owned, 1))?;
     module.define_module_function("digest", ::magnus::function!(digest, 1))?;
+    module.define_module_function("fail", ::magnus::function!(fail, 1))?;
     module.define_module_function("find_counter", ::magnus::function!(find_counter, 1))?;
     module.define_module_function("greet", ::magnus::function!(greet, 1))?;
     module.define_module_function("index_all", ::magnus::function!(index_all, 0))?;

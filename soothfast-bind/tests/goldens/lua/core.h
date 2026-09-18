@@ -55,6 +55,7 @@ char * core_describe(const char *label);
 /* `label` may be NULL. May return NULL. */
 char * core_describe_owned(const char *label);
 core_u8_array core_digest(const uint8_t *data, size_t data_len);
+int64_t core_fail(const char *message, char **error);
 core_counter * core_find_counter(int64_t start);
 char * core_greet(const char *name);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);

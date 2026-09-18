@@ -104,6 +104,9 @@ internal static class Native
     internal static extern unsafe AcmeCoreU8Array acme_core_digest(byte* data, nuint data_len);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe long acme_core_fail(byte* message, out IntPtr error);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern IntPtr acme_core_find_counter(long start);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

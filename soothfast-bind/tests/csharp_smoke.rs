@@ -161,4 +161,5 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "describe(none)=null",
     "describeOwned=owned=world",
     "describeOwned(none)=null",
+    "fail caught: bad byte\u{fffd}end",
 ];

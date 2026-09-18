@@ -125,3 +125,9 @@ pub fn maybe_ratio(value: f64) -> Option<f64> {
         false => None,
     }
 }
+
+/// The embedded NUL is deliberate: it pins the FFI string return against
+/// silently crossing as a null pointer instead of a failure.
+pub fn fail(message: &str) -> Result<i64, String> {
+    Err(format!("{message}\0end"))
+}

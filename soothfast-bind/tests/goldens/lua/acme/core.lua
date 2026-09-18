@@ -47,6 +47,7 @@ char * core_describe(const char *label);
 /* `label` may be NULL. May return NULL. */
 char * core_describe_owned(const char *label);
 core_u8_array core_digest(const uint8_t *data, size_t data_len);
+int64_t core_fail(const char *message, char **error);
 core_counter * core_find_counter(int64_t start);
 char * core_greet(const char *name);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);
@@ -278,6 +279,15 @@ function M.digest(data)
 	local data_ptr, data_len = u8_buf(data)
 	local ret = lib.core_digest(data_ptr, data_len)
 	return ffi.gc(ret, lib.core_u8_array_free)
+end
+
+function M.fail(message)
+	local err = ffi.new("char*[1]")
+	local ret = lib.core_fail(message, err)
+	if err[0] ~= nil then
+		error(lua_string(err[0]))
+	end
+	return ret
 end
 
 function M.find_counter(start)

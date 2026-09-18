@@ -173,6 +173,18 @@ func Digest(data []byte) []byte {
 	return byteSlice(C.core_digest((*C.uint8_t)(unsafe.Pointer(bufPtr(data))), C.size_t(len(data))))
 }
 
+func Fail(message string) (int64, error) {
+	cMessage := C.CString(message)
+	defer C.free(unsafe.Pointer(cMessage))
+	var errPtr *C.char
+	ret := C.core_fail(cMessage, &errPtr)
+	if errPtr != nil {
+		err := errors.New(goString(errPtr))
+		return 0, err
+	}
+	return int64(ret), nil
+}
+
 func FindCounter(start int64) *Counter {
 	return func() *Counter {
 		if p := C.core_find_counter(C.int64_t(start)); p != nil {

@@ -237,6 +237,32 @@ pub extern "system" fn Java_acme_core_Core_nativeDigest<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeFail<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    message: ::jni::objects::JString<'local>
+) -> i64 {
+    let message: String = match env.get_string(&message) {
+        Ok(v) => v.into(),
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return 0;
+        }
+    };
+    let __out = ::acme::fail(&message);
+    match __out {
+        Ok(value) => {
+            value
+        }
+        Err(reason) => {
+            let _ = env.throw_new("acme/core/CoreException", ::std::string::ToString::to_string(&reason));
+            0
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeFindCounter<'local>(
     _env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

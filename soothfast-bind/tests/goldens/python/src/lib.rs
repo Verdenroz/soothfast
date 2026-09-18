@@ -371,6 +371,11 @@ fn digest(py: Python<'_>, data: BorrowedU8) -> Vec<u8> {
 }
 
 #[pyfunction]
+fn fail(message: &str) -> PyResult<i64> {
+    Ok(::acme::fail(message).map_err(BindErrorString)?)
+}
+
+#[pyfunction]
 fn find_counter(start: i64) -> Option<Counter> {
     ::acme::find_counter(start).map(Counter)
 }
@@ -427,6 +432,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(describe, m)?)?;
     m.add_function(wrap_pyfunction!(describe_owned, m)?)?;
     m.add_function(wrap_pyfunction!(digest, m)?)?;
+    m.add_function(wrap_pyfunction!(fail, m)?)?;
     m.add_function(wrap_pyfunction!(find_counter, m)?)?;
     m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;

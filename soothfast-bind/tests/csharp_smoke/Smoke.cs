@@ -35,3 +35,13 @@ Console.WriteLine($"describe(none)={Core.Describe(null) ?? "null"}");
 
 Console.WriteLine($"describeOwned={Core.DescribeOwned("world")}");
 Console.WriteLine($"describeOwned(none)={Core.DescribeOwned(null) ?? "null"}");
+
+try
+{
+    Core.Fail("bad byte");
+    throw new Exception("expected CoreException");
+}
+catch (CoreException e)
+{
+    Console.WriteLine($"fail caught: {e.Message}");
+}

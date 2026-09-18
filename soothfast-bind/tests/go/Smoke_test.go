@@ -121,3 +121,14 @@ func TestDescribeOwned(t *testing.T) {
 		t.Fatalf("DescribeOwned(nil) = %v, want nil", got)
 	}
 }
+
+func TestFailMessageWithInteriorNul(t *testing.T) {
+	_, err := Fail("bad byte")
+	if err == nil {
+		t.Fatal("Fail(\"bad byte\") did not return an error")
+	}
+	want := "bad byte�end"
+	if err.Error() != want {
+		t.Fatalf("Fail error = %q, want %q", err.Error(), want)
+	}
+}

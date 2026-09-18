@@ -27,6 +27,7 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 - `describe`
 - `describe_owned`
 - `digest`
+- `fail`
 - `find_counter`
 - `greet`
 - `maybe_ratio`

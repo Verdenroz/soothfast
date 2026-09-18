@@ -34,6 +34,7 @@ require "acme_core"
 - `describe`
 - `describe_owned`
 - `digest`
+- `fail`
 - `find_counter`
 - `greet`
 - `index_all`

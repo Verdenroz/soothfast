@@ -64,6 +64,23 @@ public static class Core
         }
     }
 
+    public static long Fail(string message)
+    {
+        byte[] messageBytes = System.Text.Encoding.UTF8.GetBytes(message + "\0");
+        unsafe
+        {
+            fixed (byte* messagePtr = messageBytes)
+            {
+                long result = Native.acme_core_fail(messagePtr, out IntPtr error);
+                if (error != IntPtr.Zero)
+                {
+                    throw CoreException.FromNative(error);
+                }
+                return result;
+            }
+        }
+    }
+
     public static Counter FindCounter(long start)
     {
         IntPtr result = Native.acme_core_find_counter(start);

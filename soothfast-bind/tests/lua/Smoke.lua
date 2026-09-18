@@ -91,4 +91,10 @@ assert(acme.describe(nil) == nil, "describe absent")
 assert(acme.describe_owned("world") == "owned=world", "describe_owned present")
 assert(acme.describe_owned(nil) == nil, "describe_owned absent")
 
+local ok_fail, err_fail = pcall(function()
+	return acme.fail("bad byte")
+end)
+assert(not ok_fail, "expected an error from fail")
+assert(tostring(err_fail):find("bad byte\239\191\189end"), "error message: " .. tostring(err_fail))
+
 print("ok")

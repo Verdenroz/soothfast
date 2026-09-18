@@ -112,6 +112,11 @@ pub fn digest(data: Buffer) -> Buffer {
     Buffer::from(::acme::digest(data.as_ref()))
 }
 
+#[napi]
+pub fn fail(message: String) -> Result<BigInt> {
+    Ok(BigInt::from(::acme::fail(&message).map_err(BindErrorString)?))
+}
+
 #[napi(js_name = "findCounter")]
 pub fn find_counter(start: BigInt) -> Result<Option<Counter>> {
     let start = bigint_to_i64(start, "start")?;

@@ -2,6 +2,7 @@
 describe <- function(label) .Call(wrap__describe, label)
 describe_owned <- function(label) .Call(wrap__describe_owned, label)
 digest <- function(data) .Call(wrap__digest, data)
+fail <- function(message) .Call(wrap__fail, message)
 find_counter <- function(start) .Call(wrap__find_counter, start)
 greet <- function(name) .Call(wrap__greet, name)
 maybe_ratio <- function(value) .Call(wrap__maybe_ratio, value)

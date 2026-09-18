@@ -21,6 +21,10 @@ public final class Core {
         return nativeDigest(data);
     }
 
+    public static long fail(String message) {
+        return nativeFail(message);
+    }
+
     public static Counter findCounter(long start) {
         long ptr_ = nativeFindCounter(start);
         return ptr_ == 0 ? null : new Counter(ptr_, Counter.Raw.INSTANCE);
@@ -49,6 +53,7 @@ public final class Core {
     private static native String nativeDescribe(String label);
     private static native String nativeDescribeOwned(String label);
     private static native byte[] nativeDigest(byte[] data);
+    private static native long nativeFail(String message);
     private static native long nativeFindCounter(long start);
     private static native String nativeGreet(String name);
     private static native double[] nativeNormalize(double[] input, double factor);
