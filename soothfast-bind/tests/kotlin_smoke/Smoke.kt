@@ -22,6 +22,10 @@ fun main() {
     println("normalize=${Core.normalize(doubleArrayOf(1.0, 2.0, 3.0), 2.0).contentToString()}")
     println("stamp=${Core.stamp(7, 3.0, byteArrayOf(9, 9))}")
 
+    val scaled = doubleArrayOf(0.0, 0.0, 0.0)
+    Core.scaleInto(doubleArrayOf(1.0, 2.0, 3.0), 2.0, scaled)
+    println("scaleInto=${scaled.contentToString()}")
+
     println("peakLevel=${Core.peakLevel(doubleArrayOf(0.1, 0.9, 0.3))}")
     Core.findCounter(5)!!.use { found -> println("findCounter=${found.value}") }
     println("findCounter(missing)=${Core.findCounter(-1)}")

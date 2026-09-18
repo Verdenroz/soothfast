@@ -80,6 +80,10 @@ assert renormalized.tolist() == [2.0, 4.0, 6.0]
 via_array = acme_core.normalize(array.array("d", [1.0, 2.0]), 3.0)
 assert via_array.tolist() == [3.0, 6.0]
 
+out = array.array("d", [0.0, 0.0, 0.0])
+acme_core.scale_into([1.0, 2.0, 3.0], 2.0, out)
+assert out.tolist() == [2.0, 4.0, 6.0]
+
 assert acme_core.peak_level([0.1, 0.9, 0.3]) == Level.High
 assert acme_core.peak_level([0.1, 0.2]) == Level.Low
 

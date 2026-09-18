@@ -53,6 +53,11 @@ end
 
 raise "digest" unless AcmeCore.digest("abc".b) == "bcd".b
 raise "normalize" unless AcmeCore.normalize([1.0, 2.0], 2.0) == [2.0, 4.0]
+
+scaled = [0.0, 0.0, 0.0]
+AcmeCore.scale_into([1.0, 2.0, 3.0], 2.0, scaled)
+raise "scale_into" unless scaled == [2.0, 4.0, 6.0]
+
 raise "greet" unless AcmeCore.greet("world") == "hello, world"
 
 raise "peak_level" unless AcmeCore.peak_level([0.1, 0.9, 0.3]) == :high

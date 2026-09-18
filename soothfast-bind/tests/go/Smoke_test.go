@@ -66,6 +66,12 @@ func TestFreeFunctions(t *testing.T) {
 	if got := Stamp(1, 2, []byte{1, 2, 3}); got != 6 {
 		t.Fatalf("Stamp = %d, want 6", got)
 	}
+
+	scaled := make([]float64, 3)
+	ScaleInto([]float64{1, 2, 3}, 2, scaled)
+	if scaled[0] != 2 || scaled[1] != 4 || scaled[2] != 6 {
+		t.Fatalf("ScaleInto = %v, want [2 4 6]", scaled)
+	}
 }
 
 func TestEmptyBuffer(t *testing.T) {

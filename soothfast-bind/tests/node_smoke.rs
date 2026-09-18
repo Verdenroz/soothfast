@@ -27,7 +27,7 @@ fn scratch_dir() -> PathBuf {
 const SMOKE_TEST_JS: &str = r#"
 const test = require("node:test");
 const assert = require("node:assert");
-const { Counter, Level, digest, normalize, peakLevel, findCounter, describe, describeOwned, maybeRatio } = require("./index.js");
+const { Counter, Level, digest, normalize, scaleInto, peakLevel, findCounter, describe, describeOwned, maybeRatio } = require("./index.js");
 
 test("a class carries state across calls", () => {
     const counter = new Counter(10n);
@@ -41,6 +41,12 @@ test("a buffer call reaches Rust without boxing every byte", () => {
     assert.deepStrictEqual(Buffer.from(bytes), Buffer.from([2, 3, 4]));
     const scaled = normalize(Float64Array.from([1, 2, 3]), 2);
     assert.deepStrictEqual(Array.from(scaled), [2, 4, 6]);
+});
+
+test("a mutable out-parameter writes back into the caller's buffer", () => {
+    const out = new Float64Array(3);
+    scaleInto(Float64Array.from([1, 2, 3]), 2, out);
+    assert.deepStrictEqual(Array.from(out), [2, 4, 6]);
 });
 
 test("a failing call throws a JavaScript Error", () => {

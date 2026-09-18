@@ -139,6 +139,7 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "caught: overflow",
     "digest=[2, 3, 4]",
     "normalize=[2, 4, 6]",
+    "scale_into=[2, 4, 6]",
     "greet=hello, C++",
     "stamp=6",
     "peak_level=High",

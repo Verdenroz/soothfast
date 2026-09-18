@@ -42,7 +42,7 @@ fn run(cmd: &mut Command, what: &str) {
 const SMOKE_TEST_JS: &str = r#"
 const test = require("node:test");
 const assert = require("node:assert");
-const { Counter, Level, digest, normalize, greet, peakLevel, findCounter, describe, describeOwned, maybeRatio } = require("./pkg");
+const { Counter, Level, digest, normalize, scaleInto, greet, peakLevel, findCounter, describe, describeOwned, maybeRatio } = require("./pkg");
 
 test("a class carries state across calls", () => {
     const counter = new Counter(10n);
@@ -73,6 +73,12 @@ test("byte and float sequences cross as plain arrays", () => {
 
 test("greet round-trips a plain string", () => {
     assert.strictEqual(greet("wasm"), "hello, wasm");
+});
+
+test("a mutable out-parameter writes back into the caller's array", () => {
+    const out = new Float64Array(3);
+    scaleInto([1, 2, 3], 2, out);
+    assert.deepStrictEqual(Array.from(out), [2, 4, 6]);
 });
 
 test("a mirrored enum returns by value and an optional handle maps into its wrapper", () => {

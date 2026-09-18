@@ -21,6 +21,10 @@ Console.WriteLine($"digest=[{string.Join(", ", Core.Digest(new byte[] { 1, 2, 3 
 Console.WriteLine($"normalize=[{string.Join(", ", Core.Normalize(new double[] { 1.0, 2.0, 3.0 }, 2.0))}]");
 Console.WriteLine($"stamp={Core.Stamp(7, 3.0, new byte[] { 9, 9 })}");
 
+var scaled = new double[] { 0, 0, 0 };
+Core.ScaleInto(new double[] { 1.0, 2.0, 3.0 }, 2.0, scaled);
+Console.WriteLine($"scaleInto=[{string.Join(", ", scaled)}]");
+
 Console.WriteLine($"peakLevel={Core.PeakLevel(new double[] { 0.1, 0.9, 0.3 })}");
 var found = Core.FindCounter(5);
 Console.WriteLine($"findCounter={found.Value}");

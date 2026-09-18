@@ -152,6 +152,7 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "caught: overflow",
     "digest=[2, 3, 4]",
     "normalize=[2, 4, 6]",
+    "scaleInto=[2, 4, 6]",
     "stamp=12",
     "peakLevel=High",
     "findCounter=5",
