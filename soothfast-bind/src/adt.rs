@@ -136,8 +136,10 @@ fn auto_trait(r: &Resolver, inner: &Value, want: &str) -> Option<bool> {
     None
 }
 
+// rustdoc reports pub(crate) as "crate", and a separate glue crate can
+// reach only "public".
 fn is_public(item: &Value) -> bool {
-    item["visibility"].as_str() != Some("default")
+    item["visibility"].as_str() == Some("public")
 }
 
 fn summary(item: &Value) -> Option<String> {
