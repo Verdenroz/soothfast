@@ -337,6 +337,36 @@ fn lockfile_stale(dir: &Path) -> bool {
         .is_ok_and(|out| out.status.success())
 }
 
+/// `cargo update --workspace` refreshes an existing lockfile to satisfy a
+/// changed manifest without bumping unrelated dependencies.
+fn update_lockfile(dir: &Path) -> Result<(), String> {
+    let out = crate::invoke::cargo_command()
+        .args(["update", "--workspace"])
+        .current_dir(dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!(
+            "cargo update --workspace failed in {}: {}",
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Creates a missing lockfile or refreshes one that no longer satisfies its
+/// manifest; a fresh lockfile is left untouched.
+fn ensure_lockfile(dir: &Path) -> Result<(), String> {
+    if !dir.join("Cargo.lock").exists() {
+        generate_lockfile(dir)
+    } else if lockfile_stale(dir) {
+        update_lockfile(dir)
+    } else {
+        Ok(())
+    }
+}
+
 fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let built = build_all(pkg, common, &meta.dir, &meta.version)?;
@@ -374,8 +404,8 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
                         bound.entry.out
                     );
                 }
-            } else if !dir.join("Cargo.lock").exists() {
-                generate_lockfile(&dir)?;
+            } else {
+                ensure_lockfile(&dir)?;
             }
         }
         println!(
@@ -723,9 +753,9 @@ mod tests {
     }
 
     #[test]
-    fn lockfile_stale_tracks_whether_the_lock_still_satisfies_the_manifest() {
+    fn ensure_lockfile_creates_refreshes_and_leaves_fresh_alone() {
         let root = std::env::temp_dir().join(format!(
-            "soothfast-bind-lockfile-test-{}",
+            "soothfast-bind-ensure-lockfile-test-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -735,10 +765,18 @@ mod tests {
         write_crate(&b, "b", "a = { path = \"../a\" }\n");
 
         assert!(lockfile_stale(&b), "no Cargo.lock yet");
-        generate_lockfile(&b).expect("generates a lockfile");
+        ensure_lockfile(&b).expect("creates a lockfile");
         assert!(
             !lockfile_stale(&b),
             "a fresh lockfile satisfies its manifest"
+        );
+
+        let fresh = std::fs::read_to_string(b.join("Cargo.lock")).expect("reads lockfile");
+        ensure_lockfile(&b).expect("no-op on a fresh lockfile");
+        assert_eq!(
+            std::fs::read_to_string(b.join("Cargo.lock")).expect("reads lockfile"),
+            fresh,
+            "a fresh lockfile is left untouched"
         );
 
         write_crate(
@@ -747,6 +785,11 @@ mod tests {
             "a = { path = \"../a\" }\nc = { path = \"../c\" }\n",
         );
         assert!(lockfile_stale(&b), "the lock predates the new dependency");
+        ensure_lockfile(&b).expect("refreshes a stale lockfile");
+        assert!(
+            !lockfile_stale(&b),
+            "the refreshed lock satisfies the manifest"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
