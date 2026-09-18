@@ -73,13 +73,13 @@ pub fn auto_impl(name: &str, negative: bool) -> Value {
     })
 }
 
-pub fn enum_item(name: &str, variants: &[u64]) -> Value {
+pub fn enum_item(name: &str, variants: &[u64], impls: &[u64]) -> Value {
     json!({
         "name": name, "docs": Value::Null, "attrs": [], "visibility": "public",
         "inner": { "enum": {
             "variants": variants,
             "generics": { "params": [], "where_predicates": [] },
-            "impls": [] } },
+            "impls": impls } },
     })
 }
 
@@ -324,13 +324,17 @@ fn methods(insert: &mut impl FnMut(u64, Value)) {
     );
 }
 
-/// `Level`, a payload-free enum, and `Mode`, one that carries data.
+/// `Level`, a payload-free enum, and `Mode`, one that carries data. Real
+/// rustdoc emits Send/Sync auto-impls for both, the same as it does for
+/// `Counter`.
 fn enums(insert: &mut impl FnMut(u64, Value)) {
-    insert(4, enum_item("Level", &[45, 46]));
+    insert(4, enum_item("Level", &[45, 46], &[47, 48]));
     insert(45, variant("Low", json!("plain")));
     insert(46, variant("High", json!("plain")));
+    insert(47, auto_impl("Send", false));
+    insert(48, auto_impl("Sync", false));
 
-    insert(3, enum_item("Mode", &[40, 41, 42]));
+    insert(3, enum_item("Mode", &[40, 41, 42], &[49, 50]));
     insert(40, variant("Fast", json!("plain")));
     insert(41, variant("Precise", json!({ "tuple": [43] })));
     insert(43, field("0", prim("u32"), true));
@@ -341,7 +345,11 @@ fn enums(insert: &mut impl FnMut(u64, Value)) {
             json!({ "struct": { "fields": [44], "has_stripped_fields": false } }),
         ),
     );
-    insert(44, field("level", prim("u8"), true));
+    // Rust has no per-field visibility inside an enum variant, so rustdoc
+    // always reports "default" here regardless of the field's own privacy.
+    insert(44, field("level", prim("u8"), false));
+    insert(49, auto_impl("Send", false));
+    insert(50, auto_impl("Sync", false));
 }
 
 /// `acme`, with a free fn, a struct and its inherent impl, and an enum.

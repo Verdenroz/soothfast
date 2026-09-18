@@ -5,9 +5,9 @@
 //! tree). `go_smoke.rs`, `node_smoke.rs` and `java_smoke.rs` all copy this
 //! one crate and their own golden into a scratch directory in that shape,
 //! so each builds its golden's cdylib for real rather than only comparing
-//! its text. Only the items the plan actually binds need bodies; a gapped
-//! one (`with_time`, `merge`, ...) is never called by generated code, so it
-//! is left out.
+//! its text. `with_time` is the one gapped item left out: it would need a
+//! `chrono` dependency only to prove a foreign-type gap already covered by
+//! `tests/surface.rs`.
 
 use std::collections::HashMap;
 
@@ -54,6 +54,10 @@ impl Counter {
     pub async fn refresh(&self) -> u32 {
         self.value as u32
     }
+
+    pub fn consume(self) -> i64 {
+        self.value
+    }
 }
 
 pub fn digest(data: &[u8]) -> Vec<u8> {
@@ -62,6 +66,10 @@ pub fn digest(data: &[u8]) -> Vec<u8> {
 
 pub fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
     input.into_iter().map(|v| v * factor).collect()
+}
+
+pub fn merge(base: Counter) -> i64 {
+    base.value
 }
 
 pub fn stamp(handle: i64, error: f64, register: &[u8]) -> u64 {
