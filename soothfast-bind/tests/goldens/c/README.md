@@ -52,6 +52,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `acme_core_normalize`
 - `acme_core_peak_level`
 - `acme_core_scale_into`
+- `acme_core_split`
 - `acme_core_stamp`
 
 ## Not bound

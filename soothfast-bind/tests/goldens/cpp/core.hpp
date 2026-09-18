@@ -158,6 +158,10 @@ inline void scale_into(std::span<const double> values, double factor, std::span<
     core_scale_into(values.data(), values.size(), factor, out.data(), out.size());
 }
 
+inline void split(std::span<const double> src, std::span<double> lo, std::span<double> hi) {
+    core_split(src.data(), src.size(), lo.data(), lo.size(), hi.data(), hi.size());
+}
+
 inline uint64_t stamp(int64_t handle, double error_, std::span<const uint8_t> register_) {
     auto raw_result = core_stamp(handle, error_, register_.data(), register_.size());
     return raw_result;

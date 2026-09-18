@@ -112,6 +112,15 @@ fn scale_into(values: Vec<f64>, factor: f64, out: ::magnus::RArray) -> Result<()
     Ok(__out)
 }
 
+fn split(src: Vec<f64>, lo: ::magnus::RArray, hi: ::magnus::RArray) -> Result<(), ::magnus::Error> {
+    let mut lo_vec = lo.to_vec::<f64>()?;
+    let mut hi_vec = hi.to_vec::<f64>()?;
+    let __out = ::acme::split(&src, &mut lo_vec, &mut hi_vec);
+    lo_vec.iter().enumerate().try_for_each(|(i, value)| lo.store(i as isize, *value))?;
+    hi_vec.iter().enumerate().try_for_each(|(i, value)| hi.store(i as isize, *value))?;
+    Ok(__out)
+}
+
 fn stamp(handle: i64, error: f64, register: ::magnus::RString) -> u64 {
     let register = unsafe { register.as_slice() }.to_vec();
     ::acme::stamp(handle, error, &register)
@@ -144,6 +153,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("normalize", ::magnus::function!(normalize, 2))?;
     module.define_module_function("peak_level", ::magnus::function!(peak_level, 1))?;
     module.define_module_function("scale_into", ::magnus::function!(scale_into, 3))?;
+    module.define_module_function("split", ::magnus::function!(split, 3))?;
     module.define_module_function("stamp", ::magnus::function!(stamp, 3))?;
     module.define_module_function("trim", ::magnus::function!(trim, 1))?;
     Ok(())

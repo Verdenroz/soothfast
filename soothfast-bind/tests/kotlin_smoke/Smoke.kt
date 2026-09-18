@@ -35,4 +35,10 @@ fun main() {
 
     println("describeOwned=${Core.describeOwned("world")}")
     println("describeOwned(none)=${Core.describeOwned(null)}")
+
+    val lo = DoubleArray(3)
+    val hi = DoubleArray(3)
+    Core.split(doubleArrayOf(1.0, 2.0, 3.0), lo, hi)
+    println("split.lo=${lo.contentToString()}")
+    println("split.hi=${hi.contentToString()}")
 }

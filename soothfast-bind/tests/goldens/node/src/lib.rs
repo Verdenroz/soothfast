@@ -149,6 +149,11 @@ pub fn scale_into(values: Float64Array, factor: f64, mut out: Float64Array) -> (
 }
 
 #[napi]
+pub fn split(src: Float64Array, mut lo: Float64Array, mut hi: Float64Array) -> () {
+    ::acme::split(src.as_ref(), unsafe { lo.as_mut() }, unsafe { hi.as_mut() })
+}
+
+#[napi]
 pub fn stamp(handle: BigInt, error: f64, register: Buffer) -> Result<BigInt> {
     let handle = bigint_to_i64(handle, "handle")?;
     Ok(BigInt::from(::acme::stamp(handle, error, register.as_ref())))

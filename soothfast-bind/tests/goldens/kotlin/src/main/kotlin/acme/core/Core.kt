@@ -13,6 +13,7 @@ private external fun nativeGreet(name: String): String
 private external fun nativeNormalize(input: DoubleArray, factor: Double): DoubleArray
 private external fun nativePeakLevel(values: DoubleArray): Int
 private external fun nativeScaleInto(values: DoubleArray, factor: Double, out: DoubleArray): Unit
+private external fun nativeSplit(src: DoubleArray, lo: DoubleArray, hi: DoubleArray): Unit
 private external fun nativeStamp(handle: Long, error: Double, register: ByteArray): Long
 
 fun describe(label: String?): String? {
@@ -50,6 +51,10 @@ fun peakLevel(values: DoubleArray): Level {
 
 fun scaleInto(values: DoubleArray, factor: Double, out: DoubleArray) {
     nativeScaleInto(values, factor, out)
+}
+
+fun split(src: DoubleArray, lo: DoubleArray, hi: DoubleArray) {
+    nativeSplit(src, lo, hi)
 }
 
 fun stamp(handle: Long, error: Double, register: ByteArray): Long {

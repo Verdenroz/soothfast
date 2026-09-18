@@ -122,5 +122,8 @@ internal static class Native
     internal static extern unsafe void acme_core_scale_into(double* values, nuint values_len, double factor, double* out_, nuint out__len);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe void acme_core_split(double* src, nuint src_len, double* lo, nuint lo_len, double* hi, nuint hi_len);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe ulong acme_core_stamp(long handle_, double error_, byte* register, nuint register_len);
 }

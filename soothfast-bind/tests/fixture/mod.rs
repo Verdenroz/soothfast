@@ -254,6 +254,25 @@ fn failing_free_functions(insert: &mut impl FnMut(u64, Value)) {
     );
 }
 
+/// The crate's free functions taking more than one writable buffer, so a
+/// backend that can only keep one pinned at a time has a second to prove it
+/// still writes back.
+fn multi_buffer_free_functions(insert: &mut impl FnMut(u64, Value)) {
+    insert(
+        23,
+        func(
+            "split",
+            &[
+                ("src", borrowed(json!({ "slice": prim("f64") }), false)),
+                ("lo", borrowed(json!({ "slice": prim("f64") }), true)),
+                ("hi", borrowed(json!({ "slice": prim("f64") }), true)),
+            ],
+            Value::Null,
+            false,
+        ),
+    );
+}
+
 /// `Counter`, its fields and its auto-trait impls. The inherent impl block
 /// and its methods are [`methods`]'s to insert.
 fn structs(insert: &mut impl FnMut(u64, Value)) {
@@ -376,6 +395,7 @@ pub fn doc() -> Value {
     free_functions(&mut insert);
     optional_free_functions(&mut insert);
     failing_free_functions(&mut insert);
+    multi_buffer_free_functions(&mut insert);
     structs(&mut insert);
     methods(&mut insert);
     enums(&mut insert);
@@ -398,6 +418,7 @@ pub fn doc() -> Value {
             "17": { "crate_id": 0, "path": ["acme", "describe_owned"], "kind": "function" },
             "18": { "crate_id": 0, "path": ["acme", "maybe_ratio"], "kind": "function" },
             "19": { "crate_id": 0, "path": ["acme", "fail"], "kind": "function" },
+            "23": { "crate_id": 0, "path": ["acme", "split"], "kind": "function" },
             "2": { "crate_id": 0, "path": ["acme", "Counter"], "kind": "struct" },
             "3": { "crate_id": 0, "path": ["acme", "Mode"], "kind": "enum" },
             "4": { "crate_id": 0, "path": ["acme", "Level"], "kind": "enum" },
@@ -439,6 +460,7 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::describe_owned", "fn"),
         record("acme::maybe_ratio", "fn"),
         record("acme::fail", "fn"),
+        record("acme::split", "fn"),
         record("acme::Counter", "struct"),
         record("acme::Mode", "enum"),
         record("acme::Level", "enum"),

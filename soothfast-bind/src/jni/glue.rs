@@ -293,31 +293,69 @@ fn body(
         let _ = writeln!(out, "    let this = unsafe {{ {cast} }};");
     }
     for param in &function.params {
-        if pinned.is_some_and(|p| p.name == param.name) {
+        if pinned.as_ref().is_some_and(|p| p.param.name == param.name) {
             continue;
         }
         out.push_str(&param_prelude(param, plan, krate, &zero));
     }
-    if let Some(param) = pinned {
-        out.push_str(&pin_stmt(param, plan, &zero));
+    if let Some(p) = &pinned {
+        out.push_str(&pin_stmt(p, &zero));
     }
 
-    let call = call_expr(function, owner, krate, plan, pinned);
+    let call = call_expr(function, owner, krate, plan, pinned.as_ref());
     let no_value = function.throws.is_none() && function.ret == Ty::Unit;
     if no_value {
         let _ = writeln!(out, "    {call};");
-        if let Some(param) = pinned {
-            let _ = writeln!(out, "    drop({}_pin);", rust_ident(&param.name));
+        if let Some(p) = &pinned {
+            let _ = writeln!(out, "    drop({}_pin);", rust_ident(&p.param.name));
         }
+        out.push_str(&writeback_stmts(function, plan, pinned.as_ref(), &zero));
         return out;
     }
 
     let _ = writeln!(out, "    let __out = {call};");
-    if let Some(param) = pinned {
-        let _ = writeln!(out, "    drop({}_pin);", rust_ident(&param.name));
+    if let Some(p) = &pinned {
+        let _ = writeln!(out, "    drop({}_pin);", rust_ident(&p.param.name));
     }
+    out.push_str(&writeback_stmts(function, plan, pinned.as_ref(), &zero));
     let _ = writeln!(out, "{}", finish(function, plan, opts));
     out
+}
+
+/// Every non-pinned writable buffer's write-back, in parameter order. The
+/// pinned buffer, if any, already writes back through `CopyBack` when its
+/// guard drops above, so it is excluded here.
+fn writeback_stmts(
+    function: &Function,
+    plan: &BindingPlan,
+    pinned: Option<&Pinned>,
+    zero: &str,
+) -> String {
+    let mut out = String::new();
+    for param in &function.params {
+        if pinned.is_some_and(|p| p.param.name == param.name) {
+            continue;
+        }
+        if let Transfer::Buffer {
+            element,
+            writable: true,
+            ..
+        } = Transfer::of(param, plan)
+        {
+            out.push_str(&writeback_stmt(&rust_ident(&param.name), element, zero));
+        }
+    }
+    out
+}
+
+/// The single buffer parameter staying pinned across a call, carrying the
+/// element type and writability [`pin_stmt`] and [`call_arg`] need so
+/// neither has to re-derive them from `Transfer::of` and handle the
+/// buffer-or-not case a second time.
+struct Pinned<'a> {
+    param: &'a Param,
+    element: Primitive,
+    writable: bool,
 }
 
 /// Which single buffer parameter, if more than one crosses, gets to stay
@@ -325,30 +363,32 @@ fn body(
 /// `env`, so at most one guard can be alive at a time. The writable one
 /// wins, since only it saves two copies rather than one; a lone borrowed
 /// buffer wins by default.
-fn pinned_param<'a>(function: &'a Function, plan: &BindingPlan) -> Option<&'a Param> {
-    let buffers: Vec<&Param> = function
+fn pinned_param<'a>(function: &'a Function, plan: &BindingPlan) -> Option<Pinned<'a>> {
+    let buffers: Vec<(&Param, Primitive, bool)> = function
         .params
         .iter()
-        .filter(|p| {
-            matches!(
-                Transfer::of(p, plan),
-                Transfer::Buffer { borrowed: true, .. }
-            )
+        .filter_map(|p| match Transfer::of(p, plan) {
+            Transfer::Buffer {
+                element,
+                borrowed: true,
+                writable,
+            } => Some((p, element, writable)),
+            _ => None,
         })
         .collect();
     buffers
         .iter()
-        .find(|p| {
-            matches!(
-                Transfer::of(p, plan),
-                Transfer::Buffer { writable: true, .. }
-            )
-        })
+        .find(|(_, _, writable)| *writable)
         .copied()
         .or(if buffers.len() == 1 {
             buffers.first().copied()
         } else {
             None
+        })
+        .map(|(param, element, writable)| Pinned {
+            param,
+            element,
+            writable,
         })
 }
 
@@ -372,6 +412,11 @@ fn param_prelude(param: &Param, plan: &BindingPlan, krate: &str, zero: &str) -> 
             borrowed: false,
             ..
         } => owned_buffer_stmt(&name, element, zero),
+        Transfer::Buffer {
+            element,
+            writable: true,
+            ..
+        } => readback_buffer_stmt(&name, element, zero),
         Transfer::Buffer { element, .. } => copied_buffer_stmt(&name, element, zero),
         Transfer::Handle { mirrored: true, .. } => {
             let snake = types::snake(&class_name(&param.ty));
@@ -410,6 +455,41 @@ fn owned_buffer_stmt(name: &str, element: Primitive, zero: &str) -> String {
     )
 }
 
+/// A writable buffer that will not stay pinned, because another one in the
+/// same call needs the one live `AutoElementsCritical` guard instead: read
+/// with a plain array-region call now, and write back with
+/// [`writeback_stmt`] once the call and the pinned guard's drop are both
+/// past, since a plain JNI call also needs `env` unborrowed.
+fn readback_buffer_stmt(name: &str, element: Primitive, zero: &str) -> String {
+    let spelling = types::scalar_of(element);
+    let natural = element.render();
+    let cast = element_cast("__raw", natural, spelling.rust);
+    let err = err_arm(zero);
+    format!(
+        "    let __len = match env.get_array_length(&{name}) {{\n        Ok(v) => v as usize,\n        {err}\n    }};\n\
+         \x20   let mut __raw = vec![{zero_elem}; __len];\n\
+         \x20   match env.get_{java}_array_region(&{name}, 0, &mut __raw) {{\n        Ok(()) => {{}}\n        {err}\n    }}\n\
+         \x20   let mut {name}_buf: Vec<{natural}> = {cast};\n",
+        zero_elem = zero_literal(spelling.rust),
+        java = spelling.java,
+    )
+}
+
+/// [`readback_buffer_stmt`]'s other half: write `{name}_buf` back into the
+/// Java array it was read from.
+fn writeback_stmt(name: &str, element: Primitive, zero: &str) -> String {
+    let spelling = types::scalar_of(element);
+    let natural = element.render();
+    let cast = element_cast(&format!("{name}_buf"), spelling.rust, natural);
+    format!(
+        "    let {name}_out: Vec<{stored}> = {cast};\n\
+         \x20   match env.set_{java}_array_region(&{name}, 0, &{name}_out) {{\n        Ok(()) => {{}}\n        {err}\n    }}\n",
+        stored = spelling.rust,
+        java = spelling.java,
+        err = err_arm(zero),
+    )
+}
+
 /// A borrowed buffer that will not stay pinned, because another one in the
 /// same call needs the one live `AutoElementsCritical` guard instead.
 fn copied_buffer_stmt(name: &str, element: Primitive, zero: &str) -> String {
@@ -431,13 +511,14 @@ fn copied_buffer_stmt(name: &str, element: Primitive, zero: &str) -> String {
     )
 }
 
-fn pin_stmt(param: &Param, plan: &BindingPlan, zero: &str) -> String {
-    let name = rust_ident(&param.name);
-    let Transfer::Buffer { writable, .. } = Transfer::of(param, plan) else {
-        unreachable!("pinned_param only names a buffer parameter")
+fn pin_stmt(pinned: &Pinned, zero: &str) -> String {
+    let name = rust_ident(&pinned.param.name);
+    let mode = if pinned.writable {
+        "CopyBack"
+    } else {
+        "NoCopyBack"
     };
-    let mode = if writable { "CopyBack" } else { "NoCopyBack" };
-    let binding = if writable { "let mut" } else { "let" };
+    let binding = if pinned.writable { "let mut" } else { "let" };
     format!(
         "    let result = unsafe {{ env.get_array_elements_critical(&{name}, ::jni::objects::ReleaseMode::{mode}) }};\n\
          {err_block}\n\
@@ -479,7 +560,7 @@ fn pinned_slice_expr(name: &str, element: Primitive, writable: bool) -> String {
     }
     match writable {
         true => format!(
-            "unsafe {{ ::std::slice::from_raw_parts_mut({var}.as_ptr() as *mut {natural}, {var}.len()) }}"
+            "unsafe {{ ::std::slice::from_raw_parts_mut({var}.as_mut_ptr() as *mut {natural}, {var}.len()) }}"
         ),
         false => format!(
             "unsafe {{ ::std::slice::from_raw_parts({var}.as_ptr() as *const {natural}, {var}.len()) }}"
@@ -530,7 +611,7 @@ fn call_expr(
     owner: Option<&Class>,
     krate: &str,
     plan: &BindingPlan,
-    pinned: Option<&Param>,
+    pinned: Option<&Pinned>,
 ) -> String {
     let args: Vec<String> = function
         .params
@@ -549,16 +630,18 @@ fn call_expr(
     }
 }
 
-fn call_arg(param: &Param, plan: &BindingPlan, pinned: Option<&Param>) -> String {
+fn call_arg(param: &Param, plan: &BindingPlan, pinned: Option<&Pinned>) -> String {
     let name = rust_ident(&param.name);
-    if pinned.is_some_and(|p| p.name == param.name) {
-        let Transfer::Buffer {
-            element, writable, ..
-        } = Transfer::of(param, plan)
-        else {
-            unreachable!("pinned_param only names a buffer parameter")
-        };
-        return pinned_slice_expr(&name, element, writable);
+    if let Some(p) = pinned
+        && p.param.name == param.name
+    {
+        return pinned_slice_expr(&name, p.element, p.writable);
+    }
+    if matches!(
+        Transfer::of(param, plan),
+        Transfer::Buffer { writable: true, .. }
+    ) {
+        return format!("&mut {name}_buf");
     }
     if matches!(Transfer::of(param, plan), Transfer::Handle { .. }) {
         return name;
@@ -622,7 +705,7 @@ fn returned(expr: &str, ty: &Ty, plan: &BindingPlan, zero: &str) -> String {
             other => returned(expr, other, plan, zero),
         },
         _ => match types::element(ty) {
-            Some(spelling) => array_return_expr(expr, ty, &spelling, zero),
+            Some((natural, spelling)) => array_return_expr(expr, &natural, &spelling, zero),
             None => scalar_return_expr(expr, ty),
         },
     }
@@ -639,13 +722,8 @@ fn scalar_return_expr(expr: &str, ty: &Ty) -> String {
     }
 }
 
-fn array_return_expr(expr: &str, ty: &Ty, spelling: &types::Spelling, zero: &str) -> String {
-    let natural = match ty {
-        Ty::Bytes => "u8".to_string(),
-        Ty::List(inner) => inner.render(),
-        _ => unreachable!("checked by types::element"),
-    };
-    let cast = element_cast(expr, spelling.rust, &natural);
+fn array_return_expr(expr: &str, natural: &str, spelling: &types::Spelling, zero: &str) -> String {
+    let cast = element_cast(expr, spelling.rust, natural);
     let err = err_arm(zero);
     format!(
         "{{\n            let __values: Vec<{rust}> = {cast};\n            \

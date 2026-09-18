@@ -144,6 +144,19 @@ public static class Core
         }
     }
 
+    public static void Split(ReadOnlySpan<double> src, Span<double> lo, Span<double> hi)
+    {
+        unsafe
+        {
+            fixed (double* srcPtr = src)
+            fixed (double* loPtr = lo)
+            fixed (double* hiPtr = hi)
+            {
+                Native.acme_core_split(srcPtr, (nuint)src.Length, loPtr, (nuint)lo.Length, hiPtr, (nuint)hi.Length);
+            }
+        }
+    }
+
     public static ulong Stamp(long handle_, double error_, ReadOnlySpan<byte> register)
     {
         unsafe

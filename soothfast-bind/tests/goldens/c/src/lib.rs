@@ -275,6 +275,11 @@ pub unsafe extern "C" fn acme_core_scale_into(values: *const f64, values_len: us
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_split(src: *const f64, src_len: usize, lo: *mut f64, lo_len: usize, hi: *mut f64, hi_len: usize) {
+    ::acme::split(unsafe { ffi::slice(src, src_len) }, unsafe { ffi::slice_mut(lo, lo_len) }, unsafe { ffi::slice_mut(hi, hi_len) })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_stamp(handle_: i64, error_: f64, register_: *const u8, register_len: usize) -> u64 {
     ::acme::stamp(handle_, error_, unsafe { ffi::slice(register_, register_len) })
 }

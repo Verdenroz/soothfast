@@ -179,6 +179,8 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "describe(none)=null",
     "describeOwned=owned=world",
     "describeOwned(none)=null",
+    "split.lo=[2.0, 4.0, 6.0]",
+    "split.hi=[-1.0, -2.0, -3.0]",
 ];
 
 fn java_sources(dir: &Path) -> Vec<PathBuf> {

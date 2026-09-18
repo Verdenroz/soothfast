@@ -42,6 +42,7 @@ require "acme_core"
 - `normalize`
 - `peak_level`
 - `scale_into`
+- `split`
 - `stamp`
 - `trim`
 

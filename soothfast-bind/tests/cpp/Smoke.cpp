@@ -61,5 +61,12 @@ int main() {
         std::printf("fail caught: %s\n", e.what());
     }
 
+    std::vector<double> src{1.0, 2.0, 3.0};
+    std::vector<double> lo(3);
+    std::vector<double> hi(3);
+    split(src, lo, hi);
+    std::printf("split.lo=[%g, %g, %g]\n", lo[0], lo[1], lo[2]);
+    std::printf("split.hi=[%g, %g, %g]\n", hi[0], hi[1], hi[2]);
+
     return 0;
 }

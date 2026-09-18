@@ -55,12 +55,13 @@ pub(crate) fn scalar(ty: &Ty) -> Option<Spelling> {
     ty.primitive().map(scalar_of)
 }
 
-/// The element of a contiguous sequence this backend carries pinned, or
-/// `None` for one it does not.
-pub(crate) fn element(ty: &Ty) -> Option<Spelling> {
+/// The element of a contiguous sequence this backend carries pinned, as the
+/// Rust type it naturally renders plus its JNI spelling, or `None` for a
+/// type that is not one.
+pub(crate) fn element(ty: &Ty) -> Option<(String, Spelling)> {
     match ty {
-        Ty::Bytes => scalar(&Ty::U8),
-        Ty::List(inner) => scalar(inner),
+        Ty::Bytes => scalar(&Ty::U8).map(|s| ("u8".to_string(), s)),
+        Ty::List(inner) => scalar(inner).map(|s| (inner.render(), s)),
         _ => None,
     }
 }
@@ -77,7 +78,7 @@ pub(crate) fn java_ty(ty: &Ty) -> String {
         Ty::Optional(inner) => java_ty(inner),
         ty => scalar(ty)
             .map(|s| s.java.into())
-            .or_else(|| element(ty).map(|e| format!("{}[]", e.java)))
+            .or_else(|| element(ty).map(|(_, e)| format!("{}[]", e.java)))
             .unwrap_or_default(),
     }
 }
@@ -104,7 +105,7 @@ pub(crate) fn native_param_ty(ty: &Ty, plan: &BindingPlan) -> String {
         ty => scalar(ty)
             .map(|s| s.rust.into())
             .or_else(|| {
-                element(ty).map(|e| format!("::jni::objects::{}<'local>", array_class(e.java)))
+                element(ty).map(|(_, e)| format!("::jni::objects::{}<'local>", array_class(e.java)))
             })
             .unwrap_or_default(),
     }
@@ -124,7 +125,7 @@ pub(crate) fn native_return_ty(ty: &Ty, plan: &BindingPlan) -> String {
         },
         ty => scalar(ty)
             .map(|s| s.rust.into())
-            .or_else(|| element(ty).map(|e| format!("::jni::sys::{}", array_sys(e.java))))
+            .or_else(|| element(ty).map(|(_, e)| format!("::jni::sys::{}", array_sys(e.java))))
             .unwrap_or_default(),
     }
 }
@@ -160,7 +161,7 @@ pub(crate) fn kotlin_ty(ty: &Ty) -> String {
         },
         ty => scalar(ty)
             .map(|s| s.kotlin.into())
-            .or_else(|| element(ty).map(|e| format!("{}Array", e.kotlin)))
+            .or_else(|| element(ty).map(|(_, e)| format!("{}Array", e.kotlin)))
             .unwrap_or_default(),
     }
 }

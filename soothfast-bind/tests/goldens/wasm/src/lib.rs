@@ -129,6 +129,11 @@ pub fn scale_into(values: &[f64], factor: f64, out: &mut [f64]) -> () {
 }
 
 #[wasm_bindgen]
+pub fn split(src: &[f64], lo: &mut [f64], hi: &mut [f64]) -> () {
+    ::acme::split(src, lo, hi)
+}
+
+#[wasm_bindgen]
 pub fn stamp(handle: i64, error: f64, register: &[u8]) -> u64 {
     ::acme::stamp(handle, error, register)
 }

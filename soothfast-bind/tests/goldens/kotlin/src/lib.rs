@@ -402,6 +402,68 @@ pub extern "system" fn Java_acme_core_Core_nativeScaleInto<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeSplit<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    src: ::jni::objects::JDoubleArray<'local>,
+    lo: ::jni::objects::JDoubleArray<'local>,
+    hi: ::jni::objects::JDoubleArray<'local>
+) {
+    let src: Vec<f64> = {
+        let result = unsafe { env.get_array_elements_critical(&src, ::jni::objects::ReleaseMode::NoCopyBack) };
+        // env stays borrowed until result is dropped, so this can't throw as a plain match arm.
+        if let Err(ref e) = result {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            let message = e.to_string();
+            drop(result);
+            __throw_unless_pending(&mut env, pending, message);
+            return ;
+        }
+        let guard = result.unwrap_or_else(|_| unreachable!("checked above"));
+        guard.to_vec()
+    };
+    let __len = match env.get_array_length(&hi) {
+        Ok(v) => v as usize,
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ;
+        }
+    };
+    let mut __raw = vec![0.0; __len];
+    match env.get_double_array_region(&hi, 0, &mut __raw) {
+        Ok(()) => {}
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ;
+        }
+    }
+    let mut hi_buf: Vec<f64> = __raw;
+    let result = unsafe { env.get_array_elements_critical(&lo, ::jni::objects::ReleaseMode::CopyBack) };
+    // env stays borrowed until result is dropped, so this can't throw as a plain match arm.
+    if let Err(ref e) = result {
+        let pending = matches!(e, ::jni::errors::Error::JavaException);
+        let message = e.to_string();
+        drop(result);
+        __throw_unless_pending(&mut env, pending, message);
+        return ;
+    }
+    let mut lo_pin = result.unwrap_or_else(|_| unreachable!("checked above"));
+    ::acme::split(&src, &mut lo_pin, &mut hi_buf);
+    drop(lo_pin);
+    let hi_out: Vec<f64> = hi_buf;
+    match env.set_double_array_region(&hi, 0, &hi_out) {
+        Ok(()) => {}
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ;
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeStamp<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

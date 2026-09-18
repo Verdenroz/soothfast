@@ -131,3 +131,10 @@ pub fn maybe_ratio(value: f64) -> Option<f64> {
 pub fn fail(message: &str) -> Result<i64, String> {
     Err(format!("{message}\0end"))
 }
+
+pub fn split(src: &[f64], lo: &mut [f64], hi: &mut [f64]) {
+    for (i, v) in src.iter().enumerate() {
+        lo[i] = v * 2.0;
+        hi[i] = -v;
+    }
+}

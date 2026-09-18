@@ -413,6 +413,11 @@ fn scale_into(py: Python<'_>, values: BorrowedF64, factor: f64, mut out: Borrowe
 }
 
 #[pyfunction]
+fn split(py: Python<'_>, src: BorrowedF64, mut lo: BorrowedMutF64, mut hi: BorrowedMutF64) -> () {
+    py.detach(|| ::acme::split(src.as_slice(), lo.as_mut_slice(), hi.as_mut_slice()))
+}
+
+#[pyfunction]
 fn stamp(py: Python<'_>, handle: i64, error: f64, register: BorrowedU8) -> u64 {
     py.detach(|| ::acme::stamp(handle, error, register.as_slice()))
 }
@@ -440,6 +445,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(peak_level, m)?)?;
     m.add_function(wrap_pyfunction!(scale_into, m)?)?;
+    m.add_function(wrap_pyfunction!(split, m)?)?;
     m.add_function(wrap_pyfunction!(stamp, m)?)?;
     m.add_function(wrap_pyfunction!(trim, m)?)?;
     Ok(())

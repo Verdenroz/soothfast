@@ -150,4 +150,6 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "describe_owned=owned=world",
     "describe_owned(none)=none",
     "fail caught: bad byte\u{fffd}end",
+    "split.lo=[2, 4, 6]",
+    "split.hi=[-1, -2, -3]",
 ];

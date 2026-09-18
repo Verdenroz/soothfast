@@ -102,6 +102,15 @@ fn a_failed_jni_call_throws_instead_of_aborting_under_panic_abort() {
 }
 
 #[test]
+fn a_second_writable_buffer_reads_and_writes_back_without_staying_pinned() {
+    let glue = &emit_set_with(BindKind::Java, &java_opts()).files["src/lib.rs"];
+    assert!(glue.contains("nativeSplit"));
+    assert!(glue.contains("get_double_array_region(&hi, 0, &mut __raw)"));
+    assert!(glue.contains("let mut hi_buf: Vec<f64> = __raw;"));
+    assert!(glue.contains("set_double_array_region(&hi, 0, &hi_out)"));
+}
+
+#[test]
 fn natives_extracts_the_bundled_library_before_falling_back_to_the_path() {
     let files = emit_set_with(BindKind::Java, &java_opts()).files;
     let natives = &files["src/main/java/acme/core/Natives.java"];

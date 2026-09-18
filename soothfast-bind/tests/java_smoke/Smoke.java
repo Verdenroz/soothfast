@@ -41,5 +41,11 @@ public class Smoke {
 
         System.out.println("describeOwned=" + Core.describeOwned("world"));
         System.out.println("describeOwned(none)=" + Core.describeOwned(null));
+
+        double[] lo = new double[3];
+        double[] hi = new double[3];
+        Core.split(new double[] {1.0, 2.0, 3.0}, lo, hi);
+        System.out.println("split.lo=" + Arrays.toString(lo));
+        System.out.println("split.hi=" + Arrays.toString(hi));
     }
 }

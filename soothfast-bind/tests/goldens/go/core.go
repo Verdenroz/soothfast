@@ -212,6 +212,10 @@ func ScaleInto(values []float64, factor float64, out []float64) {
 	C.core_scale_into((*C.double)(unsafe.Pointer(bufPtr(values))), C.size_t(len(values)), C.double(factor), (*C.double)(unsafe.Pointer(bufPtr(out))), C.size_t(len(out)))
 }
 
+func Split(src []float64, lo []float64, hi []float64) {
+	C.core_split((*C.double)(unsafe.Pointer(bufPtr(src))), C.size_t(len(src)), (*C.double)(unsafe.Pointer(bufPtr(lo))), C.size_t(len(lo)), (*C.double)(unsafe.Pointer(bufPtr(hi))), C.size_t(len(hi)))
+}
+
 func Stamp(handle int64, error_ float64, register []byte) uint64 {
 	return uint64(C.core_stamp(C.int64_t(handle), C.double(error_), (*C.uint8_t)(unsafe.Pointer(bufPtr(register))), C.size_t(len(register))))
 }

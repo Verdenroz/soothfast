@@ -46,6 +46,10 @@ public final class Core {
         nativeScaleInto(values, factor, out);
     }
 
+    public static void split(double[] src, double[] lo, double[] hi) {
+        nativeSplit(src, lo, hi);
+    }
+
     public static long stamp(long handle, double error, byte[] register) {
         return nativeStamp(handle, error, register);
     }
@@ -59,5 +63,6 @@ public final class Core {
     private static native double[] nativeNormalize(double[] input, double factor);
     private static native int nativePeakLevel(double[] values);
     private static native void nativeScaleInto(double[] values, double factor, double[] out);
+    private static native void nativeSplit(double[] src, double[] lo, double[] hi);
     private static native long nativeStamp(long handle, double error, byte[] register);
 }

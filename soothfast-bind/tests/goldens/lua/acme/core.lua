@@ -53,6 +53,7 @@ char * core_greet(const char *name);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);
 core_level core_peak_level(const double *values, size_t values_len);
 void core_scale_into(const double *values, size_t values_len, double factor, double *out, size_t out_len);
+void core_split(const double *src, size_t src_len, double *lo, size_t lo_len, double *hi, size_t hi_len);
 uint64_t core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register_len);
 ]]
 
@@ -319,6 +320,23 @@ function M.scale_into(values, factor, out)
 	if type(out) == "table" then
 		for i = 1, out_len do
 			out[i] = out_ptr[i - 1]
+		end
+	end
+end
+
+function M.split(src, lo, hi)
+	local src_ptr, src_len = f64_buf(src)
+	local lo_ptr, lo_len = f64_buf(lo)
+	local hi_ptr, hi_len = f64_buf(hi)
+	lib.core_split(src_ptr, src_len, lo_ptr, lo_len, hi_ptr, hi_len)
+	if type(lo) == "table" then
+		for i = 1, lo_len do
+			lo[i] = lo_ptr[i - 1]
+		end
+	end
+	if type(hi) == "table" then
+		for i = 1, hi_len do
+			hi[i] = hi_ptr[i - 1]
 		end
 	end
 end

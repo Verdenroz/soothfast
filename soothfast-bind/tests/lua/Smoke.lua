@@ -97,4 +97,10 @@ end)
 assert(not ok_fail, "expected an error from fail")
 assert(tostring(err_fail):find("bad byte\239\191\189end"), "error message: " .. tostring(err_fail))
 
+local split_lo = { 0, 0, 0 }
+local split_hi = { 0, 0, 0 }
+acme.split({ 1.0, 2.0, 3.0 }, split_lo, split_hi)
+assert(split_lo[1] == 2.0 and split_lo[2] == 4.0 and split_lo[3] == 6.0, "split lo")
+assert(split_hi[1] == -1.0 and split_hi[2] == -2.0 and split_hi[3] == -3.0, "split hi")
+
 print("ok")

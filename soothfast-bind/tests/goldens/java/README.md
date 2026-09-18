@@ -45,6 +45,7 @@ A borrowed buffer parameter (`double[]`, `byte[]`, ...) is read through `GetPrim
 - `normalize`
 - `peakLevel`
 - `scaleInto`
+- `split`
 - `stamp`
 
 ## Not bound

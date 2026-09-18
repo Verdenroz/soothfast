@@ -45,3 +45,9 @@ catch (CoreException e)
 {
     Console.WriteLine($"fail caught: {e.Message}");
 }
+
+var lo = new double[3];
+var hi = new double[3];
+Core.Split(new double[] { 1.0, 2.0, 3.0 }, lo, hi);
+Console.WriteLine($"split.lo=[{string.Join(", ", lo)}]");
+Console.WriteLine($"split.hi=[{string.Join(", ", hi)}]");

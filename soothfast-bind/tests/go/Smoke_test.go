@@ -132,3 +132,16 @@ func TestFailMessageWithInteriorNul(t *testing.T) {
 		t.Fatalf("Fail error = %q, want %q", err.Error(), want)
 	}
 }
+
+func TestSplitWritesBothBuffers(t *testing.T) {
+	lo := make([]float64, 3)
+	hi := make([]float64, 3)
+	Split([]float64{1, 2, 3}, lo, hi)
+	wantLo := []float64{2, 4, 6}
+	wantHi := []float64{-1, -2, -3}
+	for i := range wantLo {
+		if lo[i] != wantLo[i] || hi[i] != wantHi[i] {
+			t.Fatalf("Split = lo=%v hi=%v, want lo=%v hi=%v", lo, hi, wantLo, wantHi)
+		}
+	}
+}
