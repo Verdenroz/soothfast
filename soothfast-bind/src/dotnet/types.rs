@@ -27,7 +27,6 @@ fn both(spelling: &'static str) -> Spelling {
     }
 }
 
-/// A primitive's blittable P/Invoke spelling and its public C# spelling.
 pub(crate) fn scalar_of(p: Primitive) -> Spelling {
     match p {
         Primitive::Bool => Spelling {

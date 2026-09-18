@@ -918,9 +918,6 @@ mod tests {
         assert!(status.success(), "cargo generate-lockfile failed");
     }
 
-    /// Builds `soothfast-bind`'s own Java golden the way `bind build` would,
-    /// in the same fixture-crate-at-the-root layout `java_smoke.rs` uses.
-    /// Ignored: it shells out to cargo, javac and jar.
     #[test]
     #[ignore = "shells out to cargo, javac and jar"]
     fn java_build_produces_a_jar() {
@@ -940,10 +937,6 @@ mod tests {
         );
     }
 
-    /// Same shape, over the Kotlin golden. `kotlinc` is absent on this
-    /// machine, so the assertion is the contract the missing-compiler path
-    /// promises rather than a fixed pass/fail: the cdylib still builds
-    /// either way, and a jar appears exactly when `kotlinc` is on `PATH`.
     #[test]
     #[ignore = "shells out to cargo, kotlinc and jar"]
     fn kotlin_build_packages_a_jar_exactly_when_kotlinc_is_available() {
@@ -970,9 +963,6 @@ mod tests {
         );
     }
 
-    /// Builds `soothfast-bind`'s own R golden the way `bind build` would, in
-    /// the same fixture-crate-at-the-root layout `r_smoke.rs` uses. Ignored:
-    /// it shells out to `R CMD INSTALL`.
     #[test]
     #[ignore = "shells out to R CMD INSTALL"]
     fn r_build_installs_a_library() {
@@ -997,9 +987,6 @@ mod tests {
         );
     }
 
-    /// Builds `soothfast-bind`'s own C++ golden the way `bind build` would,
-    /// in the same fixture-crate-at-the-root layout `cpp_smoke.rs` uses.
-    /// Ignored: it shells out to cargo and a C++ compiler.
     #[test]
     #[ignore = "shells out to cargo and a C++ compiler"]
     fn cpp_build_verifies_the_header_by_syntax_only() {
@@ -1025,9 +1012,6 @@ mod tests {
         );
     }
 
-    /// Builds `soothfast-bind`'s own Lua golden the way `bind build` would,
-    /// in the same fixture-crate-at-the-root layout `lua_smoke.rs` uses.
-    /// Ignored: it shells out to cargo and luajit.
     #[test]
     #[ignore = "shells out to cargo and luajit"]
     fn lua_build_passes_the_require_load_check() {
