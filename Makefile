@@ -15,6 +15,11 @@ BASE ?= origin/master
 # this repo bump it in one place.
 export SOOTHFAST_RUSTDOC_TOOLCHAIN ?= $(shell sed -n 's/^ *default: \(nightly-[0-9-]*\)$$/\1/p' action.yml)
 
+# Pinned here so ci.yml and bind-release.yml install the same maturin and
+# wasm-pack instead of each leg drifting to whatever's latest that day.
+export SOOTHFAST_MATURIN_VERSION ?= 1.10.2
+export SOOTHFAST_WASM_PACK_VERSION ?= 0.15.0
+
 # Self-measuring bench crates; runs merge into the shared "self" baseline.
 BENCH_CRATES := soothfast-registry soothfast-measure soothfast-docs \
                 soothfast-spec soothfast-sdk soothfast-site soothfast-report \

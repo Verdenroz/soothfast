@@ -73,10 +73,12 @@ jobs:
       - if: matrix.container
         shell: bash
         run: |
-          /opt/python/cp312-cp312/bin/pip install maturin
+          MV=$(make -s print-SOOTHFAST_MATURIN_VERSION)
+          /opt/python/cp312-cp312/bin/pip install "maturin==$MV"
           echo /opt/python/cp312-cp312/bin >> "$GITHUB_PATH"
       - if: ${{ !matrix.container }}
-        run: pip install maturin
+        shell: bash
+        run: pip install "maturin==$(make -s print-SOOTHFAST_MATURIN_VERSION)"
       - name: Locate the built CLI
         id: cli
         shell: bash
@@ -128,7 +130,7 @@ jobs:
         with:
           key: bind-wasm
       - run: cargo build --release --locked -p cargo-soothfast
-      - run: curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
+      - run: cargo install wasm-pack --locked --version "$(make -s print-SOOTHFAST_WASM_PACK_VERSION)"
       - name: Write the glue crate
         env:
           PACKAGE: ${{ inputs.package }}
