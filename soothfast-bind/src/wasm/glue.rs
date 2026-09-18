@@ -3,7 +3,10 @@
 //! Every exported type becomes a locally defined wrapper: `#[wasm_bindgen]`
 //! expands to trait impls the orphan rule only permits in the crate that
 //! defines the type. The same rule is why a failing call rejects through a
-//! local error newtype rather than `impl From<UserError> for JsValue`.
+//! local error newtype rather than `impl From<UserError> for JsError`. It
+//! rejects with `JsError`, not a bare `JsValue::from_str` string, so a
+//! caller's `catch (e) { e.message }` reads the same way it does for every
+//! other backend's exception.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -59,9 +62,9 @@ fn error_impl(ty: &Ty, name: &str, krate: &str) -> String {
         "
 struct {name}({inner});
 
-impl ::std::convert::From<{name}> for ::wasm_bindgen::JsValue {{
-    fn from(err: {name}) -> ::wasm_bindgen::JsValue {{
-        ::wasm_bindgen::JsValue::from_str(&::std::string::ToString::to_string(&err.0))
+impl ::std::convert::From<{name}> for ::wasm_bindgen::JsError {{
+    fn from(err: {name}) -> ::wasm_bindgen::JsError {{
+        ::wasm_bindgen::JsError::new(&::std::string::ToString::to_string(&err.0))
     }}
 }}
 "
@@ -172,7 +175,7 @@ fn constructor(ctor: &Function, krate: &str, plan: &BindingPlan) -> String {
         call_args(ctor, plan)
     );
     let ret = match ctor.throws {
-        Some(_) => "Result<Self, JsValue>",
+        Some(_) => "Result<Self, JsError>",
         None => "Self",
     };
     format!(
@@ -384,7 +387,7 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
 fn return_ty(function: &Function) -> String {
     let ok = signature_ty(&function.ret);
     match function.throws {
-        Some(_) => format!("Result<{ok}, JsValue>"),
+        Some(_) => format!("Result<{ok}, JsError>"),
         None => ok,
     }
 }

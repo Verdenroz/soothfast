@@ -29,6 +29,12 @@ impl Counter {
         self.0.value.clone() as f64
     }
 
+    fn set_value(&mut self, value: f64) -> ::std::result::Result<(), String> {
+        let value = __checked_int::<i64>(value, "value")?;
+        self.0.value = value;
+        Ok(())
+    }
+
     fn absorb(&mut self, other: &Counter) -> ::std::result::Result<(), String> {
         if ::std::ptr::eq(self, other) {
             return Err("other aliases self".to_string());

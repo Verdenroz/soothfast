@@ -121,4 +121,5 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "maybe_ratio=0.25",
     "maybe_ratio(-1)=TRUE",
     "caught absorb: other aliases self",
+    "value<-=99",
 ];

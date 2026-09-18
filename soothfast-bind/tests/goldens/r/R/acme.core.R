@@ -12,6 +12,12 @@ stamp <- function(handle, error, register) .Call(wrap__stamp, handle, error, reg
 trim <- function(input) .Call(wrap__trim, input)
 Counter <- function(start) .Call(wrap__Counter__new, start)
 Counter__value <- function(self) .Call(wrap__Counter__value, self)
+Counter__set_value <- function(self, value) .Call(wrap__Counter__set_value, self, value)
+`value<-` <- function(x, value) UseMethod("value<-")
+`value<-.Counter` <- function(x, value) {
+  Counter__set_value(x, value)
+  x
+}
 Counter__absorb <- function(self, other) .Call(wrap__Counter__absorb, self, other)
 Counter__at <- function(self, level) .Call(wrap__Counter__at, self, level)
 Counter__bump <- function(self, by) .Call(wrap__Counter__bump, self, by)

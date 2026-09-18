@@ -81,6 +81,26 @@ fn a_same_class_parameter_checks_pointer_identity_against_self() {
 }
 
 #[test]
+fn an_accessor_gets_a_replacement_function_as_well_as_a_getter() {
+    let set = emit_set_with(BindKind::R, &r_opts());
+    let glue = &set.files["src/rust/src/lib.rs"];
+    assert!(
+        glue.contains("fn set_value(&mut self, value: f64) -> ::std::result::Result<(), String>")
+    );
+    let wrappers = &set.files["R/acme.core.R"];
+    assert!(wrappers.contains(
+        "Counter__set_value <- function(self, value) .Call(wrap__Counter__set_value, self, value)"
+    ));
+    assert!(wrappers.contains("`value<-` <- function(x, value) UseMethod(\"value<-\")"));
+    assert!(wrappers.contains(
+        "`value<-.Counter` <- function(x, value) {\n  Counter__set_value(x, value)\n  x\n}"
+    ));
+    let namespace = &set.files["NAMESPACE"];
+    assert!(namespace.contains("export(\"value<-\")"));
+    assert!(namespace.contains("S3method(\"value<-\", Counter)"));
+}
+
+#[test]
 fn a_mutable_out_parameter_is_a_gap_since_r_vectors_are_values() {
     let set = emit_set_with(BindKind::R, &r_opts());
     assert!(

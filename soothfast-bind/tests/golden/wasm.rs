@@ -27,9 +27,18 @@ fn javascript_spellings_are_renamed_and_rust_names_are_left_alone() {
 fn a_failing_call_rejects_through_a_local_newtype() {
     let wasm = emit(BindKind::Wasm)["src/lib.rs"].clone();
     assert!(
-        wasm.contains("impl ::std::convert::From<BindErrorString> for ::wasm_bindgen::JsValue")
+        wasm.contains("impl ::std::convert::From<BindErrorString> for ::wasm_bindgen::JsError")
     );
-    assert!(wasm.contains("-> Result<i64, JsValue>"));
+    assert!(wasm.contains("-> Result<i64, JsError>"));
+}
+
+#[test]
+fn a_failing_call_rejects_with_a_real_error_not_a_bare_string() {
+    let wasm = emit(BindKind::Wasm)["src/lib.rs"].clone();
+    assert!(
+        wasm.contains("::wasm_bindgen::JsError::new(&::std::string::ToString::to_string(&err.0))"),
+        "a bare JsValue::from_str leaves catch (e) {{ e.message }} undefined in JavaScript: {wasm}"
+    );
 }
 
 #[test]

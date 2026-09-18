@@ -9,7 +9,7 @@
 
 use std::fmt::Write;
 
-use crate::model::{Param, Receiver, Ty};
+use crate::model::{Ownership, Param, Receiver, Ty};
 use crate::plan::{Accessor, BindingPlan, Class, Function, Transfer};
 use crate::{BindOptions, GENERATED_RS, GLUE_ALLOW};
 
@@ -75,6 +75,7 @@ fn class_block(class: &Class, krate: &str, plan: &BindingPlan) -> String {
     }
     for accessor in &class.accessors {
         out.push_str(&getter(accessor, krate, plan));
+        out.push_str(&setter(accessor, krate, plan));
     }
     for function in class.methods.iter().chain(class.statics.iter()) {
         out.push_str(&method(function, Some(class), krate, plan));
@@ -93,6 +94,44 @@ fn getter(accessor: &Accessor, krate: &str, plan: &BindingPlan) -> String {
     let ret = ret_ty(&accessor.ty, plan);
     let read = returned(&format!("self.0.{name}.clone()"), &accessor.ty, krate, plan);
     format!("    fn {name}(&self) -> {ret} {{\n        {read}\n    }}\n\n")
+}
+
+/// A field write, reusing the same parameter machinery a real function
+/// parameter gets: a checked 64-bit integer or a mirrored enum can fail to
+/// convert here exactly as it can as an argument, so the setter is fallible
+/// under the same conditions [`is_fallible`] would call a call fallible for.
+fn setter(accessor: &Accessor, krate: &str, plan: &BindingPlan) -> String {
+    let value = Param {
+        name: "value".into(),
+        ty: accessor.ty.clone(),
+        ownership: Ownership::Owned,
+        inner_ownership: Ownership::Owned,
+    };
+    let fallible = param_ty_needs_checked_int(&accessor.ty)
+        || matches!(
+            Transfer::of(&value, plan),
+            Transfer::Handle { mirrored: true, .. }
+        );
+    let ret = match fallible {
+        true => " -> ::std::result::Result<(), String>",
+        false => "",
+    };
+    let mut raw = param_prelude(&value, krate, plan);
+    let _ = writeln!(
+        raw,
+        "    self.0.{} = {};",
+        accessor.field,
+        call_arg(&value, plan)
+    );
+    if fallible {
+        raw.push_str("    Ok(())\n");
+    }
+    format!(
+        "    fn set_{}(&mut self, value: {}){ret} {{\n{}    }}\n\n",
+        accessor.field,
+        param_ty(&value, plan),
+        indent(&raw),
+    )
 }
 
 /// One bound call, as a method on the local newtype. `body` renders at the

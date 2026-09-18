@@ -6,9 +6,9 @@ use wasm_bindgen::prelude::*;
 
 struct BindErrorString(::std::string::String);
 
-impl ::std::convert::From<BindErrorString> for ::wasm_bindgen::JsValue {
-    fn from(err: BindErrorString) -> ::wasm_bindgen::JsValue {
-        ::wasm_bindgen::JsValue::from_str(&::std::string::ToString::to_string(&err.0))
+impl ::std::convert::From<BindErrorString> for ::wasm_bindgen::JsError {
+    fn from(err: BindErrorString) -> ::wasm_bindgen::JsError {
+        ::wasm_bindgen::JsError::new(&::std::string::ToString::to_string(&err.0))
     }
 }
 
@@ -40,7 +40,7 @@ impl Counter {
         self.0.at(level.into())
     }
 
-    pub fn bump(&self, by: i64) -> Result<i64, JsValue> {
+    pub fn bump(&self, by: i64) -> Result<i64, JsError> {
         Ok(self.0.bump(by).map_err(BindErrorString)?)
     }
 
@@ -102,7 +102,7 @@ pub fn digest(data: &[u8]) -> Vec<u8> {
 }
 
 #[wasm_bindgen]
-pub fn fail(message: &str) -> Result<i64, JsValue> {
+pub fn fail(message: &str) -> Result<i64, JsError> {
     Ok(::acme::fail(message).map_err(BindErrorString)?)
 }
 

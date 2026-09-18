@@ -42,3 +42,7 @@ cat("maybe_ratio(-1)=", is.null(maybe_ratio(-1)), "\n", sep = "")
 
 absorb_err <- tryCatch(x$absorb(x), error = function(e) conditionMessage(e))
 cat("caught absorb:", absorb_err, "\n")
+
+setter_target <- Counter(1)
+value(setter_target) <- 99
+cat("value<-=", setter_target$value(), "\n", sep = "")

@@ -411,6 +411,10 @@ devs <- s$deviations_all(c(0.0, 4.0))
   `x$absorb(x)`, compares the two external pointers before the real call
   and raises an R error on a match rather than handing Rust a `&mut` and a
   `&` over the same allocation.
+- **A field is both `x$field()` and `field(x) <- value`.** The getter is a
+  method call; the setter is R's replacement-function convention, a
+  `field<-` generic with a `field<-.ClassName` method dispatching to it, so
+  assignment reads like assignment rather than a disguised method call.
 
 R has no cross-compilation matrix and no distributable tarball either — see
 Commands above for what `bind build` does instead.

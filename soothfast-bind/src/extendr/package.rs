@@ -41,6 +41,11 @@ pub(crate) fn namespace(plan: &BindingPlan, opts: &BindOptions) -> String {
         if !class.methods.is_empty() || !class.accessors.is_empty() {
             let _ = writeln!(out, "S3method(\"$\", {})", class.name);
         }
+        for accessor in &class.accessors {
+            let field = types::r_ident(&accessor.field);
+            let _ = writeln!(out, "export(\"{field}<-\")");
+            let _ = writeln!(out, "S3method(\"{field}<-\", {})", class.name);
+        }
     }
     out
 }
@@ -112,13 +117,30 @@ fn class_r(class: &Class) -> String {
 
     let mut arms = String::new();
     for accessor in &class.accessors {
+        let field = types::r_ident(&accessor.field);
         let helper = instance_helper_name(class, &accessor.field);
         let symbol = types::wrap_method(&class.name, &accessor.field);
         let _ = writeln!(out, "{helper} <- function(self) .Call({symbol}, self)");
+        let _ = writeln!(arms, "    {field} = function() {helper}(x),");
+
+        // R's replacement-function syntax (`field(x) <- value`) dispatches
+        // through a generic named literally `field<-`; redefining it once
+        // per class sharing the field name is harmless, since every
+        // definition is identical.
+        let set_helper = instance_helper_name(class, &format!("set_{}", accessor.field));
+        let set_symbol = types::wrap_method(&class.name, &format!("set_{}", accessor.field));
         let _ = writeln!(
-            arms,
-            "    {} = function() {helper}(x),",
-            types::r_ident(&accessor.field),
+            out,
+            "{set_helper} <- function(self, value) .Call({set_symbol}, self, value)"
+        );
+        let _ = writeln!(
+            out,
+            "`{field}<-` <- function(x, value) UseMethod(\"{field}<-\")"
+        );
+        let _ = writeln!(
+            out,
+            "`{field}<-.{}` <- function(x, value) {{\n  {set_helper}(x, value)\n  x\n}}",
+            class.name,
         );
     }
     for method in &class.methods {
