@@ -10,7 +10,7 @@ use std::process::Command;
 
 use soothfast_bind::foreign::TypeTable;
 use soothfast_bind::model::Surface;
-use soothfast_bind::{BindFileSet, BindOptions, compat};
+use soothfast_bind::{BindFileSet, BindKind, BindOptions, compat};
 
 use crate::bind_bench;
 use crate::bind_bench_launch;
@@ -534,81 +534,13 @@ fn bench(
 ) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let cfg = bind_config::load(&meta.dir)?;
-    let candidates: Vec<(&BindEntry, &String)> = cfg
-        .entries
-        .iter()
-        .filter(|e| entry_selected(e, only))
-        .filter_map(|e| e.bench.as_ref().map(|bench| (e, bench)))
-        .collect();
+    let candidates = bench_candidates(&cfg, only);
     if candidates.is_empty() {
         println!("bind bench: nothing to bench — no [[bind]] entry has a `bench` script");
         return Ok(0);
     }
 
-    let mut rows: Vec<Row> = Vec::new();
-    let mut run = Run::default();
-    let mut failures: Vec<String> = Vec::new();
-    for (entry, bench_rel) in candidates {
-        let glue = meta.dir.join(&entry.out);
-        let script = meta.dir.join(bench_rel);
-        let label = format!("{} [{}]", entry.out, entry.lang.name());
-
-        if let Some((tool, hint)) = bind_bench_launch::missing_tool(entry.lang) {
-            println!("bind bench: skipping {label}: `{tool}` not found — {hint}");
-            continue;
-        }
-        // `bind bench` builds its own target rather than requiring a
-        // separate `bind build` first: a script otherwise fails with a
-        // confusing "cannot find module" instead of a clear build error.
-        // Quiet, so a build tool's own stdout never lands in this
-        // command's table/JSON output.
-        let artifacts = match crate::bind_build::run(entry.lang, &glue, &entry.targets, true, true)
-        {
-            Ok(a) => a,
-            Err(e) => {
-                failures.push(format!("{label}: build failed: {e}"));
-                continue;
-            }
-        };
-        let cmd = match bind_bench_launch::launch(entry.lang, &glue, &script, &artifacts) {
-            Ok(cmd) => cmd,
-            Err(bind_bench_launch::LaunchError::Missing(msg)) => {
-                println!("bind bench: skipping {label}: {msg}");
-                continue;
-            }
-            Err(bind_bench_launch::LaunchError::Failed(msg)) => {
-                failures.push(format!("{label}: {msg}"));
-                continue;
-            }
-        };
-        let records = match run_script(cmd, &label) {
-            Ok(Some(records)) => records,
-            Ok(None) => continue,
-            Err(msg) => {
-                failures.push(msg);
-                continue;
-            }
-        };
-        for record in records {
-            let ratio = bind_bench::ratio(record.binding_ns, record.host_ns);
-            let id = bind_bench::item_id(pkg, entry.lang.name(), &record.shape);
-            run.items.insert(
-                id,
-                ItemMetrics {
-                    ratio: Some(ratio),
-                    binding_ns: Some(record.binding_ns),
-                    host_ns: Some(record.host_ns),
-                    n: Some(record.n),
-                    ..Default::default()
-                },
-            );
-            rows.push(Row {
-                lang: entry.lang.name(),
-                record,
-                ratio,
-            });
-        }
-    }
+    let (rows, run, failures) = run_bench_candidates(pkg, &meta.dir, candidates);
 
     print_rows(&rows, json);
     println!("bind bench: {} shape(s) measured", rows.len());
@@ -616,16 +548,121 @@ fn bench(
         println!("bind bench: FAILED {f}");
     }
 
-    if let Some(name) = save_baseline {
-        if run.items.is_empty() {
-            println!("bind bench: nothing measured, not saving baseline {name:?}");
-        } else {
-            let path = invoke::save_baseline(name, &run, invoke::SaveScope::BenchFiltered)
-                .map_err(|e| e.to_string())?;
-            println!("baseline saved: {}", path.display());
+    save_bench_baseline(save_baseline, &run)?;
+    Ok(if failures.is_empty() { 0 } else { 1 })
+}
+
+/// Entries configured with a `bench` script, filtered by `--only`.
+fn bench_candidates<'a>(
+    cfg: &'a bind_config::BindConfig,
+    only: Option<&[String]>,
+) -> Vec<(&'a BindEntry, &'a String)> {
+    cfg.entries
+        .iter()
+        .filter(|e| entry_selected(e, only))
+        .filter_map(|e| e.bench.as_ref().map(|bench| (e, bench)))
+        .collect()
+}
+
+/// Builds, launches, and measures every candidate, filing each measured
+/// shape into the returned `Run` under its baseline item id.
+fn run_bench_candidates(
+    pkg: &str,
+    dir: &Path,
+    candidates: Vec<(&BindEntry, &String)>,
+) -> (Vec<Row>, Run, Vec<String>) {
+    let mut rows = Vec::new();
+    let mut run = Run::default();
+    let mut failures = Vec::new();
+    for (entry, bench_rel) in candidates {
+        match bench_entry(entry, bench_rel, dir) {
+            Ok(Some(measured)) => {
+                for row in measured {
+                    let id = bind_bench::item_id(pkg, row.lang, &row.record.shape);
+                    run.items.insert(
+                        id,
+                        ItemMetrics {
+                            ratio: Some(row.ratio),
+                            binding_ns: Some(row.record.binding_ns),
+                            host_ns: Some(row.record.host_ns),
+                            n: Some(row.record.n),
+                            ..Default::default()
+                        },
+                    );
+                    rows.push(row);
+                }
+            }
+            Ok(None) => {}
+            Err(msg) => failures.push(msg),
         }
     }
-    Ok(if failures.is_empty() { 0 } else { 1 })
+    (rows, run, failures)
+}
+
+/// One entry's build, launch, and measurement. `Ok(None)` covers every skip
+/// (missing tool, missing script) — the skip reason is already printed.
+fn bench_entry(entry: &BindEntry, bench_rel: &str, dir: &Path) -> Result<Option<Vec<Row>>, String> {
+    let glue = dir.join(&entry.out);
+    let script = dir.join(bench_rel);
+    let label = format!("{} [{}]", entry.out, entry.lang.name());
+
+    if let Some((tool, hint)) = bind_bench_launch::missing_tool(entry.lang) {
+        println!("bind bench: skipping {label}: `{tool}` not found — {hint}");
+        return Ok(None);
+    }
+    let artifacts = build_for_bench(entry.lang, &glue, &entry.targets, &label)?;
+    let cmd = match bind_bench_launch::launch(entry.lang, &glue, &script, &artifacts) {
+        Ok(cmd) => cmd,
+        Err(bind_bench_launch::LaunchError::Missing(msg)) => {
+            println!("bind bench: skipping {label}: {msg}");
+            return Ok(None);
+        }
+        Err(bind_bench_launch::LaunchError::Failed(msg)) => return Err(format!("{label}: {msg}")),
+    };
+    let Some(records) = run_script(cmd, &label)? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        records
+            .into_iter()
+            .map(|record| {
+                let ratio = bind_bench::ratio(record.binding_ns, record.host_ns);
+                Row {
+                    lang: entry.lang.name(),
+                    record,
+                    ratio,
+                }
+            })
+            .collect(),
+    ))
+}
+
+/// `bind bench` builds its own target rather than requiring a separate
+/// `bind build` first: a script otherwise fails with a confusing "cannot
+/// find module" instead of a clear build error. Quiet, so a build tool's
+/// own stdout never lands in this command's table/JSON output.
+fn build_for_bench(
+    lang: BindKind,
+    glue: &Path,
+    targets: &[String],
+    label: &str,
+) -> Result<Vec<String>, String> {
+    crate::bind_build::run(lang, glue, targets, true, true)
+        .map_err(|e| format!("{label}: build failed: {e}"))
+}
+
+fn save_bench_baseline(name: Option<&str>, run: &Run) -> Result<(), String> {
+    let Some(name) = name else {
+        return Ok(());
+    };
+    if run.items.is_empty() {
+        println!("bind bench: nothing measured, not saving baseline {name:?}");
+        return Ok(());
+    }
+    let path = invoke::save_baseline(name, run, invoke::SaveScope::BenchFiltered)
+        .map_err(|e| e.to_string())?;
+    println!("baseline saved: {}", path.display());
+    Ok(())
 }
 
 /// Run one entry's launch command to completion and parse its stdout.
