@@ -36,7 +36,7 @@ typedef struct core_u8_array {
 
 void core_u8_array_free(core_u8_array array);
 
-/* Release a string this library returned. */
+/* Release a string this library returned. A returned string is never NULL; an interior NUL byte is replaced with U+FFFD. */
 void core_string_free(char *text);
 
 /* Release a Counter this library returned. */

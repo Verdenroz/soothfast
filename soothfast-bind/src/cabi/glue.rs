@@ -562,10 +562,13 @@ pub unsafe fn text_opt<'a>(data: *const ::std::os::raw::c_char) -> Option<&'a st
     Some(unsafe { ::std::ffi::CStr::from_ptr(data) }.to_str().unwrap_or(""))
 }
 
+/// A present string never crosses as NULL: an interior NUL byte, which C
+/// can't represent, is replaced with U+FFFD first.
 pub fn into_text(value: String) -> *mut ::std::os::raw::c_char {
+    let value = value.replace('\0', "\u{fffd}");
     match ::std::ffi::CString::new(value) {
         Ok(text) => text.into_raw(),
-        Err(_) => ::std::ptr::null_mut(),
+        Err(_) => ::std::ffi::CString::default().into_raw(),
     }
 }
 

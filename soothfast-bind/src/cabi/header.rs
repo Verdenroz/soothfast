@@ -47,7 +47,9 @@ pub(crate) fn declarations(plan: &BindingPlan, module: &str) -> String {
     if returns_text(plan) {
         let _ = write!(
             out,
-            "\n/* Release a string this library returned. */\nvoid {module}_string_free(char *text);\n"
+            "\n/* Release a string this library returned. A returned string is \
+             never NULL; an interior NUL byte is replaced with U+FFFD. */\n\
+             void {module}_string_free(char *text);\n"
         );
     }
     for class in &plan.classes {

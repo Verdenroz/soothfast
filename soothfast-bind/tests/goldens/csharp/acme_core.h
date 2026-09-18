@@ -36,7 +36,7 @@ typedef struct acme_core_u8_array {
 
 void acme_core_u8_array_free(acme_core_u8_array array);
 
-/* Release a string this library returned. */
+/* Release a string this library returned. A returned string is never NULL; an interior NUL byte is replaced with U+FFFD. */
 void acme_core_string_free(char *text);
 
 /* Release a Counter this library returned. */

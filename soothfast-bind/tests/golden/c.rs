@@ -80,6 +80,13 @@ fn a_parameter_cannot_collide_with_what_the_backend_generates_around_it() {
 }
 
 #[test]
+fn a_returned_string_never_crosses_as_null() {
+    let files = emit(BindKind::CAbi);
+    assert!(files["src/lib.rs"].contains("value.replace('\\0', \"\\u{fffd}\")"));
+    assert!(files["acme_core.h"].contains("A returned string is never NULL"));
+}
+
+#[test]
 fn what_c_cannot_spell_is_reported_rather_than_guessed() {
     let set = emit_set(BindKind::CAbi);
     let gaps = set.gaps.join("\n");
