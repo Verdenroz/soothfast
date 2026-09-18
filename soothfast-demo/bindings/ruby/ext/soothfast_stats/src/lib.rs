@@ -7,7 +7,7 @@ use ::magnus::prelude::*;
 static ERROR: ::magnus::value::Lazy<::magnus::ExceptionClass> = ::magnus::value::Lazy::new(|ruby| {
     ruby.define_module("SoothfastStats")
         .and_then(|m| m.define_error("Error", ruby.exception_standard_error()))
-        .expect("defines SoothfastStats::Error")
+        .unwrap_or_else(|e| panic!("defines SoothfastStats::Error: {e}"))
 });
 
 fn metric_from_symbol(
