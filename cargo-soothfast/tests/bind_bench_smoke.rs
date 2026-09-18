@@ -103,9 +103,8 @@ fn measures_a_fake_entry_and_saves_a_baseline() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// An inherited `CARGO_TARGET_DIR` must not move the glue crate's build
-/// output away from where `bind bench` looks for it (the same reason
-/// `bind_build`'s cargo, maturin, napi and wasm-pack calls all strip it).
+// An inherited `CARGO_TARGET_DIR` must not move the glue build away from
+// where `bind bench` looks for it.
 #[test]
 fn builds_correctly_even_with_cargo_target_dir_set_in_the_environment() {
     let dir = std::env::temp_dir().join(format!(
@@ -216,9 +215,7 @@ int main() {
 }
 "#;
 
-/// `bind bench` compiles the C++ bench source itself (there is no separate
-/// `bind build` step for the host language); a machine with no C++ compiler
-/// skips the entry rather than failing the run.
+// `bind bench` compiles the C++ source itself; `bind build` has no host step.
 #[test]
 fn measures_a_cpp_entry_or_skips_without_a_compiler() {
     let dir = std::env::temp_dir().join(format!(
@@ -253,7 +250,7 @@ const CANNED_JSON_LUA: &str = r#"print('{"shape": "build_summary", "binding_ns":
 print('{"shape": "batch_buffer", "binding_ns": 5.0, "host_ns": 45.0, "n": 100000}')
 "#;
 
-/// A machine with no `luajit` skips the entry rather than failing the run.
+// A machine with no `luajit` skips the entry rather than failing the run.
 #[test]
 fn measures_a_lua_entry_or_skips_without_luajit() {
     let dir = std::env::temp_dir().join(format!(

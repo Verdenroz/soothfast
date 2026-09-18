@@ -53,7 +53,6 @@ func hostMedianMad(values []float64) (float64, float64) {
 	return median, middle(absDevs)
 }
 
-// middle returns a sorted slice's median.
 func middle(sorted []float64) float64 {
 	n := len(sorted)
 	if n%2 == 1 {

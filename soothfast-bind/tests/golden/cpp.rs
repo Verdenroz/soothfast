@@ -119,13 +119,8 @@ fn what_c_cannot_spell_is_also_unsupported_for_cpp() {
     assert!(!set.files["core.hpp"].contains("index_all"));
 }
 
-/// The emitted header must parse and type-check clean under both compilers
-/// the repo has installed, at the warning level a real consumer builds
-/// with. `-fsyntax-only` needs no library to link against: the header's own
-/// declarations, pulled in from `core.h`, are enough. The driver file lives
-/// in a scratch directory, not the golden one: `cpp_goldens` walks that
-/// directory and would trip over an extra file a concurrent test left
-/// behind.
+// `-fsyntax-only` needs no library to link. The driver lives in a scratch
+// directory, not the golden one, since `cpp_goldens` walks that directory.
 #[test]
 fn the_cpp_header_compiles_clean_under_available_compilers() {
     use std::process::Command;

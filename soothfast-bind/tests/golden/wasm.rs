@@ -47,8 +47,8 @@ fn an_optional_handle_return_maps_into_its_wrapper_for_wasm() {
     assert!(glue.contains("::acme::find_counter(start).map(Counter)"));
 }
 
-/// The golden's own text cannot show a type mismatch between the promised
-/// return type and what the call actually hands back; only rustc can.
+// The golden's own text cannot show a type mismatch between the promised
+// return type and what the call actually hands back; only rustc can.
 #[test]
 fn the_wasm_golden_compiles_for_wasm32() {
     let installed = Command::new("rustup")
