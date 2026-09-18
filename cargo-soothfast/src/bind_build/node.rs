@@ -1,14 +1,15 @@
 use std::path::Path;
 use std::process::Command;
 
-use super::staging::{artifacts, hush};
+use super::staging::{artifacts, clear_artifacts, hush};
 
 /// `npm install` once, then one `napi build` per target, or one untargeted
 /// build when none are configured.
 ///
 /// A target whose toolchain is missing is reported and skipped, the same
 /// posture as `maturin`'s matrix: a machine rarely carries every
-/// cross-linker.
+/// cross-linker. If every target fails, this errors instead of reporting
+/// whatever `.node` file an earlier run happened to leave behind.
 pub(super) fn napi(
     glue: &Path,
     targets: &[String],
@@ -19,6 +20,10 @@ pub(super) fn napi(
         npm_install(glue, quiet)?;
     }
 
+    // Cleared first: a `.node` file from an earlier run must not be
+    // reported as this run's output.
+    clear_artifacts(glue, &["node"]);
+
     let mut failures = Vec::new();
     if targets.is_empty() {
         napi_build_once(glue, None, release, quiet)?;
@@ -27,6 +32,9 @@ pub(super) fn napi(
             if let Err(e) = napi_build_once(glue, Some(target), release, quiet) {
                 failures.push(format!("{target}: {e}"));
             }
+        }
+        if failures.len() == targets.len() {
+            return Err(format!("every target failed:\n  {}", failures.join("\n  ")));
         }
     }
     for failure in &failures {
@@ -83,5 +91,39 @@ fn napi_build_once(
     match status.success() {
         true => Ok(()),
         false => Err(format!("`npx {}` failed", args.join(" "))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bind_build::test_support::{copy_dir, lock};
+
+    #[test]
+    #[ignore = "shells out to cargo, npm and napi"]
+    fn every_target_failing_errors_instead_of_reporting_a_stale_node_file() {
+        let bind_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../soothfast-bind/tests");
+        let scratch = std::env::temp_dir().join(format!(
+            "soothfast-bind-napi-build-smoke-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        copy_dir(&bind_dir.join("fixture_crate"), &scratch);
+        let glue = scratch.join("glue");
+        copy_dir(&bind_dir.join("goldens/node"), &glue);
+        lock(&glue);
+
+        let stale = glue.join("stale.node");
+        std::fs::write(&stale, b"stale").expect("writes stale .node file");
+
+        // No dev machine has an aarch64 Windows cross toolchain installed,
+        // so this target reliably fails without needing napi absent.
+        let err = napi(&glue, &["aarch64-pc-windows-msvc".to_string()], false, true)
+            .expect_err("an unbuildable target must fail, not report the stale .node file");
+        assert!(err.contains("aarch64-pc-windows-msvc"), "{err}");
+        assert!(
+            !stale.exists(),
+            "the stale .node file must be cleared, not reported"
+        );
     }
 }
