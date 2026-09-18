@@ -43,6 +43,7 @@ void acme_core_string_free(char *text);
 void acme_core_counter_free(acme_core_counter *handle);
 acme_core_counter * acme_core_counter_new(int64_t start);
 int64_t acme_core_counter_value(const acme_core_counter *handle);
+void acme_core_counter_absorb(acme_core_counter *handle, const acme_core_counter *other);
 int64_t acme_core_counter_at(const acme_core_counter *handle, acme_core_level level);
 int64_t acme_core_counter_bump(const acme_core_counter *handle, int64_t by, char **error);
 int64_t acme_core_counter_bump_all(const acme_core_counter *handle, const int64_t *by, size_t by_len);

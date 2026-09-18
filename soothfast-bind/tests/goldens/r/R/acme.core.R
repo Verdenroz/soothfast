@@ -12,6 +12,7 @@ stamp <- function(handle, error, register) .Call(wrap__stamp, handle, error, reg
 trim <- function(input) .Call(wrap__trim, input)
 Counter <- function(start) .Call(wrap__Counter__new, start)
 Counter__value <- function(self) .Call(wrap__Counter__value, self)
+Counter__absorb <- function(self, other) .Call(wrap__Counter__absorb, self, other)
 Counter__at <- function(self, level) .Call(wrap__Counter__at, self, level)
 Counter__bump <- function(self, by) .Call(wrap__Counter__bump, self, by)
 Counter__bump_all <- function(self, by) .Call(wrap__Counter__bump_all, self, by)
@@ -20,6 +21,7 @@ Counter__scale <- function(self, factor) .Call(wrap__Counter__scale, self, facto
 "$.Counter" <- function(x, name) {
   switch(name,
     value = function() Counter__value(x),
+    absorb = function(other) Counter__absorb(x, other),
     at = function(level) Counter__at(x, level),
     bump = function(by) Counter__bump(x, by),
     bump_all = function(by) Counter__bump_all(x, by),

@@ -406,6 +406,11 @@ devs <- s$deviations_all(c(0.0, 4.0))
   caller passed in is not aliased elsewhere, so writing through one in
   place is not something a caller can safely observe. Return the sequence
   instead.
+- **A call that could alias the receiver checks pointer identity first.**
+  A method taking `&mut self` alongside a parameter of its own class, like
+  `x$absorb(x)`, compares the two external pointers before the real call
+  and raises an R error on a match rather than handing Rust a `&mut` and a
+  `&` over the same allocation.
 
 R has no cross-compilation matrix and no distributable tarball either — see
 Commands above for what `bind build` does instead.

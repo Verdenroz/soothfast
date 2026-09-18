@@ -35,6 +35,7 @@ void core_string_free(char *text);
 void core_counter_free(core_counter *handle);
 core_counter * core_counter_new(int64_t start);
 int64_t core_counter_value(const core_counter *handle);
+void core_counter_absorb(core_counter *handle, const core_counter *other);
 int64_t core_counter_at(const core_counter *handle, core_level level);
 int64_t core_counter_bump(const core_counter *handle, int64_t by, char **error);
 int64_t core_counter_bump_all(const core_counter *handle, const int64_t *by, size_t by_len);
@@ -248,6 +249,13 @@ function Counter:value()
 		error("Counter is closed")
 	end
 	return lib.core_counter_value(self.ptr)
+end
+
+function Counter:absorb(other)
+	if self.ptr == nil then
+		error("Counter is closed")
+	end
+	lib.core_counter_absorb(self.ptr, other.ptr)
 end
 
 function Counter:at(level)

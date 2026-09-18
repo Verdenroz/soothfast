@@ -50,6 +50,12 @@ impl Counter {
         Ok(())
     }
 
+    fn absorb(ruby: &::magnus::Ruby, rb_self: &Self, other: &Counter) -> Result<(), ::magnus::Error> {
+        let mut __recv = rb_self.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        let other = other.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.absorb(&other))
+    }
+
     fn at(ruby: &::magnus::Ruby, rb_self: &Self, level: ::magnus::Symbol) -> Result<i64, ::magnus::Error> {
         let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
         let level = level_from_symbol(ruby, level)?;
@@ -149,6 +155,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     class.define_singleton_method("new", ::magnus::function!(Counter::new, 1))?;
     class.define_method("value", ::magnus::method!(Counter::value, 0))?;
     class.define_method("value=", ::magnus::method!(Counter::set_value, 1))?;
+    class.define_method("absorb", ::magnus::method!(Counter::absorb, 1))?;
     class.define_method("at", ::magnus::method!(Counter::at, 1))?;
     class.define_method("bump", ::magnus::method!(Counter::bump, 1))?;
     class.define_method("bump_all", ::magnus::method!(Counter::bump_all, 1))?;

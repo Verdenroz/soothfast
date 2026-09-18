@@ -123,6 +123,18 @@ impl {name} {{
             {name}::Owned(v) => v,
         }}
     }}
+
+    /// The bytes this view reads from, or `None` for one Rust already owns a
+    /// private copy of: it cannot alias anything the caller can observe.
+    fn byte_range(&self) -> Option<(usize, usize)> {{
+        match self {{
+            {name}::Buffer(b) => {{
+                let start = b.buf_ptr() as usize;
+                Some((start, start + b.item_count() * ::std::mem::size_of::<{element}>()))
+            }}
+            {name}::Owned(_) => None,
+        }}
+    }}
 }}
 "
     )
@@ -154,11 +166,17 @@ impl<'py> ::pyo3::FromPyObject<'py> for {name} {{
 
 impl {name} {{
     fn as_mut_slice(&mut self) -> &mut [{element}] {{
-        // Writability and contiguity were both checked at extraction, so the
-        // pointer addresses exactly `item_count` items and nothing aliases it.
+        // Writability and contiguity were checked at extraction; the call
+        // site checks every other buffer parameter against byte_range()
+        // before this is ever called, so nothing aliases it either.
         unsafe {{
             ::std::slice::from_raw_parts_mut(self.0.buf_ptr() as *mut {element}, self.0.item_count())
         }}
+    }}
+
+    fn byte_range(&self) -> (usize, usize) {{
+        let start = self.0.buf_ptr() as usize;
+        (start, start + self.0.item_count() * ::std::mem::size_of::<{element}>())
     }}
 }}
 "

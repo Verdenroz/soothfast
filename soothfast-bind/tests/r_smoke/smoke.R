@@ -39,3 +39,6 @@ cat("caught describe_owned:", describe_owned_err, "\n")
 
 cat("maybe_ratio=", maybe_ratio(4), "\n", sep = "")
 cat("maybe_ratio(-1)=", is.null(maybe_ratio(-1)), "\n", sep = "")
+
+absorb_err <- tryCatch(x$absorb(x), error = function(e) conditionMessage(e))
+cat("caught absorb:", absorb_err, "\n")

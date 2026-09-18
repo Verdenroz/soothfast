@@ -27,6 +27,16 @@ fn the_glue_names_every_exported_item_exactly_once() {
 }
 
 #[test]
+fn two_buffer_parameters_that_alias_raise_before_the_call() {
+    let glue = emit(BindKind::Python)["src/lib.rs"].clone();
+    assert!(glue.contains(
+        "if values.byte_range().is_some_and(|r| buffers_alias(out.byte_range(), r)) {\n        \
+         return Err(::pyo3::exceptions::PyValueError::new_err(\"values and out alias the same buffer\"));\n    }"
+    ));
+    assert!(glue.contains("fn scale_into(py: Python<'_>, values: BorrowedF64, factor: f64, mut out: BorrowedMutF64) -> PyResult<()>"));
+}
+
+#[test]
 fn a_failing_call_raises_through_a_local_newtype() {
     let glue = emit(BindKind::Python)["src/lib.rs"].clone();
     assert!(glue.contains("struct BindErrorString(::std::string::String);"));

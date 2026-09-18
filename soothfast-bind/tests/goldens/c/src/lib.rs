@@ -157,6 +157,11 @@ pub unsafe extern "C" fn acme_core_counter_value(handle: *const AcmeCoreCounter)
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_counter_absorb(handle: *mut AcmeCoreCounter, other: *const AcmeCoreCounter) {
+    (unsafe { &mut *handle }).0.absorb(&(unsafe { &*other }).0)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_counter_at(handle: *const AcmeCoreCounter, level: AcmeCoreLevel) -> i64 {
     (unsafe { &*handle }).0.at(level.into())
 }

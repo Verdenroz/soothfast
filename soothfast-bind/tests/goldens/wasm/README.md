@@ -14,6 +14,7 @@ await init();
 
 ### `Counter`
 
+- `absorb`
 - `at`
 - `bump`
 - `bumpAll`

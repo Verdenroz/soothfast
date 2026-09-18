@@ -18,6 +18,7 @@ require "acme_core"
 
 ### `AcmeCore::Counter`
 
+- `absorb`
 - `at`
 - `bump`
 - `bump_all`

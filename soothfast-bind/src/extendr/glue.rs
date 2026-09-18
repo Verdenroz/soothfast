@@ -99,7 +99,7 @@ fn getter(accessor: &Accessor, krate: &str, plan: &BindingPlan) -> String {
 /// indentation a free function's own body would use; nested one level
 /// deeper inside `impl`, it needs shifting right by one more level.
 fn method(function: &Function, owner: Option<&Class>, krate: &str, plan: &BindingPlan) -> String {
-    let fallible = is_fallible(function, plan);
+    let fallible = is_fallible(function, owner, plan);
     let sig = signature(function, owner, plan, fallible);
     let body = indent(&body(function, owner, krate, plan, fallible));
     format!("    fn {sig} {{\n{body}    }}\n\n")
@@ -120,7 +120,7 @@ fn indent(text: &str) -> String {
 
 /// A free function: the same shape as a method, minus a receiver.
 fn shim(function: &Function, owner: Option<&Class>, krate: &str, plan: &BindingPlan) -> String {
-    let fallible = is_fallible(function, plan);
+    let fallible = is_fallible(function, owner, plan);
     let sig = signature(function, owner, plan, fallible);
     let body = body(function, owner, krate, plan, fallible);
     format!("\n#[extendr]\nfn {sig} {{\n{body}}}\n")
@@ -128,15 +128,39 @@ fn shim(function: &Function, owner: Option<&Class>, krate: &str, plan: &BindingP
 
 /// Whether converting a parameter or validating an enum can fail even when
 /// the user's own function cannot: a 64-bit integer or an enum crossing as a
-/// string both get checked on the way in, and a check that can fail has to
-/// make the whole call fallible.
-fn is_fallible(function: &Function, plan: &BindingPlan) -> bool {
+/// string both get checked on the way in, [`aliasing_param`] naming a
+/// parameter can too, and a check that can fail has to make the whole call
+/// fallible.
+fn is_fallible(function: &Function, owner: Option<&Class>, plan: &BindingPlan) -> bool {
     function.throws.is_some()
+        || aliasing_param(function, owner, plan).is_some()
         || function.params.iter().any(|p| match Transfer::of(p, plan) {
             Transfer::Handle { mirrored: true, .. } => true,
             Transfer::Text { nullable: true, .. } => true,
             _ => param_ty_needs_checked_int(&p.ty),
         })
+}
+
+/// The parameter, if any, that could reach the receiver's own external
+/// pointer a second time: a call like `x.absorb(x)` would then hand the
+/// real Rust call a `&mut` and a `&` (or two `&mut`s) over one allocation.
+/// Only a receiver or parameter that could actually be exclusive matters:
+/// two shared references to the same value alias safely.
+fn aliasing_param<'a>(
+    function: &'a Function,
+    owner: Option<&Class>,
+    plan: &BindingPlan,
+) -> Option<&'a Param> {
+    let owner = owner?;
+    let receiver_exclusive = function.receiver == Receiver::Exclusive;
+    function.params.iter().find(|p| {
+        class_name(&p.ty) == owner.name
+            && (receiver_exclusive
+                || matches!(
+                    Transfer::of(p, plan),
+                    Transfer::Handle { writable: true, .. }
+                ))
+    })
 }
 
 fn signature(
@@ -245,6 +269,13 @@ fn body(
     fallible: bool,
 ) -> String {
     let mut out = String::new();
+    if let Some(param) = aliasing_param(function, owner, plan) {
+        let name = &param.name;
+        let _ = writeln!(
+            out,
+            "    if ::std::ptr::eq(self, {name}) {{\n        return Err(\"{name} aliases self\".to_string());\n    }}"
+        );
+    }
     for param in &function.params {
         out.push_str(&param_prelude(param, krate, plan));
     }

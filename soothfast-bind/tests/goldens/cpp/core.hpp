@@ -58,6 +58,10 @@ public:
         return raw_result;
     }
 
+    void absorb(const Counter& other) {
+        core_counter_absorb(handle_.get(), other.get());
+    }
+
     int64_t at(Level level) const {
         auto raw_result = core_counter_at(handle_.get(), static_cast<core_level>(level));
         return raw_result;

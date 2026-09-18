@@ -16,6 +16,9 @@ class Counter private constructor(private val ptr: Long, marker: Raw) : AutoClos
         private external fun nativeValue(ptr: Long): Long
 
         @JvmStatic
+        private external fun nativeAbsorb(ptr: Long, other: Long): Unit
+
+        @JvmStatic
         private external fun nativeAt(ptr: Long, level: Int): Long
 
         @JvmStatic
@@ -54,6 +57,10 @@ class Counter private constructor(private val ptr: Long, marker: Raw) : AutoClos
         get() {
             return nativeValue(nativePtr())
         }
+
+    fun absorb(other: Counter) {
+        nativeAbsorb(nativePtr(), other.nativePtr())
+    }
 
     fun at(level: Level): Long {
         return nativeAt(nativePtr(), level.ordinal)

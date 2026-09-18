@@ -29,6 +29,14 @@ impl Counter {
         self.0.value.clone() as f64
     }
 
+    fn absorb(&mut self, other: &Counter) -> ::std::result::Result<(), String> {
+        if ::std::ptr::eq(self, other) {
+            return Err("other aliases self".to_string());
+        }
+        self.0.absorb(&other.0);
+        Ok(())
+    }
+
     fn at(&self, level: &str) -> ::std::result::Result<f64, String> {
         let level = {
             type Inner = ::acme::Level;

@@ -71,6 +71,16 @@ fn an_optional_string_crosses_as_null_not_na_in_r() {
 }
 
 #[test]
+fn a_same_class_parameter_checks_pointer_identity_against_self() {
+    let glue = &emit_set_with(BindKind::R, &r_opts()).files["src/rust/src/lib.rs"];
+    assert!(glue.contains(
+        "fn absorb(&mut self, other: &Counter) -> ::std::result::Result<(), String> {\n        \
+         if ::std::ptr::eq(self, other) {\n            \
+         return Err(\"other aliases self\".to_string());\n        }"
+    ));
+}
+
+#[test]
 fn a_mutable_out_parameter_is_a_gap_since_r_vectors_are_values() {
     let set = emit_set_with(BindKind::R, &r_opts());
     assert!(

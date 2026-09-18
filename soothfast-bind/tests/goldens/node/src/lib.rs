@@ -53,6 +53,11 @@ impl Counter {
     }
 
     #[napi]
+    pub fn absorb(&mut self, other: ClassInstance<'_, Counter>) -> () {
+        self.0.absorb(&other.0)
+    }
+
+    #[napi]
     pub fn at(&self, level: Level) -> BigInt {
         BigInt::from(self.0.at(level.into()))
     }

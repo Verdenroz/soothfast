@@ -89,6 +89,13 @@ func (recv *Counter) Value() int64 {
 	return int64(C.core_counter_value(recv.ptr))
 }
 
+func (recv *Counter) Absorb(other *Counter) {
+	if recv.ptr == nil {
+		panic("Counter is closed")
+	}
+	C.core_counter_absorb(recv.ptr, other.ptr)
+}
+
 func (recv *Counter) At(level Level) int64 {
 	if recv.ptr == nil {
 		panic("Counter is closed")

@@ -288,7 +288,7 @@ fn methods(insert: &mut impl FnMut(u64, Value)) {
     insert(
         30,
         json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
-                "inner": { "impl": { "trait": Value::Null, "items": [31, 32, 33, 34, 35, 36, 47] } } }),
+                "inner": { "impl": { "trait": Value::Null, "items": [31, 32, 33, 34, 35, 36, 47, 48] } } }),
     );
     insert(
         31,
@@ -365,6 +365,20 @@ fn methods(insert: &mut impl FnMut(u64, Value)) {
                 ("factor", prim("i64")),
             ],
             prim("i64"),
+            false,
+        ),
+    );
+    // A parameter of the receiver's own class, so `x.absorb(x)` can alias
+    // the same object a backend's `&mut self` already borrows.
+    insert(
+        48,
+        func(
+            "absorb",
+            &[
+                ("self", borrowed(json!({ "generic": "Self" }), true)),
+                ("other", borrowed(path("Counter", 2, &[]), false)),
+            ],
+            Value::Null,
             false,
         ),
     );
@@ -482,6 +496,7 @@ pub fn records() -> Vec<ExportRecord> {
         method("acme::Counter::bump_all", "Counter"),
         method("acme::Counter::at", "Counter"),
         method("acme::Counter::scale", "Counter"),
+        method("acme::Counter::absorb", "Counter"),
         method("acme::Counter::consume", "Counter"),
         method("acme::Counter::refresh", "Counter"),
     ]

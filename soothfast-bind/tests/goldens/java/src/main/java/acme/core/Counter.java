@@ -53,6 +53,10 @@ public final class Counter implements AutoCloseable {
         return nativeValue(nativePtr());
     }
 
+    public void absorb(Counter other) {
+        nativeAbsorb(nativePtr(), other.nativePtr());
+    }
+
     public long at(Level level) {
         return nativeAt(nativePtr(), level.ordinal());
     }
@@ -77,6 +81,7 @@ public final class Counter implements AutoCloseable {
 
     private static native long nativeNew(long start);
     private static native long nativeValue(long ptr);
+    private static native void nativeAbsorb(long ptr, long other);
     private static native long nativeAt(long ptr, int level);
     private static native long nativeBump(long ptr, long by);
     private static native long nativeBumpAll(long ptr, long[] by);

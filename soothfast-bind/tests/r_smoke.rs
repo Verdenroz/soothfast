@@ -120,4 +120,5 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "caught describe_owned: `label` is not a string",
     "maybe_ratio=0.25",
     "maybe_ratio(-1)=TRUE",
+    "caught absorb: other aliases self",
 ];

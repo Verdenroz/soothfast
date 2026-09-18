@@ -35,6 +35,10 @@ impl<F: ::std::future::Future> ::std::future::Future for OnRuntime<F> {
     }
 }
 
+fn buffers_alias(a: (usize, usize), b: (usize, usize)) -> bool {
+    a.0 < b.1 && b.0 < a.1
+}
+
 /// An `f64` sequence read through the buffer protocol when the caller
 /// passes a buffer (`array.array`, `memoryview`, numpy), and unboxed element
 /// by element only when it is some other sequence.
@@ -70,6 +74,18 @@ impl BorrowedF64 {
         match self {
             BorrowedF64::Buffer(_) => self.as_slice().to_vec(),
             BorrowedF64::Owned(v) => v,
+        }
+    }
+
+    /// The bytes this view reads from, or `None` for one Rust already owns a
+    /// private copy of: it cannot alias anything the caller can observe.
+    fn byte_range(&self) -> Option<(usize, usize)> {
+        match self {
+            BorrowedF64::Buffer(b) => {
+                let start = b.buf_ptr() as usize;
+                Some((start, start + b.item_count() * ::std::mem::size_of::<f64>()))
+            }
+            BorrowedF64::Owned(_) => None,
         }
     }
 }
@@ -111,6 +127,18 @@ impl BorrowedI64 {
             BorrowedI64::Owned(v) => v,
         }
     }
+
+    /// The bytes this view reads from, or `None` for one Rust already owns a
+    /// private copy of: it cannot alias anything the caller can observe.
+    fn byte_range(&self) -> Option<(usize, usize)> {
+        match self {
+            BorrowedI64::Buffer(b) => {
+                let start = b.buf_ptr() as usize;
+                Some((start, start + b.item_count() * ::std::mem::size_of::<i64>()))
+            }
+            BorrowedI64::Owned(_) => None,
+        }
+    }
 }
 
 /// A borrowed mutable `f64` sequence. Writing back in place needs a
@@ -136,11 +164,17 @@ impl<'py> ::pyo3::FromPyObject<'py> for BorrowedMutF64 {
 
 impl BorrowedMutF64 {
     fn as_mut_slice(&mut self) -> &mut [f64] {
-        // Writability and contiguity were both checked at extraction, so the
-        // pointer addresses exactly `item_count` items and nothing aliases it.
+        // Writability and contiguity were checked at extraction; the call
+        // site checks every other buffer parameter against byte_range()
+        // before this is ever called, so nothing aliases it either.
         unsafe {
             ::std::slice::from_raw_parts_mut(self.0.buf_ptr() as *mut f64, self.0.item_count())
         }
+    }
+
+    fn byte_range(&self) -> (usize, usize) {
+        let start = self.0.buf_ptr() as usize;
+        (start, start + self.0.item_count() * ::std::mem::size_of::<f64>())
     }
 }
 
@@ -179,6 +213,18 @@ impl BorrowedU8 {
         match self {
             BorrowedU8::Buffer(_) => self.as_slice().to_vec(),
             BorrowedU8::Owned(v) => v,
+        }
+    }
+
+    /// The bytes this view reads from, or `None` for one Rust already owns a
+    /// private copy of: it cannot alias anything the caller can observe.
+    fn byte_range(&self) -> Option<(usize, usize)> {
+        match self {
+            BorrowedU8::Buffer(b) => {
+                let start = b.buf_ptr() as usize;
+                Some((start, start + b.item_count() * ::std::mem::size_of::<u8>()))
+            }
+            BorrowedU8::Owned(_) => None,
         }
     }
 }
@@ -310,6 +356,10 @@ impl Counter {
         self.0.value = value;
     }
 
+    fn absorb(&mut self, other: PyRef<'_, Counter>) -> () {
+        self.0.absorb(&other.0)
+    }
+
     fn at(&self, level: Level) -> i64 {
         self.0.at(level.into())
     }
@@ -412,13 +462,27 @@ fn peak_level(py: Python<'_>, values: BorrowedF64) -> Level {
 }
 
 #[pyfunction]
-fn scale_into(py: Python<'_>, values: BorrowedF64, factor: f64, mut out: BorrowedMutF64) -> () {
-    py.detach(|| ::acme::scale_into(values.as_slice(), factor, out.as_mut_slice()))
+fn scale_into(py: Python<'_>, values: BorrowedF64, factor: f64, mut out: BorrowedMutF64) -> PyResult<()> {
+    if values.byte_range().is_some_and(|r| buffers_alias(out.byte_range(), r)) {
+        return Err(::pyo3::exceptions::PyValueError::new_err("values and out alias the same buffer"));
+    }
+    let out = py.detach(|| ::acme::scale_into(values.as_slice(), factor, out.as_mut_slice()));
+    Ok(out)
 }
 
 #[pyfunction]
-fn split(py: Python<'_>, src: BorrowedF64, mut lo: BorrowedMutF64, mut hi: BorrowedMutF64) -> () {
-    py.detach(|| ::acme::split(src.as_slice(), lo.as_mut_slice(), hi.as_mut_slice()))
+fn split(py: Python<'_>, src: BorrowedF64, mut lo: BorrowedMutF64, mut hi: BorrowedMutF64) -> PyResult<()> {
+    if src.byte_range().is_some_and(|r| buffers_alias(lo.byte_range(), r)) {
+        return Err(::pyo3::exceptions::PyValueError::new_err("src and lo alias the same buffer"));
+    }
+    if src.byte_range().is_some_and(|r| buffers_alias(hi.byte_range(), r)) {
+        return Err(::pyo3::exceptions::PyValueError::new_err("src and hi alias the same buffer"));
+    }
+    if buffers_alias(lo.byte_range(), hi.byte_range()) {
+        return Err(::pyo3::exceptions::PyValueError::new_err("lo and hi alias the same buffer"));
+    }
+    let out = py.detach(|| ::acme::split(src.as_slice(), lo.as_mut_slice(), hi.as_mut_slice()));
+    Ok(out)
 }
 
 #[pyfunction]

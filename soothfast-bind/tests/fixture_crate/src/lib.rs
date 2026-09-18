@@ -56,6 +56,10 @@ impl Counter {
         self.value
     }
 
+    pub fn absorb(&mut self, other: &Counter) {
+        self.value += other.value;
+    }
+
     pub async fn refresh(&self) -> u32 {
         self.value as u32
     }

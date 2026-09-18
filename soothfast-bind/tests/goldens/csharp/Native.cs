@@ -83,6 +83,9 @@ internal static class Native
     internal static extern long acme_core_counter_value(IntPtr handle);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void acme_core_counter_absorb(IntPtr handle, IntPtr other);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern long acme_core_counter_at(IntPtr handle, int level);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

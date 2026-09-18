@@ -55,6 +55,11 @@ public sealed class Counter : IDisposable
         }
     }
 
+    public void Absorb(Counter other)
+    {
+        Native.acme_core_counter_absorb(NativeHandle, other.NativeHandle);
+    }
+
     public long At(Level level)
     {
         long result = Native.acme_core_counter_at(NativeHandle, (int)level);

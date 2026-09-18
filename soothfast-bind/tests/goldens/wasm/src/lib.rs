@@ -32,6 +32,10 @@ impl Counter {
         self.0.value = value;
     }
 
+    pub fn absorb(&mut self, other: &Counter) -> () {
+        self.0.absorb(&other.0)
+    }
+
     pub fn at(&self, level: Level) -> i64 {
         self.0.at(level.into())
     }

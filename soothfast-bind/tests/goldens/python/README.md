@@ -18,6 +18,7 @@ import acme_core
 
 ### `Counter`
 
+- `absorb`
 - `at`
 - `bump`
 - `bump_all`

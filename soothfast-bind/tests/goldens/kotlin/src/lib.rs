@@ -42,6 +42,18 @@ pub extern "system" fn Java_acme_core_Counter_nativeValue<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Counter_nativeAbsorb<'local>(
+    _env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    ptr: i64,
+    other: i64
+) {
+    let this = unsafe { &mut *(ptr as *mut ::acme::Counter) };
+    let other = unsafe { &*(other as *const ::acme::Counter) };
+    this.absorb(other);
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Counter_nativeAt<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

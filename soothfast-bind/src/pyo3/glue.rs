@@ -17,6 +17,16 @@ use super::asyncrt;
 use super::buffers::{self, array_name, buffered, view_name};
 use super::py_ident;
 
+/// Every call with a writable buffer parameter alongside another buffer
+/// parameter needs this: two arguments can name the same Python object
+/// (`scale_into(a, 2.0, a)`), which would hand the Rust call a `&mut` and
+/// a `&` (or two `&mut`s) over the same memory.
+const ALIAS_CHECK: &str = "
+fn buffers_alias(a: (usize, usize), b: (usize, usize)) -> bool {
+    a.0 < b.1 && b.0 < a.1
+}
+";
+
 /// Render the glue crate body.
 pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
     let krate = format!("::{}", opts.crate_name);
@@ -24,6 +34,9 @@ pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
     out.push_str(GLUE_ALLOW);
     out.push_str("\nuse pyo3::prelude::*;\n");
     out.push_str(&asyncrt::preamble(plan));
+    if needs_alias_check(plan) {
+        out.push_str(ALIAS_CHECK);
+    }
 
     for view in buffers::views(plan) {
         out.push_str(&view);
@@ -42,6 +55,74 @@ pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
     }
     out.push_str(&module_block(plan, opts));
     out
+}
+
+/// Whether any function in the surface has a writable buffer parameter
+/// alongside another buffer parameter, the only shape [`ALIAS_CHECK`] guards.
+fn needs_alias_check(plan: &BindingPlan) -> bool {
+    plan.functions()
+        .any(|f| !aliasing_pairs(f, plan).is_empty())
+}
+
+/// Every pair of buffer parameters that need a byte-range check against each
+/// other: at least one of the two has to be writable, since two shared views
+/// over the same memory alias safely.
+fn aliasing_pairs(function: &Function, plan: &BindingPlan) -> Vec<(String, bool, String, bool)> {
+    let buffers: Vec<(String, bool)> = function
+        .params
+        .iter()
+        .filter_map(|p| match Transfer::of(p, plan) {
+            Transfer::Buffer {
+                element, writable, ..
+            } => {
+                let element: Ty = element.into();
+                buffered(&element).map(|_| (py_ident(&p.name), writable))
+            }
+            _ => None,
+        })
+        .collect();
+    let mut pairs = Vec::new();
+    for i in 0..buffers.len() {
+        for j in (i + 1)..buffers.len() {
+            let (a_name, a_writable) = &buffers[i];
+            let (b_name, b_writable) = &buffers[j];
+            if *a_writable || *b_writable {
+                pairs.push((a_name.clone(), *a_writable, b_name.clone(), *b_writable));
+            }
+        }
+    }
+    pairs
+}
+
+/// One `if` per pair [`aliasing_pairs`] names, raising `ValueError` on
+/// overlap rather than letting the call alias two Rust references.
+fn aliasing_check(function: &Function, plan: &BindingPlan, indent: &str) -> String {
+    let mut out = String::new();
+    for (a_name, a_writable, b_name, b_writable) in aliasing_pairs(function, plan) {
+        let (writable_name, other_name, other_writable) = match a_writable {
+            true => (&a_name, &b_name, b_writable),
+            false => (&b_name, &a_name, a_writable),
+        };
+        let condition = match other_writable {
+            true => {
+                format!("buffers_alias({writable_name}.byte_range(), {other_name}.byte_range())")
+            }
+            false => format!(
+                "{other_name}.byte_range().is_some_and(|r| buffers_alias({writable_name}.byte_range(), r))"
+            ),
+        };
+        let _ = writeln!(
+            out,
+            "{indent}if {condition} {{\n{indent}    return Err(::pyo3::exceptions::PyValueError::new_err(\"{a_name} and {b_name} alias the same buffer\"));\n{indent}}}"
+        );
+    }
+    out
+}
+
+/// Whether the generated signature has to return `PyResult`: the call
+/// itself can fail, or an aliasing check ahead of it can.
+fn fallible(function: &Function, plan: &BindingPlan) -> bool {
+    function.throws.is_some() || !aliasing_pairs(function, plan).is_empty()
 }
 
 /// One newtype per distinct error type, named after it so several errors in
@@ -186,9 +267,9 @@ fn constructor(ctor: &Function, krate: &str, plan: &BindingPlan, owner: &Class) 
         ctor.name,
         call_args(ctor, plan)
     );
-    let ret = match ctor.throws {
-        Some(_) => "PyResult<Self>",
-        None => "Self",
+    let ret = match fallible(ctor, plan) {
+        true => "PyResult<Self>",
+        false => "Self",
     };
     format!(
         "{}    #[new]\n    fn new({}) -> {ret} {{\n{}    }}\n",
@@ -238,7 +319,7 @@ fn member(method: &Function, plan: &BindingPlan, owner: &Class) -> String {
         docs(method.doc.as_deref(), "    "),
         asyncness(method),
         py_ident(&method.name),
-        return_ty(method),
+        return_ty(method, plan),
         body(&call, method, plan, "        ", detach),
     )
 }
@@ -257,7 +338,7 @@ fn associated_fn(function: &Function, krate: &str, plan: &BindingPlan, owner: &C
         asyncness(function),
         py_ident(&function.name),
         params(function, plan, detach),
-        return_ty(function),
+        return_ty(function, plan),
         body(&call, function, plan, "        ", detach),
     )
 }
@@ -275,27 +356,33 @@ fn free_fn(function: &Function, krate: &str, plan: &BindingPlan) -> String {
         asyncness(function),
         py_ident(&function.name),
         params(function, plan, detach),
-        return_ty(function),
+        return_ty(function, plan),
         body(&call, function, plan, "    ", detach),
     )
 }
 
 /// The call, converted into whatever the generated signature promised: a
 /// handle constructor, a mirrored value, a `?` through the error newtype.
+/// [`aliasing_check`]'s `if`s run first, ahead of the call itself, whether
+/// detached or not.
 fn body(call: &str, function: &Function, plan: &BindingPlan, indent: &str, detach: bool) -> String {
     let call = match function.is_async {
         true => asyncrt::awaited(call),
         false => call.to_string(),
     };
+    let checks = aliasing_check(function, plan, indent);
     if !detach {
-        return completed(&call, function, plan, indent, "");
+        return format!("{checks}{}", completed(&call, function, plan, indent, ""));
     }
     // A call that cannot fail and needs no conversion is the whole body, so
     // binding its value would only name it to return it.
-    if function.throws.is_none() && returned("out", &function.ret, plan) == "out" {
+    if function.throws.is_none()
+        && checks.is_empty()
+        && returned("out", &function.ret, plan) == "out"
+    {
         return format!("{indent}py.detach(|| {call})\n");
     }
-    let bound = format!("{indent}let out = py.detach(|| {call});\n");
+    let bound = format!("{checks}{indent}let out = py.detach(|| {call});\n");
     completed("out", function, plan, indent, &bound)
 }
 
@@ -308,15 +395,14 @@ fn completed(
     indent: &str,
     prefix: &str,
 ) -> String {
-    match &function.throws {
-        Some(err) => {
-            let raised = format!("{expr}.map_err({})?", error_name(err));
-            format!(
-                "{prefix}{indent}Ok({})\n",
-                returned(&raised, &function.ret, plan)
-            )
-        }
-        None => format!("{prefix}{indent}{}\n", returned(expr, &function.ret, plan)),
+    let value = match &function.throws {
+        Some(err) => format!("{expr}.map_err({})?", error_name(err)),
+        None => expr.to_string(),
+    };
+    let out = returned(&value, &function.ret, plan);
+    match fallible(function, plan) {
+        true => format!("{prefix}{indent}Ok({out})\n"),
+        false => format!("{prefix}{indent}{out}\n"),
     }
 }
 
@@ -478,11 +564,11 @@ fn needs_mut(param: &Param, plan: &BindingPlan) -> bool {
     )
 }
 
-fn return_ty(function: &Function) -> String {
+fn return_ty(function: &Function, plan: &BindingPlan) -> String {
     let ok = returned_ty(&function.ret);
-    match function.throws {
-        Some(_) => format!("PyResult<{ok}>"),
-        None => ok,
+    match fallible(function, plan) {
+        true => format!("PyResult<{ok}>"),
+        false => ok,
     }
 }
 
