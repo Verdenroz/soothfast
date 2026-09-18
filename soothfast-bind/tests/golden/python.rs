@@ -95,8 +95,11 @@ fn an_optional_handle_return_maps_into_its_wrapper_for_python() {
 // return type and what the call actually hands back; only rustc can.
 #[test]
 fn the_python_golden_compiles_against_a_real_python() {
-    if Command::new("python3").arg("--version").output().is_err() {
-        eprintln!("python3 not on PATH; skipping");
+    if !crate::support::require_toolchain(
+        Command::new("python3").arg("--version").output().is_ok(),
+        "python3",
+        "install Python 3",
+    ) {
         return;
     }
     let glue = stage_golden("python", "python");

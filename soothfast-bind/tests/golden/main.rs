@@ -4,6 +4,8 @@
 
 #[path = "../fixture/mod.rs"]
 mod fixture;
+#[path = "../support/mod.rs"]
+mod support;
 
 mod c;
 mod cpp;

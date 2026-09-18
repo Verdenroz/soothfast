@@ -56,8 +56,11 @@ fn the_wasm_golden_compiles_for_wasm32() {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
         .unwrap_or(false);
-    if !installed {
-        eprintln!("wasm32-unknown-unknown not installed; skipping");
+    if !crate::support::require_toolchain(
+        installed,
+        "wasm32-unknown-unknown target",
+        "rustup target add wasm32-unknown-unknown",
+    ) {
         return;
     }
     let glue = stage_golden("wasm", "wasm");

@@ -134,11 +134,21 @@ fn the_cpp_header_compiles_clean_under_available_compilers() {
         "soothfast-bind-cpp-check-{}-{nanos}",
         std::process::id()
     ));
+    let compiler_available = ["g++", "clang++"]
+        .iter()
+        .any(|c| Command::new(c).arg("--version").output().is_ok());
+    if !crate::support::require_toolchain(
+        compiler_available,
+        "g++ or clang++",
+        "install a C++ compiler",
+    ) {
+        return;
+    }
+
     std::fs::create_dir_all(&scratch).expect("makes scratch dir");
     let check = scratch.join("check.cpp");
     std::fs::write(&check, "#include \"core.hpp\"\n").expect("writes check.cpp");
 
-    let mut checked = 0;
     for compiler in ["g++", "clang++"] {
         let args = ["-std=c++20", "-Wall", "-Wextra", "-Werror", "-fsyntax-only"];
         let output = Command::new(compiler)
@@ -151,7 +161,6 @@ fn the_cpp_header_compiles_clean_under_available_compilers() {
             eprintln!("{compiler} not on PATH; skipping");
             continue;
         };
-        checked += 1;
         assert!(
             output.status.success(),
             "{compiler} {} -I {} {} exited with {}\nstderr:\n{}",
@@ -163,7 +172,4 @@ fn the_cpp_header_compiles_clean_under_available_compilers() {
         );
     }
     let _ = std::fs::remove_dir_all(&scratch);
-    if checked == 0 {
-        eprintln!("neither g++ nor clang++ on PATH; skipping");
-    }
 }

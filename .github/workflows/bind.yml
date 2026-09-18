@@ -80,9 +80,10 @@ jobs:
   smoke:
     # Compiles and runs every soothfast-bind golden package against its real
     # host toolchain, the CI form of the `#[ignore]`d tests under
-    # soothfast-bind/tests and soothfast-demo/tests/glue_compiles.rs.
-    # Independent of build-cli: it never invokes cargo-soothfast, only cargo
-    # and the host toolchains the goldens already commit.
+    # soothfast-bind/tests, cargo-soothfast's own bind_build/bind_gate_smoke
+    # tests, and soothfast-demo/tests/glue_compiles.rs. Independent of
+    # build-cli: `cargo test` builds its own cargo-soothfast rather than
+    # downloading the other job's artifact.
     if: github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]')
     runs-on: ubuntu-latest
     permissions:
@@ -102,9 +103,17 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
+      # fixture_parity and bind_gate_smoke both walk real rustdoc JSON.
+      - name: Pin the rustdoc toolchain
+        run: |
+          TC=$(make -s print-SOOTHFAST_RUSTDOC_TOOLCHAIN)
+          echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$TC" >> "$GITHUB_ENV"
+          rustup toolchain install "$TC" --profile minimal
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: smoke
+      - run: pip install "maturin==$(make -s print-SOOTHFAST_MATURIN_VERSION)"
+      - run: cargo install wasm-pack --locked --version "$(make -s print-SOOTHFAST_WASM_PACK_VERSION)"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: soothfast-bind/tests/goldens/go/go.mod
@@ -154,8 +163,18 @@ jobs:
         run: cargo test -p soothfast-bind --test node_smoke --locked -- --ignored
       - name: csharp smoke
         run: cargo test -p soothfast-bind --test csharp_smoke --locked -- --ignored
+      - name: python smoke
+        run: cargo test -p soothfast-bind --test python_smoke --locked -- --ignored
+      - name: wasm smoke
+        run: cargo test -p soothfast-bind --test wasm_smoke --locked -- --ignored
       - name: demo glue compiles
         run: cargo test -p soothfast-demo --test glue_compiles --locked -- --ignored
+      - name: fixture matches real rustdoc
+        run: cargo test -p soothfast-bind --test fixture_parity --locked -- --ignored
+      - name: bind build ignored tests
+        run: cargo test -p cargo-soothfast --bin cargo-soothfast bind_build --locked -- --ignored
+      - name: bind gate and --check failure tests
+        run: cargo test -p cargo-soothfast --test bind_gate_smoke --locked -- --ignored
 
   generate:
     if: github.event_name == 'push'
