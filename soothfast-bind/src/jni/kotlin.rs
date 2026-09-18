@@ -232,7 +232,11 @@ fn handle_class(class: &Class, plan: &BindingPlan, opts: &BindOptions) -> String
          \x20   }}\n\
          {raw_object}\n\
          \x20   private val cleanable: Cleaner.Cleanable = Natives.CLEANER.register(this, State(ptr))\n\n\
-         \x20   internal fun nativePtr(): Long = ptr\n\n\
+         \x20   private var closed = false\n\n\
+         \x20   internal fun nativePtr(): Long {{\n\
+         \x20       check(!closed) {{ \"{name} is closed\" }}\n\
+         \x20       return ptr\n\
+         \x20   }}\n\n\
          \x20   private class State(private val ptr: Long) : Runnable {{\n\
          \x20       override fun run() {{\n\
          \x20           nativeFree(ptr)\n\
@@ -240,6 +244,7 @@ fn handle_class(class: &Class, plan: &BindingPlan, opts: &BindOptions) -> String
          \x20   }}\n\
          {members}\n\
          \x20   override fun close() {{\n\
+         \x20       closed = true\n\
          \x20       cleanable.clean()\n\
          \x20   }}\n\
          }}\n",
@@ -269,7 +274,7 @@ fn getter(accessor: &Accessor, plan: &BindingPlan) -> (String, String) {
     let ty = types::kotlin_ty(&accessor.ty);
     let native_ty = types::native_kotlin_ty(&accessor.ty, plan);
     let body = wrap_returned(
-        &format!("{native_name}(ptr)"),
+        &format!("{native_name}(nativePtr())"),
         &accessor.ty,
         plan,
         "            ",
@@ -343,7 +348,7 @@ fn signature_parts(
     let mut native_call_args = Vec::new();
     if has_receiver {
         native_decl_params.push("ptr: Long".to_string());
-        native_call_args.push("ptr".to_string());
+        native_call_args.push("nativePtr()".to_string());
     }
     for param in &function.params {
         let pname = kotlin_ident(&param.name);

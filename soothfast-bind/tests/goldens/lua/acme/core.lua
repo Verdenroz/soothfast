@@ -244,15 +244,24 @@ function Counter.new(start)
 end
 
 function Counter:value()
+	if self.ptr == nil then
+		error("Counter is closed")
+	end
 	return lib.core_counter_value(self.ptr)
 end
 
 function Counter:at(level)
+	if self.ptr == nil then
+		error("Counter is closed")
+	end
 	local ret = lib.core_counter_at(self.ptr, level_to_c(level))
 	return ret
 end
 
 function Counter:bump(by)
+	if self.ptr == nil then
+		error("Counter is closed")
+	end
 	local err = ffi.new("char*[1]")
 	local ret = lib.core_counter_bump(self.ptr, by, err)
 	if err[0] ~= nil then
@@ -262,12 +271,18 @@ function Counter:bump(by)
 end
 
 function Counter:bump_all(by)
+	if self.ptr == nil then
+		error("Counter is closed")
+	end
 	local by_ptr, by_len = i64_buf(by)
 	local ret = lib.core_counter_bump_all(self.ptr, by_ptr, by_len)
 	return ret
 end
 
 function Counter:scale(factor)
+	if self.ptr == nil then
+		error("Counter is closed")
+	end
 	local ret = lib.core_counter_scale(self.ptr, factor)
 	return ret
 end

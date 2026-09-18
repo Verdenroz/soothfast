@@ -103,4 +103,12 @@ acme.split({ 1.0, 2.0, 3.0 }, split_lo, split_hi)
 assert(split_lo[1] == 2.0 and split_lo[2] == 4.0 and split_lo[3] == 6.0, "split lo")
 assert(split_hi[1] == -1.0 and split_hi[2] == -2.0 and split_hi[3] == -3.0, "split hi")
 
+local closed = acme.Counter.new(1)
+closed:close()
+local ok_closed, err_closed = pcall(function()
+	return closed:value()
+end)
+assert(not ok_closed, "expected an error reading a closed counter")
+assert(tostring(err_closed):find("is closed"), "error message: " .. tostring(err_closed))
+
 print("ok")

@@ -10,6 +10,7 @@ public final class Mode implements AutoCloseable {
 
     private final long ptr;
     private final Cleaner.Cleanable cleanable;
+    private boolean closed;
 
     private static final class State implements Runnable {
         private final long ptr;
@@ -31,11 +32,15 @@ public final class Mode implements AutoCloseable {
 
     /** The raw handle, readable only from generated code in this package. */
     long nativePtr() {
+        if (closed) {
+            throw new IllegalStateException("Mode is closed");
+        }
         return ptr;
     }
 
     @Override
     public void close() {
+        closed = true;
         cleanable.clean();
     }
 

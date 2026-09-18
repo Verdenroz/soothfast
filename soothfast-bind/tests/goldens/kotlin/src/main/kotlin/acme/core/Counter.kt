@@ -35,7 +35,12 @@ class Counter private constructor(private val ptr: Long, marker: Raw) : AutoClos
 
     private val cleanable: Cleaner.Cleanable = Natives.CLEANER.register(this, State(ptr))
 
-    internal fun nativePtr(): Long = ptr
+    private var closed = false
+
+    internal fun nativePtr(): Long {
+        check(!closed) { "Counter is closed" }
+        return ptr
+    }
 
     private class State(private val ptr: Long) : Runnable {
         override fun run() {
@@ -47,26 +52,27 @@ class Counter private constructor(private val ptr: Long, marker: Raw) : AutoClos
 
     val value: Long
         get() {
-            return nativeValue(ptr)
+            return nativeValue(nativePtr())
         }
 
     fun at(level: Level): Long {
-        return nativeAt(ptr, level.ordinal)
+        return nativeAt(nativePtr(), level.ordinal)
     }
 
     fun bump(by: Long): Long {
-        return nativeBump(ptr, by)
+        return nativeBump(nativePtr(), by)
     }
 
     fun bumpAll(by: LongArray): Long {
-        return nativeBumpAll(ptr, by)
+        return nativeBumpAll(nativePtr(), by)
     }
 
     fun scale(factor: Long): Long {
-        return nativeScale(ptr, factor)
+        return nativeScale(nativePtr(), factor)
     }
 
     override fun close() {
+        closed = true
         cleanable.clean()
     }
 }

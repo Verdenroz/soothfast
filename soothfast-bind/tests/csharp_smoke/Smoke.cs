@@ -51,3 +51,15 @@ var hi = new double[3];
 Core.Split(new double[] { 1.0, 2.0, 3.0 }, lo, hi);
 Console.WriteLine($"split.lo=[{string.Join(", ", lo)}]");
 Console.WriteLine($"split.hi=[{string.Join(", ", hi)}]");
+
+var closedCounter = new Counter(1);
+closedCounter.Dispose();
+try
+{
+    _ = closedCounter.Value;
+    throw new Exception("expected ObjectDisposedException");
+}
+catch (ObjectDisposedException e)
+{
+    Console.WriteLine($"use after close: {e.ObjectName}");
+}

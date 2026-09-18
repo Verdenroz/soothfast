@@ -164,4 +164,5 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "fail caught: bad byte\u{fffd}end",
     "split.lo=[2, 4, 6]",
     "split.hi=[-1, -2, -3]",
+    "use after close: Counter",
 ];

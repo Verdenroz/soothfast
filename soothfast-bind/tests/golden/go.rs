@@ -120,6 +120,14 @@ fn the_emitted_go_is_already_gofmt_clean() {
 }
 
 #[test]
+fn a_method_call_after_close_panics_instead_of_dereferencing_a_freed_pointer() {
+    let glue = emit_go()["core.go"].clone();
+    assert!(glue.contains(
+        "func (recv *Counter) Value() int64 {\n\tif recv.ptr == nil {\n\t\tpanic(\"Counter is closed\")\n\t}\n"
+    ));
+}
+
+#[test]
 fn what_c_cannot_spell_is_also_unsupported_for_go() {
     let set = emit_go_set();
     let gaps = set.gaps.join("\n");

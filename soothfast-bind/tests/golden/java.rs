@@ -111,6 +111,18 @@ fn a_second_writable_buffer_reads_and_writes_back_without_staying_pinned() {
 }
 
 #[test]
+fn a_call_after_close_throws_instead_of_passing_a_freed_pointer() {
+    let counter =
+        &emit_set_with(BindKind::Java, &java_opts()).files["src/main/java/acme/core/Counter.java"];
+    assert!(counter.contains(
+        "long nativePtr() {\n        if (closed) {\n            \
+         throw new IllegalStateException(\"Counter is closed\");\n        }\n        \
+         return ptr;\n    }"
+    ));
+    assert!(counter.contains("public long value() {\n        return nativeValue(nativePtr());"));
+}
+
+#[test]
 fn natives_extracts_the_bundled_library_before_falling_back_to_the_path() {
     let files = emit_set_with(BindKind::Java, &java_opts()).files;
     let natives = &files["src/main/java/acme/core/Natives.java"];

@@ -83,14 +83,23 @@ func NewCounter(start int64) *Counter {
 }
 
 func (recv *Counter) Value() int64 {
+	if recv.ptr == nil {
+		panic("Counter is closed")
+	}
 	return int64(C.core_counter_value(recv.ptr))
 }
 
 func (recv *Counter) At(level Level) int64 {
+	if recv.ptr == nil {
+		panic("Counter is closed")
+	}
 	return int64(C.core_counter_at(recv.ptr, level.c()))
 }
 
 func (recv *Counter) Bump(by int64) (int64, error) {
+	if recv.ptr == nil {
+		panic("Counter is closed")
+	}
 	var errPtr *C.char
 	ret := C.core_counter_bump(recv.ptr, C.int64_t(by), &errPtr)
 	if errPtr != nil {
@@ -101,10 +110,16 @@ func (recv *Counter) Bump(by int64) (int64, error) {
 }
 
 func (recv *Counter) BumpAll(by []int64) int64 {
+	if recv.ptr == nil {
+		panic("Counter is closed")
+	}
 	return int64(C.core_counter_bump_all(recv.ptr, (*C.int64_t)(unsafe.Pointer(bufPtr(by))), C.size_t(len(by))))
 }
 
 func (recv *Counter) Scale(factor int64) int64 {
+	if recv.ptr == nil {
+		panic("Counter is closed")
+	}
 	return int64(C.core_counter_scale(recv.ptr, C.int64_t(factor)))
 }
 

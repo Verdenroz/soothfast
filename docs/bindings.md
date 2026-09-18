@@ -254,7 +254,8 @@ n, err := c.Bump(5)
 
 - **A handle is a struct with an unexported pointer.** `Close` releases it
   through the C `*_free` and is idempotent; `runtime.SetFinalizer` is the
-  backstop for a caller that forgets to call it.
+  backstop for a caller that forgets to call it. A call after `Close`
+  panics rather than passing the freed pointer on.
 - **A slice of one primitive crosses as a pointer and a length**, the same
   buffer C takes, via `unsafe.Pointer` on the slice's backing array. An empty
   slice never takes that address, which cgo would reject.
@@ -308,7 +309,9 @@ try (Summary s = new Summary(new double[] {3.0, 1.0, 5.0, 4.0})) {
 ```
 
 - **A handle registers with a shared `Cleaner`** on close or collection,
-  whichever comes first; `close()` is idempotent and safe to call twice.
+  whichever comes first; `close()` is idempotent and safe to call twice. A
+  call after `close()` throws `IllegalStateException` rather than passing
+  the freed pointer to native code.
 - **A public constructor is real**, not a disguised factory: `bind gen`
   generates one that delegates to the package-private pointer-wrapping
   constructor through a `Raw` marker class, so the two can never collide on
@@ -357,6 +360,8 @@ Summary(doubleArrayOf(3.0, 1.0, 5.0, 4.0)).use { s ->
 - **Free functions are top-level, not static methods on a holder class.**
   `@file:JvmName("<Module>")` names the file's own compiled class after the
   module, so the native symbols still land where the glue expects them.
+- **A call after `close()` throws `IllegalStateException`** via `check()`,
+  the same guarantee Java's handle gives.
 
 `kotlinc` and `kotlin` are host tools the same way `javac` and the JVM are:
 not a soothfast dependency, just what `bind build` shells out to.
@@ -524,7 +529,8 @@ counter:close()
 - **A handle is a table with a `ptr` field**, freed through the C `*_free`
   and registered with `ffi.gc` as a backstop; `:close()` disarms the
   finalizer and frees once, so calling it twice is a no-op the same way
-  Go's `Close()` is.
+  Go's `Close()` is. A call after `:close()` raises through `error` rather
+  than passing the freed pointer to the C library.
 - **A payload-free enum crosses as a validated string**, not a mirrored
   ordinal: a lookup table checks it against the type's own variant names
   on the way in and maps an ordinal back to a name on the way out, the
@@ -556,7 +562,10 @@ using (var s = new Summary(new double[] { 3.0, 1.0, 5.0, 4.0 }))
 
 - **A handle is a `SafeHandle` subclass**, its `ReleaseHandle` calling the C
   `*_free`; the class implementing `IDisposable` over it is what a `using`
-  block, or an explicit `Dispose()`, actually releases.
+  block, or an explicit `Dispose()`, actually releases. A call after
+  `Dispose()` throws `ObjectDisposedException`: the handle is read through
+  a property checking `SafeHandle.IsClosed` rather than
+  `DangerousGetHandle()` called bare.
 - **A borrowed buffer parameter is pinned with `fixed`**, the P/Invoke
   marshaller's own answer to the same question Java's `GetPrimitiveArrayCritical`
   answers: no copy, but the call cannot hand its work to another thread or

@@ -303,7 +303,17 @@ fn handle_class(
          \x20       }}\n\
          \x20   }}\n\n\
          \x20   private readonly Handle _handle;\n\n\
-         \x20   internal IntPtr NativeHandle => _handle.DangerousGetHandle();\n\
+         \x20   internal IntPtr NativeHandle\n\
+         \x20   {{\n\
+         \x20       get\n\
+         \x20       {{\n\
+         \x20           if (_handle.IsClosed)\n\
+         \x20           {{\n\
+         \x20               throw new ObjectDisposedException(nameof({}));\n\
+         \x20           }}\n\
+         \x20           return _handle.DangerousGetHandle();\n\
+         \x20       }}\n\
+         \x20   }}\n\
          {}\n\
          \x20   public void Dispose()\n\
          \x20   {{\n\
@@ -314,6 +324,7 @@ fn handle_class(
         doc(class.doc.as_deref()),
         class.name,
         c::handle_c(&class.name, module),
+        class.name,
         indent(&members, 4),
     )
 }

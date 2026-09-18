@@ -88,6 +88,17 @@ fn a_pinned_csharp_buffer_gets_one_note_for_the_whole_package() {
 }
 
 #[test]
+fn a_call_after_dispose_throws_instead_of_reading_a_freed_handle() {
+    let counter = &emit_set_with(BindKind::CSharp, &csharp_opts()).files["Counter.cs"];
+    assert!(counter.contains(
+        "internal IntPtr NativeHandle\n    {\n        get\n        {\n            \
+         if (_handle.IsClosed)\n            {\n                \
+         throw new ObjectDisposedException(nameof(Counter));\n            }\n            \
+         return _handle.DangerousGetHandle();\n        }\n    }"
+    ));
+}
+
+#[test]
 fn what_c_cannot_spell_is_also_unsupported_for_csharp() {
     let set = emit_set_with(BindKind::CSharp, &csharp_opts());
     let gaps = set.gaps.join("\n");

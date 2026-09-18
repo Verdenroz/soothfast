@@ -258,10 +258,19 @@ fn accessor_block(accessor: &Accessor, class: &Class, plan: &BindingPlan, module
     );
     let call = format!("lib.{symbol}(self.ptr)");
     format!(
-        "function {}:{name}()\n\treturn {}\nend\n\n",
+        "function {}:{name}()\n{}\treturn {}\nend\n\n",
         class.name,
+        closed_check(&class.name),
         returned(&call, &accessor.ty, plan, module),
     )
+}
+
+/// Every receiver-taking call starts here: `self.ptr` goes straight into a
+/// C call with no nil check of its own, so a use after `close()` would
+/// otherwise reach the Rust side as a null-pointer dereference instead of a
+/// Lua error.
+fn closed_check(class_name: &str) -> String {
+    format!("\tif self.ptr == nil then\n\t\terror(\"{class_name} is closed\")\n\tend\n")
 }
 
 fn function_block(
@@ -296,6 +305,11 @@ fn function_body(
 ) -> String {
     let mut lines: Vec<String> = Vec::new();
 
+    if let (Some(class), receiver) = (owner, function.receiver)
+        && receiver != Receiver::None
+    {
+        lines.push(closed_check(&class.name).trim_end().to_string());
+    }
     for param in &function.params {
         if let Transfer::Buffer { element, .. } = Transfer::of(param, plan) {
             let helper = format!("{}_buf", c::scalar_of(element).rust);

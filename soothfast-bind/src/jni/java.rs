@@ -219,6 +219,7 @@ fn handle_class(class: &Class, plan: &BindingPlan, opts: &BindOptions) -> String
          \x20   }}\n\n\
          \x20   private final long ptr;\n\
          \x20   private final Cleaner.Cleanable cleanable;\n\
+         \x20   private boolean closed;\n\
          {raw_marker}\n\
          \x20   private static final class State implements Runnable {{\n\
          \x20       private final long ptr;\n\n\
@@ -236,11 +237,15 @@ fn handle_class(class: &Class, plan: &BindingPlan, opts: &BindOptions) -> String
          \x20   }}\n\n\
          \x20   /** The raw handle, readable only from generated code in this package. */\n\
          \x20   long nativePtr() {{\n\
+         \x20       if (closed) {{\n\
+         \x20           throw new IllegalStateException(\"{name} is closed\");\n\
+         \x20       }}\n\
          \x20       return ptr;\n\
          \x20   }}\n\
          {methods}\n\
          \x20   @Override\n\
          \x20   public void close() {{\n\
+         \x20       closed = true;\n\
          \x20       cleanable.clean();\n\
          \x20   }}\n\n\
          {natives}\
@@ -297,7 +302,7 @@ fn getter(accessor: &Accessor, plan: &BindingPlan) -> (String, String) {
     let native_name = types::native_method_name(&accessor.field);
     let ty = types::java_ty(&accessor.ty);
     let native_ty = types::native_java_ty(&accessor.ty, plan);
-    let body = wrap_returned(&format!("{native_name}(ptr)"), &accessor.ty, plan);
+    let body = wrap_returned(&format!("{native_name}(nativePtr())"), &accessor.ty, plan);
     let public = format!(
         "\n{}    public {ty} {name}() {{\n        {body}\n    }}\n",
         doc(accessor.doc.as_deref(), "    "),
@@ -318,7 +323,7 @@ fn method(function: &Function, owner: Option<&Class>, plan: &BindingPlan) -> (St
     let mut native_call_args = Vec::new();
     if has_receiver {
         native_decl_params.push("long ptr".to_string());
-        native_call_args.push("ptr".to_string());
+        native_call_args.push("nativePtr()".to_string());
     }
     for param in &function.params {
         let pname = java_ident(&param.name);

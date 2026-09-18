@@ -221,11 +221,20 @@ fn getter(accessor: &Accessor, class: &Class, plan: &BindingPlan, module: &str) 
     let ret_ty = go_return_type(&accessor.ty, plan);
     let call = format!("C.{symbol}(recv.ptr)");
     format!(
-        "{}func (recv *{}) {go_name}() {ret_ty} {{\n\treturn {}\n}}\n\n",
+        "{}func (recv *{}) {go_name}() {ret_ty} {{\n{}\treturn {}\n}}\n\n",
         docs(accessor.doc.as_deref()),
         class.name,
+        closed_check(&class.name),
         convert_ret(&call, &accessor.ty, plan),
     )
+}
+
+/// Every receiver-taking call starts here: `recv.ptr` goes straight into a
+/// C call with no nil check of its own, so a use after `Close()` would
+/// otherwise reach the Rust side as a null-pointer dereference instead of a
+/// Go panic.
+fn closed_check(class_name: &str) -> String {
+    format!("\tif recv.ptr == nil {{\n\t\tpanic(\"{class_name} is closed\")\n\t}}\n")
 }
 
 fn func_block(
@@ -242,16 +251,22 @@ fn func_block(
         (Some(_), false) => c::pascal(&function.name),
         (None, _) => c::pascal(&function.name),
     };
-    let recv_sig = match (owner, is_ctor, function.receiver) {
-        (Some(c), false, r) if r != Receiver::None => format!("(recv *{}) ", c.name),
+    let has_receiver =
+        matches!((owner, is_ctor, function.receiver), (Some(_), false, r) if r != Receiver::None);
+    let recv_sig = match (owner, has_receiver) {
+        (Some(c), true) => format!("(recv *{}) ", c.name),
         _ => String::new(),
     };
     let params = go_signature_params(&function.params, plan);
     let ret_sig = go_return_signature(function, plan);
     let call = c_call(function, owner, is_ctor, function.receiver, plan);
+    let guard = match (has_receiver, owner) {
+        (true, Some(c)) => closed_check(&c.name),
+        _ => String::new(),
+    };
 
     format!(
-        "{}func {recv_sig}{go_name}({params}){ret_sig} {{\n{}}}\n\n",
+        "{}func {recv_sig}{go_name}({params}){ret_sig} {{\n{guard}{}}}\n\n",
         docs(function.doc.as_deref()),
         body(function, &call, plan),
     )

@@ -24,7 +24,17 @@ public sealed class Mode : IDisposable
 
     private readonly Handle _handle;
 
-    internal IntPtr NativeHandle => _handle.DangerousGetHandle();
+    internal IntPtr NativeHandle
+    {
+        get
+        {
+            if (_handle.IsClosed)
+            {
+                throw new ObjectDisposedException(nameof(Mode));
+            }
+            return _handle.DangerousGetHandle();
+        }
+    }
 
     internal Mode(IntPtr ptr)
     {

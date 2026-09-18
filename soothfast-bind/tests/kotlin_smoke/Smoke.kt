@@ -41,4 +41,13 @@ fun main() {
     Core.split(doubleArrayOf(1.0, 2.0, 3.0), lo, hi)
     println("split.lo=${lo.contentToString()}")
     println("split.hi=${hi.contentToString()}")
+
+    val closed = Counter(1)
+    closed.close()
+    try {
+        closed.value
+        throw AssertionError("expected IllegalStateException")
+    } catch (e: IllegalStateException) {
+        println("use after close: ${e.message}")
+    }
 }

@@ -181,6 +181,7 @@ const EXPECTED_OUTPUT: &[&str] = &[
     "describeOwned(none)=null",
     "split.lo=[2.0, 4.0, 6.0]",
     "split.hi=[-1.0, -2.0, -3.0]",
+    "use after close: Counter is closed",
 ];
 
 fn java_sources(dir: &Path) -> Vec<PathBuf> {

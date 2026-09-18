@@ -79,6 +79,16 @@ fn a_kotlin_declared_constructor_is_a_secondary_one_disambiguated_by_a_marker() 
 }
 
 #[test]
+fn a_kotlin_call_after_close_throws_instead_of_passing_a_freed_pointer() {
+    let files = emit_set_with(BindKind::Kotlin, &kotlin_opts()).files;
+    let counter = &files["src/main/kotlin/acme/core/Counter.kt"];
+    assert!(counter.contains(
+        "internal fun nativePtr(): Long {\n        check(!closed) { \"Counter is closed\" }\n        return ptr\n    }"
+    ));
+    assert!(counter.contains("get() {\n            return nativeValue(nativePtr())"));
+}
+
+#[test]
 fn a_kotlin_free_functions_optional_return_lines_up_with_its_own_indent() {
     let files = emit_set_with(BindKind::Kotlin, &kotlin_opts()).files;
     let module = &files["src/main/kotlin/acme/core/Core.kt"];

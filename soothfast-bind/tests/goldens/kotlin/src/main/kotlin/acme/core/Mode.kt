@@ -15,7 +15,12 @@ class Mode private constructor(private val ptr: Long) : AutoCloseable {
 
     private val cleanable: Cleaner.Cleanable = Natives.CLEANER.register(this, State(ptr))
 
-    internal fun nativePtr(): Long = ptr
+    private var closed = false
+
+    internal fun nativePtr(): Long {
+        check(!closed) { "Mode is closed" }
+        return ptr
+    }
 
     private class State(private val ptr: Long) : Runnable {
         override fun run() {
@@ -24,6 +29,7 @@ class Mode private constructor(private val ptr: Long) : AutoCloseable {
     }
 
     override fun close() {
+        closed = true
         cleanable.clean()
     }
 }

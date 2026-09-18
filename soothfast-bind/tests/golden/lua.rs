@@ -132,6 +132,14 @@ fn a_buffer_argument_accepts_a_returned_array_with_no_copy() {
 }
 
 #[test]
+fn a_method_call_after_close_errors_instead_of_dereferencing_a_freed_pointer() {
+    let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
+    assert!(lua.contains(
+        "function Counter:value()\n\tif self.ptr == nil then\n\t\terror(\"Counter is closed\")\n\tend\n"
+    ));
+}
+
+#[test]
 fn a_parameter_named_after_luas_own_raise_builtin_is_escaped() {
     let lua = &emit_set_with(BindKind::Lua, &lua_opts()).files["acme/core.lua"];
     assert!(lua.contains("function M.stamp(handle, error_, register)"));

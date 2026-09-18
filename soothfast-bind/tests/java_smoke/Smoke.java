@@ -47,5 +47,14 @@ public class Smoke {
         Core.split(new double[] {1.0, 2.0, 3.0}, lo, hi);
         System.out.println("split.lo=" + Arrays.toString(lo));
         System.out.println("split.hi=" + Arrays.toString(hi));
+
+        Counter closed = new Counter(1);
+        closed.close();
+        try {
+            closed.value();
+            throw new AssertionError("expected IllegalStateException");
+        } catch (IllegalStateException e) {
+            System.out.println("use after close: " + e.getMessage());
+        }
     }
 }

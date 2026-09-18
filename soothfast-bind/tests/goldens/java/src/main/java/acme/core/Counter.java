@@ -10,6 +10,7 @@ public final class Counter implements AutoCloseable {
 
     private final long ptr;
     private final Cleaner.Cleanable cleanable;
+    private boolean closed;
 
     static final class Raw {
         private Raw() {
@@ -38,6 +39,9 @@ public final class Counter implements AutoCloseable {
 
     /** The raw handle, readable only from generated code in this package. */
     long nativePtr() {
+        if (closed) {
+            throw new IllegalStateException("Counter is closed");
+        }
         return ptr;
     }
 
@@ -46,27 +50,28 @@ public final class Counter implements AutoCloseable {
     }
 
     public long value() {
-        return nativeValue(ptr);
+        return nativeValue(nativePtr());
     }
 
     public long at(Level level) {
-        return nativeAt(ptr, level.ordinal());
+        return nativeAt(nativePtr(), level.ordinal());
     }
 
     public long bump(long by) {
-        return nativeBump(ptr, by);
+        return nativeBump(nativePtr(), by);
     }
 
     public long bumpAll(long[] by) {
-        return nativeBumpAll(ptr, by);
+        return nativeBumpAll(nativePtr(), by);
     }
 
     public long scale(long factor) {
-        return nativeScale(ptr, factor);
+        return nativeScale(nativePtr(), factor);
     }
 
     @Override
     public void close() {
+        closed = true;
         cleanable.clean();
     }
 

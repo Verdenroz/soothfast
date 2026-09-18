@@ -46,6 +46,17 @@ func TestCloseIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestUseAfterClosePanics(t *testing.T) {
+	c := NewCounter(1)
+	c.Close()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Value() after Close() did not panic")
+		}
+	}()
+	c.Value()
+}
+
 func TestFreeFunctions(t *testing.T) {
 	got := Digest([]byte{1, 2, 3})
 	want := []byte{2, 3, 4}
