@@ -51,6 +51,11 @@ impl Counter {
         }
     }
 
+    pub fn scale(&mut self, factor: i64) -> i64 {
+        self.value *= factor;
+        self.value
+    }
+
     pub async fn refresh(&self) -> u32 {
         self.value as u32
     }

@@ -15,6 +15,7 @@ Counter__value <- function(self) .Call(wrap__Counter__value, self)
 Counter__at <- function(self, level) .Call(wrap__Counter__at, self, level)
 Counter__bump <- function(self, by) .Call(wrap__Counter__bump, self, by)
 Counter__bump_all <- function(self, by) .Call(wrap__Counter__bump_all, self, by)
+Counter__scale <- function(self, factor) .Call(wrap__Counter__scale, self, factor)
 
 "$.Counter" <- function(x, name) {
   switch(name,
@@ -22,6 +23,7 @@ Counter__bump_all <- function(self, by) .Call(wrap__Counter__bump_all, self, by)
     at = function(level) Counter__at(x, level),
     bump = function(by) Counter__bump(x, by),
     bump_all = function(by) Counter__bump_all(x, by),
+    scale = function(factor) Counter__scale(x, factor),
     stop("unknown method ", name)
   )
 }

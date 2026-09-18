@@ -288,7 +288,7 @@ fn methods(insert: &mut impl FnMut(u64, Value)) {
     insert(
         30,
         json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
-                "inner": { "impl": { "trait": Value::Null, "items": [31, 32, 33, 34, 35, 36] } } }),
+                "inner": { "impl": { "trait": Value::Null, "items": [31, 32, 33, 34, 35, 36, 47] } } }),
     );
     insert(
         31,
@@ -350,6 +350,19 @@ fn methods(insert: &mut impl FnMut(u64, Value)) {
             &[
                 ("self", borrowed(json!({ "generic": "Self" }), false)),
                 ("level", path("Level", 4, &[])),
+            ],
+            prim("i64"),
+            false,
+        ),
+    );
+    // An exclusive receiver: the one shape every other method here avoids.
+    insert(
+        47,
+        func(
+            "scale",
+            &[
+                ("self", borrowed(json!({ "generic": "Self" }), true)),
+                ("factor", prim("i64")),
             ],
             prim("i64"),
             false,
@@ -468,6 +481,7 @@ pub fn records() -> Vec<ExportRecord> {
         method("acme::Counter::bump", "Counter"),
         method("acme::Counter::bump_all", "Counter"),
         method("acme::Counter::at", "Counter"),
+        method("acme::Counter::scale", "Counter"),
         method("acme::Counter::consume", "Counter"),
         method("acme::Counter::refresh", "Counter"),
     ]

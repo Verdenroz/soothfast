@@ -38,6 +38,7 @@ int64_t core_counter_value(const core_counter *handle);
 int64_t core_counter_at(const core_counter *handle, core_level level);
 int64_t core_counter_bump(const core_counter *handle, int64_t by, char **error);
 int64_t core_counter_bump_all(const core_counter *handle, const int64_t *by, size_t by_len);
+int64_t core_counter_scale(core_counter *handle, int64_t factor);
 
 /* Release a Mode this library returned. */
 void core_mode_free(core_mode *handle);
@@ -263,6 +264,11 @@ end
 function Counter:bump_all(by)
 	local by_ptr, by_len = i64_buf(by)
 	local ret = lib.core_counter_bump_all(self.ptr, by_ptr, by_len)
+	return ret
+end
+
+function Counter:scale(factor)
+	local ret = lib.core_counter_scale(self.ptr, factor)
 	return ret
 end
 

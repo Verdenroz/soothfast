@@ -180,6 +180,11 @@ pub unsafe extern "C" fn core_counter_bump_all(handle: *const CoreCounter, by: *
     (unsafe { &*handle }).0.bump_all(unsafe { ffi::slice(by, by_len) }.to_vec())
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn core_counter_scale(handle: *mut CoreCounter, factor: i64) -> i64 {
+    (unsafe { &mut *handle }).0.scale(factor)
+}
+
 /// `Level`, mirrored as a C enumeration.
 #[repr(C)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]

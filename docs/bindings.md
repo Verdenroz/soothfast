@@ -436,7 +436,10 @@ counter.at(:low)
 - **A failing call raises `<Module>::Error`**, one exception class per
   package rather than one per Rust error type: magnus turns any `Err`
   returned from a bound call into a raised exception on its own, so the
-  glue only has to name the class once.
+  glue only has to name the class once. Every receiver and handle
+  parameter borrows the wrapped `RefCell` fallibly for the same reason: a
+  call that aliases one object twice, like `x.absorb(x)`, raises
+  `<Module>::Error` instead of panicking past `rescue`.
 - **The package is a gem, not a wheel.** `bind gen` writes the usual
   `<name>.gemspec`/`Gemfile`/`Rakefile` trio around an `ext/<module>/` glue
   crate that `rb_sys`'s `create_rust_makefile` builds; `bind build` runs

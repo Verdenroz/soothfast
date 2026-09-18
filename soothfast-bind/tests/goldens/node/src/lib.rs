@@ -67,6 +67,12 @@ impl Counter {
     pub fn bump_all(&self, by: BigInt64Array) -> BigInt {
         BigInt::from(self.0.bump_all(by.to_vec()))
     }
+
+    #[napi]
+    pub fn scale(&mut self, factor: BigInt) -> Result<BigInt> {
+        let factor = bigint_to_i64(factor, "factor")?;
+        Ok(BigInt::from(self.0.scale(factor)))
+    }
 }
 
 #[napi]

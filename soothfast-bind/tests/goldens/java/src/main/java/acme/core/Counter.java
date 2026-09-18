@@ -61,6 +61,10 @@ public final class Counter implements AutoCloseable {
         return nativeBumpAll(ptr, by);
     }
 
+    public long scale(long factor) {
+        return nativeScale(ptr, factor);
+    }
+
     @Override
     public void close() {
         cleanable.clean();
@@ -71,5 +75,6 @@ public final class Counter implements AutoCloseable {
     private static native long nativeAt(long ptr, int level);
     private static native long nativeBump(long ptr, long by);
     private static native long nativeBumpAll(long ptr, long[] by);
+    private static native long nativeScale(long ptr, long factor);
     private static native void nativeFree(long ptr);
 }

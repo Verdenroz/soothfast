@@ -325,6 +325,10 @@ impl Counter {
     async fn refresh(&self) -> u32 {
         OnRuntime(self.0.refresh()).await
     }
+
+    fn scale(&mut self, factor: i64) -> i64 {
+        self.0.scale(factor)
+    }
 }
 
 #[pyclass(name = "Level", eq, eq_int)]

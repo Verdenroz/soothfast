@@ -79,6 +79,11 @@ public:
         return raw_result;
     }
 
+    int64_t scale(int64_t factor) {
+        auto raw_result = core_counter_scale(handle_.get(), factor);
+        return raw_result;
+    }
+
 private:
     struct Deleter {
         void operator()(core_counter *p) const noexcept { core_counter_free(p); }

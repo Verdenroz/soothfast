@@ -21,6 +21,7 @@ const { Counter, Level, Mode, describe, describeOwned, digest, fail, findCounter
 - `at`
 - `bump`
 - `bumpAll`
+- `scale`
 
 ### `Level`
 

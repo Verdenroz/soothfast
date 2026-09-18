@@ -22,6 +22,7 @@ import acme_core
 - `bump`
 - `bump_all`
 - `refresh`
+- `scale`
 
 ### `Level`
 

@@ -39,25 +39,36 @@ impl Counter {
         Counter(::std::cell::RefCell::new(::acme::Counter::new(start)))
     }
 
-    fn value(&self) -> i64 {
-        self.0.borrow().value.clone()
+    fn value(ruby: &::magnus::Ruby, rb_self: &Self) -> Result<i64, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.value.clone())
     }
 
-    fn set_value(&self, value: i64) {
-        self.0.borrow_mut().value = value;
+    fn set_value(ruby: &::magnus::Ruby, rb_self: &Self, value: i64) -> Result<(), ::magnus::Error> {
+        let mut __recv = rb_self.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        __recv.value = value;
+        Ok(())
     }
 
     fn at(ruby: &::magnus::Ruby, rb_self: &Self, level: ::magnus::Symbol) -> Result<i64, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
         let level = level_from_symbol(ruby, level)?;
-        Ok(rb_self.0.borrow().at(level))
+        Ok(__recv.at(level))
     }
 
     fn bump(ruby: &::magnus::Ruby, rb_self: &Self, by: i64) -> Result<i64, ::magnus::Error> {
-        Ok(rb_self.0.borrow().bump(by).map_err(|reason| ::magnus::Error::new(ruby.get_inner(&ERROR), ::std::string::ToString::to_string(&reason)))?)
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.bump(by).map_err(|reason| ::magnus::Error::new(ruby.get_inner(&ERROR), ::std::string::ToString::to_string(&reason)))?)
     }
 
-    fn bump_all(&self, by: Vec<i64>) -> i64 {
-        self.0.borrow().bump_all(by)
+    fn bump_all(ruby: &::magnus::Ruby, rb_self: &Self, by: Vec<i64>) -> Result<i64, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.bump_all(by))
+    }
+
+    fn scale(ruby: &::magnus::Ruby, rb_self: &Self, factor: i64) -> Result<i64, ::magnus::Error> {
+        let mut __recv = rb_self.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.scale(factor))
     }
 }
 
@@ -141,6 +152,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     class.define_method("at", ::magnus::method!(Counter::at, 1))?;
     class.define_method("bump", ::magnus::method!(Counter::bump, 1))?;
     class.define_method("bump_all", ::magnus::method!(Counter::bump_all, 1))?;
+    class.define_method("scale", ::magnus::method!(Counter::scale, 1))?;
     module.define_class("Mode", ruby.class_object())?;
     module.define_module_function("describe", ::magnus::function!(describe, 1))?;
     module.define_module_function("describe_owned", ::magnus::function!(describe_owned, 1))?;

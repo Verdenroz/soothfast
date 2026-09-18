@@ -92,6 +92,9 @@ internal static class Native
     internal static extern unsafe long acme_core_counter_bump_all(IntPtr handle, long* by, nuint by_len);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern long acme_core_counter_scale(IntPtr handle, long factor);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void acme_core_mode_free(IntPtr handle);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

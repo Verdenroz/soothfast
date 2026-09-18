@@ -46,6 +46,7 @@ int64_t acme_core_counter_value(const acme_core_counter *handle);
 int64_t acme_core_counter_at(const acme_core_counter *handle, acme_core_level level);
 int64_t acme_core_counter_bump(const acme_core_counter *handle, int64_t by, char **error);
 int64_t acme_core_counter_bump_all(const acme_core_counter *handle, const int64_t *by, size_t by_len);
+int64_t acme_core_counter_scale(acme_core_counter *handle, int64_t factor);
 
 /* Release a Mode this library returned. */
 void acme_core_mode_free(acme_core_mode *handle);

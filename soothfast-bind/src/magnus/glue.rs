@@ -3,9 +3,12 @@
 //! Every exported type becomes a locally defined wrapper, the same orphan-
 //! rule reason every other backend defines one: `#[magnus::wrap]` expands
 //! to trait impls only the defining crate may write. The wrapper holds a
-//! `RefCell` because magnus hands a bound method `&self` on the wrapper
-//! however the underlying call needs it; the `RefCell` is what turns that
-//! into the `&mut` an exclusive receiver still requires.
+//! `RefCell` because magnus's `method!`/`function!` extract a receiver
+//! through `TryConvert`, implemented only for `&T`: every bound method
+//! takes `&Self` regardless of what the underlying call needs, and the
+//! `RefCell` is what still lets an exclusive one get a `&mut`. Every borrow
+//! of it, receiver or handle parameter, is fallible rather than panicking,
+//! since two of them can alias the same wrapped object.
 //!
 //! A plain enum crosses as a Ruby `Symbol` rather than a class of its own,
 //! so unlike every other backend it gets no wrapper at all: just the two
@@ -145,17 +148,19 @@ fn constructor(ctor: &Function, krate: &str, plan: &BindingPlan) -> String {
 }
 
 /// A getter clones, which every bound field type supports: an exported type
-/// held by a field never reaches here (the plan reports it instead).
+/// held by a field never reaches here (the plan reports it instead). The
+/// borrow is fallible for the same reason a method's is: an aliasing call
+/// elsewhere in the same statement could already hold it.
 fn getter(accessor: &Accessor, plan: &BindingPlan) -> String {
     let name = rb_ident(&accessor.field);
     let field = &accessor.field;
-    let needs_ruby = ty_has_mirrored_enum(&accessor.ty, plan);
-    let expr = format!("{}.0.borrow().{field}.clone()", self_var(needs_ruby));
+    let expr = format!("__recv.{field}.clone()");
     format!(
-        "{}    fn {name}({}) -> {} {{\n        {}\n    }}\n",
+        "{}    fn {name}({}) -> Result<{}, ::magnus::Error> {{\n        {}\n        Ok({})\n    }}\n",
         docs(accessor.doc.as_deref(), "    "),
-        receiver_sig(needs_ruby, false),
+        receiver_sig(),
         returned_ty(&accessor.ty, plan),
+        receiver_borrow_stmt(false),
         wrap_return(&expr, &accessor.ty, plan),
     )
 }
@@ -163,7 +168,6 @@ fn getter(accessor: &Accessor, plan: &BindingPlan) -> String {
 fn setter(accessor: &Accessor, plan: &BindingPlan) -> String {
     let name = rb_ident(&accessor.field);
     let field = &accessor.field;
-    let mirrored = matches!(&accessor.ty, Ty::Class(class) if plan.is_mirrored(class));
     let (param_ty, prelude, assigned) = match &accessor.ty {
         Ty::Bytes => (
             "::magnus::RString".to_string(),
@@ -180,57 +184,67 @@ fn setter(accessor: &Accessor, plan: &BindingPlan) -> String {
         ),
         ty => (signature_ty(ty), None, "value".to_string()),
     };
-    let ret = if mirrored {
-        " -> Result<(), ::magnus::Error>"
-    } else {
-        ""
-    };
     let mut out_body = String::new();
+    let _ = writeln!(out_body, "        {}", receiver_borrow_stmt(true));
     if let Some(stmt) = &prelude {
         let _ = writeln!(out_body, "        {stmt}");
     }
-    let _ = writeln!(
-        out_body,
-        "        {}.0.borrow_mut().{field} = {assigned};",
-        self_var(mirrored),
-    );
-    if mirrored {
-        out_body.push_str("        Ok(())\n");
-    }
+    let _ = writeln!(out_body, "        __recv.{field} = {assigned};");
+    out_body.push_str("        Ok(())\n");
     format!(
-        "    fn set_{name}({}, value: {param_ty}){ret} {{\n{out_body}    }}\n",
-        receiver_sig(mirrored, false),
+        "    fn set_{name}({}, value: {param_ty}) -> Result<(), ::magnus::Error> {{\n{out_body}    }}\n",
+        receiver_sig(),
     )
 }
 
 fn member(method: &Function, plan: &BindingPlan) -> String {
     let planned = plan_params(method, plan);
-    let needs_ruby = needs_ruby(method, plan);
     let exclusive = method.receiver == Receiver::Exclusive;
-    let call = format!(
-        "{}.0.borrow{}().{}({})",
-        self_var(needs_ruby),
-        if exclusive { "_mut" } else { "" },
-        method.name,
-        call_args(&planned)
-    );
+    let call = format!("__recv.{}({})", method.name, call_args(&planned));
     let ret_ty = wrapped_ret_ty(method, plan);
+    let mut all_preludes = vec![receiver_borrow_stmt(exclusive)];
+    all_preludes.extend(preludes(&planned));
     format!(
         "{}    fn {}({}) -> {ret_ty} {{\n{}    }}\n",
         docs(method.doc.as_deref(), "    "),
         method.name,
-        join(
-            &receiver_sig(needs_ruby, exclusive),
-            &params_sig(&planned, method)
-        ),
+        join(&receiver_sig(), &params_sig(&planned, method)),
         body(
             &call,
             method,
             plan,
             "        ",
-            &preludes(&planned),
+            &all_preludes,
             &postludes(&planned)
         ),
+    )
+}
+
+/// `rb_self`'s own borrow, fallible rather than panicking: two parameters
+/// (or the receiver and a parameter) can alias the same wrapped object, and
+/// a panic under a `RefCell` already borrowed would cross the Ruby boundary
+/// as an uncatchable fatal error instead of the package's own `rescue`-able
+/// exception class. A member method always needs `ruby` for this, so its
+/// receiver is always spelled `rb_self`.
+fn receiver_borrow_stmt(exclusive: bool) -> String {
+    let (method, binding) = match exclusive {
+        true => ("try_borrow_mut", "let mut __recv"),
+        false => ("try_borrow", "let __recv"),
+    };
+    format!(
+        "{binding} = rb_self.0.{method}().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), \"already borrowed\".to_string()))?;"
+    )
+}
+
+/// A handle parameter's own borrow, shadowing its wrapper binding with the
+/// guard: the same aliasing risk [`receiver_borrow_stmt`] guards against.
+fn handle_borrow_stmt(name: &str, writable: bool) -> String {
+    let (method, binding) = match writable {
+        true => ("try_borrow_mut", "let mut"),
+        false => ("try_borrow", "let"),
+    };
+    format!(
+        "{binding} {name} = {name}.0.{method}().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), \"already borrowed\".to_string()))?;"
     )
 }
 
@@ -283,26 +297,15 @@ fn free_fn(function: &Function, krate: &str, plan: &BindingPlan) -> String {
     )
 }
 
-/// `self.0` or `rb_self.0`, matching whichever [`receiver_sig`] chose: a
-/// method needing the `Ruby` handle takes it as a leading parameter, which
-/// magnus's `method!` macro reads only from a receiver spelled as a plain
-/// `rb_self` binding rather than `self` sugar.
-fn self_var(needs_ruby: bool) -> &'static str {
-    if needs_ruby { "rb_self" } else { "self" }
-}
-
-/// The receiver clause for a bound method: `&self`/`&mut self` normally, or
-/// `ruby: &::magnus::Ruby, rb_self: &Self`/`&mut Self` when the body needs
-/// the interpreter handle. `method!`/`function!` read a leading `&Ruby`
-/// parameter as that handle without it counting toward the declared arity.
-fn receiver_sig(needs_ruby: bool, exclusive: bool) -> String {
-    match needs_ruby {
-        true => format!(
-            "ruby: &::magnus::Ruby, rb_self: &{}Self",
-            if exclusive { "mut " } else { "" }
-        ),
-        false => format!("&{}self", if exclusive { "mut " } else { "" }),
-    }
+/// The receiver clause for a bound method, getter or setter: always
+/// `&Self`, never `&mut`, since magnus 0.8.2's `method!`/`function!`
+/// extract a receiver through `TryConvert`, which is implemented only for
+/// `&T`. Mutation goes through the wrapper's `RefCell` instead, and that
+/// borrow can fail, so every one of these needs `ruby` to raise the
+/// package error; `method!`/`function!` read the leading `&Ruby` parameter
+/// without it counting toward the declared arity.
+fn receiver_sig() -> String {
+    "ruby: &::magnus::Ruby, rb_self: &Self".to_string()
 }
 
 /// A receiver-less signature (a constructor, a static, or a free function):
@@ -377,29 +380,34 @@ fn body(
 
 /// Whether the generated signature has to return `Result`: the call itself
 /// can fail, a mirrored-enum parameter can (an unrecognized symbol raises
-/// before the call ever runs), and so can converting a writable buffer
-/// parameter to and from the caller's `Array`.
+/// before the call ever runs), a handle parameter's own borrow can (it may
+/// alias the receiver or another handle parameter), and so can converting a
+/// writable buffer parameter to and from the caller's `Array`. A bound
+/// method's own receiver borrow can fail the same way, so every one is
+/// fallible.
 fn fallible(function: &Function, plan: &BindingPlan) -> bool {
     function.throws.is_some()
+        || function.receiver != Receiver::None
         || function.params.iter().any(|p| match Transfer::of(p, plan) {
-            Transfer::Handle { mirrored: true, .. } => true,
+            Transfer::Handle { .. } => true,
             Transfer::Buffer { writable: true, .. } => !matches!(p.ty, Ty::Bytes),
             _ => false,
         })
 }
 
 /// Whether the body needs a `Ruby` handle at all: raising the package error,
-/// validating a mirrored-enum parameter, and building one to return all do.
-/// A writable buffer's own `?`s do not: `RArray::to_vec`/`store` need no
-/// handle, so that case alone must not drag in an unused parameter.
+/// validating a mirrored-enum parameter, borrowing a handle (the receiver's
+/// own included, since its `try_borrow`/`try_borrow_mut` can fail), and
+/// building one to return all do. A writable buffer's own `?`s do not:
+/// `RArray::to_vec`/`store` need no handle, so that case alone must not drag
+/// in an unused parameter.
 fn needs_ruby(function: &Function, plan: &BindingPlan) -> bool {
     function.throws.is_some()
-        || function.params.iter().any(|p| {
-            matches!(
-                Transfer::of(p, plan),
-                Transfer::Handle { mirrored: true, .. }
-            )
-        })
+        || function.receiver != Receiver::None
+        || function
+            .params
+            .iter()
+            .any(|p| matches!(Transfer::of(p, plan), Transfer::Handle { .. }))
         || ty_has_mirrored_enum(&function.ret, plan)
 }
 
@@ -524,14 +532,14 @@ fn param_plan(param: &Param, plan: &BindingPlan) -> PlannedParam {
         }
         Transfer::Handle { writable: true, .. } => (
             format!("&{}", class_name(&param.ty)),
-            None,
-            format!("&mut {name}.0.borrow_mut()"),
+            Some(handle_borrow_stmt(name, true)),
+            format!("&mut {name}"),
             None,
         ),
         Transfer::Handle { .. } => (
             format!("&{}", class_name(&param.ty)),
-            None,
-            format!("&{name}.0.borrow()"),
+            Some(handle_borrow_stmt(name, false)),
+            format!("&{name}"),
             None,
         ),
         Transfer::Buffer { .. } if matches!(param.ty, Ty::Bytes) => (
@@ -743,10 +751,13 @@ mod tests {
             "a writable buffer's to_vec/store can fail, so the call becomes fallible: {rendered}"
         );
         assert!(
-            rendered.contains("fn deviations_into(&self,"),
-            "to_vec/store need no Ruby handle, so the receiver keeps plain \
-             `&self` sugar rather than gaining an unused leading parameter: \
-             {rendered}"
+            rendered.contains("fn deviations_into(ruby: &::magnus::Ruby, rb_self: &Self,"),
+            "a receiver borrow can fail on its own, so every bound method \
+             needs ruby to raise the package error: {rendered}"
+        );
+        assert!(
+            rendered.contains("let __recv = rb_self.0.try_borrow()"),
+            "a shared receiver borrows fallibly rather than panicking: {rendered}"
         );
     }
 }

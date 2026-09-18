@@ -34,6 +34,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `acme_core_counter_at`
 - `acme_core_counter_bump`
 - `acme_core_counter_bump_all`
+- `acme_core_counter_scale`
 
 ### `acme_core_level`
 

@@ -21,6 +21,7 @@ require "acme_core"
 - `at`
 - `bump`
 - `bump_all`
+- `scale`
 
 ### `AcmeCore::Mode`
 

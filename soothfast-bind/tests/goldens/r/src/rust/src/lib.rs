@@ -58,6 +58,12 @@ impl Counter {
         let __out = self.0.bump_all(by);
         Ok(__out as f64)
     }
+
+    fn scale(&mut self, factor: f64) -> ::std::result::Result<f64, String> {
+        let factor = __checked_int::<i64>(factor, "factor")?;
+        let __out = self.0.scale(factor);
+        Ok(__out as f64)
+    }
 }
 
 #[extendr]

@@ -18,6 +18,7 @@ await init();
 - `bump`
 - `bumpAll`
 - `refresh`
+- `scale`
 
 ### `Level`
 

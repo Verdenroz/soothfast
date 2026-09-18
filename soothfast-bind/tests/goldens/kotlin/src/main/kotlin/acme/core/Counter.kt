@@ -25,6 +25,9 @@ class Counter private constructor(private val ptr: Long, marker: Raw) : AutoClos
         private external fun nativeBumpAll(ptr: Long, by: LongArray): Long
 
         @JvmStatic
+        private external fun nativeScale(ptr: Long, factor: Long): Long
+
+        @JvmStatic
         private external fun nativeFree(ptr: Long)
     }
 
@@ -57,6 +60,10 @@ class Counter private constructor(private val ptr: Long, marker: Raw) : AutoClos
 
     fun bumpAll(by: LongArray): Long {
         return nativeBumpAll(ptr, by)
+    }
+
+    fun scale(factor: Long): Long {
+        return nativeScale(ptr, factor)
     }
 
     override fun close() {

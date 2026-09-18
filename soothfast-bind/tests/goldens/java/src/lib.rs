@@ -110,6 +110,18 @@ pub extern "system" fn Java_acme_core_Counter_nativeBumpAll<'local>(
     __out
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Counter_nativeScale<'local>(
+    _env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    ptr: i64,
+    factor: i64
+) -> i64 {
+    let this = unsafe { &mut *(ptr as *mut ::acme::Counter) };
+    let __out = this.scale(factor);
+    __out
+}
+
 /// Release a `Counter` this library returned. Releasing one twice, or one
 /// this library did not return, is undefined.
 #[unsafe(no_mangle)]

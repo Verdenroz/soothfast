@@ -73,6 +73,12 @@ public sealed class Counter : IDisposable
         }
     }
 
+    public long Scale(long factor)
+    {
+        long result = Native.acme_core_counter_scale(NativeHandle, factor);
+        return result;
+    }
+
     public void Dispose()
     {
         _handle.Dispose();

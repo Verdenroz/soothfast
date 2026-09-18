@@ -59,6 +59,33 @@ fn a_ruby_async_method_is_a_gap_with_no_runtime_story() {
 }
 
 #[test]
+fn a_ruby_receiver_never_takes_self_by_mutable_reference() {
+    let glue = &emit_set_with(BindKind::Ruby, &ruby_opts()).files["ext/acme_core/src/lib.rs"];
+    assert!(
+        !glue.contains("&mut self") && !glue.contains("rb_self: &mut Self"),
+        "magnus's TryConvert is implemented only for &T: {glue}"
+    );
+    assert!(glue.contains("fn bump(ruby: &::magnus::Ruby, rb_self: &Self, by: i64)"));
+}
+
+#[test]
+fn a_ruby_receiver_borrows_fallibly_instead_of_panicking() {
+    let glue = &emit_set_with(BindKind::Ruby, &ruby_opts()).files["ext/acme_core/src/lib.rs"];
+    assert!(glue.contains(
+        "let mut __recv = rb_self.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), \"already borrowed\".to_string()))?;"
+    ));
+    assert!(glue.contains("fn scale(ruby: &::magnus::Ruby, rb_self: &Self, factor: i64)"));
+    assert!(
+        !glue.contains(".0.borrow()."),
+        "a getter borrows fallibly too, not through a plain borrow(): {glue}"
+    );
+    assert!(
+        !glue.contains(".0.borrow_mut()."),
+        "a setter borrows fallibly too, not through a plain borrow_mut(): {glue}"
+    );
+}
+
+#[test]
 fn a_ruby_writable_buffer_writes_its_mutation_back_into_the_callers_array() {
     let glue = &emit_set_with(BindKind::Ruby, &ruby_opts()).files["ext/acme_core/src/lib.rs"];
     assert!(glue.contains("fn scale_into(values: Vec<f64>, factor: f64, out: ::magnus::RArray)"));

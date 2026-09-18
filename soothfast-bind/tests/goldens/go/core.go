@@ -104,6 +104,10 @@ func (recv *Counter) BumpAll(by []int64) int64 {
 	return int64(C.core_counter_bump_all(recv.ptr, (*C.int64_t)(unsafe.Pointer(bufPtr(by))), C.size_t(len(by))))
 }
 
+func (recv *Counter) Scale(factor int64) int64 {
+	return int64(C.core_counter_scale(recv.ptr, C.int64_t(factor)))
+}
+
 type Level int32
 
 const (

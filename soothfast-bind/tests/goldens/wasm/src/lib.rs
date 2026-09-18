@@ -48,6 +48,10 @@ impl Counter {
     pub async fn refresh(&self) -> u32 {
         self.0.refresh().await
     }
+
+    pub fn scale(&mut self, factor: i64) -> i64 {
+        self.0.scale(factor)
+    }
 }
 
 #[wasm_bindgen]
