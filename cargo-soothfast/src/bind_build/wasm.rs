@@ -31,14 +31,12 @@ pub(super) fn wasm_pack(
         // wasm-pack shells out to cargo itself; same CARGO_TARGET_DIR
         // reasoning as the C backend and maturin.
         .env_remove("CARGO_TARGET_DIR");
-    // A host `[build] rustflags` (e.g. a linker override) still applies to
-    // the wasm32 link; the target-specific var outranks it, but an empty
-    // value parses to zero flags and cargo treats that as unset, so this
-    // needs an actual, harmless flag rather than "".
+    // `[build] rustflags` still reaches the wasm32 link and an empty target
+    // override reads as unset, so a no-op flag stands in.
     if std::env::var_os("CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS").is_none() {
         cmd.env(
             "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
-            "-Awarnings",
+            "-Cstrip=none",
         );
     }
     hush(&mut cmd, quiet);
