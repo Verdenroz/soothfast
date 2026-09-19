@@ -241,3 +241,8 @@ pub fn sum_optional(values: Option<Float64Array>) -> f64 {
 pub fn trim(input: Float64Array) -> Option<Float64Array> {
     ::acme::trim(input.as_ref()).map(Float64Array::from)
 }
+
+#[napi]
+pub fn version() -> String {
+    ::acme::version()
+}

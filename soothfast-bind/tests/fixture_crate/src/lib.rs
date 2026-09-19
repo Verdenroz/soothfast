@@ -89,6 +89,10 @@ pub fn index_all() -> HashMap<String, u32> {
     HashMap::new()
 }
 
+pub fn version() -> String {
+    "0.1.0".to_string()
+}
+
 pub fn trim(input: &[f64]) -> Option<Vec<f64>> {
     match input.is_empty() {
         true => None,

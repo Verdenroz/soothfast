@@ -41,6 +41,7 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 - `stamp`
 - `sum_optional`
 - `trim`
+- `version`
 
 ## Not bound
 

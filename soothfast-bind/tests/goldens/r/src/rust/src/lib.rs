@@ -235,6 +235,12 @@ fn trim(input: &[f64]) -> Robj {
     match __out { Some(v) => Robj::from(v), None => ().into() }
 }
 
+#[extendr]
+fn version() -> String {
+    let __out = ::acme::version();
+    __out
+}
+
 extendr_module! {
     mod acme_core;
     impl Counter;
@@ -256,4 +262,5 @@ extendr_module! {
     fn stamp;
     fn sum_optional;
     fn trim;
+    fn version;
 }

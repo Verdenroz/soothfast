@@ -74,6 +74,10 @@ public final class Core {
         return nativeStamp(handle, error, register);
     }
 
+    public static String version() {
+        return nativeVersion();
+    }
+
     private static native String nativeDescribe(String label);
     private static native String nativeDescribeOwned(String label);
     private static native byte[] nativeDigest(byte[] data);
@@ -90,4 +94,5 @@ public final class Core {
     private static native void nativeScaleInto(double[] values, double factor, double[] out);
     private static native void nativeSplit(double[] src, double[] lo, double[] hi);
     private static native long nativeStamp(long handle, double error, byte[] register);
+    private static native String nativeVersion();
 }

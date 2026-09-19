@@ -101,6 +101,12 @@ fn an_accessor_gets_a_replacement_function_as_well_as_a_getter() {
 }
 
 #[test]
+fn a_zero_arg_wrapper_calls_with_no_trailing_comma() {
+    let wrappers = &emit_set_with(BindKind::R, &r_opts()).files["R/acme.core.R"];
+    assert!(wrappers.contains("version <- function() .Call(wrap__version)"));
+}
+
+#[test]
 fn a_mutable_out_parameter_is_a_gap_since_r_vectors_are_values() {
     let set = emit_set_with(BindKind::R, &r_opts());
     assert!(

@@ -227,4 +227,12 @@ public static class Core
             }
         }
     }
+
+    public static string Version()
+    {
+        IntPtr result = Native.acme_core_version();
+        string value = Marshal.PtrToStringUTF8(result) ?? string.Empty;
+        Native.acme_core_string_free(result);
+        return value;
+    }
 }

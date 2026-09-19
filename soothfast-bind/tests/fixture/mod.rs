@@ -132,6 +132,7 @@ fn free_functions(insert: &mut impl FnMut(u64, Value)) {
         ),
     );
 
+    insert(57, func("version", &[], path("String", 92, &[]), false));
     insert(
         8,
         func(
@@ -539,6 +540,7 @@ pub fn doc() -> Value {
             "5": { "crate_id": 0, "path": ["acme", "with_time"], "kind": "function" },
             "6": { "crate_id": 0, "path": ["acme", "digest"], "kind": "function" },
             "7": { "crate_id": 0, "path": ["acme", "index_all"], "kind": "function" },
+            "57": { "crate_id": 0, "path": ["acme", "version"], "kind": "function" },
             "8": { "crate_id": 0, "path": ["acme", "merge"], "kind": "function" },
             "9": { "crate_id": 0, "path": ["acme", "trim"], "kind": "function" },
             "11": { "crate_id": 0, "path": ["acme", "stamp"], "kind": "function" },
@@ -592,6 +594,7 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::with_time", "fn"),
         record("acme::digest", "fn"),
         record("acme::index_all", "fn"),
+        record("acme::version", "fn"),
         record("acme::merge", "fn"),
         record("acme::trim", "fn"),
         record("acme::stamp", "fn"),

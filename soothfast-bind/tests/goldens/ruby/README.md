@@ -57,6 +57,7 @@ require "acme_core"
 - `stamp`
 - `sum_optional`
 - `trim`
+- `version`
 
 ## Not bound
 

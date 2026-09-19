@@ -651,3 +651,19 @@ pub extern "system" fn Java_acme_core_Core_nativeStamp<'local>(
     drop(register_pin);
     __out as i64
 }
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeVersion<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>
+) -> ::jni::sys::jstring {
+    let __out = ::acme::version();
+    match env.new_string(__out) {
+        Ok(v) => v.into_raw(),
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+    }
+}

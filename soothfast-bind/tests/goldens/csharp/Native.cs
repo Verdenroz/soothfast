@@ -165,4 +165,7 @@ internal static class Native
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe ulong acme_core_stamp(long handle_, double error_, byte* register, nuint register_len);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern IntPtr acme_core_version();
 }

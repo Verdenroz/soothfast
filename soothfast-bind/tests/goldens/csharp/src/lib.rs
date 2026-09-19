@@ -393,3 +393,8 @@ pub unsafe extern "C" fn acme_core_split(src: *const f64, src_len: usize, lo: *m
 pub unsafe extern "C" fn acme_core_stamp(handle_: i64, error_: f64, register_: *const u8, register_len: usize) -> u64 {
     ::acme::stamp(handle_, error_, unsafe { ffi::slice(register_, register_len) })
 }
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_version() -> *mut ::std::os::raw::c_char {
+    ffi::into_text(::acme::version())
+}

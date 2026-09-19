@@ -191,6 +191,10 @@ fn trim(input: Vec<f64>) -> Option<Vec<f64>> {
     ::acme::trim(&input)
 }
 
+fn version() -> String {
+    ::acme::version()
+}
+
 #[::magnus::init]
 fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     let module = ruby.define_module("AcmeCore")?;
@@ -229,5 +233,6 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("stamp", ::magnus::function!(stamp, 3))?;
     module.define_module_function("sum_optional", ::magnus::function!(sum_optional, 1))?;
     module.define_module_function("trim", ::magnus::function!(trim, 1))?;
+    module.define_module_function("version", ::magnus::function!(version, 0))?;
     Ok(())
 }

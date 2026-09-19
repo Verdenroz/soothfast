@@ -212,4 +212,9 @@ inline uint64_t stamp(int64_t handle, double error_, std::span<const uint8_t> re
     return raw_result;
 }
 
+inline std::string version() {
+    auto raw_result = core_version();
+    return take_string(raw_result);
+}
+
 } // namespace acme::core

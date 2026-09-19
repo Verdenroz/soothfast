@@ -78,6 +78,7 @@ core_usize_array core_sample_ids(const size_t *ids, size_t ids_len);
 void core_scale_into(const double *values, size_t values_len, double factor, double *out, size_t out_len);
 void core_split(const double *src, size_t src_len, double *lo, size_t lo_len, double *hi, size_t hi_len);
 uint64_t core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register_len);
+char * core_version(void);
 ]]
 
 local lib = ffi.load("core")
@@ -535,6 +536,11 @@ function M.stamp(handle, error_, register)
 	local register_ptr, register_len = u8_buf(register)
 	local ret = lib.core_stamp(handle, error_, register_ptr, register_len)
 	return ret
+end
+
+function M.version()
+	local ret = lib.core_version()
+	return lua_string(ret)
 end
 
 return M

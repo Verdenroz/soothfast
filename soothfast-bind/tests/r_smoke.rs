@@ -95,6 +95,7 @@ fn the_r_golden_installs_and_runs() {
 }
 
 const EXPECTED_OUTPUT: &[&str] = &[
+    "version=0.1.0",
     "value=10",
     "bump=15",
     "at(Low)=10",

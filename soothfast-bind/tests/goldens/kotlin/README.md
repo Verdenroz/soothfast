@@ -52,6 +52,7 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 - `scaleInto`
 - `split`
 - `stamp`
+- `version`
 
 ## Not bound
 

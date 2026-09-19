@@ -289,3 +289,7 @@ func Split(src []float64, lo []float64, hi []float64) {
 func Stamp(handle int64, error_ float64, register []byte) uint64 {
 	return uint64(C.core_stamp(C.int64_t(handle), C.double(error_), (*C.uint8_t)(unsafe.Pointer(bufPtr(register))), C.size_t(len(register))))
 }
+
+func Version() string {
+	return goString(C.core_version())
+}

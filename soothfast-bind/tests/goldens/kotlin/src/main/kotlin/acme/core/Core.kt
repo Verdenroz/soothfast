@@ -20,6 +20,7 @@ private external fun nativeSampleIds(ids: LongArray): LongArray
 private external fun nativeScaleInto(values: DoubleArray, factor: Double, out: DoubleArray): Unit
 private external fun nativeSplit(src: DoubleArray, lo: DoubleArray, hi: DoubleArray): Unit
 private external fun nativeStamp(handle: Long, error: Double, register: ByteArray): Long
+private external fun nativeVersion(): String
 
 fun describe(label: String?): String? {
     return nativeDescribe(label)
@@ -84,4 +85,8 @@ fun split(src: DoubleArray, lo: DoubleArray, hi: DoubleArray) {
 
 fun stamp(handle: Long, error: Double, register: ByteArray): Long {
     return nativeStamp(handle, error, register)
+}
+
+fun version(): String {
+    return nativeVersion()
 }

@@ -599,6 +599,11 @@ fn trim(py: Python<'_>, input: BorrowedF64) -> Option<F64Array> {
     out.map(F64Array::new)
 }
 
+#[pyfunction]
+fn version() -> String {
+    ::acme::version()
+}
+
 #[pymodule]
 fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<F64Array>()?;
@@ -630,5 +635,6 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(stamp, m)?)?;
     m.add_function(wrap_pyfunction!(sum_optional, m)?)?;
     m.add_function(wrap_pyfunction!(trim, m)?)?;
+    m.add_function(wrap_pyfunction!(version, m)?)?;
     Ok(())
 }

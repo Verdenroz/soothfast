@@ -206,3 +206,8 @@ pub fn sum_optional(values: Option<Vec<f64>>) -> f64 {
 pub fn trim(input: &[f64]) -> Option<Vec<f64>> {
     ::acme::trim(input)
 }
+
+#[wasm_bindgen]
+pub fn version() -> String {
+    ::acme::version()
+}

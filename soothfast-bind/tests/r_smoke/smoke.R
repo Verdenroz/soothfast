@@ -9,6 +9,7 @@ cat("at(Low)=", x$at("Low"), "\n", sep = "")
 cat("at(High)=", x$at("High"), "\n", sep = "")
 cat("bump_all=", x$bump_all(c(1, 2, 3)), "\n", sep = "")
 
+cat("version=", version(), "\n", sep = "")
 cat("digest=", paste(digest(as.raw(c(1, 2, 3))), collapse = " "), "\n", sep = "")
 cat("normalize=", paste(normalize(c(1, 2, 3), 2), collapse = " "), "\n", sep = "")
 cat("greet=", greet("R"), "\n", sep = "")

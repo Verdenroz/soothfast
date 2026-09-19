@@ -61,6 +61,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `core_scale_into`
 - `core_split`
 - `core_stamp`
+- `core_version`
 
 ## Not bound
 

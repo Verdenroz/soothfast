@@ -80,10 +80,19 @@ fn free_fn(function: &Function, owner: Option<&Class>) -> String {
         None => types::wrap_fn(&function.name),
     };
     format!(
-        "{name} <- function({}) .Call({symbol}, {})\n",
+        "{name} <- function({}) {}\n",
         params.join(", "),
-        params.join(", "),
+        call_expr(&symbol, &params),
     )
+}
+
+/// `.Call(symbol, ...)`: R's own parser rejects a trailing comma before the
+/// closing paren, so a zero-arg call needs the symbol alone.
+fn call_expr(symbol: &str, args: &[String]) -> String {
+    match args.is_empty() {
+        true => format!(".Call({symbol})"),
+        false => format!(".Call({symbol}, {})", args.join(", ")),
+    }
 }
 
 fn static_fn_name(class: &Class, function: &Function) -> String {
@@ -105,10 +114,10 @@ fn class_r(class: &Class) -> String {
         let symbol = types::wrap_method(&class.name, &ctor.name);
         let _ = writeln!(
             out,
-            "{} <- function({}) .Call({symbol}, {})",
+            "{} <- function({}) {}",
             class.name,
             params.join(", "),
-            params.join(", "),
+            call_expr(&symbol, &params),
         );
     }
     for s in &class.statics {
