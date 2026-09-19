@@ -401,7 +401,7 @@ fn fingerprint(py: Python<'_>, bytes: BorrowedU8) -> u64 {
     py.detach(|| ::soothfast_demo::fingerprint(bytes.into_vec()))
 }
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn soothfast_stats(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<F64Array>()?;
     m.add_class::<Metric>()?;
