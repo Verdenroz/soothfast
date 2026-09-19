@@ -77,6 +77,7 @@ int64_t core_fail(const char *message, char **error);
 core_counter * core_find_counter(int64_t start);
 core_bool_array core_flags(const bool *values, size_t values_len);
 char * core_greet(const char *name);
+void core_invert_bits(uint8_t *buf, size_t buf_len);
 bool core_is_high(core_level level);
 int64_t core_mutate_counter(core_counter *counter);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);

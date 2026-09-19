@@ -551,7 +551,7 @@ fn critical_err_block(zero: &str, indent: &str) -> String {
 
 /// The pinned slice or mutable slice a call argument passes, reinterpreting
 /// the pinned element type when the Rust side wants its unsigned twin (or,
-/// for `bool`, its `jboolean` byte — JNI guarantees that one is always 0 or
+/// for `bool`, its `jboolean` byte: JNI guarantees that one is always 0 or
 /// 1, which is what makes reinterpreting it as `bool` sound).
 fn pinned_slice_expr(name: &str, element: Primitive, writable: bool) -> String {
     let natural = element.render();

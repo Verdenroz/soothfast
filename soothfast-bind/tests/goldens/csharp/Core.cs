@@ -120,6 +120,17 @@ public static class Core
         }
     }
 
+    public static void InvertBits(Span<byte> buf)
+    {
+        unsafe
+        {
+            fixed (byte* bufPtr = buf)
+            {
+                Native.acme_core_invert_bits(bufPtr, (nuint)buf.Length);
+            }
+        }
+    }
+
     public static bool IsHigh(Level level)
     {
         byte result = Native.acme_core_is_high((int)level);

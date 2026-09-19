@@ -170,6 +170,10 @@ inline std::string greet(std::string_view name) {
     return take_string(raw_result);
 }
 
+inline void invert_bits(std::span<uint8_t> buf) {
+    core_invert_bits(buf.data(), buf.size());
+}
+
 inline bool is_high(Level level) {
     auto raw_result = core_is_high(static_cast<core_level>(level));
     return raw_result;

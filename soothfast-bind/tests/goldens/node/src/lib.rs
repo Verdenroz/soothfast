@@ -149,6 +149,11 @@ pub fn greet(name: String) -> String {
     ::acme::greet(&name)
 }
 
+#[napi(js_name = "invertBits")]
+pub fn invert_bits(mut buf: Buffer) -> () {
+    ::acme::invert_bits(unsafe { buf.as_mut() })
+}
+
 #[napi(js_name = "isHigh")]
 pub fn is_high(level: Level) -> bool {
     ::acme::is_high(&level.into())

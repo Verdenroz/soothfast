@@ -77,6 +77,7 @@ int64_t acme_core_fail(const char *message, char **error);
 acme_core_counter * acme_core_find_counter(int64_t start);
 acme_core_bool_array acme_core_flags(const bool *values, size_t values_len);
 char * acme_core_greet(const char *name);
+void acme_core_invert_bits(uint8_t *buf, size_t buf_len);
 bool acme_core_is_high(acme_core_level level);
 int64_t acme_core_mutate_counter(acme_core_counter *counter);
 acme_core_f64_array acme_core_normalize(const double *input, size_t input_len, double factor);

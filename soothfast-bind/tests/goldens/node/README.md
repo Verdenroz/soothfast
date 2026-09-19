@@ -11,7 +11,7 @@ npm install acme-core
 ## Use
 
 ```js
-const { Counter, Level, Mode, counters, describe, describeOwned, digest, fail, findCounter, flags, greet, isHigh, levels, maybeRatio, mutateCounter, normalize, peakLevel, peek, sampleIds, scaleInto, scaleOptional, setLevel, split, stamp, sumOptional, trim } = require("acme-core");
+const { Counter, Level, Mode, counters, describe, describeOwned, digest, fail, findCounter, flags, greet, invertBits, isHigh, levels, maybeRatio, mutateCounter, normalize, peakLevel, peek, sampleIds, scaleInto, scaleOptional, setLevel, split, stamp, sumOptional, trim } = require("acme-core");
 ```
 
 ## Classes
@@ -40,6 +40,7 @@ const { Counter, Level, Mode, counters, describe, describeOwned, digest, fail, f
 - `findCounter`
 - `flags`
 - `greet`
+- `invertBits`
 - `isHigh`
 - `levels`
 - `maybeRatio`

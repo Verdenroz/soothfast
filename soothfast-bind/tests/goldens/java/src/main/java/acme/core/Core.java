@@ -38,6 +38,10 @@ public final class Core {
         return nativeGreet(name);
     }
 
+    public static void invertBits(byte[] buf) {
+        nativeInvertBits(buf);
+    }
+
     public static boolean isHigh(Level level) {
         return nativeIsHigh(level.ordinal());
     }
@@ -77,6 +81,7 @@ public final class Core {
     private static native long nativeFindCounter(long start);
     private static native boolean[] nativeFlags(boolean[] values);
     private static native String nativeGreet(String name);
+    private static native void nativeInvertBits(byte[] buf);
     private static native boolean nativeIsHigh(int level);
     private static native long nativeMutateCounter(long counter);
     private static native double[] nativeNormalize(double[] input, double factor);

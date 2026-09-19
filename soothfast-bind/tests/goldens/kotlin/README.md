@@ -43,6 +43,7 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 - `findCounter`
 - `flags`
 - `greet`
+- `invertBits`
 - `isHigh`
 - `mutateCounter`
 - `normalize`

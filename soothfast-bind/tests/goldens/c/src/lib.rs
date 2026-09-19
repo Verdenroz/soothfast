@@ -339,6 +339,11 @@ pub unsafe extern "C" fn acme_core_greet(name: *const ::std::os::raw::c_char) ->
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_invert_bits(buf: *mut u8, buf_len: usize) {
+    ::acme::invert_bits(unsafe { ffi::slice_mut(buf, buf_len) })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_is_high(level: AcmeCoreLevel) -> bool {
     ::acme::is_high(&level.into())
 }

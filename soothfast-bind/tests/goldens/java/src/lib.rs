@@ -369,6 +369,26 @@ pub extern "system" fn Java_acme_core_Core_nativeGreet<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeInvertBits<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    buf: ::jni::objects::JByteArray<'local>
+) {
+    let result = unsafe { env.get_array_elements_critical(&buf, ::jni::objects::ReleaseMode::CopyBack) };
+    // env stays borrowed until result is dropped, so this can't throw as a plain match arm.
+    if let Err(ref e) = result {
+        let pending = matches!(e, ::jni::errors::Error::JavaException);
+        let message = e.to_string();
+        drop(result);
+        __throw_unless_pending(&mut env, pending, message);
+        return ;
+    }
+    let mut buf_pin = result.unwrap_or_else(|_| unreachable!("checked above"));
+    ::acme::invert_bits(unsafe { ::std::slice::from_raw_parts_mut(buf_pin.as_mut_ptr() as *mut u8, buf_pin.len()) });
+    drop(buf_pin);
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeIsHigh<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

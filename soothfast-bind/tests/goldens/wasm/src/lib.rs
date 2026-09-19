@@ -121,6 +121,11 @@ pub fn greet(name: &str) -> String {
     ::acme::greet(name)
 }
 
+#[wasm_bindgen(js_name = invertBits)]
+pub fn invert_bits(buf: &mut [u8]) -> () {
+    ::acme::invert_bits(buf)
+}
+
 #[wasm_bindgen(js_name = isHigh)]
 pub fn is_high(level: Level) -> bool {
     ::acme::is_high(&level.into())

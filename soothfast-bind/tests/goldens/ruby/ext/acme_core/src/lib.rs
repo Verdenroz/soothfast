@@ -118,6 +118,11 @@ fn index_all() -> ::std::collections::HashMap<String, u32> {
     ::acme::index_all()
 }
 
+fn invert_bits(buf: ::magnus::RString) -> () {
+    let mut buf = unsafe { buf.as_slice() }.to_vec();
+    ::acme::invert_bits(&mut buf)
+}
+
 fn is_high(ruby: &::magnus::Ruby, level: ::magnus::Symbol) -> Result<bool, ::magnus::Error> {
     let level = level_from_symbol(ruby, level)?;
     Ok(::acme::is_high(&level))
@@ -209,6 +214,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("flags", ::magnus::function!(flags, 1))?;
     module.define_module_function("greet", ::magnus::function!(greet, 1))?;
     module.define_module_function("index_all", ::magnus::function!(index_all, 0))?;
+    module.define_module_function("invert_bits", ::magnus::function!(invert_bits, 1))?;
     module.define_module_function("is_high", ::magnus::function!(is_high, 1))?;
     module.define_module_function("levels", ::magnus::function!(levels, 0))?;
     module.define_module_function("maybe_ratio", ::magnus::function!(maybe_ratio, 1))?;

@@ -11,6 +11,7 @@ private external fun nativeFail(message: String): Long
 private external fun nativeFindCounter(start: Long): Long
 private external fun nativeFlags(values: BooleanArray): BooleanArray
 private external fun nativeGreet(name: String): String
+private external fun nativeInvertBits(buf: ByteArray): Unit
 private external fun nativeIsHigh(level: Int): Boolean
 private external fun nativeMutateCounter(counter: Long): Long
 private external fun nativeNormalize(input: DoubleArray, factor: Double): DoubleArray
@@ -47,6 +48,10 @@ fun flags(values: BooleanArray): BooleanArray {
 
 fun greet(name: String): String {
     return nativeGreet(name)
+}
+
+fun invertBits(buf: ByteArray) {
+    nativeInvertBits(buf)
 }
 
 fun isHigh(level: Level): Boolean {

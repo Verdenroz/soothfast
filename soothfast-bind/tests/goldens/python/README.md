@@ -42,6 +42,7 @@ import acme_core
 - `flags`
 - `greet`
 - `index_all`
+- `invert_bits`
 - `is_high`
 - `levels`
 - `maybe_ratio`

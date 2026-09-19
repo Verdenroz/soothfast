@@ -254,6 +254,10 @@ func Greet(name string) string {
 	return goString(C.core_greet(cName))
 }
 
+func InvertBits(buf []byte) {
+	C.core_invert_bits((*C.uint8_t)(unsafe.Pointer(bufPtr(buf))), C.size_t(len(buf)))
+}
+
 func IsHigh(level Level) bool {
 	return bool(C.core_is_high(level.c()))
 }

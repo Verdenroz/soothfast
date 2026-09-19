@@ -181,6 +181,12 @@ pub fn counters() -> Vec<Counter> {
     vec![Counter::new(1), Counter::new(2)]
 }
 
+pub fn invert_bits(buf: &mut [u8]) {
+    for b in buf.iter_mut() {
+        *b = b.wrapping_add(1);
+    }
+}
+
 pub fn set_level(level: Option<Level>) -> bool {
     matches!(level, Some(Level::High))
 }

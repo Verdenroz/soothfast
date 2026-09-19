@@ -140,6 +140,9 @@ internal static class Native
     internal static extern unsafe IntPtr acme_core_greet(byte* name);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe void acme_core_invert_bits(byte* buf, nuint buf_len);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern byte acme_core_is_high(int level);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

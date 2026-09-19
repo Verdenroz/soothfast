@@ -565,14 +565,20 @@ fn param_plan(param: &Param, plan: &BindingPlan) -> PlannedParam {
             format!("&{name}"),
             None,
         ),
-        Transfer::Buffer { .. } if matches!(param.ty, Ty::Bytes) => (
-            "::magnus::RString".into(),
-            Some(format!(
-                "let {name} = unsafe {{ {name}.as_slice() }}.to_vec();"
-            )),
-            by_ownership(name, param.ownership),
-            None,
-        ),
+        Transfer::Buffer { .. } if matches!(param.ty, Ty::Bytes) => {
+            let binding = match param.ownership {
+                Ownership::BorrowedMut => "let mut",
+                _ => "let",
+            };
+            (
+                "::magnus::RString".into(),
+                Some(format!(
+                    "{binding} {name} = unsafe {{ {name}.as_slice() }}.to_vec();"
+                )),
+                by_ownership(name, param.ownership),
+                None,
+            )
+        }
         Transfer::Buffer {
             element,
             writable: true,

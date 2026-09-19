@@ -178,6 +178,43 @@ impl BorrowedMutF64 {
     }
 }
 
+/// A borrowed mutable `u8` sequence. Writing back in place needs a
+/// real writable buffer, so unlike the read side there is no fallback.
+struct BorrowedMutU8(::pyo3::buffer::PyBuffer<u8>);
+
+impl<'py> ::pyo3::FromPyObject<'py> for BorrowedMutU8 {
+    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        let buf = ::pyo3::buffer::PyBuffer::<u8>::get(obj)?;
+        if buf.readonly() {
+            return Err(::pyo3::exceptions::PyTypeError::new_err(
+                "expected a writable buffer",
+            ));
+        }
+        if !buf.is_c_contiguous() {
+            return Err(::pyo3::exceptions::PyTypeError::new_err(
+                "expected a contiguous buffer",
+            ));
+        }
+        Ok(BorrowedMutU8(buf))
+    }
+}
+
+impl BorrowedMutU8 {
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        // Writability and contiguity were checked at extraction; the call
+        // site checks every other buffer parameter against byte_range()
+        // before this is ever called, so nothing aliases it either.
+        unsafe {
+            ::std::slice::from_raw_parts_mut(self.0.buf_ptr() as *mut u8, self.0.item_count())
+        }
+    }
+
+    fn byte_range(&self) -> (usize, usize) {
+        let start = self.0.buf_ptr() as usize;
+        (start, start + self.0.item_count() * ::std::mem::size_of::<u8>())
+    }
+}
+
 /// An `u8` sequence read through the buffer protocol when the caller
 /// passes a buffer (`array.array`, `memoryview`, numpy), and unboxed element
 /// by element only when it is some other sequence.
@@ -455,6 +492,11 @@ fn index_all() -> ::std::collections::HashMap<String, u32> {
 }
 
 #[pyfunction]
+fn invert_bits(py: Python<'_>, mut buf: BorrowedMutU8) -> () {
+    py.detach(|| ::acme::invert_bits(buf.as_mut_slice()))
+}
+
+#[pyfunction]
 fn is_high(level: Level) -> bool {
     ::acme::is_high(&level.into())
 }
@@ -561,6 +603,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(flags, m)?)?;
     m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;
+    m.add_function(wrap_pyfunction!(invert_bits, m)?)?;
     m.add_function(wrap_pyfunction!(is_high, m)?)?;
     m.add_function(wrap_pyfunction!(levels, m)?)?;
     m.add_function(wrap_pyfunction!(maybe_ratio, m)?)?;

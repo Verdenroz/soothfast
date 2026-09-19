@@ -259,6 +259,15 @@ fn free_functions(insert: &mut impl FnMut(u64, Value)) {
             false,
         ),
     );
+    insert(
+        56,
+        func(
+            "invert_bits",
+            &[("buf", borrowed(json!({ "slice": prim("u8") }), true))],
+            Value::Null,
+            false,
+        ),
+    );
 }
 
 /// The crate's free functions that take or return an `Option`.
@@ -543,6 +552,7 @@ pub fn doc() -> Value {
             "55": { "crate_id": 0, "path": ["acme", "sample_ids"], "kind": "function" },
             "28": { "crate_id": 0, "path": ["acme", "levels"], "kind": "function" },
             "29": { "crate_id": 0, "path": ["acme", "counters"], "kind": "function" },
+            "56": { "crate_id": 0, "path": ["acme", "invert_bits"], "kind": "function" },
             "16": { "crate_id": 0, "path": ["acme", "describe"], "kind": "function" },
             "17": { "crate_id": 0, "path": ["acme", "describe_owned"], "kind": "function" },
             "18": { "crate_id": 0, "path": ["acme", "maybe_ratio"], "kind": "function" },
@@ -595,6 +605,7 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::sample_ids", "fn"),
         record("acme::levels", "fn"),
         record("acme::counters", "fn"),
+        record("acme::invert_bits", "fn"),
         record("acme::describe", "fn"),
         record("acme::describe_owned", "fn"),
         record("acme::maybe_ratio", "fn"),
