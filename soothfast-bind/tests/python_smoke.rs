@@ -48,6 +48,7 @@ from acme_core import Counter, Level
 
 c = Counter(10)
 assert c.value == 10
+assert repr(c) == "Counter(value=10)"
 assert c.bump(5) == 15
 assert c.bump(1) == 11
 assert c.bump_all([1, 2, 3]) == 16

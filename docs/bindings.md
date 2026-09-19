@@ -293,7 +293,9 @@ A method returning a borrowed value (`&str`, `&[f64]`, `Option<&str>`) is
 owned by the Python glue before it crosses; the other backends report it
 for now, so return an owned value there. A public field holding an
 exported type reads as a handle but has no setter: the handle Python passes
-in cannot be moved out of.
+in cannot be moved out of. A handle's `repr` lists its readable fields in
+declaration order (`Counter(value=10)`), leaving out fields holding another
+handle.
 
 A failing call raises from a per-package hierarchy in Python: an `Error`
 base, one subclass per error type a bound call returns (`FinanceError`,

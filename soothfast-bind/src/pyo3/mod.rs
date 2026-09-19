@@ -6,6 +6,7 @@ mod buffers;
 mod errors;
 mod glue;
 mod package;
+mod repr;
 mod seq;
 mod text;
 

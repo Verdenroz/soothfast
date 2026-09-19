@@ -461,6 +461,10 @@ impl Counter {
         self.0.value = value;
     }
 
+    fn __repr__(&self) -> String {
+        format!("Counter(value={:?})", self.0.value)
+    }
+
     fn absorb(&mut self, other: PyRef<'_, Counter>) -> () {
         self.0.absorb(&other.0)
     }
@@ -492,7 +496,7 @@ impl Counter {
 }
 
 #[pyclass(name = "Level", eq, eq_int)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
     Low,
     High,

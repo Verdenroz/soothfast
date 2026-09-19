@@ -476,6 +476,53 @@ fn a_blocking_twin_whose_name_is_taken_is_an_error() {
     assert!(err.contains("`poll_blocking`"), "{err}");
 }
 
+#[test]
+fn a_handle_repr_lists_its_showable_fields_in_order_and_is_absent_without_any() {
+    let glue = python_glue();
+    assert!(
+        glue.contains(
+            "    fn __repr__(&self) -> String {\n        format!(\"Client(symbol={:?}, price={:?}, maybe={:?})\", self.0.symbol, self.0.price, self.0.maybe)\n    }"
+        ),
+        "{glue}"
+    );
+    let bag = &glue[glue.find("impl Bag {").expect("Bag members")..];
+    let bag = &bag[..bag.find("\n}\n").expect("end of impl")];
+    assert!(!bag.contains("__repr__"), "{bag}");
+    assert!(glue.contains("#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub enum Level {"));
+}
+
+#[test]
+fn a_mirrored_enum_field_and_a_mapped_field_print_by_python_name_and_quoted() {
+    let mut doc = doc_with_stamp();
+    doc["index"]["6"]["inner"]["struct"]["kind"]["plain"]["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .push(json!(17));
+    doc["index"]["17"] = field("mode", path("Level", 5, &[]), true);
+    let mut table = TypeTable::with_defaults();
+    table.insert("chrono::DateTime", Ty::Text("chrono::DateTime".into()));
+    let records = vec![
+        record("acme::core::Client", "struct"),
+        record("acme::core::Level", "enum"),
+        record("acme::core::Bag", "struct"),
+    ];
+    let (walked, gaps) = surface(&stamped(doc), &table, &records).expect("walks");
+    let files = BindKind::Python
+        .emit(&walked, gaps, &opts())
+        .expect("emits");
+    let glue = &files.files["src/lib.rs"];
+    assert!(
+        glue.contains("format!(\"Bag(mode=Level.{:?})\", Level::from(&self.0.mode))"),
+        "{glue}"
+    );
+    assert!(
+        glue.contains(
+            "format!(\"Client(symbol={:?}, clock={:?}, price={:?}, maybe={:?})\", self.0.symbol, ::std::string::ToString::to_string(&self.0.clock), self.0.price, self.0.maybe)"
+        ),
+        "{glue}"
+    );
+}
+
 fn find<'a>(surface: &'a Surface, id: &str) -> &'a soothfast_bind::model::ExportedFn {
     surface
         .fns

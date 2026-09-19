@@ -16,7 +16,7 @@ use super::blocking;
 use super::buffers::{self, array_name, buffered, view_name};
 use super::errors::{self, Hierarchy, error_impl, error_name, error_newtypes};
 use super::py_ident;
-use super::{seq, text};
+use super::{repr, seq, text};
 
 /// Every call with a writable buffer parameter alongside another buffer
 /// parameter needs this: two arguments can name the same Python object
@@ -157,6 +157,7 @@ fn class_block(class: &Class, krate: &str, plan: &BindingPlan, opts: &BindOption
         members.push(getter(accessor, plan));
         members.extend(setter(accessor, plan));
     }
+    members.extend(repr::member(class, plan));
     for method in &class.methods {
         members.push(member(method, plan, class));
         members.extend(blocking::member(method, plan, class, opts));
@@ -197,7 +198,7 @@ fn plain_enum(class: &Class, krate: &str) -> String {
     format!(
         "
 {}#[pyclass(name = \"{name}\", eq, eq_int)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum {name} {{
 {}}}
 
