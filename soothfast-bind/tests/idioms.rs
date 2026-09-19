@@ -262,6 +262,33 @@ fn a_handle_list_field_reads_but_never_writes_and_an_optional_enum_field_convert
 }
 
 #[test]
+fn a_handle_list_field_gets_one_seq_class_with_on_demand_handles_and_columns() {
+    let glue = python_glue();
+    assert!(
+        glue.contains(
+            "#[pyclass(name = \"ClientSeq\")]\npub struct ClientSeq(Vec<::acme::Client>);"
+        )
+    );
+    assert_eq!(glue.matches("pub struct ClientSeq(").count(), 1);
+    assert!(glue.contains("fn __getitem__(&self, index: isize) -> ::pyo3::PyResult<Client> {"));
+    assert!(glue.contains(
+        "fn tolist(&self) -> Vec<Client> {\n        self.0.iter().cloned().map(Client).collect()"
+    ));
+    assert!(glue.contains("format!(\"ClientSeq(len={})\", self.0.len())"));
+    assert!(glue.contains("fn symbol(&self) -> Vec<String> {\n        self.0.iter().map(|v| v.symbol.clone()).collect()"));
+    let seq_at = glue
+        .find("m.add_class::<ClientSeq>()?;")
+        .expect("registers the seq");
+    let class_at = glue
+        .find("m.add_class::<Client>()?;")
+        .expect("registers the class");
+    assert!(seq_at < class_at, "{glue}");
+    let seq_def = glue.find("pub struct ClientSeq(").expect("defines the seq");
+    let class_def = glue.find("pub struct Client(").expect("defines the class");
+    assert!(seq_def < class_def, "{glue}");
+}
+
+#[test]
 fn a_field_holding_a_clone_exported_type_reads_as_a_fresh_handle_in_python_only() {
     let (surface, gaps) = walk();
     let python = lower(&surface, gaps.clone(), &opts(), BindKind::Python).expect("lowers");
