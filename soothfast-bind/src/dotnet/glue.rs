@@ -606,16 +606,49 @@ fn convert_and_return(ty: &Ty, plan: &BindingPlan, module: &str, var: &str) -> S
             Some(spelling) => {
                 let public = spelling.public;
                 let free = format!("{}_free", c::array_c(ty, module));
-                format!(
-                    "{public}[] value = new {public}[{var}.Len];\n\
-                     if ({var}.Len > 0)\n\
-                     {{\n    Marshal.Copy({var}.Data, value, 0, (int){var}.Len);\n}}\n\
-                     Native.{free}({var});\n\
-                     return value;\n"
-                )
+                let copy_ty = marshal_copy_ty(spelling.native);
+                let copy = match copy_ty == public {
+                    true => format!(
+                        "{public}[] value = new {public}[{var}.Len];\n\
+                         if ({var}.Len > 0)\n\
+                         {{\n    Marshal.Copy({var}.Data, value, 0, (int){var}.Len);\n}}\n"
+                    ),
+                    false => format!(
+                        "{public}[] value = new {public}[{var}.Len];\n\
+                         if ({var}.Len > 0)\n\
+                         {{\n    {copy_ty}[] raw = new {copy_ty}[{var}.Len];\n    \
+                         Marshal.Copy({var}.Data, raw, 0, (int){var}.Len);\n    \
+                         for (int i = 0; i < raw.Length; i++)\n    \
+                         {{\n        value[i] = {};\n    }}\n}}\n",
+                        marshal_copy_cast(public, "raw[i]"),
+                    ),
+                };
+                format!("{copy}Native.{free}({var});\nreturn value;\n")
             }
             None => format!("return {var};\n"),
         },
+    }
+}
+
+/// `Marshal.Copy` has an overload only for byte/short/int/long/float/double
+/// (and IntPtr): a narrower or unsigned native element copies through its
+/// same-width signed twin instead, cast back to the public type afterward.
+fn marshal_copy_ty(native: &'static str) -> &'static str {
+    match native {
+        "byte" | "sbyte" => "byte",
+        "short" | "ushort" => "short",
+        "int" | "uint" => "int",
+        "long" | "ulong" => "long",
+        other => other,
+    }
+}
+
+/// The public type's own reading of one raw `Marshal.Copy`-compatible
+/// element: `bool` is a nonzero check, everything else a numeric cast.
+fn marshal_copy_cast(public: &str, expr: &str) -> String {
+    match public {
+        "bool" => format!("{expr} != 0"),
+        _ => format!("({public}){expr}"),
     }
 }
 

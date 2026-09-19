@@ -97,7 +97,12 @@ public static class Core
                 bool[] value = new bool[result.Len];
                 if (result.Len > 0)
                 {
-                    Marshal.Copy(result.Data, value, 0, (int)result.Len);
+                    byte[] raw = new byte[result.Len];
+                    Marshal.Copy(result.Data, raw, 0, (int)result.Len);
+                    for (int i = 0; i < raw.Length; i++)
+                    {
+                        value[i] = raw[i] != 0;
+                    }
                 }
                 Native.acme_core_bool_array_free(result);
                 return value;
