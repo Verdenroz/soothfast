@@ -197,7 +197,7 @@ fn plain_enum(class: &Class, krate: &str) -> String {
     };
     format!(
         "
-{}#[pyclass(name = \"{name}\", eq, eq_int)]
+{}#[pyclass(name = \"{name}\", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum {name} {{
 {}}}

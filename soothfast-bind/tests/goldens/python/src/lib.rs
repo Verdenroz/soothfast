@@ -112,9 +112,11 @@ enum BorrowedF64 {
     Owned(Vec<f64>),
 }
 
-impl<'py> ::pyo3::FromPyObject<'py> for BorrowedF64 {
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
-        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<f64>::get(obj)
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for BorrowedF64 {
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<f64>::get(&obj)
             && buf.is_c_contiguous()
         {
             return Ok(BorrowedF64::Buffer(buf));
@@ -163,9 +165,11 @@ enum BorrowedI64 {
     Owned(Vec<i64>),
 }
 
-impl<'py> ::pyo3::FromPyObject<'py> for BorrowedI64 {
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
-        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<i64>::get(obj)
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for BorrowedI64 {
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<i64>::get(&obj)
             && buf.is_c_contiguous()
         {
             return Ok(BorrowedI64::Buffer(buf));
@@ -210,9 +214,11 @@ impl BorrowedI64 {
 /// real writable buffer, so unlike the read side there is no fallback.
 struct BorrowedMutF64(::pyo3::buffer::PyBuffer<f64>);
 
-impl<'py> ::pyo3::FromPyObject<'py> for BorrowedMutF64 {
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
-        let buf = ::pyo3::buffer::PyBuffer::<f64>::get(obj)?;
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for BorrowedMutF64 {
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        let buf = ::pyo3::buffer::PyBuffer::<f64>::get(&obj)?;
         if buf.readonly() {
             return Err(::pyo3::exceptions::PyTypeError::new_err(
                 "expected a writable buffer",
@@ -247,9 +253,11 @@ impl BorrowedMutF64 {
 /// real writable buffer, so unlike the read side there is no fallback.
 struct BorrowedMutU8(::pyo3::buffer::PyBuffer<u8>);
 
-impl<'py> ::pyo3::FromPyObject<'py> for BorrowedMutU8 {
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
-        let buf = ::pyo3::buffer::PyBuffer::<u8>::get(obj)?;
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for BorrowedMutU8 {
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        let buf = ::pyo3::buffer::PyBuffer::<u8>::get(&obj)?;
         if buf.readonly() {
             return Err(::pyo3::exceptions::PyTypeError::new_err(
                 "expected a writable buffer",
@@ -288,9 +296,11 @@ enum BorrowedU8 {
     Owned(Vec<u8>),
 }
 
-impl<'py> ::pyo3::FromPyObject<'py> for BorrowedU8 {
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
-        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<u8>::get(obj)
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for BorrowedU8 {
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<u8>::get(&obj)
             && buf.is_c_contiguous()
         {
             return Ok(BorrowedU8::Buffer(buf));
@@ -495,7 +505,7 @@ impl Counter {
     }
 }
 
-#[pyclass(name = "Level", eq, eq_int)]
+#[pyclass(name = "Level", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
     Low,

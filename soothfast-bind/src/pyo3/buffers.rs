@@ -94,9 +94,11 @@ enum {name} {{
     Owned(Vec<{element}>),
 }}
 
-impl<'py> ::pyo3::FromPyObject<'py> for {name} {{
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {{
-        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<{element}>::get(obj)
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for {name} {{
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {{
+        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<{element}>::get(&obj)
             && buf.is_c_contiguous()
         {{
             return Ok({name}::Buffer(buf));
@@ -147,9 +149,11 @@ fn writable_view(name: &str, element: &str) -> String {
 /// real writable buffer, so unlike the read side there is no fallback.
 struct {name}(::pyo3::buffer::PyBuffer<{element}>);
 
-impl<'py> ::pyo3::FromPyObject<'py> for {name} {{
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {{
-        let buf = ::pyo3::buffer::PyBuffer::<{element}>::get(obj)?;
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for {name} {{
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {{
+        let buf = ::pyo3::buffer::PyBuffer::<{element}>::get(&obj)?;
         if buf.readonly() {{
             return Err(::pyo3::exceptions::PyTypeError::new_err(
                 \"expected a writable buffer\",

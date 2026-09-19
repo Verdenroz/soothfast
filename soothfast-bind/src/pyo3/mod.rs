@@ -16,7 +16,7 @@ use crate::{BindFileSet, BindOptions};
 
 /// The pyo3 release the generated glue builds against, unless the `[[bind]]`
 /// entry pins another.
-pub(crate) const DEFAULT_VERSION: &str = "0.26";
+pub(crate) const DEFAULT_VERSION: &str = "0.29";
 
 const KEYWORDS: &[&str] = &[
     "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
