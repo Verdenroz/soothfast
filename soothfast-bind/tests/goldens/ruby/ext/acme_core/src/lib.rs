@@ -81,8 +81,8 @@ impl Counter {
 #[::magnus::wrap(class = "AcmeCore::Mode", free_immediately)]
 pub struct Mode(::std::cell::RefCell<::acme::Mode>);
 
-fn counters() -> Vec<Counter> {
-    (::acme::counters()).into_iter().map(|value| Counter(::std::cell::RefCell::new(value))).collect()
+fn counters(ruby: &::magnus::Ruby) -> ::magnus::RArray {
+    ruby.ary_from_iter((::acme::counters()).into_iter().map(|value| Counter(::std::cell::RefCell::new(value))))
 }
 
 fn describe(label: Option<String>) -> Option<String> {
@@ -128,8 +128,8 @@ fn is_high(ruby: &::magnus::Ruby, level: ::magnus::Symbol) -> Result<bool, ::mag
     Ok(::acme::is_high(&level))
 }
 
-fn levels(ruby: &::magnus::Ruby) -> Vec<::magnus::Symbol> {
-    (::acme::levels()).into_iter().map(|value| level_to_symbol(ruby, &value)).collect()
+fn levels(ruby: &::magnus::Ruby) -> ::magnus::RArray {
+    ruby.ary_from_iter((::acme::levels()).into_iter().map(|value| level_to_symbol(ruby, &value)))
 }
 
 fn maybe_ratio(value: f64) -> Option<f64> {

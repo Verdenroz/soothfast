@@ -401,9 +401,9 @@ fn fallible(function: &Function, plan: &BindingPlan) -> bool {
 /// Whether the body needs a `Ruby` handle at all: raising the package error,
 /// validating a mirrored-enum parameter, borrowing a handle (the receiver's
 /// own included, since its `try_borrow`/`try_borrow_mut` can fail), and
-/// building one to return all do. A writable buffer's own `?`s do not:
-/// `RArray::to_vec`/`store` need no handle, so that case alone must not drag
-/// in an unused parameter.
+/// building one to return, or an array of them, all do. A writable buffer's
+/// own `?`s do not: `RArray::to_vec`/`store` need no handle, so that case
+/// alone must not drag in an unused parameter.
 fn needs_ruby(function: &Function, plan: &BindingPlan) -> bool {
     function.throws.is_some()
         || function.receiver != Receiver::None
@@ -412,6 +412,17 @@ fn needs_ruby(function: &Function, plan: &BindingPlan) -> bool {
                 || list_mirrored_class(&p.ty, plan).is_some()
         })
         || ty_has_mirrored_enum(&function.ret, plan)
+        || returns_array(&function.ret, plan)
+}
+
+/// Whether the returned type holds a sequence built through `ary_from_iter`
+/// rather than converted from a `Vec`.
+fn returns_array(ty: &Ty, plan: &BindingPlan) -> bool {
+    match ty {
+        Ty::Optional(inner) => returns_array(inner, plan),
+        Ty::List(inner) => wrap_return("value", inner, plan) != "value",
+        _ => false,
+    }
 }
 
 fn ty_has_mirrored_enum(ty: &Ty, plan: &BindingPlan) -> bool {
@@ -438,7 +449,7 @@ fn wrap_return(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
             // call already returns is already the one this signature
             // promises.
             mapped if mapped == "value" => expr.to_string(),
-            mapped => format!("({expr}).into_iter().map(|value| {mapped}).collect()"),
+            mapped => format!("ruby.ary_from_iter(({expr}).into_iter().map(|value| {mapped}))"),
         },
         Ty::Class(name) if plan.is_mirrored(name) => {
             format!("{}_to_symbol(ruby, &{expr})", types::snake(name))
@@ -450,11 +461,18 @@ fn wrap_return(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
 }
 
 /// A returned type, where a mirrored enum comes back as a `Symbol` and a
-/// byte sequence as a Ruby string rather than an array of small integers.
+/// byte sequence as a Ruby string rather than an array of small integers. A
+/// sequence of either, or of handles, comes back as an `RArray` built
+/// element by element: magnus converts a `Vec` only when its element type
+/// needs no interpreter to become a Ruby value, which handles, symbols and
+/// strings-as-bytes all do.
 fn returned_ty(ty: &Ty, plan: &BindingPlan) -> String {
     match ty {
         Ty::Optional(inner) => format!("Option<{}>", returned_ty(inner, plan)),
-        Ty::List(inner) => format!("Vec<{}>", returned_ty(inner, plan)),
+        Ty::List(inner) => match wrap_return("value", inner, plan) == "value" {
+            true => format!("Vec<{}>", returned_ty(inner, plan)),
+            false => "::magnus::RArray".into(),
+        },
         Ty::Class(name) if plan.is_mirrored(name) => "::magnus::Symbol".into(),
         Ty::Class(name) => name.clone(),
         Ty::Bytes => "::magnus::RString".into(),
@@ -610,9 +628,9 @@ fn param_plan(param: &Param, plan: &BindingPlan) -> PlannedParam {
             let class_name = list_mirrored_class(&param.ty, plan).unwrap();
             let helper = format!("{}_from_symbol", types::snake(class_name));
             (
-                "Vec<::magnus::Symbol>".into(),
+                "::magnus::RArray".into(),
                 Some(format!(
-                    "let {name} = {name}.into_iter().map(|v| {helper}(ruby, v)).collect::<Result<Vec<_>, _>>()?;"
+                    "let {name} = (0..{name}.len()).map(|i| {name}.entry::<::magnus::Symbol>(i as isize).and_then(|v| {helper}(ruby, v))).collect::<Result<Vec<_>, ::magnus::Error>>()?;"
                 )),
                 by_ownership(name, param.ownership),
                 None,
