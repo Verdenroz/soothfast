@@ -1,7 +1,8 @@
 //! `__repr__` for a handle class: its readable fields, in accessor order,
 //! as `Name(field=value, ...)`. Only a field the glue can show without
 //! anything from the bound crate is listed: a `Debug` value, a mirrored
-//! enum by its Python name, or a mapped type through `Display`.
+//! enum by its Python name (optional or not), or a mapped type through
+//! `Display`.
 
 use crate::model::Ty;
 use crate::plan::{Accessor, BindingPlan, Class};
@@ -37,6 +38,17 @@ fn slot(accessor: &Accessor, plan: &BindingPlan) -> Option<(String, String)> {
             format!("{name}={class}.{{:?}}"),
             format!("{class}::from(&{value})"),
         ),
+        Ty::Optional(inner) if matches!(&**inner, Ty::Class(c) if plan.is_mirrored(c)) => {
+            let Ty::Class(class) = &**inner else {
+                return None;
+            };
+            (
+                format!("{name}={{}}"),
+                format!(
+                    "match {value}.as_ref() {{ Some(v) => format!(\"Some({class}.{{:?}})\", {class}::from(v)), None => String::from(\"None\") }}"
+                ),
+            )
+        }
         Ty::Text(_) => (
             format!("{name}={{:?}}"),
             format!("::std::string::ToString::to_string(&{value})"),

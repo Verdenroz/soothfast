@@ -485,9 +485,15 @@ fn a_handle_repr_lists_its_showable_fields_in_order_and_is_absent_without_any() 
         ),
         "{glue}"
     );
-    let bag = &glue[glue.find("impl Bag {").expect("Bag members")..];
-    let bag = &bag[..bag.find("\n}\n").expect("end of impl")];
-    assert!(!bag.contains("__repr__"), "{bag}");
+    assert!(
+        glue.contains(
+            "format!(\"Bag(level={})\", match self.0.level.as_ref() { Some(v) => format!(\"Some(Level.{:?})\", Level::from(v)), None => String::from(\"None\") })"
+        ),
+        "{glue}"
+    );
+    let seq = &glue[glue.find("impl ClientSeq {").expect("seq members")..];
+    let seq = &seq[..seq.find("\n}\n").expect("end of impl")];
+    assert_eq!(seq.matches("__repr__").count(), 0, "{seq}");
     assert!(glue.contains("#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub enum Level {"));
 }
 
@@ -512,7 +518,9 @@ fn a_mirrored_enum_field_and_a_mapped_field_print_by_python_name_and_quoted() {
         .expect("emits");
     let glue = &files.files["src/lib.rs"];
     assert!(
-        glue.contains("format!(\"Bag(mode=Level.{:?})\", Level::from(&self.0.mode))"),
+        glue.contains(
+            "format!(\"Bag(level={}, mode=Level.{:?})\", match self.0.level.as_ref() { Some(v) => format!(\"Some(Level.{:?})\", Level::from(v)), None => String::from(\"None\") }, Level::from(&self.0.mode))"
+        ),
         "{glue}"
     );
     assert!(
