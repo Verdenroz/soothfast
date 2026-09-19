@@ -357,8 +357,10 @@ fn wrap_ok(expr: &str, fallible: bool) -> String {
 /// needs, or nothing for a parameter that already arrives in it.
 fn param_prelude(param: &Param, krate: &str, plan: &BindingPlan) -> String {
     let name = &param.name;
+    if let Some(class) = mirrored_class(&class_name(&param.ty), plan) {
+        return enum_from_str(param, class, krate);
+    }
     match Transfer::of(param, plan) {
-        Transfer::Handle { mirrored: true, .. } => enum_from_str(param, krate, plan),
         Transfer::Text { nullable: true, .. } => optional_text_prelude(name),
         Transfer::Buffer {
             element, borrowed, ..
@@ -370,6 +372,18 @@ fn param_prelude(param: &Param, krate: &str, plan: &BindingPlan) -> String {
             None => String::new(),
         },
     }
+}
+
+/// The class a mirrored enum's name resolves to. Both `Transfer::of`'s own
+/// `mirrored` flag and this walk `plan.classes` for the same match, so
+/// wherever this returns `Some`, `Transfer::of` would already agree the
+/// parameter is a mirrored handle: resolving the class here instead of
+/// re-deriving it from a name inside `enum_from_str`/`enum_to_str` leaves
+/// nothing left to fail there.
+fn mirrored_class<'a>(name: &str, plan: &'a BindingPlan) -> Option<&'a Class> {
+    plan.classes
+        .iter()
+        .find(|c| c.name == name && c.is_plain_enum())
 }
 
 /// An absent string crosses as R's own `NULL`, matching every other optional
@@ -397,12 +411,9 @@ fn buffer_prelude(name: &str, element: &Ty, borrowed: bool) -> String {
 /// A plain enum crossing as a string, validated against its own variant
 /// names: unlike a mirrored ordinal, this reads the same in an R traceback
 /// as the value a caller actually passed.
-fn enum_from_str(param: &Param, krate: &str, plan: &BindingPlan) -> String {
+fn enum_from_str(param: &Param, class: &Class, krate: &str) -> String {
     let name = &param.name;
-    let class_name = class_name(&param.ty);
-    let Some(class) = plan.classes.iter().find(|c| c.name == class_name) else {
-        unreachable!("is_mirrored({class_name}) named a class not in the plan")
-    };
+    let class_name = &class.name;
     let inner = inner_path(&class.rust_path, krate);
     let mut arms = String::new();
     for variant in class.variants.iter().flatten() {
@@ -416,8 +427,10 @@ fn enum_from_str(param: &Param, krate: &str, plan: &BindingPlan) -> String {
 fn returned(expr: &str, ty: &Ty, krate: &str, plan: &BindingPlan) -> String {
     match ty {
         Ty::Unit => expr.to_string(),
-        Ty::Class(name) if plan.is_mirrored(name) => enum_to_str(expr, name, krate, plan),
-        Ty::Class(name) => format!("{name}({expr})"),
+        Ty::Class(name) => match mirrored_class(name, plan) {
+            Some(class) => enum_to_str(expr, class, krate),
+            None => format!("{name}({expr})"),
+        },
         Ty::Optional(inner) => optional_to_robj(expr, inner, krate, plan),
         ty if types::checked_int(ty).is_some() => format!("{expr} as f64"),
         Ty::List(inner) if types::checked_int(inner).is_some() => {
@@ -427,10 +440,7 @@ fn returned(expr: &str, ty: &Ty, krate: &str, plan: &BindingPlan) -> String {
     }
 }
 
-fn enum_to_str(expr: &str, name: &str, krate: &str, plan: &BindingPlan) -> String {
-    let Some(class) = plan.classes.iter().find(|c| c.name == name) else {
-        unreachable!("is_mirrored({name}) named a class not in the plan")
-    };
+fn enum_to_str(expr: &str, class: &Class, krate: &str) -> String {
     let inner = inner_path(&class.rust_path, krate);
     let mut arms = String::new();
     for variant in class.variants.iter().flatten() {

@@ -288,7 +288,7 @@ fn methods(insert: &mut impl FnMut(u64, Value)) {
     insert(
         30,
         json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
-                "inner": { "impl": { "trait": Value::Null, "items": [31, 32, 33, 34, 35, 36, 47, 48] } } }),
+                "inner": { "impl": { "trait": Value::Null, "items": [31, 32, 33, 34, 35, 36, 51, 52] } } }),
     );
     insert(
         31,
@@ -357,7 +357,7 @@ fn methods(insert: &mut impl FnMut(u64, Value)) {
     );
     // An exclusive receiver: the one shape every other method here avoids.
     insert(
-        47,
+        51,
         func(
             "scale",
             &[
@@ -371,7 +371,7 @@ fn methods(insert: &mut impl FnMut(u64, Value)) {
     // A parameter of the receiver's own class, so `x.absorb(x)` can alias
     // the same object a backend's `&mut self` already borrows.
     insert(
-        48,
+        52,
         func(
             "absorb",
             &[
