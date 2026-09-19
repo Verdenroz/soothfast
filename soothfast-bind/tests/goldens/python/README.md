@@ -33,6 +33,7 @@ import acme_core
 
 ## Functions
 
+- `counters`
 - `describe`
 - `describe_owned`
 - `digest`
@@ -42,6 +43,7 @@ import acme_core
 - `greet`
 - `index_all`
 - `is_high`
+- `levels`
 - `maybe_ratio`
 - `mutate_counter`
 - `normalize`

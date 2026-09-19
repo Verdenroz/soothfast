@@ -426,6 +426,10 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
         Ty::ISize => format!("BigInt::from({expr} as i64)"),
         Ty::USize => format!("BigInt::from({expr} as u64)"),
         Ty::List(inner) => match &**inner {
+            Ty::Class(name) if plan.is_mirrored(name) => {
+                format!("{expr}.into_iter().map(::std::convert::Into::into).collect()")
+            }
+            Ty::Class(name) => format!("{expr}.into_iter().map({name}).collect()"),
             Ty::ISize => format!("{expr}.into_iter().map(|v| BigInt::from(v as i64)).collect()"),
             Ty::USize => format!("{expr}.into_iter().map(|v| BigInt::from(v as u64)).collect()"),
             _ => match array_ty(inner) {

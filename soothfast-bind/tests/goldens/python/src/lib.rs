@@ -410,6 +410,11 @@ impl ::std::convert::From<Level> for ::acme::Level {
 pub struct Mode(::acme::Mode);
 
 #[pyfunction]
+fn counters() -> Vec<Counter> {
+    ::acme::counters().into_iter().map(Counter).collect()
+}
+
+#[pyfunction]
 fn describe(label: Option<String>) -> Option<String> {
     ::acme::describe(label.as_deref())
 }
@@ -452,6 +457,11 @@ fn index_all() -> ::std::collections::HashMap<String, u32> {
 #[pyfunction]
 fn is_high(level: Level) -> bool {
     ::acme::is_high(&level.into())
+}
+
+#[pyfunction]
+fn levels() -> Vec<Level> {
+    ::acme::levels().into_iter().map(::std::convert::Into::into).collect()
 }
 
 #[pyfunction]
@@ -542,6 +552,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Counter>()?;
     m.add_class::<Level>()?;
     m.add_class::<Mode>()?;
+    m.add_function(wrap_pyfunction!(counters, m)?)?;
     m.add_function(wrap_pyfunction!(describe, m)?)?;
     m.add_function(wrap_pyfunction!(describe_owned, m)?)?;
     m.add_function(wrap_pyfunction!(digest, m)?)?;
@@ -551,6 +562,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;
     m.add_function(wrap_pyfunction!(is_high, m)?)?;
+    m.add_function(wrap_pyfunction!(levels, m)?)?;
     m.add_function(wrap_pyfunction!(maybe_ratio, m)?)?;
     m.add_function(wrap_pyfunction!(mutate_counter, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;

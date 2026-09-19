@@ -87,6 +87,11 @@ impl ::std::convert::From<Level> for ::acme::Level {
 pub struct Mode(::acme::Mode);
 
 #[wasm_bindgen]
+pub fn counters() -> Vec<Counter> {
+    ::acme::counters().into_iter().map(Counter).collect()
+}
+
+#[wasm_bindgen]
 pub fn describe(label: Option<String>) -> Option<String> {
     ::acme::describe(label.as_deref())
 }
@@ -119,6 +124,11 @@ pub fn greet(name: &str) -> String {
 #[wasm_bindgen(js_name = isHigh)]
 pub fn is_high(level: Level) -> bool {
     ::acme::is_high(&level.into())
+}
+
+#[wasm_bindgen]
+pub fn levels() -> Vec<Level> {
+    ::acme::levels().into_iter().map(::std::convert::Into::into).collect()
 }
 
 #[wasm_bindgen(js_name = maybeRatio)]

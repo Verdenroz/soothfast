@@ -81,6 +81,10 @@ impl Counter {
 #[::magnus::wrap(class = "AcmeCore::Mode", free_immediately)]
 pub struct Mode(::std::cell::RefCell<::acme::Mode>);
 
+fn counters() -> Vec<Counter> {
+    (::acme::counters()).into_iter().map(|value| Counter(::std::cell::RefCell::new(value))).collect()
+}
+
 fn describe(label: Option<String>) -> Option<String> {
     ::acme::describe(label.as_deref())
 }
@@ -117,6 +121,10 @@ fn index_all() -> ::std::collections::HashMap<String, u32> {
 fn is_high(ruby: &::magnus::Ruby, level: ::magnus::Symbol) -> Result<bool, ::magnus::Error> {
     let level = level_from_symbol(ruby, level)?;
     Ok(::acme::is_high(&level))
+}
+
+fn levels(ruby: &::magnus::Ruby) -> Vec<::magnus::Symbol> {
+    (::acme::levels()).into_iter().map(|value| level_to_symbol(ruby, value)).collect()
 }
 
 fn maybe_ratio(value: f64) -> Option<f64> {
@@ -192,6 +200,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     class.define_method("bump_all", ::magnus::method!(Counter::bump_all, 1))?;
     class.define_method("scale", ::magnus::method!(Counter::scale, 1))?;
     module.define_class("Mode", ruby.class_object())?;
+    module.define_module_function("counters", ::magnus::function!(counters, 0))?;
     module.define_module_function("describe", ::magnus::function!(describe, 1))?;
     module.define_module_function("describe_owned", ::magnus::function!(describe_owned, 1))?;
     module.define_module_function("digest", ::magnus::function!(digest, 1))?;
@@ -201,6 +210,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("greet", ::magnus::function!(greet, 1))?;
     module.define_module_function("index_all", ::magnus::function!(index_all, 0))?;
     module.define_module_function("is_high", ::magnus::function!(is_high, 1))?;
+    module.define_module_function("levels", ::magnus::function!(levels, 0))?;
     module.define_module_function("maybe_ratio", ::magnus::function!(maybe_ratio, 1))?;
     module.define_module_function("mutate_counter", ::magnus::function!(mutate_counter, 1))?;
     module.define_module_function("normalize", ::magnus::function!(normalize, 2))?;

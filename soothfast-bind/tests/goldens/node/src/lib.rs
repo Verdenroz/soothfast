@@ -109,6 +109,11 @@ impl ::std::convert::From<Level> for ::acme::Level {
 pub struct Mode(::acme::Mode);
 
 #[napi]
+pub fn counters() -> Vec<Counter> {
+    ::acme::counters().into_iter().map(Counter).collect()
+}
+
+#[napi]
 pub fn describe(label: Option<String>) -> Option<String> {
     ::acme::describe(label.as_deref())
 }
@@ -147,6 +152,11 @@ pub fn greet(name: String) -> String {
 #[napi(js_name = "isHigh")]
 pub fn is_high(level: Level) -> bool {
     ::acme::is_high(&level.into())
+}
+
+#[napi]
+pub fn levels() -> Vec<Level> {
+    ::acme::levels().into_iter().map(::std::convert::Into::into).collect()
 }
 
 #[napi(js_name = "maybeRatio")]

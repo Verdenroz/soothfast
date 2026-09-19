@@ -430,6 +430,13 @@ fn wrap_return(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
             mapped if mapped == "value" => expr.to_string(),
             mapped => format!("({expr}).map(|value| {mapped})"),
         },
+        Ty::List(inner) => match wrap_return("value", inner, plan) {
+            // As above: an element needing no shaping means the `Vec` the
+            // call already returns is already the one this signature
+            // promises.
+            mapped if mapped == "value" => expr.to_string(),
+            mapped => format!("({expr}).into_iter().map(|value| {mapped}).collect()"),
+        },
         Ty::Class(name) if plan.is_mirrored(name) => {
             format!("{}_to_symbol(ruby, {expr})", types::snake(name))
         }
@@ -444,6 +451,7 @@ fn wrap_return(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
 fn returned_ty(ty: &Ty, plan: &BindingPlan) -> String {
     match ty {
         Ty::Optional(inner) => format!("Option<{}>", returned_ty(inner, plan)),
+        Ty::List(inner) => format!("Vec<{}>", returned_ty(inner, plan)),
         Ty::Class(name) if plan.is_mirrored(name) => "::magnus::Symbol".into(),
         Ty::Class(name) => name.clone(),
         Ty::Bytes => "::magnus::RString".into(),

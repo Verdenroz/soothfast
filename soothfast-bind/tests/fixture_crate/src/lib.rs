@@ -173,6 +173,14 @@ pub fn sample_ids(ids: Vec<usize>) -> Vec<usize> {
     ids
 }
 
+pub fn levels() -> Vec<Level> {
+    vec![Level::Low, Level::High]
+}
+
+pub fn counters() -> Vec<Counter> {
+    vec![Counter::new(1), Counter::new(2)]
+}
+
 pub fn set_level(level: Option<Level>) -> bool {
     matches!(level, Some(Level::High))
 }

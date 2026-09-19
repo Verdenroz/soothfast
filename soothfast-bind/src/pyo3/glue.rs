@@ -426,6 +426,13 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
             Ty::Class(name) => format!("{expr}.map({name})"),
             _ => expr.to_string(),
         },
+        Ty::List(inner) => match &**inner {
+            Ty::Class(name) if plan.is_mirrored(name) => {
+                format!("{expr}.into_iter().map(::std::convert::Into::into).collect()")
+            }
+            Ty::Class(name) => format!("{expr}.into_iter().map({name}).collect()"),
+            _ => expr.to_string(),
+        },
         _ => expr.to_string(),
     }
 }
