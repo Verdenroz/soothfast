@@ -229,7 +229,7 @@ only in the generated crate.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `String`, `&str` | `str` | `string` | `char *` | `string` | `String` | `String` | character | `String` | `string_view` in, `string` out | `string` | `string` |
 | `Vec<u8>`, `&[u8]` | `bytes` | `Uint8Array` | `uint8_t *` + `size_t` | `[]byte` | `byte[]` | `ByteArray` | raw vector | `String` (binary) | `span<const uint8_t>` in, `vector<uint8_t>` out | table or FFI array | `Span<byte>` / `byte[]` |
-| `Vec<T>` | array class | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` | `span<const T>` in, `vector<T>` out | table or FFI array | `Span<T>` / `T[]` |
+| `Vec<T>` | array class; a field of handles is a `{T}Seq` | `Array` / typed array | `*_array` struct | `[]T` | `T[]` | `TArray` | numeric vector | `Array` | `span<const T>` in, `vector<T>` out | table or FFI array | `Span<T>` / `T[]` |
 | `i64`, `u64` | `int` | `BigInt` | `int64_t` | `int64` | `long` | `Long` | double, checked | `Integer` | `int64_t`, `uint64_t` | `int64_t`/`uint64_t` cdata | `long`, `ulong` |
 | `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles and strings | nullable pointer, handles and strings | nullable, handles and strings | `T?`, handles and strings | `T` or `NULL` | `T \| nil` | `optional<T>`, handles and strings | nullable pointer, handles and strings | `null`, handles and strings |
 | `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` | not bound | not bound | not bound |
@@ -790,6 +790,18 @@ an array class exporting the buffer protocol, so `numpy.asarray(x)` and
 `memoryview(x)` read it without copying, and `x.tolist()` copies only when
 asked. Boxing 100k floats into a list cost 18 ns each; the array class costs
 1.0 ns including the computation.
+
+**A field of handles is a seq, not a list.** A public `Vec<T>` field whose
+`T` is an exported `Clone` struct reads as a `{T}Seq` handle in Python:
+`chart.candles` clones the vector once and builds a `Candle` only when one
+is indexed, where a list would build all 10,529 of them on every attribute
+access, quadratic in a loop that indexes the field. The seq has `len`,
+negative indexing, iteration, `tolist()` for the list when it is wanted,
+and a column getter per field of the element type: a primitive column
+comes back as the same buffer-protocol array class a `Vec<f64>` return
+uses (`chart.candles.close` is one `F64Array`), an optional one as a list
+of `T | None`, a string one as a list of `str`. A method returning
+`Vec<T>` still returns a list of handles.
 
 **An out-parameter is not a shortcut.** Writing through an `&mut [f64]` the
 caller owns reads the same as handing back a fresh sequence, because the
