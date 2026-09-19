@@ -4,6 +4,7 @@ mod asyncrt;
 mod buffers;
 mod glue;
 mod package;
+mod seq;
 
 use crate::naming;
 use crate::plan::BindingPlan;

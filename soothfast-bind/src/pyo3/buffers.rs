@@ -203,8 +203,9 @@ pub(crate) fn arrays(plan: &BindingPlan) -> Vec<(String, String)> {
         .iter()
         .flat_map(|c| c.accessors.iter())
         .map(|a| &a.ty);
+    let columns = super::seq::column_types(plan);
     let mut wanted: BTreeMap<String, String> = BTreeMap::new();
-    for ty in returns.chain(fields) {
+    for ty in returns.chain(fields).chain(columns.iter()) {
         let sequence = match ty {
             Ty::Optional(inner) => &**inner,
             other => other,

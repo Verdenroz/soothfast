@@ -251,7 +251,11 @@ fn a_borrowed_str_return_is_owned_by_the_python_glue_and_reported_elsewhere() {
 #[test]
 fn a_handle_list_field_reads_but_never_writes_and_an_optional_enum_field_converts() {
     let glue = python_glue();
-    assert!(glue.contains("fn items(&self) -> Vec<Client>"));
+    assert!(
+        glue.contains(
+            "fn items(&self) -> ClientSeq {\n        ClientSeq::new(self.0.items.clone())"
+        )
+    );
     assert!(!glue.contains("fn set_items"), "{glue}");
     assert!(glue.contains("fn set_level(&mut self, value: Option<Level>)"));
     assert!(glue.contains("self.0.level = value.map(::std::convert::Into::into);"));

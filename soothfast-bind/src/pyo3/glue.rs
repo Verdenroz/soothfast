@@ -16,6 +16,7 @@ use crate::{BindOptions, GENERATED_RS, GLUE_ALLOW};
 use super::asyncrt;
 use super::buffers::{self, array_name, buffered, view_name};
 use super::py_ident;
+use super::seq;
 
 /// Every call with a writable buffer parameter alongside another buffer
 /// parameter needs this: two arguments can name the same Python object
@@ -43,6 +44,9 @@ pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
     }
     for (name, element) in buffers::arrays(plan) {
         out.push_str(&buffers::array(&name, &element));
+    }
+    for class in seq::classes(plan) {
+        out.push_str(&seq::render(class, &krate));
     }
     for (ty, name) in error_newtypes(plan) {
         out.push_str(&error_impl(&ty, &name, &krate));
@@ -291,8 +295,11 @@ fn constructor(ctor: &Function, krate: &str, plan: &BindingPlan, owner: &Class) 
 
 /// A getter clones, which every bound field type supports: an exported type
 /// reaches here only when the plan found it `Clone`, and is wrapped into a
-/// fresh handle.
+/// fresh handle. A sequence of one is wrapped into its seq instead.
 fn getter(accessor: &Accessor, plan: &BindingPlan) -> String {
+    if let Some(class) = seq::element(&accessor.ty, plan) {
+        return seq::getter(accessor, class);
+    }
     let name = py_ident(&accessor.field);
     let field = &accessor.field;
     let read = match &accessor.ty {
@@ -521,6 +528,9 @@ fn module_block(plan: &BindingPlan, opts: &BindOptions) -> String {
     for (name, _) in buffers::arrays(plan) {
         let _ = writeln!(body, "    m.add_class::<{name}>()?;");
     }
+    for class in seq::classes(plan) {
+        let _ = writeln!(body, "    m.add_class::<{}>()?;", seq::name(&class.name));
+    }
     for class in &plan.classes {
         let _ = writeln!(body, "    m.add_class::<{}>()?;", class.name);
     }
@@ -719,7 +729,7 @@ fn signature_ty(ty: &Ty) -> String {
 
 /// A registry id as a path the glue crate can call, with the package's own
 /// crate name replaced by the dependency's.
-fn inner_path(id: &str, krate: &str) -> String {
+pub(super) fn inner_path(id: &str, krate: &str) -> String {
     let tail = id.split_once("::").map(|(_, rest)| rest).unwrap_or(id);
     format!("{krate}::{tail}")
 }
@@ -743,7 +753,7 @@ fn join(receiver: &str, params: &str) -> String {
     }
 }
 
-fn docs(doc: Option<&str>, indent: &str) -> String {
+pub(super) fn docs(doc: Option<&str>, indent: &str) -> String {
     match doc {
         Some(text) => format!("{indent}/// {text}\n"),
         None => String::new(),
