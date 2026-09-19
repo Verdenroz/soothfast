@@ -8,7 +8,7 @@ use std::process::Command;
 
 /// `bind bench` builds its target before launching a script (the same
 /// `bind build` a real `[[bind]]` entry goes through), so the `c` glue
-/// directory needs a real, if trivial, cdylib crate — not just a script.
+/// directory needs a real, if trivial, cdylib crate, not just a script.
 /// `bind build` passes `--locked`, so a fixture glue crate needs the lockfile
 /// `bind gen` would have written beside its manifest.
 fn lock(glue: &Path) {

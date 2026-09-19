@@ -73,7 +73,7 @@ fn maturin_once(
     hush(&mut cmd, quiet);
     let status = cmd.status().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => {
-            "`maturin` not found — pip install maturin, or uv tool install maturin".to_string()
+            "`maturin` not found: pip install maturin, or uv tool install maturin".to_string()
         }
         _ => format!("cannot run maturin: {e}"),
     })?;

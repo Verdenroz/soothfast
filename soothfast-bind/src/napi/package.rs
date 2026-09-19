@@ -72,7 +72,7 @@ fn crate_name(package: &str) -> String {
     flattened.trim_matches('-').to_string()
 }
 
-/// `package.json` is plain JSON — no comment can mark it generated, so the
+/// `package.json` is plain JSON: no comment can mark it generated, so the
 /// staleness check in `bind gen --check` is what keeps it honest.
 pub(crate) fn package_json(opts: &BindOptions) -> String {
     let mut out = String::new();

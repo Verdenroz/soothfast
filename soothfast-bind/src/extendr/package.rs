@@ -51,7 +51,7 @@ pub(crate) fn namespace(plan: &BindingPlan, opts: &BindOptions) -> String {
 }
 
 /// `R/<pkg>.R`: the wrapper functions and the class methods. A plain enum
-/// needs none of this — it crosses as a validated string, so the Rust value
+/// needs none of this: it crosses as a validated string, so the Rust value
 /// it mirrors never has an R-side representation of its own.
 pub(crate) fn r_wrappers(plan: &BindingPlan) -> String {
     let mut out = String::from(GENERATED_R);
@@ -236,8 +236,8 @@ pub(crate) fn makevars_win(lib: &str) -> String {
 }
 
 /// `src/rust/Cargo.toml`. The bound crate sits two directories above where
-/// every other backend's manifest would put it — `<out>/src/rust/` instead
-/// of `<out>/` — so `crate_path` needs two extra steps up to reach it.
+/// every other backend's manifest would put it (`<out>/src/rust/` instead
+/// of `<out>/`), so `crate_path` needs two extra steps up to reach it.
 pub(crate) fn cargo_toml(opts: &BindOptions, lib: &str) -> String {
     let version = opts.backend_version.as_deref().unwrap_or(DEFAULT_VERSION);
     format!(

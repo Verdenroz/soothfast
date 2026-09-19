@@ -49,7 +49,7 @@ fn npm_install(glue: &Path, quiet: bool) -> Result<(), String> {
     hush(&mut cmd, quiet);
     let status = cmd.status().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => {
-            "`npm` not found — install Node.js (https://nodejs.org)".to_string()
+            "`npm` not found: install Node.js (https://nodejs.org)".to_string()
         }
         _ => format!("cannot run npm: {e}"),
     })?;
@@ -84,7 +84,7 @@ fn napi_build_once(
     hush(&mut cmd, quiet);
     let status = cmd.status().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => {
-            "`npm`/`npx` not found — install Node.js (https://nodejs.org)".to_string()
+            "`npm`/`npx` not found: install Node.js (https://nodejs.org)".to_string()
         }
         _ => format!("cannot run npx: {e}"),
     })?;

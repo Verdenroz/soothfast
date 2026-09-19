@@ -5,7 +5,7 @@
 //! compiles to a static native method on that class itself, not on its
 //! `Companion`, so it links against exactly the symbol `glue.rs` emits for
 //! a Java `private static native` method of the same name. Free functions
-//! need no companion at all — a top-level `external fun` in a file already
+//! need no companion at all: a top-level `external fun` in a file already
 //! compiles to a static native method on that file's own class.
 //!
 //! One final class per handle, holding the pointer a native method needs
@@ -293,7 +293,7 @@ fn getter(accessor: &Accessor, plan: &BindingPlan) -> (String, String) {
 /// calling it, kept as a pair so the two can never name a different method.
 /// `has_receiver` is threaded in rather than read off `function.receiver`
 /// directly, since the caller already knows it from which of `class.methods`
-/// or `class.statics` the function came from — and it decides not just
+/// or `class.statics` the function came from, and it decides not just
 /// whether `ptr` crosses, but where the wrapper lands: an instance method
 /// beside `close()`, a static factory inside the `companion object` beside
 /// the native declarations, since Kotlin has no other way to give Java a

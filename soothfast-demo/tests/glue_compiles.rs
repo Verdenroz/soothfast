@@ -49,8 +49,8 @@ fn find_manifest_dir(dir: &Path, depth: u32) -> Option<PathBuf> {
 ///
 /// Mirrors the detection `soothfast-bind`'s `ruby_smoke` test uses: `rb_sys`
 /// needs Ruby's own headers, which `cargo check` cannot get without `ruby`
-/// on PATH, and that absence is this machine's normal state, not a failure
-/// — unless `SOOTHFAST_SMOKE_STRICT` is set, when CI must not skip silently.
+/// on PATH, and that absence is this machine's normal state, not a failure,
+/// unless `SOOTHFAST_SMOKE_STRICT` is set, when CI must not skip silently.
 fn missing_toolchain(pkg: &str) -> Option<String> {
     if pkg != "ruby" {
         return None;

@@ -45,7 +45,7 @@ pub(super) fn lua(
         Ok(_) => return Err(format!("`luajit -e \"require('{module}')\"` failed")),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             eprintln!(
-                "soothfast: `luajit` not found — https://luajit.org/download.html; \
+                "soothfast: `luajit` not found: https://luajit.org/download.html; \
                  skipping the require load check"
             );
         }

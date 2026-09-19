@@ -1,5 +1,5 @@
 //! `bind gate` and `bind gen --check` driven to an actual failure against a
-//! real, minimal `#[soothfast::export]` crate in a throwaway git repo —
+//! real, minimal `#[soothfast::export]` crate in a throwaway git repo:
 //! everywhere else exercises `compat::diff` and the lockfile check in
 //! isolation, never the CLI commands that wrap them.
 //!

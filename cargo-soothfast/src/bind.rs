@@ -1,4 +1,4 @@
-//! `cargo soothfast bind` — native language bindings from the code.
+//! `cargo soothfast bind`: native language bindings from the code.
 //!
 //! The SDK family's sibling for surfaces with no wire boundary. The exported
 //! surface is walked once and lowered per language, so a class defined once
@@ -114,7 +114,7 @@ fn run_gate(args: &[String]) -> i32 {
 fn gate(pkg: &str, common: &CommonArgs, base: &str, allow_breaking: bool) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     if bind_config::load(&meta.dir)?.entries.is_empty() {
-        println!("bind gate: no [[bind]] entry — nothing to gate");
+        println!("bind gate: no [[bind]] entry: nothing to gate");
         return Ok(0);
     }
     let (head, _) = exported_surface(pkg, common)?;
@@ -140,7 +140,7 @@ fn gate(pkg: &str, common: &CommonArgs, base: &str, allow_breaking: bool) -> Res
         return Ok(0);
     }
     println!(
-        "bind gate: FAILED ({breaking} breaking change(s) vs {base}) — \
+        "bind gate: FAILED ({breaking} breaking change(s) vs {base}): \
          release it deliberately with --allow-breaking"
     );
     Ok(1)
@@ -264,7 +264,7 @@ pub(crate) fn exported_surface(
         // linkme registrations reach the bench binary only if the linker
         // keeps the library, which it does only when something names it.
         return Err(format!(
-            "no `#[soothfast::export]` items registered — if the annotations are \
+            "no `#[soothfast::export]` items registered; if the annotations are \
              in the library, add `use {} as _;` to its bench target so the \
              linker keeps their registrations",
             pkg.replace('-', "_")
@@ -371,7 +371,7 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let built = build_all(pkg, common, &meta.dir, &meta.version)?;
     if built.is_empty() {
-        println!("bind gen: nothing to generate — no [[bind]] entry in soothfast.toml");
+        println!("bind gen: nothing to generate: no [[bind]] entry in soothfast.toml");
         return Ok(0);
     }
 
@@ -385,7 +385,7 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
                 if current != *content {
                     stale += 1;
                     println!(
-                        "STALE {}/{rel}: regenerating would change it — run \
+                        "STALE {}/{rel}: regenerating would change it: run \
                          `cargo soothfast bind gen -p {pkg}` and commit the result",
                         bound.entry.out
                     );
@@ -399,7 +399,7 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
                 if lockfile_stale(&dir) {
                     stale += 1;
                     println!(
-                        "STALE {}/Cargo.lock: not locked — run \
+                        "STALE {}/Cargo.lock: not locked: run \
                          `cargo soothfast bind gen -p {pkg}` and commit the result",
                         bound.entry.out
                     );
@@ -409,7 +409,7 @@ fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, Str
             }
         }
         println!(
-            "bind gen: {} [{}] — {} file(s), {} gap(s), {} note(s)",
+            "bind gen: {} [{}]: {} file(s), {} gap(s), {} note(s)",
             bound.entry.out,
             bound.entry.lang.name(),
             bound.files.files.len(),
@@ -440,7 +440,7 @@ fn build(
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let cfg = bind_config::load(&meta.dir)?;
     if cfg.entries.is_empty() {
-        println!("bind build: nothing to build — no [[bind]] entry in soothfast.toml");
+        println!("bind build: nothing to build: no [[bind]] entry in soothfast.toml");
         return Ok(0);
     }
     let mut failed = 0u32;
@@ -453,7 +453,7 @@ fn build(
         match crate::bind_build::run(entry.lang, &glue, &wanted, release, false) {
             Ok(artifacts) => {
                 println!(
-                    "bind build: {} [{}] — {} artifact(s)",
+                    "bind build: {} [{}]: {} artifact(s)",
                     entry.out,
                     entry.lang.name(),
                     artifacts.len()
@@ -536,7 +536,7 @@ fn bench(
     let cfg = bind_config::load(&meta.dir)?;
     let candidates = bench_candidates(&cfg, only);
     if candidates.is_empty() {
-        println!("bind bench: nothing to bench — no [[bind]] entry has a `bench` script");
+        println!("bind bench: nothing to bench: no [[bind]] entry has a `bench` script");
         return Ok(0);
     }
 
@@ -600,14 +600,14 @@ fn run_bench_candidates(
 }
 
 /// One entry's build, launch, and measurement. `Ok(None)` covers every skip
-/// (missing tool, missing script) — the skip reason is already printed.
+/// (missing tool, missing script): the skip reason is already printed.
 fn bench_entry(entry: &BindEntry, bench_rel: &str, dir: &Path) -> Result<Option<Vec<Row>>, String> {
     let glue = dir.join(&entry.out);
     let script = dir.join(bench_rel);
     let label = format!("{} [{}]", entry.out, entry.lang.name());
 
     if let Some((tool, hint)) = bind_bench_launch::missing_tool(entry.lang) {
-        println!("bind bench: skipping {label}: `{tool}` not found — {hint}");
+        println!("bind bench: skipping {label}: `{tool}` not found: {hint}");
         return Ok(None);
     }
     let artifacts = build_for_bench(entry.lang, &glue, &entry.targets, &label)?;
@@ -667,7 +667,7 @@ fn save_bench_baseline(name: Option<&str>, run: &Run) -> Result<(), String> {
 
 /// Run one entry's launch command to completion and parse its stdout.
 /// `Ok(None)` means the tool vanished between `launch` building the command
-/// and actually spawning it — rare, but the same "skip, don't fail" verdict
+/// and actually spawning it: rare, but the same "skip, don't fail" verdict
 /// a `Missing` from `launch` gets.
 fn run_script(
     mut cmd: Command,

@@ -24,7 +24,7 @@ pub(super) fn go(
             Ok(_) => return Err(format!("`go {}` failed", args.join(" "))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 eprintln!(
-                    "soothfast: `go` not found — https://go.dev/doc/install; \
+                    "soothfast: `go` not found: https://go.dev/doc/install; \
                      skipping wrapper verification"
                 );
                 break;

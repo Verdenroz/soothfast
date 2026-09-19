@@ -31,7 +31,7 @@ pub struct BindEntry {
     pub repository: Option<String>,
     /// Target triples the package is built for.
     pub targets: Vec<String>,
-    /// `bind bench` script, relative to the package root — the same root
+    /// `bind bench` script, relative to the package root: the same root
     /// `out` is relative to.
     pub bench: Option<String>,
 }

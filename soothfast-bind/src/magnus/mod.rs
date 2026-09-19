@@ -108,7 +108,7 @@ pub(crate) fn emit(plan: &BindingPlan, opts: &BindOptions) -> Result<BindFileSet
 ///
 /// No transfer notes: `BufferSupport::AlwaysCopies` already makes
 /// [`crate::plan::transfer_notes`] return none, and it is the honest answer
-/// here too, not just an economical one — a Ruby `Array` has to be unboxed
+/// here too, not just an economical one: a Ruby `Array` has to be unboxed
 /// element by element whether a parameter borrows or not, and a `String`'s
 /// bytes are not a pointer this backend can keep past the call.
 fn notes(plan: &BindingPlan) -> Vec<String> {

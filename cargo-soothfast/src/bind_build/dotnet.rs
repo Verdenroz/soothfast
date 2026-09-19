@@ -83,7 +83,7 @@ fn dotnet_build(glue: &Path, release: bool, quiet: bool) -> Result<Vec<String>, 
     hush(&mut cmd, quiet);
     let status = cmd.status().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => {
-            "`dotnet` not found — install the .NET SDK (https://dotnet.microsoft.com/download)"
+            "`dotnet` not found: install the .NET SDK (https://dotnet.microsoft.com/download)"
                 .to_string()
         }
         _ => format!("cannot run dotnet: {e}"),

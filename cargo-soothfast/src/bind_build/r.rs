@@ -36,7 +36,7 @@ pub(super) fn r(glue: &Path, targets: &[String], quiet: bool) -> Result<Vec<Stri
     hush(&mut cmd, quiet);
     let status = cmd.status().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => {
-            "`R` not found — install R (https://www.r-project.org)".to_string()
+            "`R` not found: install R (https://www.r-project.org)".to_string()
         }
         _ => format!("cannot run R: {e}"),
     })?;

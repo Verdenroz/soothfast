@@ -1,5 +1,5 @@
 //! Walks a real nightly's rustdoc JSON for `tests/fixture_crate` and checks
-//! it against the synthetic document `tests/fixture/mod.rs` hand-writes —
+//! it against the synthetic document `tests/fixture/mod.rs` hand-writes:
 //! every other test in this crate trusts that synthetic shape without ever
 //! comparing it to what rustdoc actually emits.
 //!

@@ -27,7 +27,7 @@ pub(super) const KOTLIN: JvmLang = JvmLang {
     src_dir: "kotlin",
     ext: "kt",
     compiler: "kotlinc",
-    install_hint: "install the Kotlin compiler — https://kotlinlang.org/docs/command-line.html",
+    install_hint: "install the Kotlin compiler: https://kotlinlang.org/docs/command-line.html",
 };
 
 /// `cargo build` of the cdylib, same matrix behavior as C, then the host
@@ -89,7 +89,7 @@ fn compile_classes(glue: &Path, lang: JvmLang, quiet: bool) -> Result<PathBuf, S
     hush(&mut compile, quiet);
     let status = compile.status().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => {
-            format!("`{}` not found — {}", lang.compiler, lang.install_hint)
+            format!("`{}` not found: {}", lang.compiler, lang.install_hint)
         }
         _ => format!("cannot run {}: {e}", lang.compiler),
     })?;
@@ -110,7 +110,7 @@ fn create_jar(glue: &Path, classes: &Path, staging: &Path, quiet: bool) -> Resul
     }
     hush(&mut jar_cmd, quiet);
     let status = jar_cmd.status().map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => "`jar` not found — install a JDK".to_string(),
+        std::io::ErrorKind::NotFound => "`jar` not found: install a JDK".to_string(),
         _ => format!("cannot run jar: {e}"),
     })?;
     if !status.success() {

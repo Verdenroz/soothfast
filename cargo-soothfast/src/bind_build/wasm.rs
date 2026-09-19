@@ -42,7 +42,7 @@ pub(super) fn wasm_pack(
     hush(&mut cmd, quiet);
     let status = cmd.status().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => {
-            "`wasm-pack` not found — cargo install wasm-pack".to_string()
+            "`wasm-pack` not found: cargo install wasm-pack".to_string()
         }
         _ => format!("cannot run wasm-pack: {e}"),
     })?;

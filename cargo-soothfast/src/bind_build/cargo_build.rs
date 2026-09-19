@@ -68,7 +68,7 @@ fn compile_c(
     if !status.success() {
         return Err(match target {
             Some(triple) => format!(
-                "cargo build failed — is the target installed? \
+                "cargo build failed; is the target installed? \
                  (rustup target add {triple})"
             ),
             None => "cargo build failed".to_string(),

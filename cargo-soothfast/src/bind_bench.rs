@@ -1,7 +1,7 @@
 //! `bind bench` protocol: one JSON object per line on a host script's
 //! stdout, `{"shape": "...", "binding_ns": <f64>, "host_ns": <f64>, "n":
-//! <u64>}`. Anything else on the line is ignored, since stderr — not stdout
-//! — is where a script's own diagnostics belong.
+//! <u64>}`. Anything else on the line is ignored, since stderr, not stdout,
+//! is where a script's own diagnostics belong.
 
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -15,7 +15,7 @@ pub struct BenchRecord {
     pub n: u64,
 }
 
-/// Parse one line, or `None` if it is not a well-formed record — malformed
+/// Parse one line, or `None` if it is not a well-formed record: malformed
 /// JSON, missing fields, or a line that isn't JSON at all.
 fn parse_line(line: &str) -> Option<BenchRecord> {
     let v: Value = serde_json::from_str(line).ok()?;
@@ -162,9 +162,9 @@ mod tests {
         assert!(err.contains("binding_ns"), "{err}");
     }
 
-    // JSON itself can't carry NaN/Infinity — serde_json rejects an
+    // JSON itself can't carry NaN/Infinity: serde_json rejects an
     // out-of-range literal as a parse error before a value ever exists to
-    // validate — so this exercises `validate` directly against a value a
+    // validate, so this exercises `validate` directly against a value a
     // script could only produce by a bug in how it's computed, not printed.
     #[test]
     fn rejects_a_nonfinite_host_ns() {

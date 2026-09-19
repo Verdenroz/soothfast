@@ -17,17 +17,17 @@ pub enum LaunchError {
 }
 
 /// The tool `lang`'s bench launch needs that `bind build` doesn't already
-/// guarantee, missing from this machine — name and install hint, in the
+/// guarantee, missing from this machine: name and install hint, in the
 /// order to check them. Empty for a language `bind bench` never skips on.
 fn required_tools(lang: BindKind) -> &'static [(&'static str, &'static str)] {
     match lang {
         BindKind::Python => &[("maturin", "pip install maturin, or uv tool install maturin")],
         BindKind::Node => &[("node", "install Node.js (https://nodejs.org)")],
-        BindKind::Go => &[("go", "install Go — https://go.dev/doc/install")],
+        BindKind::Go => &[("go", "install Go: https://go.dev/doc/install")],
         BindKind::Java => &[("java", "install a JDK")],
         BindKind::Kotlin => &[(
             "kotlin",
-            "install the Kotlin compiler — https://kotlinlang.org/docs/command-line.html",
+            "install the Kotlin compiler: https://kotlinlang.org/docs/command-line.html",
         )],
         BindKind::R => &[("Rscript", "install R (https://www.r-project.org)")],
         BindKind::CAbi
@@ -82,7 +82,7 @@ fn find_artifact<'a>(artifacts: &'a [String], suffix: &str) -> Option<&'a str> {
 }
 
 /// Run a setup step to completion, capturing its output instead of
-/// inheriting stdio — so its own tool's progress noise never lands on
+/// inheriting stdio, so its own tool's progress noise never lands on
 /// `bind bench`'s stdout, which is either a table or a JSON stream.
 fn run_setup(mut cmd: Command, label: &str) -> Result<(), LaunchError> {
     let out = cmd.output().map_err(|e| match e.kind() {
@@ -102,7 +102,7 @@ fn run_setup(mut cmd: Command, label: &str) -> Result<(), LaunchError> {
 /// Install the wheel `bind build` just produced into a scratch venv under
 /// `target/` (already gitignored by every generated package), then run the
 /// script with that venv's interpreter. Built with `python3 -m venv` and
-/// installed with that venv's own `pip` — both ship with every CPython,
+/// installed with that venv's own `pip`: both ship with every CPython,
 /// unlike `uv`, which a bare CI runner may not have.
 fn python(glue: &Path, script: &Path, artifacts: &[String]) -> Result<Command, LaunchError> {
     let wheel = find_artifact(artifacts, ".whl")
@@ -125,7 +125,7 @@ fn python(glue: &Path, script: &Path, artifacts: &[String]) -> Result<Command, L
     Ok(cmd)
 }
 
-/// The absolute path `python3` resolves to on `PATH` — what `maturin
+/// The absolute path `python3` resolves to on `PATH`: what `maturin
 /// build` targets by default with no `--interpreter` override.
 fn python3_executable() -> Result<String, LaunchError> {
     let out = Command::new("python3")
@@ -191,7 +191,7 @@ fn r(glue: &Path, script: &Path) -> Command {
 }
 
 /// The script itself, run directly: the only shape that fits a language
-/// with no scripting story of its own — an already-compiled harness.
+/// with no scripting story of its own: an already-compiled harness.
 fn direct(glue: &Path, script: &Path) -> Command {
     let mut cmd = Command::new(script);
     cmd.current_dir(glue);

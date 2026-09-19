@@ -39,7 +39,7 @@ fn rake_compile(glue: &Path, quiet: bool) -> Result<Vec<String>, String> {
     cmd.args(["exec", "rake", "compile"]).current_dir(glue);
     hush(&mut cmd, quiet);
     let status = cmd.status().map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => "`bundle` not found — gem install bundler".to_string(),
+        std::io::ErrorKind::NotFound => "`bundle` not found: gem install bundler".to_string(),
         _ => format!("cannot run bundle: {e}"),
     })?;
     if !status.success() {
@@ -74,7 +74,7 @@ fn gem_build(glue: &Path, quiet: bool) -> Result<String, String> {
     cmd.args(["build", &gemspec]).current_dir(glue);
     hush(&mut cmd, quiet);
     let status = cmd.status().map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => "`gem` not found — install a Ruby toolchain".to_string(),
+        std::io::ErrorKind::NotFound => "`gem` not found: install a Ruby toolchain".to_string(),
         _ => format!("cannot run gem: {e}"),
     })?;
     if !status.success() {

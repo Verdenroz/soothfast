@@ -2,8 +2,8 @@
 //!
 //! R's numeric and raw vectors are contiguous and its collector does not
 //! move objects, so a borrowed one crosses zero-copy, the same answer as
-//! Python, C and Node. Where R has no exact type at all — a 64-bit integer,
-//! an `Option` of a sequence or a handle — the glue does the conversion by
+//! Python, C and Node. Where R has no exact type at all (a 64-bit integer,
+//! an `Option` of a sequence or a handle) the glue does the conversion by
 //! hand instead of leaning on extendr's own derive; see [`glue`] and
 //! [`types`].
 
