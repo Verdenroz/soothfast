@@ -248,8 +248,16 @@ fn param_ty(param: &Param, plan: &BindingPlan) -> String {
             borrowed: false,
             nullable: false,
         } => "String".into(),
-        Transfer::Handle { mirrored: true, .. } => "&str".into(),
-        Transfer::Handle { writable, .. } => {
+        Transfer::Handle {
+            mirrored: true,
+            nullable: false,
+            ..
+        } => "&str".into(),
+        Transfer::Handle {
+            writable,
+            nullable: false,
+            ..
+        } => {
             let name = class_name(&param.ty);
             match writable {
                 true => format!("&mut {name}"),
@@ -257,6 +265,7 @@ fn param_ty(param: &Param, plan: &BindingPlan) -> String {
             }
         }
         Transfer::Buffer { element, .. } => buffer_param_ty(&element.into()),
+        _ if matches!(&param.ty, Ty::Optional(_)) => "Robj".into(),
         _ => scalar_ty(&param.ty),
     }
 }
@@ -357,7 +366,9 @@ fn wrap_ok(expr: &str, fallible: bool) -> String {
 /// needs, or nothing for a parameter that already arrives in it.
 fn param_prelude(param: &Param, krate: &str, plan: &BindingPlan) -> String {
     let name = &param.name;
-    if let Some(class) = mirrored_class(&class_name(&param.ty), plan) {
+    if !matches!(param.ty, Ty::Optional(_))
+        && let Some(class) = mirrored_class(&class_name(&param.ty), plan)
+    {
         return enum_from_str(param, class, krate);
     }
     match Transfer::of(param, plan) {
@@ -365,11 +376,14 @@ fn param_prelude(param: &Param, krate: &str, plan: &BindingPlan) -> String {
         Transfer::Buffer {
             element, borrowed, ..
         } => buffer_prelude(name, &element.into(), borrowed),
-        _ => match types::checked_int(&param.ty) {
-            Some(rust) => {
-                format!("    let {name} = __checked_int::<{rust}>({name}, \"{name}\")?;\n")
-            }
-            None => String::new(),
+        _ => match &param.ty {
+            Ty::Optional(inner) => optional_param_prelude(name, inner, krate, plan),
+            _ => match types::checked_int(&param.ty) {
+                Some(rust) => {
+                    format!("    let {name} = __checked_int::<{rust}>({name}, \"{name}\")?;\n")
+                }
+                None => String::new(),
+            },
         },
     }
 }
@@ -393,6 +407,43 @@ fn optional_text_prelude(name: &str) -> String {
     format!(
         "    let {name}: Option<String> = match {name}.as_str() {{\n        Some(s) if s.is_na() => None,\n        Some(s) => Some(s.to_string()),\n        None if {name}.is_null() => None,\n        None => return Err(\"`{name}` is not a string\".to_string()),\n    }};\n"
     )
+}
+
+/// A `None`/`NULL` optional parameter reaches R as a bare `Robj`, hand-
+/// converted the same way [`optional_text_prelude`] already does for a
+/// string. `plan::unsupported` gaps every `Option<T>` this doesn't cover, so
+/// nothing else reaches here.
+fn optional_param_prelude(name: &str, inner: &Ty, krate: &str, plan: &BindingPlan) -> String {
+    match inner {
+        Ty::F64 => format!("    let {name} = {name}.as_real();\n"),
+        Ty::List(_) => format!("    let {name} = {name}.as_real_vector();\n"),
+        Ty::Class(class_name) => optional_enum_prelude(name, class_name, krate, plan),
+        _ => String::new(),
+    }
+}
+
+/// A mirrored enum crossing as an optional string, validated against its
+/// own variant names when present: composes [`optional_text_prelude`] with
+/// the same variant match [`enum_from_str`] does for the non-optional case.
+fn optional_enum_prelude(name: &str, class_name: &str, krate: &str, plan: &BindingPlan) -> String {
+    let mut out = optional_text_prelude(name);
+    let Some(class) = plan.classes.iter().find(|c| c.name == class_name) else {
+        unreachable!("optional_scalar_param_is_ready named a class not in the plan")
+    };
+    let inner = inner_path(&class.rust_path, krate);
+    let mut arms = String::new();
+    for variant in class.variants.iter().flatten() {
+        let _ = writeln!(
+            arms,
+            "            Some(\"{0}\") => Some({inner}::{0}),",
+            variant.name
+        );
+    }
+    let _ = write!(
+        out,
+        "    let {name} = match {name}.as_deref() {{\n{arms}            None => None,\n            Some(other) => return Err(format!(\"unknown {class_name} variant: {{other}}\", other = other)),\n        }};\n"
+    );
+    out
 }
 
 /// A checked-int element always needs a fresh, converted `Vec`, whatever the
@@ -487,12 +538,20 @@ fn call_arg(param: &Param, plan: &BindingPlan) -> String {
             true => format!("{name}.as_deref()"),
             false => name.clone(),
         },
-        Transfer::Handle { mirrored: true, .. } => match param.ownership {
+        Transfer::Handle {
+            mirrored: true,
+            nullable: false,
+            ..
+        } => match param.ownership {
             Ownership::Owned => name.clone(),
             Ownership::Borrowed => format!("&{name}"),
             Ownership::BorrowedMut => format!("&mut {name}"),
         },
-        Transfer::Handle { writable, .. } => match writable {
+        Transfer::Handle {
+            writable,
+            nullable: false,
+            ..
+        } => match writable {
             true => format!("&mut {name}.0"),
             false => format!("&{name}.0"),
         },

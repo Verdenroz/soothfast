@@ -340,14 +340,38 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
     let name = &param.name;
     let class_of = |ty: &Ty| match ty {
         Ty::Class(c) => c.clone(),
+        Ty::Optional(inner) => match &**inner {
+            Ty::Class(c) => c.clone(),
+            _ => String::new(),
+        },
         _ => String::new(),
     };
     // A borrowed slice is still copied into linear memory, so the win here
     // is only the `Vec` an owned parameter would allocate and free.
     match Transfer::of(param, plan) {
+        Transfer::Handle {
+            mirrored: true,
+            nullable: true,
+            ..
+        } => (
+            format!("Option<{}>", class_of(&param.ty)),
+            format!("{name}.map(::std::convert::Into::into)"),
+        ),
         Transfer::Handle { mirrored: true, .. } => {
             (class_of(&param.ty), mirrored_arg(name, param.ownership))
         }
+        Transfer::Handle {
+            writable: true,
+            nullable: true,
+            ..
+        } => (
+            format!("Option<&mut {}>", class_of(&param.ty)),
+            format!("{name}.map(|v| &mut v.0)"),
+        ),
+        Transfer::Handle { nullable: true, .. } => (
+            format!("Option<&{}>", class_of(&param.ty)),
+            format!("{name}.map(|v| &v.0)"),
+        ),
         Transfer::Handle { writable: true, .. } => (
             format!("&mut {}", class_of(&param.ty)),
             format!("&mut {name}.0"),

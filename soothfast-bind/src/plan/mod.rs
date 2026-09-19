@@ -399,6 +399,9 @@ fn bindable(
     if r_optional_scalar_param_is_blocked(f, kind, mirrored, gaps) {
         return false;
     }
+    if wasm_optional_handle_ref_param_is_blocked(f, kind, mirrored, gaps) {
+        return false;
+    }
     every_type_is_carriable(f, kind, mirrored, gaps)
 }
 
@@ -433,6 +436,47 @@ fn r_optional_scalar_param_is_blocked(
                      sequence or a sentinel for absent",
                     inner.render()
                 ),
+            },
+        );
+        return true;
+    }
+    false
+}
+
+/// wasm-bindgen implements `OptionFromWasmAbi` for an exported struct only
+/// by value, never for a reference to one; the plan only ever carries the
+/// reference form for a non-mirrored `Option<Class>` parameter (an owned one
+/// is already a `Gap::HandleByValue` from `owned_handle_param_is_blocked`),
+/// so every one that reaches here is a gap regardless of ownership.
+fn wasm_optional_handle_ref_param_is_blocked(
+    f: &ExportedFn,
+    kind: BindKind,
+    mirrored: &BTreeSet<String>,
+    gaps: &mut Vec<Gap>,
+) -> bool {
+    if kind != BindKind::Wasm {
+        return false;
+    }
+    for param in &f.params {
+        let Ty::Optional(inner) = &param.ty else {
+            continue;
+        };
+        let Ty::Class(name) = &**inner else {
+            continue;
+        };
+        if mirrored.contains(name) {
+            continue;
+        }
+        record(
+            gaps,
+            Gap::UnsupportedByBackend {
+                at: f.id.clone(),
+                ty: param.ty.render(),
+                lang: kind.name(),
+                why: "wasm-bindgen has no OptionFromWasmAbi for a reference \
+                      to an exported type; return it instead, or accept a \
+                      separate presence flag alongside the handle"
+                    .into(),
             },
         );
         return true;
@@ -496,8 +540,15 @@ fn owned_handle_param_is_blocked(
     gaps: &mut Vec<Gap>,
 ) -> bool {
     for param in &f.params {
-        if let Ty::Class(name) = &param.ty
-            && param.ownership == Ownership::Owned
+        let owned_class = match &param.ty {
+            Ty::Class(name) if param.ownership == Ownership::Owned => Some(name),
+            Ty::Optional(inner) if param.inner_ownership == Ownership::Owned => match &**inner {
+                Ty::Class(name) => Some(name),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(name) = owned_class
             && !mirrored.contains(name)
         {
             record(
@@ -518,9 +569,11 @@ fn owned_handle_param_is_blocked(
 /// and the two need different C. Go, C++, Lua and C# all call the same C
 /// functions, so each inherits the restriction; Java and Kotlin have no way
 /// to name a different constructor overload for it either; R's own handle is
-/// an external pointer with the same borrowed-or-owned ambiguity. A mirrored
-/// enum has neither problem: it crosses by value, so R carries it, though a
-/// handle borrowed-or-owned ambiguity still blocks it for the rest.
+/// an external pointer with the same borrowed-or-owned ambiguity. Ruby's own
+/// handle is a `RefCell`, whose borrow guard cannot outlive the closure a
+/// `None`/`Some` conversion would need to build one in. A mirrored enum has
+/// none of these problems: it crosses by value, so R and Ruby both carry it,
+/// though the rest of the list keeps blocking it either way.
 fn optional_handle_param_is_blocked(
     f: &ExportedFn,
     kind: BindKind,
@@ -534,6 +587,7 @@ fn optional_handle_param_is_blocked(
             | BindKind::Java
             | BindKind::Kotlin
             | BindKind::R
+            | BindKind::Ruby
             | BindKind::Cpp
             | BindKind::Lua
             | BindKind::CSharp
@@ -547,7 +601,7 @@ fn optional_handle_param_is_blocked(
         let Ty::Class(name) = &**inner else {
             continue;
         };
-        if kind == BindKind::R && mirrored.contains(name) {
+        if matches!(kind, BindKind::R | BindKind::Ruby) && mirrored.contains(name) {
             continue;
         }
         record(

@@ -75,13 +75,14 @@ fn node_exports_the_same_names_wasm_does_except_async_and_bool_arrays() {
     let node_plan = plan_for(BindKind::Node);
     let wasm = export_names(&wasm_plan);
     let node = export_names(&node_plan);
-    // wasm-bindgen has no ABI for a `Vec<bool>` at all; napi-rs carries one
-    // as a plain JS array, so `flags` is the one name node has that wasm
+    // wasm-bindgen has no ABI for a `Vec<bool>` at all, and no
+    // `OptionFromWasmAbi` for a reference to an exported type; napi-rs
+    // carries both, so `flags` and `peek` are names node has that wasm
     // gaps rather than the other way around.
     let extra: std::collections::BTreeSet<String> = node.difference(&wasm).cloned().collect();
     assert_eq!(
         extra,
-        std::collections::BTreeSet::from(["fn:flags".to_string()])
+        std::collections::BTreeSet::from(["fn:flags".to_string(), "fn:peek".to_string()])
     );
     let missing: std::collections::BTreeSet<String> = wasm.difference(&node).cloned().collect();
     assert_eq!(missing, async_export_names(&wasm_plan));

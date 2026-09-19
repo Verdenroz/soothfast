@@ -20,7 +20,7 @@ pub fn mutate_handle(h: &mut Handle) -> bool {
     true
 }
 
-pub fn option_handle_param(h: Option<Handle>) -> bool {
+pub fn option_handle_param(h: Option<&Handle>) -> bool {
     h.is_some()
 }
 

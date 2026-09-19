@@ -181,6 +181,31 @@ fn peak_level(values: &[f64]) -> String {
 }
 
 #[extendr]
+fn scale_optional(factor: Robj) -> f64 {
+    let factor = factor.as_real();
+    let __out = ::acme::scale_optional(factor);
+    __out
+}
+
+#[extendr]
+fn set_level(level: Robj) -> ::std::result::Result<bool, String> {
+    let level: Option<String> = match level.as_str() {
+        Some(s) if s.is_na() => None,
+        Some(s) => Some(s.to_string()),
+        None if level.is_null() => None,
+        None => return Err("`level` is not a string".to_string()),
+    };
+    let level = match level.as_deref() {
+            Some("Low") => Some(::acme::Level::Low),
+            Some("High") => Some(::acme::Level::High),
+            None => None,
+            Some(other) => return Err(format!("unknown Level variant: {other}", other = other)),
+        };
+    let __out = ::acme::set_level(level);
+    Ok(__out)
+}
+
+#[extendr]
 fn stamp(handle: f64, error: f64, register: &[u8]) -> ::std::result::Result<f64, String> {
     let handle = __checked_int::<i64>(handle, "handle")?;
     let __out = ::acme::stamp(handle, error, register);
@@ -208,6 +233,8 @@ extendr_module! {
     fn mutate_counter;
     fn normalize;
     fn peak_level;
+    fn scale_optional;
+    fn set_level;
     fn stamp;
     fn trim;
 }

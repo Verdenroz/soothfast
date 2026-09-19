@@ -35,6 +35,8 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 - `mutate_counter`
 - `normalize`
 - `peak_level`
+- `scale_optional`
+- `set_level`
 - `stamp`
 - `trim`
 
@@ -46,5 +48,6 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 - acme::flags: `Vec<bool>` cannot cross into r: a `bool` sequence has no R vector to become: R's own logical vector holds a tri-state NA-or-boolean, not a plain bool
 - acme::index_all: `HashMap<String, u32>` cannot cross into r: R has no map type; return a sequence of pairs, or an exported type with accessors
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; take it by reference, or add a method returning what the caller needs
+- acme::peek: `Option<Counter>` cannot cross into r: an optional exported type is taken only as a return; take it by reference instead
 - acme::scale_into: `Vec<f64>` cannot cross into r: R vectors are values; an out-parameter cannot be written through, return the sequence instead
 - acme::split: `Vec<f64>` cannot cross into r: R vectors are values; an out-parameter cannot be written through, return the sequence instead

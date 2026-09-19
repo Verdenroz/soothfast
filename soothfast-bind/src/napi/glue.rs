@@ -459,6 +459,10 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
     let name = &param.name;
     let class_of = |ty: &Ty| match ty {
         Ty::Class(c) => c.clone(),
+        Ty::Optional(inner) => match &**inner {
+            Ty::Class(c) => c.clone(),
+            _ => String::new(),
+        },
         _ => String::new(),
     };
     let by_ownership = || match param.ownership {
@@ -467,6 +471,15 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
         Ownership::BorrowedMut => (signature_ty(&param.ty), None, format!("&mut {name}")),
     };
     match Transfer::of(param, plan) {
+        Transfer::Handle {
+            mirrored: true,
+            nullable: true,
+            ..
+        } => (
+            format!("Option<{}>", class_of(&param.ty)),
+            None,
+            format!("{name}.map(::std::convert::Into::into)"),
+        ),
         Transfer::Handle { mirrored: true, .. } => (
             class_of(&param.ty),
             None,
@@ -476,6 +489,20 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
         // never a bare reference: the value lives behind a JS object that
         // may still be aliased elsewhere. `ClassInstance` implements
         // `DerefMut`, so a writable one still reaches `.0` mutably.
+        Transfer::Handle {
+            writable: true,
+            nullable: true,
+            ..
+        } => (
+            format!("Option<ClassInstance<'_, {}>>", class_of(&param.ty)),
+            None,
+            format!("{name}.as_deref_mut().map(|v| &mut v.0)"),
+        ),
+        Transfer::Handle { nullable: true, .. } => (
+            format!("Option<ClassInstance<'_, {}>>", class_of(&param.ty)),
+            None,
+            format!("{name}.as_deref().map(|v| &v.0)"),
+        ),
         Transfer::Handle { writable: true, .. } => (
             format!("ClassInstance<'_, {}>", class_of(&param.ty)),
             None,

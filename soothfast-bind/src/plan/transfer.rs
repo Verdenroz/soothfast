@@ -14,7 +14,14 @@ pub enum Transfer {
     /// A single value. Copying it is free everywhere.
     Scalar,
     /// An exported type the caller keeps hold of.
-    Handle { mirrored: bool, writable: bool },
+    Handle {
+        mirrored: bool,
+        writable: bool,
+        /// Whether `None` (a null pointer or R's own `NULL`, depending on
+        /// the backend) is a valid value: `Ty::Optional(Class)` rather than
+        /// a plain `Ty::Class`.
+        nullable: bool,
+    },
     Text {
         borrowed: bool,
         /// Whether `None` (a null pointer, at the FFI boundary) is a valid
@@ -42,6 +49,7 @@ impl Transfer {
             Ty::Class(name) => Transfer::Handle {
                 mirrored: plan.is_mirrored(name),
                 writable,
+                nullable: false,
             },
             Ty::Str => Transfer::Text {
                 borrowed,
@@ -50,6 +58,14 @@ impl Transfer {
             Ty::Optional(inner) if **inner == Ty::Str => Transfer::Text {
                 borrowed: param.inner_ownership != Ownership::Owned,
                 nullable: true,
+            },
+            Ty::Optional(inner) => match &**inner {
+                Ty::Class(name) => Transfer::Handle {
+                    mirrored: plan.is_mirrored(name),
+                    writable: param.inner_ownership == Ownership::BorrowedMut,
+                    nullable: true,
+                },
+                _ => Transfer::Collection,
             },
             Ty::Bytes => Transfer::Buffer {
                 element: Primitive::U8,

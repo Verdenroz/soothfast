@@ -169,9 +169,24 @@ pub fn peak_level(values: Float64Array) -> Level {
     ::acme::peak_level(values.as_ref()).into()
 }
 
+#[napi]
+pub fn peek(counter: Option<ClassInstance<'_, Counter>>) -> bool {
+    ::acme::peek(counter.as_deref().map(|v| &v.0))
+}
+
 #[napi(js_name = "scaleInto")]
 pub fn scale_into(values: Float64Array, factor: f64, mut out: Float64Array) -> () {
     ::acme::scale_into(values.as_ref(), factor, unsafe { out.as_mut() })
+}
+
+#[napi(js_name = "scaleOptional")]
+pub fn scale_optional(factor: Option<f64>) -> f64 {
+    ::acme::scale_optional(factor)
+}
+
+#[napi(js_name = "setLevel")]
+pub fn set_level(level: Option<Level>) -> bool {
+    ::acme::set_level(level.map(::std::convert::Into::into))
 }
 
 #[napi]

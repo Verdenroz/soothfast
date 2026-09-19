@@ -60,6 +60,16 @@ fn param_mut(name: &str, ty: Ty) -> Param {
     }
 }
 
+/// `Option<&inner>`: the option itself is owned, matching how rustdoc reads
+/// a plain (not itself borrowed) `Option<T>` parameter; only the borrowed
+/// item inside it is not.
+fn param_optional_borrowed(name: &str, inner: Ty) -> Param {
+    Param {
+        inner_ownership: Ownership::Borrowed,
+        ..param(name, Ty::Optional(Box::new(inner)))
+    }
+}
+
 fn free(id: &str, params: Vec<Param>, ret: Ty) -> ExportedFn {
     ExportedFn {
         id: id.into(),
@@ -191,7 +201,7 @@ fn surface() -> Surface {
         ),
         free(
             "shapes::option_handle_param",
-            vec![param("h", Ty::Optional(Box::new(handle_ty.clone())))],
+            vec![param_optional_borrowed("h", handle_ty.clone())],
             Ty::Bool,
         ),
         free(

@@ -265,6 +265,36 @@ fn optional_free_functions(insert: &mut impl FnMut(u64, Value)) {
             false,
         ),
     );
+    insert(
+        24,
+        func(
+            "scale_optional",
+            &[("factor", path("Option", 93, &[prim("f64")]))],
+            prim("f64"),
+            false,
+        ),
+    );
+    insert(
+        26,
+        func(
+            "set_level",
+            &[("level", path("Option", 93, &[path("Level", 4, &[])]))],
+            prim("bool"),
+            false,
+        ),
+    );
+    insert(
+        27,
+        func(
+            "peek",
+            &[(
+                "counter",
+                path("Option", 93, &[borrowed(path("Counter", 2, &[]), false)]),
+            )],
+            prim("bool"),
+            false,
+        ),
+    );
 }
 
 /// The crate's free functions that always fail, for exercising the error
@@ -476,6 +506,9 @@ pub fn doc() -> Value {
             "18": { "crate_id": 0, "path": ["acme", "maybe_ratio"], "kind": "function" },
             "19": { "crate_id": 0, "path": ["acme", "fail"], "kind": "function" },
             "23": { "crate_id": 0, "path": ["acme", "split"], "kind": "function" },
+            "24": { "crate_id": 0, "path": ["acme", "scale_optional"], "kind": "function" },
+            "26": { "crate_id": 0, "path": ["acme", "set_level"], "kind": "function" },
+            "27": { "crate_id": 0, "path": ["acme", "peek"], "kind": "function" },
             "2": { "crate_id": 0, "path": ["acme", "Counter"], "kind": "struct" },
             "3": { "crate_id": 0, "path": ["acme", "Mode"], "kind": "enum" },
             "4": { "crate_id": 0, "path": ["acme", "Level"], "kind": "enum" },
@@ -521,6 +554,9 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::maybe_ratio", "fn"),
         record("acme::fail", "fn"),
         record("acme::split", "fn"),
+        record("acme::scale_optional", "fn"),
+        record("acme::set_level", "fn"),
+        record("acme::peek", "fn"),
         record("acme::Counter", "struct"),
         record("acme::Mode", "enum"),
         record("acme::Level", "enum"),

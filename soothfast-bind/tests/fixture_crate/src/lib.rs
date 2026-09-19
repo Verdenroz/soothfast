@@ -160,3 +160,15 @@ pub fn split(src: &[f64], lo: &mut [f64], hi: &mut [f64]) {
         hi[i] = -v;
     }
 }
+
+pub fn scale_optional(factor: Option<f64>) -> f64 {
+    factor.unwrap_or(1.0)
+}
+
+pub fn set_level(level: Option<Level>) -> bool {
+    matches!(level, Some(Level::High))
+}
+
+pub fn peek(counter: Option<&Counter>) -> bool {
+    counter.is_some_and(|c| c.value > 0)
+}

@@ -143,6 +143,15 @@ fn scale_into(values: Vec<f64>, factor: f64, out: ::magnus::RArray) -> Result<()
     Ok(__out)
 }
 
+fn scale_optional(factor: Option<f64>) -> f64 {
+    ::acme::scale_optional(factor)
+}
+
+fn set_level(ruby: &::magnus::Ruby, level: Option<::magnus::Symbol>) -> Result<bool, ::magnus::Error> {
+    let level = level.map(|v| level_from_symbol(ruby, v)).transpose()?;
+    Ok(::acme::set_level(level))
+}
+
 fn split(src: Vec<f64>, lo: ::magnus::RArray, hi: ::magnus::RArray) -> Result<(), ::magnus::Error> {
     let mut lo_vec = lo.to_vec::<f64>()?;
     let mut hi_vec = hi.to_vec::<f64>()?;
@@ -189,6 +198,8 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("normalize", ::magnus::function!(normalize, 2))?;
     module.define_module_function("peak_level", ::magnus::function!(peak_level, 1))?;
     module.define_module_function("scale_into", ::magnus::function!(scale_into, 3))?;
+    module.define_module_function("scale_optional", ::magnus::function!(scale_optional, 1))?;
+    module.define_module_function("set_level", ::magnus::function!(set_level, 1))?;
     module.define_module_function("split", ::magnus::function!(split, 3))?;
     module.define_module_function("stamp", ::magnus::function!(stamp, 3))?;
     module.define_module_function("trim", ::magnus::function!(trim, 1))?;

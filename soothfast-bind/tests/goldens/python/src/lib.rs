@@ -477,12 +477,27 @@ fn peak_level(py: Python<'_>, values: BorrowedF64) -> Level {
 }
 
 #[pyfunction]
+fn peek(counter: Option<PyRef<'_, Counter>>) -> bool {
+    ::acme::peek(counter.as_deref().map(|v| &v.0))
+}
+
+#[pyfunction]
 fn scale_into(py: Python<'_>, values: BorrowedF64, factor: f64, mut out: BorrowedMutF64) -> PyResult<()> {
     if values.byte_range().is_some_and(|r| buffers_alias(out.byte_range(), r)) {
         return Err(::pyo3::exceptions::PyValueError::new_err("values and out alias the same buffer"));
     }
     let out = py.detach(|| ::acme::scale_into(values.as_slice(), factor, out.as_mut_slice()));
     Ok(out)
+}
+
+#[pyfunction]
+fn scale_optional(factor: Option<f64>) -> f64 {
+    ::acme::scale_optional(factor)
+}
+
+#[pyfunction]
+fn set_level(level: Option<Level>) -> bool {
+    ::acme::set_level(level.map(::std::convert::Into::into))
 }
 
 #[pyfunction]
@@ -530,7 +545,10 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mutate_counter, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(peak_level, m)?)?;
+    m.add_function(wrap_pyfunction!(peek, m)?)?;
     m.add_function(wrap_pyfunction!(scale_into, m)?)?;
+    m.add_function(wrap_pyfunction!(scale_optional, m)?)?;
+    m.add_function(wrap_pyfunction!(set_level, m)?)?;
     m.add_function(wrap_pyfunction!(split, m)?)?;
     m.add_function(wrap_pyfunction!(stamp, m)?)?;
     m.add_function(wrap_pyfunction!(trim, m)?)?;

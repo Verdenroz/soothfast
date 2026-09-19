@@ -521,6 +521,21 @@ fn param_plan(param: &Param, plan: &BindingPlan) -> PlannedParam {
             },
             None,
         ),
+        Transfer::Handle {
+            mirrored: true,
+            nullable: true,
+            ..
+        } => {
+            let helper = format!("{}_from_symbol", types::snake(&class_name(&param.ty)));
+            (
+                "Option<::magnus::Symbol>".into(),
+                Some(format!(
+                    "let {name} = {name}.map(|v| {helper}(ruby, v)).transpose()?;"
+                )),
+                by_ownership(name, param.ownership),
+                None,
+            )
+        }
         Transfer::Handle { mirrored: true, .. } => {
             let helper = format!("{}_from_symbol", types::snake(&class_name(&param.ty)));
             (

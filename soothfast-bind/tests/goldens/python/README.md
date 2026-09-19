@@ -46,7 +46,10 @@ import acme_core
 - `mutate_counter`
 - `normalize`
 - `peak_level`
+- `peek`
 - `scale_into`
+- `scale_optional`
+- `set_level`
 - `split`
 - `stamp`
 - `trim`

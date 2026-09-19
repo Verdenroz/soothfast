@@ -146,6 +146,16 @@ pub fn scale_into(values: &[f64], factor: f64, out: &mut [f64]) -> () {
     ::acme::scale_into(values, factor, out)
 }
 
+#[wasm_bindgen(js_name = scaleOptional)]
+pub fn scale_optional(factor: Option<f64>) -> f64 {
+    ::acme::scale_optional(factor)
+}
+
+#[wasm_bindgen(js_name = setLevel)]
+pub fn set_level(level: Option<Level>) -> bool {
+    ::acme::set_level(level.map(::std::convert::Into::into))
+}
+
 #[wasm_bindgen]
 pub fn split(src: &[f64], lo: &mut [f64], hi: &mut [f64]) -> () {
     ::acme::split(src, lo, hi)

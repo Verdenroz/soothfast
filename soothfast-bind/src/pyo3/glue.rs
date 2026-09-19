@@ -512,10 +512,34 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
     let name = py_ident(&param.name);
     let class = match &param.ty {
         Ty::Class(c) => c.clone(),
+        Ty::Optional(inner) => match &**inner {
+            Ty::Class(c) => c.clone(),
+            _ => String::new(),
+        },
         _ => String::new(),
     };
     match Transfer::of(param, plan) {
+        Transfer::Handle {
+            mirrored: true,
+            nullable: true,
+            ..
+        } => (
+            format!("Option<{class}>"),
+            format!("{name}.map(::std::convert::Into::into)"),
+        ),
         Transfer::Handle { mirrored: true, .. } => (class, mirrored_arg(&name, param.ownership)),
+        Transfer::Handle {
+            writable: true,
+            nullable: true,
+            ..
+        } => (
+            format!("Option<PyRefMut<'_, {class}>>"),
+            format!("{name}.as_deref_mut().map(|v| &mut v.0)"),
+        ),
+        Transfer::Handle { nullable: true, .. } => (
+            format!("Option<PyRef<'_, {class}>>"),
+            format!("{name}.as_deref().map(|v| &v.0)"),
+        ),
         Transfer::Handle { writable: true, .. } => {
             (format!("PyRefMut<'_, {class}>"), format!("&mut {name}.0"))
         }

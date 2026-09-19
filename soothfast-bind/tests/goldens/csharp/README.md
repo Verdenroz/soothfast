@@ -68,6 +68,9 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - acme::index_all: `HashMap<String, u32>` cannot cross into csharp: C has no map type; return a sequence of pairs, or an exported type with accessors
 - acme::maybe_ratio: `Option<f64>` cannot cross into csharp: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; take it by reference, or add a method returning what the caller needs
+- acme::peek: `Option<Counter>` cannot cross into csharp: an optional exported type is taken only as a return; take it by reference instead
+- acme::scale_optional: `Option<f64>` cannot cross into csharp: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
+- acme::set_level: `Option<Level>` cannot cross into csharp: an optional exported type is taken only as a return; take it by reference instead
 - acme::trim: `Option<Vec<f64>>` cannot cross into csharp: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 
 ## C#
