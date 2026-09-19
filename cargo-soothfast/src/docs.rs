@@ -438,7 +438,8 @@ fn export_fingerprints(
         return Ok(None);
     };
     let dir = invoke::pkg_dir(pkg).map_err(|e| e.to_string())?;
-    if !marked && crate::bind_config::load(&dir)?.entries.is_empty() {
+    let cfg = crate::bind_config::load(&dir)?;
+    if !marked && cfg.entries.is_empty() {
         return Ok(None);
     }
     let mut common = CommonArgs {
@@ -446,7 +447,8 @@ fn export_fingerprints(
         ..CommonArgs::default()
     };
     common.features.clone_from(&a.features);
-    let (surface, _) = crate::bind::exported_surface(pkg, &common)?;
+    let table = crate::bind::type_table(&cfg)?;
+    let (surface, _) = crate::bind::exported_surface(pkg, &common, &table)?;
     Ok(Some((
         format!("{}::", pkg.replace('-', "_")),
         surface.fingerprints(),

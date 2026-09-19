@@ -4,6 +4,7 @@
 //! with the site, spec and SDK engines, so each parser reads only its own
 //! tables.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use soothfast_bind::BindKind;
@@ -39,6 +40,9 @@ pub struct BindEntry {
     /// `bind bench` script, relative to the package root: the same root
     /// `out` is relative to.
     pub bench: Option<String>,
+    /// `[bind.types]`: a foreign type's canonical path, and how it crosses.
+    /// The only mapping so far is `"str"`.
+    pub types: BTreeMap<String, String>,
 }
 
 impl BindEntry {
@@ -56,6 +60,7 @@ impl BindEntry {
             targets: Vec::new(),
             interpreters: Vec::new(),
             bench: None,
+            types: BTreeMap::new(),
         }
     }
 
@@ -87,22 +92,32 @@ pub fn load(dir: &Path) -> Result<BindConfig, String> {
 /// Parse the `[[bind]]` sections of a `soothfast.toml`.
 pub fn parse(text: &str) -> Result<BindConfig, String> {
     let mut cfg = BindConfig::default();
-    let mut in_bind = false;
+    let mut section = Section::Other;
 
     for (lineno, line) in logical_lines(text) {
         let line = line.as_str();
         if let Some(inner) = line.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
-            in_bind = inner.trim() == "bind";
-            if in_bind {
+            section = Section::Other;
+            if inner.trim() == "bind" {
                 cfg.entries.push(BindEntry::new());
+                section = Section::Bind;
             }
             continue;
         }
-        if line.starts_with('[') {
-            in_bind = false;
+        if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            // `[bind.types]` is a sub-table of the preceding [[bind]] entry.
+            section = match inner.trim() {
+                "bind.types" if cfg.entries.is_empty() => {
+                    return Err(format!(
+                        "line {lineno}: [bind.types] before any [[bind]] entry"
+                    ));
+                }
+                "bind.types" => Section::Types,
+                _ => Section::Other,
+            };
             continue;
         }
-        if !in_bind {
+        if section == Section::Other {
             continue;
         }
 
@@ -114,7 +129,18 @@ pub fn parse(text: &str) -> Result<BindConfig, String> {
             .entries
             .last_mut()
             .ok_or_else(|| format!("line {lineno}: key outside [[bind]]"))?;
-        set(entry, key.trim(), value).map_err(|e| format!("line {lineno}: {e}"))?;
+        match section {
+            Section::Bind => {
+                set(entry, key.trim(), value).map_err(|e| format!("line {lineno}: {e}"))?
+            }
+            Section::Types => {
+                let path = key.trim().trim_matches('"').to_string();
+                let mapping =
+                    type_mapping(&path, value).map_err(|e| format!("line {lineno}: {e}"))?;
+                entry.types.insert(path, mapping);
+            }
+            Section::Other => {}
+        }
     }
 
     for (i, e) in cfg.entries.iter().enumerate() {
@@ -125,6 +151,24 @@ pub fn parse(text: &str) -> Result<BindConfig, String> {
         }
     }
     Ok(cfg)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Bind,
+    Types,
+    Other,
+}
+
+/// One `[bind.types]` value. Only `"str"` exists so far: the type crosses
+/// as a string through `Display` on the way out and `FromStr` on the way in.
+fn type_mapping(path: &str, value: TomlValue) -> Result<String, String> {
+    match value {
+        TomlValue::Str(s) if s == "str" => Ok(s),
+        _ => Err(format!(
+            "[bind.types] entry {path:?}: only \"str\" (Display out, FromStr in) is supported"
+        )),
+    }
 }
 
 fn set(entry: &mut BindEntry, key: &str, value: TomlValue) -> Result<(), String> {
@@ -171,6 +215,43 @@ mod tests {
         assert_eq!(cfg.entries[0].interpreters, vec!["python3", "python3.14t"]);
         let bad = "[[bind]]\nlang = \"python\"\nout = \"b/py\"\npackage = \"p\"\ninterpreters = \"python3\"\n";
         assert!(parse(bad).is_err());
+    }
+
+    #[test]
+    fn a_types_table_maps_a_path_to_str() {
+        let cfg = parse(
+            "[[bind]]\nout = \"bindings/python\"\npackage = \"acme-core\"\n\n\
+             [bind.types]\n\"chrono::DateTime\" = \"str\"\nUuid = \"str\"\n",
+        )
+        .expect("parses");
+        let types = &cfg.entries[0].types;
+        assert_eq!(
+            types.get("chrono::DateTime").map(String::as_str),
+            Some("str")
+        );
+        assert_eq!(types.get("Uuid").map(String::as_str), Some("str"));
+    }
+
+    #[test]
+    fn a_types_value_other_than_str_is_an_error_naming_the_path() {
+        let err = parse(
+            "[[bind]]\nout = \"x\"\npackage = \"x\"\n\n[bind.types]\n\"chrono::DateTime\" = \"int\"\n",
+        )
+        .expect_err("rejects");
+        assert!(err.contains("\"chrono::DateTime\""), "{err}");
+        assert!(
+            err.contains("only \"str\" (Display out, FromStr in) is supported"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_types_table_before_any_entry_is_an_error() {
+        let err = parse("[bind.types]\n\"chrono::DateTime\" = \"str\"\n").expect_err("rejects");
+        assert!(
+            err.contains("[bind.types] before any [[bind]] entry"),
+            "{err}"
+        );
     }
 
     #[test]

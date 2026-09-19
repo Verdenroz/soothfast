@@ -195,6 +195,32 @@ cdylib under `runtimes/<rid>/native/` (the layout `Native.cs`'s own
 resolver probes) before running `dotnet build`; a missing `dotnet` skips
 only that step, the same posture as a missing `javac`.
 
+## Mapping a foreign type
+
+A type from another crate has no fields rustdoc can read, so a call that
+takes or returns one is reported as a gap naming it. `[bind.types]`, a
+sub-table of the `[[bind]]` entry above it, says how such a type crosses:
+
+```toml
+[[bind]]
+lang = "python"
+out = "bindings/python"
+package = "finance-query"
+
+[bind.types]
+"chrono::DateTime" = "str"
+```
+
+`"str"` is the one mapping so far: the type crosses as a string, rendered
+through `Display` on the way out and parsed through `FromStr` on the way
+in, so a parameter that fails to parse raises `ValueError` with the parse
+error's own message. It converts in Python only for now; every other
+backend reports a call or field mentioning a mapped type as unsupported.
+The lookup falls back to the bare type name, so `"DateTime" = "str"`
+matches `chrono::DateTime` too, and a type reached through a re-export
+matches its canonical spelling. Every `[[bind]]` entry's table feeds one
+walk of the surface, so the same path may not be mapped two ways.
+
 ## What the generated code looks like
 
 Every exported type becomes a wrapper defined in the glue crate. That is not

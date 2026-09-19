@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use soothfast_bind::foreign::TypeTable;
-use soothfast_bind::model::Surface;
+use soothfast_bind::model::{Surface, Ty};
 use soothfast_bind::{BindFileSet, BindKind, BindOptions, compat};
 
 use crate::bind_bench;
@@ -113,13 +113,15 @@ fn run_gate(args: &[String]) -> i32 {
 
 fn gate(pkg: &str, common: &CommonArgs, base: &str, allow_breaking: bool) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
-    if bind_config::load(&meta.dir)?.entries.is_empty() {
+    let cfg = bind_config::load(&meta.dir)?;
+    if cfg.entries.is_empty() {
         println!("bind gate: no [[bind]] entry: nothing to gate");
         return Ok(0);
     }
-    let (head, _) = exported_surface(pkg, common)?;
+    let table = type_table(&cfg)?;
+    let (head, _) = exported_surface(pkg, common, &table)?;
     let (base_surface, _) =
-        invoke::with_merge_base_worktree(base, |wt| base_surface_in(pkg, common, wt))?;
+        invoke::with_merge_base_worktree(base, |wt| base_surface_in(pkg, common, wt, &table))?;
 
     let changes = compat::diff(&base_surface, &head);
     if changes.is_empty() {
@@ -151,6 +153,7 @@ fn base_surface_in(
     pkg: &str,
     common: &CommonArgs,
     wt: &Path,
+    table: &TypeTable,
 ) -> Result<(Surface, Vec<soothfast_bind::gap::Gap>), String> {
     // A package added by this very branch has no surface at the merge base,
     // and asking cargo about one it has never heard of fails in a way that
@@ -163,7 +166,7 @@ fn base_surface_in(
         return Ok((Surface::default(), Vec::new()));
     }
     let doc = spec_gen::rustdoc_for(pkg, common, Some(wt))?;
-    soothfast_bind::walk::surface(&doc, &TypeTable::with_defaults(), &records)
+    soothfast_bind::walk::surface(&doc, table, &records)
 }
 
 /// Where the package sits inside a worktree, by the path it holds in this
@@ -239,7 +242,7 @@ fn build_all(pkg: &str, common: &CommonArgs, meta: &invoke::PkgMeta) -> Result<V
         return Ok(Vec::new());
     }
 
-    let (surface, gaps) = exported_surface(pkg, common)?;
+    let (surface, gaps) = exported_surface(pkg, common, &type_table(&cfg)?)?;
     let mut out = Vec::new();
     for entry in cfg.entries {
         let opts = bind_options(&entry, pkg, meta);
@@ -249,10 +252,31 @@ fn build_all(pkg: &str, common: &CommonArgs, meta: &invoke::PkgMeta) -> Result<V
     Ok(out)
 }
 
+/// One `[bind.types]` table for the walk: the union of every entry's, since
+/// the surface is read once for all of them.
+pub(crate) fn type_table(cfg: &bind_config::BindConfig) -> Result<TypeTable, String> {
+    let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut table = TypeTable::with_defaults();
+    for entry in &cfg.entries {
+        for (path, mapping) in &entry.types {
+            if let Some(other) = seen.insert(path, mapping)
+                && other != mapping
+            {
+                return Err(format!(
+                    "[bind.types] maps {path:?} as {other:?} in one entry and {mapping:?} in another"
+                ));
+            }
+            table.insert(path, Ty::Text(path.clone()));
+        }
+    }
+    Ok(table)
+}
+
 /// Discover the exported items, then read their shapes out of rustdoc.
 pub(crate) fn exported_surface(
     pkg: &str,
     common: &CommonArgs,
+    table: &TypeTable,
 ) -> Result<(Surface, Vec<soothfast_bind::gap::Gap>), String> {
     let records = spec_gen::discover_exports(common, None)?;
     if records.is_empty() {
@@ -266,7 +290,7 @@ pub(crate) fn exported_surface(
         ));
     }
     let doc = spec_gen::rustdoc_for(pkg, common, None)?;
-    soothfast_bind::walk::surface(&doc, &TypeTable::with_defaults(), &records)
+    soothfast_bind::walk::surface(&doc, table, &records)
 }
 
 fn bind_options(entry: &BindEntry, pkg: &str, meta: &invoke::PkgMeta) -> BindOptions {
@@ -777,6 +801,28 @@ mod tests {
         assert_eq!(
             manifest_dir(Path::new("/out"), &files),
             Some(PathBuf::from("/out/ext/acme_core"))
+        );
+    }
+
+    #[test]
+    fn the_type_table_is_the_union_of_every_entry_and_rejects_a_conflict() {
+        let cfg = bind_config::parse(
+            "[[bind]]\nout = \"a\"\npackage = \"a\"\n[bind.types]\n\"x::A\" = \"str\"\n\n\
+             [[bind]]\nout = \"b\"\npackage = \"b\"\n[bind.types]\n\"y::B\" = \"str\"\n",
+        )
+        .expect("parses");
+        let table = type_table(&cfg).expect("builds");
+        assert_eq!(table.lookup("x::A"), Some(&Ty::Text("x::A".into())));
+        assert_eq!(table.lookup("y::B"), Some(&Ty::Text("y::B".into())));
+
+        let mut conflicting = cfg.clone();
+        conflicting.entries[1]
+            .types
+            .insert("x::A".into(), "other".into());
+        let err = type_table(&conflicting).expect_err("conflicts");
+        assert!(
+            err.contains("maps \"x::A\" as \"str\" in one entry and \"other\" in another"),
+            "{err}"
         );
     }
 
