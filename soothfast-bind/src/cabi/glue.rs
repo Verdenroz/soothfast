@@ -210,6 +210,15 @@ impl ::std::convert::From<{inner}> for {name} {{
     }}
 }}
 
+// A mirrored enum has no derived `Clone`; a field getter converts through
+// this one instead of cloning an owned copy just to consume it.
+impl ::std::convert::From<&{inner}> for {name} {{
+    fn from(value: &{inner}) -> Self {{
+        match value {{
+{}        }}
+    }}
+}}
+
 impl ::std::convert::From<{name}> for {inner} {{
     fn from(value: {name}) -> Self {{
         match value {{
@@ -219,12 +228,14 @@ impl ::std::convert::From<{name}> for {inner} {{
 ",
         class.name,
         arms(&inner, &name),
+        arms(&inner, &name),
         arms(&name, &inner),
     )
 }
 
-/// A field read, which clones: an exported type held by a field never
-/// reaches here, because the plan reports it instead.
+/// A field read, which clones except for a mirrored enum (read by reference
+/// instead, since it has no derived `Clone`): an exported handle type held
+/// by a field never reaches here, because the plan reports it instead.
 fn getter(accessor: &Accessor, class: &Class, plan: &BindingPlan, opts: &BindOptions) -> String {
     let module = &opts.module;
     let handle = handle_rust(&class.name, module);
@@ -233,7 +244,11 @@ fn getter(accessor: &Accessor, class: &Class, plan: &BindingPlan, opts: &BindOpt
         types::handle_c(&class.name, module),
         types::snake(&accessor.field)
     );
-    let read = format!("(unsafe {{ &*handle }}).0.{}.clone()", accessor.field);
+    let field = format!("(unsafe {{ &*handle }}).0.{}", accessor.field);
+    let read = match &accessor.ty {
+        Ty::Class(name) if plan.is_mirrored(name) => format!("(&{field})"),
+        _ => format!("{field}.clone()"),
+    };
     format!(
         "
 /// Read `{}` off a `{}`.

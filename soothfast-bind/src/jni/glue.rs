@@ -118,7 +118,7 @@ fn enum_conversions(class: &Class, krate: &str, plan: &BindingPlan) -> String {
         }
         let _ = write!(
             out,
-            "\nfn {name}_to_ordinal(value: {inner}) -> i32 {{\n    match value {{\n{to_arms}    }}\n}}\n"
+            "\nfn {name}_to_ordinal(value: &{inner}) -> i32 {{\n    match value {{\n{to_arms}    }}\n}}\n"
         );
     }
     if needs_from_ordinal(&class.name, plan) {
@@ -163,8 +163,9 @@ fn free_shim(class: &Class, krate: &str, opts: &BindOptions) -> String {
     )
 }
 
-/// A field read, which clones: an exported type held by a field never
-/// reaches here, because the plan reports it instead.
+/// A field read, which clones except for a mirrored enum (read by reference
+/// instead, since it has no derived `Clone`): an exported handle type held
+/// by a field never reaches here, because the plan reports it instead.
 fn getter(
     accessor: &Accessor,
     class: &Class,
@@ -181,16 +182,29 @@ fn getter(
     } else {
         format!(" -> {native_ty}")
     };
-    let read = format!(
-        "(unsafe {{ &*(ptr as *const {inner}) }}).{}.clone()",
+    let field = format!(
+        "(unsafe {{ &*(ptr as *const {inner}) }}).{}",
         accessor.field
     );
     let needs_env = ret_needs_env(&accessor.ty);
     let env_param = env_param(needs_env, needs_env);
-    let zero = zero_value(&accessor.ty, plan);
+    // A mirrored plain enum has no derived `Clone`; reading it as `&self`
+    // matches its reference straight into the ordinal instead of cloning an
+    // owned copy just to consume it.
+    let body = match &accessor.ty {
+        Ty::Class(name) if plan.is_mirrored(name) => {
+            format!("{}_to_ordinal(&{field})", types::snake(name))
+        }
+        _ => {
+            let zero = zero_value(&accessor.ty, plan);
+            format!(
+                "let __out = {field}.clone();\n    {}",
+                returned("__out", &accessor.ty, plan, &zero)
+            )
+        }
+    };
     format!(
-        "\n#[unsafe(no_mangle)]\npub extern \"system\" fn {symbol}<'local>(\n    {env_param},\n    _class: ::jni::objects::JClass<'local>,\n    ptr: i64,\n){ret} {{\n    let __out = {read};\n    {}\n}}\n",
-        returned("__out", &accessor.ty, plan, &zero),
+        "\n#[unsafe(no_mangle)]\npub extern \"system\" fn {symbol}<'local>(\n    {env_param},\n    _class: ::jni::objects::JClass<'local>,\n    ptr: i64,\n){ret} {{\n    {body}\n}}\n"
     )
 }
 
@@ -720,7 +734,7 @@ fn returned(expr: &str, ty: &Ty, plan: &BindingPlan, zero: &str) -> String {
             err_arm(zero),
         ),
         Ty::Class(name) if plan.is_mirrored(name) => {
-            format!("{}_to_ordinal({expr})", types::snake(name))
+            format!("{}_to_ordinal(&{expr})", types::snake(name))
         }
         Ty::Class(_) => format!("Box::into_raw(Box::new({expr})) as i64"),
         Ty::Optional(inner) => match &**inner {

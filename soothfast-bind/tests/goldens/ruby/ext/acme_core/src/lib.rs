@@ -24,7 +24,7 @@ fn level_from_symbol(
     }
 }
 
-fn level_to_symbol(ruby: &::magnus::Ruby, value: ::acme::Level) -> ::magnus::Symbol {
+fn level_to_symbol(ruby: &::magnus::Ruby, value: &::acme::Level) -> ::magnus::Symbol {
     match value {
         ::acme::Level::Low => ruby.to_symbol("low"),
         ::acme::Level::High => ruby.to_symbol("high"),
@@ -129,7 +129,7 @@ fn is_high(ruby: &::magnus::Ruby, level: ::magnus::Symbol) -> Result<bool, ::mag
 }
 
 fn levels(ruby: &::magnus::Ruby) -> Vec<::magnus::Symbol> {
-    (::acme::levels()).into_iter().map(|value| level_to_symbol(ruby, value)).collect()
+    (::acme::levels()).into_iter().map(|value| level_to_symbol(ruby, &value)).collect()
 }
 
 fn maybe_ratio(value: f64) -> Option<f64> {
@@ -146,7 +146,7 @@ fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
 }
 
 fn peak_level(ruby: &::magnus::Ruby, values: Vec<f64>) -> ::magnus::Symbol {
-    level_to_symbol(ruby, ::acme::peak_level(&values))
+    level_to_symbol(ruby, &::acme::peak_level(&values))
 }
 
 fn sample_ids(ids: Vec<usize>) -> Vec<usize> {

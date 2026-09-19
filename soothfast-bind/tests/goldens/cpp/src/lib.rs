@@ -272,6 +272,17 @@ impl ::std::convert::From<::acme::Level> for CoreLevel {
     }
 }
 
+// A mirrored enum has no derived `Clone`; a field getter converts through
+// this one instead of cloning an owned copy just to consume it.
+impl ::std::convert::From<&::acme::Level> for CoreLevel {
+    fn from(value: &::acme::Level) -> Self {
+        match value {
+            ::acme::Level::Low => CoreLevel::Low,
+            ::acme::Level::High => CoreLevel::High,
+        }
+    }
+}
+
 impl ::std::convert::From<CoreLevel> for ::acme::Level {
     fn from(value: CoreLevel) -> Self {
         match value {

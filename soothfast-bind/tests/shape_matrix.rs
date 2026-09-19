@@ -149,12 +149,15 @@ const SHAPES: &[&str] = &[
     "shapes::option_flag_param",
     "shapes::flag_ref_param",
     "shapes::flag_list_ret",
+    "shapes::flag_list_param",
+    "shapes::handle_list_param",
     "shapes::usize_list_probe",
     "shapes::option_list_probe",
     "shapes::bool_list_probe",
     "shapes::option_f64_param",
     "shapes::digest_mut",
     "Wrap.inner",
+    "Wrap.flag",
 ];
 
 fn surface() -> Surface {
@@ -166,10 +169,10 @@ fn surface() -> Surface {
     );
     let wrap = ty(
         "Wrap",
-        TypeKind::Struct(vec![field(
-            "inner",
-            Ty::Optional(Box::new(Ty::Class("Handle".into()))),
-        )]),
+        TypeKind::Struct(vec![
+            field("inner", Ty::Optional(Box::new(Ty::Class("Handle".into())))),
+            field("flag", Ty::Class("Flag".into())),
+        ]),
     );
 
     let handle_ty = Ty::Class("Handle".into());
@@ -228,6 +231,16 @@ fn surface() -> Surface {
             "shapes::flag_list_ret",
             Vec::new(),
             Ty::List(Box::new(flag_ty.clone())),
+        ),
+        free(
+            "shapes::flag_list_param",
+            vec![param("flags", Ty::List(Box::new(flag_ty.clone())))],
+            Ty::Bool,
+        ),
+        free(
+            "shapes::handle_list_param",
+            vec![param("handles", Ty::List(Box::new(handle_ty.clone())))],
+            Ty::Bool,
         ),
         free(
             "shapes::usize_list_probe",

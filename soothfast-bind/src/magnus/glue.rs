@@ -82,7 +82,7 @@ fn enum_conversions(class: &Class, krate: &str) -> String {
         );
     }
     format!(
-        "\nfn {name}_from_symbol(\n    ruby: &::magnus::Ruby,\n    value: ::magnus::Symbol,\n) -> Result<{inner}, ::magnus::Error> {{\n    match value.name()?.as_ref() {{\n{from_arms}        other => Err(::magnus::Error::new(\n            ruby.exception_arg_error(),\n            format!(\"invalid {}: :{{other}}\"),\n        )),\n    }}\n}}\n\nfn {name}_to_symbol(ruby: &::magnus::Ruby, value: {inner}) -> ::magnus::Symbol {{\n    match value {{\n{to_arms}    }}\n}}\n",
+        "\nfn {name}_from_symbol(\n    ruby: &::magnus::Ruby,\n    value: ::magnus::Symbol,\n) -> Result<{inner}, ::magnus::Error> {{\n    match value.name()?.as_ref() {{\n{from_arms}        other => Err(::magnus::Error::new(\n            ruby.exception_arg_error(),\n            format!(\"invalid {}: :{{other}}\"),\n        )),\n    }}\n}}\n\nfn {name}_to_symbol(ruby: &::magnus::Ruby, value: &{inner}) -> ::magnus::Symbol {{\n    match value {{\n{to_arms}    }}\n}}\n",
         class.name,
     )
 }
@@ -147,14 +147,17 @@ fn constructor(ctor: &Function, krate: &str, plan: &BindingPlan) -> String {
     )
 }
 
-/// A getter clones, which every bound field type supports: an exported type
-/// held by a field never reaches here (the plan reports it instead). The
-/// borrow is fallible for the same reason a method's is: an aliasing call
+/// A getter clones, except a mirrored enum: it has no derived `Clone`, and
+/// `wrap_return` borrows it (`&expr`) into `_to_symbol` instead. The borrow
+/// is fallible for the same reason a method's is: an aliasing call
 /// elsewhere in the same statement could already hold it.
 fn getter(accessor: &Accessor, plan: &BindingPlan) -> String {
     let name = rb_ident(&accessor.field);
     let field = &accessor.field;
-    let expr = format!("__recv.{field}.clone()");
+    let expr = match &accessor.ty {
+        Ty::Class(class) if plan.is_mirrored(class) => format!("__recv.{field}"),
+        _ => format!("__recv.{field}.clone()"),
+    };
     format!(
         "{}    fn {name}({}) -> Result<{}, ::magnus::Error> {{\n        {}\n        Ok({})\n    }}\n",
         docs(accessor.doc.as_deref(), "    "),
@@ -391,7 +394,7 @@ fn fallible(function: &Function, plan: &BindingPlan) -> bool {
         || function.params.iter().any(|p| match Transfer::of(p, plan) {
             Transfer::Handle { .. } => true,
             Transfer::Buffer { writable: true, .. } => !matches!(p.ty, Ty::Bytes),
-            _ => false,
+            _ => list_mirrored_class(&p.ty, plan).is_some(),
         })
 }
 
@@ -404,10 +407,10 @@ fn fallible(function: &Function, plan: &BindingPlan) -> bool {
 fn needs_ruby(function: &Function, plan: &BindingPlan) -> bool {
     function.throws.is_some()
         || function.receiver != Receiver::None
-        || function
-            .params
-            .iter()
-            .any(|p| matches!(Transfer::of(p, plan), Transfer::Handle { .. }))
+        || function.params.iter().any(|p| {
+            matches!(Transfer::of(p, plan), Transfer::Handle { .. })
+                || list_mirrored_class(&p.ty, plan).is_some()
+        })
         || ty_has_mirrored_enum(&function.ret, plan)
 }
 
@@ -438,7 +441,7 @@ fn wrap_return(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
             mapped => format!("({expr}).into_iter().map(|value| {mapped}).collect()"),
         },
         Ty::Class(name) if plan.is_mirrored(name) => {
-            format!("{}_to_symbol(ruby, {expr})", types::snake(name))
+            format!("{}_to_symbol(ruby, &{expr})", types::snake(name))
         }
         Ty::Class(name) => format!("{name}(::std::cell::RefCell::new({expr}))"),
         Ty::Bytes => format!("::magnus::RString::from_slice(&{expr})"),
@@ -603,12 +606,36 @@ fn param_plan(param: &Param, plan: &BindingPlan) -> PlannedParam {
             by_ownership(name, param.ownership),
             None,
         ),
+        _ if list_mirrored_class(&param.ty, plan).is_some() => {
+            let class_name = list_mirrored_class(&param.ty, plan).unwrap();
+            let helper = format!("{}_from_symbol", types::snake(class_name));
+            (
+                "Vec<::magnus::Symbol>".into(),
+                Some(format!(
+                    "let {name} = {name}.into_iter().map(|v| {helper}(ruby, v)).collect::<Result<Vec<_>, _>>()?;"
+                )),
+                by_ownership(name, param.ownership),
+                None,
+            )
+        }
         _ => (
             signature_ty(&param.ty),
             None,
             by_ownership(name, param.ownership),
             None,
         ),
+    }
+}
+
+/// The mirrored class a `Vec<Class>` parameter carries element-wise, if any:
+/// a non-mirrored one is already gapped in plan/mod.rs before this runs.
+fn list_mirrored_class<'a>(ty: &'a Ty, plan: &BindingPlan) -> Option<&'a str> {
+    match ty {
+        Ty::List(inner) => match &**inner {
+            Ty::Class(name) if plan.is_mirrored(name) => Some(name),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

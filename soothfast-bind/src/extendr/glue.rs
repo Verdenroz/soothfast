@@ -88,11 +88,20 @@ fn class_block(class: &Class, krate: &str, plan: &BindingPlan) -> String {
 }
 
 /// A field read. An exported type held by a field never reaches here,
-/// because the plan reports it instead, the same as every other backend.
+/// because the plan reports it instead, the same as every other backend. A
+/// mirrored enum has no derived `Clone`, so it reads by reference instead;
+/// `enum_to_str`'s match arms bind nothing, so they read the same way
+/// whether `expr` names an owned value or a reference to one.
 fn getter(accessor: &Accessor, krate: &str, plan: &BindingPlan) -> String {
     let name = &accessor.field;
     let ret = ret_ty(&accessor.ty, plan);
-    let read = returned(&format!("self.0.{name}.clone()"), &accessor.ty, krate, plan);
+    let field = match &accessor.ty {
+        Ty::Class(class) if mirrored_class(class, plan).is_some() => {
+            format!("&self.0.{name}")
+        }
+        _ => format!("self.0.{name}.clone()"),
+    };
+    let read = returned(&field, &accessor.ty, krate, plan);
     format!("    fn {name}(&self) -> {ret} {{\n        {read}\n    }}\n\n")
 }
 
@@ -487,8 +496,16 @@ fn returned(expr: &str, ty: &Ty, krate: &str, plan: &BindingPlan) -> String {
         Ty::List(inner) if types::checked_int(inner).is_some() => {
             format!("{expr}.into_iter().map(|v| v as f64).collect()")
         }
+        ty if widened_scalar(ty) => format!("{expr} as {}", types::native_scalar(ty).unwrap()),
         _ => expr.to_string(),
     }
+}
+
+/// Whether extendr's own scalar derive marshals this type as a wider native
+/// one (I8/I16/U8/U16 as its i32, F32 as its f64): the value needs widening
+/// on the way out and narrowing back on the way in.
+fn widened_scalar(ty: &Ty) -> bool {
+    matches!(ty, Ty::I8 | Ty::I16 | Ty::U8 | Ty::U16 | Ty::F32)
 }
 
 fn enum_to_str(expr: &str, class: &Class, krate: &str) -> String {
@@ -560,6 +577,7 @@ fn call_arg(param: &Param, plan: &BindingPlan) -> String {
         Transfer::Buffer {
             element, borrowed, ..
         } if borrowed && types::checked_int(&element.into()).is_some() => format!("&{name}"),
+        _ if widened_scalar(&param.ty) => format!("{name} as {}", param.ty.render()),
         _ => name.clone(),
     }
 }

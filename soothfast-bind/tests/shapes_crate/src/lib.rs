@@ -28,7 +28,9 @@ pub fn handle_list_ret() -> Vec<Handle> {
     vec![Handle::new(1), Handle::new(2)]
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Deliberately not `Clone`/`Copy`: a backend's field getter must read this
+/// by reference rather than assume it can clone or move a copy out.
+#[derive(PartialEq, Eq)]
 pub enum Flag {
     A,
     B,
@@ -56,6 +58,14 @@ pub fn flag_list_ret() -> Vec<Flag> {
     vec![Flag::A, Flag::B]
 }
 
+pub fn flag_list_param(flags: Vec<Flag>) -> bool {
+    !flags.is_empty()
+}
+
+pub fn handle_list_param(handles: Vec<Handle>) -> bool {
+    !handles.is_empty()
+}
+
 pub struct Bag {
     pub values: Vec<f64>,
 }
@@ -76,11 +86,15 @@ impl Default for Bag {
 /// nothing here needs `Handle` to be `Clone`.
 pub struct Wrap {
     pub inner: Option<Handle>,
+    pub flag: Flag,
 }
 
 impl Wrap {
     pub fn new() -> Self {
-        Wrap { inner: None }
+        Wrap {
+            inner: None,
+            flag: Flag::A,
+        }
     }
 }
 

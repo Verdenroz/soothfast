@@ -171,6 +171,15 @@ impl ::std::convert::From<{inner}> for {name} {{
     }}
 }}
 
+// A mirrored enum has no derived `Clone`; a field getter converts through
+// this one instead of cloning an owned copy just to consume it.
+impl ::std::convert::From<&{inner}> for {name} {{
+    fn from(value: &{inner}) -> Self {{
+        match value {{
+{}        }}
+    }}
+}}
+
 impl ::std::convert::From<{name}> for {inner} {{
     fn from(value: {name}) -> Self {{
         match value {{
@@ -183,6 +192,7 @@ impl ::std::convert::From<{name}> for {inner} {{
             .iter()
             .map(|n| format!("    {n},\n"))
             .collect::<String>(),
+        arms(&inner, name),
         arms(&inner, name),
         arms(name, &inner),
     )
@@ -209,12 +219,16 @@ fn constructor(ctor: &Function, krate: &str, plan: &BindingPlan) -> String {
 
 fn getter(accessor: &Accessor, plan: &BindingPlan) -> String {
     let field = &accessor.field;
+    let read = match &accessor.ty {
+        Ty::Class(class) if plan.is_mirrored(class) => format!("(&self.0.{field})"),
+        _ => format!("self.0.{field}.clone()"),
+    };
     format!(
         "{}    #[napi(getter{})]\n    pub fn {field}(&self) -> {} {{\n        {}\n    }}\n",
         docs(accessor.doc.as_deref(), "    "),
         rename(field).map(|r| format!(", {r}")).unwrap_or_default(),
         signature_ty(&accessor.ty),
-        out(&format!("self.0.{field}.clone()"), &accessor.ty, plan),
+        out(&read, &accessor.ty, plan),
     )
 }
 
@@ -607,8 +621,27 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
                 let (prelude, arg) = convert_scalar(name, &param.ty, plan);
                 return ("BigInt".into(), prelude, arg);
             }
+            if let Some(class_name) = list_mirrored_class(&param.ty, plan) {
+                return (
+                    format!("Vec<{class_name}>"),
+                    None,
+                    format!("{name}.into_iter().map(::std::convert::Into::into).collect()"),
+                );
+            }
             by_ownership()
         }
+    }
+}
+
+/// The mirrored class a `Vec<Class>` parameter carries element-wise, if any:
+/// a non-mirrored one is already gapped in plan/mod.rs before this runs.
+fn list_mirrored_class<'a>(ty: &'a Ty, plan: &BindingPlan) -> Option<&'a str> {
+    match ty {
+        Ty::List(inner) => match &**inner {
+            Ty::Class(name) if plan.is_mirrored(name) => Some(name),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

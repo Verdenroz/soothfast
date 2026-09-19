@@ -546,6 +546,12 @@ fn owned_handle_param_is_blocked(
                 Ty::Class(name) => Some(name),
                 _ => None,
             },
+            // A `Vec<Class>` is N owned handles; no backend has a pattern
+            // for extracting a list of them any more than it does for one.
+            Ty::List(inner) => match &**inner {
+                Ty::Class(name) => Some(name),
+                _ => None,
+            },
             _ => None,
         };
         if let Some(name) = owned_class

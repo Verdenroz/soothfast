@@ -6,7 +6,7 @@ fn __throw_unless_pending(env: &mut ::jni::JNIEnv, pending: bool, message: Strin
     }
 }
 
-fn level_to_ordinal(value: ::acme::Level) -> i32 {
+fn level_to_ordinal(value: &::acme::Level) -> i32 {
     match value {
         ::acme::Level::Low => 0,
         ::acme::Level::High => 1,
@@ -482,7 +482,7 @@ pub extern "system" fn Java_acme_core_Core_nativePeakLevel<'local>(
     let values_pin = result.unwrap_or_else(|_| unreachable!("checked above"));
     let __out = ::acme::peak_level(&values_pin);
     drop(values_pin);
-    level_to_ordinal(__out)
+    level_to_ordinal(&__out)
 }
 
 #[unsafe(no_mangle)]
