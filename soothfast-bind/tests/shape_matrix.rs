@@ -279,6 +279,7 @@ fn surface() -> Surface {
     Surface {
         fns,
         types: vec![handle, flag, bag, wrap],
+        errors: Vec::new(),
     }
 }
 

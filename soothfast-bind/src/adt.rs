@@ -6,7 +6,9 @@
 
 use serde_json::Value;
 
-use crate::model::{ExportRecord, ExportedType, Field, Ty, TypeKind, Variant, VariantFields};
+use crate::model::{
+    ErrorType, ExportRecord, ExportedType, Field, Ty, TypeKind, Variant, VariantFields,
+};
 use crate::resolve::Resolver;
 
 /// Read one struct or enum item against the metadata its annotation recorded.
@@ -34,6 +36,29 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
         clone: auto_trait(r, inner, "Clone") == Some(true),
         doc: record.summary.clone(),
         skip: record.skip.clone(),
+    }
+}
+
+/// Read the error type a call throws, from its own item. Its fields decide
+/// which attributes a raised error carries, so one the target cannot take is
+/// dropped there rather than reported as a gap.
+pub(crate) fn error_type(r: &mut Resolver, item: &Value, rust_path: String) -> ErrorType {
+    let name = item["name"].as_str().unwrap_or_default().to_string();
+    let before = r.gaps.len();
+    let variants = item["inner"]
+        .get("enum")
+        .map(|e| variants(r, &e["variants"], &rust_path));
+    r.gaps.truncate(before);
+    ErrorType {
+        name,
+        non_exhaustive: item["attrs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|a| a.as_str().is_some_and(|a| a.contains("non_exhaustive"))),
+        doc: summary(item),
+        variants,
+        rust_path,
     }
 }
 

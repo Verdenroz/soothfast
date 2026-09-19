@@ -332,11 +332,26 @@ impl ExportedType {
     }
 }
 
+/// An error type some exported call returns in a `Result`, exported or
+/// not: a language that raises a class per error needs its shape either way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ErrorType {
+    pub name: String,
+    /// The public path when the crate re-exports one, else the canonical.
+    pub rust_path: String,
+    /// `None` for a struct.
+    pub variants: Option<Vec<Variant>>,
+    pub non_exhaustive: bool,
+    pub doc: Option<String>,
+}
+
 /// Everything `#[soothfast::export]` declared in one package.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Surface {
     pub fns: Vec<ExportedFn>,
     pub types: Vec<ExportedType>,
+    /// Every error type a `fns` entry throws, each once, in first-thrown order.
+    pub errors: Vec<ErrorType>,
 }
 
 impl Surface {

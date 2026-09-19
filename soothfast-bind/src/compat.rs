@@ -96,6 +96,7 @@ mod tests {
         Surface {
             fns,
             types: Vec::new(),
+            errors: Vec::new(),
         }
     }
 

@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::foreign::TypeTable;
 use crate::gap::Gap;
-use crate::model::{ExportRecord, Surface};
+use crate::model::{ExportRecord, ExportedFn, Surface, Ty};
 use crate::resolve::Resolver;
 use crate::{adt, fn_sig};
 
@@ -31,7 +31,7 @@ pub fn surface(
         .filter(|r| is_type(r))
         .map(|r| r.id.clone())
         .collect();
-    let mut resolver = Resolver::new(doc, table, exported)?;
+    let mut resolver = Resolver::new(doc, table, exported.clone())?;
     let mut surface = Surface::default();
 
     for record in &records {
@@ -46,14 +46,18 @@ pub fn surface(
             "fn" => match resolver.find_by_path(&record.id) {
                 Some(item) => {
                     let item = item.clone();
-                    surface.fns.push(fn_sig::walk(&mut resolver, &item, record));
+                    let function = fn_sig::walk(&mut resolver, &item, record);
+                    note_error(&mut resolver, &mut surface, &exported, &function);
+                    surface.fns.push(function);
                 }
                 None => resolver.record(missing(record)),
             },
             "method" => match find_method(&resolver, &record.id) {
                 Some(item) => {
                     let item = item.clone();
-                    surface.fns.push(fn_sig::walk(&mut resolver, &item, record));
+                    let function = fn_sig::walk(&mut resolver, &item, record);
+                    note_error(&mut resolver, &mut surface, &exported, &function);
+                    surface.fns.push(function);
                 }
                 None => resolver.record(missing(record)),
             },
@@ -62,6 +66,39 @@ pub fn surface(
     }
 
     Ok((surface, resolver.gaps))
+}
+
+/// The error type a call throws, read once per distinct type. A `String`
+/// error has no shape to read, and a type outside the document (another
+/// crate's) none the document can give.
+fn note_error(
+    resolver: &mut Resolver,
+    surface: &mut Surface,
+    exported: &BTreeSet<String>,
+    function: &ExportedFn,
+) {
+    let canonical = match &function.throws {
+        Some(Ty::Opaque(path)) => path.clone(),
+        Some(Ty::Class(name)) => match exported
+            .iter()
+            .find(|id| id.rsplit("::").next() == Some(name))
+        {
+            Some(id) => id.clone(),
+            None => return,
+        },
+        _ => return,
+    };
+    let Some(item) = resolver.find_by_path(&canonical) else {
+        return;
+    };
+    let item = item.clone();
+    let rust_path = resolver.public_path(&item["id"]).unwrap_or(canonical);
+    if surface.errors.iter().any(|e| e.rust_path == rust_path) {
+        return;
+    }
+    surface
+        .errors
+        .push(adt::error_type(resolver, &item, rust_path));
 }
 
 fn is_type(record: &ExportRecord) -> bool {

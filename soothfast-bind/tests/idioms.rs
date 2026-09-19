@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use soothfast_bind::BindKind;
 use soothfast_bind::foreign::TypeTable;
 use soothfast_bind::gap::Gap;
-use soothfast_bind::model::{Surface, Ty};
+use soothfast_bind::model::{Surface, Ty, VariantFields};
 use soothfast_bind::plan::lower;
 use soothfast_bind::walk::surface;
 
@@ -43,6 +43,11 @@ fn with_synthetic_param(mut f: Value) -> Value {
     f
 }
 
+fn non_exhaustive(mut item: Value) -> Value {
+    item["attrs"] = json!(["#[non_exhaustive]"]);
+    item
+}
+
 fn module(name: &str, public: bool, items: &[u64]) -> Value {
     json!({
         "name": name, "docs": Value::Null, "attrs": [],
@@ -66,7 +71,7 @@ fn doc() -> Value {
         "root": 0,
         "index": {
             "0": module("acme", true, &[40, 41, 42, 43, 45, 46]),
-            "40": module("core", false, &[1, 2, 3, 5, 6, 30]),
+            "40": module("core", false, &[1, 2, 3, 5, 6, 30, 32]),
             "41": reexport("Client", 3),
             "45": reexport("Level", 5),
             "46": reexport("Bag", 6),
@@ -96,6 +101,15 @@ fn doc() -> Value {
             "12": field("items", path("Vec", 90, &[path("Client", 3, &[])]), true),
             "13": field("level", path("Option", 93, &[path("Level", 5, &[])]), true),
             "30": with_synthetic_param(func("open", &[("name", into_string())], prim("bool"), false)),
+            "32": func("probe", &[], std_result(prim("bool"), path("Failure", 7, &[])), false),
+            "7": non_exhaustive(enum_item("Failure", &[70, 71, 72], &[])),
+            "70": variant("NotFound", json!({ "struct": { "fields": [73, 74, 75], "has_stripped_fields": false } })),
+            "73": field("symbol", path("String", 92, &[]), true),
+            "74": field("retry", path("Option", 93, &[prim("i64")]), true),
+            "75": field("client", path("Client", 3, &[]), true),
+            "71": variant("Wrapped", json!({ "tuple": [76] })),
+            "76": field("0", prim("i64"), true),
+            "72": variant("Busy", json!("plain")),
             "31": func("read", &[("name", json!({ "impl_trait": [ { "trait_bound": {
                 "trait": { "path": "AsRef", "id": 62, "args": { "angle_bracketed": {
                     "args": [ { "type": prim("str") } ], "constraints": [] } } },
@@ -110,6 +124,8 @@ fn doc() -> Value {
             "90": { "crate_id": 1, "path": ["alloc", "vec", "Vec"], "kind": "struct" },
             "93": { "crate_id": 1, "path": ["core", "option", "Option"], "kind": "enum" },
             "30": { "crate_id": 0, "path": ["acme", "core", "open"], "kind": "function" },
+            "32": { "crate_id": 0, "path": ["acme", "core", "probe"], "kind": "function" },
+            "7": { "crate_id": 0, "path": ["acme", "core", "Failure"], "kind": "enum" },
             "31": { "crate_id": 0, "path": ["acme", "util", "read"], "kind": "function" },
             "67": { "crate_id": 1, "path": ["core", "result", "Result"], "kind": "enum" },
             "92": { "crate_id": 1, "path": ["alloc", "string", "String"], "kind": "struct" },
@@ -135,12 +151,44 @@ fn walk() -> (Surface, Vec<Gap>) {
         record("acme::core::Bag", "struct"),
         method("acme::core::Client::symbol", "Client"),
         record("acme::core::open", "fn"),
+        record("acme::core::probe", "fn"),
         record("acme::util::read", "fn"),
         method("acme::core::Client::new", "Client"),
         method("acme::core::Client::chart", "Client"),
         method("acme::core::Client::nested", "Client"),
     ];
     surface(&stamped(doc()), &TypeTable::with_defaults(), &records).expect("walks")
+}
+
+#[test]
+fn a_thrown_enum_error_is_read_once_with_its_variants_whether_exported_or_not() {
+    let (surface, _) = walk();
+    assert_eq!(
+        find(&surface, "acme::core::probe").throws,
+        Some(Ty::Opaque("acme::core::Failure".into()))
+    );
+    assert_eq!(surface.errors.len(), 1, "{:?}", surface.errors);
+    let failure = &surface.errors[0];
+    assert_eq!(failure.name, "Failure");
+    assert_eq!(failure.rust_path, "acme::core::Failure");
+    assert!(failure.non_exhaustive);
+    let variants = failure.variants.as_ref().expect("an enum");
+    let names: Vec<&str> = variants.iter().map(|v| v.name.as_str()).collect();
+    assert_eq!(names, ["NotFound", "Wrapped", "Busy"]);
+    let VariantFields::Named(fields) = &variants[0].fields else {
+        panic!("{:?}", variants[0]);
+    };
+    let tys: Vec<(&str, &Ty)> = fields.iter().map(|f| (f.name.as_str(), &f.ty)).collect();
+    assert_eq!(
+        tys,
+        [
+            ("symbol", &Ty::Str),
+            ("retry", &Ty::Optional(Box::new(Ty::I64))),
+            ("client", &Ty::Class("Client".into())),
+        ]
+    );
+    assert_eq!(variants[1].fields, VariantFields::Tuple(vec![Ty::I64]));
+    assert_eq!(variants[2].fields, VariantFields::Unit);
 }
 
 fn find<'a>(surface: &'a Surface, id: &str) -> &'a soothfast_bind::model::ExportedFn {
