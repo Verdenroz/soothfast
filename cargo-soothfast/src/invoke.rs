@@ -721,6 +721,7 @@ pub struct PkgMeta {
     pub dir: PathBuf,
     pub version: String,
     pub description: Option<String>,
+    pub authors: Vec<String>,
 }
 
 pub fn pkg_meta(pkg: &str) -> io::Result<PkgMeta> {
@@ -751,6 +752,12 @@ pub fn pkg_meta(pkg: &str) -> io::Result<PkgMeta> {
         dir,
         version: p["version"].as_str().unwrap_or("0.0.0").to_string(),
         description: p["description"].as_str().map(String::from),
+        authors: p["authors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| a.as_str().map(String::from))
+            .collect(),
     })
 }
 

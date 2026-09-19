@@ -7,7 +7,7 @@ use crate::plan::{BindingPlan, Class};
 use crate::{BindOptions, GENERATED_RUBY, GENERATED_TOML};
 
 use super::types;
-use super::{DEFAULT_VERSION, RB_SYS_VERSION, rb_ident};
+use super::{DEFAULT_VERSION, RAKE_COMPILER_VERSION, RB_SYS_VERSION, rb_ident};
 
 /// `spec.summary` is required, so it always gets something; `spec.description`
 /// is not, so it only appears when `[[bind]] description` was actually set,
@@ -30,14 +30,26 @@ pub(crate) fn gemspec(opts: &BindOptions) -> String {
     if let Some(repository) = &opts.repository {
         let _ = writeln!(out, "  spec.homepage = {}", quote(repository));
     }
+    // RubyGems refuses an empty author list, so the crate name stands in
+    // when its manifest names nobody.
+    let authors = match opts.authors.is_empty() {
+        true => quote(&opts.crate_package),
+        false => opts
+            .authors
+            .iter()
+            .map(|a| quote(a))
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
     let _ = write!(
         out,
-        "  spec.authors = []\n  \
+        "  spec.authors = [{authors}]\n  \
          spec.required_ruby_version = \">= 3.1\"\n  \
-         spec.files = Dir[\"lib/**/*.rb\", \"ext/**/*.{{rs,toml,rb}}\"]\n  \
+         spec.files = Dir[\"lib/**/*.rb\", \"ext/**/*.{{rs,toml,rb}}\", \"Cargo.{{toml,lock}}\"]\n  \
          spec.require_paths = [\"lib\"]\n  \
          spec.extensions = [{}]\n  \
-         spec.add_dependency \"rb_sys\", \"~> {RB_SYS_VERSION}\"\nend\n",
+         spec.add_dependency \"rb_sys\", \"~> {RB_SYS_VERSION}\"\n  \
+         spec.add_development_dependency \"rake-compiler\", \"~> {RAKE_COMPILER_VERSION}\"\nend\n",
         quote(&format!("ext/{}/extconf.rb", opts.module)),
     );
     out
@@ -61,7 +73,7 @@ pub(crate) fn rakefile(module: &str) -> String {
 
 pub(crate) fn extconf(module: &str) -> String {
     format!(
-        "{GENERATED_RUBY}\nrequire \"rb_sys/mkmf\"\n\n\
+        "{GENERATED_RUBY}\nrequire \"mkmf\"\nrequire \"rb_sys/mkmf\"\n\n\
          create_rust_makefile(\"{module}/{module}\")\n"
     )
 }
@@ -78,20 +90,19 @@ pub(crate) fn lib_entry(module: &str) -> String {
 /// into a crash instead.
 ///
 /// The manifest lives at `ext/<module>/Cargo.toml`, two directories below
-/// the package root that `crate_path` is relative to.
+/// the package root that `crate_path` is relative to, and the package is
+/// named after the extension: `RbSys::ExtensionTask` looks the crate up by
+/// that name in `cargo metadata` run from the package root, which is what
+/// the [`workspace`] manifest there is for.
 pub(crate) fn cargo_toml(opts: &BindOptions) -> String {
     let version = opts.backend_version.as_deref().unwrap_or(DEFAULT_VERSION);
     format!(
         "{GENERATED_TOML}
 [package]
-name = \"{}-glue\"
+name = \"{}\"
 version = \"{}\"
 edition = \"2024\"
 publish = false
-
-# Built on its own by the packaging tool, never as a member of whatever
-# workspace it is generated inside.
-[workspace]
 
 [lib]
 name = \"{}\"
@@ -107,6 +118,18 @@ lto = true
 codegen-units = 1
 ",
         opts.module, opts.version, opts.module, opts.crate_package, opts.crate_path,
+    )
+}
+
+/// The workspace manifest at the package root. It also keeps the glue out
+/// of whatever workspace the package is generated inside.
+pub(crate) fn workspace(module: &str) -> String {
+    format!(
+        "{GENERATED_TOML}
+[workspace]
+members = [\"ext/{module}\"]
+resolver = \"2\"
+"
     )
 }
 

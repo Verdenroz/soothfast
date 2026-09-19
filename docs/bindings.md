@@ -456,7 +456,10 @@ counter.at(:low)
   `<Module>::Error` instead of panicking past `rescue`.
 - **The package is a gem, not a wheel.** `bind gen` writes the usual
   `<name>.gemspec`/`Gemfile`/`Rakefile` trio around an `ext/<module>/` glue
-  crate that `rb_sys`'s `create_rust_makefile` builds; `bind build` runs
+  crate that `rb_sys`'s `create_rust_makefile` builds. The crate is named
+  after the extension and a workspace manifest at the gem root lists it,
+  because `RbSys::ExtensionTask` finds it by name in `cargo metadata` run
+  from there; `bind build` runs
   `bundle exec rake compile` and then `gem build`, each reported and
   skipped on its own so a machine missing one tool still hears about the
   other.

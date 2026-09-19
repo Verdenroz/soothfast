@@ -520,6 +520,7 @@ mod tests {
             dir: std::path::PathBuf::from("/tmp"),
             version: "2.3.4".into(),
             description: Some("from Cargo.toml".into()),
+            authors: Vec::new(),
         };
         let info = info_for(None, "my-api", &meta);
         assert_eq!(info.title, "my-api");
@@ -533,6 +534,7 @@ mod tests {
             dir: std::path::PathBuf::from("/tmp"),
             version: "2.3.4".into(),
             description: None,
+            authors: Vec::new(),
         };
         let entry = SpecEntry {
             path: "specs/openapi.yaml".into(),
@@ -564,6 +566,7 @@ mod tests {
             dir: std::path::PathBuf::from("/nonexistent"),
             version: "0.0.0".into(),
             description: None,
+            authors: Vec::new(),
         };
         let cfg = spec_config::SpecConfig::default();
         let built = build("no-such-package", &CommonArgs::default(), None, &cfg, &meta)
@@ -578,6 +581,7 @@ mod tests {
             dir: std::path::PathBuf::from("/nonexistent"),
             version: "0.0.0".into(),
             description: None,
+            authors: Vec::new(),
         };
         let cfg = spec_config::parse("[[spec]]\npath = \"vendor/stripe.yaml\"\n").expect("parses");
         let built = build("no-such-package", &CommonArgs::default(), None, &cfg, &meta)

@@ -282,6 +282,8 @@ pub struct BindOptions {
     pub crate_path: String,
     pub description: Option<String>,
     pub repository: Option<String>,
+    /// The bound crate's own authors, for a manifest format that requires one.
+    pub authors: Vec<String>,
     /// Target triples the package is built for. Empty means the language's
     /// own default.
     pub targets: Vec<String>,
@@ -302,6 +304,7 @@ impl Default for BindOptions {
             description: None,
             repository: None,
             targets: Vec::new(),
+            authors: Vec::new(),
             backend_version: None,
         }
     }

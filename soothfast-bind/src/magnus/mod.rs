@@ -23,6 +23,10 @@ pub(crate) const DEFAULT_VERSION: &str = "0.8";
 /// actually touches, and rb-sys is only its build-time companion.
 pub(crate) const RB_SYS_VERSION: &str = "0.9";
 
+/// The rake-compiler release `rb_sys/extensiontask` drives; a development
+/// dependency, since only `rake compile` needs it.
+pub(crate) const RAKE_COMPILER_VERSION: &str = "1.2";
+
 const KEYWORDS: &[&str] = &[
     "BEGIN",
     "END",
@@ -85,6 +89,7 @@ pub(crate) fn emit(plan: &BindingPlan, opts: &BindOptions) -> Result<BindFileSet
     files.insert("Rakefile".into(), package::rakefile(&opts.module));
     files.insert("README.md".into(), package::readme(plan, opts, &module));
     files.insert(".gitignore".into(), "target/\ntmp/\n*.gem\n".into());
+    files.insert("Cargo.toml".into(), package::workspace(&opts.module));
     files.insert(
         format!("ext/{}/Cargo.toml", opts.module),
         package::cargo_toml(opts),

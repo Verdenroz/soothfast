@@ -233,13 +233,8 @@ struct Built {
 /// The surface is walked once and lowered per language, which is what makes
 /// a class defined once in Rust reach every configured language as the same
 /// class.
-fn build_all(
-    pkg: &str,
-    common: &CommonArgs,
-    dir: &Path,
-    version: &str,
-) -> Result<Vec<Built>, String> {
-    let cfg = bind_config::load(dir)?;
+fn build_all(pkg: &str, common: &CommonArgs, meta: &invoke::PkgMeta) -> Result<Vec<Built>, String> {
+    let cfg = bind_config::load(&meta.dir)?;
     if cfg.entries.is_empty() {
         return Ok(Vec::new());
     }
@@ -247,7 +242,7 @@ fn build_all(
     let (surface, gaps) = exported_surface(pkg, common)?;
     let mut out = Vec::new();
     for entry in cfg.entries {
-        let opts = bind_options(&entry, pkg, version);
+        let opts = bind_options(&entry, pkg, meta);
         let files = entry.lang.emit(&surface, gaps.clone(), &opts)?;
         out.push(Built { entry, files });
     }
@@ -274,16 +269,20 @@ pub(crate) fn exported_surface(
     soothfast_bind::walk::surface(&doc, &TypeTable::with_defaults(), &records)
 }
 
-fn bind_options(entry: &BindEntry, pkg: &str, version: &str) -> BindOptions {
+fn bind_options(entry: &BindEntry, pkg: &str, meta: &invoke::PkgMeta) -> BindOptions {
     BindOptions {
         package: entry.package.clone(),
         module: entry.module(),
-        version: entry.version.clone().unwrap_or_else(|| version.to_string()),
+        version: entry
+            .version
+            .clone()
+            .unwrap_or_else(|| meta.version.clone()),
         crate_name: pkg.replace('-', "_"),
         crate_package: pkg.to_string(),
         crate_path: crate_path(&entry.out),
         description: entry.description.clone(),
         repository: entry.repository.clone(),
+        authors: meta.authors.clone(),
         targets: entry.targets.clone(),
         backend_version: entry.backend_version.clone(),
     }
@@ -296,9 +295,10 @@ fn crate_path(out: &str) -> String {
     vec![".."; depth].join("/")
 }
 
-/// The directory holding a bound package's own `Cargo.toml`, relative to
-/// `out_dir`. Every backend emits exactly one; R's and Ruby's nest theirs
-/// under `src/rust` or `ext/<module>` instead of the output root.
+/// The directory holding the `Cargo.toml` a lockfile belongs beside,
+/// relative to `out_dir`. R nests its one manifest under `src/rust`; Ruby
+/// emits a workspace manifest at the root above its `ext/<module>` member,
+/// and the root sorts first.
 fn manifest_dir(out_dir: &Path, files: &BTreeMap<String, String>) -> Option<PathBuf> {
     let rel = files.keys().find(|k| k.ends_with("Cargo.toml"))?;
     match Path::new(rel).parent() {
@@ -369,7 +369,7 @@ fn ensure_lockfile(dir: &Path) -> Result<(), String> {
 
 fn generate(pkg: &str, common: &CommonArgs, check_only: bool) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
-    let built = build_all(pkg, common, &meta.dir, &meta.version)?;
+    let built = build_all(pkg, common, &meta)?;
     if built.is_empty() {
         println!("bind gen: nothing to generate: no [[bind]] entry in soothfast.toml");
         return Ok(0);
@@ -767,6 +767,18 @@ mod tests {
         assert_eq!(
             manifest_dir(Path::new("/out"), &files),
             Some(PathBuf::from("/out/ext/acme_core"))
+        );
+    }
+
+    #[test]
+    fn manifest_dir_prefers_a_workspace_root_over_its_member() {
+        let files = BTreeMap::from([
+            ("Cargo.toml".to_string(), String::new()),
+            ("ext/acme_core/Cargo.toml".to_string(), String::new()),
+        ]);
+        assert_eq!(
+            manifest_dir(Path::new("/out"), &files),
+            Some(PathBuf::from("/out"))
         );
     }
 
