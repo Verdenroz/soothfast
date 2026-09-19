@@ -10,6 +10,7 @@ private external fun nativeDigest(data: ByteArray): ByteArray
 private external fun nativeFail(message: String): Long
 private external fun nativeFindCounter(start: Long): Long
 private external fun nativeGreet(name: String): String
+private external fun nativeMutateCounter(counter: Long): Long
 private external fun nativeNormalize(input: DoubleArray, factor: Double): DoubleArray
 private external fun nativePeakLevel(values: DoubleArray): Int
 private external fun nativeScaleInto(values: DoubleArray, factor: Double, out: DoubleArray): Unit
@@ -39,6 +40,10 @@ fun findCounter(start: Long): Counter? {
 
 fun greet(name: String): String {
     return nativeGreet(name)
+}
+
+fun mutateCounter(counter: Counter): Long {
+    return nativeMutateCounter(counter.nativePtr())
 }
 
 fun normalize(input: DoubleArray, factor: Double): DoubleArray {

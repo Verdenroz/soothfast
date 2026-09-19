@@ -144,6 +144,11 @@ pub fn maybe_ratio(value: f64) -> Option<f64> {
     ::acme::maybe_ratio(value)
 }
 
+#[napi(js_name = "mutateCounter")]
+pub fn mutate_counter(mut counter: ClassInstance<'_, Counter>) -> BigInt {
+    BigInt::from(::acme::mutate_counter(&mut counter.0))
+}
+
 #[napi]
 pub fn normalize(input: Float64Array, factor: f64) -> Float64Array {
     Float64Array::from(::acme::normalize(input.to_vec(), factor))

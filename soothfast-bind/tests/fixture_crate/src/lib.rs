@@ -124,6 +124,11 @@ pub fn is_high(level: &Level) -> bool {
     matches!(level, Level::High)
 }
 
+pub fn mutate_counter(counter: &mut Counter) -> i64 {
+    counter.value += 1;
+    counter.value
+}
+
 pub fn describe(label: Option<&str>) -> Option<String> {
     label.map(|l| format!("label={l}"))
 }

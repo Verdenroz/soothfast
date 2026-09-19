@@ -322,6 +322,17 @@ pub extern "system" fn Java_acme_core_Core_nativeGreet<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeMutateCounter<'local>(
+    _env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    counter: i64
+) -> i64 {
+    let counter = unsafe { &mut *(counter as *mut ::acme::Counter) };
+    let __out = ::acme::mutate_counter(counter);
+    __out
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeNormalize<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

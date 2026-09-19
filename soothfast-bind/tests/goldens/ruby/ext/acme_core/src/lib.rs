@@ -114,6 +114,11 @@ fn maybe_ratio(value: f64) -> Option<f64> {
     ::acme::maybe_ratio(value)
 }
 
+fn mutate_counter(ruby: &::magnus::Ruby, counter: &Counter) -> Result<i64, ::magnus::Error> {
+    let mut counter = counter.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+    Ok(::acme::mutate_counter(&mut counter))
+}
+
 fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
     ::acme::normalize(input, factor)
 }
@@ -169,6 +174,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("greet", ::magnus::function!(greet, 1))?;
     module.define_module_function("index_all", ::magnus::function!(index_all, 0))?;
     module.define_module_function("maybe_ratio", ::magnus::function!(maybe_ratio, 1))?;
+    module.define_module_function("mutate_counter", ::magnus::function!(mutate_counter, 1))?;
     module.define_module_function("normalize", ::magnus::function!(normalize, 2))?;
     module.define_module_function("peak_level", ::magnus::function!(peak_level, 1))?;
     module.define_module_function("scale_into", ::magnus::function!(scale_into, 3))?;

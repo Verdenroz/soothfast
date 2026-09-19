@@ -145,6 +145,12 @@ fn maybe_ratio(value: f64) -> Robj {
 }
 
 #[extendr]
+fn mutate_counter(counter: &mut Counter) -> f64 {
+    let __out = ::acme::mutate_counter(&mut counter.0);
+    __out as f64
+}
+
+#[extendr]
 fn normalize(input: &[f64], factor: f64) -> Vec<f64> {
     let input = input.to_vec();
     let __out = ::acme::normalize(input, factor);
@@ -184,6 +190,7 @@ extendr_module! {
     fn find_counter;
     fn greet;
     fn maybe_ratio;
+    fn mutate_counter;
     fn normalize;
     fn peak_level;
     fn stamp;

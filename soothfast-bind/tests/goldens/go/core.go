@@ -226,6 +226,10 @@ func Greet(name string) string {
 	return goString(C.core_greet(cName))
 }
 
+func MutateCounter(counter *Counter) int64 {
+	return int64(C.core_mutate_counter(counter.ptr))
+}
+
 func Normalize(input []float64, factor float64) []float64 {
 	return float64Slice(C.core_normalize((*C.double)(unsafe.Pointer(bufPtr(input))), C.size_t(len(input)), C.double(factor)))
 }

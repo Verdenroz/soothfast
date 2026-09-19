@@ -51,6 +51,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `core_fail`
 - `core_find_counter`
 - `core_greet`
+- `core_mutate_counter`
 - `core_normalize`
 - `core_peak_level`
 - `core_scale_into`

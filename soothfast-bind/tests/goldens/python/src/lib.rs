@@ -450,6 +450,11 @@ fn maybe_ratio(value: f64) -> Option<f64> {
 }
 
 #[pyfunction]
+fn mutate_counter(mut counter: PyRefMut<'_, Counter>) -> i64 {
+    ::acme::mutate_counter(&mut counter.0)
+}
+
+#[pyfunction]
 fn normalize(py: Python<'_>, input: BorrowedF64, factor: f64) -> F64Array {
     let out = py.detach(|| ::acme::normalize(input.into_vec(), factor));
     F64Array::new(out)
@@ -510,6 +515,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;
     m.add_function(wrap_pyfunction!(maybe_ratio, m)?)?;
+    m.add_function(wrap_pyfunction!(mutate_counter, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(peak_level, m)?)?;
     m.add_function(wrap_pyfunction!(scale_into, m)?)?;

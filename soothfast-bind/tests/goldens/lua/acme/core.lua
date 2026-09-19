@@ -52,6 +52,7 @@ core_u8_array core_digest(const uint8_t *data, size_t data_len);
 int64_t core_fail(const char *message, char **error);
 core_counter * core_find_counter(int64_t start);
 char * core_greet(const char *name);
+int64_t core_mutate_counter(core_counter *counter);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);
 core_level core_peak_level(const double *values, size_t values_len);
 void core_scale_into(const double *values, size_t values_len, double factor, double *out, size_t out_len);
@@ -328,6 +329,11 @@ end
 function M.greet(name)
 	local ret = lib.core_greet(name)
 	return lua_string(ret)
+end
+
+function M.mutate_counter(counter)
+	local ret = lib.core_mutate_counter(counter.ptr)
+	return ret
 end
 
 function M.normalize(input, factor)

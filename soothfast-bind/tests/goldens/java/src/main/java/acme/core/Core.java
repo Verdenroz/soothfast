@@ -34,6 +34,10 @@ public final class Core {
         return nativeGreet(name);
     }
 
+    public static long mutateCounter(Counter counter) {
+        return nativeMutateCounter(counter.nativePtr());
+    }
+
     public static double[] normalize(double[] input, double factor) {
         return nativeNormalize(input, factor);
     }
@@ -60,6 +64,7 @@ public final class Core {
     private static native long nativeFail(String message);
     private static native long nativeFindCounter(long start);
     private static native String nativeGreet(String name);
+    private static native long nativeMutateCounter(long counter);
     private static native double[] nativeNormalize(double[] input, double factor);
     private static native int nativePeakLevel(double[] values);
     private static native void nativeScaleInto(double[] values, double factor, double[] out);

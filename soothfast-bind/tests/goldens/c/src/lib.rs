@@ -270,6 +270,11 @@ pub unsafe extern "C" fn acme_core_greet(name: *const ::std::os::raw::c_char) ->
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_mutate_counter(counter: *mut AcmeCoreCounter) -> i64 {
+    ::acme::mutate_counter(&mut (unsafe { &mut *counter }).0)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_normalize(input: *const f64, input_len: usize, factor: f64) -> AcmeCoreF64Array {
     AcmeCoreF64Array::new(::acme::normalize(unsafe { ffi::slice(input, input_len) }.to_vec(), factor))
 }

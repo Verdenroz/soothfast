@@ -573,6 +573,9 @@ fn needs_mut(param: &Param, plan: &BindingPlan) -> bool {
     matches!(
         Transfer::of(param, plan),
         Transfer::Buffer { element, writable: true, .. } if buffered(&element.into()).is_some()
+    ) || matches!(
+        Transfer::of(param, plan),
+        Transfer::Handle { writable: true, .. }
     )
 }
 

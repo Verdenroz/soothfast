@@ -153,6 +153,11 @@ inline std::string greet(std::string_view name) {
     return take_string(raw_result);
 }
 
+inline int64_t mutate_counter(Counter& counter) {
+    auto raw_result = core_mutate_counter(counter.get());
+    return raw_result;
+}
+
 inline std::vector<double> normalize(std::span<const double> input, double factor) {
     auto raw_result = core_normalize(input.data(), input.size(), factor);
     return to_vector_f64(raw_result);

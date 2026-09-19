@@ -41,6 +41,7 @@ require "acme_core"
 - `greet`
 - `index_all`
 - `maybe_ratio`
+- `mutate_counter`
 - `normalize`
 - `peak_level`
 - `scale_into`

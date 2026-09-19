@@ -51,6 +51,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `acme_core_fail`
 - `acme_core_find_counter`
 - `acme_core_greet`
+- `acme_core_mutate_counter`
 - `acme_core_normalize`
 - `acme_core_peak_level`
 - `acme_core_scale_into`

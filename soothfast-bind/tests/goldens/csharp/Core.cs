@@ -102,6 +102,12 @@ public static class Core
         }
     }
 
+    public static long MutateCounter(Counter counter)
+    {
+        long result = Native.acme_core_mutate_counter(counter.NativeHandle);
+        return result;
+    }
+
     public static double[] Normalize(ReadOnlySpan<double> input, double factor)
     {
         unsafe

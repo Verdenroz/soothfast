@@ -474,7 +474,13 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
         ),
         // A napi class instance reaches another call as a `ClassInstance`,
         // never a bare reference: the value lives behind a JS object that
-        // may still be aliased elsewhere.
+        // may still be aliased elsewhere. `ClassInstance` implements
+        // `DerefMut`, so a writable one still reaches `.0` mutably.
+        Transfer::Handle { writable: true, .. } => (
+            format!("ClassInstance<'_, {}>", class_of(&param.ty)),
+            None,
+            format!("&mut {name}.0"),
+        ),
         Transfer::Handle { .. } => (
             format!("ClassInstance<'_, {}>", class_of(&param.ty)),
             None,
@@ -543,7 +549,7 @@ fn mirrored_arg(name: &str, ownership: Ownership) -> String {
 fn needs_mut(param: &Param, plan: &BindingPlan) -> bool {
     matches!(
         Transfer::of(param, plan),
-        Transfer::Buffer { writable: true, .. }
+        Transfer::Buffer { writable: true, .. } | Transfer::Handle { writable: true, .. }
     )
 }
 

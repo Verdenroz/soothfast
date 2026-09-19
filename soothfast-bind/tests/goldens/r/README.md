@@ -31,6 +31,7 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 - `find_counter`
 - `greet`
 - `maybe_ratio`
+- `mutate_counter`
 - `normalize`
 - `peak_level`
 - `stamp`

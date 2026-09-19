@@ -119,6 +119,9 @@ internal static class Native
     internal static extern unsafe IntPtr acme_core_greet(byte* name);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern long acme_core_mutate_counter(IntPtr counter);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe AcmeCoreF64Array acme_core_normalize(double* input, nuint input_len, double factor);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
