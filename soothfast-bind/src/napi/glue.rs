@@ -467,9 +467,11 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
         Ownership::BorrowedMut => (signature_ty(&param.ty), None, format!("&mut {name}")),
     };
     match Transfer::of(param, plan) {
-        Transfer::Handle { mirrored: true, .. } => {
-            (class_of(&param.ty), None, format!("{name}.into()"))
-        }
+        Transfer::Handle { mirrored: true, .. } => (
+            class_of(&param.ty),
+            None,
+            mirrored_arg(name, param.ownership),
+        ),
         // A napi class instance reaches another call as a `ClassInstance`,
         // never a bare reference: the value lives behind a JS object that
         // may still be aliased elsewhere.
@@ -522,6 +524,18 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
             ("BigInt".into(), prelude, arg)
         }
         _ => by_ownership(),
+    }
+}
+
+/// A mirrored enum always converts by value; a borrowed or exclusively
+/// borrowed parameter needs a reference to that temporary instead of the
+/// value itself.
+fn mirrored_arg(name: &str, ownership: Ownership) -> String {
+    let value = format!("{name}.into()");
+    match ownership {
+        Ownership::Owned => value,
+        Ownership::Borrowed => format!("&{value}"),
+        Ownership::BorrowedMut => format!("&mut {value}"),
     }
 }
 

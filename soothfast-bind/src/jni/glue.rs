@@ -643,6 +643,16 @@ fn call_arg(param: &Param, plan: &BindingPlan, pinned: Option<&Pinned>) -> Strin
     ) {
         return format!("&mut {name}_buf");
     }
+    // The prelude already converted a mirrored enum into an owned value of
+    // the real type; a non-mirrored handle's prelude already cast into a
+    // reference, so only the mirrored case still needs one taken here.
+    if let Transfer::Handle { mirrored: true, .. } = Transfer::of(param, plan) {
+        return match param.ownership {
+            Ownership::Owned => name,
+            Ownership::Borrowed => format!("&{name}"),
+            Ownership::BorrowedMut => format!("&mut {name}"),
+        };
+    }
     if matches!(Transfer::of(param, plan), Transfer::Handle { .. }) {
         return name;
     }

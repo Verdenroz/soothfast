@@ -120,6 +120,10 @@ pub fn find_counter(start: i64) -> Option<Counter> {
     }
 }
 
+pub fn is_high(level: &Level) -> bool {
+    matches!(level, Level::High)
+}
+
 pub fn describe(label: Option<&str>) -> Option<String> {
     label.map(|l| format!("label={l}"))
 }

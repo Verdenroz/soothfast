@@ -526,7 +526,7 @@ fn param_plan(param: &Param, plan: &BindingPlan) -> PlannedParam {
             (
                 "::magnus::Symbol".into(),
                 Some(format!("let {name} = {helper}(ruby, {name})?;")),
-                name.clone(),
+                by_ownership(name, param.ownership),
                 None,
             )
         }

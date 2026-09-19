@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::model::{Receiver, Ty};
+use crate::model::{Ownership, Receiver, Ty};
 use crate::plan::{Accessor, BindingPlan, Class, Function, Transfer};
 use crate::{BindOptions, GENERATED_RS, GLUE_ALLOW};
 
@@ -401,7 +401,7 @@ fn args(function: &Function, plan: &BindingPlan) -> String {
                         false => format!("{text}.to_string()"),
                     }
                 }
-                Transfer::Handle { mirrored: true, .. } => format!("{name}.into()"),
+                Transfer::Handle { mirrored: true, .. } => mirrored_arg(&name, p.ownership),
                 Transfer::Handle { writable: true, .. } => {
                     format!("&mut (unsafe {{ &mut *{name} }}).0")
                 }
@@ -411,6 +411,18 @@ fn args(function: &Function, plan: &BindingPlan) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// A mirrored enum always converts by value; a borrowed or exclusively
+/// borrowed parameter needs a reference to that temporary instead of the
+/// value itself.
+fn mirrored_arg(name: &str, ownership: Ownership) -> String {
+    let value = format!("{name}.into()");
+    match ownership {
+        Ownership::Owned => value,
+        Ownership::Borrowed => format!("&{value}"),
+        Ownership::BorrowedMut => format!("&mut {value}"),
+    }
 }
 
 fn returns(function: &Function, plan: &BindingPlan, module: &str) -> String {

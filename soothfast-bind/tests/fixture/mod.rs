@@ -205,6 +205,15 @@ fn free_functions(insert: &mut impl FnMut(u64, Value)) {
             false,
         ),
     );
+    insert(
+        19,
+        func(
+            "is_high",
+            &[("level", borrowed(path("Level", 4, &[]), false))],
+            prim("bool"),
+            false,
+        ),
+    );
 }
 
 /// The crate's free functions that take or return an `Option`.
@@ -441,6 +450,7 @@ pub fn doc() -> Value {
             "13": { "crate_id": 0, "path": ["acme", "scale_into"], "kind": "function" },
             "14": { "crate_id": 0, "path": ["acme", "peak_level"], "kind": "function" },
             "15": { "crate_id": 0, "path": ["acme", "find_counter"], "kind": "function" },
+            "19": { "crate_id": 0, "path": ["acme", "is_high"], "kind": "function" },
             "16": { "crate_id": 0, "path": ["acme", "describe"], "kind": "function" },
             "17": { "crate_id": 0, "path": ["acme", "describe_owned"], "kind": "function" },
             "18": { "crate_id": 0, "path": ["acme", "maybe_ratio"], "kind": "function" },
@@ -483,6 +493,7 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::scale_into", "fn"),
         record("acme::peak_level", "fn"),
         record("acme::find_counter", "fn"),
+        record("acme::is_high", "fn"),
         record("acme::describe", "fn"),
         record("acme::describe_owned", "fn"),
         record("acme::maybe_ratio", "fn"),

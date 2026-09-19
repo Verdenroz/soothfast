@@ -487,7 +487,11 @@ fn call_arg(param: &Param, plan: &BindingPlan) -> String {
             true => format!("{name}.as_deref()"),
             false => name.clone(),
         },
-        Transfer::Handle { mirrored: true, .. } => name.clone(),
+        Transfer::Handle { mirrored: true, .. } => match param.ownership {
+            Ownership::Owned => name.clone(),
+            Ownership::Borrowed => format!("&{name}"),
+            Ownership::BorrowedMut => format!("&mut {name}"),
+        },
         Transfer::Handle { writable, .. } => match writable {
             true => format!("&mut {name}.0"),
             false => format!("&{name}.0"),

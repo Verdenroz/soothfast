@@ -39,6 +39,7 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 ## Not bound
 
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
+- acme::is_high: foreign type `acme::is_high` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::Counter::refresh: `async fn` cannot cross into r: no R runtime story yet
 - acme::index_all: `HashMap<String, u32>` cannot cross into r: R has no map type; return a sequence of pairs, or an exported type with accessors

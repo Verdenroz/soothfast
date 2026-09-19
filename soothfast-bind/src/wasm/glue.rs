@@ -345,7 +345,9 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
     // A borrowed slice is still copied into linear memory, so the win here
     // is only the `Vec` an owned parameter would allocate and free.
     match Transfer::of(param, plan) {
-        Transfer::Handle { mirrored: true, .. } => (class_of(&param.ty), format!("{name}.into()")),
+        Transfer::Handle { mirrored: true, .. } => {
+            (class_of(&param.ty), mirrored_arg(name, param.ownership))
+        }
         Transfer::Handle { writable: true, .. } => (
             format!("&mut {}", class_of(&param.ty)),
             format!("&mut {name}.0"),
@@ -381,6 +383,18 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
             Ownership::Borrowed => (signature_ty(&param.ty), format!("&{name}")),
             Ownership::BorrowedMut => (signature_ty(&param.ty), format!("&mut {name}")),
         },
+    }
+}
+
+/// A mirrored enum always converts by value; a borrowed or exclusively
+/// borrowed parameter needs a reference to that temporary instead of the
+/// value itself.
+fn mirrored_arg(name: &str, ownership: Ownership) -> String {
+    let value = format!("{name}.into()");
+    match ownership {
+        Ownership::Owned => value,
+        Ownership::Borrowed => format!("&{value}"),
+        Ownership::BorrowedMut => format!("&mut {value}"),
     }
 }
 
