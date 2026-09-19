@@ -123,16 +123,23 @@ fn build_scratch() -> PathBuf {
     root
 }
 
+/// Gems land under the scratch tree: the system gem directory is not
+/// writable from an ordinary user's test run.
+fn bundle(glue: &Path) -> Command {
+    let mut cmd = Command::new("bundle");
+    cmd.env("BUNDLE_PATH", glue.join("vendor/bundle"))
+        .current_dir(glue);
+    cmd
+}
+
 fn bundle_install(glue: &Path) {
-    let local_install = Command::new("bundle")
+    let local_install = bundle(glue)
         .args(["install", "--local"])
-        .current_dir(glue)
         .status()
         .expect("runs bundle install --local");
     if !local_install.success() {
-        let status = Command::new("bundle")
+        let status = bundle(glue)
             .arg("install")
-            .current_dir(glue)
             .status()
             .expect("runs bundle install");
         assert!(status.success(), "bundle install failed");
@@ -140,9 +147,8 @@ fn bundle_install(glue: &Path) {
 }
 
 fn rake_compile(glue: &Path) {
-    let compile = Command::new("bundle")
+    let compile = bundle(glue)
         .args(["exec", "rake", "compile"])
-        .current_dir(glue)
         .status()
         .expect("runs bundle exec rake compile");
     assert!(compile.success(), "rake compile failed");
