@@ -481,6 +481,11 @@ impl Counter {
         OnRuntime::new(self.0.refresh()).await
     }
 
+    /// Blocking form of `refresh`: runs the call to completion on the package's runtime.
+    fn refresh_blocking(&self, py: Python<'_>) -> u32 {
+        py.detach(|| runtime().block_on(self.0.refresh()))
+    }
+
     fn scale(&mut self, factor: i64) -> i64 {
         self.0.scale(factor)
     }

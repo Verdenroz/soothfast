@@ -10,12 +10,12 @@ use fixture::{
     variant,
 };
 use serde_json::{Value, json};
-use soothfast_bind::BindKind;
 use soothfast_bind::foreign::TypeTable;
 use soothfast_bind::gap::Gap;
 use soothfast_bind::model::{Surface, Ty, VariantFields};
 use soothfast_bind::plan::{VariantShape, lower};
 use soothfast_bind::walk::surface;
+use soothfast_bind::{BindKind, BindOptions};
 
 fn alias(name: &str, target: Value) -> Value {
     json!({
@@ -372,6 +372,108 @@ fn a_mapped_foreign_type_crosses_as_text_into_python_and_is_reported_elsewhere()
         why.contains("`\"chrono::DateTime\" = \"str\"` crosses it as a string"),
         "{why}"
     );
+}
+
+#[test]
+fn a_blocking_twin_holds_the_lock_when_the_owner_is_not_sync_and_a_static_releases_it() {
+    let glue = python_glue();
+    assert!(
+        glue.contains(
+            "    /// Blocking form of `chart`: runs the call to completion on the package's runtime.\n    fn chart_blocking(&self) -> PyResult<i64> {\n        Ok(runtime().block_on(self.0.chart()).map_err(BindErrorString)?)\n    }"
+        ),
+        "{glue}"
+    );
+    assert!(
+        glue.contains(
+            "    #[staticmethod]\n    fn new_blocking(py: Python<'_>, symbol: String) -> PyResult<Client> {\n        let out = py.detach(|| runtime().block_on(::acme::Client::new(symbol)));\n        Ok(Client(out.map_err(BindErrorString)?))\n    }"
+        ),
+        "{glue}"
+    );
+    assert!(glue.contains("async fn chart(&self)"), "{glue}");
+}
+
+/// The document with `Client` marked `Sync` and an async free `poll`.
+fn doc_with_sync_client_and_poll() -> Value {
+    let mut doc = doc();
+    doc["index"]["3"]["inner"]["struct"]["impls"]
+        .as_array_mut()
+        .expect("impls")
+        .extend([json!(77), json!(78)]);
+    doc["index"]["77"] = auto_impl("Sync", false);
+    doc["index"]["78"] = auto_impl("Send", false);
+    doc["index"]["35"] = func("poll", &[], prim("bool"), true);
+    doc["index"]["40"]["inner"]["module"]["items"]
+        .as_array_mut()
+        .expect("items")
+        .push(json!(35));
+    doc["paths"]["35"] =
+        json!({ "crate_id": 0, "path": ["acme", "core", "poll"], "kind": "function" });
+    doc
+}
+
+#[test]
+fn a_blocking_twin_releases_the_lock_for_a_sync_owner_and_a_free_twin_is_registered() {
+    let records = vec![
+        record("acme::core::Client", "struct"),
+        method("acme::core::Client::chart", "Client"),
+        record("acme::core::poll", "fn"),
+    ];
+    let (walked, gaps) = surface(
+        &stamped(doc_with_sync_client_and_poll()),
+        &TypeTable::with_defaults(),
+        &records,
+    )
+    .expect("walks");
+    let files = BindKind::Python
+        .emit(&walked, gaps, &opts())
+        .expect("emits");
+    let glue = &files.files["src/lib.rs"];
+    assert!(
+        glue.contains(
+            "    fn chart_blocking(&self, py: Python<'_>) -> PyResult<i64> {\n        let out = py.detach(|| runtime().block_on(self.0.chart()));\n        Ok(out.map_err(BindErrorString)?)\n    }"
+        ),
+        "{glue}"
+    );
+    assert!(
+        glue.contains(
+            "#[pyfunction]\nfn poll_blocking(py: Python<'_>) -> bool {\n    py.detach(|| runtime().block_on(::acme::core::poll()))\n}"
+        ),
+        "{glue}"
+    );
+    assert!(
+        glue.contains("m.add_function(wrap_pyfunction!(poll_blocking, m)?)?;"),
+        "{glue}"
+    );
+    let unconfigured = BindOptions {
+        blocking: false,
+        ..opts()
+    };
+    let files = BindKind::Python
+        .emit(&walked, Vec::new(), &unconfigured)
+        .expect("emits");
+    assert!(!files.files["src/lib.rs"].contains("_blocking"));
+}
+
+#[test]
+fn a_blocking_twin_whose_name_is_taken_is_an_error() {
+    let mut doc = doc_with_sync_client_and_poll();
+    doc["index"]["36"] = func("poll_blocking", &[], prim("bool"), false);
+    doc["index"]["40"]["inner"]["module"]["items"]
+        .as_array_mut()
+        .expect("items")
+        .push(json!(36));
+    doc["paths"]["36"] =
+        json!({ "crate_id": 0, "path": ["acme", "core", "poll_blocking"], "kind": "function" });
+    let records = vec![
+        record("acme::core::poll", "fn"),
+        record("acme::core::poll_blocking", "fn"),
+    ];
+    let (walked, gaps) =
+        surface(&stamped(doc), &TypeTable::with_defaults(), &records).expect("walks");
+    let err = BindKind::Python
+        .emit(&walked, gaps, &opts())
+        .expect_err("collides");
+    assert!(err.contains("`poll_blocking`"), "{err}");
 }
 
 fn find<'a>(surface: &'a Surface, id: &str) -> &'a soothfast_bind::model::ExportedFn {

@@ -5,17 +5,16 @@
 //! defines the type. The same rule is why a failing call raises through a
 //! local error newtype rather than `impl From<UserError> for PyErr`.
 
-use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use crate::model::{Ownership, Param, Receiver, Ty};
-use crate::naming::ident_part;
 use crate::plan::{Accessor, BindingPlan, Class, Function, Transfer, offloadable};
 use crate::{BindOptions, GENERATED_RS, GLUE_ALLOW};
 
 use super::asyncrt;
+use super::blocking;
 use super::buffers::{self, array_name, buffered, view_name};
-use super::errors::{self, Hierarchy};
+use super::errors::{self, Hierarchy, error_impl, error_name, error_newtypes};
 use super::py_ident;
 use super::{seq, text};
 
@@ -33,6 +32,7 @@ fn buffers_alias(a: (usize, usize), b: (usize, usize)) -> bool {
 pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> Result<String, String> {
     let krate = format!("::{}", opts.crate_name);
     let hierarchy = errors::hierarchy(plan, opts)?;
+    blocking::check(plan, opts)?;
     let mut out = String::from(GENERATED_RS);
     out.push_str(GLUE_ALLOW);
     out.push_str("\nuse pyo3::prelude::*;\n");
@@ -55,10 +55,11 @@ pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> Result<String, S
         out.push_str(&error_impl(&ty, &name, &krate, &hierarchy));
     }
     for class in &plan.classes {
-        out.push_str(&class_block(class, &krate, plan));
+        out.push_str(&class_block(class, &krate, plan, opts));
     }
     for function in &plan.functions {
         out.push_str(&free_fn(function, &krate, plan));
+        out.extend(blocking::free(function, &krate, plan, opts));
     }
     out.push_str(&module_block(plan, opts, &hierarchy));
     Ok(out)
@@ -135,61 +136,7 @@ fn fallible(function: &Function, plan: &BindingPlan) -> bool {
         || function.params.iter().any(|p| text::mentions(&p.ty))
 }
 
-/// One newtype per distinct error type, named after it so several errors in
-/// one package stay tellable apart.
-fn error_newtypes(plan: &BindingPlan) -> Vec<(Ty, String)> {
-    let mut seen: BTreeMap<String, Ty> = BTreeMap::new();
-    for function in plan.functions() {
-        if let Some(err) = &function.throws {
-            seen.insert(err.render(), err.clone());
-        }
-    }
-    seen.into_values()
-        .map(|ty| {
-            let name = error_name(&ty);
-            (ty, name)
-        })
-        .collect()
-}
-
-fn error_name(ty: &Ty) -> String {
-    format!("BindError{}", ident_part(&ty.render()))
-}
-
-fn error_impl(ty: &Ty, name: &str, krate: &str, hierarchy: &Hierarchy) -> String {
-    let inner = hierarchy
-        .spelling(ty, krate)
-        .unwrap_or_else(|| error_ty(ty, krate));
-    let allow = match hierarchy.matches(ty) {
-        true => "#[allow(unreachable_patterns)]\n    ",
-        false => "",
-    };
-    format!(
-        "
-struct {name}({inner});
-
-impl ::std::convert::From<{name}> for ::pyo3::PyErr {{
-    {allow}fn from(err: {name}) -> ::pyo3::PyErr {{
-        let message = ::std::string::ToString::to_string(&err.0);
-{}    }}
-}}
-",
-        hierarchy.raise(ty, krate),
-    )
-}
-
-/// An error type is spelled as the Rust type itself: it is rendered through
-/// `Display`, never carried across as a value.
-fn error_ty(ty: &Ty, krate: &str) -> String {
-    match ty {
-        Ty::Str => "::std::string::String".into(),
-        Ty::Opaque(path) => format!("::{path}"),
-        Ty::Class(name) => format!("{krate}::{name}"),
-        other => other.render(),
-    }
-}
-
-fn class_block(class: &Class, krate: &str, plan: &BindingPlan) -> String {
+fn class_block(class: &Class, krate: &str, plan: &BindingPlan, opts: &BindOptions) -> String {
     if class.is_plain_enum() {
         return plain_enum(class, krate);
     }
@@ -212,9 +159,11 @@ fn class_block(class: &Class, krate: &str, plan: &BindingPlan) -> String {
     }
     for method in &class.methods {
         members.push(member(method, plan, class));
+        members.extend(blocking::member(method, plan, class, opts));
     }
     for associated in &class.statics {
         members.push(associated_fn(associated, krate, plan, class));
+        members.extend(blocking::associated(associated, krate, plan, class, opts));
     }
     if !members.is_empty() {
         let _ = write!(
@@ -426,13 +375,25 @@ fn body(call: &str, function: &Function, plan: &BindingPlan, indent: &str, detac
         true => asyncrt::awaited(call),
         false => call.to_string(),
     };
+    shaped_body(&call, function, plan, indent, detach)
+}
+
+/// [`body`] over a call already shaped for how it runs: awaited, blocked on,
+/// or plain.
+pub(super) fn shaped_body(
+    call: &str,
+    function: &Function,
+    plan: &BindingPlan,
+    indent: &str,
+    detach: bool,
+) -> String {
     let checks = format!(
         "{}{}",
         aliasing_check(function, plan, indent),
         text::preludes(function, indent)
     );
     if !detach {
-        return format!("{checks}{}", completed(&call, function, plan, indent, ""));
+        return format!("{checks}{}", completed(call, function, plan, indent, ""));
     }
     // A call that cannot fail and needs no conversion is the whole body, so
     // binding its value would only name it to return it.
@@ -568,6 +529,7 @@ fn module_block(plan: &BindingPlan, opts: &BindOptions, hierarchy: &Hierarchy) -
             py_ident(&function.name)
         );
     }
+    body.push_str(&blocking::registrations(plan, opts));
     format!(
         "\n#[pymodule(gil_used = false)]\nfn {}(m: &Bound<'_, PyModule>) -> PyResult<()> {{\n{body}    Ok(())\n}}\n",
         opts.module,
@@ -578,7 +540,7 @@ fn module_block(plan: &BindingPlan, opts: &BindOptions, hierarchy: &Hierarchy) -
 ///
 /// A `Python` token is not part of the Python signature: pyo3 recognises the
 /// type and supplies it, so a released lock costs the caller no argument.
-fn params(function: &Function, plan: &BindingPlan, detach: bool) -> String {
+pub(super) fn params(function: &Function, plan: &BindingPlan, detach: bool) -> String {
     let token = detach.then(|| "py: Python<'_>".to_string());
     token
         .into_iter()
@@ -593,7 +555,7 @@ fn params(function: &Function, plan: &BindingPlan, detach: bool) -> String {
         .join(", ")
 }
 
-fn call_args(function: &Function, plan: &BindingPlan) -> String {
+pub(super) fn call_args(function: &Function, plan: &BindingPlan) -> String {
     function
         .params
         .iter()
@@ -727,7 +689,7 @@ fn needs_mut(param: &Param, plan: &BindingPlan) -> bool {
     )
 }
 
-fn return_ty(function: &Function, plan: &BindingPlan) -> String {
+pub(super) fn return_ty(function: &Function, plan: &BindingPlan) -> String {
     let ok = returned_ty(&function.ret);
     match fallible(function, plan) {
         true => format!("PyResult<{ok}>"),
@@ -766,7 +728,7 @@ pub(super) fn inner_path(id: &str, krate: &str) -> String {
     format!("{krate}::{tail}")
 }
 
-fn owner_path(rust_path: &str) -> &str {
+pub(super) fn owner_path(rust_path: &str) -> &str {
     rust_path
         .rsplit_once("::")
         .map(|(head, _)| head)
@@ -777,7 +739,7 @@ fn asyncness(function: &Function) -> &'static str {
     if function.is_async { "async " } else { "" }
 }
 
-fn join(receiver: &str, params: &str) -> String {
+pub(super) fn join(receiver: &str, params: &str) -> String {
     match (receiver.is_empty(), params.is_empty()) {
         (true, _) => params.to_string(),
         (false, true) => receiver.to_string(),

@@ -1,6 +1,7 @@
 //! Python bindings, over pyo3.
 
 mod asyncrt;
+mod blocking;
 mod buffers;
 mod errors;
 mod glue;

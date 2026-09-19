@@ -3,11 +3,12 @@
 //! fields set as attributes, so a caller can `except` a case rather than
 //! parse a message.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use crate::BindOptions;
 use crate::model::Ty;
+use crate::naming::ident_part;
 use crate::plan::{BindingPlan, ErrorClass, ErrorVariant, VariantShape};
 
 use super::buffers;
@@ -211,4 +212,58 @@ fn arm(variant: &ErrorVariant, name: &str, path: &str) -> String {
 /// A doc summary as a Rust string literal's contents.
 fn quoted(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// One newtype per distinct error type, named after it so several errors in
+/// one package stay tellable apart.
+pub(super) fn error_newtypes(plan: &BindingPlan) -> Vec<(Ty, String)> {
+    let mut seen: BTreeMap<String, Ty> = BTreeMap::new();
+    for function in plan.functions() {
+        if let Some(err) = &function.throws {
+            seen.insert(err.render(), err.clone());
+        }
+    }
+    seen.into_values()
+        .map(|ty| {
+            let name = error_name(&ty);
+            (ty, name)
+        })
+        .collect()
+}
+
+pub(super) fn error_name(ty: &Ty) -> String {
+    format!("BindError{}", ident_part(&ty.render()))
+}
+
+pub(super) fn error_impl(ty: &Ty, name: &str, krate: &str, hierarchy: &Hierarchy) -> String {
+    let inner = hierarchy
+        .spelling(ty, krate)
+        .unwrap_or_else(|| error_ty(ty, krate));
+    let allow = match hierarchy.matches(ty) {
+        true => "#[allow(unreachable_patterns)]\n    ",
+        false => "",
+    };
+    format!(
+        "
+struct {name}({inner});
+
+impl ::std::convert::From<{name}> for ::pyo3::PyErr {{
+    {allow}fn from(err: {name}) -> ::pyo3::PyErr {{
+        let message = ::std::string::ToString::to_string(&err.0);
+{}    }}
+}}
+",
+        hierarchy.raise(ty, krate),
+    )
+}
+
+/// An error type is spelled as the Rust type itself: it is rendered through
+/// `Display`, never carried across as a value.
+fn error_ty(ty: &Ty, krate: &str) -> String {
+    match ty {
+        Ty::Str => "::std::string::String".into(),
+        Ty::Opaque(path) => format!("::{path}"),
+        Ty::Class(name) => format!("{krate}::{name}"),
+        other => other.render(),
+    }
 }

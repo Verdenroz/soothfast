@@ -643,6 +643,7 @@ pub fn opts() -> BindOptions {
         version: "0.1.0".into(),
         crate_name: "acme".into(),
         crate_package: "acme".into(),
+        blocking: true,
         ..BindOptions::default()
     }
 }
