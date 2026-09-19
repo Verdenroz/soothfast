@@ -62,7 +62,7 @@ require "acme_core"
 ## Not bound
 
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
-- acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
+- acme::with_time: foreign type `chrono::DateTime` has no mapping; map it under [bind.types] in soothfast.toml (`"chrono::DateTime" = "str"` crosses it as a string through Display and FromStr)
 - acme::Counter::refresh: `async fn` cannot cross into ruby: no Ruby runtime story yet
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs
 - acme::peek: `Option<Counter>` cannot cross into ruby: an optional exported type is taken only as a return; take it by reference instead

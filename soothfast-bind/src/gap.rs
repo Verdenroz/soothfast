@@ -82,8 +82,9 @@ impl Gap {
     pub fn explain(&self) -> String {
         match self {
             Self::UnmappedForeign { at, path } => format!(
-                "{at}: foreign type `{path}` has no mapping; add one under \
-                 [bind.types] in soothfast.toml"
+                "{at}: foreign type `{path}` has no mapping; map it under \
+                 [bind.types] in soothfast.toml (`\"{path}\" = \"str\"` crosses it \
+                 as a string through Display and FromStr)"
             ),
             Self::UnsupportedByBackend { at, ty, lang, why } => {
                 format!("{at}: `{ty}` cannot cross into {lang}: {why}")

@@ -5,6 +5,12 @@ use crate::model::Ty;
 
 /// Why a language cannot carry this type, if it cannot.
 pub(super) fn unsupported(kind: BindKind, ty: &Ty, mirrored: &BTreeSet<String>) -> Option<String> {
+    if kind != BindKind::Python && mentions_text(ty) {
+        return Some(
+            "a [bind.types] mapping crosses into Python only for now; other backends report it"
+                .into(),
+        );
+    }
     // Go, C++, Lua and C# all call the same C functions, so each inherits
     // the restriction; Java and Kotlin have no generic container either,
     // and no more of a story than C does for a sequence of anything but one
@@ -57,6 +63,16 @@ pub(super) fn unsupported(kind: BindKind, ty: &Ty, mirrored: &BTreeSet<String>) 
         }
         Ty::Tuple(items) => items.iter().find_map(|t| unsupported(kind, t, mirrored)),
         _ => None,
+    }
+}
+
+fn mentions_text(ty: &Ty) -> bool {
+    match ty {
+        Ty::Text(_) => true,
+        Ty::List(inner) | Ty::Optional(inner) => mentions_text(inner),
+        Ty::Map(key, value) => mentions_text(key) || mentions_text(value),
+        Ty::Tuple(items) => items.iter().any(mentions_text),
+        _ => false,
     }
 }
 

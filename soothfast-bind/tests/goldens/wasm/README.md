@@ -56,7 +56,7 @@ await init();
 ## Not bound
 
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
-- acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
+- acme::with_time: foreign type `chrono::DateTime` has no mapping; map it under [bind.types] in soothfast.toml (`"chrono::DateTime" = "str"` crosses it as a string through Display and FromStr)
 - acme::flags: `Vec<bool>` cannot cross into wasm: wasm-bindgen carries no `bool` array; return a list of `u8` instead
 - acme::index_all: `HashMap<String, u32>` cannot cross into wasm: wasm-bindgen carries no map type; return a list of pairs, or a struct with named fields
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs

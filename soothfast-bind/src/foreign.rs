@@ -73,6 +73,16 @@ mod tests {
     }
 
     #[test]
+    fn a_str_mapping_carries_the_path_it_was_declared_under() {
+        let mut table = TypeTable::default();
+        table.insert("chrono::DateTime", Ty::Text("chrono::DateTime".into()));
+        assert_eq!(
+            table.lookup("chrono::offset::DateTime"),
+            Some(&Ty::Text("chrono::DateTime".into()))
+        );
+    }
+
+    #[test]
     fn an_empty_table_maps_nothing() {
         assert!(TypeTable::default().is_empty());
         assert_eq!(TypeTable::default().lookup("std::path::PathBuf"), None);

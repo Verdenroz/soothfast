@@ -57,7 +57,7 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 ## Not bound
 
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
-- acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
+- acme::with_time: foreign type `chrono::DateTime` has no mapping; map it under [bind.types] in soothfast.toml (`"chrono::DateTime" = "str"` crosses it as a string through Display and FromStr)
 - acme::Counter::refresh: `async fn` cannot cross into kotlin: no Kotlin runtime story yet
 - acme::counters: `Vec<Counter>` cannot cross into kotlin: a sequence of `Counter` has no C spelling that owns its elements; a sequence of one primitive crosses as a pointer and a length
 - acme::index_all: `HashMap<String, u32>` cannot cross into kotlin: C has no map type; return a sequence of pairs, or an exported type with accessors

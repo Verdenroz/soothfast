@@ -32,6 +32,10 @@ pub enum Ty {
     Tuple(Vec<Ty>),
     /// An exported struct or enum, by name.
     Class(String),
+    /// A foreign type, by canonical path, crossing as a string through
+    /// `Display` on the way out and `FromStr` on the way in: a
+    /// `[bind.types]` mapping of `"str"`.
+    Text(String),
     /// A type with no known mapping. Always accompanied by a
     /// [`crate::gap::Gap`]; never emitted as a guess.
     Opaque(String),
@@ -140,7 +144,7 @@ impl Ty {
                 let rendered: Vec<String> = items.iter().map(Ty::render).collect();
                 format!("({})", rendered.join(", "))
             }
-            Ty::Class(name) | Ty::Opaque(name) => name.clone(),
+            Ty::Class(name) | Ty::Text(name) | Ty::Opaque(name) => name.clone(),
         }
     }
 

@@ -262,6 +262,66 @@ fn the_python_glue_raises_a_package_hierarchy_with_variant_fields_as_attributes(
     assert!(module.find("add_class::<Bag>").unwrap() < module.find("m.add(\"Error\"").unwrap());
 }
 
+/// The document plus `stamp(at: DateTime) -> DateTime`, which only a
+/// `[bind.types]` mapping makes bindable.
+fn doc_with_stamp() -> Value {
+    let mut doc = doc();
+    doc["index"]["33"] = func(
+        "stamp",
+        &[("at", path("DateTime", 99, &[]))],
+        path("DateTime", 99, &[]),
+        false,
+    );
+    doc["index"]["40"]["inner"]["module"]["items"]
+        .as_array_mut()
+        .expect("items")
+        .push(json!(33));
+    doc["paths"]["33"] =
+        json!({ "crate_id": 0, "path": ["acme", "core", "stamp"], "kind": "function" });
+    doc
+}
+
+#[test]
+fn a_mapped_foreign_type_crosses_as_text_into_python_and_is_reported_elsewhere() {
+    let mut table = TypeTable::with_defaults();
+    table.insert("chrono::DateTime", Ty::Text("chrono::DateTime".into()));
+    let records = vec![record("acme::core::stamp", "fn")];
+    let (walked, gaps) = surface(&stamped(doc_with_stamp()), &table, &records).expect("walks");
+    let stamp = find(&walked, "acme::core::stamp");
+    assert_eq!(stamp.params[0].ty, Ty::Text("chrono::DateTime".into()));
+    assert_eq!(stamp.ret, Ty::Text("chrono::DateTime".into()));
+    assert!(gaps.is_empty(), "{gaps:?}");
+
+    let python = lower(&walked, gaps.clone(), &opts(), BindKind::Python).expect("lowers");
+    assert!(python.functions.iter().any(|f| f.name == "stamp"));
+    assert!(python.gaps.is_empty(), "{:?}", python.gaps);
+    let go = lower(&walked, gaps, &opts(), BindKind::Go).expect("lowers");
+    assert!(go.functions.is_empty());
+    let why = go
+        .gaps
+        .iter()
+        .map(|g| g.explain())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(why.contains("crosses into Python only for now"), "{why}");
+
+    let (_, unmapped) = surface(
+        &stamped(doc_with_stamp()),
+        &TypeTable::with_defaults(),
+        &records,
+    )
+    .expect("walks");
+    let why = unmapped
+        .iter()
+        .map(|g| g.explain())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        why.contains("`\"chrono::DateTime\" = \"str\"` crosses it as a string"),
+        "{why}"
+    );
+}
+
 fn find<'a>(surface: &'a Surface, id: &str) -> &'a soothfast_bind::model::ExportedFn {
     surface
         .fns
