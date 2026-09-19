@@ -27,6 +27,12 @@ inline std::string take_string(char *raw) {
     return value;
 }
 
+inline std::vector<bool> to_vector_bool(core_bool_array arr) {
+    std::vector<bool> out(arr.data, arr.data + arr.len);
+    core_bool_array_free(arr);
+    return out;
+}
+
 inline std::vector<double> to_vector_f64(core_f64_array arr) {
     std::vector<double> out(arr.data, arr.data + arr.len);
     core_f64_array_free(arr);
@@ -147,10 +153,20 @@ inline std::optional<Counter> find_counter(int64_t start) {
     return raw_result != nullptr ? std::optional<Counter>(Counter(raw_result)) : std::nullopt;
 }
 
+inline std::vector<bool> flags(std::span<const bool> values) {
+    auto raw_result = core_flags(values.data(), values.size());
+    return to_vector_bool(raw_result);
+}
+
 inline std::string greet(std::string_view name) {
     std::string name_owned(name);
     auto raw_result = core_greet(name_owned.c_str());
     return take_string(raw_result);
+}
+
+inline bool is_high(Level level) {
+    auto raw_result = core_is_high(static_cast<core_level>(level));
+    return raw_result;
 }
 
 inline int64_t mutate_counter(Counter& counter) {

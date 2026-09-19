@@ -20,6 +20,14 @@ typedef enum core_level {
 
 typedef struct core_mode core_mode;
 
+/* An owned `bool` sequence. Release it with core_bool_array_free. */
+typedef struct core_bool_array {
+    bool *data;
+    size_t len;
+} core_bool_array;
+
+void core_bool_array_free(core_bool_array array);
+
 /* An owned `f64` sequence. Release it with core_f64_array_free. */
 typedef struct core_f64_array {
     double *data;
@@ -59,7 +67,9 @@ char * core_describe_owned(const char *label);
 core_u8_array core_digest(const uint8_t *data, size_t data_len);
 int64_t core_fail(const char *message, char **error);
 core_counter * core_find_counter(int64_t start);
+core_bool_array core_flags(const bool *values, size_t values_len);
 char * core_greet(const char *name);
+bool core_is_high(core_level level);
 int64_t core_mutate_counter(core_counter *counter);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);
 core_level core_peak_level(const double *values, size_t values_len);

@@ -8,6 +8,12 @@ using System.Runtime.InteropServices;
 
 namespace Acme.Core;
 
+internal struct AcmeCoreBoolArray
+{
+    public IntPtr Data;
+    public nuint Len;
+}
+
 internal struct AcmeCoreF64Array
 {
     public IntPtr Data;
@@ -68,6 +74,9 @@ internal static class Native
     internal static extern void acme_core_string_free(IntPtr text);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void acme_core_bool_array_free(AcmeCoreBoolArray array);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void acme_core_f64_array_free(AcmeCoreF64Array array);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
@@ -116,7 +125,13 @@ internal static class Native
     internal static extern IntPtr acme_core_find_counter(long start);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe AcmeCoreBoolArray acme_core_flags(byte* values, nuint values_len);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe IntPtr acme_core_greet(byte* name);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern byte acme_core_is_high(int level);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern long acme_core_mutate_counter(IntPtr counter);

@@ -20,6 +20,14 @@ typedef enum acme_core_level {
 
 typedef struct acme_core_mode acme_core_mode;
 
+/* An owned `bool` sequence. Release it with acme_core_bool_array_free. */
+typedef struct acme_core_bool_array {
+    bool *data;
+    size_t len;
+} acme_core_bool_array;
+
+void acme_core_bool_array_free(acme_core_bool_array array);
+
 /* An owned `f64` sequence. Release it with acme_core_f64_array_free. */
 typedef struct acme_core_f64_array {
     double *data;
@@ -59,7 +67,9 @@ char * acme_core_describe_owned(const char *label);
 acme_core_u8_array acme_core_digest(const uint8_t *data, size_t data_len);
 int64_t acme_core_fail(const char *message, char **error);
 acme_core_counter * acme_core_find_counter(int64_t start);
+acme_core_bool_array acme_core_flags(const bool *values, size_t values_len);
 char * acme_core_greet(const char *name);
+bool acme_core_is_high(acme_core_level level);
 int64_t acme_core_mutate_counter(acme_core_counter *counter);
 acme_core_f64_array acme_core_normalize(const double *input, size_t input_len, double factor);
 acme_core_level acme_core_peak_level(const double *values, size_t values_len);

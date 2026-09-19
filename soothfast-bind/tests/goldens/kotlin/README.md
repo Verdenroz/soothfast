@@ -41,7 +41,9 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 - `digest`
 - `fail`
 - `findCounter`
+- `flags`
 - `greet`
+- `isHigh`
 - `mutateCounter`
 - `normalize`
 - `peakLevel`
@@ -52,7 +54,6 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 ## Not bound
 
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
-- acme::is_high: foreign type `acme::is_high` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::Counter::refresh: `async fn` cannot cross into kotlin: no Kotlin runtime story yet
 - acme::index_all: `HashMap<String, u32>` cannot cross into kotlin: C has no map type; return a sequence of pairs, or an exported type with accessors

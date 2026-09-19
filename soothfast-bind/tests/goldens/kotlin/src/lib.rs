@@ -297,6 +297,53 @@ pub extern "system" fn Java_acme_core_Core_nativeFindCounter<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeFlags<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    values: ::jni::objects::JBooleanArray<'local>
+) -> ::jni::sys::jbooleanArray {
+    let __len = match env.get_array_length(&values) {
+        Ok(v) => v as usize,
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+    };
+    let mut __raw = vec![0; __len];
+    match env.get_boolean_array_region(&values, 0, &mut __raw) {
+        Ok(()) => {}
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+    }
+    let values: Vec<bool> = __raw.into_iter().map(|v| v != 0).collect();
+    let __out = ::acme::flags(values);
+    {
+            let __values: Vec<u8> = __out.into_iter().map(|v| v as u8).collect();
+            let __arr = match env.new_boolean_array(__values.len() as i32) {
+                Ok(v) => v,
+                Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+            };
+            match env.set_boolean_array_region(&__arr, 0, &__values) {
+                Ok(()) => {}
+                Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+            }
+            __arr.into_raw()
+        }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeGreet<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,
@@ -319,6 +366,23 @@ pub extern "system" fn Java_acme_core_Core_nativeGreet<'local>(
             return ::std::ptr::null_mut();
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeIsHigh<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    level: i32
+) -> bool {
+    let level = match level_from_ordinal(level) {
+        Ok(v) => v,
+        Err(other) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", format!("invalid Level ordinal: {other}"));
+            return false;
+        }
+    };
+    let __out = ::acme::is_high(&level);
+    __out
 }
 
 #[unsafe(no_mangle)]

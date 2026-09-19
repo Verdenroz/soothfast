@@ -50,7 +50,9 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `acme_core_digest`
 - `acme_core_fail`
 - `acme_core_find_counter`
+- `acme_core_flags`
 - `acme_core_greet`
+- `acme_core_is_high`
 - `acme_core_mutate_counter`
 - `acme_core_normalize`
 - `acme_core_peak_level`
@@ -61,7 +63,6 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 ## Not bound
 
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
-- acme::is_high: foreign type `acme::is_high` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::Counter::refresh: `async fn` cannot cross into csharp: no .NET async story yet
 - acme::index_all: `HashMap<String, u32>` cannot cross into csharp: C has no map type; return a sequence of pairs, or an exported type with accessors

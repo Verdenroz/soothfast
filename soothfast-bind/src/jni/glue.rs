@@ -443,14 +443,15 @@ fn param_prelude(param: &Param, plan: &BindingPlan, krate: &str, zero: &str) -> 
 fn owned_buffer_stmt(name: &str, element: Primitive, zero: &str) -> String {
     let spelling = types::scalar_of(element);
     let natural = element.render();
-    let cast = element_cast("__raw", natural, spelling.rust);
+    let region = region_rust(element);
+    let cast = element_cast("__raw", natural, region);
     let err = err_arm(zero);
     format!(
         "    let __len = match env.get_array_length(&{name}) {{\n        Ok(v) => v as usize,\n        {err}\n    }};\n\
          \x20   let mut __raw = vec![{zero_elem}; __len];\n\
          \x20   match env.get_{java}_array_region(&{name}, 0, &mut __raw) {{\n        Ok(()) => {{}}\n        {err}\n    }}\n\
          \x20   let {name}: Vec<{natural}> = {cast};\n",
-        zero_elem = zero_literal(spelling.rust),
+        zero_elem = zero_literal(region),
         java = spelling.java,
     )
 }
@@ -493,10 +494,12 @@ fn writeback_stmt(name: &str, element: Primitive, zero: &str) -> String {
 /// A borrowed buffer that will not stay pinned, because another one in the
 /// same call needs the one live `AutoElementsCritical` guard instead.
 fn copied_buffer_stmt(name: &str, element: Primitive, zero: &str) -> String {
-    let spelling = types::scalar_of(element);
     let natural = element.render();
-    let cast = if natural == spelling.rust {
+    let region = region_rust(element);
+    let cast = if natural == region {
         "guard.to_vec()".to_string()
+    } else if natural == "bool" {
+        "guard.iter().map(|v| *v != 0).collect()".to_string()
     } else {
         format!("guard.iter().map(|v| *v as {natural}).collect()")
     };
@@ -547,10 +550,12 @@ fn critical_err_block(zero: &str, indent: &str) -> String {
 }
 
 /// The pinned slice or mutable slice a call argument passes, reinterpreting
-/// the pinned element type when the Rust side wants its unsigned twin.
+/// the pinned element type when the Rust side wants its unsigned twin (or,
+/// for `bool`, its `jboolean` byte — JNI guarantees that one is always 0 or
+/// 1, which is what makes reinterpreting it as `bool` sound).
 fn pinned_slice_expr(name: &str, element: Primitive, writable: bool) -> String {
     let natural = element.render();
-    let stored = types::scalar_of(element).rust;
+    let stored = region_rust(element);
     let var = format!("{name}_pin");
     if natural == stored {
         return match writable {
@@ -579,11 +584,25 @@ fn scalar_cast_stmt(name: &str, ty: &Ty) -> String {
     }
 }
 
-fn element_cast(expr: &str, natural: &str, stored: &str) -> String {
-    match natural == stored {
-        true => expr.to_string(),
-        false => format!("{expr}.into_iter().map(|v| v as {natural}).collect()"),
+/// The Rust type `env.get_/set_{java}_array_region` and a critical-array
+/// guard hand over: the same as the element's natural type for every
+/// primitive but `bool`, whose JNI array calls read and write a `jboolean`
+/// byte rather than a native `bool`.
+fn region_rust(element: Primitive) -> &'static str {
+    match element {
+        Primitive::Bool => "u8",
+        other => types::scalar_of(other).rust,
     }
+}
+
+fn element_cast(expr: &str, natural: &str, stored: &str) -> String {
+    if natural == stored {
+        return expr.to_string();
+    }
+    if natural == "bool" {
+        return format!("{expr}.into_iter().map(|v| v != 0).collect()");
+    }
+    format!("{expr}.into_iter().map(|v| v as {natural}).collect()")
 }
 
 fn zero_literal(rust_ty: &str) -> &'static str {
@@ -733,14 +752,18 @@ fn scalar_return_expr(expr: &str, ty: &Ty) -> String {
 }
 
 fn array_return_expr(expr: &str, natural: &str, spelling: &types::Spelling, zero: &str) -> String {
-    let cast = element_cast(expr, spelling.rust, natural);
+    let region = match natural {
+        "bool" => "u8",
+        _ => spelling.rust,
+    };
+    let cast = element_cast(expr, region, natural);
     let err = err_arm(zero);
     format!(
         "{{\n            let __values: Vec<{rust}> = {cast};\n            \
          let __arr = match env.new_{java}_array(__values.len() as i32) {{\n                Ok(v) => v,\n                {err}\n            }};\n            \
          match env.set_{java}_array_region(&__arr, 0, &__values) {{\n                Ok(()) => {{}}\n                {err}\n            }}\n            \
          __arr.into_raw()\n        }}",
-        rust = spelling.rust,
+        rust = region,
         java = spelling.java,
     )
 }

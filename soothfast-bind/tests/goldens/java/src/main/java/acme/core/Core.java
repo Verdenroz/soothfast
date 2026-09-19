@@ -30,8 +30,16 @@ public final class Core {
         return ptr_ == 0 ? null : new Counter(ptr_, Counter.Raw.INSTANCE);
     }
 
+    public static boolean[] flags(boolean[] values) {
+        return nativeFlags(values);
+    }
+
     public static String greet(String name) {
         return nativeGreet(name);
+    }
+
+    public static boolean isHigh(Level level) {
+        return nativeIsHigh(level.ordinal());
     }
 
     public static long mutateCounter(Counter counter) {
@@ -63,7 +71,9 @@ public final class Core {
     private static native byte[] nativeDigest(byte[] data);
     private static native long nativeFail(String message);
     private static native long nativeFindCounter(long start);
+    private static native boolean[] nativeFlags(boolean[] values);
     private static native String nativeGreet(String name);
+    private static native boolean nativeIsHigh(int level);
     private static native long nativeMutateCounter(long counter);
     private static native double[] nativeNormalize(double[] input, double factor);
     private static native int nativePeakLevel(double[] values);

@@ -116,6 +116,11 @@ pub fn greet(name: &str) -> String {
     ::acme::greet(name)
 }
 
+#[wasm_bindgen(js_name = isHigh)]
+pub fn is_high(level: Level) -> bool {
+    ::acme::is_high(&level.into())
+}
+
 #[wasm_bindgen(js_name = maybeRatio)]
 pub fn maybe_ratio(value: f64) -> Option<f64> {
     ::acme::maybe_ratio(value)

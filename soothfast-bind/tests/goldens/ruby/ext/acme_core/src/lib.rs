@@ -102,12 +102,21 @@ fn find_counter(start: i64) -> Option<Counter> {
     (::acme::find_counter(start)).map(|value| Counter(::std::cell::RefCell::new(value)))
 }
 
+fn flags(values: Vec<bool>) -> Vec<bool> {
+    ::acme::flags(values)
+}
+
 fn greet(name: String) -> String {
     ::acme::greet(&name)
 }
 
 fn index_all() -> ::std::collections::HashMap<String, u32> {
     ::acme::index_all()
+}
+
+fn is_high(ruby: &::magnus::Ruby, level: ::magnus::Symbol) -> Result<bool, ::magnus::Error> {
+    let level = level_from_symbol(ruby, level)?;
+    Ok(::acme::is_high(&level))
 }
 
 fn maybe_ratio(value: f64) -> Option<f64> {
@@ -171,8 +180,10 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("digest", ::magnus::function!(digest, 1))?;
     module.define_module_function("fail", ::magnus::function!(fail, 1))?;
     module.define_module_function("find_counter", ::magnus::function!(find_counter, 1))?;
+    module.define_module_function("flags", ::magnus::function!(flags, 1))?;
     module.define_module_function("greet", ::magnus::function!(greet, 1))?;
     module.define_module_function("index_all", ::magnus::function!(index_all, 0))?;
+    module.define_module_function("is_high", ::magnus::function!(is_high, 1))?;
     module.define_module_function("maybe_ratio", ::magnus::function!(maybe_ratio, 1))?;
     module.define_module_function("mutate_counter", ::magnus::function!(mutate_counter, 1))?;
     module.define_module_function("normalize", ::magnus::function!(normalize, 2))?;

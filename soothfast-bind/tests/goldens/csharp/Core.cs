@@ -87,6 +87,24 @@ public static class Core
         return result == IntPtr.Zero ? null : new Counter(result);
     }
 
+    public static bool[] Flags(ReadOnlySpan<bool> values)
+    {
+        unsafe
+        {
+            fixed (byte* valuesPtr = values)
+            {
+                AcmeCoreBoolArray result = Native.acme_core_flags(valuesPtr, (nuint)values.Length);
+                bool[] value = new bool[result.Len];
+                if (result.Len > 0)
+                {
+                    Marshal.Copy(result.Data, value, 0, (int)result.Len);
+                }
+                Native.acme_core_bool_array_free(result);
+                return value;
+            }
+        }
+    }
+
     public static string Greet(string name)
     {
         byte[] nameBytes = System.Text.Encoding.UTF8.GetBytes(name + "\0");
@@ -100,6 +118,12 @@ public static class Core
                 return value;
             }
         }
+    }
+
+    public static bool IsHigh(Level level)
+    {
+        byte result = Native.acme_core_is_high((int)level);
+        return result != 0;
     }
 
     public static long MutateCounter(Counter counter)

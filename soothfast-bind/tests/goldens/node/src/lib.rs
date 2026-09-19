@@ -135,8 +135,18 @@ pub fn find_counter(start: BigInt) -> Result<Option<Counter>> {
 }
 
 #[napi]
+pub fn flags(values: Vec<bool>) -> Vec<bool> {
+    ::acme::flags(values)
+}
+
+#[napi]
 pub fn greet(name: String) -> String {
     ::acme::greet(&name)
+}
+
+#[napi(js_name = "isHigh")]
+pub fn is_high(level: Level) -> bool {
+    ::acme::is_high(&level.into())
 }
 
 #[napi(js_name = "maybeRatio")]

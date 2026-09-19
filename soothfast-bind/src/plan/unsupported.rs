@@ -121,6 +121,14 @@ fn unsupported_by_r(ty: &Ty) -> Option<String> {
              primitive crosses as a numeric or raw vector",
             inner.render()
         )),
+        // R's logical vector holds extendr's own tri-state Rbool (TRUE,
+        // FALSE, or NA), not a plain bool; extendr's derive marshals it as
+        // one, never as `Vec<bool>`/`&[bool]`.
+        Ty::List(inner) if **inner == Ty::Bool => Some(
+            "a `bool` sequence has no R vector to become: R's own logical \
+             vector holds a tri-state NA-or-boolean, not a plain bool"
+                .into(),
+        ),
         _ => None,
     }
 }

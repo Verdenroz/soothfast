@@ -435,6 +435,11 @@ fn find_counter(start: i64) -> Option<Counter> {
 }
 
 #[pyfunction]
+fn flags(py: Python<'_>, values: Vec<bool>) -> Vec<bool> {
+    py.detach(|| ::acme::flags(values))
+}
+
+#[pyfunction]
 fn greet(name: &str) -> String {
     ::acme::greet(name)
 }
@@ -442,6 +447,11 @@ fn greet(name: &str) -> String {
 #[pyfunction]
 fn index_all() -> ::std::collections::HashMap<String, u32> {
     ::acme::index_all()
+}
+
+#[pyfunction]
+fn is_high(level: Level) -> bool {
+    ::acme::is_high(&level.into())
 }
 
 #[pyfunction]
@@ -512,8 +522,10 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(digest, m)?)?;
     m.add_function(wrap_pyfunction!(fail, m)?)?;
     m.add_function(wrap_pyfunction!(find_counter, m)?)?;
+    m.add_function(wrap_pyfunction!(flags, m)?)?;
     m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;
+    m.add_function(wrap_pyfunction!(is_high, m)?)?;
     m.add_function(wrap_pyfunction!(maybe_ratio, m)?)?;
     m.add_function(wrap_pyfunction!(mutate_counter, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;

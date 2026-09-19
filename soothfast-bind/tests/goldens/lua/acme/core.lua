@@ -12,6 +12,14 @@ typedef enum core_level {
 
 typedef struct core_mode core_mode;
 
+/* An owned `bool` sequence. Release it with core_bool_array_free. */
+typedef struct core_bool_array {
+    bool *data;
+    size_t len;
+} core_bool_array;
+
+void core_bool_array_free(core_bool_array array);
+
 /* An owned `f64` sequence. Release it with core_f64_array_free. */
 typedef struct core_f64_array {
     double *data;
@@ -51,7 +59,9 @@ char * core_describe_owned(const char *label);
 core_u8_array core_digest(const uint8_t *data, size_t data_len);
 int64_t core_fail(const char *message, char **error);
 core_counter * core_find_counter(int64_t start);
+core_bool_array core_flags(const bool *values, size_t values_len);
 char * core_greet(const char *name);
+bool core_is_high(core_level level);
 int64_t core_mutate_counter(core_counter *counter);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);
 core_level core_peak_level(const double *values, size_t values_len);
@@ -66,6 +76,22 @@ local function lua_string(s)
 	local text = ffi.string(s)
 	lib.core_string_free(s)
 	return text
+end
+
+local function bool_buf(value)
+	-- a VLA cdata array carries no `#`; its instance size does.
+	if ffi.istype("bool[?]", value) then
+		return value, ffi.sizeof(value) / ffi.sizeof("bool")
+	end
+	if ffi.istype("core_bool_array", value) then
+		return value.data, tonumber(value.len)
+	end
+	local n = #value
+	local arr = ffi.new("bool[?]", n)
+	for i = 1, n do
+		arr[i - 1] = value[i]
+	end
+	return arr, n
 end
 
 local function f64_buf(value)
@@ -112,6 +138,44 @@ local function u8_buf(value)
 	end
 	return arr, n
 end
+
+-- Copies a `bool` array into a plain table.
+local function core_bool_array_totable(self)
+	local n = tonumber(self.len)
+	local out = {}
+	for i = 1, n do
+		out[i] = self.data[i - 1]
+	end
+	return out
+end
+
+local function core_bool_array_close(self)
+	if self.data == nil then
+		return
+	end
+	ffi.gc(self, nil)
+	lib.core_bool_array_free(self)
+	self.len = 0
+	self.data = nil
+end
+
+ffi.metatype("core_bool_array", {
+	__len = function(self) return tonumber(self.len) end,
+	__index = function(self, key)
+		if key == "totable" then
+			return core_bool_array_totable
+		end
+		if key == "close" then
+			return core_bool_array_close
+		end
+		if type(key) == "number" then
+			if key % 1 ~= 0 or key < 1 or key > tonumber(self.len) then
+				error("core_bool_array index out of range: " .. tostring(key))
+			end
+			return self.data[key - 1]
+		end
+	end,
+})
 
 -- Copies a `f64` array into a plain table.
 local function core_f64_array_totable(self)
@@ -326,9 +390,20 @@ function M.find_counter(start)
 	return (function() local p = ret; if p == nil then return nil end; return wrap_counter(p) end)()
 end
 
+function M.flags(values)
+	local values_ptr, values_len = bool_buf(values)
+	local ret = lib.core_flags(values_ptr, values_len)
+	return ffi.gc(ret, lib.core_bool_array_free)
+end
+
 function M.greet(name)
 	local ret = lib.core_greet(name)
 	return lua_string(ret)
+end
+
+function M.is_high(level)
+	local ret = lib.core_is_high(level_to_c(level))
+	return ret
 end
 
 function M.mutate_counter(counter)

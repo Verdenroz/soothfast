@@ -38,8 +38,10 @@ require "acme_core"
 - `digest`
 - `fail`
 - `find_counter`
+- `flags`
 - `greet`
 - `index_all`
+- `is_high`
 - `maybe_ratio`
 - `mutate_counter`
 - `normalize`
@@ -52,7 +54,6 @@ require "acme_core"
 ## Not bound
 
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
-- acme::is_high: foreign type `acme::is_high` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::Counter::refresh: `async fn` cannot cross into ruby: no Ruby runtime story yet
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; take it by reference, or add a method returning what the caller needs

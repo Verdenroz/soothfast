@@ -9,7 +9,9 @@ private external fun nativeDescribeOwned(label: String?): String?
 private external fun nativeDigest(data: ByteArray): ByteArray
 private external fun nativeFail(message: String): Long
 private external fun nativeFindCounter(start: Long): Long
+private external fun nativeFlags(values: BooleanArray): BooleanArray
 private external fun nativeGreet(name: String): String
+private external fun nativeIsHigh(level: Int): Boolean
 private external fun nativeMutateCounter(counter: Long): Long
 private external fun nativeNormalize(input: DoubleArray, factor: Double): DoubleArray
 private external fun nativePeakLevel(values: DoubleArray): Int
@@ -38,8 +40,16 @@ fun findCounter(start: Long): Counter? {
     return if (ptr_ == 0L) null else Counter(ptr_, Counter.Raw)
 }
 
+fun flags(values: BooleanArray): BooleanArray {
+    return nativeFlags(values)
+}
+
 fun greet(name: String): String {
     return nativeGreet(name)
+}
+
+fun isHigh(level: Level): Boolean {
+    return nativeIsHigh(level.ordinal)
 }
 
 fun mutateCounter(counter: Counter): Long {

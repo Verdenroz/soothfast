@@ -129,6 +129,10 @@ pub fn mutate_counter(counter: &mut Counter) -> i64 {
     counter.value
 }
 
+pub fn flags(values: Vec<bool>) -> Vec<bool> {
+    values.into_iter().map(|v| !v).collect()
+}
+
 pub fn describe(label: Option<&str>) -> Option<String> {
     label.map(|l| format!("label={l}"))
 }

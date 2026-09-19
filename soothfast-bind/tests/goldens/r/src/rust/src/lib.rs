@@ -139,6 +139,20 @@ fn greet(name: &str) -> String {
 }
 
 #[extendr]
+fn is_high(level: &str) -> ::std::result::Result<bool, String> {
+    let level = {
+        type Inner = ::acme::Level;
+        match level {
+            "Low" => Inner::Low,
+            "High" => Inner::High,
+            other => return Err(format!("unknown Level variant: {other}", other = other)),
+        }
+    };
+    let __out = ::acme::is_high(&level);
+    Ok(__out)
+}
+
+#[extendr]
 fn maybe_ratio(value: f64) -> Robj {
     let __out = ::acme::maybe_ratio(value);
     match __out { Some(v) => Robj::from(v), None => ().into() }
@@ -189,6 +203,7 @@ extendr_module! {
     fn fail;
     fn find_counter;
     fn greet;
+    fn is_high;
     fn maybe_ratio;
     fn mutate_counter;
     fn normalize;

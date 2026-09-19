@@ -30,6 +30,7 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 - `fail`
 - `find_counter`
 - `greet`
+- `is_high`
 - `maybe_ratio`
 - `mutate_counter`
 - `normalize`
@@ -40,9 +41,9 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 ## Not bound
 
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
-- acme::is_high: foreign type `acme::is_high` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::Counter::refresh: `async fn` cannot cross into r: no R runtime story yet
+- acme::flags: `Vec<bool>` cannot cross into r: a `bool` sequence has no R vector to become: R's own logical vector holds a tri-state NA-or-boolean, not a plain bool
 - acme::index_all: `HashMap<String, u32>` cannot cross into r: R has no map type; return a sequence of pairs, or an exported type with accessors
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; take it by reference, or add a method returning what the caller needs
 - acme::scale_into: `Vec<f64>` cannot cross into r: R vectors are values; an out-parameter cannot be written through, return the sequence instead

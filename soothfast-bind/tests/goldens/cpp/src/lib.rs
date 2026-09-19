@@ -58,6 +58,38 @@ pub unsafe fn report<E: ::std::fmt::Display>(error: *mut *mut ::std::os::raw::c_
 }
 }
 
+/// An owned `bool` sequence. Release it with `core_bool_array_free`.
+#[repr(C)]
+pub struct CoreBoolArray {
+    data: *mut bool,
+    len: usize,
+}
+
+impl CoreBoolArray {
+    fn empty() -> Self {
+        CoreBoolArray { data: ::std::ptr::null_mut(), len: 0 }
+    }
+
+    fn new(values: Vec<bool>) -> Self {
+        let mut boxed = values.into_boxed_slice();
+        let out = CoreBoolArray { data: boxed.as_mut_ptr(), len: boxed.len() };
+        ::std::mem::forget(boxed);
+        out
+    }
+}
+
+/// Release a sequence this library returned. Releasing one twice, or one it
+/// did not return, is undefined.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn core_bool_array_free(array: CoreBoolArray) {
+    if array.data.is_null() {
+        return;
+    }
+    drop(unsafe {
+        Box::from_raw(::std::ptr::slice_from_raw_parts_mut(array.data, array.len))
+    });
+}
+
 /// An owned `f64` sequence. Release it with `core_f64_array_free`.
 #[repr(C)]
 pub struct CoreF64Array {
@@ -265,8 +297,18 @@ pub unsafe extern "C" fn core_find_counter(start: i64) -> *mut CoreCounter {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn core_flags(values: *const bool, values_len: usize) -> CoreBoolArray {
+    CoreBoolArray::new(::acme::flags(unsafe { ffi::slice(values, values_len) }.to_vec()))
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn core_greet(name: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_char {
     ffi::into_text(::acme::greet(unsafe { ffi::text(name) }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn core_is_high(level: CoreLevel) -> bool {
+    ::acme::is_high(&level.into())
 }
 
 #[unsafe(no_mangle)]

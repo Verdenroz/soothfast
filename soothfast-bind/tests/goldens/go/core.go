@@ -31,6 +31,18 @@ func bufPtr[T any](s []T) *T {
 	return &s[0]
 }
 
+// boolSlice copies a `bool` sequence this library returned and
+// releases it.
+func boolSlice(arr C.core_bool_array) []bool {
+	defer C.core_bool_array_free(arr)
+	if arr.len == 0 {
+		return nil
+	}
+	out := make([]bool, arr.len)
+	copy(out, unsafe.Slice((*bool)(unsafe.Pointer(arr.data)), arr.len))
+	return out
+}
+
 // float64Slice copies a `f64` sequence this library returned and
 // releases it.
 func float64Slice(arr C.core_f64_array) []float64 {
@@ -220,10 +232,18 @@ func FindCounter(start int64) *Counter {
 	}()
 }
 
+func Flags(values []bool) []bool {
+	return boolSlice(C.core_flags((*C.bool)(unsafe.Pointer(bufPtr(values))), C.size_t(len(values))))
+}
+
 func Greet(name string) string {
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
 	return goString(C.core_greet(cName))
+}
+
+func IsHigh(level Level) bool {
+	return bool(C.core_is_high(level.c()))
 }
 
 func MutateCounter(counter *Counter) int64 {
