@@ -5,7 +5,7 @@ Gem::Specification.new do |spec|
   spec.version = "0.3.2"
   spec.summary = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
   spec.description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
-  spec.authors = ["Harvey Tseng <harveytseng2@gmail.com>"]
+  spec.authors = ["soothfast maintainers"]
   spec.required_ruby_version = ">= 3.1"
   spec.files = Dir["lib/**/*.rb", "ext/**/*.{rs,toml,rb}", "Cargo.{toml,lock}"]
   spec.require_paths = ["lib"]
