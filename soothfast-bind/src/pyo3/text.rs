@@ -56,6 +56,21 @@ pub(crate) fn parse(expr: &str, ty: &Ty) -> Option<String> {
     })
 }
 
+/// A mapped field read in place: `Display` needs only a borrow, and the
+/// mapped type need not be `Clone`.
+pub(crate) fn out_ref(expr: &str, ty: &Ty) -> Option<String> {
+    Some(match ty {
+        Ty::Text(_) => format!("::std::string::ToString::to_string(&{expr})"),
+        Ty::Optional(inner) if matches!(**inner, Ty::Text(_)) => {
+            format!("{expr}.as_ref().map(|v| ::std::string::ToString::to_string(v))")
+        }
+        Ty::List(inner) if matches!(**inner, Ty::Text(_)) => {
+            format!("{expr}.iter().map(|v| ::std::string::ToString::to_string(v)).collect()")
+        }
+        _ => return None,
+    })
+}
+
 /// A mapped value, or an option or sequence of one, rendered to the string
 /// Python receives.
 pub(crate) fn out(expr: &str, ty: &Ty) -> Option<String> {

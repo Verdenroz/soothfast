@@ -319,11 +319,12 @@ fn getter(accessor: &Accessor, plan: &BindingPlan) -> String {
         Ty::Class(class) if plan.is_mirrored(class) => format!("(&self.0.{field})"),
         _ => format!("self.0.{field}.clone()"),
     };
+    let body = text::out_ref(&format!("self.0.{field}"), &accessor.ty)
+        .unwrap_or_else(|| returned(&read, &accessor.ty, plan));
     format!(
-        "{}    #[getter]\n    fn {name}(&self) -> {} {{\n        {}\n    }}\n",
+        "{}    #[getter]\n    fn {name}(&self) -> {} {{\n        {body}\n    }}\n",
         docs(accessor.doc.as_deref(), "    "),
         returned_ty(&accessor.ty),
-        returned(&read, &accessor.ty, plan),
     )
 }
 

@@ -133,7 +133,8 @@ impl BindingPlan {
     /// else is built out of primitives, which always can.
     pub fn sendable(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::Opaque(_) => false,
+            // A mapped type's Send-ness is not in the document either.
+            Ty::Opaque(_) | Ty::Text(_) => false,
             Ty::Class(name) => self.classes.iter().any(|c| c.name == *name && c.send),
             Ty::List(inner) | Ty::Optional(inner) => self.sendable(inner),
             Ty::Map(key, value) => self.sendable(key) && self.sendable(value),

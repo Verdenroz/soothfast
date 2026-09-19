@@ -321,7 +321,7 @@ fn the_python_glue_parses_a_mapped_type_in_and_renders_it_out() {
     );
     assert!(
         glue.contains(
-            "fn clock(&self) -> String {\n        ::std::string::ToString::to_string(&self.0.clock.clone())\n    }"
+            "fn clock(&self) -> String {\n        ::std::string::ToString::to_string(&self.0.clock)\n    }"
         ),
         "{glue}"
     );
