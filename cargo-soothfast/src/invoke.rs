@@ -241,7 +241,7 @@ fn run_records(
         let stderr = String::from_utf8_lossy(&out.stderr);
         let reason = stderr
             .lines()
-            .find(|l| l.contains("error"))
+            .find(|l| l.trim_start().starts_with("error"))
             .or_else(|| stderr.trim().lines().last())
             .unwrap_or("no error output");
         return Err(io::Error::other(format!(
