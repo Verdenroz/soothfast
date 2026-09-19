@@ -142,8 +142,10 @@ segment the same way `go`'s and `cpp`'s are. For `csharp`, `package` is
 the root namespace, dotted like Java's; the assembly name and the
 `.csproj` file are named after it, and the embedded C crate's own name is
 derived from it the same way Go's is: the whole namespace, snake_cased.
-`module`, `version`, `description`, `repository`, `targets`, and
-`backend_version` all default to something sensible.
+`module`, `version`, `description`, `repository`, `authors`, `targets`, and
+`backend_version` all default to something sensible; `authors` falls back
+to the crate's own, and stands in for the crate name where a manifest
+format requires one.
 
 ## Commands
 

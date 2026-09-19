@@ -29,6 +29,8 @@ pub struct BindEntry {
     pub backend_version: Option<String>,
     pub description: Option<String>,
     pub repository: Option<String>,
+    /// Defaults to the crate's own authors.
+    pub authors: Vec<String>,
     /// Target triples the package is built for.
     pub targets: Vec<String>,
     /// `bind bench` script, relative to the package root: the same root
@@ -47,6 +49,7 @@ impl BindEntry {
             backend_version: None,
             description: None,
             repository: None,
+            authors: Vec::new(),
             targets: Vec::new(),
             bench: None,
         }
@@ -135,6 +138,7 @@ fn set(entry: &mut BindEntry, key: &str, value: TomlValue) -> Result<(), String>
         ("backend_version", TomlValue::Str(s)) => entry.backend_version = Some(s),
         ("description", TomlValue::Str(s)) => entry.description = Some(s),
         ("repository", TomlValue::Str(s)) => entry.repository = Some(s),
+        ("authors", TomlValue::StrArray(a)) => entry.authors = a,
         ("targets", TomlValue::StrArray(a)) => entry.targets = a,
         ("bench", TomlValue::Str(s)) => entry.bench = Some(s),
         (key, _) => return Err(format!("unknown or mistyped `{key}`")),
@@ -153,6 +157,17 @@ mod tests {
         assert_eq!(cfg.entries.len(), 1);
         assert_eq!(cfg.entries[0].lang, BindKind::Python);
         assert_eq!(cfg.entries[0].module(), "acme_core");
+    }
+
+    #[test]
+    fn authors_is_a_list_of_strings() {
+        let cfg = parse(
+            "[[bind]]\nout = \"bindings/ruby\"\npackage = \"acme-core\"\n\
+             authors = [\"Acme maintainers\"]\n",
+        )
+        .expect("parses");
+        assert_eq!(cfg.entries[0].authors, vec!["Acme maintainers".to_string()]);
+        assert!(parse("[[bind]]\nout = \"x\"\npackage = \"x\"\nauthors = \"me\"\n").is_err());
     }
 
     #[test]

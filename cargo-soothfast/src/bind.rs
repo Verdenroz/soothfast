@@ -282,7 +282,10 @@ fn bind_options(entry: &BindEntry, pkg: &str, meta: &invoke::PkgMeta) -> BindOpt
         crate_path: crate_path(&entry.out),
         description: entry.description.clone(),
         repository: entry.repository.clone(),
-        authors: meta.authors.clone(),
+        authors: match entry.authors.is_empty() {
+            true => meta.authors.clone(),
+            false => entry.authors.clone(),
+        },
         targets: entry.targets.clone(),
         backend_version: entry.backend_version.clone(),
     }
