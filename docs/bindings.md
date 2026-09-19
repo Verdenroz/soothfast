@@ -148,6 +148,8 @@ to the crate's own, and stands in for the crate name where a manifest
 format requires one. For `python`, `interpreters = ["python3.14",
 "python3.14t"]` names the interpreters `bind build` produces a wheel for,
 one wheel each, in place of whichever `python3` maturin finds first.
+`blocking = true` also emits a synchronous `{name}_blocking` twin of every
+async call; see [Async needs a runtime](#async-needs-a-runtime).
 
 ## Commands
 
@@ -219,7 +221,10 @@ backend reports a call or field mentioning a mapped type as unsupported.
 The lookup falls back to the bare type name, so `"DateTime" = "str"`
 matches `chrono::DateTime` too, and a type reached through a re-export
 matches its canonical spelling. Every `[[bind]]` entry's table feeds one
-walk of the surface, so the same path may not be mapped two ways.
+walk of the surface, so the same path may not be mapped two ways. Mapping
+a type changes the fingerprint of every export that mentions it, so
+`docs check` reports the change and `docs accept` re-locks it, the same
+as any signature change.
 
 ## What the generated code looks like
 
@@ -996,6 +1001,18 @@ one trip through the event loop.
 Glue crates binding an `async fn` take a `tokio` dependency for this, and
 cargo unifies it with whatever tokio the bound crate already pulls in. A
 surface with nothing async takes neither the dependency nor the runtime.
+
+A notebook or a plain script has no event loop to hand a coroutine to.
+`[[bind]] blocking = true` emits a `{name}_blocking` twin beside every
+async call, with the same arguments and return, that runs the future to
+completion on that runtime and returns the value: `t.chart_blocking(...)`
+instead of `asyncio.run(t.chart(...))`. The twin releases the interpreter
+lock while it waits when everything the call touches can leave the Python
+thread (the receiver is `Sync`, the arguments are owned values or
+`Sync` handles, the return and the error are `Send`); otherwise it holds
+the lock for the whole call, so other Python threads stall until it
+returns, but the call still completes. A twin must never be called from
+inside a running tokio context, which Python never is.
 
 ### Free-threaded Python
 

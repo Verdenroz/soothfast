@@ -69,6 +69,7 @@ except OverflowError:
     pass
 
 assert asyncio.run(c.refresh()) == 10
+assert c.refresh_blocking() == 10
 
 assert bytes(acme_core.digest(bytes([1, 2, 3]))) == bytes([2, 3, 4])
 
