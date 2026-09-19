@@ -16,9 +16,11 @@ enum BorrowedF64 {
     Owned(Vec<f64>),
 }
 
-impl<'py> ::pyo3::FromPyObject<'py> for BorrowedF64 {
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
-        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<f64>::get(obj)
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for BorrowedF64 {
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<f64>::get(&obj)
             && buf.is_c_contiguous()
         {
             return Ok(BorrowedF64::Buffer(buf));
@@ -63,9 +65,11 @@ impl BorrowedF64 {
 /// real writable buffer, so unlike the read side there is no fallback.
 struct BorrowedMutF64(::pyo3::buffer::PyBuffer<f64>);
 
-impl<'py> ::pyo3::FromPyObject<'py> for BorrowedMutF64 {
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
-        let buf = ::pyo3::buffer::PyBuffer::<f64>::get(obj)?;
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for BorrowedMutF64 {
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        let buf = ::pyo3::buffer::PyBuffer::<f64>::get(&obj)?;
         if buf.readonly() {
             return Err(::pyo3::exceptions::PyTypeError::new_err(
                 "expected a writable buffer",
@@ -104,9 +108,11 @@ enum BorrowedU8 {
     Owned(Vec<u8>),
 }
 
-impl<'py> ::pyo3::FromPyObject<'py> for BorrowedU8 {
-    fn extract_bound(obj: &::pyo3::Bound<'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
-        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<u8>::get(obj)
+impl<'a, 'py> ::pyo3::FromPyObject<'a, 'py> for BorrowedU8 {
+    type Error = ::pyo3::PyErr;
+
+    fn extract(obj: ::pyo3::Borrowed<'a, 'py, ::pyo3::PyAny>) -> ::pyo3::PyResult<Self> {
+        if let Ok(buf) = ::pyo3::buffer::PyBuffer::<u8>::get(&obj)
             && buf.is_c_contiguous()
         {
             return Ok(BorrowedU8::Buffer(buf));
@@ -246,17 +252,20 @@ impl F64Array {
     }
 }
 
+::pyo3::create_exception!(soothfast_stats, Error, ::pyo3::exceptions::PyException, "Base of every error soothfast-stats raises.");
+
 struct BindErrorString(::std::string::String);
 
 impl ::std::convert::From<BindErrorString> for ::pyo3::PyErr {
     fn from(err: BindErrorString) -> ::pyo3::PyErr {
-        ::pyo3::exceptions::PyRuntimeError::new_err(::std::string::ToString::to_string(&err.0))
+        let message = ::std::string::ToString::to_string(&err.0);
+        Error::new_err(message)
     }
 }
 
 /// Which statistic a comparison reads.
-#[pyclass(name = "Metric", eq, eq_int)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[pyclass(name = "Metric", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Metric {
     Median,
     Mad,
@@ -353,6 +362,10 @@ impl Summary {
         self.0.max = value;
     }
 
+    fn __repr__(&self) -> String {
+        format!("Summary(median={:?}, mad={:?}, min={:?}, max={:?})", self.0.median, self.0.mad, self.0.min, self.0.max)
+    }
+
     /// How far `value` sits from the median, in MAD units.
     fn deviations(&self, value: f64) -> f64 {
         self.0.deviations(value)
@@ -406,6 +419,7 @@ fn soothfast_stats(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<F64Array>()?;
     m.add_class::<Metric>()?;
     m.add_class::<Summary>()?;
+    m.add("Error", m.py().get_type::<Error>())?;
     m.add_function(wrap_pyfunction!(fingerprint, m)?)?;
     Ok(())
 }

@@ -16,7 +16,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 soothfast-demo = { path = "../.." }
-pyo3 = { version = "0.26", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 
 # Built once and shipped, so build time is worth trading for speed.
 # `panic = "abort"` is deliberately absent: pyo3 turns a panic into a Python
