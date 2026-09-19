@@ -1011,8 +1011,14 @@ lock while it waits when everything the call touches can leave the Python
 thread (the receiver is `Sync`, the arguments are owned values or
 `Sync` handles, the return and the error are `Send`); otherwise it holds
 the lock for the whole call, so other Python threads stall until it
-returns, but the call still completes. A twin must never be called from
-inside a running tokio context, which Python never is.
+returns, but the call still completes. That holding form has one hazard:
+called from inside a running event loop with an in-flight `await` on the
+same handle, it can block on a lock that suspended coroutine holds, and
+the coroutine cannot run to release it because it needs the interpreter
+lock the twin is holding. So call twins from synchronous code or from a
+thread of their own, and prefer the async form inside an event loop; a
+twin that released the lock has no such problem. A twin must never be
+called from inside a running tokio context, which Python never is.
 
 ### Free-threaded Python
 
