@@ -15,6 +15,7 @@ private external fun nativeIsHigh(level: Int): Boolean
 private external fun nativeMutateCounter(counter: Long): Long
 private external fun nativeNormalize(input: DoubleArray, factor: Double): DoubleArray
 private external fun nativePeakLevel(values: DoubleArray): Int
+private external fun nativeSampleIds(ids: LongArray): LongArray
 private external fun nativeScaleInto(values: DoubleArray, factor: Double, out: DoubleArray): Unit
 private external fun nativeSplit(src: DoubleArray, lo: DoubleArray, hi: DoubleArray): Unit
 private external fun nativeStamp(handle: Long, error: Double, register: ByteArray): Long
@@ -62,6 +63,10 @@ fun normalize(input: DoubleArray, factor: Double): DoubleArray {
 
 fun peakLevel(values: DoubleArray): Level {
     return Level.entries[nativePeakLevel(values)]
+}
+
+fun sampleIds(ids: LongArray): LongArray {
+    return nativeSampleIds(ids)
 }
 
 fun scaleInto(values: DoubleArray, factor: Double, out: DoubleArray) {

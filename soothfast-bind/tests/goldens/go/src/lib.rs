@@ -154,6 +154,38 @@ pub unsafe extern "C" fn core_u8_array_free(array: CoreU8Array) {
     });
 }
 
+/// An owned `usize` sequence. Release it with `core_usize_array_free`.
+#[repr(C)]
+pub struct CoreUsizeArray {
+    data: *mut usize,
+    len: usize,
+}
+
+impl CoreUsizeArray {
+    fn empty() -> Self {
+        CoreUsizeArray { data: ::std::ptr::null_mut(), len: 0 }
+    }
+
+    fn new(values: Vec<usize>) -> Self {
+        let mut boxed = values.into_boxed_slice();
+        let out = CoreUsizeArray { data: boxed.as_mut_ptr(), len: boxed.len() };
+        ::std::mem::forget(boxed);
+        out
+    }
+}
+
+/// Release a sequence this library returned. Releasing one twice, or one it
+/// did not return, is undefined.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn core_usize_array_free(array: CoreUsizeArray) {
+    if array.data.is_null() {
+        return;
+    }
+    drop(unsafe {
+        Box::from_raw(::std::ptr::slice_from_raw_parts_mut(array.data, array.len))
+    });
+}
+
 /// Release a string this library returned. Releasing one twice, or one it
 /// did not return, is undefined.
 #[unsafe(no_mangle)]
@@ -324,6 +356,11 @@ pub unsafe extern "C" fn core_normalize(input: *const f64, input_len: usize, fac
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn core_peak_level(values: *const f64, values_len: usize) -> CoreLevel {
     ::acme::peak_level(unsafe { ffi::slice(values, values_len) }).into()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn core_sample_ids(ids: *const usize, ids_len: usize) -> CoreUsizeArray {
+    CoreUsizeArray::new(::acme::sample_ids(unsafe { ffi::slice(ids, ids_len) }.to_vec()))
 }
 
 #[unsafe(no_mangle)]

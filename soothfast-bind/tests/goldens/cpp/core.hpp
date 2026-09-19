@@ -45,6 +45,12 @@ inline std::vector<uint8_t> to_vector_u8(core_u8_array arr) {
     return out;
 }
 
+inline std::vector<size_t> to_vector_usize(core_usize_array arr) {
+    std::vector<size_t> out(arr.data, arr.data + arr.len);
+    core_usize_array_free(arr);
+    return out;
+}
+
 enum class Level {
     Low,
     High,
@@ -182,6 +188,11 @@ inline std::vector<double> normalize(std::span<const double> input, double facto
 inline Level peak_level(std::span<const double> values) {
     auto raw_result = core_peak_level(values.data(), values.size());
     return static_cast<Level>(raw_result);
+}
+
+inline std::vector<size_t> sample_ids(std::span<const size_t> ids) {
+    auto raw_result = core_sample_ids(ids.data(), ids.size());
+    return to_vector_usize(raw_result);
 }
 
 inline void scale_into(std::span<const double> values, double factor, std::span<double> out) {

@@ -141,6 +141,11 @@ pub fn peak_level(values: &[f64]) -> Level {
     ::acme::peak_level(values).into()
 }
 
+#[wasm_bindgen(js_name = sampleIds)]
+pub fn sample_ids(ids: Vec<usize>) -> Vec<usize> {
+    ::acme::sample_ids(ids)
+}
+
 #[wasm_bindgen(js_name = scaleInto)]
 pub fn scale_into(values: &[f64], factor: f64, out: &mut [f64]) -> () {
     ::acme::scale_into(values, factor, out)
@@ -164,6 +169,11 @@ pub fn split(src: &[f64], lo: &mut [f64], hi: &mut [f64]) -> () {
 #[wasm_bindgen]
 pub fn stamp(handle: i64, error: f64, register: &[u8]) -> u64 {
     ::acme::stamp(handle, error, register)
+}
+
+#[wasm_bindgen(js_name = sumOptional)]
+pub fn sum_optional(values: Option<Vec<f64>>) -> f64 {
+    ::acme::sum_optional(values)
 }
 
 #[wasm_bindgen]

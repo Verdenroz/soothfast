@@ -46,11 +46,13 @@ require "acme_core"
 - `mutate_counter`
 - `normalize`
 - `peak_level`
+- `sample_ids`
 - `scale_into`
 - `scale_optional`
 - `set_level`
 - `split`
 - `stamp`
+- `sum_optional`
 - `trim`
 
 ## Not bound

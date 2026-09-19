@@ -35,9 +35,11 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 - `mutate_counter`
 - `normalize`
 - `peak_level`
+- `sample_ids`
 - `scale_optional`
 - `set_level`
 - `stamp`
+- `sum_optional`
 - `trim`
 
 ## Not bound

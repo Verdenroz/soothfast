@@ -162,6 +162,24 @@ public static class Core
         }
     }
 
+    public static nuint[] SampleIds(ReadOnlySpan<nuint> ids)
+    {
+        unsafe
+        {
+            fixed (nuint* idsPtr = ids)
+            {
+                AcmeCoreUsizeArray result = Native.acme_core_sample_ids(idsPtr, (nuint)ids.Length);
+                nuint[] value = new nuint[result.Len];
+                if (result.Len > 0)
+                {
+                    Marshal.Copy(result.Data, value, 0, (int)result.Len);
+                }
+                Native.acme_core_usize_array_free(result);
+                return value;
+            }
+        }
+    }
+
     public static void ScaleInto(ReadOnlySpan<double> values, double factor, Span<double> out_)
     {
         unsafe

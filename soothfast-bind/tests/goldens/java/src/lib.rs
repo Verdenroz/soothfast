@@ -466,6 +466,53 @@ pub extern "system" fn Java_acme_core_Core_nativePeakLevel<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeSampleIds<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    ids: ::jni::objects::JLongArray<'local>
+) -> ::jni::sys::jlongArray {
+    let __len = match env.get_array_length(&ids) {
+        Ok(v) => v as usize,
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+    };
+    let mut __raw = vec![0; __len];
+    match env.get_long_array_region(&ids, 0, &mut __raw) {
+        Ok(()) => {}
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+    }
+    let ids: Vec<usize> = __raw.into_iter().map(|v| v as usize).collect();
+    let __out = ::acme::sample_ids(ids);
+    {
+            let __values: Vec<i64> = __out.into_iter().map(|v| v as i64).collect();
+            let __arr = match env.new_long_array(__values.len() as i32) {
+                Ok(v) => v,
+                Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+            };
+            match env.set_long_array_region(&__arr, 0, &__values) {
+                Ok(()) => {}
+                Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ::std::ptr::null_mut();
+        }
+            }
+            __arr.into_raw()
+        }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeScaleInto<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

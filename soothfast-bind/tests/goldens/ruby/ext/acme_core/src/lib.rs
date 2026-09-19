@@ -136,6 +136,10 @@ fn peak_level(ruby: &::magnus::Ruby, values: Vec<f64>) -> ::magnus::Symbol {
     level_to_symbol(ruby, ::acme::peak_level(&values))
 }
 
+fn sample_ids(ids: Vec<usize>) -> Vec<usize> {
+    ::acme::sample_ids(ids)
+}
+
 fn scale_into(values: Vec<f64>, factor: f64, out: ::magnus::RArray) -> Result<(), ::magnus::Error> {
     let mut out_vec = out.to_vec::<f64>()?;
     let __out = ::acme::scale_into(&values, factor, &mut out_vec);
@@ -164,6 +168,10 @@ fn split(src: Vec<f64>, lo: ::magnus::RArray, hi: ::magnus::RArray) -> Result<()
 fn stamp(handle: i64, error: f64, register: ::magnus::RString) -> u64 {
     let register = unsafe { register.as_slice() }.to_vec();
     ::acme::stamp(handle, error, &register)
+}
+
+fn sum_optional(values: Option<Vec<f64>>) -> f64 {
+    ::acme::sum_optional(values)
 }
 
 fn trim(input: Vec<f64>) -> Option<Vec<f64>> {
@@ -197,11 +205,13 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("mutate_counter", ::magnus::function!(mutate_counter, 1))?;
     module.define_module_function("normalize", ::magnus::function!(normalize, 2))?;
     module.define_module_function("peak_level", ::magnus::function!(peak_level, 1))?;
+    module.define_module_function("sample_ids", ::magnus::function!(sample_ids, 1))?;
     module.define_module_function("scale_into", ::magnus::function!(scale_into, 3))?;
     module.define_module_function("scale_optional", ::magnus::function!(scale_optional, 1))?;
     module.define_module_function("set_level", ::magnus::function!(set_level, 1))?;
     module.define_module_function("split", ::magnus::function!(split, 3))?;
     module.define_module_function("stamp", ::magnus::function!(stamp, 3))?;
+    module.define_module_function("sum_optional", ::magnus::function!(sum_optional, 1))?;
     module.define_module_function("trim", ::magnus::function!(trim, 1))?;
     Ok(())
 }

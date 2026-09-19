@@ -54,6 +54,10 @@ public final class Core {
         return Level.values()[nativePeakLevel(values)];
     }
 
+    public static long[] sampleIds(long[] ids) {
+        return nativeSampleIds(ids);
+    }
+
     public static void scaleInto(double[] values, double factor, double[] out) {
         nativeScaleInto(values, factor, out);
     }
@@ -77,6 +81,7 @@ public final class Core {
     private static native long nativeMutateCounter(long counter);
     private static native double[] nativeNormalize(double[] input, double factor);
     private static native int nativePeakLevel(double[] values);
+    private static native long[] nativeSampleIds(long[] ids);
     private static native void nativeScaleInto(double[] values, double factor, double[] out);
     private static native void nativeSplit(double[] src, double[] lo, double[] hi);
     private static native long nativeStamp(long handle, double error, byte[] register);

@@ -181,6 +181,16 @@ fn peak_level(values: &[f64]) -> String {
 }
 
 #[extendr]
+fn sample_ids(ids: &[f64]) -> ::std::result::Result<Vec<f64>, String> {
+    let ids: Vec<usize> = ids
+        .iter()
+        .map(|v| __checked_int::<usize>(*v, "ids"))
+        .collect::<::std::result::Result<_, _>>()?;
+    let __out = ::acme::sample_ids(ids);
+    Ok(__out.into_iter().map(|v| v as f64).collect())
+}
+
+#[extendr]
 fn scale_optional(factor: Robj) -> f64 {
     let factor = factor.as_real();
     let __out = ::acme::scale_optional(factor);
@@ -213,6 +223,13 @@ fn stamp(handle: f64, error: f64, register: &[u8]) -> ::std::result::Result<f64,
 }
 
 #[extendr]
+fn sum_optional(values: Robj) -> f64 {
+    let values = values.as_real_vector();
+    let __out = ::acme::sum_optional(values);
+    __out
+}
+
+#[extendr]
 fn trim(input: &[f64]) -> Robj {
     let __out = ::acme::trim(input);
     match __out { Some(v) => Robj::from(v), None => ().into() }
@@ -233,8 +250,10 @@ extendr_module! {
     fn mutate_counter;
     fn normalize;
     fn peak_level;
+    fn sample_ids;
     fn scale_optional;
     fn set_level;
     fn stamp;
+    fn sum_optional;
     fn trim;
 }

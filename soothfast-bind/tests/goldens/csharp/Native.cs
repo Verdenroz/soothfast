@@ -26,6 +26,12 @@ internal struct AcmeCoreU8Array
     public nuint Len;
 }
 
+internal struct AcmeCoreUsizeArray
+{
+    public IntPtr Data;
+    public nuint Len;
+}
+
 internal static class Native
 {
     private const string LibraryName = "acme_core";
@@ -81,6 +87,9 @@ internal static class Native
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void acme_core_u8_array_free(AcmeCoreU8Array array);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void acme_core_usize_array_free(AcmeCoreUsizeArray array);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void acme_core_counter_free(IntPtr handle);
@@ -141,6 +150,9 @@ internal static class Native
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe int acme_core_peak_level(double* values, nuint values_len);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe AcmeCoreUsizeArray acme_core_sample_ids(nuint* ids, nuint ids_len);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe void acme_core_scale_into(double* values, nuint values_len, double factor, double* out_, nuint out__len);

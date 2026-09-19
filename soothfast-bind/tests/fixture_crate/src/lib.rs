@@ -165,6 +165,14 @@ pub fn scale_optional(factor: Option<f64>) -> f64 {
     factor.unwrap_or(1.0)
 }
 
+pub fn sum_optional(values: Option<Vec<f64>>) -> f64 {
+    values.map(|v| v.iter().sum()).unwrap_or(0.0)
+}
+
+pub fn sample_ids(ids: Vec<usize>) -> Vec<usize> {
+    ids
+}
+
 pub fn set_level(level: Option<Level>) -> bool {
     matches!(level, Some(Level::High))
 }

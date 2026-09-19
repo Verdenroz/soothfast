@@ -174,6 +174,12 @@ pub fn peek(counter: Option<ClassInstance<'_, Counter>>) -> bool {
     ::acme::peek(counter.as_deref().map(|v| &v.0))
 }
 
+#[napi(js_name = "sampleIds")]
+pub fn sample_ids(ids: Vec<BigInt>) -> Result<Vec<BigInt>> {
+    let ids = ids.into_iter().map(|v| bigint_to_u64(v, "ids").map(|v| v as usize)).collect::<Result<Vec<_>>>()?;
+    Ok(::acme::sample_ids(ids).into_iter().map(|v| BigInt::from(v as u64)).collect())
+}
+
 #[napi(js_name = "scaleInto")]
 pub fn scale_into(values: Float64Array, factor: f64, mut out: Float64Array) -> () {
     ::acme::scale_into(values.as_ref(), factor, unsafe { out.as_mut() })
@@ -198,6 +204,11 @@ pub fn split(src: Float64Array, mut lo: Float64Array, mut hi: Float64Array) -> (
 pub fn stamp(handle: BigInt, error: f64, register: Buffer) -> Result<BigInt> {
     let handle = bigint_to_i64(handle, "handle")?;
     Ok(BigInt::from(::acme::stamp(handle, error, register.as_ref())))
+}
+
+#[napi(js_name = "sumOptional")]
+pub fn sum_optional(values: Option<Float64Array>) -> f64 {
+    ::acme::sum_optional(values.map(|v| v.to_vec()))
 }
 
 #[napi]

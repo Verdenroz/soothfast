@@ -44,6 +44,14 @@ typedef struct core_u8_array {
 
 void core_u8_array_free(core_u8_array array);
 
+/* An owned `usize` sequence. Release it with core_usize_array_free. */
+typedef struct core_usize_array {
+    size_t *data;
+    size_t len;
+} core_usize_array;
+
+void core_usize_array_free(core_usize_array array);
+
 /* Release a string this library returned. A returned string is never NULL; an interior NUL byte is replaced with U+FFFD. */
 void core_string_free(char *text);
 
@@ -73,6 +81,7 @@ bool core_is_high(core_level level);
 int64_t core_mutate_counter(core_counter *counter);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);
 core_level core_peak_level(const double *values, size_t values_len);
+core_usize_array core_sample_ids(const size_t *ids, size_t ids_len);
 void core_scale_into(const double *values, size_t values_len, double factor, double *out, size_t out_len);
 void core_split(const double *src, size_t src_len, double *lo, size_t lo_len, double *hi, size_t hi_len);
 uint64_t core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register_len);

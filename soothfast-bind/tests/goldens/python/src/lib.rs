@@ -482,6 +482,11 @@ fn peek(counter: Option<PyRef<'_, Counter>>) -> bool {
 }
 
 #[pyfunction]
+fn sample_ids(py: Python<'_>, ids: Vec<usize>) -> Vec<usize> {
+    py.detach(|| ::acme::sample_ids(ids))
+}
+
+#[pyfunction]
 fn scale_into(py: Python<'_>, values: BorrowedF64, factor: f64, mut out: BorrowedMutF64) -> PyResult<()> {
     if values.byte_range().is_some_and(|r| buffers_alias(out.byte_range(), r)) {
         return Err(::pyo3::exceptions::PyValueError::new_err("values and out alias the same buffer"));
@@ -521,6 +526,11 @@ fn stamp(py: Python<'_>, handle: i64, error: f64, register: BorrowedU8) -> u64 {
 }
 
 #[pyfunction]
+fn sum_optional(values: Option<Vec<f64>>) -> f64 {
+    ::acme::sum_optional(values)
+}
+
+#[pyfunction]
 fn trim(py: Python<'_>, input: BorrowedF64) -> Option<F64Array> {
     let out = py.detach(|| ::acme::trim(input.as_slice()));
     out.map(F64Array::new)
@@ -546,11 +556,13 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(peak_level, m)?)?;
     m.add_function(wrap_pyfunction!(peek, m)?)?;
+    m.add_function(wrap_pyfunction!(sample_ids, m)?)?;
     m.add_function(wrap_pyfunction!(scale_into, m)?)?;
     m.add_function(wrap_pyfunction!(scale_optional, m)?)?;
     m.add_function(wrap_pyfunction!(set_level, m)?)?;
     m.add_function(wrap_pyfunction!(split, m)?)?;
     m.add_function(wrap_pyfunction!(stamp, m)?)?;
+    m.add_function(wrap_pyfunction!(sum_optional, m)?)?;
     m.add_function(wrap_pyfunction!(trim, m)?)?;
     Ok(())
 }

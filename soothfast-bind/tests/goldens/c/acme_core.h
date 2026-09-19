@@ -44,6 +44,14 @@ typedef struct acme_core_u8_array {
 
 void acme_core_u8_array_free(acme_core_u8_array array);
 
+/* An owned `usize` sequence. Release it with acme_core_usize_array_free. */
+typedef struct acme_core_usize_array {
+    size_t *data;
+    size_t len;
+} acme_core_usize_array;
+
+void acme_core_usize_array_free(acme_core_usize_array array);
+
 /* Release a string this library returned. A returned string is never NULL; an interior NUL byte is replaced with U+FFFD. */
 void acme_core_string_free(char *text);
 
@@ -73,6 +81,7 @@ bool acme_core_is_high(acme_core_level level);
 int64_t acme_core_mutate_counter(acme_core_counter *counter);
 acme_core_f64_array acme_core_normalize(const double *input, size_t input_len, double factor);
 acme_core_level acme_core_peak_level(const double *values, size_t values_len);
+acme_core_usize_array acme_core_sample_ids(const size_t *ids, size_t ids_len);
 void acme_core_scale_into(const double *values, size_t values_len, double factor, double *out, size_t out_len);
 void acme_core_split(const double *src, size_t src_len, double *lo, size_t lo_len, double *hi, size_t hi_len);
 uint64_t acme_core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register_len);

@@ -36,6 +36,14 @@ typedef struct core_u8_array {
 
 void core_u8_array_free(core_u8_array array);
 
+/* An owned `usize` sequence. Release it with core_usize_array_free. */
+typedef struct core_usize_array {
+    size_t *data;
+    size_t len;
+} core_usize_array;
+
+void core_usize_array_free(core_usize_array array);
+
 /* Release a string this library returned. A returned string is never NULL; an interior NUL byte is replaced with U+FFFD. */
 void core_string_free(char *text);
 
@@ -65,6 +73,7 @@ bool core_is_high(core_level level);
 int64_t core_mutate_counter(core_counter *counter);
 core_f64_array core_normalize(const double *input, size_t input_len, double factor);
 core_level core_peak_level(const double *values, size_t values_len);
+core_usize_array core_sample_ids(const size_t *ids, size_t ids_len);
 void core_scale_into(const double *values, size_t values_len, double factor, double *out, size_t out_len);
 void core_split(const double *src, size_t src_len, double *lo, size_t lo_len, double *hi, size_t hi_len);
 uint64_t core_stamp(int64_t handle_, double error_, const uint8_t *register_, size_t register_len);
@@ -133,6 +142,22 @@ local function u8_buf(value)
 	end
 	local n = #value
 	local arr = ffi.new("uint8_t[?]", n)
+	for i = 1, n do
+		arr[i - 1] = value[i]
+	end
+	return arr, n
+end
+
+local function usize_buf(value)
+	-- a VLA cdata array carries no `#`; its instance size does.
+	if ffi.istype("size_t[?]", value) then
+		return value, ffi.sizeof(value) / ffi.sizeof("size_t")
+	end
+	if ffi.istype("core_usize_array", value) then
+		return value.data, tonumber(value.len)
+	end
+	local n = #value
+	local arr = ffi.new("size_t[?]", n)
 	for i = 1, n do
 		arr[i - 1] = value[i]
 	end
@@ -247,6 +272,44 @@ ffi.metatype("core_u8_array", {
 		if type(key) == "number" then
 			if key % 1 ~= 0 or key < 1 or key > tonumber(self.len) then
 				error("core_u8_array index out of range: " .. tostring(key))
+			end
+			return self.data[key - 1]
+		end
+	end,
+})
+
+-- Copies a `usize` array into a plain table.
+local function core_usize_array_totable(self)
+	local n = tonumber(self.len)
+	local out = {}
+	for i = 1, n do
+		out[i] = self.data[i - 1]
+	end
+	return out
+end
+
+local function core_usize_array_close(self)
+	if self.data == nil then
+		return
+	end
+	ffi.gc(self, nil)
+	lib.core_usize_array_free(self)
+	self.len = 0
+	self.data = nil
+end
+
+ffi.metatype("core_usize_array", {
+	__len = function(self) return tonumber(self.len) end,
+	__index = function(self, key)
+		if key == "totable" then
+			return core_usize_array_totable
+		end
+		if key == "close" then
+			return core_usize_array_close
+		end
+		if type(key) == "number" then
+			if key % 1 ~= 0 or key < 1 or key > tonumber(self.len) then
+				error("core_usize_array index out of range: " .. tostring(key))
 			end
 			return self.data[key - 1]
 		end
@@ -421,6 +484,12 @@ function M.peak_level(values)
 	local values_ptr, values_len = f64_buf(values)
 	local ret = lib.core_peak_level(values_ptr, values_len)
 	return level_from_c(ret)
+end
+
+function M.sample_ids(ids)
+	local ids_ptr, ids_len = usize_buf(ids)
+	local ret = lib.core_sample_ids(ids_ptr, ids_len)
+	return ffi.gc(ret, lib.core_usize_array_free)
 end
 
 function M.scale_into(values, factor, out)

@@ -232,6 +232,15 @@ fn free_functions(insert: &mut impl FnMut(u64, Value)) {
             false,
         ),
     );
+    insert(
+        55,
+        func(
+            "sample_ids",
+            &[("ids", path("Vec", 90, &[prim("usize")]))],
+            path("Vec", 90, &[prim("usize")]),
+            false,
+        ),
+    );
 }
 
 /// The crate's free functions that take or return an `Option`.
@@ -270,6 +279,18 @@ fn optional_free_functions(insert: &mut impl FnMut(u64, Value)) {
         func(
             "scale_optional",
             &[("factor", path("Option", 93, &[prim("f64")]))],
+            prim("f64"),
+            false,
+        ),
+    );
+    insert(
+        25,
+        func(
+            "sum_optional",
+            &[(
+                "values",
+                path("Option", 93, &[path("Vec", 90, &[prim("f64")])]),
+            )],
             prim("f64"),
             false,
         ),
@@ -501,12 +522,14 @@ pub fn doc() -> Value {
             "53": { "crate_id": 0, "path": ["acme", "is_high"], "kind": "function" },
             "22": { "crate_id": 0, "path": ["acme", "mutate_counter"], "kind": "function" },
             "54": { "crate_id": 0, "path": ["acme", "flags"], "kind": "function" },
+            "55": { "crate_id": 0, "path": ["acme", "sample_ids"], "kind": "function" },
             "16": { "crate_id": 0, "path": ["acme", "describe"], "kind": "function" },
             "17": { "crate_id": 0, "path": ["acme", "describe_owned"], "kind": "function" },
             "18": { "crate_id": 0, "path": ["acme", "maybe_ratio"], "kind": "function" },
             "19": { "crate_id": 0, "path": ["acme", "fail"], "kind": "function" },
             "23": { "crate_id": 0, "path": ["acme", "split"], "kind": "function" },
             "24": { "crate_id": 0, "path": ["acme", "scale_optional"], "kind": "function" },
+            "25": { "crate_id": 0, "path": ["acme", "sum_optional"], "kind": "function" },
             "26": { "crate_id": 0, "path": ["acme", "set_level"], "kind": "function" },
             "27": { "crate_id": 0, "path": ["acme", "peek"], "kind": "function" },
             "2": { "crate_id": 0, "path": ["acme", "Counter"], "kind": "struct" },
@@ -549,12 +572,14 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::is_high", "fn"),
         record("acme::mutate_counter", "fn"),
         record("acme::flags", "fn"),
+        record("acme::sample_ids", "fn"),
         record("acme::describe", "fn"),
         record("acme::describe_owned", "fn"),
         record("acme::maybe_ratio", "fn"),
         record("acme::fail", "fn"),
         record("acme::split", "fn"),
         record("acme::scale_optional", "fn"),
+        record("acme::sum_optional", "fn"),
         record("acme::set_level", "fn"),
         record("acme::peek", "fn"),
         record("acme::Counter", "struct"),

@@ -56,6 +56,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `core_mutate_counter`
 - `core_normalize`
 - `core_peak_level`
+- `core_sample_ids`
 - `core_scale_into`
 - `core_split`
 - `core_stamp`
@@ -71,6 +72,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - acme::peek: `Option<Counter>` cannot cross into go: an optional exported type is taken only as a return; take it by reference instead
 - acme::scale_optional: `Option<f64>` cannot cross into go: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::set_level: `Option<Level>` cannot cross into go: an optional exported type is taken only as a return; take it by reference instead
+- acme::sum_optional: `Option<Vec<f64>>` cannot cross into go: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::trim: `Option<Vec<f64>>` cannot cross into go: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 
 ## Go

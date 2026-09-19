@@ -328,10 +328,10 @@ fn body(call: &str, function: &Function, plan: &BindingPlan, indent: &str) -> St
 /// its parameters is a `BigInt` that might not fit the width it claims.
 fn is_fallible(function: &Function, plan: &BindingPlan) -> bool {
     function.throws.is_some()
-        || function
-            .params
-            .iter()
-            .any(|p| is_bigint_ty(&p.ty) && matches!(Transfer::of(p, plan), Transfer::Scalar))
+        || function.params.iter().any(|p| {
+            (is_bigint_ty(&p.ty) && matches!(Transfer::of(p, plan), Transfer::Scalar))
+                || matches!(&p.ty, Ty::List(inner) if bigint_list_conv(inner).is_some())
+        })
 }
 
 /// Whether any 64-bit integer crosses this plan, as a parameter or a field
@@ -391,7 +391,28 @@ fn convert_scalar(name: &str, ty: &Ty, plan: &BindingPlan) -> (Option<String>, S
             name.to_string(),
         ),
         Ty::Bytes => (None, format!("{name}.to_vec()")),
+        Ty::List(inner) => match bigint_list_conv(inner) {
+            Some((helper, cast)) => (
+                Some(format!(
+                    "let {name} = {name}.into_iter().map(|v| {helper}(v, \"{name}\").map(|v| v{cast})).collect::<Result<Vec<_>>>()?;"
+                )),
+                name.to_string(),
+            ),
+            None => (None, format!("{name}.to_vec()")),
+        },
         _ => (None, name.to_string()),
+    }
+}
+
+/// The `BIGINT_HELPERS` conversion and any post-cast an `isize`/`usize`
+/// element needs on top of it, for a list napi carries as `Vec<BigInt>`
+/// rather than a typed array: `array_ty` has no fixed-width JS array for a
+/// pointer-sized element.
+fn bigint_list_conv(element: &Ty) -> Option<(&'static str, &'static str)> {
+    match element {
+        Ty::ISize => Some(("bigint_to_i64", " as isize")),
+        Ty::USize => Some(("bigint_to_u64", " as usize")),
+        _ => None,
     }
 }
 
@@ -404,9 +425,13 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
         Ty::I64 | Ty::U64 => format!("BigInt::from({expr})"),
         Ty::ISize => format!("BigInt::from({expr} as i64)"),
         Ty::USize => format!("BigInt::from({expr} as u64)"),
-        Ty::List(inner) => match array_ty(inner) {
-            Some(arr) => format!("{arr}::from({expr})"),
-            None => expr.to_string(),
+        Ty::List(inner) => match &**inner {
+            Ty::ISize => format!("{expr}.into_iter().map(|v| BigInt::from(v as i64)).collect()"),
+            Ty::USize => format!("{expr}.into_iter().map(|v| BigInt::from(v as u64)).collect()"),
+            _ => match array_ty(inner) {
+                Some(arr) => format!("{arr}::from({expr})"),
+                None => expr.to_string(),
+            },
         },
         Ty::Optional(inner) => match &**inner {
             Ty::Bytes => format!("{expr}.map(Buffer::from)"),
@@ -550,13 +575,47 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, Option<String>, String
                 };
                 (ty.to_string(), None, handoff)
             }
-            None => by_ownership(),
+            // isize/usize have no fixed-width typed array; napi carries
+            // them as Vec<BigInt>, converted the same way a bare BigInt
+            // scalar is.
+            None => match bigint_list_conv(&element.into()) {
+                Some((helper, cast)) => (
+                    "Vec<BigInt>".into(),
+                    Some(format!(
+                        "let {name} = {name}.into_iter().map(|v| {helper}(v, \"{name}\").map(|v| v{cast})).collect::<Result<Vec<_>>>()?;"
+                    )),
+                    name.clone(),
+                ),
+                None => by_ownership(),
+            },
         },
-        _ if is_bigint_ty(&param.ty) => {
-            let (prelude, arg) = convert_scalar(name, &param.ty, plan);
-            ("BigInt".into(), prelude, arg)
+        _ => {
+            if let Ty::Optional(inner) = &param.ty
+                && let Some((ty, elem)) = optional_buffer(inner)
+            {
+                return (
+                    format!("Option<{ty}>"),
+                    None,
+                    format!("{name}.map(|v| {elem})"),
+                );
+            }
+            if is_bigint_ty(&param.ty) {
+                let (prelude, arg) = convert_scalar(name, &param.ty, plan);
+                return ("BigInt".into(), prelude, arg);
+            }
+            by_ownership()
         }
-        _ => by_ownership(),
+    }
+}
+
+/// The napi wrapper an `Option<Bytes | List>` crosses through, and the
+/// expression converting one present value (`v`, the wrapper) back into the
+/// owned type the call wants.
+fn optional_buffer(inner: &Ty) -> Option<(&'static str, &'static str)> {
+    match inner {
+        Ty::Bytes => Some(("Buffer", "v.to_vec()")),
+        Ty::List(elem) => array_ty(elem).map(|arr| (arr, "v.to_vec()")),
+        _ => None,
     }
 }
 

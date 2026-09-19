@@ -67,6 +67,18 @@ func byteSlice(arr C.core_u8_array) []byte {
 	return out
 }
 
+// uintSlice copies a `usize` sequence this library returned and
+// releases it.
+func uintSlice(arr C.core_usize_array) []uint {
+	defer C.core_usize_array_free(arr)
+	if arr.len == 0 {
+		return nil
+	}
+	out := make([]uint, arr.len)
+	copy(out, unsafe.Slice((*uint)(unsafe.Pointer(arr.data)), arr.len))
+	return out
+}
+
 // Counter wraps a native core_counter.
 type Counter struct {
 	ptr *C.core_counter
@@ -256,6 +268,10 @@ func Normalize(input []float64, factor float64) []float64 {
 
 func PeakLevel(values []float64) Level {
 	return Level(C.core_peak_level((*C.double)(unsafe.Pointer(bufPtr(values))), C.size_t(len(values))))
+}
+
+func SampleIds(ids []uint) []uint {
+	return uintSlice(C.core_sample_ids((*C.size_t)(unsafe.Pointer(bufPtr(ids))), C.size_t(len(ids))))
 }
 
 func ScaleInto(values []float64, factor float64, out []float64) {

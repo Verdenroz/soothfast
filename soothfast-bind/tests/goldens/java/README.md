@@ -47,6 +47,7 @@ A borrowed buffer parameter (`double[]`, `byte[]`, ...) is read through `GetPrim
 - `mutateCounter`
 - `normalize`
 - `peakLevel`
+- `sampleIds`
 - `scaleInto`
 - `split`
 - `stamp`
@@ -62,4 +63,5 @@ A borrowed buffer parameter (`double[]`, `byte[]`, ...) is read through `GetPrim
 - acme::peek: `Option<Counter>` cannot cross into java: an optional exported type is taken only as a return; take it by reference instead
 - acme::scale_optional: `Option<f64>` cannot cross into java: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::set_level: `Option<Level>` cannot cross into java: an optional exported type is taken only as a return; take it by reference instead
+- acme::sum_optional: `Option<Vec<f64>>` cannot cross into java: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::trim: `Option<Vec<f64>>` cannot cross into java: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null

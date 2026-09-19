@@ -56,6 +56,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `acme_core_mutate_counter`
 - `acme_core_normalize`
 - `acme_core_peak_level`
+- `acme_core_sample_ids`
 - `acme_core_scale_into`
 - `acme_core_split`
 - `acme_core_stamp`
@@ -71,4 +72,5 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - acme::peek: `Option<Counter>` cannot cross into c: an optional exported type is taken only as a return; take it by reference instead
 - acme::scale_optional: `Option<f64>` cannot cross into c: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::set_level: `Option<Level>` cannot cross into c: an optional exported type is taken only as a return; take it by reference instead
+- acme::sum_optional: `Option<Vec<f64>>` cannot cross into c: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::trim: `Option<Vec<f64>>` cannot cross into c: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
