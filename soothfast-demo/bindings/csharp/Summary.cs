@@ -25,7 +25,17 @@ public sealed class Summary : IDisposable
 
     private readonly Handle _handle;
 
-    internal IntPtr NativeHandle => _handle.DangerousGetHandle();
+    internal IntPtr NativeHandle
+    {
+        get
+        {
+            if (_handle.IsClosed)
+            {
+                throw new ObjectDisposedException(nameof(Summary));
+            }
+            return _handle.DangerousGetHandle();
+        }
+    }
 
     /// Summarize a sample set. Fails on an empty one, which has no median.
     public Summary(ReadOnlySpan<double> samples)

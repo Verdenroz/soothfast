@@ -59,7 +59,12 @@ class Summary private constructor(private val ptr: Long, marker: Raw) : AutoClos
 
     private val cleanable: Cleaner.Cleanable = Natives.CLEANER.register(this, State(ptr))
 
-    internal fun nativePtr(): Long = ptr
+    private var closed = false
+
+    internal fun nativePtr(): Long {
+        check(!closed) { "Summary is closed" }
+        return ptr
+    }
 
     private class State(private val ptr: Long) : Runnable {
         override fun run() {
@@ -72,56 +77,57 @@ class Summary private constructor(private val ptr: Long, marker: Raw) : AutoClos
 
     val median: Double
         get() {
-            return nativeMedian(ptr)
+            return nativeMedian(nativePtr())
         }
 
     /** Median absolute deviation, unscaled. */
     val mad: Double
         get() {
-            return nativeMad(ptr)
+            return nativeMad(nativePtr())
         }
 
     val min: Double
         get() {
-            return nativeMin(ptr)
+            return nativeMin(nativePtr())
         }
 
     val max: Double
         get() {
-            return nativeMax(ptr)
+            return nativeMax(nativePtr())
         }
 
     /** How far `value` sits from the median, in MAD units. */
     fun deviations(value: Double): Double {
-        return nativeDeviations(ptr, value)
+        return nativeDeviations(nativePtr(), value)
     }
 
     /** How far each of `values` sits from the median, in MAD units. */
     fun deviationsAll(values: DoubleArray): DoubleArray {
-        return nativeDeviationsAll(ptr, values)
+        return nativeDeviationsAll(nativePtr(), values)
     }
 
     /** [`Summary::deviations_all`], writing into a caller-owned buffer. */
     fun deviationsInto(values: DoubleArray, out: DoubleArray) {
-        nativeDeviationsInto(ptr, values, out)
+        nativeDeviationsInto(nativePtr(), values, out)
     }
 
     /** Read one statistic by name. */
     fun get(metric: Metric): Double {
-        return nativeGet(ptr, metric.ordinal)
+        return nativeGet(nativePtr(), metric.ordinal)
     }
 
     /** A one-line rendering of the whole summary. */
     fun label(): String {
-        return nativeLabel(ptr)
+        return nativeLabel(nativePtr())
     }
 
     /** Scale every statistic by `factor`. */
     fun rescale(factor: Double) {
-        nativeRescale(ptr, factor)
+        nativeRescale(nativePtr(), factor)
     }
 
     override fun close() {
+        closed = true
         cleanable.clean()
     }
 }

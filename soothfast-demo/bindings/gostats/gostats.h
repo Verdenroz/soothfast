@@ -30,7 +30,7 @@ typedef struct gostats_f64_array {
 
 void gostats_f64_array_free(gostats_f64_array array);
 
-/* Release a string this library returned. */
+/* Release a string this library returned. A returned string is never NULL; an interior NUL byte is replaced with U+FFFD. */
 void gostats_string_free(char *text);
 
 /* Release a Summary this library returned. */

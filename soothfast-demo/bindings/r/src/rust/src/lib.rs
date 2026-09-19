@@ -21,16 +21,32 @@ impl Summary {
         self.0.median.clone()
     }
 
+    fn set_median(&mut self, value: f64) {
+        self.0.median = value;
+    }
+
     fn mad(&self) -> f64 {
         self.0.mad.clone()
+    }
+
+    fn set_mad(&mut self, value: f64) {
+        self.0.mad = value;
     }
 
     fn min(&self) -> f64 {
         self.0.min.clone()
     }
 
+    fn set_min(&mut self, value: f64) {
+        self.0.min = value;
+    }
+
     fn max(&self) -> f64 {
         self.0.max.clone()
+    }
+
+    fn set_max(&mut self, value: f64) {
+        self.0.max = value;
     }
 
     fn deviations(&self, value: f64) -> f64 {

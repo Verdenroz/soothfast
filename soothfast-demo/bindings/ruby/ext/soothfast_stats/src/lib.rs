@@ -45,71 +45,89 @@ impl Summary {
         Ok(Summary(::std::cell::RefCell::new(::soothfast_demo::Summary::new(samples).map_err(|reason| ::magnus::Error::new(ruby.get_inner(&ERROR), ::std::string::ToString::to_string(&reason)))?)))
     }
 
-    fn median(&self) -> f64 {
-        self.0.borrow().median.clone()
+    fn median(ruby: &::magnus::Ruby, rb_self: &Self) -> Result<f64, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.median.clone())
     }
 
-    fn set_median(&self, value: f64) {
-        self.0.borrow_mut().median = value;
+    fn set_median(ruby: &::magnus::Ruby, rb_self: &Self, value: f64) -> Result<(), ::magnus::Error> {
+        let mut __recv = rb_self.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        __recv.median = value;
+        Ok(())
     }
 
     /// Median absolute deviation, unscaled.
-    fn mad(&self) -> f64 {
-        self.0.borrow().mad.clone()
+    fn mad(ruby: &::magnus::Ruby, rb_self: &Self) -> Result<f64, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.mad.clone())
     }
 
-    fn set_mad(&self, value: f64) {
-        self.0.borrow_mut().mad = value;
+    fn set_mad(ruby: &::magnus::Ruby, rb_self: &Self, value: f64) -> Result<(), ::magnus::Error> {
+        let mut __recv = rb_self.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        __recv.mad = value;
+        Ok(())
     }
 
-    fn min(&self) -> f64 {
-        self.0.borrow().min.clone()
+    fn min(ruby: &::magnus::Ruby, rb_self: &Self) -> Result<f64, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.min.clone())
     }
 
-    fn set_min(&self, value: f64) {
-        self.0.borrow_mut().min = value;
+    fn set_min(ruby: &::magnus::Ruby, rb_self: &Self, value: f64) -> Result<(), ::magnus::Error> {
+        let mut __recv = rb_self.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        __recv.min = value;
+        Ok(())
     }
 
-    fn max(&self) -> f64 {
-        self.0.borrow().max.clone()
+    fn max(ruby: &::magnus::Ruby, rb_self: &Self) -> Result<f64, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.max.clone())
     }
 
-    fn set_max(&self, value: f64) {
-        self.0.borrow_mut().max = value;
+    fn set_max(ruby: &::magnus::Ruby, rb_self: &Self, value: f64) -> Result<(), ::magnus::Error> {
+        let mut __recv = rb_self.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        __recv.max = value;
+        Ok(())
     }
 
     /// How far `value` sits from the median, in MAD units.
-    fn deviations(&self, value: f64) -> f64 {
-        self.0.borrow().deviations(value)
+    fn deviations(ruby: &::magnus::Ruby, rb_self: &Self, value: f64) -> Result<f64, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.deviations(value))
     }
 
     /// How far each of `values` sits from the median, in MAD units.
-    fn deviations_all(&self, values: Vec<f64>) -> Vec<f64> {
-        self.0.borrow().deviations_all(&values)
+    fn deviations_all(ruby: &::magnus::Ruby, rb_self: &Self, values: Vec<f64>) -> Result<Vec<f64>, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.deviations_all(&values))
     }
 
     /// [`Summary::deviations_all`], writing into a caller-owned buffer.
-    fn deviations_into(&self, values: Vec<f64>, out: ::magnus::RArray) -> Result<(), ::magnus::Error> {
+    fn deviations_into(ruby: &::magnus::Ruby, rb_self: &Self, values: Vec<f64>, out: ::magnus::RArray) -> Result<(), ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
         let mut out_vec = out.to_vec::<f64>()?;
-        let __out = self.0.borrow().deviations_into(&values, &mut out_vec);
+        let __out = __recv.deviations_into(&values, &mut out_vec);
         out_vec.iter().enumerate().try_for_each(|(i, value)| out.store(i as isize, *value))?;
         Ok(__out)
     }
 
     /// Read one statistic by name.
     fn get(ruby: &::magnus::Ruby, rb_self: &Self, metric: ::magnus::Symbol) -> Result<f64, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
         let metric = metric_from_symbol(ruby, metric)?;
-        Ok(rb_self.0.borrow().get(metric))
+        Ok(__recv.get(metric))
     }
 
     /// A one-line rendering of the whole summary.
-    fn label(&self) -> String {
-        self.0.borrow().label()
+    fn label(ruby: &::magnus::Ruby, rb_self: &Self) -> Result<String, ::magnus::Error> {
+        let __recv = rb_self.0.try_borrow().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.label())
     }
 
     /// Scale every statistic by `factor`.
-    fn rescale(&mut self, factor: f64) -> () {
-        self.0.borrow_mut().rescale(factor)
+    fn rescale(ruby: &::magnus::Ruby, rb_self: &Self, factor: f64) -> Result<(), ::magnus::Error> {
+        let mut __recv = rb_self.0.try_borrow_mut().map_err(|_| ::magnus::Error::new(ruby.get_inner(&ERROR), "already borrowed".to_string()))?;
+        Ok(__recv.rescale(factor))
     }
 
     /// Parse a comma-separated sample set.

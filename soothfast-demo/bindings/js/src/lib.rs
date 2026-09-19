@@ -6,9 +6,9 @@ use wasm_bindgen::prelude::*;
 
 struct BindErrorString(::std::string::String);
 
-impl ::std::convert::From<BindErrorString> for ::wasm_bindgen::JsValue {
-    fn from(err: BindErrorString) -> ::wasm_bindgen::JsValue {
-        ::wasm_bindgen::JsValue::from_str(&::std::string::ToString::to_string(&err.0))
+impl ::std::convert::From<BindErrorString> for ::wasm_bindgen::JsError {
+    fn from(err: BindErrorString) -> ::wasm_bindgen::JsError {
+        ::wasm_bindgen::JsError::new(&::std::string::ToString::to_string(&err.0))
     }
 }
 
@@ -52,7 +52,7 @@ pub struct Summary(::soothfast_demo::Summary);
 impl Summary {
     /// Summarize a sample set. Fails on an empty one, which has no median.
     #[wasm_bindgen(constructor)]
-    pub fn new(samples: Vec<f64>) -> Result<Self, JsValue> {
+    pub fn new(samples: Vec<f64>) -> Result<Self, JsError> {
         Ok(Summary(::soothfast_demo::Summary::new(samples).map_err(BindErrorString)?))
     }
 
@@ -130,7 +130,7 @@ impl Summary {
     }
 
     /// Parse a comma-separated sample set.
-    pub fn parse(text: &str) -> Result<Summary, JsValue> {
+    pub fn parse(text: &str) -> Result<Summary, JsError> {
         Ok(Summary(::soothfast_demo::Summary::parse(text).map_err(BindErrorString)?))
     }
 }

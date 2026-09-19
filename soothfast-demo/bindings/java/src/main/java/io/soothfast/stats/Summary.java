@@ -11,6 +11,7 @@ public final class Summary implements AutoCloseable {
 
     private final long ptr;
     private final Cleaner.Cleanable cleanable;
+    private boolean closed;
 
     static final class Raw {
         private Raw() {
@@ -39,6 +40,9 @@ public final class Summary implements AutoCloseable {
 
     /** The raw handle, readable only from generated code in this package. */
     long nativePtr() {
+        if (closed) {
+            throw new IllegalStateException("Summary is closed");
+        }
         return ptr;
     }
 
@@ -48,50 +52,50 @@ public final class Summary implements AutoCloseable {
     }
 
     public double median() {
-        return nativeMedian(ptr);
+        return nativeMedian(nativePtr());
     }
 
     /** Median absolute deviation, unscaled. */
     public double mad() {
-        return nativeMad(ptr);
+        return nativeMad(nativePtr());
     }
 
     public double min() {
-        return nativeMin(ptr);
+        return nativeMin(nativePtr());
     }
 
     public double max() {
-        return nativeMax(ptr);
+        return nativeMax(nativePtr());
     }
 
     /** How far `value` sits from the median, in MAD units. */
     public double deviations(double value) {
-        return nativeDeviations(ptr, value);
+        return nativeDeviations(nativePtr(), value);
     }
 
     /** How far each of `values` sits from the median, in MAD units. */
     public double[] deviationsAll(double[] values) {
-        return nativeDeviationsAll(ptr, values);
+        return nativeDeviationsAll(nativePtr(), values);
     }
 
     /** [`Summary::deviations_all`], writing into a caller-owned buffer. */
     public void deviationsInto(double[] values, double[] out) {
-        nativeDeviationsInto(ptr, values, out);
+        nativeDeviationsInto(nativePtr(), values, out);
     }
 
     /** Read one statistic by name. */
     public double get(Metric metric) {
-        return nativeGet(ptr, metric.ordinal());
+        return nativeGet(nativePtr(), metric.ordinal());
     }
 
     /** A one-line rendering of the whole summary. */
     public String label() {
-        return nativeLabel(ptr);
+        return nativeLabel(nativePtr());
     }
 
     /** Scale every statistic by `factor`. */
     public void rescale(double factor) {
-        nativeRescale(ptr, factor);
+        nativeRescale(nativePtr(), factor);
     }
 
     /** Parse a comma-separated sample set. */
@@ -101,6 +105,7 @@ public final class Summary implements AutoCloseable {
 
     @Override
     public void close() {
+        closed = true;
         cleanable.clean();
     }
 

@@ -94,49 +94,79 @@ func NewSummary(samples []float64) (*Summary, error) {
 }
 
 func (recv *Summary) Median() float64 {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	return float64(C.gostats_summary_median(recv.ptr))
 }
 
 // Median absolute deviation, unscaled.
 func (recv *Summary) Mad() float64 {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	return float64(C.gostats_summary_mad(recv.ptr))
 }
 
 func (recv *Summary) Min() float64 {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	return float64(C.gostats_summary_min(recv.ptr))
 }
 
 func (recv *Summary) Max() float64 {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	return float64(C.gostats_summary_max(recv.ptr))
 }
 
 // How far `value` sits from the median, in MAD units.
 func (recv *Summary) Deviations(value float64) float64 {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	return float64(C.gostats_summary_deviations(recv.ptr, C.double(value)))
 }
 
 // How far each of `values` sits from the median, in MAD units.
 func (recv *Summary) DeviationsAll(values []float64) []float64 {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	return float64Slice(C.gostats_summary_deviations_all(recv.ptr, (*C.double)(unsafe.Pointer(bufPtr(values))), C.size_t(len(values))))
 }
 
 // [`Summary::deviations_all`], writing into a caller-owned buffer.
 func (recv *Summary) DeviationsInto(values []float64, out []float64) {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	C.gostats_summary_deviations_into(recv.ptr, (*C.double)(unsafe.Pointer(bufPtr(values))), C.size_t(len(values)), (*C.double)(unsafe.Pointer(bufPtr(out))), C.size_t(len(out)))
 }
 
 // Read one statistic by name.
 func (recv *Summary) Get(metric Metric) float64 {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	return float64(C.gostats_summary_get(recv.ptr, metric.c()))
 }
 
 // A one-line rendering of the whole summary.
 func (recv *Summary) Label() string {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	return goString(C.gostats_summary_label(recv.ptr))
 }
 
 // Scale every statistic by `factor`.
 func (recv *Summary) Rescale(factor float64) {
+	if recv.ptr == nil {
+		panic("Summary is closed")
+	}
 	C.gostats_summary_rescale(recv.ptr, C.double(factor))
 }
 

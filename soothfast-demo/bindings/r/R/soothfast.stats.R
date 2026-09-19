@@ -3,9 +3,33 @@ fingerprint <- function(bytes) .Call(wrap__fingerprint, bytes)
 Summary <- function(samples) .Call(wrap__Summary__new, samples)
 Summary_parse <- function(text) .Call(wrap__Summary__parse, text)
 Summary__median <- function(self) .Call(wrap__Summary__median, self)
+Summary__set_median <- function(self, value) .Call(wrap__Summary__set_median, self, value)
+`median<-` <- function(x, value) UseMethod("median<-")
+`median<-.Summary` <- function(x, value) {
+  Summary__set_median(x, value)
+  x
+}
 Summary__mad <- function(self) .Call(wrap__Summary__mad, self)
+Summary__set_mad <- function(self, value) .Call(wrap__Summary__set_mad, self, value)
+`mad<-` <- function(x, value) UseMethod("mad<-")
+`mad<-.Summary` <- function(x, value) {
+  Summary__set_mad(x, value)
+  x
+}
 Summary__min <- function(self) .Call(wrap__Summary__min, self)
+Summary__set_min <- function(self, value) .Call(wrap__Summary__set_min, self, value)
+`min<-` <- function(x, value) UseMethod("min<-")
+`min<-.Summary` <- function(x, value) {
+  Summary__set_min(x, value)
+  x
+}
 Summary__max <- function(self) .Call(wrap__Summary__max, self)
+Summary__set_max <- function(self, value) .Call(wrap__Summary__set_max, self, value)
+`max<-` <- function(x, value) UseMethod("max<-")
+`max<-.Summary` <- function(x, value) {
+  Summary__set_max(x, value)
+  x
+}
 Summary__deviations <- function(self, value) .Call(wrap__Summary__deviations, self, value)
 Summary__deviations_all <- function(self, values) .Call(wrap__Summary__deviations_all, self, values)
 Summary__get <- function(self, metric) .Call(wrap__Summary__get, self, metric)

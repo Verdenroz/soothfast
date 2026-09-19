@@ -30,7 +30,7 @@ typedef struct soothfast_stats_f64_array {
 
 void soothfast_stats_f64_array_free(soothfast_stats_f64_array array);
 
-/* Release a string this library returned. */
+/* Release a string this library returned. A returned string is never NULL; an interior NUL byte is replaced with U+FFFD. */
 void soothfast_stats_string_free(char *text);
 
 /* Release a Summary this library returned. */

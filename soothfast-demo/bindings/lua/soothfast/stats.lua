@@ -22,7 +22,7 @@ typedef struct stats_f64_array {
 
 void stats_f64_array_free(stats_f64_array array);
 
-/* Release a string this library returned. */
+/* Release a string this library returned. A returned string is never NULL; an interior NUL byte is replaced with U+FFFD. */
 void stats_string_free(char *text);
 
 /* Release a Summary this library returned. */
@@ -173,33 +173,54 @@ function Summary.new(samples)
 end
 
 function Summary:median()
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	return lib.stats_summary_median(self.ptr)
 end
 
 function Summary:mad()
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	return lib.stats_summary_mad(self.ptr)
 end
 
 function Summary:min()
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	return lib.stats_summary_min(self.ptr)
 end
 
 function Summary:max()
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	return lib.stats_summary_max(self.ptr)
 end
 
 function Summary:deviations(value)
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	local ret = lib.stats_summary_deviations(self.ptr, value)
 	return ret
 end
 
 function Summary:deviations_all(values)
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	local values_ptr, values_len = f64_buf(values)
 	local ret = lib.stats_summary_deviations_all(self.ptr, values_ptr, values_len)
 	return ffi.gc(ret, lib.stats_f64_array_free)
 end
 
 function Summary:deviations_into(values, out)
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	local values_ptr, values_len = f64_buf(values)
 	local out_ptr, out_len = f64_buf(out)
 	lib.stats_summary_deviations_into(self.ptr, values_ptr, values_len, out_ptr, out_len)
@@ -211,16 +232,25 @@ function Summary:deviations_into(values, out)
 end
 
 function Summary:get(metric)
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	local ret = lib.stats_summary_get(self.ptr, metric_to_c(metric))
 	return ret
 end
 
 function Summary:label()
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	local ret = lib.stats_summary_label(self.ptr)
 	return lua_string(ret)
 end
 
 function Summary:rescale(factor)
+	if self.ptr == nil then
+		error("Summary is closed")
+	end
 	lib.stats_summary_rescale(self.ptr, factor)
 end
 
