@@ -167,6 +167,8 @@ jobs:
         run: cargo test -p soothfast-bind --test python_smoke --locked -- --ignored
       - name: wasm smoke
         run: cargo test -p soothfast-bind --test wasm_smoke --locked -- --ignored
+      - name: shape matrix
+        run: cargo test -p soothfast-bind --test shape_matrix --locked -- --ignored
       - name: demo glue compiles
         run: cargo test -p soothfast-demo --test glue_compiles --locked -- --ignored
       - name: fixture matches real rustdoc
