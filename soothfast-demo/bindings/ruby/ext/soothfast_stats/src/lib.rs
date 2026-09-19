@@ -26,7 +26,7 @@ fn metric_from_symbol(
     }
 }
 
-fn metric_to_symbol(ruby: &::magnus::Ruby, value: ::soothfast_demo::Metric) -> ::magnus::Symbol {
+fn metric_to_symbol(ruby: &::magnus::Ruby, value: &::soothfast_demo::Metric) -> ::magnus::Symbol {
     match value {
         ::soothfast_demo::Metric::Median => ruby.to_symbol("median"),
         ::soothfast_demo::Metric::Mad => ruby.to_symbol("mad"),

@@ -122,6 +122,19 @@ impl ::std::convert::From<::soothfast_demo::Metric> for StatsMetric {
     }
 }
 
+// A mirrored enum has no derived `Clone`; a field getter converts through
+// this one instead of cloning an owned copy just to consume it.
+impl ::std::convert::From<&::soothfast_demo::Metric> for StatsMetric {
+    fn from(value: &::soothfast_demo::Metric) -> Self {
+        match value {
+            ::soothfast_demo::Metric::Median => StatsMetric::Median,
+            ::soothfast_demo::Metric::Mad => StatsMetric::Mad,
+            ::soothfast_demo::Metric::Min => StatsMetric::Min,
+            ::soothfast_demo::Metric::Max => StatsMetric::Max,
+        }
+    }
+}
+
 impl ::std::convert::From<StatsMetric> for ::soothfast_demo::Metric {
     fn from(value: StatsMetric) -> Self {
         match value {
