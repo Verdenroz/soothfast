@@ -510,9 +510,13 @@ fn build_call(
         match Transfer::of(param, plan) {
             Transfer::Buffer { element, .. } => {
                 let ptr = format!("{name}Ptr");
-                let native = types::scalar_of(element).native;
-                pins.push(format!("fixed ({native}* {ptr} = {name})"));
-                args.push(format!("{ptr}, (nuint){name}.Length"));
+                let spelling = types::scalar_of(element);
+                pins.push(format!("fixed ({}* {ptr} = {name})", spelling.public));
+                let arg = match spelling.native == spelling.public {
+                    true => ptr,
+                    false => format!("({}*){ptr}", spelling.native),
+                };
+                args.push(format!("{arg}, (nuint){name}.Length"));
             }
             Transfer::Text { nullable: true, .. } => {
                 let bytes = format!("{name}Bytes");
@@ -639,6 +643,7 @@ fn marshal_copy_ty(native: &'static str) -> &'static str {
         "short" | "ushort" => "short",
         "int" | "uint" => "int",
         "long" | "ulong" => "long",
+        "nuint" => "nint",
         other => other,
     }
 }

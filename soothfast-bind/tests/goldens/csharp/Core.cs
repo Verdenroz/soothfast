@@ -91,9 +91,9 @@ public static class Core
     {
         unsafe
         {
-            fixed (byte* valuesPtr = values)
+            fixed (bool* valuesPtr = values)
             {
-                AcmeCoreBoolArray result = Native.acme_core_flags(valuesPtr, (nuint)values.Length);
+                AcmeCoreBoolArray result = Native.acme_core_flags((byte*)valuesPtr, (nuint)values.Length);
                 bool[] value = new bool[result.Len];
                 if (result.Len > 0)
                 {
@@ -188,7 +188,12 @@ public static class Core
                 nuint[] value = new nuint[result.Len];
                 if (result.Len > 0)
                 {
-                    Marshal.Copy(result.Data, value, 0, (int)result.Len);
+                    nint[] raw = new nint[result.Len];
+                    Marshal.Copy(result.Data, raw, 0, (int)result.Len);
+                    for (int i = 0; i < raw.Length; i++)
+                    {
+                        value[i] = (nuint)raw[i];
+                    }
                 }
                 Native.acme_core_usize_array_free(result);
                 return value;
