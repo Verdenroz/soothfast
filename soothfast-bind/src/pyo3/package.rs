@@ -34,7 +34,7 @@ name = \"{}\"
 crate-type = [\"cdylib\"]
 
 [dependencies]
-{} = {{ path = \"{}\" }}
+{} = {{ path = \"{}\"{} }}
 pyo3 = {{ version = \"{version}\", features = {features} }}
 {}\n# Built once and shipped, so build time is worth trading for speed.\n# `panic = \"abort\"` is deliberately absent: pyo3 turns a panic into a Python\n# exception through `catch_unwind`, which aborting would kill the interpreter\n# instead.\n[profile.release]\nlto = true\ncodegen-units = 1\n",
         opts.package,
@@ -42,6 +42,7 @@ pyo3 = {{ version = \"{version}\", features = {features} }}
         opts.module,
         opts.crate_package,
         opts.crate_path,
+        opts.dependency_features(),
         asyncrt::dependency(plan),
     )
 }

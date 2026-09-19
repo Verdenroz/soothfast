@@ -27,7 +27,7 @@ name = \"{}\"
 crate-type = [\"cdylib\", \"staticlib\"]
 
 [dependencies]
-{} = {{ path = \"{}\" }}
+{} = {{ path = \"{}\"{} }}
 
 # Built once and shipped, so build time is worth trading for speed. Unwinding
 # past an `extern \"C\"` boundary is undefined, so a panic aborts instead.
@@ -36,7 +36,12 @@ lto = true
 codegen-units = 1
 panic = \"abort\"
 ",
-        opts.package, opts.version, opts.module, opts.crate_package, opts.crate_path,
+        opts.package,
+        opts.version,
+        opts.module,
+        opts.crate_package,
+        opts.crate_path,
+        opts.dependency_features(),
     )
 }
 

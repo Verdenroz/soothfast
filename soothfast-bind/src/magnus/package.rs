@@ -109,7 +109,7 @@ name = \"{}\"
 crate-type = [\"cdylib\"]
 
 [dependencies]
-{} = {{ path = \"../../{}\" }}
+{} = {{ path = \"../../{}\"{} }}
 magnus = \"{version}\"
 rb-sys = \"{RB_SYS_VERSION}\"
 
@@ -117,7 +117,12 @@ rb-sys = \"{RB_SYS_VERSION}\"
 lto = true
 codegen-units = 1
 ",
-        opts.module, opts.version, opts.module, opts.crate_package, opts.crate_path,
+        opts.module,
+        opts.version,
+        opts.module,
+        opts.crate_package,
+        opts.crate_path,
+        opts.dependency_features(),
     )
 }
 

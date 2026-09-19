@@ -29,7 +29,7 @@ publish = false
 crate-type = [\"cdylib\"]
 
 [dependencies]
-{} = {{ path = \"{}\" }}
+{} = {{ path = \"{}\"{} }}
 # napi6 is what `BigInt` and the 64-bit typed arrays need; every Node
 # release still supported carries it.
 napi = {{ version = \"{version}\", features = [\"napi6\"] }}
@@ -48,6 +48,7 @@ strip = \"symbols\"
         opts.version,
         opts.crate_package,
         opts.crate_path,
+        opts.dependency_features(),
     )
 }
 

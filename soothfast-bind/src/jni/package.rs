@@ -32,7 +32,7 @@ name = \"{lib}\"
 crate-type = [\"cdylib\"]
 
 [dependencies]
-{} = {{ path = \"{}\" }}
+{} = {{ path = \"{}\"{} }}
 jni = \"{version}\"
 
 # Built once and shipped, so build time is worth trading for speed.
@@ -43,7 +43,10 @@ lto = true
 codegen-units = 1
 panic = \"abort\"
 ",
-        opts.version, opts.crate_package, opts.crate_path,
+        opts.version,
+        opts.crate_package,
+        opts.crate_path,
+        opts.dependency_features(),
     )
 }
 

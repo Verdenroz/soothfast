@@ -163,6 +163,9 @@ cargo soothfast bind build -p PKG          # drive maturin / wasm-pack / napi / 
 `bind gen` writes a small Rust glue crate per language and the packaging
 around it, including a `Cargo.lock` that `--check` fails on when it is
 missing or no longer satisfies the manifest, the same as stale file text.
+`bind gen --features X` bakes `X` into the glue's dependency on your crate,
+so a binding of a feature-gated surface is generated and built with the
+same features.
 `bind build` hands that crate to the ecosystem's own tool:
 `maturin` for Python, `wasm-pack` for wasm, `napi build` (via `npx`, after an
 `npm install` if `node_modules/` is missing) for Node. None of these tools

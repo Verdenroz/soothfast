@@ -296,6 +296,28 @@ pub struct BindOptions {
     pub backend_version: Option<String>,
     /// Python only: also emit a `{name}_blocking` twin of every async call.
     pub blocking: bool,
+    /// Cargo features the surface was walked with; the glue depends on the
+    /// bound crate with exactly these, so the compiled crate matches the
+    /// walked one.
+    pub features: Vec<String>,
+}
+
+impl BindOptions {
+    /// The `features = [...]` clause of the glue's dependency on the bound
+    /// crate, or nothing when the walk used none.
+    pub fn dependency_features(&self) -> String {
+        match self.features.is_empty() {
+            true => String::new(),
+            false => format!(
+                ", features = [{}]",
+                self.features
+                    .iter()
+                    .map(|f| format!("\"{f}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
 }
 
 impl Default for BindOptions {
@@ -313,6 +335,7 @@ impl Default for BindOptions {
             authors: Vec::new(),
             backend_version: None,
             blocking: false,
+            features: Vec::new(),
         }
     }
 }

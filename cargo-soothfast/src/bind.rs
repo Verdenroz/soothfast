@@ -245,7 +245,7 @@ fn build_all(pkg: &str, common: &CommonArgs, meta: &invoke::PkgMeta) -> Result<V
     let (surface, gaps) = exported_surface(pkg, common, &type_table(&cfg)?)?;
     let mut out = Vec::new();
     for entry in cfg.entries {
-        let opts = bind_options(&entry, pkg, meta);
+        let opts = bind_options(&entry, pkg, meta, common);
         let files = entry.lang.emit(&surface, gaps.clone(), &opts)?;
         out.push(Built { entry, files });
     }
@@ -293,7 +293,12 @@ pub(crate) fn exported_surface(
     soothfast_bind::walk::surface(&doc, table, &records)
 }
 
-fn bind_options(entry: &BindEntry, pkg: &str, meta: &invoke::PkgMeta) -> BindOptions {
+fn bind_options(
+    entry: &BindEntry,
+    pkg: &str,
+    meta: &invoke::PkgMeta,
+    common: &CommonArgs,
+) -> BindOptions {
     BindOptions {
         package: entry.package.clone(),
         module: entry.module(),
@@ -313,7 +318,19 @@ fn bind_options(entry: &BindEntry, pkg: &str, meta: &invoke::PkgMeta) -> BindOpt
         targets: entry.targets.clone(),
         backend_version: entry.backend_version.clone(),
         blocking: entry.blocking,
+        features: feature_list(common.features.as_deref()),
     }
+}
+
+/// The `--features` string as cargo reads it: comma or whitespace separated.
+fn feature_list(features: Option<&str>) -> Vec<String> {
+    features
+        .unwrap_or_default()
+        .split([',', ' ', '\t', '\n'])
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 /// The path from the glue crate back to the package it binds, one `..` per
@@ -803,6 +820,13 @@ mod tests {
             manifest_dir(Path::new("/out"), &files),
             Some(PathBuf::from("/out/ext/acme_core"))
         );
+    }
+
+    #[test]
+    fn a_features_string_splits_on_commas_and_whitespace() {
+        assert_eq!(feature_list(Some("a, b c")), ["a", "b", "c"]);
+        assert!(feature_list(None).is_empty());
+        assert!(feature_list(Some(" , ")).is_empty());
     }
 
     #[test]

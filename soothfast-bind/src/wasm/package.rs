@@ -30,13 +30,14 @@ publish = false
 crate-type = [\"cdylib\", \"rlib\"]
 
 [dependencies]
-{} = {{ path = \"{}\" }}
+{} = {{ path = \"{}\"{} }}
 wasm-bindgen = \"{version}\"
 {}\n# Built once and shipped, so build time is worth trading for a smaller,\n# faster artifact. wasm32 has no unwinding, so aborting costs nothing.\n[profile.release]\nlto = true\ncodegen-units = 1\npanic = \"abort\"\n",
         crate_name(&opts.package),
         opts.version,
         opts.crate_package,
         opts.crate_path,
+        opts.dependency_features(),
         futures_dep(plan),
     )
 }

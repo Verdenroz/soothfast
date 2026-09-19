@@ -245,9 +245,12 @@ pub(crate) fn cargo_toml(opts: &BindOptions, lib: &str) -> String {
          edition = \"2024\"\npublish = false\n\n\
          [workspace]\n\n\
          [lib]\nname = \"{lib}\"\ncrate-type = [\"staticlib\"]\n\n\
-         [dependencies]\n{} = {{ path = \"../../{}\" }}\nextendr-api = \"{version}\"\n\n\
+         [dependencies]\n{} = {{ path = \"../../{}\"{} }}\nextendr-api = \"{version}\"\n\n\
          [profile.release]\nlto = true\ncodegen-units = 1\n",
-        opts.version, opts.crate_package, opts.crate_path,
+        opts.version,
+        opts.crate_package,
+        opts.crate_path,
+        opts.dependency_features(),
     )
 }
 
