@@ -13,7 +13,7 @@ mod transfer;
 mod unsupported;
 
 pub use transfer::{BufferSupport, Transfer, offloadable, transfer_notes};
-use unsupported::unsupported;
+use unsupported::{optional_scalar_param_is_ready, unsupported};
 
 use crate::gap::Gap;
 use crate::model::{
@@ -214,6 +214,28 @@ fn class_of(
         .filter(|f| f.owner.as_deref() == Some(ty.name.as_str()))
         .collect();
 
+    // A plain enum mirrors onto a target language's own enumeration, which
+    // has no constructor, methods or statics of its own to carry these on.
+    if let TypeKind::Enum(variants) = &ty.kind
+        && is_plain(variants)
+    {
+        for f in &owned {
+            gaps.push(Gap::PlainEnumMember { at: f.id.clone() });
+        }
+        return Class {
+            rust_path: ty.rust_path.clone(),
+            name: ty.name.clone(),
+            doc: ty.doc.clone(),
+            send: ty.send,
+            sync: ty.sync,
+            ctor: None,
+            accessors: Vec::new(),
+            methods: Vec::new(),
+            statics: Vec::new(),
+            variants: Some(variants.clone()),
+        };
+    }
+
     let ctor = pick_ctor(&owned, &ty.name).map(|f| function_of(f, opts, Some(&ty.name)));
     let ctor_path = ctor.as_ref().map(|c| c.rust_path.clone());
 
@@ -277,7 +299,15 @@ fn accessors_of(
     let mut out = Vec::new();
     for field in fields.iter().filter(|f| f.public) {
         let at = format!("{owner}.{}", field.name);
-        if let Ty::Class(nested) = &field.ty
+        let nested = match &field.ty {
+            Ty::Class(nested) => Some(nested),
+            Ty::Optional(inner) => match &**inner {
+                Ty::Class(nested) => Some(nested),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(nested) = nested
             && !mirrored.contains(nested)
         {
             gaps.push(Gap::HandleByValue {
@@ -286,7 +316,7 @@ fn accessors_of(
             });
             continue;
         }
-        if field.ty.has_opaque() || unsupported(kind, &field.ty).is_some() {
+        if field.ty.has_opaque() || unsupported(kind, &field.ty, mirrored).is_some() {
             continue;
         }
         out.push(Accessor {
@@ -360,13 +390,54 @@ fn bindable(
     if owned_handle_param_is_blocked(f, mirrored, gaps) {
         return false;
     }
-    if optional_handle_param_is_blocked(f, kind, gaps) {
+    if optional_handle_param_is_blocked(f, kind, mirrored, gaps) {
         return false;
     }
     if r_mutable_buffer_param_is_blocked(f, kind, gaps) {
         return false;
     }
-    every_type_is_carriable(f, kind, gaps)
+    if r_optional_scalar_param_is_blocked(f, kind, mirrored, gaps) {
+        return false;
+    }
+    every_type_is_carriable(f, kind, mirrored, gaps)
+}
+
+/// A `None`/`NULL` parameter of any other optional shape has no hand-built
+/// `Robj` conversion yet; the return and field directions are unrestricted
+/// (see [`unsupported::optional_scalar_param_is_ready`]'s own doc).
+fn r_optional_scalar_param_is_blocked(
+    f: &ExportedFn,
+    kind: BindKind,
+    mirrored: &BTreeSet<String>,
+    gaps: &mut Vec<Gap>,
+) -> bool {
+    if kind != BindKind::R {
+        return false;
+    }
+    for param in &f.params {
+        let Ty::Optional(inner) = &param.ty else {
+            continue;
+        };
+        if optional_scalar_param_is_ready(inner, mirrored) {
+            continue;
+        }
+        record(
+            gaps,
+            Gap::UnsupportedByBackend {
+                at: f.id.clone(),
+                ty: param.ty.render(),
+                lang: kind.name(),
+                why: format!(
+                    "`Option<{}>` has no hand-built Robj conversion for a \
+                     parameter; take the value directly, using an empty \
+                     sequence or a sentinel for absent",
+                    inner.render()
+                ),
+            },
+        );
+        return true;
+    }
+    false
 }
 
 /// `async fn` needs a runtime story per backend, and never on an exclusive
@@ -447,8 +518,15 @@ fn owned_handle_param_is_blocked(
 /// and the two need different C. Go, C++, Lua and C# all call the same C
 /// functions, so each inherits the restriction; Java and Kotlin have no way
 /// to name a different constructor overload for it either; R's own handle is
-/// an external pointer with the same borrowed-or-owned ambiguity.
-fn optional_handle_param_is_blocked(f: &ExportedFn, kind: BindKind, gaps: &mut Vec<Gap>) -> bool {
+/// an external pointer with the same borrowed-or-owned ambiguity. A mirrored
+/// enum has neither problem: it crosses by value, so R carries it, though a
+/// handle borrowed-or-owned ambiguity still blocks it for the rest.
+fn optional_handle_param_is_blocked(
+    f: &ExportedFn,
+    kind: BindKind,
+    mirrored: &BTreeSet<String>,
+    gaps: &mut Vec<Gap>,
+) -> bool {
     if !matches!(
         kind,
         BindKind::CAbi
@@ -463,20 +541,27 @@ fn optional_handle_param_is_blocked(f: &ExportedFn, kind: BindKind, gaps: &mut V
         return false;
     }
     for param in &f.params {
-        if matches!(&param.ty, Ty::Optional(inner) if matches!(**inner, Ty::Class(_))) {
-            record(
-                gaps,
-                Gap::UnsupportedByBackend {
-                    at: f.id.clone(),
-                    ty: param.ty.render(),
-                    lang: kind.name(),
-                    why: "an optional exported type is taken only as a return; \
-                          take it by reference instead"
-                        .into(),
-                },
-            );
-            return true;
+        let Ty::Optional(inner) = &param.ty else {
+            continue;
+        };
+        let Ty::Class(name) = &**inner else {
+            continue;
+        };
+        if kind == BindKind::R && mirrored.contains(name) {
+            continue;
         }
+        record(
+            gaps,
+            Gap::UnsupportedByBackend {
+                at: f.id.clone(),
+                ty: param.ty.render(),
+                lang: kind.name(),
+                why: "an optional exported type is taken only as a return; \
+                      take it by reference instead"
+                    .into(),
+            },
+        );
+        return true;
     }
     false
 }
@@ -510,13 +595,18 @@ fn r_mutable_buffer_param_is_blocked(f: &ExportedFn, kind: BindKind, gaps: &mut 
 
 /// `throws` is deliberately absent: an error crosses as a message, so its
 /// type never has to be one the target language can carry.
-fn every_type_is_carriable(f: &ExportedFn, kind: BindKind, gaps: &mut Vec<Gap>) -> bool {
+fn every_type_is_carriable(
+    f: &ExportedFn,
+    kind: BindKind,
+    mirrored: &BTreeSet<String>,
+    gaps: &mut Vec<Gap>,
+) -> bool {
     let tys = f.params.iter().map(|p| &p.ty).chain(once(&f.ret));
     for ty in tys {
         if ty.has_opaque() {
             return false;
         }
-        if let Some(why) = unsupported(kind, ty) {
+        if let Some(why) = unsupported(kind, ty, mirrored) {
             record(
                 gaps,
                 Gap::UnsupportedByBackend {

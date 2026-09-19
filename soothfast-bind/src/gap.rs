@@ -56,6 +56,10 @@ pub enum Gap {
         /// The exported type being copied.
         ty: String,
     },
+    /// A constructor, method or associated fn on a plain enum. Every target
+    /// language mirrors a payload-free enum onto its own enumeration, which
+    /// has none of these to carry them on.
+    PlainEnumMember { at: String },
 }
 
 impl Gap {
@@ -69,7 +73,8 @@ impl Gap {
             | Self::NotSendStatic { at, .. }
             | Self::HandleByValue { at, .. }
             | Self::ConsumingReceiver { at }
-            | Self::AsyncExclusiveReceiver { at } => at,
+            | Self::AsyncExclusiveReceiver { at }
+            | Self::PlainEnumMember { at } => at,
         }
     }
 
@@ -107,6 +112,11 @@ impl Gap {
                 "{at}: crosses the exported type `{ty}` by value, which would \
                  copy it; take it by reference, or add a method returning what \
                  the caller needs"
+            ),
+            Self::PlainEnumMember { at } => format!(
+                "{at}: a plain enum mirrors onto the target language's own \
+                 enumeration, which has no constructors, methods or \
+                 associated fns; expose this as a free function instead"
             ),
         }
     }
