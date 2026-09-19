@@ -5,10 +5,11 @@ Gem::Specification.new do |spec|
   spec.version = "0.3.2"
   spec.summary = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
   spec.description = "Robust summary statistics and the FNV-1a fingerprint soothfast gates on"
-  spec.authors = []
+  spec.authors = ["Harvey Tseng <harveytseng2@gmail.com>"]
   spec.required_ruby_version = ">= 3.1"
-  spec.files = Dir["lib/**/*.rb", "ext/**/*.{rs,toml,rb}"]
+  spec.files = Dir["lib/**/*.rb", "ext/**/*.{rs,toml,rb}", "Cargo.{toml,lock}"]
   spec.require_paths = ["lib"]
   spec.extensions = ["ext/soothfast_stats/extconf.rb"]
   spec.add_dependency "rb_sys", "~> 0.9"
+  spec.add_development_dependency "rake-compiler", "~> 1.2"
 end

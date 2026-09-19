@@ -4,7 +4,7 @@ package io.soothfast.statskt
 import java.lang.ref.Cleaner
 
 /** A robust summary of one sample set. */
-class Summary private constructor(private val ptr: Long, marker: Raw) : AutoCloseable {
+class Summary internal constructor(private val ptr: Long, marker: Raw) : AutoCloseable {
     companion object {
         init {
             Natives.load()
@@ -55,7 +55,7 @@ class Summary private constructor(private val ptr: Long, marker: Raw) : AutoClos
         private external fun nativeFree(ptr: Long)
     }
 
-    private object Raw
+    internal object Raw
 
     private val cleanable: Cleaner.Cleanable = Natives.CLEANER.register(this, State(ptr))
 
