@@ -76,12 +76,14 @@ fn doc() -> Value {
             "44": module("util", false, &[31]),
             "1": alias("Result", std_result(json!({ "generic": "T" }), path("String", 92, &[]))),
             "2": alias("Outcome", path("Result", 1, &[json!({ "generic": "T" })])),
-            "3": struct_item("Client", &[10, 11], &[4, 47]),
+            "3": struct_item("Client", &[10, 11, 15, 16], &[4, 47]),
             "47": auto_impl("Clone", false),
             "4": json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
                 "inner": { "impl": { "trait": Value::Null, "items": [20, 21, 22, 23] } } }),
             "10": field("symbol", path("String", 92, &[]), true),
             "11": field("clock", path("DateTime", 99, &[]), false),
+            "15": field("price", prim("f64"), true),
+            "16": field("maybe", path("Option", 93, &[prim("i64")]), true),
             "20": func("new", &[("symbol", into_string())], path("Result", 1, &[json!({ "generic": "Self" })]), true),
             "21": func("chart", &[("self", borrowed(json!({ "generic": "Self" }), false))], path("Result", 1, &[prim("i64")]), true),
             "22": func("nested", &[("self", borrowed(json!({ "generic": "Self" }), false))], path("Outcome", 2, &[prim("u32")]), false),
@@ -276,6 +278,12 @@ fn a_handle_list_field_gets_one_seq_class_with_on_demand_handles_and_columns() {
     ));
     assert!(glue.contains("format!(\"ClientSeq(len={})\", self.0.len())"));
     assert!(glue.contains("fn symbol(&self) -> Vec<String> {\n        self.0.iter().map(|v| v.symbol.clone()).collect()"));
+    assert!(glue.contains("fn price(&self) -> F64Array {\n        F64Array::new(self.0.iter().map(|v| v.price).collect())"));
+    assert!(glue.contains(
+        "fn maybe(&self) -> Vec<Option<i64>> {\n        self.0.iter().map(|v| v.maybe).collect()"
+    ));
+    assert_eq!(glue.matches("pub struct F64Array(").count(), 1);
+    assert!(glue.contains("m.add_class::<F64Array>()?;"));
     let seq_at = glue
         .find("m.add_class::<ClientSeq>()?;")
         .expect("registers the seq");
