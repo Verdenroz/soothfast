@@ -17,7 +17,7 @@ use super::asyncrt;
 use super::buffers::{self, array_name, buffered, view_name};
 use super::errors::{self, Hierarchy};
 use super::py_ident;
-use super::seq;
+use super::{seq, text};
 
 /// Every call with a writable buffer parameter alongside another buffer
 /// parameter needs this: two arguments can name the same Python object
@@ -127,9 +127,12 @@ fn aliasing_check(function: &Function, plan: &BindingPlan, indent: &str) -> Stri
 }
 
 /// Whether the generated signature has to return `PyResult`: the call
-/// itself can fail, or an aliasing check ahead of it can.
+/// itself can fail, an aliasing check ahead of it can, or a mapped
+/// parameter has to parse first.
 fn fallible(function: &Function, plan: &BindingPlan) -> bool {
-    function.throws.is_some() || !aliasing_pairs(function, plan).is_empty()
+    function.throws.is_some()
+        || !aliasing_pairs(function, plan).is_empty()
+        || function.params.iter().any(|p| text::mentions(&p.ty))
 }
 
 /// One newtype per distinct error type, named after it so several errors in
@@ -338,6 +341,11 @@ fn setter(accessor: &Accessor, plan: &BindingPlan) -> Option<String> {
         }
         ty => (signature_ty(ty), into(ty, plan)),
     };
+    if let Some(parsed) = text::parse("value", &accessor.ty) {
+        return Some(format!(
+            "    #[setter]\n    fn set_{name}(&mut self, value: {spelling}) -> PyResult<()> {{\n        self.0.{field} = {parsed};\n        Ok(())\n    }}\n",
+        ));
+    }
     Some(format!(
         "    #[setter]\n    fn set_{name}(&mut self, value: {spelling}) {{\n        self.0.{field} = {assigned};\n    }}\n",
     ))
@@ -417,7 +425,11 @@ fn body(call: &str, function: &Function, plan: &BindingPlan, indent: &str, detac
         true => asyncrt::awaited(call),
         false => call.to_string(),
     };
-    let checks = aliasing_check(function, plan, indent);
+    let checks = format!(
+        "{}{}",
+        aliasing_check(function, plan, indent),
+        text::preludes(function, indent)
+    );
     if !detach {
         return format!("{checks}{}", completed(&call, function, plan, indent, ""));
     }
@@ -482,6 +494,9 @@ fn owned(expr: &str, ty: &Ty) -> String {
 
 /// A value leaving the user's crate, spelled the way the signature promised.
 fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
+    if let Some(rendered) = text::out(expr, ty) {
+        return rendered;
+    }
     match ty {
         Ty::Class(name) if plan.is_mirrored(name) => format!("{expr}.into()"),
         Ty::Class(name) => format!("{name}({expr})"),
@@ -662,6 +677,11 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
                 format!("{name}.into_iter().map(::std::convert::Into::into).collect()"),
             )
         }
+        // A mapped parameter was parsed and rebound ahead of the call, so
+        // it is handed on like any owned value; `Option<&T>` re-borrows it.
+        _ if text::mentions(&param.ty) && param.inner_ownership != Ownership::Owned => {
+            (signature_ty(&param.ty), format!("{name}.as_ref()"))
+        }
         _ => match param.ownership {
             Ownership::Owned => (signature_ty(&param.ty), name),
             Ownership::Borrowed => (signature_ty(&param.ty), format!("&{name}")),
@@ -719,7 +739,7 @@ fn return_ty(function: &Function, plan: &BindingPlan) -> String {
 fn signature_ty(ty: &Ty) -> String {
     let nest = |inner: &Ty| signature_ty(inner);
     match ty {
-        Ty::Str => "String".into(),
+        Ty::Str | Ty::Text(_) => "String".into(),
         Ty::Bytes => "Vec<u8>".into(),
         Ty::List(inner) => format!("Vec<{}>", nest(inner)),
         Ty::Map(key, value) => format!(

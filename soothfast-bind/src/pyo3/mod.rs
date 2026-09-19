@@ -6,6 +6,7 @@ mod errors;
 mod glue;
 mod package;
 mod seq;
+mod text;
 
 use crate::naming;
 use crate::plan::BindingPlan;

@@ -262,8 +262,9 @@ fn the_python_glue_raises_a_package_hierarchy_with_variant_fields_as_attributes(
     assert!(module.find("add_class::<Bag>").unwrap() < module.find("m.add(\"Error\"").unwrap());
 }
 
-/// The document plus `stamp(at: DateTime) -> DateTime`, which only a
-/// `[bind.types]` mapping makes bindable.
+/// The document plus `stamp(at: DateTime) -> DateTime`,
+/// `maybe_stamp() -> Option<DateTime>` and a public `Client.clock`, which
+/// only a `[bind.types]` mapping makes bindable.
 fn doc_with_stamp() -> Value {
     let mut doc = doc();
     doc["index"]["33"] = func(
@@ -272,13 +273,64 @@ fn doc_with_stamp() -> Value {
         path("DateTime", 99, &[]),
         false,
     );
+    doc["index"]["34"] = func(
+        "maybe_stamp",
+        &[],
+        path("Option", 93, &[path("DateTime", 99, &[])]),
+        false,
+    );
+    doc["index"]["11"] = field("clock", path("DateTime", 99, &[]), true);
     doc["index"]["40"]["inner"]["module"]["items"]
         .as_array_mut()
         .expect("items")
-        .push(json!(33));
+        .extend([json!(33), json!(34)]);
     doc["paths"]["33"] =
         json!({ "crate_id": 0, "path": ["acme", "core", "stamp"], "kind": "function" });
+    doc["paths"]["34"] =
+        json!({ "crate_id": 0, "path": ["acme", "core", "maybe_stamp"], "kind": "function" });
     doc
+}
+
+#[test]
+fn the_python_glue_parses_a_mapped_type_in_and_renders_it_out() {
+    let mut table = TypeTable::with_defaults();
+    table.insert("chrono::DateTime", Ty::Text("chrono::DateTime".into()));
+    let records = vec![
+        record("acme::core::Client", "struct"),
+        method("acme::core::Client::new", "Client"),
+        record("acme::core::stamp", "fn"),
+        record("acme::core::maybe_stamp", "fn"),
+    ];
+    let (walked, gaps) = surface(&stamped(doc_with_stamp()), &table, &records).expect("walks");
+    let files = BindKind::Python
+        .emit(&walked, gaps, &opts())
+        .expect("emits");
+    let glue = &files.files["src/lib.rs"];
+    let parse = "parse().map_err(|e| ::pyo3::exceptions::PyValueError::new_err(::std::string::ToString::to_string(&e)))?";
+    assert!(
+        glue.contains(&format!(
+            "fn stamp(at: String) -> PyResult<String> {{\n    let at = at.{parse};\n    Ok(::std::string::ToString::to_string(&::acme::core::stamp(at)))\n}}"
+        )),
+        "{glue}"
+    );
+    assert!(
+        glue.contains(
+            "fn maybe_stamp() -> Option<String> {\n    ::acme::core::maybe_stamp().map(|v| ::std::string::ToString::to_string(&v))\n}"
+        ),
+        "{glue}"
+    );
+    assert!(
+        glue.contains(
+            "fn clock(&self) -> String {\n        ::std::string::ToString::to_string(&self.0.clock.clone())\n    }"
+        ),
+        "{glue}"
+    );
+    assert!(
+        glue.contains(&format!(
+            "fn set_clock(&mut self, value: String) -> PyResult<()> {{\n        self.0.clock = value.{parse};\n        Ok(())\n    }}"
+        )),
+        "{glue}"
+    );
 }
 
 #[test]
