@@ -76,11 +76,19 @@ fn returns(r: &mut Resolver, output: &Value, at: &str) -> (Ty, Option<Ty>) {
     let path = output["resolved_path"]["path"].as_str().unwrap_or_default();
     if path == "Result" || path.ends_with("::Result") {
         let args = generic_args(&output["resolved_path"]);
-        let ok = match args.first() {
-            Some(ty) => r.resolve(ty, at),
-            None => Ty::Unit,
-        };
-        let err = args.get(1).map(|ty| r.resolve_message(ty, at));
+        // A real `Result<T, E>` always spells both type arguments; a single-
+        // argument alias (`type Result<T> = std::result::Result<T, Error>`)
+        // reads identically here but silently drops the error, so it is
+        // reported rather than treated as an infallible `T`.
+        if args.len() != 2 {
+            r.record(Gap::UnmappedForeign {
+                at: at.to_string(),
+                path: path.to_string(),
+            });
+            return (Ty::Opaque(path.to_string()), None);
+        }
+        let ok = r.resolve(&args[0], at);
+        let err = Some(r.resolve_message(&args[1], at));
         return (ok, err);
     }
     (r.resolve(output, at), None)

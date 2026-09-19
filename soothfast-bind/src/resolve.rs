@@ -12,11 +12,6 @@ use crate::foreign::TypeTable;
 use crate::gap::Gap;
 use crate::model::Ty;
 
-/// Containers that carry their inner type through unchanged.
-const TRANSPARENT: &[&str] = &[
-    "Box", "Arc", "Rc", "Cow", "RefCell", "Cell", "Mutex", "RwLock",
-];
-
 /// Containers that bind as an ordered sequence.
 const SEQUENCES: &[&str] = &[
     "Vec",
@@ -185,7 +180,7 @@ impl<'a> Resolver<'a> {
     fn primitive(&mut self, p: &str, at: &str) -> Ty {
         match p {
             "bool" => Ty::Bool,
-            "char" | "str" => Ty::Str,
+            "str" => Ty::Str,
             "f32" => Ty::F32,
             "f64" => Ty::F64,
             "i8" => Ty::I8,
@@ -220,7 +215,6 @@ impl<'a> Resolver<'a> {
                 return Ty::Optional(Box::new(inner));
             }
             "String" | "str" => return Ty::Str,
-            _ if TRANSPARENT.contains(&last) => return self.arg(&args, 0, at),
             _ if SEQUENCES.contains(&last) => {
                 let item = self.arg(&args, 0, at);
                 return match item {

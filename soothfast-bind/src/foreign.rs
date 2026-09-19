@@ -17,15 +17,13 @@ pub struct TypeTable {
 
 impl TypeTable {
     /// A table with the std types every language already has a spelling for.
+    ///
+    /// `PathBuf`/`Path`/`OsString`/`OsStr` are deliberately absent: their
+    /// bytes are not guaranteed valid UTF-8, so mapping them to a plain
+    /// string would silently lose that; they gap instead, and a crate that
+    /// wants one bound adds its own lossy or byte-based mapping here.
     pub fn with_defaults() -> Self {
-        let mut table = TypeTable::default();
-        for path in ["std::path::PathBuf", "std::path::Path"] {
-            table.insert(path, Ty::Str);
-        }
-        for path in ["std::ffi::OsString", "std::ffi::OsStr"] {
-            table.insert(path, Ty::Str);
-        }
-        table
+        TypeTable::default()
     }
 
     /// Add a mapping, replacing any entry for the same path.
@@ -59,9 +57,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_explicit_mapping_wins_over_the_defaults() {
+    fn an_explicit_mapping_wins_over_no_default_at_all() {
         let mut table = TypeTable::with_defaults();
-        assert_eq!(table.lookup("std::path::PathBuf"), Some(&Ty::Str));
+        assert_eq!(table.lookup("std::path::PathBuf"), None);
         table.insert("std::path::PathBuf", Ty::Bytes);
         assert_eq!(table.lookup("std::path::PathBuf"), Some(&Ty::Bytes));
     }

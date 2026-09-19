@@ -21,7 +21,7 @@ pub enum Ty {
     USize,
     F32,
     F64,
-    /// `String`, `&str`, `Cow<str>`.
+    /// `String` or `&str`.
     Str,
     /// `Vec<u8>` and `&[u8]`, distinguished from `List(U8)` because every
     /// target language has a byte-string type that is not a list of numbers.
