@@ -3,7 +3,7 @@ package acme.core
 
 import java.lang.ref.Cleaner
 
-class Counter private constructor(private val ptr: Long, marker: Raw) : AutoCloseable {
+class Counter internal constructor(private val ptr: Long, marker: Raw) : AutoCloseable {
     companion object {
         init {
             Natives.load()
@@ -34,7 +34,7 @@ class Counter private constructor(private val ptr: Long, marker: Raw) : AutoClos
         private external fun nativeFree(ptr: Long)
     }
 
-    private object Raw
+    internal object Raw
 
     private val cleanable: Cleaner.Cleanable = Natives.CLEANER.register(this, State(ptr))
 

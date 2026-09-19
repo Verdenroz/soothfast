@@ -53,7 +53,7 @@ fn a_kotlin_handle_class_is_autocloseable_over_a_shared_cleaner() {
     assert!(natives.contains("System.loadLibrary(\"acme_core\")"));
 
     let counter = &files["src/main/kotlin/acme/core/Counter.kt"];
-    assert!(counter.contains("class Counter private constructor(private val ptr: Long"));
+    assert!(counter.contains("class Counter internal constructor(private val ptr: Long"));
     assert!(counter.contains(": AutoCloseable"));
     assert!(counter.contains("Natives.CLEANER.register(this, State(ptr))"));
     assert!(counter.contains("override fun close() {"));
@@ -73,8 +73,8 @@ fn a_kotlin_plain_enum_mirrors_onto_an_enum_class() {
 fn a_kotlin_declared_constructor_is_a_secondary_one_disambiguated_by_a_marker() {
     let files = emit_set_with(BindKind::Kotlin, &kotlin_opts()).files;
     let counter = &files["src/main/kotlin/acme/core/Counter.kt"];
-    assert!(counter.contains("private object Raw"));
-    assert!(counter.contains("private constructor(private val ptr: Long, marker: Raw)"));
+    assert!(counter.contains("internal object Raw"));
+    assert!(counter.contains("internal constructor(private val ptr: Long, marker: Raw)"));
     assert!(counter.contains("constructor(start: Long) : this(nativeNew(start), Raw)"));
 }
 

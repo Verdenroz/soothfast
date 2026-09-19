@@ -216,14 +216,14 @@ fn handle_class(class: &Class, plan: &BindingPlan, opts: &BindOptions) -> String
     );
 
     let (raw_object, raw_param) = match class.ctor {
-        Some(_) => ("\n    private object Raw\n", ", marker: Raw".to_string()),
+        Some(_) => ("\n    internal object Raw\n", ", marker: Raw".to_string()),
         None => ("", String::new()),
     };
 
     format!(
         "{GENERATED_JAVA}package {}\n\n\
          import java.lang.ref.Cleaner\n\n\
-         {}class {name} private constructor(private val ptr: Long{raw_param}) : AutoCloseable {{\n\
+         {}class {name} internal constructor(private val ptr: Long{raw_param}) : AutoCloseable {{\n\
          \x20   companion object {{\n\
          \x20       init {{\n\
          \x20           Natives.load()\n\

@@ -3,7 +3,7 @@ package acme.core
 
 import java.lang.ref.Cleaner
 
-class Mode private constructor(private val ptr: Long) : AutoCloseable {
+class Mode internal constructor(private val ptr: Long) : AutoCloseable {
     companion object {
         init {
             Natives.load()
