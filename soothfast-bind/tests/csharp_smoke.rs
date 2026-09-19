@@ -104,7 +104,9 @@ fn build_cdylib(glue: &Path) -> PathBuf {
 }
 
 fn build_dotnet_smoke(glue: &Path, cdylib: &Path) -> PathBuf {
-    let smoke = glue.join("smoke");
+    // Beside the glue, not under it: an SDK-style project compiles every
+    // .cs below its own directory, the harness's included.
+    let smoke = glue.with_file_name("smoke");
     copy_dir(&smoke_dir(), &smoke);
 
     let status = Command::new("dotnet")
