@@ -255,11 +255,15 @@ impl BindKind {
         };
         // A repository that trims file endings would otherwise rewrite what
         // was just emitted, and `gen --check` would call it stale forever.
+        // The same trimming empties a file holding only a newline, so an
+        // empty marker file stays empty.
         for text in out.files.values_mut() {
             while text.ends_with('\n') {
                 text.pop();
             }
-            text.push('\n');
+            if !text.is_empty() {
+                text.push('\n');
+            }
         }
         out.gaps = plan.gaps.iter().map(gap::Gap::explain).collect();
         Ok(out)

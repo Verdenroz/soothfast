@@ -302,7 +302,7 @@ fn setter(accessor: &Accessor, plan: &BindingPlan) -> Option<String> {
     ))
 }
 
-fn holds_handle(ty: &Ty, plan: &BindingPlan) -> bool {
+pub(super) fn holds_handle(ty: &Ty, plan: &BindingPlan) -> bool {
     match ty {
         Ty::Class(name) => !plan.is_mirrored(name),
         Ty::Optional(inner) | Ty::List(inner) => holds_handle(inner, plan),

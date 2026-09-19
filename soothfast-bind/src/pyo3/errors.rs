@@ -15,6 +15,10 @@ use super::buffers;
 use super::glue::inner_path;
 use super::{py_ident, seq};
 
+/// One exception class for the stub: its name, its parent's, and the
+/// attributes a raised instance carries.
+pub(crate) type ExceptionClass = (String, String, Vec<(String, Ty)>);
+
 /// Every exception class's Python name, decided once so the declarations,
 /// the raising code and the module registration agree.
 pub(crate) struct Hierarchy<'a> {
@@ -103,6 +107,20 @@ impl Hierarchy<'_> {
                     ty.name,
                     quoted(&doc)
                 );
+            }
+        }
+        out
+    }
+
+    /// Every class as `(name, parent, attributes)`, in declaration order:
+    /// the base under `Exception`, each type under the base, each variant
+    /// under its type with the fields a raised error carries.
+    pub(crate) fn classes(&self) -> Vec<ExceptionClass> {
+        let mut out = vec![(self.base.clone(), "Exception".to_string(), Vec::new())];
+        for ty in &self.types {
+            out.push((ty.name.clone(), self.base.clone(), Vec::new()));
+            for (variant, name) in &ty.variants {
+                out.push((name.clone(), ty.name.clone(), variant.fields.clone()));
             }
         }
         out

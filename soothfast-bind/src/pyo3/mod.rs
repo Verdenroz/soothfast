@@ -8,6 +8,7 @@ mod glue;
 mod package;
 mod repr;
 mod seq;
+mod stubs;
 mod text;
 
 use crate::naming;
@@ -41,6 +42,12 @@ pub(crate) fn emit(plan: &BindingPlan, opts: &BindOptions) -> Result<BindFileSet
     files.insert("pyproject.toml".into(), package::pyproject(opts));
     files.insert("README.md".into(), package::readme(plan, opts));
     files.insert("src/lib.rs".into(), glue::render(plan, opts)?);
+    let hierarchy = errors::hierarchy(plan, opts)?;
+    files.insert(
+        format!("{}.pyi", opts.module),
+        stubs::render(plan, opts, &hierarchy),
+    );
+    files.insert("py.typed".into(), String::new());
     files.insert(".gitignore".into(), "target/\n".into());
     Ok(out)
 }
