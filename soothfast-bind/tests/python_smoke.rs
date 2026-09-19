@@ -41,10 +41,17 @@ fn run(cmd: &mut Command, what: &str) {
 
 const SMOKE_SCRIPT: &str = r#"
 import array
+import ast
 import asyncio
+import pathlib
 
 import acme_core
 from acme_core import Counter, Level
+
+package = pathlib.Path(acme_core.__file__).parent
+assert (package / "__init__.pyi").is_file(), sorted(p.name for p in package.iterdir())
+assert (package / "py.typed").is_file()
+ast.parse((package / "__init__.pyi").read_text())
 
 c = Counter(10)
 assert c.value == 10

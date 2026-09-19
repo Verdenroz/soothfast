@@ -297,6 +297,16 @@ in cannot be moved out of. A handle's `repr` lists its readable fields in
 declaration order (`Counter(value=10)`), leaving out fields holding another
 handle.
 
+The wheel ships `py.typed` and a stub, so editors and type checkers see the
+surface without importing the extension: every class with its `__init__`,
+properties (with a setter where there is one), methods and statics, `async
+def` for an async call and its blocking twin beside it, the seq and array
+classes with their columns and `__buffer__`, a mirrored enum's variants as
+class attributes, the exception hierarchy with each variant's attributes,
+and every free function. Buffers are `Sequence[T] | memoryview` in and the
+array class out, a mapped type is `str`, and the stub never names the
+error a call raises.
+
 A failing call raises from a per-package hierarchy in Python: an `Error`
 base, one subclass per error type a bound call returns (`FinanceError`,
 named after the Rust type whether or not it is exported), and for an enum
