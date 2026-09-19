@@ -4,7 +4,7 @@
 //! a single pass with no component registry and no cycle-breaking stack: a
 //! self-referential type yields `Ty::Class` on sight and the walk stops there.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde_json::{Map, Value};
 
@@ -32,6 +32,8 @@ pub struct Resolver<'a> {
     exported: BTreeSet<String>,
     /// The type `Self` stands for in the item being walked.
     self_ty: Option<String>,
+    /// Item id → the shortest path a downstream crate can name it by.
+    public: BTreeMap<String, String>,
     pub gaps: Vec<Gap>,
 }
 
@@ -54,8 +56,17 @@ impl<'a> Resolver<'a> {
             table,
             exported,
             self_ty: None,
+            public: public_paths(doc, index),
             gaps: Vec::new(),
         })
+    }
+
+    /// The path a glue crate can spell an item by: through public modules
+    /// and `pub use` re-exports only, since the module an item is defined
+    /// in is often private. `None` when nothing public reaches it, or when
+    /// the document carries no module tree to walk.
+    pub fn public_path(&self, id: &Value) -> Option<String> {
+        self.public.get(&id_key(id)?).cloned()
     }
 
     /// Set the type `Self` resolves to for the item about to be walked.
@@ -98,10 +109,52 @@ impl<'a> Resolver<'a> {
     /// An error type is rendered through `Display`, so it needs no mapping
     /// and its absence from the table is not a gap.
     pub fn resolve_message(&mut self, ty: &Value, at: &str) -> Ty {
+        self.resolve_unreported(ty, at)
+    }
+
+    /// Resolve a type nothing reads across the boundary, such as a private
+    /// field: what it holds never has to cross, so it is not a gap either.
+    pub fn resolve_unreported(&mut self, ty: &Value, at: &str) -> Ty {
         let before = self.gaps.len();
         let out = self.resolve(ty, at);
         self.gaps.truncate(before);
         out
+    }
+
+    /// Resolve a parameter type. `impl Into<T>` and `impl AsRef<str>` in
+    /// argument position bind as the type a caller would pass: the concrete
+    /// argument the glue hands over satisfies the bound on its own, so the
+    /// call site needs nothing extra.
+    pub fn resolve_param(&mut self, ty: &Value, at: &str) -> Ty {
+        match ty.get("impl_trait").and_then(accepted_argument) {
+            Some(target) => self.resolve(&target, at),
+            None => self.resolve(ty, at),
+        }
+    }
+
+    /// A `type` alias's target with the given arguments substituted for its
+    /// parameters, or `None` for a path that is not an alias in this
+    /// package's index. `type Result<T> = std::result::Result<T, Error>`
+    /// reads as the two-armed `Result` it names.
+    pub(crate) fn expand_alias(&self, rp: &Value) -> Option<Value> {
+        let alias = self.item(&rp["id"])?["inner"].get("type_alias")?;
+        let args = generic_args(rp);
+        let bindings: BTreeMap<&str, Value> = alias["generics"]["params"]
+            .as_array()?
+            .iter()
+            .filter(|p| p["kind"].get("type").is_some())
+            .enumerate()
+            .filter_map(|(n, p)| {
+                let name = p["name"].as_str()?;
+                let arg = args.get(n).cloned().or_else(|| {
+                    p["kind"]["type"]["default"]
+                        .as_object()
+                        .map(|_| p["kind"]["type"]["default"].clone())
+                })?;
+                Some((name, arg))
+            })
+            .collect();
+        Some(substitute(&alias["type"], &bindings))
     }
 
     /// Resolve one rustdoc type node.
@@ -205,6 +258,9 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_path(&mut self, rp: &Value, at: &str) -> Ty {
+        if let Some(target) = self.expand_alias(rp) {
+            return self.resolve(&target, at);
+        }
         let display = rp["path"].as_str().unwrap_or_default();
         let args = generic_args(rp);
         let last = display.rsplit("::").next().unwrap_or(display);
@@ -261,6 +317,109 @@ pub(crate) fn generic_args(rp: &Value) -> Vec<Value> {
         .as_array()
         .map(|args| args.iter().filter_map(|a| a.get("type").cloned()).collect())
         .unwrap_or_default()
+}
+
+/// The argument type an `impl Trait` parameter takes outright: `T` for
+/// `impl Into<T>`, `str` for `impl AsRef<str>`, `[u8]` for
+/// `impl AsRef<[u8]>`. Any other bound stays erased.
+fn accepted_argument(bounds: &Value) -> Option<Value> {
+    let [bound] = bounds.as_array()?.as_slice() else {
+        return None;
+    };
+    let tr = &bound["trait_bound"]["trait"];
+    let name = tr["path"].as_str()?.rsplit("::").next()?;
+    let arg = generic_args(tr).into_iter().next()?;
+    let as_ref_target = arg["primitive"].as_str() == Some("str")
+        || arg["slice"]["primitive"].as_str() == Some("u8");
+    match name {
+        "Into" => Some(arg),
+        "AsRef" if as_ref_target => Some(arg),
+        _ => None,
+    }
+}
+
+/// `ty` with every `{"generic": name}` node bound in `bindings` replaced.
+fn substitute(ty: &Value, bindings: &BTreeMap<&str, Value>) -> Value {
+    match ty {
+        Value::Object(map) => {
+            if let Some(bound) = map
+                .get("generic")
+                .and_then(Value::as_str)
+                .and_then(|name| bindings.get(name))
+            {
+                return bound.clone();
+            }
+            Value::Object(
+                map.iter()
+                    .map(|(k, v)| (k.clone(), substitute(v, bindings)))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|v| substitute(v, bindings)).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// Every item reachable from the crate root through public modules and
+/// `pub use` re-exports, keyed by id, each at the shortest such path.
+fn public_paths(doc: &Value, index: &Map<String, Value>) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let Some(root) = id_key(&doc["root"]) else {
+        return out;
+    };
+    let Some(name) = index.get(&root).and_then(|r| r["name"].as_str()) else {
+        return out;
+    };
+    let mut queue = VecDeque::from([(root, name.to_string())]);
+    let mut seen = BTreeSet::new();
+    while let Some((module, prefix)) = queue.pop_front() {
+        if !seen.insert(module.clone()) {
+            continue;
+        }
+        let Some(items) = index
+            .get(&module)
+            .and_then(|m| m["inner"]["module"]["items"].as_array())
+        else {
+            continue;
+        };
+        for id in items.iter().filter_map(id_key) {
+            let Some(item) = index.get(&id) else {
+                continue;
+            };
+            if item["visibility"].as_str() != Some("public") {
+                continue;
+            }
+            let (target, name, glob) = match item["inner"].get("use") {
+                Some(re) => match (id_key(&re["id"]), re["name"].as_str()) {
+                    (Some(target), Some(name)) => (
+                        target,
+                        name.to_string(),
+                        re["is_glob"].as_bool().unwrap_or(false),
+                    ),
+                    _ => continue,
+                },
+                None => match item["name"].as_str() {
+                    Some(name) => (id.clone(), name.to_string(), false),
+                    None => continue,
+                },
+            };
+            let is_module = index
+                .get(&target)
+                .is_some_and(|t| t["inner"].get("module").is_some());
+            let path = match glob {
+                true => prefix.clone(),
+                false => format!("{prefix}::{name}"),
+            };
+            if is_module {
+                queue.push_back((target, path));
+            } else {
+                out.entry(target).or_insert(path);
+            }
+        }
+    }
+    out
 }
 
 /// Rustdoc writes an id as a number in a type node and as a string key in

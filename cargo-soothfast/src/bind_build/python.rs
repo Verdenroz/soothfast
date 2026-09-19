@@ -7,7 +7,8 @@ use super::staging::{artifacts, hush};
 use crate::sdk_build;
 
 /// One `maturin build` per target, or one untargeted build when none are
-/// configured.
+/// configured. `interpreters` names the Pythons to build a wheel for, one
+/// wheel each; empty means whichever `python3` maturin finds first.
 ///
 /// A target whose toolchain is missing is reported and skipped: a partial
 /// matrix is a normal local outcome, and CI builds the full one. If every
@@ -16,6 +17,7 @@ use crate::sdk_build;
 pub(super) fn maturin(
     glue: &Path,
     targets: &[String],
+    interpreters: &[String],
     release: bool,
     quiet: bool,
 ) -> Result<Vec<String>, String> {
@@ -33,10 +35,10 @@ pub(super) fn maturin(
 
     let mut failures = Vec::new();
     if targets.is_empty() {
-        maturin_once(glue, None, release, quiet)?;
+        maturin_once(glue, None, interpreters, release, quiet)?;
     } else {
         for target in &resolved {
-            if let Err(e) = maturin_once(glue, Some(target.triple), release, quiet) {
+            if let Err(e) = maturin_once(glue, Some(target.triple), interpreters, release, quiet) {
                 failures.push(format!("{}: {e}", target.triple));
             }
         }
@@ -53,6 +55,7 @@ pub(super) fn maturin(
 fn maturin_once(
     glue: &Path,
     triple: Option<&str>,
+    interpreters: &[String],
     release: bool,
     quiet: bool,
 ) -> Result<(), String> {
@@ -62,6 +65,9 @@ fn maturin_once(
     }
     if let Some(triple) = triple {
         args.extend(["--target", triple]);
+    }
+    for interpreter in interpreters {
+        args.extend(["--interpreter", interpreter]);
     }
     let mut cmd = Command::new("maturin");
     cmd.args(&args)
@@ -110,8 +116,14 @@ mod tests {
 
         // No dev machine has an aarch64 Windows cross toolchain installed,
         // so this target reliably fails without needing maturin absent.
-        let err = maturin(&glue, &["aarch64-pc-windows-msvc".to_string()], false, true)
-            .expect_err("an unbuildable target must fail, not report the stale wheel");
+        let err = maturin(
+            &glue,
+            &["aarch64-pc-windows-msvc".to_string()],
+            &[],
+            false,
+            true,
+        )
+        .expect_err("an unbuildable target must fail, not report the stale wheel");
         assert!(err.contains("aarch64-pc-windows-msvc"), "{err}");
         assert!(
             !stale.exists(),

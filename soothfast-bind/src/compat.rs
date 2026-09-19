@@ -84,6 +84,7 @@ mod tests {
             params: Vec::new(),
             ret,
             throws: None,
+            ret_borrowed: false,
             is_async: false,
             constructor: false,
             doc: None,

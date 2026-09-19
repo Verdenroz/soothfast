@@ -163,7 +163,7 @@ fn an_inherent_new_becomes_the_constructor() {
 fn a_declared_constructor_wins_over_an_inherent_new() {
     let mut records = records();
     for r in &mut records {
-        if r.id == "acme::Counter::refresh" {
+        if r.id == "acme::Counter::bump_all" {
             r.constructor = true;
         }
     }
@@ -172,7 +172,7 @@ fn a_declared_constructor_wins_over_an_inherent_new() {
     let counter = plan.classes.iter().find(|c| c.name == "Counter").unwrap();
     assert_eq!(
         counter.ctor.as_ref().map(|c| c.name.as_str()),
-        Some("refresh")
+        Some("bump_all")
     );
 }
 

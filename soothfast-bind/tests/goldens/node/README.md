@@ -64,4 +64,4 @@ const { Counter, Level, Mode, counters, describe, describeOwned, digest, fail, f
 - acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
 - acme::Counter::refresh: `async fn` cannot cross into node: no Node runtime story yet
 - acme::index_all: `HashMap<String, u32>` cannot cross into node: napi-rs carries no map type; return a list of pairs, or a struct with named fields
-- acme::merge: crosses the exported type `Counter` by value, which would copy it; take it by reference, or add a method returning what the caller needs
+- acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs

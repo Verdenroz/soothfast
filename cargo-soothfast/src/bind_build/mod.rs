@@ -41,11 +41,12 @@ pub(crate) fn run(
     kind: BindKind,
     glue: &Path,
     targets: &[String],
+    interpreters: &[String],
     release: bool,
     quiet: bool,
 ) -> Result<Vec<String>, String> {
     match kind {
-        BindKind::Python => python::maturin(glue, targets, release, quiet),
+        BindKind::Python => python::maturin(glue, targets, interpreters, release, quiet),
         BindKind::Wasm => wasm::wasm_pack(glue, targets, release, quiet),
         BindKind::Node => node::napi(glue, targets, release, quiet),
         BindKind::CAbi => cargo_build::cargo(glue, targets, release, quiet),

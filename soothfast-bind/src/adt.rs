@@ -23,12 +23,15 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
     };
 
     ExportedType {
-        rust_path: record.id.clone(),
+        rust_path: r
+            .public_path(&item["id"])
+            .unwrap_or_else(|| record.id.clone()),
         id: record.id.clone(),
         name,
         kind,
         send: auto_trait(r, inner, "Send").unwrap_or(true),
         sync: auto_trait(r, inner, "Sync") == Some(true),
+        clone: auto_trait(r, inner, "Clone") == Some(true),
         doc: record.summary.clone(),
         skip: record.skip.clone(),
     }
@@ -49,9 +52,10 @@ fn named_fields(r: &mut Resolver, ids: &Value, at: &str) -> Vec<Field> {
     for field in items(r, ids.as_array().unwrap_or(&Vec::new())) {
         let name = field["name"].as_str().unwrap_or_default().to_string();
         let where_ = format!("{at}.{name}");
+        let public = is_public(&field);
         out.push(Field {
-            ty: r.resolve(&field["inner"]["struct_field"], &where_),
-            public: is_public(&field),
+            ty: field_ty(r, &field, public, &where_),
+            public,
             doc: summary(&field),
             name,
         });
@@ -65,14 +69,24 @@ fn positional_fields(r: &mut Resolver, ids: &[Value], at: &str) -> Vec<Field> {
     let mut out = Vec::new();
     for (n, field) in items(r, ids).into_iter().enumerate() {
         let where_ = format!("{at}.{n}");
+        let public = is_public(&field);
         out.push(Field {
             name: n.to_string(),
-            ty: r.resolve(&field["inner"]["struct_field"], &where_),
-            public: is_public(&field),
+            ty: field_ty(r, &field, public, &where_),
+            public,
             doc: summary(&field),
         });
     }
     out
+}
+
+/// A private field has no reader, so whatever it holds is not a gap.
+fn field_ty(r: &mut Resolver, field: &Value, public: bool, at: &str) -> Ty {
+    let ty = &field["inner"]["struct_field"];
+    match public {
+        true => r.resolve(ty, at),
+        false => r.resolve_unreported(ty, at),
+    }
 }
 
 fn variants(r: &mut Resolver, ids: &Value, at: &str) -> Vec<Variant> {

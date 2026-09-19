@@ -66,7 +66,7 @@ mod tests {
         copy_dir(&bind_dir.join("goldens/r"), &glue);
 
         let artifacts =
-            crate::bind_build::run(BindKind::R, &glue, &[], false, false).expect("builds");
+            crate::bind_build::run(BindKind::R, &glue, &[], &[], false, false).expect("builds");
         assert!(
             artifacts.iter().any(|a| a.ends_with("target/rlib")),
             "no library among {artifacts:?}"

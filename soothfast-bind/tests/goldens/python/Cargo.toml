@@ -17,7 +17,7 @@ crate-type = ["cdylib"]
 [dependencies]
 acme = { path = ".." }
 pyo3 = { version = "0.26", features = ["extension-module", "experimental-async"] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 
 # Built once and shipped, so build time is worth trading for speed.
 # `panic = "abort"` is deliberately absent: pyo3 turns a panic into a Python

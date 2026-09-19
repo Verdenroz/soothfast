@@ -22,7 +22,7 @@ fn the_glue_names_every_exported_item_exactly_once() {
     for name in ["Counter", "Mode", "normalize", "digest", "index_all"] {
         assert!(glue.contains(name), "glue omits {name}");
     }
-    assert_eq!(glue.matches("#[pymodule]").count(), 1);
+    assert_eq!(glue.matches("#[pymodule(gil_used = false)]").count(), 1);
     assert_eq!(glue.matches("pub struct Counter(").count(), 1);
 }
 
@@ -148,7 +148,7 @@ fn a_type_rustdoc_never_proved_sync_keeps_the_lock() {
 fn an_async_call_is_awaited_inside_a_runtime() {
     let glue = emit(BindKind::Python)["src/lib.rs"].clone();
     assert!(glue.contains("async fn refresh(&self) -> u32 {"));
-    assert!(glue.contains("OnRuntime(self.0.refresh()).await"));
+    assert!(glue.contains("OnRuntime::new(self.0.refresh()).await"));
     assert!(glue.contains("fn runtime() -> &'static ::tokio::runtime::Runtime"));
 }
 
@@ -159,6 +159,12 @@ fn the_manifest_asks_for_async_support_only_when_the_surface_needs_it() {
     assert!(manifest.contains("tokio = { version = \"1\""));
     assert!(manifest.contains("crate-type = [\"cdylib\"]"));
     assert!(manifest.contains("acme = { path = \"..\" }"));
+}
+
+#[test]
+fn the_module_declares_it_needs_no_gil() {
+    let glue = emit(BindKind::Python)["src/lib.rs"].clone();
+    assert!(glue.contains("#[pymodule(gil_used = false)]"));
 }
 
 #[test]

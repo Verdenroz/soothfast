@@ -191,7 +191,7 @@ fn class_block(class: &Class, krate: &str, plan: &BindingPlan) -> String {
     }
     for accessor in &class.accessors {
         members.push(getter(accessor, plan));
-        members.push(setter(accessor, plan));
+        members.extend(setter(accessor, plan));
     }
     for method in &class.methods {
         members.push(member(method, plan, class));
@@ -290,7 +290,8 @@ fn constructor(ctor: &Function, krate: &str, plan: &BindingPlan, owner: &Class) 
 }
 
 /// A getter clones, which every bound field type supports: an exported type
-/// held by a field never reaches here (the plan reports it instead).
+/// reaches here only when the plan found it `Clone`, and is wrapped into a
+/// fresh handle.
 fn getter(accessor: &Accessor, plan: &BindingPlan) -> String {
     let name = py_ident(&accessor.field);
     let field = &accessor.field;
@@ -306,7 +307,12 @@ fn getter(accessor: &Accessor, plan: &BindingPlan) -> String {
     )
 }
 
-fn setter(accessor: &Accessor, plan: &BindingPlan) -> String {
+/// A field holding an exported type has no setter: the handle Python passes
+/// in cannot be moved out of, and the type is not known to be `Clone`.
+fn setter(accessor: &Accessor, plan: &BindingPlan) -> Option<String> {
+    if holds_handle(&accessor.ty, plan) {
+        return None;
+    }
     let name = py_ident(&accessor.field);
     let field = &accessor.field;
     let (spelling, assigned) = match &accessor.ty {
@@ -315,9 +321,19 @@ fn setter(accessor: &Accessor, plan: &BindingPlan) -> String {
         }
         ty => (signature_ty(ty), into(ty, plan)),
     };
-    format!(
+    Some(format!(
         "    #[setter]\n    fn set_{name}(&mut self, value: {spelling}) {{\n        self.0.{field} = {assigned};\n    }}\n",
-    )
+    ))
+}
+
+fn holds_handle(ty: &Ty, plan: &BindingPlan) -> bool {
+    match ty {
+        Ty::Class(name) => !plan.is_mirrored(name),
+        Ty::Optional(inner) | Ty::List(inner) => holds_handle(inner, plan),
+        Ty::Map(key, value) => holds_handle(key, plan) || holds_handle(value, plan),
+        Ty::Tuple(items) => items.iter().any(|t| holds_handle(t, plan)),
+        _ => false,
+    }
 }
 
 fn member(method: &Function, plan: &BindingPlan, owner: &Class) -> String {
@@ -413,6 +429,10 @@ fn completed(
         Some(err) => format!("{expr}.map_err({})?", error_name(err)),
         None => expr.to_string(),
     };
+    let value = match function.ret_borrowed {
+        true => owned(&value, &function.ret),
+        false => value,
+    };
     let out = returned(&value, &function.ret, plan);
     match fallible(function, plan) {
         true => format!("{prefix}{indent}Ok({out})\n"),
@@ -424,7 +444,22 @@ fn completed(
 fn into(ty: &Ty, plan: &BindingPlan) -> String {
     match ty {
         Ty::Class(name) if plan.is_mirrored(name) => "value.into()".into(),
+        Ty::Optional(inner) if matches!(&**inner, Ty::Class(name) if plan.is_mirrored(name)) => {
+            "value.map(::std::convert::Into::into)".into()
+        }
+        Ty::List(inner) if matches!(&**inner, Ty::Class(name) if plan.is_mirrored(name)) => {
+            "value.into_iter().map(::std::convert::Into::into).collect()".into()
+        }
         _ => "value".into(),
+    }
+}
+
+/// A borrowed return, owned: `&str` and `&[T]` through `ToOwned`, and an
+/// `Option` of either mapped through it.
+fn owned(expr: &str, ty: &Ty) -> String {
+    match ty {
+        Ty::Optional(_) => format!("{expr}.map(::std::borrow::ToOwned::to_owned)"),
+        _ => format!("{expr}.to_owned()"),
     }
 }
 
@@ -474,6 +509,13 @@ fn returned(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
     }
 }
 
+/// `gil_used = false` tells a free-threaded interpreter the module needs no
+/// GIL, so importing it does not switch the GIL back on for the whole
+/// process. It holds because nothing here shares mutable state outside
+/// pyo3's own borrow checking: a handle's `&mut self` calls and setters go
+/// through `PyRefMut`, a returned array is read-only through the buffer
+/// protocol and never mutated after construction, and the runtime and its
+/// relay are `Sync`. On a GIL build the flag is inert.
 fn module_block(plan: &BindingPlan, opts: &BindOptions) -> String {
     let mut body = String::new();
     for (name, _) in buffers::arrays(plan) {
@@ -490,7 +532,7 @@ fn module_block(plan: &BindingPlan, opts: &BindOptions) -> String {
         );
     }
     format!(
-        "\n#[pymodule]\nfn {}(m: &Bound<'_, PyModule>) -> PyResult<()> {{\n{body}    Ok(())\n}}\n",
+        "\n#[pymodule(gil_used = false)]\nfn {}(m: &Bound<'_, PyModule>) -> PyResult<()> {{\n{body}    Ok(())\n}}\n",
         opts.module,
     )
 }

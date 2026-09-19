@@ -292,6 +292,9 @@ pub struct ExportedFn {
     pub ret: Ty,
     /// The `E` of a `Result<T, E>` return. `T` is in [`ExportedFn::ret`].
     pub throws: Option<Ty>,
+    /// The return is a reference (`&str`, `&[T]`, `Option<&str>`), which the
+    /// glue has to own before handing it across.
+    pub ret_borrowed: bool,
     pub is_async: bool,
     /// Declared the type's constructor by `#[soothfast::export(constructor)]`.
     pub constructor: bool,
@@ -314,6 +317,10 @@ pub struct ExportedType {
     /// the document actually carries. A backend that hands `&T` to another
     /// thread cannot afford to assume this one.
     pub sync: bool,
+    /// Whether the Rust type is `Clone`, from an impl the document carries.
+    /// A field holding an exported type can only be read out as a fresh
+    /// handle when it is.
+    pub clone: bool,
     pub doc: Option<String>,
     pub skip: Vec<String>,
 }

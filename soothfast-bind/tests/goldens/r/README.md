@@ -53,7 +53,7 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 - acme::index_all: `HashMap<String, u32>` cannot cross into r: R has no map type; return a sequence of pairs, or an exported type with accessors
 - acme::invert_bits: `Vec<u8>` cannot cross into r: R vectors are values; an out-parameter cannot be written through, return the sequence instead
 - acme::levels: `Vec<Level>` cannot cross into r: a sequence of `Level` has no R vector to become; a sequence of one primitive crosses as a numeric or raw vector
-- acme::merge: crosses the exported type `Counter` by value, which would copy it; take it by reference, or add a method returning what the caller needs
+- acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs
 - acme::peek: `Option<Counter>` cannot cross into r: an optional exported type is taken only as a return; take it by reference instead
 - acme::scale_into: `Vec<f64>` cannot cross into r: R vectors are values; an out-parameter cannot be written through, return the sequence instead
 - acme::split: `Vec<f64>` cannot cross into r: R vectors are values; an out-parameter cannot be written through, return the sequence instead

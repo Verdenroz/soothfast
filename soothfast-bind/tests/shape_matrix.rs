@@ -80,6 +80,7 @@ fn free(id: &str, params: Vec<Param>, ret: Ty) -> ExportedFn {
         params,
         ret,
         throws: None,
+        ret_borrowed: false,
         is_async: false,
         constructor: false,
         doc: None,
@@ -103,6 +104,8 @@ fn method(id: &str, owner: &str, params: Vec<Param>, ret: Ty) -> ExportedFn {
     }
 }
 
+/// `clone: false` keeps `Wrap.inner` a gap for every backend, which is the
+/// shape the matrix pins.
 fn ty(name: &str, kind: TypeKind) -> ExportedType {
     ExportedType {
         id: format!("shapes::{name}"),
@@ -111,6 +114,7 @@ fn ty(name: &str, kind: TypeKind) -> ExportedType {
         kind,
         send: true,
         sync: true,
+        clone: false,
         doc: None,
         skip: Vec::new(),
     }

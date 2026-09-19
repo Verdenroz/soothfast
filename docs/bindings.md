@@ -145,7 +145,9 @@ derived from it the same way Go's is: the whole namespace, snake_cased.
 `module`, `version`, `description`, `repository`, `authors`, `targets`, and
 `backend_version` all default to something sensible; `authors` falls back
 to the crate's own, and stands in for the crate name where a manifest
-format requires one.
+format requires one. For `python`, `interpreters = ["python3.14",
+"python3.14t"]` names the interpreters `bind build` produces a wheel for,
+one wheel each, in place of whichever `python3` maturin finds first.
 
 ## Commands
 
@@ -214,6 +216,10 @@ impl Summary {
 }
 ```
 
+The glue names your items by a public path, through `pub use` re-exports
+where the defining module is private, so `Interval` in `mod constants` bound
+as `pub use constants::Interval` is spelled `finance_query::Interval`.
+
 Your crate keeps its single runtime dependency. pyo3 and wasm-bindgen appear
 only in the generated crate.
 
@@ -239,6 +245,24 @@ shape for it; that is reported as a note rather than guessed at.
 A method taking `self` by value, or an exported type crossing by value, is
 reported instead of bound: both would copy a value the caller is still
 holding. Take `&self` and return what the caller needs.
+
+Three idioms a Rust API leans on need no rewriting to bind:
+
+- **A crate-wide alias** such as `type Result<T> = std::result::Result<T,
+  Error>` is expanded to what it names, so a method returning `Result<Chart>`
+  binds as a `Chart` plus a raise, the same as one spelling both arms.
+- **`impl Into<T>` and `impl AsRef<str>` parameters** bind as the type a
+  caller would pass (`T`, or a string). The argument the glue hands over
+  satisfies the bound on its own, so the call needs nothing extra.
+- **An `async fn new`** binds as an awaitable static factory rather than a
+  constructor, since no language awaits inside construction:
+  `ticker = await Ticker.new("AAPL")`.
+
+A method returning a borrowed value (`&str`, `&[f64]`, `Option<&str>`) is
+owned by the Python glue before it crosses; the other backends report it
+for now, so return an owned value there. A public field holding an
+exported type reads as a handle but has no setter: the handle Python passes
+in cannot be moved out of.
 
 ### Go
 
@@ -912,9 +936,35 @@ suspended future never leaves a thread carrying a context it did not enter.
 Concurrency, cancellation and interleaving with Python's own coroutines are
 unchanged: twenty gathered 50 ms calls finish in 52 ms.
 
+The future never sees pyo3's own waker. That waker takes the GIL when
+called, and the polling thread is the one holding it, so a library thread
+that wakes from under one of its own locks (h2 wakes a stream from inside
+its connection lock) would wait for the GIL while the poller waits for the
+lock. The glue polls with a waker that only signals a `Notify`, and one
+runtime task per call relays each signal to pyo3 from a context holding
+nothing, which also coalesces a burst of wakes from a streaming body into
+one trip through the event loop.
+
 Glue crates binding an `async fn` take a `tokio` dependency for this, and
 cargo unifies it with whatever tokio the bound crate already pulls in. A
 surface with nothing async takes neither the dependency nor the runtime.
+
+### Free-threaded Python
+
+The module declares `gil_used = false`, so on a free-threaded interpreter
+(`python3.14t`; the default build still has a GIL) importing it does not
+switch the GIL back on for the whole process. The declaration holds because
+nothing in the glue shares mutable state outside pyo3's own borrow checking:
+a handle's `&mut self` calls and setters go through `PyRefMut`, a returned
+array is read-only through the buffer protocol, and the runtime is `Sync`.
+
+On the default build the GIL is rarely in the way of the binding itself: a
+sync call releases it for the Rust body (`py.detach`), and an `async fn`
+runs on the runtime's workers with the Python thread holding the GIL only
+for each brief poll. What a free-threaded build adds is parallelism for
+the *Python* code around the calls, and for the Python objects a getter
+builds. Each interpreter needs its own wheel; name both under
+`interpreters` and `bind build` produces `cp314` and `cp314t`.
 
 JavaScript needs none of this. wasm-bindgen turns a future into a Promise and
 the JavaScript event loop is the reactor.

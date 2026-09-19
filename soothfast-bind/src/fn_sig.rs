@@ -34,13 +34,16 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
         }
         params.push(Param {
             name: name.to_string(),
-            ty: r.resolve(ty, &at),
+            ty: r.resolve_param(ty, &at),
             ownership: ownership_of(ty),
             inner_ownership: inner_ownership_of(ty),
         });
     }
 
     let (ret, throws) = returns(r, &function["sig"]["output"], &at);
+    let output = &function["sig"]["output"];
+    let ret_borrowed =
+        ownership_of(output) != Ownership::Owned || inner_ownership_of(output) != Ownership::Owned;
     let is_async = function["header"]["is_async"].as_bool().unwrap_or(false);
 
     if receiver == Receiver::Consuming {
@@ -52,7 +55,7 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
 
     let name = item["name"].as_str().unwrap_or_default().to_string();
     ExportedFn {
-        rust_path: record.id.clone(),
+        rust_path: public_path(r, item, record).unwrap_or_else(|| record.id.clone()),
         id: record.id.clone(),
         name,
         owner: record.owner.clone(),
@@ -60,11 +63,23 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
         params,
         ret,
         throws,
+        ret_borrowed,
         is_async,
         constructor: record.constructor,
         doc: record.summary.clone(),
         skip: record.skip.clone(),
     }
+}
+
+/// The path a glue crate calls the function by: a free fn's own public
+/// path, or a method's owner at its public path.
+fn public_path(r: &Resolver, item: &Value, record: &ExportRecord) -> Option<String> {
+    if record.owner.is_none() {
+        return r.public_path(&item["id"]);
+    }
+    let (owner_path, name) = record.id.rsplit_once("::")?;
+    let owner = r.find_by_path(owner_path)?;
+    Some(format!("{}::{name}", r.public_path(&owner["id"])?))
 }
 
 /// The `Ok` and `Err` halves of the return type. A `Result` binds as a value
@@ -73,6 +88,11 @@ fn returns(r: &mut Resolver, output: &Value, at: &str) -> (Ty, Option<Ty>) {
     if output.is_null() {
         return (Ty::Unit, None);
     }
+    let mut output = output.clone();
+    while let Some(target) = r.expand_alias(&output["resolved_path"]) {
+        output = target;
+    }
+    let output = &output;
     let path = output["resolved_path"]["path"].as_str().unwrap_or_default();
     if path == "Result" || path.ends_with("::Result") {
         let args = generic_args(&output["resolved_path"]);
@@ -125,13 +145,15 @@ fn inner_ownership_of(ty: &Value) -> Ownership {
 }
 
 /// Type parameters the signature left open. Lifetimes bind fine and are not
-/// reported.
+/// reported; neither is the synthetic parameter behind an `impl Trait`
+/// argument, which [`Resolver::resolve_param`] decides on its own.
 fn generic_params(function: &Value) -> Vec<String> {
     function["generics"]["params"]
         .as_array()
         .into_iter()
         .flatten()
         .filter(|p| p["kind"].get("type").is_some())
+        .filter(|p| !p["kind"]["type"]["is_synthetic"].as_bool().unwrap_or(false))
         .filter_map(|p| p["name"].as_str().map(ToString::to_string))
         .collect()
 }

@@ -64,4 +64,4 @@ import acme_core
 
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
 - acme::with_time: foreign type `chrono::DateTime` has no mapping; add one under [bind.types] in soothfast.toml
-- acme::merge: crosses the exported type `Counter` by value, which would copy it; take it by reference, or add a method returning what the caller needs
+- acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs

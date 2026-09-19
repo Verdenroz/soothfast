@@ -110,8 +110,9 @@ impl Gap {
             ),
             Self::HandleByValue { at, ty } => format!(
                 "{at}: crosses the exported type `{ty}` by value, which would \
-                 copy it; take it by reference, or add a method returning what \
-                 the caller needs"
+                 copy it; derive `Clone` on it (Python then reads a field of it \
+                 as a fresh handle), take it by reference, or add a method \
+                 returning what the caller needs"
             ),
             Self::PlainEnumMember { at } => format!(
                 "{at}: a plain enum mirrors onto the target language's own \

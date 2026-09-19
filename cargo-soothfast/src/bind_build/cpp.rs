@@ -81,7 +81,7 @@ mod tests {
         lock(&glue);
 
         let artifacts =
-            crate::bind_build::run(BindKind::Cpp, &glue, &[], false, false).expect("builds");
+            crate::bind_build::run(BindKind::Cpp, &glue, &[], &[], false, false).expect("builds");
         assert!(
             artifacts.iter().any(|a| a.ends_with(".hpp")),
             "no header among {artifacts:?}"

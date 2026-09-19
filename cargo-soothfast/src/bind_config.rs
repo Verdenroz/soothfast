@@ -33,6 +33,9 @@ pub struct BindEntry {
     pub authors: Vec<String>,
     /// Target triples the package is built for.
     pub targets: Vec<String>,
+    /// Python interpreters `bind build` produces a wheel for, one each;
+    /// empty leaves the choice to maturin.
+    pub interpreters: Vec<String>,
     /// `bind bench` script, relative to the package root: the same root
     /// `out` is relative to.
     pub bench: Option<String>,
@@ -51,6 +54,7 @@ impl BindEntry {
             repository: None,
             authors: Vec::new(),
             targets: Vec::new(),
+            interpreters: Vec::new(),
             bench: None,
         }
     }
@@ -140,6 +144,7 @@ fn set(entry: &mut BindEntry, key: &str, value: TomlValue) -> Result<(), String>
         ("repository", TomlValue::Str(s)) => entry.repository = Some(s),
         ("authors", TomlValue::StrArray(a)) => entry.authors = a,
         ("targets", TomlValue::StrArray(a)) => entry.targets = a,
+        ("interpreters", TomlValue::StrArray(a)) => entry.interpreters = a,
         ("bench", TomlValue::Str(s)) => entry.bench = Some(s),
         (key, _) => return Err(format!("unknown or mistyped `{key}`")),
     }
@@ -157,6 +162,15 @@ mod tests {
         assert_eq!(cfg.entries.len(), 1);
         assert_eq!(cfg.entries[0].lang, BindKind::Python);
         assert_eq!(cfg.entries[0].module(), "acme_core");
+    }
+
+    #[test]
+    fn interpreters_is_a_list_of_strings() {
+        let toml = "[[bind]]\nlang = \"python\"\nout = \"b/py\"\npackage = \"p\"\ninterpreters = [\"python3\", \"python3.14t\"]\n";
+        let cfg = parse(toml).expect("parses");
+        assert_eq!(cfg.entries[0].interpreters, vec!["python3", "python3.14t"]);
+        let bad = "[[bind]]\nlang = \"python\"\nout = \"b/py\"\npackage = \"p\"\ninterpreters = \"python3\"\n";
+        assert!(parse(bad).is_err());
     }
 
     #[test]

@@ -103,7 +103,7 @@ mod tests {
         lock(&glue);
 
         let artifacts =
-            crate::bind_build::run(BindKind::Lua, &glue, &[], false, false).expect("builds");
+            crate::bind_build::run(BindKind::Lua, &glue, &[], &[], false, false).expect("builds");
         assert!(
             artifacts
                 .iter()

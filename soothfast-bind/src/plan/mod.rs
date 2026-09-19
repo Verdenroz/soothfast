@@ -36,6 +36,8 @@ pub struct Function {
     pub ret: Ty,
     /// The error a failing call raises. `None` means it cannot fail.
     pub throws: Option<Ty>,
+    /// The Rust return is a reference the glue owns before handing across.
+    pub ret_borrowed: bool,
     pub is_async: bool,
     pub doc: Option<String>,
 }
@@ -167,6 +169,11 @@ pub fn lower(
         .filter(|t| t.is_plain_enum())
         .map(|t| t.name.clone())
         .collect();
+    let cloneable: BTreeSet<String> = types
+        .iter()
+        .filter(|t| t.clone)
+        .map(|t| t.name.clone())
+        .collect();
     let fns: Vec<&ExportedFn> = surface
         .fns
         .iter()
@@ -175,7 +182,7 @@ pub fn lower(
         .collect();
 
     for ty in &types {
-        let class = class_of(ty, &fns, opts, kind, &mirrored, &mut plan.gaps);
+        let class = class_of(ty, &fns, opts, kind, &mirrored, &cloneable, &mut plan.gaps);
         plan.classes.push(class);
     }
     plan.functions = fns
@@ -207,6 +214,7 @@ fn class_of(
     opts: &BindOptions,
     kind: BindKind,
     mirrored: &BTreeSet<String>,
+    cloneable: &BTreeSet<String>,
     gaps: &mut Vec<Gap>,
 ) -> Class {
     let owned: Vec<&&ExportedFn> = fns
@@ -254,7 +262,10 @@ fn class_of(
     }
 
     let (accessors, variants) = match &ty.kind {
-        TypeKind::Struct(fields) => (accessors_of(fields, &ty.name, kind, mirrored, gaps), None),
+        TypeKind::Struct(fields) => (
+            accessors_of(fields, &ty.name, kind, mirrored, cloneable, gaps),
+            None,
+        ),
         TypeKind::Enum(v) => (Vec::new(), Some(v.clone())),
     };
 
@@ -273,13 +284,17 @@ fn class_of(
 }
 
 /// The declared constructor, or an inherent `new` that builds the type.
+/// No target language awaits inside construction, so an `async` one stays
+/// a static factory the caller awaits.
 fn pick_ctor<'a>(owned: &'a [&&'a ExportedFn], name: &str) -> Option<&'a ExportedFn> {
-    if let Some(f) = owned.iter().find(|f| f.constructor) {
+    if let Some(f) = owned.iter().find(|f| f.constructor && !f.is_async) {
         return Some(f);
     }
     owned
         .iter()
-        .find(|f| f.name == "new" && f.receiver == Receiver::None && builds(&f.ret, name))
+        .find(|f| {
+            f.name == "new" && !f.is_async && f.receiver == Receiver::None && builds(&f.ret, name)
+        })
         .map(|f| **f)
 }
 
@@ -289,30 +304,35 @@ fn builds(ret: &Ty, name: &str) -> bool {
 
 /// Public fields become properties. A private one is known to exist but has
 /// no reader, so it contributes nothing to bind.
+///
+/// A field holding an exported type is read out as a fresh handle, which
+/// copies it: Python does so when the type is `Clone`, and reports it
+/// otherwise. Every other backend still reports a bare or optional one.
 fn accessors_of(
     fields: &[Field],
     owner: &str,
     kind: BindKind,
     mirrored: &BTreeSet<String>,
+    cloneable: &BTreeSet<String>,
     gaps: &mut Vec<Gap>,
 ) -> Vec<Accessor> {
     let mut out = Vec::new();
     for field in fields.iter().filter(|f| f.public) {
         let at = format!("{owner}.{}", field.name);
-        let nested = match &field.ty {
-            Ty::Class(nested) => Some(nested),
-            Ty::Optional(inner) => match &**inner {
-                Ty::Class(nested) => Some(nested),
-                _ => None,
-            },
+        let mut nested = Vec::new();
+        field.ty.classes(&mut nested);
+        nested.retain(|c| !mirrored.contains(c));
+        let bare = matches!(&field.ty, Ty::Class(_))
+            || matches!(&field.ty, Ty::Optional(inner) if matches!(**inner, Ty::Class(_)));
+        let copied = match kind {
+            BindKind::Python => nested.iter().find(|c| !cloneable.contains(*c)),
+            _ if bare => nested.first(),
             _ => None,
         };
-        if let Some(nested) = nested
-            && !mirrored.contains(nested)
-        {
+        if let Some(copied) = copied {
             gaps.push(Gap::HandleByValue {
                 at,
-                ty: nested.clone(),
+                ty: copied.clone(),
             });
             continue;
         }
@@ -337,6 +357,7 @@ fn function_of(f: &ExportedFn, opts: &BindOptions, owner: Option<&str>) -> Funct
         params: f.params.clone(),
         ret: f.ret.clone(),
         throws: f.throws.clone(),
+        ret_borrowed: f.ret_borrowed,
         is_async: f.is_async,
         doc: f.doc.clone(),
     }
@@ -402,7 +423,50 @@ fn bindable(
     if wasm_optional_handle_ref_param_is_blocked(f, kind, mirrored, gaps) {
         return false;
     }
+    if borrowed_return_is_blocked(f, kind, mirrored, gaps) {
+        return false;
+    }
     every_type_is_carriable(f, kind, mirrored, gaps)
+}
+
+/// A borrowed return (`&str`, `&[f64]`, `Option<&str>`) is owned by the
+/// Python glue before it crosses. A reference to an exported type would
+/// need a clone the type is not known to carry, and no other backend owns
+/// a borrowed return yet; both are reported.
+fn borrowed_return_is_blocked(
+    f: &ExportedFn,
+    kind: BindKind,
+    mirrored: &BTreeSet<String>,
+    gaps: &mut Vec<Gap>,
+) -> bool {
+    if !f.ret_borrowed {
+        return false;
+    }
+    let inner = match &f.ret {
+        Ty::Optional(inner) => &**inner,
+        ret => ret,
+    };
+    let why = match inner {
+        Ty::Class(name) if !mirrored.contains(name) => {
+            format!("returns a reference to the exported type `{name}`; return an owned value")
+        }
+        _ if kind != BindKind::Python => {
+            "returns a borrowed value, which only the Python glue owns before \
+             crossing; return an owned value"
+                .into()
+        }
+        _ => return false,
+    };
+    record(
+        gaps,
+        Gap::UnsupportedByBackend {
+            at: f.id.clone(),
+            ty: format!("&{}", f.ret.render()),
+            lang: kind.name(),
+            why,
+        },
+    );
+    true
 }
 
 /// A `None`/`NULL` parameter of any other optional shape has no hand-built
@@ -746,6 +810,7 @@ mod tests {
             }],
             ret: Ty::Unit,
             throws: None,
+            ret_borrowed: false,
             is_async: false,
             doc: None,
         }

@@ -453,7 +453,14 @@ fn build(
             true => entry.targets.clone(),
             false => targets.to_vec(),
         };
-        match crate::bind_build::run(entry.lang, &glue, &wanted, release, false) {
+        match crate::bind_build::run(
+            entry.lang,
+            &glue,
+            &wanted,
+            &entry.interpreters,
+            release,
+            false,
+        ) {
             Ok(artifacts) => {
                 println!(
                     "bind build: {} [{}]: {} artifact(s)",
@@ -650,7 +657,7 @@ fn build_for_bench(
     targets: &[String],
     label: &str,
 ) -> Result<Vec<String>, String> {
-    crate::bind_build::run(lang, glue, targets, true, true)
+    crate::bind_build::run(lang, glue, targets, &[], true, true)
         .map_err(|e| format!("{label}: build failed: {e}"))
 }
 

@@ -800,6 +800,7 @@ mod tests {
             ],
             ret: Ty::Unit,
             throws: None,
+            ret_borrowed: false,
             is_async: false,
             doc: None,
         }

@@ -211,7 +211,7 @@ mod tests {
         lock(&glue);
 
         let artifacts =
-            crate::bind_build::run(BindKind::Java, &glue, &[], false, false).expect("builds");
+            crate::bind_build::run(BindKind::Java, &glue, &[], &[], false, false).expect("builds");
         assert!(
             artifacts.iter().any(|a| a.ends_with(".jar")),
             "no jar among {artifacts:?}"
@@ -232,8 +232,8 @@ mod tests {
         copy_dir(&bind_dir.join("goldens/kotlin"), &glue);
         lock(&glue);
 
-        let artifacts =
-            crate::bind_build::run(BindKind::Kotlin, &glue, &[], false, false).expect("builds");
+        let artifacts = crate::bind_build::run(BindKind::Kotlin, &glue, &[], &[], false, false)
+            .expect("builds");
         let has_jar = artifacts.iter().any(|a| a.ends_with(".jar"));
         let kotlinc_present = std::process::Command::new("kotlinc")
             .arg("-version")
