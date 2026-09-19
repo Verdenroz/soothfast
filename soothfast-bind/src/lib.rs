@@ -290,6 +290,8 @@ pub struct BindOptions {
     /// The binding library release the generated glue builds against. `None`
     /// takes the backend's own default.
     pub backend_version: Option<String>,
+    /// Python only: also emit a `{name}_blocking` twin of every async call.
+    pub blocking: bool,
 }
 
 impl Default for BindOptions {
@@ -306,6 +308,7 @@ impl Default for BindOptions {
             targets: Vec::new(),
             authors: Vec::new(),
             backend_version: None,
+            blocking: false,
         }
     }
 }

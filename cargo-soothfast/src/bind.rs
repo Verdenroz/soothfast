@@ -312,6 +312,7 @@ fn bind_options(entry: &BindEntry, pkg: &str, meta: &invoke::PkgMeta) -> BindOpt
         },
         targets: entry.targets.clone(),
         backend_version: entry.backend_version.clone(),
+        blocking: entry.blocking,
     }
 }
 

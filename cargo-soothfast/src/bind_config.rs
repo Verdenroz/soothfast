@@ -43,6 +43,8 @@ pub struct BindEntry {
     /// `[bind.types]`: a foreign type's canonical path, and how it crosses.
     /// The only mapping so far is `"str"`.
     pub types: BTreeMap<String, String>,
+    /// Python only: also emit a `{name}_blocking` twin of every async call.
+    pub blocking: bool,
 }
 
 impl BindEntry {
@@ -61,6 +63,7 @@ impl BindEntry {
             interpreters: Vec::new(),
             bench: None,
             types: BTreeMap::new(),
+            blocking: false,
         }
     }
 
@@ -189,6 +192,7 @@ fn set(entry: &mut BindEntry, key: &str, value: TomlValue) -> Result<(), String>
         ("authors", TomlValue::StrArray(a)) => entry.authors = a,
         ("targets", TomlValue::StrArray(a)) => entry.targets = a,
         ("interpreters", TomlValue::StrArray(a)) => entry.interpreters = a,
+        ("blocking", TomlValue::Bool(b)) => entry.blocking = b,
         ("bench", TomlValue::Str(s)) => entry.bench = Some(s),
         (key, _) => return Err(format!("unknown or mistyped `{key}`")),
     }
@@ -206,6 +210,16 @@ mod tests {
         assert_eq!(cfg.entries.len(), 1);
         assert_eq!(cfg.entries[0].lang, BindKind::Python);
         assert_eq!(cfg.entries[0].module(), "acme_core");
+    }
+
+    #[test]
+    fn blocking_is_a_bool_defaulting_to_false() {
+        let cfg =
+            parse("[[bind]]\nout = \"b/py\"\npackage = \"p\"\nblocking = true\n").expect("parses");
+        assert!(cfg.entries[0].blocking);
+        let cfg = parse("[[bind]]\nout = \"b/py\"\npackage = \"p\"\n").expect("parses");
+        assert!(!cfg.entries[0].blocking);
+        assert!(parse("[[bind]]\nout = \"b/py\"\npackage = \"p\"\nblocking = \"yes\"\n").is_err());
     }
 
     #[test]

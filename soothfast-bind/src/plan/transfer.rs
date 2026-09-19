@@ -118,6 +118,13 @@ pub fn offloadable(f: &Function, owner: Option<&Class>, plan: &BindingPlan) -> b
     if f.is_async || !carries_buffer {
         return false;
     }
+    detachable(f, owner, plan)
+}
+
+/// Whether everything a call touches can leave the interpreter thread: the
+/// receiver, every argument, the return and the error. This is the half of
+/// [`offloadable`] that says nothing about whether leaving pays.
+pub fn detachable(f: &Function, owner: Option<&Class>, plan: &BindingPlan) -> bool {
     let receiver = match f.receiver {
         Receiver::None => true,
         Receiver::Shared => owner.is_some_and(|c| c.sync),

@@ -14,7 +14,7 @@ mod transfer;
 mod unsupported;
 
 pub use errors::{ErrorClass, ErrorVariant, VariantShape};
-pub use transfer::{BufferSupport, Transfer, offloadable, transfer_notes};
+pub use transfer::{BufferSupport, Transfer, detachable, offloadable, transfer_notes};
 use unsupported::{optional_scalar_param_is_ready, unsupported};
 
 use crate::gap::Gap;
