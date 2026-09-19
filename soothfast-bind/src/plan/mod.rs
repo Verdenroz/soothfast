@@ -9,9 +9,11 @@
 use std::collections::BTreeSet;
 use std::iter::once;
 
+mod errors;
 mod transfer;
 mod unsupported;
 
+pub use errors::{ErrorClass, ErrorVariant, VariantShape};
 pub use transfer::{BufferSupport, Transfer, offloadable, transfer_notes};
 use unsupported::{optional_scalar_param_is_ready, unsupported};
 
@@ -94,6 +96,8 @@ pub struct BindingPlan {
     /// at [`lower`] time so [`offloadable`] and [`transfer_notes`] never have
     /// to be told which language they are answering for.
     pub buffer_support: BufferSupport,
+    /// Every error a bound call throws, as the classes a language raises.
+    pub errors: Vec<ErrorClass>,
 }
 
 impl BindingPlan {
@@ -153,6 +157,7 @@ pub fn lower(
     let mut plan = BindingPlan {
         gaps,
         buffer_support: kind.buffer_support(),
+        errors: errors::lower(&surface.errors),
         ..BindingPlan::default()
     };
     let lang = kind.name();

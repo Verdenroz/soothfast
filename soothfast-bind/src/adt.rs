@@ -51,11 +51,11 @@ pub(crate) fn error_type(r: &mut Resolver, item: &Value, rust_path: String) -> E
     r.gaps.truncate(before);
     ErrorType {
         name,
-        non_exhaustive: item["attrs"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|a| a.as_str().is_some_and(|a| a.contains("non_exhaustive"))),
+        non_exhaustive: item["attrs"].as_array().into_iter().flatten().any(|a| {
+            a.as_str()
+                .or_else(|| a["other"].as_str())
+                .is_some_and(|a| a.contains("non_exhaustive"))
+        }),
         doc: summary(item),
         variants,
         rust_path,

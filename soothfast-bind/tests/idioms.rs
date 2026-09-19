@@ -14,7 +14,7 @@ use soothfast_bind::BindKind;
 use soothfast_bind::foreign::TypeTable;
 use soothfast_bind::gap::Gap;
 use soothfast_bind::model::{Surface, Ty, VariantFields};
-use soothfast_bind::plan::lower;
+use soothfast_bind::plan::{VariantShape, lower};
 use soothfast_bind::walk::surface;
 
 fn alias(name: &str, target: Value) -> Value {
@@ -189,6 +189,77 @@ fn a_thrown_enum_error_is_read_once_with_its_variants_whether_exported_or_not() 
     );
     assert_eq!(variants[1].fields, VariantFields::Tuple(vec![Ty::I64]));
     assert_eq!(variants[2].fields, VariantFields::Unit);
+}
+
+#[test]
+fn a_thrown_enum_error_lowers_to_a_class_per_variant_keeping_only_plain_fields() {
+    let (surface, gaps) = walk();
+    let plan = lower(&surface, gaps, &opts(), BindKind::Python).expect("lowers");
+    assert_eq!(plan.errors.len(), 1, "{:?}", plan.errors);
+    let failure = &plan.errors[0];
+    assert_eq!(failure.rust_path, "acme::core::Failure");
+    let shapes: Vec<(&str, VariantShape)> = failure
+        .variants
+        .iter()
+        .map(|v| (v.name.as_str(), v.shape))
+        .collect();
+    assert_eq!(
+        shapes,
+        [
+            ("NotFound", VariantShape::Named),
+            ("Wrapped", VariantShape::Tuple),
+            ("Busy", VariantShape::Unit),
+        ]
+    );
+    assert_eq!(
+        failure.variants[0].fields,
+        [
+            ("symbol".to_string(), Ty::Str),
+            ("retry".to_string(), Ty::Optional(Box::new(Ty::I64))),
+        ]
+    );
+    assert!(failure.variants[1].fields.is_empty());
+}
+
+#[test]
+fn the_python_glue_raises_a_package_hierarchy_with_variant_fields_as_attributes() {
+    let glue = python_glue();
+    assert!(glue.contains(
+        "::pyo3::create_exception!(acme_core, Error, ::pyo3::exceptions::PyException, \"Base of every error acme-core raises.\");"
+    ));
+    assert!(glue.contains(
+        "::pyo3::create_exception!(acme_core, Failure, Error, \"A `acme::core::Failure` error.\");"
+    ));
+    assert!(glue.contains(
+        "::pyo3::create_exception!(acme_core, NotFound, Failure, \"`Failure::NotFound`.\");"
+    ));
+    assert!(glue.contains(
+        "::pyo3::create_exception!(acme_core, Wrapped, Failure, \"`Failure::Wrapped`.\");"
+    ));
+    assert!(
+        glue.contains("::pyo3::create_exception!(acme_core, Busy, Failure, \"`Failure::Busy`.\");")
+    );
+    assert!(glue.contains("struct BindErroracmecoreFailure(::acme::core::Failure);"));
+    assert!(
+        glue.contains("#[allow(unreachable_patterns)]\n    fn from(err: BindErroracmecoreFailure)")
+    );
+    assert!(glue.contains(
+        "            ::acme::core::Failure::NotFound { symbol, retry, .. } => {\n                let e = NotFound::new_err(message);\n                ::pyo3::Python::attach(|py| {\n                    let value = e.value(py);\n                    let _ = value.setattr(\"symbol\", symbol);\n                    let _ = value.setattr(\"retry\", retry);\n                });\n                e\n            }"
+    ));
+    assert!(!glue.contains("setattr(\"client\""), "{glue}");
+    assert!(glue.contains("::acme::core::Failure::Wrapped(..) => Wrapped::new_err(message),"));
+    assert!(glue.contains("::acme::core::Failure::Busy => Busy::new_err(message),"));
+    assert!(glue.contains("            _ => Failure::new_err(message),"));
+    assert!(glue.contains("fn from(err: BindErrorString) -> ::pyo3::PyErr {\n        let message = ::std::string::ToString::to_string(&err.0);\n        Error::new_err(message)"));
+    assert!(!glue.contains("PyRuntimeError"), "{glue}");
+    let module = &glue[glue.find("#[pymodule").expect("module block")..];
+    for name in ["Error", "Failure", "NotFound", "Wrapped", "Busy"] {
+        assert!(
+            module.contains(&format!("m.add(\"{name}\", m.py().get_type::<{name}>())?;")),
+            "{module}"
+        );
+    }
+    assert!(module.find("add_class::<Bag>").unwrap() < module.find("m.add(\"Error\"").unwrap());
 }
 
 fn find<'a>(surface: &'a Surface, id: &str) -> &'a soothfast_bind::model::ExportedFn {

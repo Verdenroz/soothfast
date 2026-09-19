@@ -430,11 +430,14 @@ impl F64Array {
     }
 }
 
+::pyo3::create_exception!(acme_core, Error, ::pyo3::exceptions::PyException, "Base of every error acme-core raises.");
+
 struct BindErrorString(::std::string::String);
 
 impl ::std::convert::From<BindErrorString> for ::pyo3::PyErr {
     fn from(err: BindErrorString) -> ::pyo3::PyErr {
-        ::pyo3::exceptions::PyRuntimeError::new_err(::std::string::ToString::to_string(&err.0))
+        let message = ::std::string::ToString::to_string(&err.0);
+        Error::new_err(message)
     }
 }
 
@@ -675,6 +678,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Counter>()?;
     m.add_class::<Level>()?;
     m.add_class::<Mode>()?;
+    m.add("Error", m.py().get_type::<Error>())?;
     m.add_function(wrap_pyfunction!(counters, m)?)?;
     m.add_function(wrap_pyfunction!(describe, m)?)?;
     m.add_function(wrap_pyfunction!(describe_owned, m)?)?;

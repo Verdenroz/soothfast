@@ -2,6 +2,7 @@
 
 mod asyncrt;
 mod buffers;
+mod errors;
 mod glue;
 mod package;
 mod seq;
@@ -36,7 +37,7 @@ pub(crate) fn emit(plan: &BindingPlan, opts: &BindOptions) -> Result<BindFileSet
     files.insert("Cargo.toml".into(), package::cargo_toml(plan, opts));
     files.insert("pyproject.toml".into(), package::pyproject(opts));
     files.insert("README.md".into(), package::readme(plan, opts));
-    files.insert("src/lib.rs".into(), glue::render(plan, opts));
+    files.insert("src/lib.rs".into(), glue::render(plan, opts)?);
     files.insert(".gitignore".into(), "target/\n".into());
     Ok(out)
 }

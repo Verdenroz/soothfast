@@ -15,6 +15,7 @@ use crate::{BindOptions, GENERATED_RS, GLUE_ALLOW};
 
 use super::asyncrt;
 use super::buffers::{self, array_name, buffered, view_name};
+use super::errors::{self, Hierarchy};
 use super::py_ident;
 use super::seq;
 
@@ -29,8 +30,9 @@ fn buffers_alias(a: (usize, usize), b: (usize, usize)) -> bool {
 ";
 
 /// Render the glue crate body.
-pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
+pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> Result<String, String> {
     let krate = format!("::{}", opts.crate_name);
+    let hierarchy = errors::hierarchy(plan, opts)?;
     let mut out = String::from(GENERATED_RS);
     out.push_str(GLUE_ALLOW);
     out.push_str("\nuse pyo3::prelude::*;\n");
@@ -48,8 +50,9 @@ pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
     for class in seq::classes(plan) {
         out.push_str(&seq::render(class, &krate));
     }
+    out.push_str(&hierarchy.declarations(opts));
     for (ty, name) in error_newtypes(plan) {
-        out.push_str(&error_impl(&ty, &name, &krate));
+        out.push_str(&error_impl(&ty, &name, &krate, &hierarchy));
     }
     for class in &plan.classes {
         out.push_str(&class_block(class, &krate, plan));
@@ -57,8 +60,8 @@ pub(crate) fn render(plan: &BindingPlan, opts: &BindOptions) -> String {
     for function in &plan.functions {
         out.push_str(&free_fn(function, &krate, plan));
     }
-    out.push_str(&module_block(plan, opts));
-    out
+    out.push_str(&module_block(plan, opts, &hierarchy));
+    Ok(out)
 }
 
 /// Whether any function in the surface has a writable buffer parameter
@@ -150,18 +153,25 @@ fn error_name(ty: &Ty) -> String {
     format!("BindError{}", ident_part(&ty.render()))
 }
 
-fn error_impl(ty: &Ty, name: &str, krate: &str) -> String {
-    let inner = error_ty(ty, krate);
+fn error_impl(ty: &Ty, name: &str, krate: &str, hierarchy: &Hierarchy) -> String {
+    let inner = hierarchy
+        .spelling(ty, krate)
+        .unwrap_or_else(|| error_ty(ty, krate));
+    let allow = match hierarchy.matches(ty) {
+        true => "#[allow(unreachable_patterns)]\n    ",
+        false => "",
+    };
     format!(
         "
 struct {name}({inner});
 
 impl ::std::convert::From<{name}> for ::pyo3::PyErr {{
-    fn from(err: {name}) -> ::pyo3::PyErr {{
-        ::pyo3::exceptions::PyRuntimeError::new_err(::std::string::ToString::to_string(&err.0))
-    }}
+    {allow}fn from(err: {name}) -> ::pyo3::PyErr {{
+        let message = ::std::string::ToString::to_string(&err.0);
+{}    }}
 }}
-"
+",
+        hierarchy.raise(ty, krate),
     )
 }
 
@@ -523,7 +533,7 @@ fn returned(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
 /// through `PyRefMut`, a returned array is read-only through the buffer
 /// protocol and never mutated after construction, and the runtime and its
 /// relay are `Sync`. On a GIL build the flag is inert.
-fn module_block(plan: &BindingPlan, opts: &BindOptions) -> String {
+fn module_block(plan: &BindingPlan, opts: &BindOptions, hierarchy: &Hierarchy) -> String {
     let mut body = String::new();
     for (name, _) in buffers::arrays(plan) {
         let _ = writeln!(body, "    m.add_class::<{name}>()?;");
@@ -534,6 +544,7 @@ fn module_block(plan: &BindingPlan, opts: &BindOptions) -> String {
     for class in &plan.classes {
         let _ = writeln!(body, "    m.add_class::<{}>()?;", class.name);
     }
+    body.push_str(&hierarchy.registrations());
     for function in &plan.functions {
         let _ = writeln!(
             body,
