@@ -234,7 +234,7 @@ only in the generated crate.
 | `Option<T>` | `T \| None` | `T \| undefined` | nullable pointer, handles and strings | nullable pointer, handles and strings | nullable, handles and strings | `T?`, handles and strings | `T` or `NULL` | `T \| nil` | `optional<T>`, handles and strings | nullable pointer, handles and strings | `null`, handles and strings |
 | `HashMap<K, V>` | `dict` | not bound | not bound | not bound | not bound | not bound | not bound | `Hash` | not bound | not bound | not bound |
 | `(A, B)` | `tuple` | not bound | not bound | not bound | not bound | not bound | not bound | `Array` | not bound | not bound | not bound |
-| `Result<T, E>` | raises | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises | throws `Error` | `error()` | throws |
+| `Result<T, E>` | raises an `Error` subclass | throws | `char **error` out-param | `error` | throws (unchecked) | throws (unchecked) | R condition (`stop()`) | raises | throws `Error` | `error()` | throws |
 | `async fn` | awaitable | `Promise` | not bound | not bound | not bound | not bound | not bound | not bound | not bound | not bound | not bound |
 | exported struct | handle class | handle class | opaque pointer | struct with `Close()` | handle class, `AutoCloseable` | handle class, `AutoCloseable` | external pointer, `$method()` | handle class | handle class, `unique_ptr` member | table with `:close()` | `SafeHandle`, `IDisposable` |
 | payload-free enum | `enum` | `enum` | `enum` | typed `int32` + constants | `enum` | `enum class` | validated string | `Symbol` | `enum class` | validated string | `enum` |
@@ -263,6 +263,16 @@ owned by the Python glue before it crosses; the other backends report it
 for now, so return an owned value there. A public field holding an
 exported type reads as a handle but has no setter: the handle Python passes
 in cannot be moved out of.
+
+A failing call raises from a per-package hierarchy in Python: an `Error`
+base, one subclass per error type a bound call returns (`FinanceError`,
+named after the Rust type whether or not it is exported), and for an enum
+error one subclass per variant (`SymbolNotFound`), so `except
+finance_query.SymbolNotFound` works without parsing a message. A variant's
+named fields that are primitives, strings, bytes or options of those are
+set as attributes on the raised exception (`e.symbol`, `e.retry_after`);
+any other field stays in the message only. A `String` error raises the
+base. A name already taken by a class or function takes an `Error` suffix.
 
 ### Go
 

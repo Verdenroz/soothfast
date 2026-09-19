@@ -57,8 +57,10 @@ assert c.at(Level.High) == 20
 try:
     Counter(9223372036854775807).bump(1)
     raise AssertionError("expected an error")
-except RuntimeError as e:
+except acme_core.Error as e:
     assert "overflow" in str(e)
+assert issubclass(acme_core.Error, Exception)
+assert not issubclass(acme_core.Error, RuntimeError)
 
 try:
     Counter(2**100)
