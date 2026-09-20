@@ -4,14 +4,14 @@
 //! Neither half alone is enough: the annotation is gone from rustdoc by the
 //! time it runs, and the registry carries no types.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
 use crate::foreign::TypeTable;
 use crate::gap::Gap;
 use crate::model::{ExportRecord, ExportedFn, Surface, Ty};
-use crate::resolve::Resolver;
+use crate::resolve::{Resolver, class_name};
 use crate::{adt, fn_sig};
 
 /// Read every exported item's shape out of the package's rustdoc document.
@@ -26,15 +26,26 @@ pub fn surface(
     let mut records = records.to_vec();
     records.sort_by(|a, b| a.id.cmp(&b.id));
 
-    let exported: BTreeSet<String> = records
+    let mut exported: BTreeSet<String> = records
         .iter()
         .filter(|r| is_type(r))
         .map(|r| r.id.clone())
         .collect();
     let mut resolver = Resolver::new(doc, table, exported.clone())?;
+
+    let collisions = name_collisions(&resolver, &records);
+    for id in collisions.keys() {
+        exported.remove(id);
+        resolver.exclude(id);
+    }
+
     let mut surface = Surface::default();
 
     for record in &records {
+        if let Some(gap) = collisions.get(&record.id) {
+            resolver.record(gap.clone());
+            continue;
+        }
         match record.kind.as_str() {
             "struct" | "enum" => match resolver.find_by_path(&record.id) {
                 Some(item) => {
@@ -66,6 +77,49 @@ pub fn surface(
     }
 
     Ok((surface, resolver.gaps))
+}
+
+/// Exported types whose short name collides with another exported type's,
+/// keyed by the losing id. [`ExportedType::name`](crate::model::ExportedType)
+/// is the last segment of a type's public path, so two types under
+/// different modules (or one aliased at the root) can end up wanting the
+/// same one; the shortest public path keeps it, ties broken lexically,
+/// since two classes under one name would not compile.
+fn name_collisions(resolver: &Resolver, records: &[ExportRecord]) -> BTreeMap<String, Gap> {
+    let mut by_name: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for record in records.iter().filter(|r| is_type(r)) {
+        let Some(item) = resolver.find_by_path(&record.id) else {
+            continue;
+        };
+        let rust_path = resolver
+            .public_path(&item["id"])
+            .unwrap_or_else(|| record.id.clone());
+        let name = class_name(&rust_path).to_string();
+        by_name
+            .entry(name)
+            .or_default()
+            .push((rust_path, record.id.clone()));
+    }
+
+    let mut losers = BTreeMap::new();
+    for (name, mut group) in by_name {
+        if group.len() < 2 {
+            continue;
+        }
+        group.sort_by(|a, b| (a.0.len(), &a.0).cmp(&(b.0.len(), &b.0)));
+        let winner = group[0].0.clone();
+        for (path, id) in group.into_iter().skip(1) {
+            losers.insert(
+                id,
+                Gap::NameCollision {
+                    at: path,
+                    name: name.clone(),
+                    winner: winner.clone(),
+                },
+            );
+        }
+    }
+    losers
 }
 
 /// The error type a call throws, read once per distinct type. A `String`

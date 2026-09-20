@@ -323,5 +323,52 @@ fn a_root_reexport_alias_becomes_the_class_name() {
     assert_eq!(surface.types[0].id, "acme::indices::Region");
     assert_eq!(surface.types[0].rust_path, "acme::IndicesRegion");
     assert_eq!(surface.types[0].name, "IndicesRegion");
-    assert!(gaps.is_empty(), "{gaps:?}");
+    assert!(
+        !gaps.iter().any(|g| matches!(g, Gap::NameCollision { .. })),
+        "a lone alias has nothing to collide with: {gaps:?}"
+    );
+}
+/// Three exported types can end up with the same short name: two structs
+/// both called `Report` in different modules, and a third at the crate
+/// root. Only the root one — the shortest public path — keeps the name;
+/// the other two are gaps rather than a glue file with three `Report`s.
+#[test]
+fn the_shortest_public_path_wins_a_three_way_name_collision() {
+    use fixture::{record, struct_item};
+
+    let doc = json!({
+        "index": {
+            "1": struct_item("Report", &[], &[]),
+            "2": struct_item("Report", &[], &[]),
+            "3": struct_item("Report", &[], &[]),
+        },
+        "paths": {
+            "1": { "crate_id": 0, "path": ["acme", "Report"], "kind": "struct" },
+            "2": { "crate_id": 0, "path": ["acme", "sectors", "Report"], "kind": "struct" },
+            "3": { "crate_id": 0, "path": ["acme", "industries", "Report"], "kind": "struct" },
+        },
+    });
+    let table = TypeTable::default();
+    let records = vec![
+        record("acme::Report", "struct"),
+        record("acme::sectors::Report", "struct"),
+        record("acme::industries::Report", "struct"),
+    ];
+    let (surface, gaps) = surface(&doc, &table, &records).expect("walks");
+
+    assert_eq!(
+        surface.types.iter().map(|t| &t.id).collect::<Vec<_>>(),
+        vec!["acme::Report"],
+        "only the shortest path is walked as a type"
+    );
+    for loser in ["acme::sectors::Report", "acme::industries::Report"] {
+        assert!(
+            gaps.iter().any(|g| matches!(
+                g,
+                Gap::NameCollision { at, name, winner }
+                    if at == loser && name == "Report" && winner == "acme::Report"
+            )),
+            "{loser} should lose to acme::Report: {gaps:?}"
+        );
+    }
 }

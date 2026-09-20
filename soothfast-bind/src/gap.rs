@@ -60,6 +60,16 @@ pub enum Gap {
     /// language mirrors a payload-free enum onto its own enumeration, which
     /// has none of these to carry them on.
     PlainEnumMember { at: String },
+    /// Two exported types share the same short name once re-export aliasing
+    /// is applied. The one with the shortest public path keeps the name;
+    /// this one does not, since a class name collision would not compile.
+    NameCollision {
+        at: String,
+        /// The short name both types wanted.
+        name: String,
+        /// Public path of the type that kept it.
+        winner: String,
+    },
 }
 
 impl Gap {
@@ -74,7 +84,8 @@ impl Gap {
             | Self::HandleByValue { at, .. }
             | Self::ConsumingReceiver { at }
             | Self::AsyncExclusiveReceiver { at }
-            | Self::PlainEnumMember { at } => at,
+            | Self::PlainEnumMember { at }
+            | Self::NameCollision { at, .. } => at,
         }
     }
 
@@ -119,6 +130,12 @@ impl Gap {
                 "{at}: a plain enum mirrors onto the target language's own \
                  enumeration, which has no constructors, methods or \
                  associated fns; expose this as a free function instead"
+            ),
+            Self::NameCollision { at, name, winner } => format!(
+                "{at}: short name `{name}` collides with `{winner}`, which \
+                 keeps it (the shorter public path); re-export it at the \
+                 crate root under another name (`pub use inner::{name} as \
+                 Other{name}`), or leave it unexported"
             ),
         }
     }

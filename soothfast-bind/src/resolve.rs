@@ -104,6 +104,13 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Drops a canonical path from the exported set: any later reference to
+    /// it resolves as a gap instead of `Ty::Class`, for an id that lost a
+    /// name collision and so is never walked as a type in its own right.
+    pub(crate) fn exclude(&mut self, canonical: &str) {
+        self.exported.remove(canonical);
+    }
+
     /// Resolve a type that crosses as a message rather than as a value.
     ///
     /// An error type is rendered through `Display`, so it needs no mapping
