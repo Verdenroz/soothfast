@@ -518,6 +518,31 @@ fn enums(insert: &mut impl FnMut(u64, Value)) {
     insert(50, auto_impl("Sync", false));
 }
 
+pub fn module(name: &str, public: bool, items: &[u64]) -> Value {
+    json!({
+        "name": name, "docs": Value::Null, "attrs": [],
+        "visibility": if public { "public" } else { "crate" },
+        "inner": { "module": { "is_crate": name == "acme", "items": items, "is_stripped": false } },
+    })
+}
+
+pub fn reexport(name: &str, target: u64) -> Value {
+    json!({
+        "name": name, "docs": Value::Null, "attrs": [], "visibility": "public",
+        "inner": { "use": { "source": format!("inner::{name}"), "name": name, "id": target, "is_glob": false } },
+    })
+}
+
+/// Rustdoc stamps every index entry with its own id; the fixture builders
+/// leave it to the caller.
+pub fn stamped(mut doc: Value) -> Value {
+    let index = doc["index"].as_object_mut().expect("index");
+    for (key, item) in index.iter_mut() {
+        item["id"] = json!(key.parse::<u64>().expect("numeric id"));
+    }
+    doc
+}
+
 /// `acme`, with a free fn, a struct and its inherent impl, and an enum.
 pub fn doc() -> Value {
     let mut index = Map::new();

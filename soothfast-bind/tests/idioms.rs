@@ -6,8 +6,8 @@
 mod fixture;
 
 use fixture::{
-    auto_impl, borrowed, enum_item, field, func, method, opts, path, prim, record, struct_item,
-    variant,
+    auto_impl, borrowed, enum_item, field, func, method, module, opts, path, prim, record,
+    reexport, stamped, struct_item, variant,
 };
 use serde_json::{Value, json};
 use soothfast_bind::foreign::TypeTable;
@@ -46,21 +46,6 @@ fn with_synthetic_param(mut f: Value) -> Value {
 fn non_exhaustive(mut item: Value) -> Value {
     item["attrs"] = json!(["#[non_exhaustive]"]);
     item
-}
-
-fn module(name: &str, public: bool, items: &[u64]) -> Value {
-    json!({
-        "name": name, "docs": Value::Null, "attrs": [],
-        "visibility": if public { "public" } else { "crate" },
-        "inner": { "module": { "is_crate": name == "acme", "items": items, "is_stripped": false } },
-    })
-}
-
-fn reexport(name: &str, target: u64) -> Value {
-    json!({
-        "name": name, "docs": Value::Null, "attrs": [], "visibility": "public",
-        "inner": { "use": { "source": format!("core::{name}"), "name": name, "id": target, "is_glob": false } },
-    })
 }
 
 /// `Client` and `open` live in a private `core` module and reach the crate
@@ -132,16 +117,6 @@ fn doc() -> Value {
             "99": { "crate_id": 2, "path": ["chrono", "DateTime"], "kind": "struct" },
         }
     })
-}
-
-/// Rustdoc stamps every index entry with its own id; the fixture builders
-/// leave it to the caller.
-fn stamped(mut doc: Value) -> Value {
-    let index = doc["index"].as_object_mut().expect("index");
-    for (key, item) in index.iter_mut() {
-        item["id"] = json!(key.parse::<u64>().expect("numeric id"));
-    }
-    doc
 }
 
 fn walk() -> (Surface, Vec<Gap>) {

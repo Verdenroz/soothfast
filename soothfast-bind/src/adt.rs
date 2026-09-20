@@ -9,12 +9,15 @@ use serde_json::Value;
 use crate::model::{
     ErrorType, ExportRecord, ExportedType, Field, Ty, TypeKind, Variant, VariantFields,
 };
-use crate::resolve::Resolver;
+use crate::resolve::{Resolver, class_name};
 
 /// Read one struct or enum item against the metadata its annotation recorded.
 pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> ExportedType {
     let at = record.id.clone();
-    let name = item["name"].as_str().unwrap_or_default().to_string();
+    let rust_path = r
+        .public_path(&item["id"])
+        .unwrap_or_else(|| record.id.clone());
+    let name = class_name(&rust_path).to_string();
     r.enter(Some(&name));
 
     let inner = &item["inner"];
@@ -25,9 +28,7 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
     };
 
     ExportedType {
-        rust_path: r
-            .public_path(&item["id"])
-            .unwrap_or_else(|| record.id.clone()),
+        rust_path,
         id: record.id.clone(),
         name,
         kind,

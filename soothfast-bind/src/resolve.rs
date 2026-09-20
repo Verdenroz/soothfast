@@ -440,6 +440,12 @@ fn join_path(segments: &[Value]) -> String {
         .join("::")
 }
 
+/// The class name a public path gives its type: the last segment, so a root
+/// `pub use ... as X` re-export renames the class along with it.
+pub(crate) fn class_name(rust_path: &str) -> &str {
+    rust_path.rsplit("::").next().unwrap_or(rust_path)
+}
+
 /// A best-effort spelling of a node the resolver has no arm for, so the gap
 /// it reports still names something the reader can find in the source.
 fn render(ty: &Value) -> String {

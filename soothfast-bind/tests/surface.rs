@@ -2,7 +2,8 @@
 
 mod fixture;
 
-use fixture::{doc, opts, plan_for, records, walk};
+use fixture::{doc, module, opts, plan_for, records, reexport, stamped, walk};
+use serde_json::json;
 use soothfast_bind::BindKind;
 use soothfast_bind::foreign::TypeTable;
 use soothfast_bind::gap::Gap;
@@ -266,7 +267,6 @@ fn an_exported_type_taken_by_value_is_reported_rather_than_copied() {
 #[test]
 fn an_unmapped_type_inside_a_variant_payload_is_not_gapped() {
     use fixture::{enum_item, field, path, record, variant};
-    use serde_json::json;
 
     let doc = json!({
         "index": {
@@ -295,4 +295,33 @@ fn an_unmapped_type_inside_a_variant_payload_is_not_gapped() {
             .any(|g| matches!(g, Gap::UnmappedForeign { .. })),
         "a variant's payload can never cross, so its unmapped type is not a gap: {gaps:?}"
     );
+}
+
+/// A struct declared in a private module and reached at the crate root only
+/// through `pub use inner::Region as IndicesRegion` takes the alias as its
+/// class name and public path, not the identifier it was declared under.
+#[test]
+fn a_root_reexport_alias_becomes_the_class_name() {
+    use fixture::{record, struct_item};
+
+    let doc = stamped(json!({
+        "root": 0,
+        "index": {
+            "0": module("acme", true, &[3]),
+            "2": struct_item("Region", &[], &[]),
+            "3": reexport("IndicesRegion", 2),
+        },
+        "paths": {
+            "2": { "crate_id": 0, "path": ["acme", "indices", "Region"], "kind": "struct" },
+        },
+    }));
+    let table = TypeTable::default();
+    let records = vec![record("acme::indices::Region", "struct")];
+    let (surface, gaps) = surface(&doc, &table, &records).expect("walks");
+
+    assert_eq!(surface.types.len(), 1);
+    assert_eq!(surface.types[0].id, "acme::indices::Region");
+    assert_eq!(surface.types[0].rust_path, "acme::IndicesRegion");
+    assert_eq!(surface.types[0].name, "IndicesRegion");
+    assert!(gaps.is_empty(), "{gaps:?}");
 }
