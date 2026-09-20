@@ -192,8 +192,10 @@ fn is_type(record: &ExportRecord) -> bool {
     matches!(record.kind.as_str(), "struct" | "enum")
 }
 
-/// Type parameters a struct or enum declares. A binding names a type by a
-/// single Rust path, which a generic type has none of on its own.
+/// Type and lifetime parameters a struct or enum declares. A binding names
+/// a type by a single Rust path, which a generic type has none of on its
+/// own; a bare lifetime is no better, since nothing outlives a handle held
+/// across a Python call.
 fn type_generic_params(item: &Value) -> Vec<String> {
     item["inner"]
         .get("struct")
@@ -201,7 +203,7 @@ fn type_generic_params(item: &Value) -> Vec<String> {
         .and_then(|k| k["generics"]["params"].as_array())
         .into_iter()
         .flatten()
-        .filter(|p| p["kind"].get("type").is_some())
+        .filter(|p| p["kind"].get("type").is_some() || p["kind"].get("lifetime").is_some())
         .filter_map(|p| p["name"].as_str().map(ToString::to_string))
         .collect()
 }

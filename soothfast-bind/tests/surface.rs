@@ -477,3 +477,40 @@ fn a_generic_type_is_reported_rather_than_walked() {
         "{gaps:?}"
     );
 }
+
+/// A bare lifetime parameter is reported the same way: nothing outlives a
+/// handle held across a Python call, so a borrowed type is no better bound
+/// than a generic one.
+#[test]
+fn a_type_with_a_lifetime_parameter_is_reported_rather_than_walked() {
+    use fixture::record;
+    use serde_json::Value;
+
+    let doc = json!({
+        "index": {
+            "1": {
+                "name": "Borrowed", "docs": Value::Null, "attrs": [], "visibility": "public",
+                "inner": { "struct": {
+                    "kind": { "plain": { "fields": [], "has_stripped_fields": false } },
+                    "generics": { "params": [
+                        { "name": "'a", "kind": { "lifetime": { "outlives": [] } } }
+                    ], "where_predicates": [] },
+                    "impls": [] } },
+            },
+        },
+        "paths": {
+            "1": { "crate_id": 0, "path": ["acme", "Borrowed"], "kind": "struct" },
+        },
+    });
+    let table = TypeTable::default();
+    let records = vec![record("acme::Borrowed", "struct")];
+    let (surface, gaps) = surface(&doc, &table, &records).expect("walks");
+
+    assert!(surface.types.is_empty(), "{:?}", surface.types);
+    assert!(
+        gaps.iter().any(
+            |g| matches!(g, Gap::Generic { at, param } if at == "acme::Borrowed" && param == "'a")
+        ),
+        "{gaps:?}"
+    );
+}
