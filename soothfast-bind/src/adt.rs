@@ -64,7 +64,7 @@ pub(crate) fn error_type(r: &mut Resolver, item: &Value, rust_path: String) -> E
 
 fn struct_fields(r: &mut Resolver, kind: &Value, at: &str) -> Vec<Field> {
     if let Some(plain) = kind.get("plain") {
-        return named_fields(r, &plain["fields"], at);
+        return named_fields(r, &plain["fields"], at, true);
     }
     if let Some(tuple) = kind.get("tuple").and_then(Value::as_array) {
         return positional_fields(r, tuple, at);
@@ -72,14 +72,17 @@ fn struct_fields(r: &mut Resolver, kind: &Value, at: &str) -> Vec<Field> {
     Vec::new()
 }
 
-fn named_fields(r: &mut Resolver, ids: &Value, at: &str) -> Vec<Field> {
+/// `reported` is false for an enum variant's own fields: a data-carrying
+/// enum always binds as an opaque handle, so nothing they hold ever crosses,
+/// and an unmapped one is not a gap regardless of its declared visibility.
+fn named_fields(r: &mut Resolver, ids: &Value, at: &str, reported: bool) -> Vec<Field> {
     let mut out = Vec::new();
     for field in items(r, ids.as_array().unwrap_or(&Vec::new())) {
         let name = field["name"].as_str().unwrap_or_default().to_string();
         let where_ = format!("{at}.{name}");
         let public = is_public(&field);
         out.push(Field {
-            ty: field_ty(r, &field, public, &where_),
+            ty: field_ty(r, &field, public && reported, &where_),
             public,
             doc: summary(&field),
             name,
@@ -136,7 +139,7 @@ fn items(r: &Resolver, ids: &[Value]) -> Vec<Value> {
 
 fn variant_fields(r: &mut Resolver, kind: &Value, at: &str) -> VariantFields {
     if let Some(st) = kind.get("struct") {
-        return VariantFields::Named(variant_named_fields(r, &st["fields"], at));
+        return VariantFields::Named(named_fields(r, &st["fields"], at, false));
     }
     if let Some(tuple) = kind.get("tuple").and_then(Value::as_array) {
         let mut tys: Vec<Ty> = Vec::new();
@@ -146,23 +149,6 @@ fn variant_fields(r: &mut Resolver, kind: &Value, at: &str) -> VariantFields {
         return VariantFields::Tuple(tys);
     }
     VariantFields::Unit
-}
-
-/// A variant's own fields never cross on any backend: a data-carrying enum
-/// always binds as an opaque handle, so an unmapped payload type is not a gap.
-fn variant_named_fields(r: &mut Resolver, ids: &Value, at: &str) -> Vec<Field> {
-    let mut out = Vec::new();
-    for field in items(r, ids.as_array().unwrap_or(&Vec::new())) {
-        let name = field["name"].as_str().unwrap_or_default().to_string();
-        let where_ = format!("{at}.{name}");
-        out.push(Field {
-            ty: r.resolve_unreported(&field["inner"]["struct_field"], &where_),
-            public: is_public(&field),
-            doc: summary(&field),
-            name,
-        });
-    }
-    out
 }
 
 /// Whether the type carries one auto trait, or `None` when the document does
