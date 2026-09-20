@@ -101,6 +101,7 @@ fn doc() -> Value {
                 "generic_params": [], "modifier": "none" } } ] }))], prim("bool"), false),
             "33": func("borrow_client", &[("client", borrowed(path("Client", 3, &[]), false))], prim("bool"), true),
             "34": func("borrow_bag", &[("bag", borrowed(path("Bag", 6, &[]), false))], prim("bool"), true),
+            "35": func("borrow_maybe_client", &[("client", path("Option", 93, &[borrowed(path("Client", 3, &[]), false)]))], prim("bool"), true),
         },
         "paths": {
             "1": { "crate_id": 0, "path": ["acme", "core", "Result"], "kind": "type_alias" },
@@ -109,6 +110,7 @@ fn doc() -> Value {
             "5": { "crate_id": 0, "path": ["acme", "core", "Level"], "kind": "enum" },
             "33": { "crate_id": 0, "path": ["acme", "core", "borrow_client"], "kind": "function" },
             "34": { "crate_id": 0, "path": ["acme", "core", "borrow_bag"], "kind": "function" },
+            "35": { "crate_id": 0, "path": ["acme", "core", "borrow_maybe_client"], "kind": "function" },
             "6": { "crate_id": 0, "path": ["acme", "core", "Bag"], "kind": "struct" },
             "90": { "crate_id": 1, "path": ["alloc", "vec", "Vec"], "kind": "struct" },
             "93": { "crate_id": 1, "path": ["core", "option", "Option"], "kind": "enum" },
@@ -134,6 +136,7 @@ fn walk() -> (Surface, Vec<Gap>) {
         record("acme::util::read", "fn"),
         record("acme::core::borrow_client", "fn"),
         record("acme::core::borrow_bag", "fn"),
+        record("acme::core::borrow_maybe_client", "fn"),
         method("acme::core::Client::new", "Client"),
         method("acme::core::Client::chart", "Client"),
         method("acme::core::Client::nested", "Client"),
@@ -895,14 +898,17 @@ fn a_class_nested_inside_a_map_or_a_map_of_lists_is_wrapped_at_the_leaf() {
     );
 }
 
-/// A `&Client` parameter on an async fn cannot hold its `PyRef` across the
-/// await (tied to the GIL, never `Send`); `Client` is `Clone`, so the glue
-/// clones it into an owned value first and awaits that instead.
+/// A `&Client` parameter on an async fn cannot hold a `PyRef` across the
+/// await (tied to the GIL, never `Send`); `Client` is `Clone`, so pyo3
+/// extracts an owned value instead of borrowing one.
 #[test]
-fn an_async_fn_borrowing_a_clone_class_clones_it_before_the_await() {
+fn an_async_fn_borrowing_a_clone_class_takes_it_by_value() {
     let glue = python_glue();
-    assert!(glue.contains("let client = client.0.clone();"), "{glue}");
-    assert!(glue.contains("borrow_client(&client)"), "{glue}");
+    assert!(
+        glue.contains("async fn borrow_client(client: Client) -> bool"),
+        "{glue}"
+    );
+    assert!(glue.contains("borrow_client(&client.0)"), "{glue}");
 }
 
 /// `Bag` is not `Clone`, so the same shape over it has nothing to copy out
@@ -919,5 +925,20 @@ fn an_async_fn_borrowing_a_non_clone_class_is_gapped() {
         )),
         "{:?}",
         plan.gaps
+    );
+}
+
+/// `Option<&Client>` is the same shape by way of `Option`: the same by-value
+/// extraction applies, one layer down.
+#[test]
+fn an_async_fn_borrowing_an_optional_clone_class_takes_it_by_value() {
+    let glue = python_glue();
+    assert!(
+        glue.contains("async fn borrow_maybe_client(client: Option<Client>) -> bool"),
+        "{glue}"
+    );
+    assert!(
+        glue.contains("borrow_maybe_client(client.as_ref().map(|v| &v.0))"),
+        "{glue}"
     );
 }

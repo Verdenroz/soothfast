@@ -400,10 +400,9 @@ pub(super) fn shaped_body(
     detach: bool,
 ) -> String {
     let checks = format!(
-        "{}{}{}",
+        "{}{}",
         aliasing_check(function, plan, indent),
-        text::preludes(function, indent),
-        async_handle_clone_preludes(function, plan, indent)
+        text::preludes(function, indent)
     );
     if !detach {
         return format!("{checks}{}", completed(call, function, plan, indent, ""));
@@ -615,28 +614,6 @@ pub(super) fn call_args(function: &Function, plan: &BindingPlan) -> String {
         .join(", ")
 }
 
-/// One `let` per borrowed-handle parameter of an async fn, cloning it out of
-/// its `PyRef` before the call: `bindable` already refused any such
-/// parameter whose class is not `Clone`, so every one reaching here can be.
-fn async_handle_clone_preludes(function: &Function, plan: &BindingPlan, indent: &str) -> String {
-    if !function.is_async {
-        return String::new();
-    }
-    let mut out = String::new();
-    for param in &function.params {
-        if let Transfer::Handle {
-            mirrored: false,
-            writable: false,
-            nullable: false,
-        } = Transfer::of(param, plan)
-        {
-            let name = py_ident(&param.name);
-            let _ = writeln!(out, "{indent}let {name} = {name}.0.clone();");
-        }
-    }
-    out
-}
-
 /// How one parameter is spelled and how it is handed on, decided together so
 /// the signature and the call cannot disagree.
 ///
@@ -671,6 +648,13 @@ fn passing(param: &Param, plan: &BindingPlan, is_async: bool) -> (String, String
             format!("Option<PyRefMut<'_, {class}>>"),
             format!("{name}.as_deref_mut().map(|v| &mut v.0)"),
         ),
+        // A `PyRef` cannot cross an async fn's own await (it is tied to the
+        // GIL, never `Send`); `bindable` only lets a `Clone` class reach
+        // here, so pyo3 extracts an owned value in its place instead.
+        Transfer::Handle { nullable: true, .. } if is_async => (
+            format!("Option<{class}>"),
+            format!("{name}.as_ref().map(|v| &v.0)"),
+        ),
         Transfer::Handle { nullable: true, .. } => (
             format!("Option<PyRef<'_, {class}>>"),
             format!("{name}.as_deref().map(|v| &v.0)"),
@@ -678,10 +662,7 @@ fn passing(param: &Param, plan: &BindingPlan, is_async: bool) -> (String, String
         Transfer::Handle { writable: true, .. } => {
             (format!("PyRefMut<'_, {class}>"), format!("&mut {name}.0"))
         }
-        // An async fn cannot hold this `PyRef` across its own await (it is
-        // tied to the GIL, never `Send`); a prelude clones it into `name`
-        // itself first, so the call borrows the clone instead of the field.
-        Transfer::Handle { .. } if is_async => (format!("PyRef<'_, {class}>"), format!("&{name}")),
+        Transfer::Handle { .. } if is_async => (class, format!("&{name}.0")),
         Transfer::Handle { .. } => (format!("PyRef<'_, {class}>"), format!("&{name}.0")),
         Transfer::Text {
             nullable: true,

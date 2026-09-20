@@ -624,10 +624,18 @@ fn borrowed_handle_async_param_is_blocked(
         return false;
     }
     for param in &f.params {
-        let Ty::Class(name) = &param.ty else {
+        let borrowed_class = match &param.ty {
+            Ty::Class(name) if param.ownership == Ownership::Borrowed => Some(name),
+            Ty::Optional(inner) if param.inner_ownership == Ownership::Borrowed => match &**inner {
+                Ty::Class(name) => Some(name),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(name) = borrowed_class else {
             continue;
         };
-        if param.ownership != Ownership::Borrowed || mirrored.contains(name) {
+        if mirrored.contains(name) {
             continue;
         }
         if !cloneable.contains(name) {
