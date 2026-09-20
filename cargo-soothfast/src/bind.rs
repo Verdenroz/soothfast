@@ -415,7 +415,10 @@ fn ensure_lockfile(dir: &Path) -> Result<(), String> {
     if !dir.join("Cargo.lock").exists() {
         generate_lockfile(dir)
     } else if lockfile_stale(dir) {
-        update_lockfile(dir).or_else(|_| regenerate_lockfile(dir))
+        update_lockfile(dir).or_else(|update_err| {
+            regenerate_lockfile(dir)
+                .map_err(|regen_err| format!("{update_err}; full resolve also failed: {regen_err}"))
+        })
     } else {
         Ok(())
     }
@@ -935,7 +938,9 @@ mod tests {
 
     // Trimmed from finance-query's real [dependencies]/[features]: a minimal
     // two-crate repro never reproduced the downgrade failure, only this
-    // actual dependency shape (activating ~25 features at once) does.
+    // actual dependency shape (activating ~25 features at once) does. This
+    // resolves ~25 real crates against the registry index (network on a
+    // cold cache), unlike the rest of this module.
     const DOWNGRADE_MANIFEST: &str = r#"
 [package]
 name = "full_repro"
