@@ -479,6 +479,7 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
                 format!("{expr}.map(::std::convert::Into::into)")
             }
             Ty::Class(name) => format!("{expr}.map({name})"),
+            _ if has_class(inner) => format!("{expr}.map(|value| {})", out("value", inner, plan)),
             _ => expr.to_string(),
         },
         Ty::List(inner) => match &**inner {
@@ -486,10 +487,47 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
                 format!("{expr}.into_iter().map(::std::convert::Into::into).collect()")
             }
             Ty::Class(name) => format!("{expr}.into_iter().map({name}).collect()"),
+            _ if has_class(inner) => format!(
+                "{expr}.into_iter().map(|value| {}).collect()",
+                out("value", inner, plan)
+            ),
             _ => expr.to_string(),
         },
+        Ty::Map(_, value) if has_class(value) => format!(
+            "{expr}.into_iter().map(|(key, value)| (key, {})).collect()",
+            out("value", value, plan)
+        ),
+        Ty::Tuple(items) if items.iter().any(has_class) => tuple_out(expr, items, plan),
         _ => expr.to_string(),
     }
+}
+
+/// Whether a type nests an exported class at any depth, the signal `out`
+/// uses to tell a composition worth converting from one that crosses as-is.
+fn has_class(ty: &Ty) -> bool {
+    match ty {
+        Ty::Class(_) => true,
+        Ty::Optional(inner) | Ty::List(inner) => has_class(inner),
+        Ty::Map(_, value) => has_class(value),
+        Ty::Tuple(items) => items.iter().any(has_class),
+        _ => false,
+    }
+}
+
+/// A tuple leaving the user's crate, destructured so each position converts
+/// on its own terms.
+fn tuple_out(expr: &str, items: &[Ty], plan: &BindingPlan) -> String {
+    let names: Vec<String> = (0..items.len()).map(|i| format!("v{i}")).collect();
+    let converted: Vec<String> = names
+        .iter()
+        .zip(items)
+        .map(|(name, ty)| out(name, ty, plan))
+        .collect();
+    format!(
+        "{{ let ({}) = {expr}; ({}) }}",
+        names.join(", "),
+        converted.join(", ")
+    )
 }
 
 /// A returned type, where a sequence of one primitive comes back as its array
