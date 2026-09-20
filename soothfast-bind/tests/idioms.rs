@@ -796,3 +796,44 @@ fn a_field_holding_a_clone_exported_type_reads_as_a_fresh_handle_in_python_only(
         go.gaps
     );
 }
+
+/// A tuple struct's own document, isolated from `doc()`: rustdoc names a
+/// positional field by its index, which is a legal Rust tuple index but not
+/// an identifier anywhere else.
+fn tuple_struct_doc() -> Value {
+    json!({
+        "index": {
+            "1": {
+                "name": "Wrap", "docs": Value::Null, "attrs": [], "visibility": "public",
+                "inner": { "struct": {
+                    "kind": { "tuple": [2] },
+                    "generics": { "params": [], "where_predicates": [] },
+                    "impls": [] } },
+            },
+            "2": field("0", prim("i64"), true),
+        },
+        "paths": {
+            "1": { "crate_id": 0, "path": ["shape", "Wrap"], "kind": "struct" },
+        },
+    })
+}
+
+#[test]
+fn a_tuple_structs_position_becomes_a_legal_identifier() {
+    let records = vec![record("shape::Wrap", "struct")];
+    let (surface, gaps) =
+        surface(&tuple_struct_doc(), &TypeTable::with_defaults(), &records).expect("walks");
+    assert!(
+        !gaps.iter().any(|g| g.at() == "shape::Wrap.0"),
+        "a plain i64 position needs no mapping: {gaps:?}"
+    );
+
+    let files = BindKind::Python
+        .emit(&surface, gaps, &opts())
+        .expect("emits");
+    let glue = &files.files["src/lib.rs"];
+    assert!(glue.contains("fn _0(&self) -> i64"), "{glue}");
+    let stub = &files.files["acme_core.pyi"];
+    assert!(stub.contains("def _0(self) -> int"), "{stub}");
+    assert!(glue.contains("Wrap(_0={:?})"), "{glue}");
+}
