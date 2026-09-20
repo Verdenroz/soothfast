@@ -83,22 +83,24 @@ fn a_returned_sequence_is_reported_only_where_a_buffer_saves_a_copy() {
 fn a_buffer_call_runs_with_the_lock_released() {
     let glue = emit(BindKind::Python)["src/lib.rs"].clone();
     assert!(glue.contains("py.detach(|| ::acme::digest(data.as_slice()))"));
-    assert!(glue.contains("fn bump_all(&self, py: Python<'_>, by: BorrowedI64) -> i64"));
-    assert!(glue.contains("py.detach(|| self.0.bump_all(by.into_vec()))"));
+    assert!(glue.contains("fn bump_all(&self, py: Python<'_>, by: BorrowedI64) -> PyResult<i64>"));
+    assert!(glue.contains("py.detach(|| inner.bump_all(by.into_vec()))"));
 }
 
 #[test]
 fn a_scalar_call_keeps_the_lock_rather_than_paying_to_drop_it() {
     let glue = emit(BindKind::Python)["src/lib.rs"].clone();
     assert!(glue.contains("fn bump(&self, by: i64) -> PyResult<i64>"));
-    assert!(glue.contains("fn at(&self, level: Level) -> i64"));
+    assert!(glue.contains("fn at(&self, level: Level) -> PyResult<i64>"));
 }
 
 #[test]
 fn an_optional_handle_return_maps_into_its_wrapper_for_python() {
     let glue = emit(BindKind::Python)["src/lib.rs"].clone();
     assert!(glue.contains("fn find_counter(start: i64) -> Option<Counter>"));
-    assert!(glue.contains("::acme::find_counter(start).map(Counter)"));
+    assert!(glue.contains(
+        "::acme::find_counter(start).map(|value| Counter(::std::sync::Mutex::new(CounterSlot::Live(value))))"
+    ));
 }
 
 // The golden's own text cannot show a type mismatch between the promised
@@ -147,9 +149,29 @@ fn a_type_rustdoc_never_proved_sync_keeps_the_lock() {
 #[test]
 fn an_async_call_is_awaited_inside_a_runtime() {
     let glue = emit(BindKind::Python)["src/lib.rs"].clone();
-    assert!(glue.contains("async fn refresh(&self) -> u32 {"));
-    assert!(glue.contains("OnRuntime::new(self.0.refresh()).await"));
+    assert!(glue.contains("async fn ping() -> bool {"));
+    assert!(glue.contains("OnRuntime::new(::acme::ping()).await"));
     assert!(glue.contains("fn runtime() -> &'static ::tokio::runtime::Runtime"));
+}
+
+/// `refresh` is `async` and shares `Counter` with the consuming `consume`;
+/// its own lock (see pyo3::self_access) cannot survive `refresh`'s await, so
+/// it is gapped for Python rather than generated as code that would not
+/// compile.
+#[test]
+fn an_async_method_sharing_a_consumable_owner_is_gapped_rather_than_holding_its_lock_across_await()
+{
+    let (surface, gaps) = walk();
+    let emitted = BindKind::Python
+        .emit(&surface, gaps, &opts())
+        .expect("emits");
+    assert!(
+        emitted.gaps.iter().any(|g| g.contains("Counter::refresh")),
+        "{:?}",
+        emitted.gaps
+    );
+    let glue = &emitted.files["src/lib.rs"];
+    assert!(!glue.contains("fn refresh"), "{glue}");
 }
 
 #[test]

@@ -11,7 +11,10 @@ use crate::BindOptions;
 use crate::model::Receiver;
 use crate::plan::{BindingPlan, Class, Function, detachable};
 
-use super::glue::{call_args, docs, inner_path, join, owner_path, params, return_ty, shaped_body};
+use super::glue::{
+    call_args, completed, docs, inner_path, join, owner_path, params, return_ty, self_access,
+    shaped_body,
+};
 use super::py_ident;
 
 pub(crate) fn name(function: &Function) -> String {
@@ -33,20 +36,60 @@ pub(crate) fn member(
     if !wanted(method, opts) {
         return None;
     }
+    if method.receiver == Receiver::Consuming {
+        return Some(consuming_member(method, plan, owner));
+    }
     let detach = detachable(method, Some(owner), plan);
-    let receiver = match method.receiver {
-        Receiver::Exclusive => "&mut self",
-        _ => "&self",
+    let consumable = plan.is_consumable(&owner.name);
+    let mutable = method.receiver == Receiver::Exclusive;
+    let access = self_access(owner, plan, "        ", mutable);
+    let receiver = match consumable {
+        true => "&self",
+        false if mutable => "&mut self",
+        false => "&self",
     };
-    let call = format!("self.0.{}({})", method.name, call_args(method, plan));
+    let call = format!(
+        "{}.{}({})",
+        access.expr,
+        method.name,
+        call_args(method, plan)
+    );
     let args = join(receiver, &params(method, plan, detach));
     Some(format!(
         "{}    fn {}({args}) -> {} {{\n{}    }}\n",
         doc(method),
         name(method),
-        return_ty(method, plan),
-        body(&call, method, plan, "        ", detach),
+        return_ty(method, plan, Some(owner)),
+        body(
+            &call,
+            method,
+            plan,
+            "        ",
+            detach,
+            &access.prelude,
+            Some(owner)
+        ),
     ))
+}
+
+/// The blocking twin of a terminal consuming method: `build` is never
+/// `async` here, so there is no coroutine-receiver restriction to work
+/// around and `&self` runs `take` and blocks on the call in one step.
+fn consuming_member(method: &Function, plan: &BindingPlan, owner: &Class) -> String {
+    let take = format!("self.take(\"{}\")?", method.name);
+    let inner_call = format!("value.{}({})", method.name, call_args(method, plan));
+    let call = format!("runtime().block_on({inner_call})");
+    let args = join("&self", &params(method, plan, false));
+    let ret = return_ty(method, plan, Some(owner));
+    let body = format!(
+        "        let value = {take};\n{}",
+        completed(&call, method, plan, "        ", "", Some(owner))
+    );
+    format!(
+        "{}    fn {}({args}) -> {ret} {{\n{body}    }}\n",
+        doc(method),
+        name(method)
+    )
 }
 
 /// The twin as a static method.
@@ -72,8 +115,8 @@ pub(crate) fn associated(
         doc(function),
         name(function),
         params(function, plan, detach),
-        return_ty(function, plan),
-        body(&call, function, plan, "        ", detach),
+        return_ty(function, plan, None),
+        body(&call, function, plan, "        ", detach, "", None),
     ))
 }
 
@@ -98,8 +141,8 @@ pub(crate) fn free(
         doc(function),
         name(function),
         params(function, plan, detach),
-        return_ty(function, plan),
-        body(&call, function, plan, "    ", detach),
+        return_ty(function, plan, None),
+        body(&call, function, plan, "    ", detach, "", None),
     ))
 }
 
@@ -152,13 +195,24 @@ pub(crate) fn check(plan: &BindingPlan, opts: &BindOptions) -> Result<(), String
     Ok(())
 }
 
-fn body(call: &str, function: &Function, plan: &BindingPlan, indent: &str, detach: bool) -> String {
+#[allow(clippy::too_many_arguments)]
+fn body(
+    call: &str,
+    function: &Function,
+    plan: &BindingPlan,
+    indent: &str,
+    detach: bool,
+    prelude: &str,
+    owner: Option<&Class>,
+) -> String {
     shaped_body(
         &format!("runtime().block_on({call})"),
         function,
         plan,
         indent,
         detach,
+        prelude,
+        owner,
     )
 }
 

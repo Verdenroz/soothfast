@@ -131,15 +131,26 @@ fn a_mapped_foreign_type_binds_instead_of_reporting() {
 }
 
 #[test]
-fn a_consuming_receiver_is_reported_and_left_unbound() {
-    let (_, gaps) = walk();
+fn a_consuming_receiver_is_reported_and_left_unbound_for_every_backend_but_python() {
+    let (surface, gaps) = walk();
+    let go = lower(&surface, gaps.clone(), &opts(), BindKind::Go).expect("lowers");
     assert!(
-        gaps.iter()
+        go.gaps
+            .iter()
             .any(|g| matches!(g, Gap::ConsumingReceiver { at } if at == "acme::Counter::consume"))
     );
-    let plan = plan_for(BindKind::Python);
-    let counter = plan.classes.iter().find(|c| c.name == "Counter").unwrap();
+    let counter = go.classes.iter().find(|c| c.name == "Counter").unwrap();
     assert!(!counter.methods.iter().any(|m| m.name == "consume"));
+
+    let python = lower(&surface, gaps, &opts(), BindKind::Python).expect("lowers");
+    assert!(
+        !python
+            .gaps
+            .iter()
+            .any(|g| matches!(g, Gap::ConsumingReceiver { .. }))
+    );
+    let counter = python.classes.iter().find(|c| c.name == "Counter").unwrap();
+    assert!(counter.methods.iter().any(|m| m.name == "consume"));
 }
 
 #[test]

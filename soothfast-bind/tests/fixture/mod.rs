@@ -269,6 +269,10 @@ fn free_functions(insert: &mut impl FnMut(u64, Value)) {
             false,
         ),
     );
+    // A free async fn, independent of any class, so a backend's async story
+    // still has something to prove itself against once a consuming method
+    // makes `Counter::refresh` gapped for taking its lock across an await.
+    insert(58, func("ping", &[], prim("bool"), true));
 }
 
 /// The crate's free functions that take or return an `Option`.
@@ -580,6 +584,7 @@ pub fn doc() -> Value {
             "28": { "crate_id": 0, "path": ["acme", "levels"], "kind": "function" },
             "29": { "crate_id": 0, "path": ["acme", "counters"], "kind": "function" },
             "56": { "crate_id": 0, "path": ["acme", "invert_bits"], "kind": "function" },
+            "58": { "crate_id": 0, "path": ["acme", "ping"], "kind": "function" },
             "16": { "crate_id": 0, "path": ["acme", "describe"], "kind": "function" },
             "17": { "crate_id": 0, "path": ["acme", "describe_owned"], "kind": "function" },
             "18": { "crate_id": 0, "path": ["acme", "maybe_ratio"], "kind": "function" },
@@ -634,6 +639,7 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::levels", "fn"),
         record("acme::counters", "fn"),
         record("acme::invert_bits", "fn"),
+        record("acme::ping", "fn"),
         record("acme::describe", "fn"),
         record("acme::describe_owned", "fn"),
         record("acme::maybe_ratio", "fn"),

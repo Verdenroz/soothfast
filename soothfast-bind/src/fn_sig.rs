@@ -45,9 +45,6 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
     let ret_borrowed = ret_is_borrowed(output);
     let is_async = function["header"]["is_async"].as_bool().unwrap_or(false);
 
-    if receiver == Receiver::Consuming {
-        r.record(Gap::ConsumingReceiver { at: at.clone() });
-    }
     if is_async && receiver == Receiver::Exclusive {
         r.record(Gap::AsyncExclusiveReceiver { at: at.clone() });
     }

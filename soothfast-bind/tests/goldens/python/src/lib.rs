@@ -452,56 +452,102 @@ impl ::std::convert::From<BindErrorString> for ::pyo3::PyErr {
 }
 
 #[pyclass(name = "Counter")]
-pub struct Counter(::acme::Counter);
+pub struct Counter(::std::sync::Mutex<CounterSlot>);
+
+enum CounterSlot {
+    Live(::acme::Counter),
+    Consumed(&'static str),
+}
+
+impl Counter {
+    fn take(&self, consumer: &'static str) -> ::pyo3::PyResult<::acme::Counter> {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match ::std::mem::replace(&mut *guard, CounterSlot::Consumed(consumer)) {
+            CounterSlot::Live(value) => Ok(value),
+            CounterSlot::Consumed(by) => {
+                *guard = CounterSlot::Consumed(by);
+                Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}")))
+            }
+        }
+    }
+}
 
 #[pymethods]
 impl Counter {
     #[new]
     fn new(start: i64) -> Self {
-        Counter(::acme::Counter::new(start))
+        Counter(::std::sync::Mutex::new(CounterSlot::Live(::acme::Counter::new(start))))
     }
 
     #[getter]
-    fn value(&self) -> i64 {
-        self.0.value.clone()
+    fn value(&self) -> PyResult<i64> {
+        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = match &*guard {
+            CounterSlot::Live(value) => value,
+            CounterSlot::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))),
+        };
+        Ok(inner.value.clone())
     }
 
     #[setter]
-    fn set_value(&mut self, value: i64) {
-        self.0.value = value;
+    fn set_value(&self, value: i64) -> PyResult<()> {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = match &mut *guard {
+            CounterSlot::Live(value) => value,
+            CounterSlot::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))),
+        };
+        inner.value = value;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {
-        format!("Counter(value={:?})", self.0.value)
+        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match &*guard {
+            CounterSlot::Live(inner) => format!("Counter(value={:?})", inner.value),
+            CounterSlot::Consumed(by) => format!("Counter(<consumed by {by}>)"),
+        }
     }
 
-    fn absorb(&mut self, other: PyRef<'_, Counter>) -> () {
-        self.0.absorb(&other.0)
-    }
-
-    fn at(&self, level: Level) -> i64 {
-        self.0.at(level.into())
+    fn at(&self, level: Level) -> PyResult<i64> {
+        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = match &*guard {
+            CounterSlot::Live(value) => value,
+            CounterSlot::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))),
+        };
+        Ok(inner.at(level.into()))
     }
 
     fn bump(&self, by: i64) -> PyResult<i64> {
-        Ok(self.0.bump(by).map_err(BindErrorString)?)
+        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = match &*guard {
+            CounterSlot::Live(value) => value,
+            CounterSlot::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))),
+        };
+        Ok(inner.bump(by).map_err(BindErrorString)?)
     }
 
-    fn bump_all(&self, py: Python<'_>, by: BorrowedI64) -> i64 {
-        py.detach(|| self.0.bump_all(by.into_vec()))
+    fn bump_all(&self, py: Python<'_>, by: BorrowedI64) -> PyResult<i64> {
+        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = match &*guard {
+            CounterSlot::Live(value) => value,
+            CounterSlot::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))),
+        };
+        let out = py.detach(|| inner.bump_all(by.into_vec()));
+        Ok(out)
     }
 
-    async fn refresh(&self) -> u32 {
-        OnRuntime::new(self.0.refresh()).await
+    fn consume(&self) -> PyResult<i64> {
+        let value = self.take("consume")?;
+        Ok(value.consume())
     }
 
-    /// Blocking form of `refresh`: runs the call to completion on the package's runtime.
-    fn refresh_blocking(&self, py: Python<'_>) -> u32 {
-        py.detach(|| runtime().block_on(self.0.refresh()))
-    }
-
-    fn scale(&mut self, factor: i64) -> i64 {
-        self.0.scale(factor)
+    fn scale(&self, factor: i64) -> PyResult<i64> {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = match &mut *guard {
+            CounterSlot::Live(value) => value,
+            CounterSlot::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))),
+        };
+        Ok(inner.scale(factor))
     }
 }
 
@@ -550,7 +596,7 @@ pub struct Mode(::acme::Mode);
 
 #[pyfunction]
 fn counters() -> Vec<Counter> {
-    ::acme::counters().into_iter().map(Counter).collect()
+    ::acme::counters().into_iter().map(|value| Counter(::std::sync::Mutex::new(CounterSlot::Live(value)))).collect()
 }
 
 #[pyfunction]
@@ -575,7 +621,7 @@ fn fail(message: &str) -> PyResult<i64> {
 
 #[pyfunction]
 fn find_counter(start: i64) -> Option<Counter> {
-    ::acme::find_counter(start).map(Counter)
+    ::acme::find_counter(start).map(|value| Counter(::std::sync::Mutex::new(CounterSlot::Live(value))))
 }
 
 #[pyfunction]
@@ -614,11 +660,6 @@ fn maybe_ratio(value: f64) -> Option<f64> {
 }
 
 #[pyfunction]
-fn mutate_counter(mut counter: PyRefMut<'_, Counter>) -> i64 {
-    ::acme::mutate_counter(&mut counter.0)
-}
-
-#[pyfunction]
 fn normalize(py: Python<'_>, input: BorrowedF64, factor: f64) -> F64Array {
     let out = py.detach(|| ::acme::normalize(input.into_vec(), factor));
     F64Array::new(out)
@@ -631,8 +672,14 @@ fn peak_level(py: Python<'_>, values: BorrowedF64) -> Level {
 }
 
 #[pyfunction]
-fn peek(counter: Option<PyRef<'_, Counter>>) -> bool {
-    ::acme::peek(counter.as_deref().map(|v| &v.0))
+async fn ping() -> bool {
+    OnRuntime::new(::acme::ping()).await
+}
+
+    /// Blocking form of `ping`: runs the call to completion on the package's runtime.
+#[pyfunction]
+fn ping_blocking(py: Python<'_>) -> bool {
+    py.detach(|| runtime().block_on(::acme::ping()))
 }
 
 #[pyfunction]
@@ -715,10 +762,9 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(is_high, m)?)?;
     m.add_function(wrap_pyfunction!(levels, m)?)?;
     m.add_function(wrap_pyfunction!(maybe_ratio, m)?)?;
-    m.add_function(wrap_pyfunction!(mutate_counter, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(peak_level, m)?)?;
-    m.add_function(wrap_pyfunction!(peek, m)?)?;
+    m.add_function(wrap_pyfunction!(ping, m)?)?;
     m.add_function(wrap_pyfunction!(sample_ids, m)?)?;
     m.add_function(wrap_pyfunction!(scale_into, m)?)?;
     m.add_function(wrap_pyfunction!(scale_optional, m)?)?;
@@ -728,5 +774,6 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sum_optional, m)?)?;
     m.add_function(wrap_pyfunction!(trim, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
+    m.add_function(wrap_pyfunction!(ping_blocking, m)?)?;
     Ok(())
 }

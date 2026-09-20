@@ -5,7 +5,7 @@
 use std::fmt::Write;
 
 use crate::BindOptions;
-use crate::model::Ty;
+use crate::model::{Receiver, Ty};
 use crate::plan::{Accessor, BindingPlan, Class, Function, Transfer};
 
 use super::buffers::{array_name, arrays, buffered};
@@ -124,10 +124,10 @@ fn handle_class(class: &Class, plan: &BindingPlan, opts: &BindOptions) -> String
         out.push_str("    def __repr__(self) -> str: ...\n");
     }
     for method in &class.methods {
-        out.push_str(&def(method, plan, opts, "    ", "self"));
+        out.push_str(&def(method, plan, opts, "    ", "self", Some(&class.name)));
     }
     for function in &class.statics {
-        out.push_str(&def(function, plan, opts, "    ", ""));
+        out.push_str(&def(function, plan, opts, "    ", "", None));
     }
     if class.ctor.is_none()
         && class.accessors.is_empty()
@@ -175,19 +175,21 @@ fn exception_class(name: &str, parent: &str, fields: &[(String, Ty)]) -> String 
 }
 
 fn free_fn(function: &Function, plan: &BindingPlan, opts: &BindOptions) -> String {
-    let mut out = def(function, plan, opts, "", "");
+    let mut out = def(function, plan, opts, "", "", None);
     out.push('\n');
     out
 }
 
 /// A method, static or free function, followed by its blocking twin when
-/// one is emitted.
+/// one is emitted. A consuming method that returns its own owner's class is
+/// a forward reference at this point in the stub, so it is spelled quoted.
 fn def(
     function: &Function,
     plan: &BindingPlan,
     opts: &BindOptions,
     indent: &str,
     receiver: &str,
+    owner: Option<&str>,
 ) -> String {
     let inner = format!("{indent}    ");
     let decorator = match (receiver.is_empty(), indent.is_empty()) {
@@ -195,20 +197,24 @@ fn def(
         _ => String::new(),
     };
     let asyncness = if function.is_async { "async " } else { "" };
+    let self_return = function.receiver == Receiver::Consuming
+        && matches!(&function.ret, Ty::Class(name) if Some(name.as_str()) == owner);
+    let ret = match self_return {
+        true => format!("\"{}\"", spell(&function.ret, Slot::Return)),
+        false => spell(&function.ret, Slot::Return),
+    };
     let mut out = format!(
-        "{decorator}{indent}{asyncness}def {}({receiver}{}) -> {}:{}",
+        "{decorator}{indent}{asyncness}def {}({receiver}{}) -> {ret}:{}",
         py_ident(&function.name),
         params_after(function, plan, receiver),
-        spell(&function.ret, Slot::Return),
         body(function.doc.as_deref(), &inner),
     );
     if opts.blocking && function.is_async {
         let _ = writeln!(
             out,
-            "{decorator}{indent}def {}({receiver}{}) -> {}: ...",
+            "{decorator}{indent}def {}({receiver}{}) -> {ret}: ...",
             blocking::name(function),
             params_after(function, plan, receiver),
-            spell(&function.ret, Slot::Return),
         );
     }
     out

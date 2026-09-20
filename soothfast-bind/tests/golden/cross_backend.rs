@@ -11,9 +11,13 @@ fn one_rust_surface_reaches_both_languages_as_the_same_class() {
     let python = emit(BindKind::Python)["src/lib.rs"].clone();
     let wasm = emit(BindKind::Wasm)["src/lib.rs"].clone();
     for glue in [&python, &wasm] {
-        assert!(glue.contains("pub struct Counter(::acme::Counter);"));
         assert!(glue.contains("fn normalize("));
     }
+    // `Counter` has a consuming method Python binds in place through a
+    // locked slot (see pyo3::class_block); wasm still has no story for a
+    // consuming method, so its own wrapper stays the plain form.
+    assert!(python.contains("pub struct Counter(::std::sync::Mutex<CounterSlot>);"));
+    assert!(wasm.contains("pub struct Counter(::acme::Counter);"));
     assert!(python.contains("#[pyclass(name = \"Counter\")]"));
     assert!(wasm.contains("#[wasm_bindgen]\npub struct Counter"));
 }

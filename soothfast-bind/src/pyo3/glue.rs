@@ -130,10 +130,14 @@ fn aliasing_check(function: &Function, plan: &BindingPlan, indent: &str) -> Stri
 /// Whether the generated signature has to return `PyResult`: the call
 /// itself can fail, an aliasing check ahead of it can, or a mapped
 /// parameter has to parse first.
-fn fallible(function: &Function, plan: &BindingPlan) -> bool {
+/// A consuming method's owner is never passed here (see `consuming_member`);
+/// any other method on a class a consuming method can empty always raises,
+/// since the class may already be consumed by the time it runs.
+fn fallible(function: &Function, plan: &BindingPlan, owner: Option<&Class>) -> bool {
     function.throws.is_some()
         || !aliasing_pairs(function, plan).is_empty()
         || function.params.iter().any(|p| text::mentions(&p.ty))
+        || owner.is_some_and(|c| plan.is_consumable(&c.name))
 }
 
 fn class_block(class: &Class, krate: &str, plan: &BindingPlan, opts: &BindOptions) -> String {
@@ -141,28 +145,39 @@ fn class_block(class: &Class, krate: &str, plan: &BindingPlan, opts: &BindOption
         return plain_enum(class, krate);
     }
     let unsendable = if class.send { "" } else { ", unsendable" };
+    let consumable = plan.is_consumable(&class.name);
     // A by-value `#[pyclass]` parameter needs the wrapper `Clone` and
-    // pyo3's opt-in `FromPyObject` for it; the blanket impl is being retired.
-    let (derive_clone, from_py_object) = if class.clone {
+    // pyo3's opt-in `FromPyObject` for it; the blanket impl is being
+    // retired. A consumable wrapper holds its value behind a `Mutex`,
+    // which is never `Clone`, so the two features do not combine.
+    let (derive_clone, from_py_object) = if class.clone && !consumable {
         ("#[derive(Clone)]\n", ", from_py_object")
     } else {
         ("", "")
     };
+    let inner = inner_path(&class.rust_path, krate);
+    let field = match consumable {
+        true => format!("::std::sync::Mutex<{}>", slot_name(&class.name)),
+        false => inner.clone(),
+    };
     let mut out = format!(
-        "\n{}#[pyclass(name = \"{}\"{unsendable}{from_py_object})]\n{derive_clone}pub struct {}({});\n",
+        "\n{}#[pyclass(name = \"{}\"{unsendable}{from_py_object})]\n{derive_clone}pub struct {}({field});\n",
         docs(class.doc.as_deref(), ""),
         class.name,
         class.name,
-        inner_path(&class.rust_path, krate),
     );
+    if consumable {
+        out.push_str(&slot_enum(class, &inner));
+        out.push_str(&take_impl(class, &inner));
+    }
 
     let mut members: Vec<String> = Vec::new();
     if let Some(ctor) = &class.ctor {
         members.push(constructor(ctor, krate, plan, class));
     }
     for accessor in &class.accessors {
-        members.push(getter(accessor, plan));
-        members.extend(setter(accessor, plan));
+        members.push(getter(accessor, plan, class));
+        members.extend(setter(accessor, plan, class));
     }
     members.extend(repr::member(class, plan));
     for method in &class.methods {
@@ -182,6 +197,69 @@ fn class_block(class: &Class, krate: &str, plan: &BindingPlan, opts: &BindOption
         );
     }
     out
+}
+
+/// The enum a consumable class's lock guards: its own value, or the name of
+/// whichever consuming method last took it out.
+pub(super) fn slot_name(class_name: &str) -> String {
+    format!("{class_name}Slot")
+}
+
+fn slot_enum(class: &Class, inner: &str) -> String {
+    format!(
+        "\nenum {} {{\n    Live({inner}),\n    Consumed(&'static str),\n}}\n",
+        slot_name(&class.name),
+    )
+}
+
+/// `take` empties the slot for a consuming method to move the value out of.
+/// A call that finds it already empty restores the name already there
+/// rather than overwriting it, so the error always names the first method
+/// that consumed the handle, not whichever tried to reuse it since.
+fn take_impl(class: &Class, inner: &str) -> String {
+    let name = &class.name;
+    let slot = slot_name(name);
+    format!(
+        "\nimpl {name} {{\n    fn take(&self, consumer: &'static str) -> ::pyo3::PyResult<{inner}> {{\n        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());\n        match ::std::mem::replace(&mut *guard, {slot}::Consumed(consumer)) {{\n            {slot}::Live(value) => Ok(value),\n            {slot}::Consumed(by) => {{\n                *guard = {slot}::Consumed(by);\n                Err(::pyo3::exceptions::PyRuntimeError::new_err(format!(\"{name} was consumed by {{by}}\")))\n            }}\n        }}\n    }}\n}}\n",
+    )
+}
+
+/// Where a getter, setter, method or repr reads a class's inner value:
+/// `self.0` directly for a plain wrapper, or a prelude that locks a
+/// consumable one's slot and matches out the live value, bound as `inner`.
+/// The lock never crosses an `.await`: `take` (see `take_impl`) drops its
+/// own guard before returning, and every other accessor here is
+/// synchronous start to finish.
+pub(super) struct SelfAccess {
+    pub(super) prelude: String,
+    pub(super) expr: &'static str,
+}
+
+pub(super) fn self_access(
+    owner: &Class,
+    plan: &BindingPlan,
+    indent: &str,
+    mutable: bool,
+) -> SelfAccess {
+    if !plan.is_consumable(&owner.name) {
+        return SelfAccess {
+            prelude: String::new(),
+            expr: "self.0",
+        };
+    }
+    let slot = slot_name(&owner.name);
+    let name = &owner.name;
+    let (binding, deref) = match mutable {
+        true => ("let mut guard", "&mut *guard"),
+        false => ("let guard", "&*guard"),
+    };
+    let prelude = format!(
+        "{indent}{binding} = self.0.lock().unwrap_or_else(|e| e.into_inner());\n{indent}let inner = match {deref} {{\n{indent}    {slot}::Live(value) => value,\n{indent}    {slot}::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!(\"{name} was consumed by {{by}}\"))),\n{indent}}};\n",
+    );
+    SelfAccess {
+        prelude,
+        expr: "inner",
+    }
 }
 
 /// A plain enumeration mirrors onto a Python enum rather than staying an
@@ -262,7 +340,7 @@ fn constructor(ctor: &Function, krate: &str, plan: &BindingPlan, owner: &Class) 
         ctor.name,
         call_args(ctor, plan)
     );
-    let ret = match fallible(ctor, plan) {
+    let ret = match fallible(ctor, plan, None) {
         true => "PyResult<Self>",
         false => "Self",
     };
@@ -270,38 +348,50 @@ fn constructor(ctor: &Function, krate: &str, plan: &BindingPlan, owner: &Class) 
         "{}    #[new]\n    fn new({}) -> {ret} {{\n{}    }}\n",
         docs(ctor.doc.as_deref(), "    "),
         params(ctor, plan, detach),
-        body(&call, ctor, plan, "        ", detach),
+        body(&call, ctor, plan, "        ", detach, "", None),
     )
 }
 
 /// A getter clones, which every bound field type supports: an exported type
 /// reaches here only when the plan found it `Clone`, and is wrapped into a
 /// fresh handle. A sequence of one is wrapped into its seq instead.
-fn getter(accessor: &Accessor, plan: &BindingPlan) -> String {
+fn getter(accessor: &Accessor, plan: &BindingPlan, owner: &Class) -> String {
     if let Some(class) = seq::element(&accessor.ty, plan) {
         return seq::getter(accessor, class);
     }
+    let consumable = plan.is_consumable(&owner.name);
+    let access = self_access(owner, plan, "        ", false);
+    let expr = access.expr;
     let name = py_ident(&accessor.field);
     let field = &accessor.field;
     let read = match &accessor.ty {
-        Ty::Class(class) if plan.is_mirrored(class) => format!("(&self.0.{field})"),
-        _ => format!("self.0.{field}.clone()"),
+        Ty::Class(class) if plan.is_mirrored(class) => format!("(&{expr}.{field})"),
+        _ => format!("{expr}.{field}.clone()"),
     };
-    let body = text::out_ref(&format!("self.0.{field}"), &accessor.ty)
+    let body = text::out_ref(&format!("{expr}.{field}"), &accessor.ty)
         .unwrap_or_else(|| returned(&read, &accessor.ty, plan));
+    let ret = returned_ty(&accessor.ty);
+    let (ret, body) = match consumable {
+        true => (format!("PyResult<{ret}>"), format!("Ok({body})")),
+        false => (ret, body),
+    };
     format!(
-        "{}    #[getter]\n    fn {name}(&self) -> {} {{\n        {body}\n    }}\n",
+        "{}    #[getter]\n    fn {name}(&self) -> {ret} {{\n{}        {body}\n    }}\n",
         docs(accessor.doc.as_deref(), "    "),
-        returned_ty(&accessor.ty),
+        access.prelude,
     )
 }
 
 /// A field holding an exported type has no setter: the handle Python passes
 /// in cannot be moved out of, and the type is not known to be `Clone`.
-fn setter(accessor: &Accessor, plan: &BindingPlan) -> Option<String> {
+fn setter(accessor: &Accessor, plan: &BindingPlan, owner: &Class) -> Option<String> {
     if holds_handle(&accessor.ty, plan) {
         return None;
     }
+    let consumable = plan.is_consumable(&owner.name);
+    let access = self_access(owner, plan, "        ", true);
+    let receiver = if consumable { "&self" } else { "&mut self" };
+    let expr = access.expr;
     let name = py_ident(&accessor.field);
     let field = &accessor.field;
     let (spelling, assigned) = match &accessor.ty {
@@ -310,13 +400,19 @@ fn setter(accessor: &Accessor, plan: &BindingPlan) -> Option<String> {
         }
         ty => (signature_ty(ty), into(ty, plan)),
     };
-    if let Some(parsed) = text::parse("value", &accessor.ty) {
-        return Some(format!(
-            "    #[setter]\n    fn set_{name}(&mut self, value: {spelling}) -> PyResult<()> {{\n        self.0.{field} = {parsed};\n        Ok(())\n    }}\n",
-        ));
-    }
+    let mapped = text::parse("value", &accessor.ty);
+    let ok_needed = consumable || mapped.is_some();
+    let assign = match mapped {
+        Some(parsed) => format!("{expr}.{field} = {parsed};"),
+        None => format!("{expr}.{field} = {assigned};"),
+    };
+    let (ret, tail) = match ok_needed {
+        true => (" -> PyResult<()>", format!("{assign}\n        Ok(())")),
+        false => ("", assign),
+    };
     Some(format!(
-        "    #[setter]\n    fn set_{name}(&mut self, value: {spelling}) {{\n        self.0.{field} = {assigned};\n    }}\n",
+        "    #[setter]\n    fn set_{name}({receiver}, value: {spelling}){ret} {{\n{}        {tail}\n    }}\n",
+        access.prelude,
     ))
 }
 
@@ -331,21 +427,81 @@ pub(super) fn holds_handle(ty: &Ty, plan: &BindingPlan) -> bool {
 }
 
 fn member(method: &Function, plan: &BindingPlan, owner: &Class) -> String {
+    if method.receiver == Receiver::Consuming {
+        return consuming_member(method, plan, owner);
+    }
     let detach = offloadable(method, Some(owner), plan);
-    let receiver = match method.receiver {
-        Receiver::Exclusive => "&mut self",
-        _ => "&self",
+    let consumable = plan.is_consumable(&owner.name);
+    let mutable = method.receiver == Receiver::Exclusive;
+    let access = self_access(owner, plan, "        ", mutable);
+    let receiver = match consumable {
+        true => "&self",
+        false if mutable => "&mut self",
+        false => "&self",
     };
-    let call = format!("self.0.{}({})", method.name, call_args(method, plan));
+    let call = format!(
+        "{}.{}({})",
+        access.expr,
+        method.name,
+        call_args(method, plan)
+    );
     let args = join(receiver, &params(method, plan, detach));
     format!(
         "{}    {}fn {}({args}) -> {} {{\n{}    }}\n",
         docs(method.doc.as_deref(), "    "),
         asyncness(method),
         py_ident(&method.name),
-        return_ty(method, plan),
-        body(&call, method, plan, "        ", detach),
+        return_ty(method, plan, Some(owner)),
+        body(
+            &call,
+            method,
+            plan,
+            "        ",
+            detach,
+            &access.prelude,
+            Some(owner)
+        ),
     )
+}
+
+/// A method that takes `self` by value: `take`s the value out of the
+/// wrapper's slot, calls it, and either refills the slot (a `Self`-returning
+/// setter, so `b.region(r).lang(l)` chains and mutates in place) or leaves
+/// it consumed (a terminal call like `build`). `take`'s own lock is dropped
+/// before it returns, so a terminal call is free to `.await` afterward.
+fn consuming_member(method: &Function, plan: &BindingPlan, owner: &Class) -> String {
+    let is_self_return = matches!(&method.ret, Ty::Class(name) if name == &owner.name);
+    let inner_call = format!("value.{}({})", method.name, call_args(method, plan));
+    let docs = docs(method.doc.as_deref(), "    ");
+    let asyncness = asyncness(method);
+    let name = py_ident(&method.name);
+    if is_self_return {
+        let slot = slot_name(&owner.name);
+        let call = match &method.throws {
+            Some(err) => format!("{inner_call}.map_err({})?", error_name(err)),
+            None => inner_call,
+        };
+        let args = join("slf: PyRef<'_, Self>", &params(method, plan, false));
+        return format!(
+            "{docs}    fn {name}({args}) -> PyResult<PyRef<'_, Self>> {{\n        let value = slf.take(\"{}\")?;\n        let value = {call};\n        *slf.0.lock().unwrap_or_else(|e| e.into_inner()) = {slot}::Live(value);\n        Ok(slf)\n    }}\n",
+            method.name,
+        );
+    }
+    // `take` returns before the caller ever awaits anything, so `&self`
+    // holds no lock across the `.await` below (pyo3's async pymethods only
+    // accept `&self`/`&mut self` receivers in any case).
+    let take = format!("self.take(\"{}\")?", method.name);
+    let args = join("&self", &params(method, plan, false));
+    let ret = return_ty(method, plan, Some(owner));
+    let call = match method.is_async {
+        true => asyncrt::awaited(&inner_call),
+        false => inner_call,
+    };
+    let body = format!(
+        "        let value = {take};\n{}",
+        completed(&call, method, plan, "        ", "", Some(owner))
+    );
+    format!("{docs}    {asyncness}fn {name}({args}) -> {ret} {{\n{body}    }}\n")
 }
 
 fn associated_fn(function: &Function, krate: &str, plan: &BindingPlan, owner: &Class) -> String {
@@ -362,8 +518,8 @@ fn associated_fn(function: &Function, krate: &str, plan: &BindingPlan, owner: &C
         asyncness(function),
         py_ident(&function.name),
         params(function, plan, detach),
-        return_ty(function, plan),
-        body(&call, function, plan, "        ", detach),
+        return_ty(function, plan, None),
+        body(&call, function, plan, "        ", detach, "", None),
     )
 }
 
@@ -380,39 +536,54 @@ fn free_fn(function: &Function, krate: &str, plan: &BindingPlan) -> String {
         asyncness(function),
         py_ident(&function.name),
         params(function, plan, detach),
-        return_ty(function, plan),
-        body(&call, function, plan, "    ", detach),
+        return_ty(function, plan, None),
+        body(&call, function, plan, "    ", detach, "", None),
     )
 }
 
 /// The call, converted into whatever the generated signature promised: a
 /// handle constructor, a mirrored value, a `?` through the error newtype.
-/// [`aliasing_check`]'s `if`s run first, ahead of the call itself, whether
-/// detached or not.
-fn body(call: &str, function: &Function, plan: &BindingPlan, indent: &str, detach: bool) -> String {
+/// `prelude` runs first (a consumable owner's lock, see `self_access`), then
+/// [`aliasing_check`]'s `if`s, whether detached or not.
+#[allow(clippy::too_many_arguments)]
+fn body(
+    call: &str,
+    function: &Function,
+    plan: &BindingPlan,
+    indent: &str,
+    detach: bool,
+    prelude: &str,
+    owner: Option<&Class>,
+) -> String {
     let call = match function.is_async {
         true => asyncrt::awaited(call),
         false => call.to_string(),
     };
-    shaped_body(&call, function, plan, indent, detach)
+    shaped_body(&call, function, plan, indent, detach, prelude, owner)
 }
 
 /// [`body`] over a call already shaped for how it runs: awaited, blocked on,
 /// or plain.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn shaped_body(
     call: &str,
     function: &Function,
     plan: &BindingPlan,
     indent: &str,
     detach: bool,
+    prelude: &str,
+    owner: Option<&Class>,
 ) -> String {
     let checks = format!(
-        "{}{}",
+        "{prelude}{}{}",
         aliasing_check(function, plan, indent),
         text::preludes(function, indent)
     );
     if !detach {
-        return format!("{checks}{}", completed(call, function, plan, indent, ""));
+        return format!(
+            "{checks}{}",
+            completed(call, function, plan, indent, "", owner)
+        );
     }
     // A call that cannot fail and needs no conversion is the whole body, so
     // binding its value would only name it to return it.
@@ -423,17 +594,18 @@ pub(super) fn shaped_body(
         return format!("{indent}py.detach(|| {call})\n");
     }
     let bound = format!("{checks}{indent}let out = py.detach(|| {call});\n");
-    completed("out", function, plan, indent, &bound)
+    completed("out", function, plan, indent, &bound, owner)
 }
 
 /// The call converted into whatever the signature promised, after whatever
 /// had to happen before it.
-fn completed(
+pub(super) fn completed(
     expr: &str,
     function: &Function,
     plan: &BindingPlan,
     indent: &str,
     prefix: &str,
+    owner: Option<&Class>,
 ) -> String {
     let value = match &function.throws {
         Some(err) => format!("{expr}.map_err({})?", error_name(err)),
@@ -444,7 +616,7 @@ fn completed(
         false => value,
     };
     let out = returned(&value, &function.ret, plan);
-    match fallible(function, plan) {
+    match fallible(function, plan, owner) {
         true => format!("{prefix}{indent}Ok({out})\n"),
         false => format!("{prefix}{indent}{out}\n"),
     }
@@ -489,6 +661,18 @@ fn is_container(ty: &Ty) -> bool {
     matches!(ty, Ty::List(_) | Ty::Optional(_) | Ty::Map(_, _))
 }
 
+/// A fresh handle, constructed from an owned value: a plain tuple call for
+/// most classes, or a live slot for one a consuming method can later empty.
+fn wrap_handle(name: &str, expr: &str, plan: &BindingPlan) -> String {
+    match plan.is_consumable(name) {
+        true => format!(
+            "{name}(::std::sync::Mutex::new({}::Live({expr})))",
+            slot_name(name)
+        ),
+        false => format!("{name}({expr})"),
+    }
+}
+
 /// A value leaving the user's crate, spelled the way the signature promised.
 fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
     if let Some(rendered) = text::out(expr, ty) {
@@ -496,10 +680,13 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
     }
     match ty {
         Ty::Class(name) if plan.is_mirrored(name) => format!("{expr}.into()"),
-        Ty::Class(name) => format!("{name}({expr})"),
+        Ty::Class(name) => wrap_handle(name, expr, plan),
         Ty::Optional(inner) => match &**inner {
             Ty::Class(name) if plan.is_mirrored(name) => {
                 format!("{expr}.map(::std::convert::Into::into)")
+            }
+            Ty::Class(name) if plan.is_consumable(name) => {
+                format!("{expr}.map(|value| {})", wrap_handle(name, "value", plan))
             }
             Ty::Class(name) => format!("{expr}.map({name})"),
             _ if has_class(inner) => format!("{expr}.map(|value| {})", out("value", inner, plan)),
@@ -509,6 +696,10 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
             Ty::Class(name) if plan.is_mirrored(name) => {
                 format!("{expr}.into_iter().map(::std::convert::Into::into).collect()")
             }
+            Ty::Class(name) if plan.is_consumable(name) => format!(
+                "{expr}.into_iter().map(|value| {}).collect()",
+                wrap_handle(name, "value", plan)
+            ),
             Ty::Class(name) => format!("{expr}.into_iter().map({name}).collect()"),
             _ if has_class(inner) => format!(
                 "{expr}.into_iter().map(|value| {}).collect()",
@@ -770,9 +961,9 @@ fn needs_mut(param: &Param, plan: &BindingPlan) -> bool {
     )
 }
 
-pub(super) fn return_ty(function: &Function, plan: &BindingPlan) -> String {
+pub(super) fn return_ty(function: &Function, plan: &BindingPlan, owner: Option<&Class>) -> String {
     let ok = returned_ty(&function.ret);
-    match fallible(function, plan) {
+    match fallible(function, plan, owner) {
         true => format!("PyResult<{ok}>"),
         false => ok,
     }

@@ -76,8 +76,16 @@ try:
 except OverflowError:
     pass
 
-assert asyncio.run(c.refresh()) == 10
-assert c.refresh_blocking() == 10
+assert asyncio.run(acme_core.ping()) is True
+assert acme_core.ping_blocking() is True
+
+b = Counter(3)
+assert b.consume() == 3
+try:
+    b.bump(1)
+    raise AssertionError("expected a RuntimeError")
+except RuntimeError as e:
+    assert "consumed by consume" in str(e)
 
 assert bytes(acme_core.digest(bytes([1, 2, 3]))) == bytes([2, 3, 4])
 

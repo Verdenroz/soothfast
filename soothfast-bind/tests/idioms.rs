@@ -757,6 +757,144 @@ fn a_vec_of_borrowed_str_return_is_owned_by_the_python_glue_element_wise() {
     );
 }
 
+/// `doc()` plus `Builder { n: i64 }`: a public field for repr, a chaining
+/// setter (`region`, consuming, returns `Self`), and an async terminal
+/// (`build`, consuming, returns `i64`).
+fn doc_with_builder() -> Value {
+    let mut doc = doc();
+    doc["index"]["200"] = struct_item("Builder", &[201], &[202]);
+    doc["index"]["201"] = field("n", prim("i64"), true);
+    doc["index"]["202"] = json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
+        "inner": { "impl": { "trait": Value::Null, "items": [203, 204, 205] } } });
+    doc["index"]["203"] = func(
+        "new",
+        &[("n", prim("i64"))],
+        json!({ "generic": "Self" }),
+        false,
+    );
+    doc["index"]["204"] = func(
+        "region",
+        &[
+            ("self", json!({ "generic": "Self" })),
+            ("extra", prim("i64")),
+        ],
+        json!({ "generic": "Self" }),
+        false,
+    );
+    doc["index"]["205"] = func(
+        "build",
+        &[("self", json!({ "generic": "Self" }))],
+        prim("i64"),
+        true,
+    );
+    doc["index"]["0"]["inner"]["module"]["items"]
+        .as_array_mut()
+        .expect("items")
+        .push(json!(200));
+    doc["paths"]["200"] = json!({ "crate_id": 0, "path": ["acme", "Builder"], "kind": "struct" });
+    doc
+}
+
+fn builder_records() -> Vec<soothfast_bind::model::ExportRecord> {
+    vec![
+        record("acme::Builder", "struct"),
+        method("acme::Builder::new", "Builder"),
+        method("acme::Builder::region", "Builder"),
+        method("acme::Builder::build", "Builder"),
+    ]
+}
+
+fn builder_glue() -> soothfast_bind::BindFileSet {
+    let (surface, gaps) = surface(
+        &stamped(doc_with_builder()),
+        &TypeTable::with_defaults(),
+        &builder_records(),
+    )
+    .expect("walks");
+    BindKind::Python
+        .emit(&surface, gaps, &opts())
+        .expect("emits")
+}
+
+#[test]
+fn a_self_returning_consuming_method_takes_the_slot_and_refills_it_to_chain() {
+    let files = builder_glue();
+    let glue = &files.files["src/lib.rs"];
+    assert!(
+        glue.contains("fn region(slf: PyRef<'_, Self>, extra: i64) -> PyResult<PyRef<'_, Self>> {"),
+        "{glue}"
+    );
+    assert!(
+        glue.contains("let value = slf.take(\"region\")?;"),
+        "{glue}"
+    );
+    assert!(
+        glue.contains("let value = value.region(extra);\n        *slf.0.lock()"),
+        "{glue}"
+    );
+    assert!(
+        glue.contains("= BuilderSlot::Live(value);\n        Ok(slf)"),
+        "{glue}"
+    );
+    let stub = &files.files["acme_core.pyi"];
+    assert!(
+        stub.contains("def region(self, extra: int) -> \"Builder\": ...\n"),
+        "{stub}"
+    );
+}
+
+#[test]
+fn a_terminal_consuming_method_is_async_over_self_not_prefmut() {
+    let files = builder_glue();
+    let glue = &files.files["src/lib.rs"];
+    assert!(
+        glue.contains("async fn build(&self) -> PyResult<i64> {"),
+        "{glue}"
+    );
+    assert!(
+        glue.contains("let value = self.take(\"build\")?;"),
+        "{glue}"
+    );
+    assert!(
+        glue.contains("Ok(OnRuntime::new(value.build()).await)"),
+        "{glue}"
+    );
+}
+
+#[test]
+fn a_consumed_handle_raises_naming_its_consumer_and_reprs_it() {
+    let files = builder_glue();
+    let glue = &files.files["src/lib.rs"];
+    assert!(
+        glue.contains(
+            "Err(::pyo3::exceptions::PyRuntimeError::new_err(format!(\"Builder was consumed by {by}\")))"
+        ),
+        "{glue}"
+    );
+    assert!(
+        glue.contains("BuilderSlot::Live(inner) => format!(\"Builder(n={:?})\", inner.n),"),
+        "{glue}"
+    );
+    assert!(
+        glue.contains("BuilderSlot::Consumed(by) => format!(\"Builder(<consumed by {by}>)\"),"),
+        "{glue}"
+    );
+}
+
+#[test]
+fn a_consumable_class_has_no_derive_clone_and_a_mutex_wrapped_slot() {
+    let files = builder_glue();
+    let glue = &files.files["src/lib.rs"];
+    assert!(
+        glue.contains("pub struct Builder(::std::sync::Mutex<BuilderSlot>);"),
+        "{glue}"
+    );
+    assert!(
+        !glue.contains("#[derive(Clone)]\npub struct Builder"),
+        "{glue}"
+    );
+}
+
 #[test]
 fn a_handle_list_field_reads_but_never_writes_and_an_optional_enum_field_converts() {
     let glue = python_glue();

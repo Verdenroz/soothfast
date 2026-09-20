@@ -198,3 +198,7 @@ pub fn set_level(level: Option<Level>) -> bool {
 pub fn peek(counter: Option<&Counter>) -> bool {
     counter.is_some_and(|c| c.value > 0)
 }
+
+pub async fn ping() -> bool {
+    true
+}

@@ -7,32 +7,47 @@
 use crate::model::Ty;
 use crate::plan::{Accessor, BindingPlan, Class};
 
+use super::glue::slot_name;
 use super::py_ident;
 
 /// The member, or `None` for a class with nothing to show, which keeps
-/// pyo3's own repr.
+/// pyo3's own repr. A consumable class always gets one, even with nothing
+/// else to show: it is the only place a consumed handle prints who
+/// consumed it.
 pub(crate) fn member(class: &Class, plan: &BindingPlan) -> Option<String> {
+    let consumable = plan.is_consumable(&class.name);
+    let base = if consumable { "inner" } else { "self.0" };
     let shown: Vec<(String, String)> = class
         .accessors
         .iter()
-        .filter_map(|a| slot(a, plan))
+        .filter_map(|a| slot(a, plan, base))
         .collect();
-    if shown.is_empty() {
+    if shown.is_empty() && !consumable {
         return None;
     }
     let (slots, args): (Vec<String>, Vec<String>) = shown.into_iter().unzip();
-    Some(format!(
-        "    fn __repr__(&self) -> String {{\n        format!(\"{}({})\", {})\n    }}\n",
+    let live = format!(
+        "format!(\"{}({})\", {})",
         class.name,
         slots.join(", "),
         args.join(", "),
+    );
+    if !consumable {
+        return Some(format!(
+            "    fn __repr__(&self) -> String {{\n        {live}\n    }}\n"
+        ));
+    }
+    let slot = slot_name(&class.name);
+    Some(format!(
+        "    fn __repr__(&self) -> String {{\n        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());\n        match &*guard {{\n            {slot}::Live(inner) => {live},\n            {slot}::Consumed(by) => format!(\"{}(<consumed by {{by}}>)\"),\n        }}\n    }}\n",
+        class.name,
     ))
 }
 
 /// One `name=slot` piece of the format string and the value filling it.
-fn slot(accessor: &Accessor, plan: &BindingPlan) -> Option<(String, String)> {
+fn slot(accessor: &Accessor, plan: &BindingPlan, base: &str) -> Option<(String, String)> {
     let name = py_ident(&accessor.field);
-    let value = format!("self.0.{}", accessor.field);
+    let value = format!("{base}.{}", accessor.field);
     Some(match &accessor.ty {
         Ty::Class(class) if plan.is_mirrored(class) => (
             format!("{name}={class}.{{:?}}"),

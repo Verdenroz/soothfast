@@ -167,6 +167,11 @@ pub fn peak_level(values: &[f64]) -> Level {
     ::acme::peak_level(values).into()
 }
 
+#[wasm_bindgen]
+pub async fn ping() -> bool {
+    ::acme::ping().await
+}
+
 #[wasm_bindgen(js_name = sampleIds)]
 pub fn sample_ids(ids: Vec<usize>) -> Vec<usize> {
     ::acme::sample_ids(ids)
