@@ -274,12 +274,14 @@ pub enum Metric {
 }
 
 impl ::std::convert::From<::soothfast_demo::Metric> for Metric {
+    #[allow(unreachable_patterns)]
     fn from(value: ::soothfast_demo::Metric) -> Self {
         match value {
             ::soothfast_demo::Metric::Median => Metric::Median,
             ::soothfast_demo::Metric::Mad => Metric::Mad,
             ::soothfast_demo::Metric::Min => Metric::Min,
             ::soothfast_demo::Metric::Max => Metric::Max,
+            _ => ::std::unreachable!("::soothfast_demo::Metric gained a variant this binding was not generated for"),
         }
     }
 }
@@ -287,12 +289,14 @@ impl ::std::convert::From<::soothfast_demo::Metric> for Metric {
 // A mirrored enum has no derived `Clone`; a field getter converts through
 // this one instead of cloning an owned copy just to consume it.
 impl ::std::convert::From<&::soothfast_demo::Metric> for Metric {
+    #[allow(unreachable_patterns)]
     fn from(value: &::soothfast_demo::Metric) -> Self {
         match value {
             ::soothfast_demo::Metric::Median => Metric::Median,
             ::soothfast_demo::Metric::Mad => Metric::Mad,
             ::soothfast_demo::Metric::Min => Metric::Min,
             ::soothfast_demo::Metric::Max => Metric::Max,
+            _ => ::std::unreachable!("::soothfast_demo::Metric gained a variant this binding was not generated for"),
         }
     }
 }
