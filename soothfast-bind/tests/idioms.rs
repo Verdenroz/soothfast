@@ -909,6 +909,14 @@ fn an_async_fn_borrowing_a_clone_class_takes_it_by_value() {
         "{glue}"
     );
     assert!(glue.contains("borrow_client(&client.0)"), "{glue}");
+    assert!(
+        glue.contains("#[derive(Clone)]\npub struct Client("),
+        "{glue}"
+    );
+    assert!(
+        !glue.contains("#[derive(Clone)]\npub struct Bag("),
+        "{glue}"
+    );
 }
 
 /// `Bag` is not `Clone`, so the same shape over it has nothing to copy out
