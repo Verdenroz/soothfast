@@ -280,11 +280,24 @@ fn slot_enum(class: &Class, inner: &str) -> String {
 /// A call that finds it already empty restores the name already there
 /// rather than overwriting it, so the error always names the first method
 /// that consumed the handle, not whichever tried to reuse it since.
+///
+/// `clone_inner`, emitted only when the inner type is itself `Clone`, reads
+/// the slot without emptying it: an async method or a borrowed parameter of
+/// this class clones the value out under the lock and drops the guard
+/// before anything awaits, since a `MutexGuard` cannot cross an `.await`
+/// the way `take`'s own owned value can.
 fn take_impl(class: &Class, inner: &str) -> String {
     let name = &class.name;
     let slot = slot_name(name);
+    let clone_inner = if class.clone {
+        format!(
+            "\n    fn clone_inner(&self) -> ::pyo3::PyResult<{inner}> {{\n        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());\n        match &*guard {{\n            {slot}::Live(value) => Ok(value.clone()),\n            {slot}::Consumed(by) => Err(::pyo3::exceptions::PyRuntimeError::new_err(format!(\"{name} was consumed by {{by}}\"))),\n        }}\n    }}\n"
+        )
+    } else {
+        String::new()
+    };
     format!(
-        "\nimpl {name} {{\n    fn take(&self, consumer: &'static str) -> ::pyo3::PyResult<{inner}> {{\n        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());\n        match ::std::mem::replace(&mut *guard, {slot}::Consumed(consumer)) {{\n            {slot}::Live(value) => Ok(value),\n            {slot}::Consumed(by) => {{\n                *guard = {slot}::Consumed(by);\n                Err(::pyo3::exceptions::PyRuntimeError::new_err(format!(\"{name} was consumed by {{by}}\")))\n            }}\n        }}\n    }}\n}}\n",
+        "\nimpl {name} {{\n    fn take(&self, consumer: &'static str) -> ::pyo3::PyResult<{inner}> {{\n        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());\n        match ::std::mem::replace(&mut *guard, {slot}::Consumed(consumer)) {{\n            {slot}::Live(value) => Ok(value),\n            {slot}::Consumed(by) => {{\n                *guard = {slot}::Consumed(by);\n                Err(::pyo3::exceptions::PyRuntimeError::new_err(format!(\"{name} was consumed by {{by}}\")))\n            }}\n        }}\n    }}\n{clone_inner}}}\n",
     )
 }
 
@@ -371,8 +384,37 @@ fn param_preludes(function: &Function, plan: &BindingPlan, indent: &str) -> Stri
     function
         .params
         .iter()
-        .map(|p| param_prelude(p, plan, indent))
+        .map(|p| match function.is_async {
+            true => cloned_param_prelude(p, plan, indent),
+            false => param_prelude(p, plan, indent),
+        })
         .collect()
+}
+
+/// The prelude an async call's borrowed parameter needs when its class is
+/// both consumable and `Clone`: `Py<X>` is the one owned, GIL-independent
+/// extraction that survives across the call's own await, so the value is
+/// cloned out from under its lock through a fresh GIL attachment, ahead of
+/// anything that awaits.
+fn cloned_param_prelude(param: &Param, plan: &BindingPlan, indent: &str) -> String {
+    let (class, optional) = match &param.ty {
+        Ty::Class(name) => (name, false),
+        Ty::Optional(inner) => match &**inner {
+            Ty::Class(name) => (name, true),
+            _ => return String::new(),
+        },
+        _ => return String::new(),
+    };
+    if !plan.is_consumable(class) || !plan.is_clone(class) {
+        return String::new();
+    }
+    let name = py_ident(&param.name);
+    let extract = format!("Python::attach(|py| {name}.borrow(py).clone_inner())");
+    let expr = match optional {
+        true => format!("{name}.map(|{name}| {extract}).transpose()?"),
+        false => format!("{extract}?"),
+    };
+    format!("{indent}let {name} = {expr};\n")
 }
 
 /// A plain enumeration mirrors onto a Python enum rather than staying an
@@ -543,8 +585,16 @@ fn member(method: &Function, plan: &BindingPlan, owner: &Class) -> String {
     if method.receiver == Receiver::Consuming {
         return consuming_member(method, plan, owner);
     }
-    let detach = offloadable(method, Some(owner), plan);
     let consumable = plan.is_consumable(&owner.name);
+    // A non-consuming async method on a consumable class only reaches here
+    // when the plan already proved the class `Clone` (bindable's
+    // async_sibling_of_consuming_is_blocked gates out the rest); `&self`'s
+    // own lock cannot survive the call's await, so this clones the inner
+    // value out instead of borrowing through it.
+    if consumable && method.is_async {
+        return cloned_async_member(method, plan, owner);
+    }
+    let detach = offloadable(method, Some(owner), plan);
     let mutable = method.receiver == Receiver::Exclusive;
     let access = self_access(owner, plan, "        ", mutable);
     let receiver = match consumable {
@@ -615,6 +665,25 @@ fn consuming_member(method: &Function, plan: &BindingPlan, owner: &Class) -> Str
         completed(&call, method, plan, "        ", "", Some(owner))
     );
     format!("{docs}    {asyncness}fn {name}({args}) -> {ret} {{\n{body}    }}\n")
+}
+
+/// A non-consuming async method on a consumable `Clone` class: clones the
+/// inner value out under the lock and drops the guard before the call's
+/// own `.await`, the same "own it before you yield" shape as
+/// `consuming_member`'s terminal case, just cloning instead of taking so
+/// the slot stays live.
+fn cloned_async_member(method: &Function, plan: &BindingPlan, owner: &Class) -> String {
+    let inner_call = format!("value.{}({})", method.name, call_args(method, plan));
+    let call = asyncrt::awaited(&inner_call);
+    let args = join("&self", &params(method, plan, false));
+    let docs = docs(method.doc.as_deref(), "    ");
+    let name = py_ident(&method.name);
+    let ret = return_ty(method, plan, Some(owner));
+    let body = format!(
+        "        let value = self.clone_inner()?;\n{}",
+        completed(&call, method, plan, "        ", "", Some(owner))
+    );
+    format!("{docs}    async fn {name}({args}) -> {ret} {{\n{body}    }}\n")
 }
 
 fn associated_fn(function: &Function, krate: &str, plan: &BindingPlan, owner: &Class) -> String {
@@ -984,8 +1053,18 @@ fn passing(param: &Param, plan: &BindingPlan, is_async: bool) -> (String, String
             (format!("Option<PyRefMut<'_, {class}>>"), expr)
         }
         // A `PyRef` cannot cross an async fn's own await (it is tied to the
-        // GIL, never `Send`); `bindable` only lets a `Clone` class reach
-        // here, so pyo3 extracts an owned value in its place instead.
+        // GIL, never `Send`). A consumable class has no derived `Clone` on
+        // its wrapper (its field is a `Mutex`, never `Clone`), so it takes
+        // `Py<T>` instead and clones its own inner value out from under the
+        // lock through a fresh GIL attachment ahead of the prelude's other
+        // checks (see `cloned_param_prelude`); a plain `Clone` class's own
+        // wrapper already derives `Clone`, so pyo3 extracts an owned copy
+        // of it directly and this just borrows the field out of that.
+        Transfer::Handle { nullable: true, .. }
+            if is_async && plan.is_consumable(&class) && plan.is_clone(&class) =>
+        {
+            (format!("Option<Py<{class}>>"), format!("{name}.as_ref()"))
+        }
         Transfer::Handle { nullable: true, .. } if is_async => (
             format!("Option<{class}>"),
             format!("{name}.as_ref().map(|v| &v.0)"),
@@ -1003,6 +1082,11 @@ fn passing(param: &Param, plan: &BindingPlan, is_async: bool) -> (String, String
                 false => format!("&mut {name}.0"),
             };
             (format!("PyRefMut<'_, {class}>"), expr)
+        }
+        Transfer::Handle { .. }
+            if is_async && plan.is_consumable(&class) && plan.is_clone(&class) =>
+        {
+            (format!("Py<{class}>"), format!("&{name}"))
         }
         Transfer::Handle { .. } if is_async => (class, format!("&{name}.0")),
         Transfer::Handle { .. } => {

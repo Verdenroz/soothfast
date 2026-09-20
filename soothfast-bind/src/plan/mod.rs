@@ -134,6 +134,11 @@ impl BindingPlan {
             .any(|c| c.name == name && c.methods.iter().any(|m| m.receiver == Receiver::Consuming))
     }
 
+    /// Whether a class name is known `Clone`.
+    pub fn is_clone(&self, name: &str) -> bool {
+        self.classes.iter().any(|c| c.name == name && c.clone)
+    }
+
     /// Whether anything bound here is `async`. Both backends need an extra
     /// dependency to drive a future, and only when one is present.
     pub fn has_async(&self) -> bool {
@@ -452,7 +457,7 @@ fn bindable(
         record(gaps, Gap::ConsumingReceiver { at: f.id.clone() });
         return false;
     }
-    if async_sibling_of_consuming_is_blocked(f, kind, consuming_owners, gaps) {
+    if async_sibling_of_consuming_is_blocked(f, kind, consuming_owners, cloneable, gaps) {
         return false;
     }
     if async_is_blocked(f, kind, gaps) {
@@ -462,9 +467,6 @@ fn bindable(
         return false;
     }
     if owned_handle_param_is_blocked(f, mirrored, gaps) {
-        return false;
-    }
-    if consumable_handle_param_is_blocked(f, kind, consuming_owners, gaps) {
         return false;
     }
     if optional_handle_param_is_blocked(f, kind, mirrored, gaps) {
@@ -613,16 +615,16 @@ fn async_sibling_of_consuming_is_blocked(
     f: &ExportedFn,
     kind: BindKind,
     consuming_owners: &BTreeSet<String>,
+    cloneable: &BTreeSet<String>,
     gaps: &mut Vec<Gap>,
 ) -> bool {
     if kind != BindKind::Python || !f.is_async || f.receiver == Receiver::Consuming {
         return false;
     }
-    if !f
-        .owner
-        .as_deref()
-        .is_some_and(|o| consuming_owners.contains(o))
-    {
+    let Some(owner) = f.owner.as_deref() else {
+        return false;
+    };
+    if !consuming_owners.contains(owner) || cloneable.contains(owner) {
         return false;
     }
     record(
@@ -766,52 +768,6 @@ fn owned_handle_param_is_blocked(
             );
             return true;
         }
-    }
-    false
-}
-
-/// Python reads a class a consuming method can empty through its own lock
-/// (see pyo3::self_access), and that path only exists for `self`; a
-/// borrowed parameter of that class has no way in yet.
-fn consumable_handle_param_is_blocked(
-    f: &ExportedFn,
-    kind: BindKind,
-    consuming_owners: &BTreeSet<String>,
-    gaps: &mut Vec<Gap>,
-) -> bool {
-    // A sync call locks the parameter's own slot for the call (see
-    // pyo3::passing's consumable arms) the same way self_access does for
-    // self; an async one would have to hold that lock across its own
-    // await, the same hazard async_sibling_of_consuming_is_blocked reports.
-    if kind != BindKind::Python || !f.is_async {
-        return false;
-    }
-    for param in &f.params {
-        let class = match &param.ty {
-            Ty::Class(name) => Some(name),
-            Ty::Optional(inner) => match &**inner {
-                Ty::Class(name) => Some(name),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(name) = class else { continue };
-        if !consuming_owners.contains(name) {
-            continue;
-        }
-        record(
-            gaps,
-            Gap::UnsupportedByBackend {
-                at: f.id.clone(),
-                ty: param.ty.render(),
-                lang: kind.name(),
-                why: "a consuming method on this class already locks its \
-                      slot to hold it; an async call would have to hold \
-                      that lock across its own await, which is not `Send`"
-                    .into(),
-            },
-        );
-        return true;
     }
     false
 }

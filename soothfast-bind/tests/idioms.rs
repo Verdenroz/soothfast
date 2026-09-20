@@ -762,10 +762,10 @@ fn a_vec_of_borrowed_str_return_is_owned_by_the_python_glue_element_wise() {
 /// (`build`, consuming, returns `i64`).
 fn doc_with_builder() -> Value {
     let mut doc = doc();
-    doc["index"]["200"] = struct_item("Builder", &[201], &[202]);
+    doc["index"]["200"] = struct_item("Builder", &[201], &[202, 206]);
     doc["index"]["201"] = field("n", prim("i64"), true);
     doc["index"]["202"] = json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
-        "inner": { "impl": { "trait": Value::Null, "items": [203, 204, 205] } } });
+        "inner": { "impl": { "trait": Value::Null, "items": [203, 204, 205, 209] } } });
     doc["index"]["203"] = func(
         "new",
         &[("n", prim("i64"))],
@@ -787,11 +787,60 @@ fn doc_with_builder() -> Value {
         prim("i64"),
         true,
     );
+    doc["index"]["209"] = func(
+        "status",
+        &[("self", borrowed(json!({ "generic": "Self" }), false))],
+        prim("i64"),
+        true,
+    );
+    // `Builder` is `Clone`, so an unrelated async fn can borrow it (clone
+    // the inner value out under the lock, see `cloned_param_prelude`)
+    // instead of being gapped the way a non-`Clone` consumable class is.
+    doc["index"]["206"] = auto_impl("Clone", false);
+    doc["index"]["207"] = func(
+        "configure",
+        &[("options", borrowed(path("Builder", 200, &[]), false))],
+        prim("i64"),
+        true,
+    );
+    doc["index"]["208"] = func(
+        "configure_optional",
+        &[(
+            "options",
+            path("Option", 93, &[borrowed(path("Builder", 200, &[]), false)]),
+        )],
+        prim("i64"),
+        true,
+    );
+    // `Sealed` has one consuming method but never derives `Clone`, so an
+    // unrelated async fn borrowing it has no clone-out path and stays
+    // gapped, unlike `Builder`'s.
+    doc["index"]["210"] = struct_item("Sealed", &[], &[211]);
+    doc["index"]["211"] = json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
+        "inner": { "impl": { "trait": Value::Null, "items": [212] } } });
+    doc["index"]["212"] = func(
+        "seal",
+        &[("self", json!({ "generic": "Self" }))],
+        prim("i64"),
+        false,
+    );
+    doc["index"]["213"] = func(
+        "inspect",
+        &[("sealed", borrowed(path("Sealed", 210, &[]), false))],
+        prim("i64"),
+        true,
+    );
     doc["index"]["0"]["inner"]["module"]["items"]
         .as_array_mut()
         .expect("items")
-        .push(json!(200));
+        .extend([json!(200), json!(207), json!(208), json!(210), json!(213)]);
     doc["paths"]["200"] = json!({ "crate_id": 0, "path": ["acme", "Builder"], "kind": "struct" });
+    doc["paths"]["207"] =
+        json!({ "crate_id": 0, "path": ["acme", "configure"], "kind": "function" });
+    doc["paths"]["208"] =
+        json!({ "crate_id": 0, "path": ["acme", "configure_optional"], "kind": "function" });
+    doc["paths"]["210"] = json!({ "crate_id": 0, "path": ["acme", "Sealed"], "kind": "struct" });
+    doc["paths"]["213"] = json!({ "crate_id": 0, "path": ["acme", "inspect"], "kind": "function" });
     doc
 }
 
@@ -801,6 +850,12 @@ fn builder_records() -> Vec<soothfast_bind::model::ExportRecord> {
         method("acme::Builder::new", "Builder"),
         method("acme::Builder::region", "Builder"),
         method("acme::Builder::build", "Builder"),
+        method("acme::Builder::status", "Builder"),
+        record("acme::configure", "fn"),
+        record("acme::configure_optional", "fn"),
+        record("acme::Sealed", "struct"),
+        method("acme::Sealed::seal", "Sealed"),
+        record("acme::inspect", "fn"),
     ]
 }
 
@@ -1133,4 +1188,59 @@ fn an_async_fn_borrowing_an_optional_clone_class_takes_it_by_value() {
         glue.contains("borrow_maybe_client(client.as_ref().map(|v| &v.0))"),
         "{glue}"
     );
+}
+
+#[test]
+fn an_async_fn_clones_a_clone_consumable_class_out_before_its_own_await() {
+    let files = builder_glue();
+    let glue = &files.files["src/lib.rs"];
+    let configure = glue.find("fn configure(").expect("configure is bound");
+    let clone_out = glue[configure..]
+        .find("Python::attach(|py| options.borrow(py).clone_inner())?;")
+        .expect("clones under the lock");
+    let awaits = glue[configure..]
+        .find(".await")
+        .expect("awaits the finance call");
+    assert!(clone_out < awaits, "{}", &glue[configure..configure + 400]);
+    assert!(
+        glue.contains("async fn configure(options: Py<Builder>) -> PyResult<i64> {"),
+        "{glue}"
+    );
+
+    let optional = glue.find("fn configure_optional(").expect("bound");
+    assert!(
+        glue[optional..]
+            .starts_with("fn configure_optional(options: Option<Py<Builder>>) -> PyResult<i64> {"),
+        "{glue}"
+    );
+    assert!(
+        glue.contains(
+            "let options = options.map(|options| Python::attach(|py| options.borrow(py).clone_inner())).transpose()?;"
+        ),
+        "{glue}"
+    );
+
+    assert!(
+        files
+            .gaps
+            .iter()
+            .any(|g| g.contains("Sealed") && g.contains("Send")),
+        "{:?}",
+        files.gaps
+    );
+    assert!(!glue.contains("fn inspect"), "{glue}");
+}
+
+#[test]
+fn an_async_method_clones_self_out_before_its_own_await() {
+    let files = builder_glue();
+    let glue = &files.files["src/lib.rs"];
+    let status = glue
+        .find("async fn status(&self)")
+        .expect("status is bound");
+    let clone_out = glue[status..]
+        .find("self.clone_inner()?;")
+        .expect("clones under the lock");
+    let awaits = glue[status..].find(".await").expect("awaits the call");
+    assert!(clone_out < awaits, "{}", &glue[status..status + 300]);
 }
