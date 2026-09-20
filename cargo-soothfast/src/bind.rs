@@ -400,13 +400,22 @@ fn update_lockfile(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// `cargo update --workspace` keeps every version it can, which fails when
+/// a newly enabled feature needs an already-locked dependency at an older
+/// version than what is pinned; a full re-resolve from a deleted lockfile
+/// finds that version instead.
+fn regenerate_lockfile(dir: &Path) -> Result<(), String> {
+    std::fs::remove_file(dir.join("Cargo.lock")).map_err(|e| e.to_string())?;
+    generate_lockfile(dir)
+}
+
 /// Creates a missing lockfile or refreshes one that no longer satisfies its
 /// manifest; a fresh lockfile is left untouched.
 fn ensure_lockfile(dir: &Path) -> Result<(), String> {
     if !dir.join("Cargo.lock").exists() {
         generate_lockfile(dir)
     } else if lockfile_stale(dir) {
-        update_lockfile(dir)
+        update_lockfile(dir).or_else(|_| regenerate_lockfile(dir))
     } else {
         Ok(())
     }
@@ -920,6 +929,117 @@ mod tests {
             !lockfile_stale(&b),
             "the refreshed lock satisfies the manifest"
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Trimmed from finance-query's real [dependencies]/[features]: a minimal
+    // two-crate repro never reproduced the downgrade failure, only this
+    // actual dependency shape (activating ~25 features at once) does.
+    const DOWNGRADE_MANIFEST: &str = r#"
+[package]
+name = "full_repro"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "full_repro"
+path = "src/lib.rs"
+
+[dependencies]
+soothfast = { version = "0.3" }
+reqwest = { version = "0.13", features = ["json", "cookies", "gzip", "brotli", "query"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "net"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2.0.18"
+chrono = { version = "0.4", features = ["serde"] }
+percent-encoding = "2"
+regex = "1"
+async-trait = "0.1"
+futures = "0.3"
+const_format = "0.2"
+tracing = "0.1"
+tokio-tungstenite = { version = "0.28.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-stream = { version = "0.1", features = ["sync", "time"] }
+prost = "0.14.3"
+base64 = "0.22"
+polars = { version = "0.53", optional = true, default-features = false, features = ["lazy", "polars-ops", "fmt"] }
+csv = { version = "1", optional = true }
+rayon = { version = "1", optional = true }
+vader_sentiment = { version = "0.1", optional = true }
+ct2rs = { version = "0.9.19", optional = true, default-features = false, features = ["dnnl", "tokenizers", "sentencepiece"] }
+zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
+flate2 = { version = "1", optional = true }
+chromiumoxide = { version = "0.9", optional = true }
+
+[features]
+default = []
+full = [
+    "dataframe", "indicators", "backtesting", "fred", "crypto",
+    "alphavantage", "polygon", "fmp", "risk", "translation", "sentiment",
+    "worldbank", "fiscaldata", "bls", "frankfurter", "binance", "kraken",
+    "finra", "openfigi", "defi", "gdelt", "cftc", "nasdaq", "wikipedia",
+    "secftd", "housetrades", "senatetrades",
+]
+dataframe = ["dep:polars"]
+indicators = []
+backtesting = ["indicators", "dep:rayon"]
+fred = ["dep:csv"]
+crypto = []
+worldbank = []
+fiscaldata = []
+bls = []
+frankfurter = []
+binance = []
+kraken = []
+finra = []
+openfigi = []
+defi = []
+gdelt = []
+cftc = []
+nasdaq = []
+wikipedia = []
+secftd = ["dep:zip"]
+housetrades = ["dep:zip", "dep:flate2"]
+senatetrades = ["dep:chromiumoxide"]
+sentiment = ["dep:vader_sentiment"]
+alphavantage = []
+polygon = []
+fmp = []
+risk = ["indicators"]
+translation = []
+bench-gate = ["risk", "backtesting", "translation", "fred", "crypto", "sentiment"]
+"#;
+
+    #[test]
+    fn ensure_lockfile_falls_back_to_a_full_resolve_on_a_forced_downgrade() {
+        let root = std::env::temp_dir().join(format!(
+            "soothfast-bind-ensure-lockfile-downgrade-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("full_repro/src")).expect("makes dirs");
+        std::fs::write(root.join("full_repro/Cargo.toml"), DOWNGRADE_MANIFEST)
+            .expect("writes manifest");
+        std::fs::write(root.join("full_repro/src/lib.rs"), "").expect("writes src/lib.rs");
+
+        let glue = root.join("glue");
+        write_crate(
+            &glue,
+            "glue",
+            "full_repro = { path = \"../full_repro\", features = [\"bench-gate\"] }\n",
+        );
+        ensure_lockfile(&glue).expect("locks with bench-gate active, no dataframe yet");
+
+        write_crate(
+            &glue,
+            "glue",
+            "full_repro = { path = \"../full_repro\", features = [\"full\"] }\n",
+        );
+        assert!(lockfile_stale(&glue), "full activates dataframe/polars");
+        ensure_lockfile(&glue).expect("falls back to a full re-resolve");
+        assert!(!lockfile_stale(&glue), "the re-resolved lock satisfies it");
 
         let _ = std::fs::remove_dir_all(&root);
     }
