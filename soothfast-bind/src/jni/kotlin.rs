@@ -510,6 +510,7 @@ mod tests {
             doc: None,
             send: true,
             sync: true,
+            clone: false,
             ctor: None,
             accessors: Vec::new(),
             methods: Vec::new(),

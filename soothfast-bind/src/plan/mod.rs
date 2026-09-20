@@ -63,6 +63,10 @@ pub struct Class {
     /// holds no interpreter lock needs this, and an unproven guess would not
     /// compile.
     pub sync: bool,
+    /// Whether the Rust type is known `Clone`. A backend that hands out a
+    /// value by copying it (rather than a fresh handle) needs this proven,
+    /// same as `send`/`sync`.
+    pub clone: bool,
     /// The associated fn that builds one, if any. Without it the class is
     /// only reachable as another call's return value.
     pub ctor: Option<Function>,
@@ -242,6 +246,7 @@ fn class_of(
             doc: ty.doc.clone(),
             send: ty.send,
             sync: ty.sync,
+            clone: cloneable.contains(&ty.name),
             ctor: None,
             accessors: Vec::new(),
             methods: Vec::new(),
@@ -281,6 +286,7 @@ fn class_of(
         doc: ty.doc.clone(),
         send: ty.send,
         sync: ty.sync,
+        clone: cloneable.contains(&ty.name),
         ctor,
         accessors,
         methods,
