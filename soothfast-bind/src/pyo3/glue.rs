@@ -189,9 +189,8 @@ fn plain_enum(class: &Class, krate: &str) -> String {
         .flatten()
         .map(|v| v.name.as_str())
         .collect();
-    // `inner` may be `#[non_exhaustive]`: matching it from the glue crate
-    // then needs a catch-all arm, so every conversion out of it carries one,
-    // unreachable for a binding built against the crate it was generated from.
+    // `inner` may be `#[non_exhaustive]`, so every conversion out of it
+    // carries a catch-all arm, unreachable for a matching binding.
     let arms = |from: &str, to: &str, catch_all: bool| -> String {
         let mut out: String = names
             .iter()
