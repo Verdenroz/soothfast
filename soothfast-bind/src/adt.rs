@@ -136,16 +136,33 @@ fn items(r: &Resolver, ids: &[Value]) -> Vec<Value> {
 
 fn variant_fields(r: &mut Resolver, kind: &Value, at: &str) -> VariantFields {
     if let Some(st) = kind.get("struct") {
-        return VariantFields::Named(named_fields(r, &st["fields"], at));
+        return VariantFields::Named(variant_named_fields(r, &st["fields"], at));
     }
     if let Some(tuple) = kind.get("tuple").and_then(Value::as_array) {
         let mut tys: Vec<Ty> = Vec::new();
         for (n, field) in items(r, tuple).into_iter().enumerate() {
-            tys.push(r.resolve(&field["inner"]["struct_field"], &format!("{at}.{n}")));
+            tys.push(r.resolve_unreported(&field["inner"]["struct_field"], &format!("{at}.{n}")));
         }
         return VariantFields::Tuple(tys);
     }
     VariantFields::Unit
+}
+
+/// A variant's own fields never cross on any backend: a data-carrying enum
+/// always binds as an opaque handle, so an unmapped payload type is not a gap.
+fn variant_named_fields(r: &mut Resolver, ids: &Value, at: &str) -> Vec<Field> {
+    let mut out = Vec::new();
+    for field in items(r, ids.as_array().unwrap_or(&Vec::new())) {
+        let name = field["name"].as_str().unwrap_or_default().to_string();
+        let where_ = format!("{at}.{name}");
+        out.push(Field {
+            ty: r.resolve_unreported(&field["inner"]["struct_field"], &where_),
+            public: is_public(&field),
+            doc: summary(&field),
+            name,
+        });
+    }
+    out
 }
 
 /// Whether the type carries one auto trait, or `None` when the document does
