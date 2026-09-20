@@ -1,11 +1,16 @@
 //! Rust identifiers → target-language identifiers.
 //!
-//! Exported names are already legal Rust identifiers, so nothing needs
-//! sanitizing. The only collisions are with words a target language reserves,
-//! and each language's own module says which.
+//! Exported names are already legal Rust identifiers, so little needs
+//! sanitizing: collisions with words a target language reserves (each
+//! language's own module says which), and a tuple field's synthetic
+//! position name (`"0"`, `"1"`), legal as a Rust tuple index but not as an
+//! identifier anywhere else.
 
-/// Append an underscore to a name the target language will not accept.
+/// Escape a name the target language will not accept as-is.
 pub(crate) fn escape(name: &str, reserved: &[&str]) -> String {
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        return format!("_{name}");
+    }
     if reserved.contains(&name) {
         format!("{name}_")
     } else {
@@ -51,6 +56,12 @@ mod tests {
     fn reserved_words_gain_a_trailing_underscore() {
         assert_eq!(escape("from", &["from"]), "from_");
         assert_eq!(escape("bump", &["from"]), "bump");
+    }
+
+    #[test]
+    fn a_digit_leading_name_gains_a_leading_underscore() {
+        assert_eq!(escape("0", &[]), "_0");
+        assert_eq!(escape("1", &["from"]), "_1");
     }
 
     #[test]

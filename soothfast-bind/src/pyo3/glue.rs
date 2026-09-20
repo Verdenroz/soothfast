@@ -189,11 +189,20 @@ fn plain_enum(class: &Class, krate: &str) -> String {
         .flatten()
         .map(|v| v.name.as_str())
         .collect();
-    let arms = |from: &str, to: &str| -> String {
-        names
+    // `inner` may be `#[non_exhaustive]`, so every conversion out of it
+    // carries a catch-all arm, unreachable for a matching binding.
+    let arms = |from: &str, to: &str, catch_all: bool| -> String {
+        let mut out: String = names
             .iter()
             .map(|n| format!("            {from}::{n} => {to}::{n},\n"))
-            .collect()
+            .collect();
+        if catch_all {
+            let _ = writeln!(
+                out,
+                "            _ => ::std::unreachable!(\"{from} gained a variant this binding was not generated for\"),"
+            );
+        }
+        out
     };
     format!(
         "
@@ -203,6 +212,7 @@ pub enum {name} {{
 {}}}
 
 impl ::std::convert::From<{inner}> for {name} {{
+    #[allow(unreachable_patterns)]
     fn from(value: {inner}) -> Self {{
         match value {{
 {}        }}
@@ -212,6 +222,7 @@ impl ::std::convert::From<{inner}> for {name} {{
 // A mirrored enum has no derived `Clone`; a field getter converts through
 // this one instead of cloning an owned copy just to consume it.
 impl ::std::convert::From<&{inner}> for {name} {{
+    #[allow(unreachable_patterns)]
     fn from(value: &{inner}) -> Self {{
         match value {{
 {}        }}
@@ -230,9 +241,9 @@ impl ::std::convert::From<{name}> for {inner} {{
             .iter()
             .map(|n| format!("    {n},\n"))
             .collect::<String>(),
-        arms(&inner, name),
-        arms(&inner, name),
-        arms(name, &inner),
+        arms(&inner, name, true),
+        arms(&inner, name, true),
+        arms(name, &inner, false),
     )
 }
 
@@ -468,6 +479,7 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
                 format!("{expr}.map(::std::convert::Into::into)")
             }
             Ty::Class(name) => format!("{expr}.map({name})"),
+            _ if has_class(inner) => format!("{expr}.map(|value| {})", out("value", inner, plan)),
             _ => expr.to_string(),
         },
         Ty::List(inner) => match &**inner {
@@ -475,10 +487,47 @@ fn out(expr: &str, ty: &Ty, plan: &BindingPlan) -> String {
                 format!("{expr}.into_iter().map(::std::convert::Into::into).collect()")
             }
             Ty::Class(name) => format!("{expr}.into_iter().map({name}).collect()"),
+            _ if has_class(inner) => format!(
+                "{expr}.into_iter().map(|value| {}).collect()",
+                out("value", inner, plan)
+            ),
             _ => expr.to_string(),
         },
+        Ty::Map(_, value) if has_class(value) => format!(
+            "{expr}.into_iter().map(|(key, value)| (key, {})).collect()",
+            out("value", value, plan)
+        ),
+        Ty::Tuple(items) if items.iter().any(has_class) => tuple_out(expr, items, plan),
         _ => expr.to_string(),
     }
+}
+
+/// Whether a type nests an exported class at any depth, the signal `out`
+/// uses to tell a composition worth converting from one that crosses as-is.
+fn has_class(ty: &Ty) -> bool {
+    match ty {
+        Ty::Class(_) => true,
+        Ty::Optional(inner) | Ty::List(inner) => has_class(inner),
+        Ty::Map(_, value) => has_class(value),
+        Ty::Tuple(items) => items.iter().any(has_class),
+        _ => false,
+    }
+}
+
+/// A tuple leaving the user's crate, destructured so each position converts
+/// on its own terms.
+fn tuple_out(expr: &str, items: &[Ty], plan: &BindingPlan) -> String {
+    let names: Vec<String> = (0..items.len()).map(|i| format!("v{i}")).collect();
+    let converted: Vec<String> = names
+        .iter()
+        .zip(items)
+        .map(|(name, ty)| out(name, ty, plan))
+        .collect();
+    format!(
+        "{{ let ({}) = {expr}; ({}) }}",
+        names.join(", "),
+        converted.join(", ")
+    )
 }
 
 /// A returned type, where a sequence of one primitive comes back as its array
@@ -752,5 +801,66 @@ pub(super) fn docs(doc: Option<&str>, indent: &str) -> String {
     match doc {
         Some(text) => format!("{indent}/// {text}\n"),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Variant, VariantFields};
+
+    /// `Level` on the Rust side may be `#[non_exhaustive]`; the plan carries
+    /// no such flag, so the conversion out of it always needs a catch-all.
+    fn flag_class() -> Class {
+        Class {
+            rust_path: "acme::Level".into(),
+            name: "Level".into(),
+            doc: None,
+            send: true,
+            sync: true,
+            ctor: None,
+            accessors: Vec::new(),
+            methods: Vec::new(),
+            statics: Vec::new(),
+            variants: Some(vec![
+                Variant {
+                    name: "Low".into(),
+                    fields: VariantFields::Unit,
+                    doc: None,
+                },
+                Variant {
+                    name: "High".into(),
+                    fields: VariantFields::Unit,
+                    doc: None,
+                },
+            ]),
+        }
+    }
+
+    #[test]
+    fn a_plain_enum_conversion_out_of_the_foreign_type_has_a_catch_all_arm() {
+        let rendered = plain_enum(&flag_class(), "::acme");
+        let from_foreign = rendered
+            .split("impl ::std::convert::From<::acme::Level> for Level")
+            .nth(1)
+            .expect("renders the owned conversion");
+        assert!(
+            from_foreign.contains("#[allow(unreachable_patterns)]"),
+            "a catch-all arm is unreachable for a locally exhaustive enum: {rendered}"
+        );
+        assert!(
+            from_foreign.contains("_ => ::std::unreachable!"),
+            "without a catch-all this match fails to compile against a \
+             `#[non_exhaustive]` source enum: {rendered}"
+        );
+        let from_reverse = rendered
+            .split("impl ::std::convert::From<Level> for ::acme::Level")
+            .nth(1)
+            .expect("renders the reverse conversion");
+        assert!(
+            !from_reverse.contains("::std::unreachable!"),
+            "the mirrored enum is exhaustive on its own, so the reverse \
+             conversion needs no catch-all: {rendered}"
+        );
     }
 }

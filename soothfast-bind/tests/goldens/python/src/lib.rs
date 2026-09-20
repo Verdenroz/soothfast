@@ -513,10 +513,12 @@ pub enum Level {
 }
 
 impl ::std::convert::From<::acme::Level> for Level {
+    #[allow(unreachable_patterns)]
     fn from(value: ::acme::Level) -> Self {
         match value {
             ::acme::Level::Low => Level::Low,
             ::acme::Level::High => Level::High,
+            _ => ::std::unreachable!("::acme::Level gained a variant this binding was not generated for"),
         }
     }
 }
@@ -524,10 +526,12 @@ impl ::std::convert::From<::acme::Level> for Level {
 // A mirrored enum has no derived `Clone`; a field getter converts through
 // this one instead of cloning an owned copy just to consume it.
 impl ::std::convert::From<&::acme::Level> for Level {
+    #[allow(unreachable_patterns)]
     fn from(value: &::acme::Level) -> Self {
         match value {
             ::acme::Level::Low => Level::Low,
             ::acme::Level::High => Level::High,
+            _ => ::std::unreachable!("::acme::Level gained a variant this binding was not generated for"),
         }
     }
 }

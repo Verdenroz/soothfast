@@ -796,3 +796,120 @@ fn a_field_holding_a_clone_exported_type_reads_as_a_fresh_handle_in_python_only(
         go.gaps
     );
 }
+
+/// A tuple struct's own document, isolated from `doc()`: rustdoc names a
+/// positional field by its index, which is a legal Rust tuple index but not
+/// an identifier anywhere else.
+fn tuple_struct_doc() -> Value {
+    json!({
+        "index": {
+            "1": {
+                "name": "Wrap", "docs": Value::Null, "attrs": [], "visibility": "public",
+                "inner": { "struct": {
+                    "kind": { "tuple": [2] },
+                    "generics": { "params": [], "where_predicates": [] },
+                    "impls": [] } },
+            },
+            "2": field("0", prim("i64"), true),
+        },
+        "paths": {
+            "1": { "crate_id": 0, "path": ["shape", "Wrap"], "kind": "struct" },
+        },
+    })
+}
+
+#[test]
+fn a_tuple_structs_position_becomes_a_legal_identifier() {
+    let records = vec![record("shape::Wrap", "struct")];
+    let (surface, gaps) =
+        surface(&tuple_struct_doc(), &TypeTable::with_defaults(), &records).expect("walks");
+    assert!(
+        !gaps.iter().any(|g| g.at() == "shape::Wrap.0"),
+        "a plain i64 position needs no mapping: {gaps:?}"
+    );
+
+    let files = BindKind::Python
+        .emit(&surface, gaps, &opts())
+        .expect("emits");
+    let glue = &files.files["src/lib.rs"];
+    assert!(glue.contains("fn _0(&self) -> i64"), "{glue}");
+    let stub = &files.files["acme_core.pyi"];
+    assert!(stub.contains("def _0(self) -> int"), "{stub}");
+    assert!(glue.contains("Wrap(_0={:?})"), "{glue}");
+}
+
+/// An exported `Item`, isolated from `doc()`, reached through a map and a
+/// map of lists: neither composition is `Ty::Class` itself, so the value at
+/// its leaf needs its own conversion, not the whole expression's.
+fn map_of_classes_doc() -> Value {
+    json!({
+        "index": {
+            "1": struct_item("Item", &[10], &[11]),
+            "10": field("id", prim("i64"), true),
+            "11": auto_impl("Clone", false),
+            "2": struct_item("Store", &[20, 21], &[]),
+            "20": field(
+                "by_name",
+                path("HashMap", 90, &[path("String", 91, &[]), path("Item", 1, &[])]),
+                true,
+            ),
+            "21": field(
+                "groups",
+                path(
+                    "HashMap",
+                    90,
+                    &[path("String", 91, &[]), path("Vec", 92, &[path("Item", 1, &[])])],
+                ),
+                true,
+            ),
+            "3": func(
+                "all",
+                &[],
+                path("HashMap", 90, &[path("String", 91, &[]), path("Item", 1, &[])]),
+                false,
+            ),
+        },
+        "paths": {
+            "1": { "crate_id": 0, "path": ["shape", "Item"], "kind": "struct" },
+            "2": { "crate_id": 0, "path": ["shape", "Store"], "kind": "struct" },
+            "3": { "crate_id": 0, "path": ["shape", "all"], "kind": "function" },
+        },
+    })
+}
+
+#[test]
+fn a_class_nested_inside_a_map_or_a_map_of_lists_is_wrapped_at_the_leaf() {
+    let records = vec![
+        record("shape::Item", "struct"),
+        record("shape::Store", "struct"),
+        record("shape::all", "fn"),
+    ];
+    let (surface, gaps) =
+        surface(&map_of_classes_doc(), &TypeTable::with_defaults(), &records).expect("walks");
+    let files = BindKind::Python
+        .emit(&surface, gaps, &opts())
+        .expect("emits");
+    let glue = &files.files["src/lib.rs"];
+    assert!(
+        glue.contains(
+            "fn by_name(&self) -> ::std::collections::HashMap<String, Item> {\n        \
+             self.0.by_name.clone().into_iter().map(|(key, value)| (key, Item(value))).collect()"
+        ),
+        "{glue}"
+    );
+    assert!(
+        glue.contains(
+            "fn groups(&self) -> ::std::collections::HashMap<String, Vec<Item>> {\n        \
+             self.0.groups.clone().into_iter().map(|(key, value)| \
+             (key, value.into_iter().map(Item).collect())).collect()"
+        ),
+        "{glue}"
+    );
+    assert!(
+        glue.contains(
+            "fn all() -> ::std::collections::HashMap<String, Item> {\n    \
+             ::acme::all().into_iter().map(|(key, value)| (key, Item(value))).collect()"
+        ),
+        "{glue}"
+    );
+}

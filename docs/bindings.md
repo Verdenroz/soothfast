@@ -298,7 +298,8 @@ for now, so return an owned value there. A public field holding an
 exported type reads as a handle but has no setter: the handle Python passes
 in cannot be moved out of. A handle's `repr` lists its readable fields in
 declaration order (`Counter(value=10)`), leaving out fields holding another
-handle.
+handle. A tuple struct's positions read as `_0`, `_1`, ... in every
+language, since a bare index is not an identifier.
 
 The wheel ships `py.typed` and a stub, so editors and type checkers see the
 surface without importing the extension: every class with its `__init__`,

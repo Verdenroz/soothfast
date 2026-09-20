@@ -259,3 +259,40 @@ fn an_exported_type_taken_by_value_is_reported_rather_than_copied() {
         Gap::HandleByValue { at, ty } if at == "acme::merge" && ty == "Counter"
     )));
 }
+
+/// A data-carrying enum always binds as an opaque handle (see
+/// `pyo3::glue::plain_enum`'s counterpart for plain ones), so a variant's
+/// own payload never crosses on any backend, mapped or not.
+#[test]
+fn an_unmapped_type_inside_a_variant_payload_is_not_gapped() {
+    use fixture::{enum_item, field, path, record, variant};
+    use serde_json::json;
+
+    let doc = json!({
+        "index": {
+            "1": enum_item("Stamped", &[2], &[]),
+            "2": variant("At", json!({ "tuple": [3] })),
+            "3": field("0", path("Duration", 4, &[]), true),
+        },
+        "paths": {
+            "1": { "crate_id": 0, "path": ["shape", "Stamped"], "kind": "enum" },
+            "4": { "crate_id": 1, "path": ["std", "time", "Duration"], "kind": "struct" },
+        },
+    });
+    let table = TypeTable::default();
+    let records = vec![record("shape::Stamped", "enum")];
+    let (surface, gaps) = surface(&doc, &table, &records).expect("walks");
+
+    assert_eq!(surface.types.len(), 1);
+    assert!(
+        matches!(&surface.types[0].kind, TypeKind::Enum(v) if v[0].fields == VariantFields::Tuple(vec![Ty::Opaque("std::time::Duration".into())])),
+        "{:?}",
+        surface.types[0].kind
+    );
+    assert!(
+        !gaps
+            .iter()
+            .any(|g| matches!(g, Gap::UnmappedForeign { .. })),
+        "a variant's payload can never cross, so its unmapped type is not a gap: {gaps:?}"
+    );
+}
