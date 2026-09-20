@@ -779,7 +779,11 @@ fn consumable_handle_param_is_blocked(
     consuming_owners: &BTreeSet<String>,
     gaps: &mut Vec<Gap>,
 ) -> bool {
-    if kind != BindKind::Python {
+    // A sync call locks the parameter's own slot for the call (see
+    // pyo3::passing's consumable arms) the same way self_access does for
+    // self; an async one would have to hold that lock across its own
+    // await, the same hazard async_sibling_of_consuming_is_blocked reports.
+    if kind != BindKind::Python || !f.is_async {
         return false;
     }
     for param in &f.params {
@@ -802,8 +806,8 @@ fn consumable_handle_param_is_blocked(
                 ty: param.ty.render(),
                 lang: kind.name(),
                 why: "a consuming method on this class already locks its \
-                      slot to hold it; a borrowed parameter has no path \
-                      through that lock, only `self` does"
+                      slot to hold it; an async call would have to hold \
+                      that lock across its own await, which is not `Send`"
                     .into(),
             },
         );

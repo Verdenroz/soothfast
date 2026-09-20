@@ -63,6 +63,12 @@ assert c.at(Level.Low) == 10
 assert c.at(Level.High) == 20
 
 try:
+    c.absorb(c)
+    raise AssertionError("expected a ValueError, not a hang")
+except ValueError as e:
+    assert "aliases self" in str(e)
+
+try:
     Counter(9223372036854775807).bump(1)
     raise AssertionError("expected an error")
 except acme_core.Error as e:

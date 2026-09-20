@@ -508,6 +508,18 @@ impl Counter {
         }
     }
 
+    fn absorb(&self, other: PyRef<'_, Counter>) -> PyResult<()> {
+        if ::std::ptr::eq(self, &*other) {
+            return Err(::pyo3::exceptions::PyValueError::new_err("other aliases self"));
+        }
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = match &mut *guard {
+            CounterSlot::Live(value) => value,
+            CounterSlot::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))),
+        };
+        Ok(inner.absorb(match &*other.0.lock().unwrap_or_else(|e| e.into_inner()) { CounterSlot::Live(value) => value, CounterSlot::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))) }))
+    }
+
     fn at(&self, level: Level) -> PyResult<i64> {
         let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let inner = match &*guard {
@@ -660,6 +672,11 @@ fn maybe_ratio(value: f64) -> Option<f64> {
 }
 
 #[pyfunction]
+fn mutate_counter(counter: PyRefMut<'_, Counter>) -> PyResult<i64> {
+    Ok(::acme::mutate_counter(match &mut *counter.0.lock().unwrap_or_else(|e| e.into_inner()) { CounterSlot::Live(value) => value, CounterSlot::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))) }))
+}
+
+#[pyfunction]
 fn normalize(py: Python<'_>, input: BorrowedF64, factor: f64) -> F64Array {
     let out = py.detach(|| ::acme::normalize(input.into_vec(), factor));
     F64Array::new(out)
@@ -669,6 +686,16 @@ fn normalize(py: Python<'_>, input: BorrowedF64, factor: f64) -> F64Array {
 fn peak_level(py: Python<'_>, values: BorrowedF64) -> Level {
     let out = py.detach(|| ::acme::peak_level(values.as_slice()));
     out.into()
+}
+
+#[pyfunction]
+fn peek(counter: Option<PyRef<'_, Counter>>) -> PyResult<bool> {
+    let counter = counter.as_deref().map(|v| v.0.lock().unwrap_or_else(|e| e.into_inner()));
+    let counter = counter.as_deref().map(|value| match value {
+        CounterSlot::Live(v) => Ok(v),
+        CounterSlot::Consumed(by) => Err(::pyo3::exceptions::PyRuntimeError::new_err(format!("Counter was consumed by {by}"))),
+    }).transpose()?;
+    Ok(::acme::peek(counter))
 }
 
 #[pyfunction]
@@ -762,8 +789,10 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(is_high, m)?)?;
     m.add_function(wrap_pyfunction!(levels, m)?)?;
     m.add_function(wrap_pyfunction!(maybe_ratio, m)?)?;
+    m.add_function(wrap_pyfunction!(mutate_counter, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(peak_level, m)?)?;
+    m.add_function(wrap_pyfunction!(peek, m)?)?;
     m.add_function(wrap_pyfunction!(ping, m)?)?;
     m.add_function(wrap_pyfunction!(sample_ids, m)?)?;
     m.add_function(wrap_pyfunction!(scale_into, m)?)?;

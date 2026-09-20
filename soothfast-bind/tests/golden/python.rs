@@ -203,3 +203,18 @@ fn an_enum_carrying_data_stays_a_handle_and_says_so() {
             .any(|n| n.starts_with("Mode: an enum carrying data"))
     );
 }
+
+/// `Counter::absorb(&mut self, other: &Counter)` shares its own consumable
+/// class with a parameter; `x.absorb(x)` would lock the same `Mutex` twice
+/// and deadlock unless the alias check runs first.
+#[test]
+fn a_self_aliasing_argument_is_checked_before_any_lock_is_taken() {
+    let glue = emit(BindKind::Python)["src/lib.rs"].clone();
+    let absorb = glue.find("fn absorb").expect("absorb is bound");
+    let body = &glue[absorb..];
+    let alias_check = body
+        .find("::std::ptr::eq(self, &*other)")
+        .expect("checks aliasing");
+    let self_lock = body.find("self.0.lock()").expect("locks self");
+    assert!(alias_check < self_lock, "{body}");
+}

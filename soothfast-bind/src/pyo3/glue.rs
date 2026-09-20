@@ -127,17 +127,81 @@ fn aliasing_check(function: &Function, plan: &BindingPlan, indent: &str) -> Stri
     out
 }
 
+/// Guards `x.method(x)`: a parameter of the receiver's own consumable class
+/// shares its lock with `self`, and locking it twice in the one call would
+/// deadlock a plain `std::sync::Mutex` rather than raise the usual
+/// already-consumed error. Runs ahead of every other check, including
+/// `self_access`'s own lock, since that is the lock this one exists to
+/// keep from being taken twice.
+fn self_alias_check(
+    function: &Function,
+    owner: Option<&Class>,
+    plan: &BindingPlan,
+    indent: &str,
+) -> String {
+    let Some(owner) = owner else {
+        return String::new();
+    };
+    if !plan.is_consumable(&owner.name) {
+        return String::new();
+    }
+    let mut out = String::new();
+    for param in &function.params {
+        let (class, optional) = match &param.ty {
+            Ty::Class(name) => (Some(name), false),
+            Ty::Optional(inner) => match &**inner {
+                Ty::Class(name) => (Some(name), true),
+                _ => (None, false),
+            },
+            _ => (None, false),
+        };
+        if class != Some(&owner.name) {
+            continue;
+        }
+        let name = py_ident(&param.name);
+        let condition = match optional {
+            true => format!("{name}.as_deref().is_some_and(|v| ::std::ptr::eq(self, v))"),
+            false => format!("::std::ptr::eq(self, &*{name})"),
+        };
+        let _ = writeln!(
+            out,
+            "{indent}if {condition} {{\n{indent}    return Err(::pyo3::exceptions::PyValueError::new_err(\"{name} aliases self\"));\n{indent}}}"
+        );
+    }
+    out
+}
+
 /// Whether the generated signature has to return `PyResult`: the call
 /// itself can fail, an aliasing check ahead of it can, or a mapped
 /// parameter has to parse first.
 /// A consuming method's owner is never passed here (see `consuming_member`);
 /// any other method on a class a consuming method can empty always raises,
-/// since the class may already be consumed by the time it runs.
+/// since the class may already be consumed by the time it runs, and the
+/// same holds for a parameter of such a class wherever it appears.
 fn fallible(function: &Function, plan: &BindingPlan, owner: Option<&Class>) -> bool {
     function.throws.is_some()
         || !aliasing_pairs(function, plan).is_empty()
         || function.params.iter().any(|p| text::mentions(&p.ty))
         || owner.is_some_and(|c| plan.is_consumable(&c.name))
+        || function
+            .params
+            .iter()
+            .any(|p| consumable_class_of(&p.ty, plan).is_some())
+}
+
+/// The consumable class a parameter's type names, if any: `Class` itself or
+/// `Option<Class>`, the two shapes [`passing`] locks through the class's
+/// own slot.
+fn consumable_class_of<'a>(ty: &'a Ty, plan: &BindingPlan) -> Option<&'a str> {
+    let name = match ty {
+        Ty::Class(name) => name,
+        Ty::Optional(inner) => match &**inner {
+            Ty::Class(name) => name,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    plan.is_consumable(name).then_some(name.as_str())
 }
 
 fn class_block(class: &Class, krate: &str, plan: &BindingPlan, opts: &BindOptions) -> String {
@@ -260,6 +324,55 @@ pub(super) fn self_access(
         prelude,
         expr: "inner",
     }
+}
+
+/// A parameter of a class a consuming method can empty, read through its
+/// own lock inline rather than through a `let` prelude: `binding` is the
+/// `Mutex` field access (`name.0`, or `v.0` inside an `Option::map`
+/// closure), and the temporary guard it locks lives for the whole
+/// statement the call sits in, same as any other match scrutinee.
+fn locked_param(binding: &str, class: &str, mutable: bool) -> String {
+    let slot = slot_name(class);
+    let deref = if mutable { "&mut *" } else { "&*" };
+    format!(
+        "match {deref}{binding}.lock().unwrap_or_else(|e| e.into_inner()) {{ {slot}::Live(value) => value, {slot}::Consumed(by) => return Err(::pyo3::exceptions::PyRuntimeError::new_err(format!(\"{class} was consumed by {{by}}\"))) }}"
+    )
+}
+
+/// The prelude an `Option<&Class>` parameter of a consumable class needs:
+/// unlike `self_access`'s, its guard cannot live in the call expression
+/// itself (a `MutexGuard` a closure creates and returns through does not
+/// outlive that closure), so it is bound by a `let` first, shadowing the
+/// original `PyRef`/`PyRefMut` binding with the plain reference the call
+/// site wants.
+fn param_prelude(param: &Param, plan: &BindingPlan, indent: &str) -> String {
+    let Ty::Optional(inner) = &param.ty else {
+        return String::new();
+    };
+    let Ty::Class(class) = &**inner else {
+        return String::new();
+    };
+    if !plan.is_consumable(class) {
+        return String::new();
+    }
+    let name = py_ident(&param.name);
+    let slot = slot_name(class);
+    let mutable = param.inner_ownership == Ownership::BorrowedMut;
+    let (bind, deref2) = match mutable {
+        true => (format!("let mut {name}"), "as_deref_mut"),
+        false => (format!("let {name}"), "as_deref"),
+    };
+    format!(
+        "{indent}{bind} = {name}.as_deref().map(|v| v.0.lock().unwrap_or_else(|e| e.into_inner()));\n{indent}let {name} = {name}.{deref2}().map(|value| match value {{\n{indent}    {slot}::Live(v) => Ok(v),\n{indent}    {slot}::Consumed(by) => Err(::pyo3::exceptions::PyRuntimeError::new_err(format!(\"{class} was consumed by {{by}}\"))),\n{indent}}}).transpose()?;\n"
+    )
+}
+
+fn param_preludes(function: &Function, plan: &BindingPlan, indent: &str) -> String {
+    function
+        .params
+        .iter()
+        .map(|p| param_prelude(p, plan, indent))
+        .collect()
 }
 
 /// A plain enumeration mirrors onto a Python enum rather than staying an
@@ -575,7 +688,9 @@ pub(super) fn shaped_body(
     owner: Option<&Class>,
 ) -> String {
     let checks = format!(
-        "{prelude}{}{}",
+        "{}{}{prelude}{}{}",
+        self_alias_check(function, owner, plan, indent),
+        param_preludes(function, plan, indent),
         aliasing_check(function, plan, indent),
         text::preludes(function, indent)
     );
@@ -858,10 +973,16 @@ fn passing(param: &Param, plan: &BindingPlan, is_async: bool) -> (String, String
             writable: true,
             nullable: true,
             ..
-        } => (
-            format!("Option<PyRefMut<'_, {class}>>"),
-            format!("{name}.as_deref_mut().map(|v| &mut v.0)"),
-        ),
+        } => {
+            // A consumable class's prelude (see `param_prelude`) already
+            // shadows `name` down to `Option<&mut Inner>`; the plain
+            // `PyRefMut` binding still needs `&mut v.0` here.
+            let expr = match plan.is_consumable(&class) {
+                true => name.clone(),
+                false => format!("{name}.as_deref_mut().map(|v| &mut v.0)"),
+            };
+            (format!("Option<PyRefMut<'_, {class}>>"), expr)
+        }
         // A `PyRef` cannot cross an async fn's own await (it is tied to the
         // GIL, never `Send`); `bindable` only lets a `Clone` class reach
         // here, so pyo3 extracts an owned value in its place instead.
@@ -869,15 +990,28 @@ fn passing(param: &Param, plan: &BindingPlan, is_async: bool) -> (String, String
             format!("Option<{class}>"),
             format!("{name}.as_ref().map(|v| &v.0)"),
         ),
-        Transfer::Handle { nullable: true, .. } => (
-            format!("Option<PyRef<'_, {class}>>"),
-            format!("{name}.as_deref().map(|v| &v.0)"),
-        ),
+        Transfer::Handle { nullable: true, .. } => {
+            let expr = match plan.is_consumable(&class) {
+                true => name.clone(),
+                false => format!("{name}.as_deref().map(|v| &v.0)"),
+            };
+            (format!("Option<PyRef<'_, {class}>>"), expr)
+        }
         Transfer::Handle { writable: true, .. } => {
-            (format!("PyRefMut<'_, {class}>"), format!("&mut {name}.0"))
+            let expr = match plan.is_consumable(&class) {
+                true => locked_param(&format!("{name}.0"), &class, true),
+                false => format!("&mut {name}.0"),
+            };
+            (format!("PyRefMut<'_, {class}>"), expr)
         }
         Transfer::Handle { .. } if is_async => (class, format!("&{name}.0")),
-        Transfer::Handle { .. } => (format!("PyRef<'_, {class}>"), format!("&{name}.0")),
+        Transfer::Handle { .. } => {
+            let expr = match plan.is_consumable(&class) {
+                true => locked_param(&format!("{name}.0"), &class, false),
+                false => format!("&{name}.0"),
+            };
+            (format!("PyRef<'_, {class}>"), expr)
+        }
         Transfer::Text {
             nullable: true,
             borrowed,
@@ -952,6 +1086,9 @@ fn mirrored_arg(name: &str, ownership: Ownership) -> String {
 /// A writable buffer view is taken through `&mut self`, so its binding is
 /// `mut`.
 fn needs_mut(param: &Param, plan: &BindingPlan) -> bool {
+    if consumable_class_of(&param.ty, plan).is_some() {
+        return false;
+    }
     matches!(
         Transfer::of(param, plan),
         Transfer::Buffer { element, writable: true, .. } if buffered(&element.into()).is_some()

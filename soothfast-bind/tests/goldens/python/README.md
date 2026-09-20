@@ -20,6 +20,7 @@ import acme_core
 
 ### `Counter`
 
+- `absorb`
 - `at`
 - `bump`
 - `bump_all`
@@ -47,8 +48,10 @@ import acme_core
 - `is_high`
 - `levels`
 - `maybe_ratio`
+- `mutate_counter`
 - `normalize`
 - `peak_level`
+- `peek`
 - `ping`
 - `sample_ids`
 - `scale_into`
@@ -63,8 +66,5 @@ import acme_core
 ## Not bound
 
 - acme::with_time: foreign type `chrono::DateTime` has no mapping; map it under [bind.types] in soothfast.toml (`"chrono::DateTime" = "str"` crosses it as a string through Display and FromStr)
-- acme::Counter::absorb: `Counter` cannot cross into python: a consuming method on this class already locks its slot to hold it; a borrowed parameter has no path through that lock, only `self` does
 - acme::Counter::refresh: `async fn` cannot cross into python: a consuming method on this class already locks its slot to empty it; another async method would have to hold that lock across its own await, which is not `Send`
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs
-- acme::mutate_counter: `Counter` cannot cross into python: a consuming method on this class already locks its slot to hold it; a borrowed parameter has no path through that lock, only `self` does
-- acme::peek: `Option<Counter>` cannot cross into python: a consuming method on this class already locks its slot to hold it; a borrowed parameter has no path through that lock, only `self` does
