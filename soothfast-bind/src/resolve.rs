@@ -13,7 +13,7 @@ use crate::gap::Gap;
 use crate::model::Ty;
 
 /// Containers that bind as an ordered sequence.
-const SEQUENCES: &[&str] = &[
+pub(crate) const SEQUENCES: &[&str] = &[
     "Vec",
     "VecDeque",
     "HashSet",

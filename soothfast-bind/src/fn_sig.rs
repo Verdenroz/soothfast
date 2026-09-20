@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::gap::Gap;
 use crate::model::{ExportRecord, ExportedFn, Ownership, Param, Receiver, Ty};
-use crate::resolve::{Resolver, generic_args};
+use crate::resolve::{Resolver, SEQUENCES, generic_args};
 
 /// Read one function item against the metadata its annotation recorded.
 pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> ExportedFn {
@@ -42,8 +42,7 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
 
     let (ret, throws) = returns(r, &function["sig"]["output"], &at);
     let output = &function["sig"]["output"];
-    let ret_borrowed =
-        ownership_of(output) != Ownership::Owned || inner_ownership_of(output) != Ownership::Owned;
+    let ret_borrowed = ret_is_borrowed(output);
     let is_async = function["header"]["is_async"].as_bool().unwrap_or(false);
 
     if receiver == Receiver::Consuming {
@@ -141,6 +140,25 @@ fn inner_ownership_of(ty: &Value) -> Ownership {
     match generic_args(&ty["resolved_path"]).first() {
         Some(arg) => ownership_of(arg),
         None => Ownership::Owned,
+    }
+}
+
+/// Whether a return type borrows from `self` anywhere inside it: a bare
+/// `&T`, or one nested inside `Option`, a sequence, or a map's value. The
+/// glue must own the whole thing element-wise before it can cross, so a
+/// borrow inside `Vec<&str>` counts the same as a borrow at the top level.
+fn ret_is_borrowed(ty: &Value) -> bool {
+    if ty.get("borrowed_ref").is_some() {
+        return true;
+    }
+    let rp = &ty["resolved_path"];
+    let path = rp["path"].as_str().unwrap_or_default();
+    let args = generic_args(rp);
+    match path.rsplit("::").next() {
+        Some("Option") => args.first().is_some_and(ret_is_borrowed),
+        Some("HashMap" | "BTreeMap") => args.get(1).is_some_and(ret_is_borrowed),
+        Some(last) if SEQUENCES.contains(&last) => args.first().is_some_and(ret_is_borrowed),
+        _ => false,
     }
 }
 

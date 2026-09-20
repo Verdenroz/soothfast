@@ -464,13 +464,29 @@ fn into(ty: &Ty, plan: &BindingPlan) -> String {
     }
 }
 
-/// A borrowed return, owned: `&str` and `&[T]` through `ToOwned`, and an
-/// `Option` of either mapped through it.
+/// A borrowed return, owned: `&str` and `&[T]` through `ToOwned`, recursing
+/// through `Option`, a sequence, or a map's values wherever one nests a
+/// borrow (`Vec<&str>`, `Option<Vec<&str>>`, a map with `&str` values).
 fn owned(expr: &str, ty: &Ty) -> String {
     match ty {
+        Ty::Optional(inner) if is_container(inner) => {
+            format!("{expr}.map(|value| {})", owned("value", inner))
+        }
         Ty::Optional(_) => format!("{expr}.map(::std::borrow::ToOwned::to_owned)"),
+        Ty::List(inner) => format!(
+            "{expr}.into_iter().map(|value| {}).collect()",
+            owned("value", inner)
+        ),
+        Ty::Map(_, value) => format!(
+            "{expr}.into_iter().map(|(key, value)| (key, {})).collect()",
+            owned("value", value)
+        ),
         _ => format!("{expr}.to_owned()"),
     }
+}
+
+fn is_container(ty: &Ty) -> bool {
+    matches!(ty, Ty::List(_) | Ty::Optional(_) | Ty::Map(_, _))
 }
 
 /// A value leaving the user's crate, spelled the way the signature promised.

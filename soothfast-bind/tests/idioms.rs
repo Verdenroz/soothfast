@@ -713,6 +713,50 @@ fn a_borrowed_str_return_is_owned_by_the_python_glue_and_reported_elsewhere() {
     );
 }
 
+/// `doc()` plus `Client::tags(&self) -> Vec<&str>`.
+fn doc_with_tags() -> Value {
+    let mut doc = doc();
+    doc["index"]["36"] = func(
+        "tags",
+        &[("self", borrowed(json!({ "generic": "Self" }), false))],
+        path("Vec", 90, &[borrowed(prim("str"), false)]),
+        false,
+    );
+    doc["index"]["4"]["inner"]["impl"]["items"]
+        .as_array_mut()
+        .expect("items")
+        .push(json!(36));
+    doc
+}
+
+#[test]
+fn a_vec_of_borrowed_str_return_is_owned_by_the_python_glue_element_wise() {
+    let records = vec![
+        record("acme::core::Client", "struct"),
+        method("acme::core::Client::tags", "Client"),
+    ];
+    let (surface, gaps) = surface(
+        &stamped(doc_with_tags()),
+        &TypeTable::with_defaults(),
+        &records,
+    )
+    .expect("walks");
+    assert!(find(&surface, "acme::core::Client::tags").ret_borrowed);
+    let files = BindKind::Python
+        .emit(&surface, gaps, &opts())
+        .expect("emits");
+    let glue = &files.files["src/lib.rs"];
+    assert!(
+        glue.contains("self.0.tags().into_iter().map(|value| value.to_owned()).collect()"),
+        "{glue}"
+    );
+    let stub = &files.files["acme_core.pyi"];
+    assert!(
+        stub.contains("\n    def tags(self) -> list[str]: ...\n"),
+        "{stub}"
+    );
+}
+
 #[test]
 fn a_handle_list_field_reads_but_never_writes_and_an_optional_enum_field_converts() {
     let glue = python_glue();
