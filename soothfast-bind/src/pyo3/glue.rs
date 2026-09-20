@@ -141,15 +141,17 @@ fn class_block(class: &Class, krate: &str, plan: &BindingPlan, opts: &BindOption
         return plain_enum(class, krate);
     }
     let unsendable = if class.send { "" } else { ", unsendable" };
-    // pyo3's blanket `FromPyObject` for a by-value `#[pyclass]` parameter
-    // needs the wrapper itself `Clone`, not just the type it wraps.
-    let derive_clone = if class.clone {
-        "#[derive(Clone)]\n"
+    // A by-value `#[pyclass]` parameter needs the wrapper itself `Clone`,
+    // not just the type it wraps, and an explicit opt-in into the
+    // `FromPyObject` that gives pyo3 (its blanket impl for `Clone` classes
+    // is on the way to becoming opt-in only, so ask for it up front).
+    let (derive_clone, from_py_object) = if class.clone {
+        ("#[derive(Clone)]\n", ", from_py_object")
     } else {
-        ""
+        ("", "")
     };
     let mut out = format!(
-        "\n{}#[pyclass(name = \"{}\"{unsendable})]\n{derive_clone}pub struct {}({});\n",
+        "\n{}#[pyclass(name = \"{}\"{unsendable}{from_py_object})]\n{derive_clone}pub struct {}({});\n",
         docs(class.doc.as_deref(), ""),
         class.name,
         class.name,
