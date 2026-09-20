@@ -400,9 +400,10 @@ pub(super) fn shaped_body(
     detach: bool,
 ) -> String {
     let checks = format!(
-        "{}{}",
+        "{}{}{}",
         aliasing_check(function, plan, indent),
-        text::preludes(function, indent)
+        text::preludes(function, indent),
+        async_handle_clone_preludes(function, plan, indent)
     );
     if !detach {
         return format!("{checks}{}", completed(call, function, plan, indent, ""));
@@ -599,7 +600,7 @@ pub(super) fn params(function: &Function, plan: &BindingPlan, detach: bool) -> S
                 true => format!("mut {}", py_ident(&p.name)),
                 false => py_ident(&p.name),
             };
-            format!("{binding}: {}", passing(p, plan).0)
+            format!("{binding}: {}", passing(p, plan, function.is_async).0)
         }))
         .collect::<Vec<_>>()
         .join(", ")
@@ -609,9 +610,31 @@ pub(super) fn call_args(function: &Function, plan: &BindingPlan) -> String {
     function
         .params
         .iter()
-        .map(|p| passing(p, plan).1)
+        .map(|p| passing(p, plan, function.is_async).1)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// One `let` per borrowed-handle parameter of an async fn, cloning it out of
+/// its `PyRef` before the call: `bindable` already refused any such
+/// parameter whose class is not `Clone`, so every one reaching here can be.
+fn async_handle_clone_preludes(function: &Function, plan: &BindingPlan, indent: &str) -> String {
+    if !function.is_async {
+        return String::new();
+    }
+    let mut out = String::new();
+    for param in &function.params {
+        if let Transfer::Handle {
+            mirrored: false,
+            writable: false,
+            nullable: false,
+        } = Transfer::of(param, plan)
+        {
+            let name = py_ident(&param.name);
+            let _ = writeln!(out, "{indent}let {name} = {name}.0.clone();");
+        }
+    }
+    out
 }
 
 /// How one parameter is spelled and how it is handed on, decided together so
@@ -620,7 +643,7 @@ pub(super) fn call_args(function: &Function, plan: &BindingPlan) -> String {
 /// Every sequence of a buffer-protocol type goes through a view, which is
 /// what keeps a caller's buffer off the per-element unboxing path. Borrowing
 /// one costs nothing at all; owning one costs a single memcpy.
-fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
+fn passing(param: &Param, plan: &BindingPlan, is_async: bool) -> (String, String) {
     let name = py_ident(&param.name);
     let class = match &param.ty {
         Ty::Class(c) => c.clone(),
@@ -655,6 +678,10 @@ fn passing(param: &Param, plan: &BindingPlan) -> (String, String) {
         Transfer::Handle { writable: true, .. } => {
             (format!("PyRefMut<'_, {class}>"), format!("&mut {name}.0"))
         }
+        // An async fn cannot hold this `PyRef` across its own await (it is
+        // tied to the GIL, never `Send`); a prelude clones it into `name`
+        // itself first, so the call borrows the clone instead of the field.
+        Transfer::Handle { .. } if is_async => (format!("PyRef<'_, {class}>"), format!("&{name}")),
         Transfer::Handle { .. } => (format!("PyRef<'_, {class}>"), format!("&{name}.0")),
         Transfer::Text {
             nullable: true,

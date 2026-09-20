@@ -184,7 +184,7 @@ pub fn lower(
         .fns
         .iter()
         .filter(|f| !skips(&f.skip, lang))
-        .filter(|f| bindable(f, kind, &mirrored, &mut plan.gaps))
+        .filter(|f| bindable(f, kind, &mirrored, &cloneable, &mut plan.gaps))
         .collect();
 
     for ty in &types {
@@ -406,12 +406,16 @@ fn bindable(
     f: &ExportedFn,
     kind: BindKind,
     mirrored: &BTreeSet<String>,
+    cloneable: &BTreeSet<String>,
     gaps: &mut Vec<Gap>,
 ) -> bool {
     if f.receiver == Receiver::Consuming {
         return false;
     }
     if async_is_blocked(f, kind, gaps) {
+        return false;
+    }
+    if borrowed_handle_async_param_is_blocked(f, kind, mirrored, cloneable, gaps) {
         return false;
     }
     if owned_handle_param_is_blocked(f, mirrored, gaps) {
@@ -602,6 +606,42 @@ fn async_is_blocked(f: &ExportedFn, kind: BindKind, gaps: &mut Vec<Gap>) -> bool
         },
     );
     true
+}
+
+/// A `&Class` parameter on an async Python fn crosses as a `PyRef`, which
+/// pyo3's coroutine requires the whole future to hold `Send` across every
+/// await; `PyRef` is tied to the GIL and never is. A `Clone` class lets the
+/// glue copy the value out before the await instead, so only a non-`Clone`
+/// one blocks the function.
+fn borrowed_handle_async_param_is_blocked(
+    f: &ExportedFn,
+    kind: BindKind,
+    mirrored: &BTreeSet<String>,
+    cloneable: &BTreeSet<String>,
+    gaps: &mut Vec<Gap>,
+) -> bool {
+    if !f.is_async || kind != BindKind::Python {
+        return false;
+    }
+    for param in &f.params {
+        let Ty::Class(name) = &param.ty else {
+            continue;
+        };
+        if param.ownership != Ownership::Borrowed || mirrored.contains(name) {
+            continue;
+        }
+        if !cloneable.contains(name) {
+            record(
+                gaps,
+                Gap::NotSendStatic {
+                    at: f.id.clone(),
+                    ty: format!("&{name}"),
+                },
+            );
+            return true;
+        }
+    }
+    false
 }
 
 fn owned_handle_param_is_blocked(

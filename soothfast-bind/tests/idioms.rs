@@ -99,12 +99,16 @@ fn doc() -> Value {
                 "trait": { "path": "AsRef", "id": 62, "args": { "angle_bracketed": {
                     "args": [ { "type": prim("str") } ], "constraints": [] } } },
                 "generic_params": [], "modifier": "none" } } ] }))], prim("bool"), false),
+            "33": func("borrow_client", &[("client", borrowed(path("Client", 3, &[]), false))], prim("bool"), true),
+            "34": func("borrow_bag", &[("bag", borrowed(path("Bag", 6, &[]), false))], prim("bool"), true),
         },
         "paths": {
             "1": { "crate_id": 0, "path": ["acme", "core", "Result"], "kind": "type_alias" },
             "2": { "crate_id": 0, "path": ["acme", "core", "Outcome"], "kind": "type_alias" },
             "3": { "crate_id": 0, "path": ["acme", "core", "Client"], "kind": "struct" },
             "5": { "crate_id": 0, "path": ["acme", "core", "Level"], "kind": "enum" },
+            "33": { "crate_id": 0, "path": ["acme", "core", "borrow_client"], "kind": "function" },
+            "34": { "crate_id": 0, "path": ["acme", "core", "borrow_bag"], "kind": "function" },
             "6": { "crate_id": 0, "path": ["acme", "core", "Bag"], "kind": "struct" },
             "90": { "crate_id": 1, "path": ["alloc", "vec", "Vec"], "kind": "struct" },
             "93": { "crate_id": 1, "path": ["core", "option", "Option"], "kind": "enum" },
@@ -128,6 +132,8 @@ fn walk() -> (Surface, Vec<Gap>) {
         record("acme::core::open", "fn"),
         record("acme::core::probe", "fn"),
         record("acme::util::read", "fn"),
+        record("acme::core::borrow_client", "fn"),
+        record("acme::core::borrow_bag", "fn"),
         method("acme::core::Client::new", "Client"),
         method("acme::core::Client::chart", "Client"),
         method("acme::core::Client::nested", "Client"),
@@ -886,5 +892,32 @@ fn a_class_nested_inside_a_map_or_a_map_of_lists_is_wrapped_at_the_leaf() {
              ::acme::all().into_iter().map(|(key, value)| (key, Item(value))).collect()"
         ),
         "{glue}"
+    );
+}
+
+/// A `&Client` parameter on an async fn cannot hold its `PyRef` across the
+/// await (tied to the GIL, never `Send`); `Client` is `Clone`, so the glue
+/// clones it into an owned value first and awaits that instead.
+#[test]
+fn an_async_fn_borrowing_a_clone_class_clones_it_before_the_await() {
+    let glue = python_glue();
+    assert!(glue.contains("let client = client.0.clone();"), "{glue}");
+    assert!(glue.contains("borrow_client(&client)"), "{glue}");
+}
+
+/// `Bag` is not `Clone`, so the same shape over it has nothing to copy out
+/// of the `PyRef` before the await: reported rather than emitted broken.
+#[test]
+fn an_async_fn_borrowing_a_non_clone_class_is_gapped() {
+    let (surface, gaps) = walk();
+    let plan = lower(&surface, gaps, &opts(), BindKind::Python).expect("lowers");
+    assert!(!plan.functions.iter().any(|f| f.name == "borrow_bag"));
+    assert!(
+        plan.gaps.iter().any(|g| matches!(
+            g,
+            Gap::NotSendStatic { at, ty } if at == "acme::core::borrow_bag" && ty == "&Bag"
+        )),
+        "{:?}",
+        plan.gaps
     );
 }
