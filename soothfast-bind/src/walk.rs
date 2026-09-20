@@ -223,8 +223,8 @@ fn missing(record: &ExportRecord) -> Gap {
 /// rather than by splitting the registry id — the id's own module prefix
 /// names the impl block it came from, not necessarily the owner's.
 fn find_method<'a>(r: &Resolver<'a>, record: &ExportRecord) -> Option<&'a Value> {
-    let name = record.id.rsplit("::").next()?;
-    let owner = r.find_by_path(r.owner_path(record.owner.as_deref()?)?)?;
+    let (exact, name) = record.id.rsplit_once("::")?;
+    let owner = r.find_by_path(r.owner_path(exact, record.owner.as_deref()?)?)?;
     let inner = &owner["inner"];
     let impls = inner
         .get("struct")

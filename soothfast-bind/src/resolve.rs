@@ -110,16 +110,22 @@ impl<'a> Resolver<'a> {
         self.index.get(id)
     }
 
-    /// A method's owning type's own canonical path, found by its bare name.
+    /// A method's owning type's own canonical path.
     ///
-    /// A method's registry id carries `module_path!()` of its own `impl`
-    /// block, not the type's — the same only when every impl sits beside the
-    /// struct. Splitting the id would misname the owner whenever it doesn't.
-    pub(crate) fn owner_path(&self, name: &str) -> Option<&str> {
-        self.exported
-            .iter()
-            .find(|id| class_name(id) == name)
-            .map(String::as_str)
+    /// `exact` is the method's registry id with its own name segment
+    /// stripped — right whenever the impl block sits beside the struct,
+    /// since `module_path!()` is then the type's own module. Otherwise the
+    /// owner is found by its bare name among the already-exported types,
+    /// but only when that name is unique: two exported types can share one
+    /// bare name (one aliased at the root, one not), and guessing between
+    /// them could silently attach the method to the wrong one.
+    pub(crate) fn owner_path(&self, exact: &str, name: &str) -> Option<&str> {
+        if let Some(id) = self.exported.get(exact) {
+            return Some(id.as_str());
+        }
+        let mut matches = self.exported.iter().filter(|id| class_name(id) == name);
+        let only = matches.next()?;
+        matches.next().is_none().then_some(only.as_str())
     }
 
     pub(crate) fn record(&mut self, gap: Gap) {

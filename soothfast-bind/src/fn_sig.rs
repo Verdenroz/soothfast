@@ -77,8 +77,8 @@ fn public_path(r: &Resolver, item: &Value, record: &ExportRecord) -> Option<Stri
     let Some(owner_name) = &record.owner else {
         return r.public_path(&item["id"]);
     };
-    let name = record.id.rsplit("::").next()?;
-    let owner = r.find_by_path(r.owner_path(owner_name)?)?;
+    let (exact, name) = record.id.rsplit_once("::")?;
+    let owner = r.find_by_path(r.owner_path(exact, owner_name)?)?;
     Some(format!("{}::{name}", r.public_path(&owner["id"])?))
 }
 

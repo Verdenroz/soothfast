@@ -559,3 +559,45 @@ fn a_method_declared_outside_its_types_own_module_still_binds() {
     assert_eq!(f.rust_path, "acme::Basket::total");
     assert!(gaps.is_empty(), "{gaps:?}");
 }
+
+/// Two exported types can share a bare name without colliding: one is
+/// reached only through a root alias, so `NameCollision` never sees them as
+/// the same public name. A method whose id prefix matches neither type's
+/// own module then has two equally bare-named candidates to attach to;
+/// guessing either one would silently steal the method from the other, so
+/// it is gapped instead.
+#[test]
+fn a_method_naming_neither_of_two_same_named_types_is_gapped() {
+    use fixture::{method, record, reexport, struct_item};
+
+    let doc = stamped(json!({
+        "root": 0,
+        "index": {
+            "0": module("acme", true, &[3, 4]),
+            "2": struct_item("Region", &[], &[]),
+            "3": reexport("IndicesRegion", 2),
+            "4": struct_item("Region", &[], &[]),
+        },
+        "paths": {
+            "2": { "crate_id": 0, "path": ["acme", "indices", "Region"], "kind": "struct" },
+            "4": { "crate_id": 0, "path": ["acme", "Region"], "kind": "struct" },
+        },
+    }));
+    let table = TypeTable::default();
+    let records = vec![
+        record("acme::indices::Region", "struct"),
+        record("acme::Region", "struct"),
+        method("acme::other::Region::code", "Region"),
+    ];
+    let (surface, gaps) = surface(&doc, &table, &records).expect("walks");
+
+    assert!(surface.fns.is_empty(), "{:?}", surface.fns);
+    assert!(
+        gaps.iter().any(|g| matches!(
+            g,
+            Gap::UnmappedForeign { at, path }
+                if at == "acme::other::Region::code" && path == "acme::other::Region::code"
+        )),
+        "{gaps:?}"
+    );
+}
