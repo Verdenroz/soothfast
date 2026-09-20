@@ -439,3 +439,41 @@ fn a_type_with_no_public_path_is_reported_rather_than_walked() {
         "{gaps:?}"
     );
 }
+
+/// An exported generic struct or enum has no single Rust path a binding can
+/// name it by, so it is reported rather than emitted as `finance_query::T`
+/// with its type argument silently dropped.
+#[test]
+fn a_generic_type_is_reported_rather_than_walked() {
+    use fixture::record;
+    use serde_json::Value;
+
+    let doc = json!({
+        "index": {
+            "1": {
+                "name": "Wrapper", "docs": Value::Null, "attrs": [], "visibility": "public",
+                "inner": { "struct": {
+                    "kind": { "plain": { "fields": [], "has_stripped_fields": false } },
+                    "generics": { "params": [
+                        { "name": "T", "kind": { "type": {
+                            "bounds": [], "default": Value::Null, "is_synthetic": false } } }
+                    ], "where_predicates": [] },
+                    "impls": [] } },
+            },
+        },
+        "paths": {
+            "1": { "crate_id": 0, "path": ["acme", "Wrapper"], "kind": "struct" },
+        },
+    });
+    let table = TypeTable::default();
+    let records = vec![record("acme::Wrapper", "struct")];
+    let (surface, gaps) = surface(&doc, &table, &records).expect("walks");
+
+    assert!(surface.types.is_empty(), "{:?}", surface.types);
+    assert!(
+        gaps.iter().any(
+            |g| matches!(g, Gap::Generic { at, param } if at == "acme::Wrapper" && param == "T")
+        ),
+        "{gaps:?}"
+    );
+}

@@ -79,9 +79,10 @@ pub fn surface(
     Ok((surface, resolver.gaps))
 }
 
-/// Exported types that cannot become a class, keyed by id: one with no
-/// public path at all (defined in a private module, nothing re-exports it),
-/// or one whose short name lost a collision to another exported type's.
+/// Exported types that cannot become a class, keyed by id: a generic one
+/// (nothing says which instantiation to bind), one with no public path at
+/// all (defined in a private module, nothing re-exports it), or one whose
+/// short name lost a collision to another exported type's.
 /// [`ExportedType::name`](crate::model::ExportedType) is the last segment of
 /// a type's public path, so two types under different modules (or one
 /// aliased at the root) can end up wanting the same one; the shortest
@@ -95,6 +96,16 @@ fn excluded_types(resolver: &Resolver, records: &[ExportRecord]) -> BTreeMap<Str
         let Some(item) = resolver.find_by_path(&record.id) else {
             continue;
         };
+        if let Some(param) = type_generic_params(item).into_iter().next() {
+            excluded.insert(
+                record.id.clone(),
+                Gap::Generic {
+                    at: record.id.clone(),
+                    param,
+                },
+            );
+            continue;
+        }
         match resolver.public_path(&item["id"]) {
             Some(rust_path) => {
                 let name = class_name(&rust_path).to_string();
@@ -179,6 +190,20 @@ fn note_error(
 
 fn is_type(record: &ExportRecord) -> bool {
     matches!(record.kind.as_str(), "struct" | "enum")
+}
+
+/// Type parameters a struct or enum declares. A binding names a type by a
+/// single Rust path, which a generic type has none of on its own.
+fn type_generic_params(item: &Value) -> Vec<String> {
+    item["inner"]
+        .get("struct")
+        .or_else(|| item["inner"].get("enum"))
+        .and_then(|k| k["generics"]["params"].as_array())
+        .into_iter()
+        .flatten()
+        .filter(|p| p["kind"].get("type").is_some())
+        .filter_map(|p| p["name"].as_str().map(ToString::to_string))
+        .collect()
 }
 
 /// An exported item rustdoc has no entry for, reported rather than dropped.
