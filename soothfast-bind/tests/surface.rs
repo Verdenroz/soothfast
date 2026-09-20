@@ -372,3 +372,34 @@ fn the_shortest_public_path_wins_a_three_way_name_collision() {
         );
     }
 }
+
+/// A struct declared in a private module, with no `pub use` reaching it,
+/// cannot be named from outside the crate: it is reported rather than
+/// walked, since glue that named it by its declaration path would not
+/// compile.
+#[test]
+fn a_type_with_no_public_path_is_reported_rather_than_walked() {
+    use fixture::{record, struct_item};
+
+    let doc = stamped(json!({
+        "root": 0,
+        "index": {
+            "0": module("acme", true, &[1]),
+            "1": module("hidden", false, &[2]),
+            "2": struct_item("Secret", &[], &[]),
+        },
+        "paths": {
+            "2": { "crate_id": 0, "path": ["acme", "hidden", "Secret"], "kind": "struct" },
+        },
+    }));
+    let table = TypeTable::default();
+    let records = vec![record("acme::hidden::Secret", "struct")];
+    let (surface, gaps) = surface(&doc, &table, &records).expect("walks");
+
+    assert!(surface.types.is_empty(), "{:?}", surface.types);
+    assert!(
+        gaps.iter()
+            .any(|g| matches!(g, Gap::Unreachable { at } if at == "acme::hidden::Secret")),
+        "{gaps:?}"
+    );
+}

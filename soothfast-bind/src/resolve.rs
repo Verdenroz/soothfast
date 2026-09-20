@@ -34,6 +34,11 @@ pub struct Resolver<'a> {
     self_ty: Option<String>,
     /// Item id → the shortest path a downstream crate can name it by.
     public: BTreeMap<String, String>,
+    /// Whether `doc` carries a module tree at all. A synthetic test document
+    /// without one leaves every `public_path` a `None` that means nothing,
+    /// so callers must tell that apart from a real document's `None`, which
+    /// means nothing public actually reaches the item.
+    has_module_tree: bool,
     pub gaps: Vec<Gap>,
 }
 
@@ -57,6 +62,7 @@ impl<'a> Resolver<'a> {
             exported,
             self_ty: None,
             public: public_paths(doc, index),
+            has_module_tree: doc.get("root").is_some(),
             gaps: Vec::new(),
         })
     }
@@ -67,6 +73,12 @@ impl<'a> Resolver<'a> {
     /// the document carries no module tree to walk.
     pub fn public_path(&self, id: &Value) -> Option<String> {
         self.public.get(&id_key(id)?).cloned()
+    }
+
+    /// Whether a `None` from [`Self::public_path`] means the document has no
+    /// module tree to consult, rather than a real absence of a public path.
+    pub(crate) fn has_module_tree(&self) -> bool {
+        self.has_module_tree
     }
 
     /// Set the type `Self` resolves to for the item about to be walked.

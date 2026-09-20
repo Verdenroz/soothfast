@@ -33,8 +33,8 @@ pub fn surface(
         .collect();
     let mut resolver = Resolver::new(doc, table, exported.clone())?;
 
-    let collisions = name_collisions(&resolver, &records);
-    for id in collisions.keys() {
+    let excluded = excluded_types(&resolver, &records);
+    for id in excluded.keys() {
         exported.remove(id);
         resolver.exclude(id);
     }
@@ -42,7 +42,7 @@ pub fn surface(
     let mut surface = Surface::default();
 
     for record in &records {
-        if let Some(gap) = collisions.get(&record.id) {
+        if let Some(gap) = excluded.get(&record.id) {
             resolver.record(gap.clone());
             continue;
         }
@@ -79,29 +79,51 @@ pub fn surface(
     Ok((surface, resolver.gaps))
 }
 
-/// Exported types whose short name collides with another exported type's,
-/// keyed by the losing id. [`ExportedType::name`](crate::model::ExportedType)
-/// is the last segment of a type's public path, so two types under
-/// different modules (or one aliased at the root) can end up wanting the
-/// same one; the shortest public path keeps it, ties broken lexically,
-/// since two classes under one name would not compile.
-fn name_collisions(resolver: &Resolver, records: &[ExportRecord]) -> BTreeMap<String, Gap> {
+/// Exported types that cannot become a class, keyed by id: one with no
+/// public path at all (defined in a private module, nothing re-exports it),
+/// or one whose short name lost a collision to another exported type's.
+/// [`ExportedType::name`](crate::model::ExportedType) is the last segment of
+/// a type's public path, so two types under different modules (or one
+/// aliased at the root) can end up wanting the same one; the shortest
+/// public path keeps it, ties broken lexically, since two classes under one
+/// name would not compile any more than a class naming itself through a
+/// path nothing outside the crate can reach would.
+fn excluded_types(resolver: &Resolver, records: &[ExportRecord]) -> BTreeMap<String, Gap> {
     let mut by_name: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    let mut excluded = BTreeMap::new();
     for record in records.iter().filter(|r| is_type(r)) {
         let Some(item) = resolver.find_by_path(&record.id) else {
             continue;
         };
-        let rust_path = resolver
-            .public_path(&item["id"])
-            .unwrap_or_else(|| record.id.clone());
-        let name = class_name(&rust_path).to_string();
-        by_name
-            .entry(name)
-            .or_default()
-            .push((rust_path, record.id.clone()));
+        match resolver.public_path(&item["id"]) {
+            Some(rust_path) => {
+                let name = class_name(&rust_path).to_string();
+                by_name
+                    .entry(name)
+                    .or_default()
+                    .push((rust_path, record.id.clone()));
+            }
+            None if resolver.has_module_tree() => {
+                excluded.insert(
+                    record.id.clone(),
+                    Gap::Unreachable {
+                        at: record.id.clone(),
+                    },
+                );
+            }
+            // A synthetic document with no module tree at all: every path
+            // falls back to the item's own declaration path, as before.
+            None => {
+                let rust_path = record.id.clone();
+                let name = class_name(&rust_path).to_string();
+                by_name
+                    .entry(name)
+                    .or_default()
+                    .push((rust_path, record.id.clone()));
+            }
+        }
     }
 
-    let mut losers = BTreeMap::new();
     for (name, mut group) in by_name {
         if group.len() < 2 {
             continue;
@@ -109,7 +131,7 @@ fn name_collisions(resolver: &Resolver, records: &[ExportRecord]) -> BTreeMap<St
         group.sort_by(|a, b| (a.0.len(), &a.0).cmp(&(b.0.len(), &b.0)));
         let winner = group[0].0.clone();
         for (path, id) in group.into_iter().skip(1) {
-            losers.insert(
+            excluded.insert(
                 id,
                 Gap::NameCollision {
                     at: path,
@@ -119,7 +141,7 @@ fn name_collisions(resolver: &Resolver, records: &[ExportRecord]) -> BTreeMap<St
             );
         }
     }
-    losers
+    excluded
 }
 
 /// The error type a call throws, read once per distinct type. A `String`

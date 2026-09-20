@@ -70,6 +70,11 @@ pub enum Gap {
         /// Public path of the type that kept it.
         winner: String,
     },
+    /// An exported struct or enum with no public path: it is defined in a
+    /// private module and nothing re-exports it, so glue naming it by that
+    /// path would not compile. Reachable only structurally, as a field or
+    /// return value of something that does have a path.
+    Unreachable { at: String },
 }
 
 impl Gap {
@@ -85,7 +90,8 @@ impl Gap {
             | Self::ConsumingReceiver { at }
             | Self::AsyncExclusiveReceiver { at }
             | Self::PlainEnumMember { at }
-            | Self::NameCollision { at, .. } => at,
+            | Self::NameCollision { at, .. }
+            | Self::Unreachable { at } => at,
         }
     }
 
@@ -136,6 +142,11 @@ impl Gap {
                  keeps it (the shorter public path); re-export it at the \
                  crate root under another name (`pub use inner::{name} as \
                  Other{name}`), or leave it unexported"
+            ),
+            Self::Unreachable { at } => format!(
+                "{at}: no public path reaches it, so glue could only name it \
+                 through a private module; add a `pub use` for it, or leave \
+                 it unexported"
             ),
         }
     }
