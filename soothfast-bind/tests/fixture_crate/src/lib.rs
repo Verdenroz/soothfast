@@ -218,3 +218,7 @@ pub fn route(providers: impl IntoIterator<Item = u8>) {
 pub fn names<I: IntoIterator<Item = String>>(items: I) {
     let _ = items;
 }
+
+pub fn wait_for(d: std::time::Duration) -> std::time::Duration {
+    d
+}

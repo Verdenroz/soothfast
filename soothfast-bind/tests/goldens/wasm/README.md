@@ -65,3 +65,4 @@ await init();
 - acme::index_all: `HashMap<String, u32>` cannot cross into wasm: wasm-bindgen carries no map type; return a list of pairs, or a struct with named fields
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs
 - acme::peek: `Option<Counter>` cannot cross into wasm: wasm-bindgen has no OptionFromWasmAbi for a reference to an exported type; return it instead, or accept a separate presence flag alongside the handle
+- acme::wait_for: `std::time::Duration` cannot cross into wasm: `std::time::Duration` crosses into Python only for now, through pyo3's own `datetime.timedelta` conversion; other backends report it

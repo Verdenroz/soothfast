@@ -11,6 +11,14 @@ pub(super) fn unsupported(kind: BindKind, ty: &Ty, mirrored: &BTreeSet<String>) 
                 .into(),
         );
     }
+    if kind != BindKind::Python && mentions_duration(ty) {
+        return Some(
+            "`std::time::Duration` crosses into Python only for now, through \
+             pyo3's own `datetime.timedelta` conversion; other backends \
+             report it"
+                .into(),
+        );
+    }
     // Go, C++, Lua and C# all call the same C functions, so each inherits
     // the restriction; Java and Kotlin have no generic container either,
     // and no more of a story than C does for a sequence of anything but one
@@ -72,6 +80,16 @@ fn mentions_text(ty: &Ty) -> bool {
         Ty::List(inner) | Ty::Optional(inner) => mentions_text(inner),
         Ty::Map(key, value) => mentions_text(key) || mentions_text(value),
         Ty::Tuple(items) => items.iter().any(mentions_text),
+        _ => false,
+    }
+}
+
+fn mentions_duration(ty: &Ty) -> bool {
+    match ty {
+        Ty::Duration => true,
+        Ty::List(inner) | Ty::Optional(inner) => mentions_duration(inner),
+        Ty::Map(key, value) => mentions_duration(key) || mentions_duration(value),
+        Ty::Tuple(items) => items.iter().any(mentions_duration),
         _ => false,
     }
 }

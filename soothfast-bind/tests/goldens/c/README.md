@@ -82,3 +82,4 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - acme::set_level: `Option<Level>` cannot cross into c: an optional exported type is taken only as a return; take it by reference instead
 - acme::sum_optional: `Option<Vec<f64>>` cannot cross into c: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::trim: `Option<Vec<f64>>` cannot cross into c: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
+- acme::wait_for: `std::time::Duration` cannot cross into c: `std::time::Duration` crosses into Python only for now, through pyo3's own `datetime.timedelta` conversion; other backends report it

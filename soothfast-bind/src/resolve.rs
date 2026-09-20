@@ -348,6 +348,9 @@ impl<'a> Resolver<'a> {
         let canonical = self
             .canonical(&rp["id"])
             .unwrap_or_else(|| display.to_string());
+        if canonical == "core::time::Duration" {
+            return Ty::Duration;
+        }
         if self.exported.contains(&canonical) {
             // The source spells a reference by its pre-alias name; the
             // class itself is only ever registered under the alias.

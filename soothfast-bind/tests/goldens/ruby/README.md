@@ -70,3 +70,4 @@ require "acme_core"
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs
 - acme::peek: `Option<Counter>` cannot cross into ruby: an optional exported type is taken only as a return; take it by reference instead
 - acme::ping: `async fn` cannot cross into ruby: no Ruby runtime story yet
+- acme::wait_for: `std::time::Duration` cannot cross into ruby: `std::time::Duration` crosses into Python only for now, through pyo3's own `datetime.timedelta` conversion; other backends report it

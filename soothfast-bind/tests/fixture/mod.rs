@@ -273,6 +273,15 @@ fn free_functions(insert: &mut impl FnMut(u64, Value)) {
     // still has something to prove itself against once a consuming method
     // makes `Counter::refresh` gapped for taking its lock across an await.
     insert(58, func("ping", &[], prim("bool"), true));
+    insert(
+        62,
+        func(
+            "wait_for",
+            &[("d", path("std::time::Duration", 95, &[]))],
+            path("std::time::Duration", 95, &[]),
+            false,
+        ),
+    );
 }
 
 /// An `IntoIterator<Item = ...>` trait bound, the shape it carries wherever
@@ -672,6 +681,8 @@ pub fn doc() -> Value {
             "59": { "crate_id": 0, "path": ["acme", "from_items"], "kind": "function" },
             "60": { "crate_id": 0, "path": ["acme", "route"], "kind": "function" },
             "61": { "crate_id": 0, "path": ["acme", "names"], "kind": "function" },
+            "62": { "crate_id": 0, "path": ["acme", "wait_for"], "kind": "function" },
+            "95": { "crate_id": 2, "path": ["core", "time", "Duration"], "kind": "struct" },
             "16": { "crate_id": 0, "path": ["acme", "describe"], "kind": "function" },
             "17": { "crate_id": 0, "path": ["acme", "describe_owned"], "kind": "function" },
             "18": { "crate_id": 0, "path": ["acme", "maybe_ratio"], "kind": "function" },
@@ -730,6 +741,7 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::from_items", "fn"),
         record("acme::route", "fn"),
         record("acme::names", "fn"),
+        record("acme::wait_for", "fn"),
         record("acme::describe", "fn"),
         record("acme::describe_owned", "fn"),
         record("acme::maybe_ratio", "fn"),

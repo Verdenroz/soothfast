@@ -26,6 +26,10 @@ pub enum Ty {
     /// `Vec<u8>` and `&[u8]`, distinguished from `List(U8)` because every
     /// target language has a byte-string type that is not a list of numbers.
     Bytes,
+    /// `std::time::Duration`. Python crosses it as `datetime.timedelta`
+    /// through pyo3's own conversion; every other backend reports it
+    /// unsupported.
+    Duration,
     List(Box<Ty>),
     Map(Box<Ty>, Box<Ty>),
     Optional(Box<Ty>),
@@ -137,6 +141,7 @@ impl Ty {
             Ty::F64 => "f64".into(),
             Ty::Str => "String".into(),
             Ty::Bytes => "Vec<u8>".into(),
+            Ty::Duration => "std::time::Duration".into(),
             Ty::List(inner) => format!("Vec<{}>", inner.render()),
             Ty::Map(key, value) => format!("HashMap<{}, {}>", key.render(), value.render()),
             Ty::Optional(inner) => format!("Option<{}>", inner.render()),

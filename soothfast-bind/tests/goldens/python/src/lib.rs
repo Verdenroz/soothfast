@@ -784,6 +784,11 @@ fn version() -> String {
     ::acme::version()
 }
 
+#[pyfunction]
+fn wait_for(d: std::time::Duration) -> std::time::Duration {
+    ::acme::wait_for(d)
+}
+
 #[pymodule(gil_used = false)]
 fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<F64Array>()?;
@@ -821,6 +826,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sum_optional, m)?)?;
     m.add_function(wrap_pyfunction!(trim, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
+    m.add_function(wrap_pyfunction!(wait_for, m)?)?;
     m.add_function(wrap_pyfunction!(ping_blocking, m)?)?;
     Ok(())
 }

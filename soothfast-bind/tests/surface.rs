@@ -102,6 +102,26 @@ fn an_into_iterator_bound_binds_as_a_list_in_every_shape_it_appears() {
 }
 
 #[test]
+fn a_duration_resolves_by_its_canonical_path_not_its_display_name() {
+    let (surface, gaps) = walk();
+    let f = find_fn(&surface, "acme::wait_for");
+    assert_eq!(f.params[0].ty, Ty::Duration);
+    assert_eq!(f.ret, Ty::Duration);
+    assert!(!gaps.iter().any(|g| g.at() == "acme::wait_for"));
+
+    let go = lower(&surface, gaps, &opts(), BindKind::Go).expect("lowers");
+    assert!(
+        go.gaps.iter().any(|g| matches!(
+            g,
+            Gap::UnsupportedByBackend { at, why, .. }
+                if at == "acme::wait_for" && why.contains("Duration")
+        )),
+        "{:?}",
+        go.gaps
+    );
+}
+
+#[test]
 fn an_async_fn_is_recorded_as_one() {
     let (surface, _) = walk();
     assert!(find_fn(&surface, "acme::Counter::refresh").is_async);

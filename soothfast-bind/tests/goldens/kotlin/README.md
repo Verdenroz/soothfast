@@ -73,3 +73,4 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 - acme::set_level: `Option<Level>` cannot cross into kotlin: an optional exported type is taken only as a return; take it by reference instead
 - acme::sum_optional: `Option<Vec<f64>>` cannot cross into kotlin: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::trim: `Option<Vec<f64>>` cannot cross into kotlin: `Option<Vec<f64>>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
+- acme::wait_for: `std::time::Duration` cannot cross into kotlin: `std::time::Duration` crosses into Python only for now, through pyo3's own `datetime.timedelta` conversion; other backends report it

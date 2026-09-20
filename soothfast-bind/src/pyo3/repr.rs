@@ -76,7 +76,7 @@ fn slot(accessor: &Accessor, plan: &BindingPlan, base: &str) -> Option<(String, 
 /// Whether `{:?}` of the value needs nothing from the bound crate.
 fn debuggable(ty: &Ty) -> bool {
     match ty {
-        Ty::Str | Ty::Bytes => true,
+        Ty::Str | Ty::Bytes | Ty::Duration => true,
         Ty::Optional(inner) | Ty::List(inner) => debuggable(inner),
         other => other.is_primitive(),
     }

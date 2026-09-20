@@ -43,6 +43,7 @@ const SMOKE_SCRIPT: &str = r#"
 import array
 import ast
 import asyncio
+import datetime
 import pathlib
 
 import acme_core
@@ -52,6 +53,8 @@ package = pathlib.Path(acme_core.__file__).parent
 assert (package / "__init__.pyi").is_file(), sorted(p.name for p in package.iterdir())
 assert (package / "py.typed").is_file()
 ast.parse((package / "__init__.pyi").read_text())
+
+assert acme_core.wait_for(datetime.timedelta(seconds=90)) == datetime.timedelta(minutes=1, seconds=30)
 
 c = Counter(10)
 assert c.value == 10

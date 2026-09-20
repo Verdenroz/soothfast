@@ -61,3 +61,4 @@ A borrowed numeric or raw vector parameter (`&[f64]`, `&[u8]`) reads R's own vec
 - acme::ping: `async fn` cannot cross into r: no R runtime story yet
 - acme::scale_into: `Vec<f64>` cannot cross into r: R vectors are values; an out-parameter cannot be written through, return the sequence instead
 - acme::split: `Vec<f64>` cannot cross into r: R vectors are values; an out-parameter cannot be written through, return the sequence instead
+- acme::wait_for: `std::time::Duration` cannot cross into r: `std::time::Duration` crosses into Python only for now, through pyo3's own `datetime.timedelta` conversion; other backends report it

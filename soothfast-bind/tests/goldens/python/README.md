@@ -65,6 +65,7 @@ import acme_core
 - `sum_optional`
 - `trim`
 - `version`
+- `wait_for`
 
 ## Not bound
 
