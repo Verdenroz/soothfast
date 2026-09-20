@@ -328,6 +328,42 @@ fn a_root_reexport_alias_becomes_the_class_name() {
         "a lone alias has nothing to collide with: {gaps:?}"
     );
 }
+
+/// A field referencing an aliased type spells it as the source wrote it
+/// (the pre-alias name); the class it resolves to is only ever registered
+/// under the alias, so the field's type must resolve to that name too.
+#[test]
+fn a_field_of_an_aliased_type_resolves_to_the_alias() {
+    use fixture::{field, path, record, struct_item};
+
+    let doc = stamped(json!({
+        "root": 0,
+        "index": {
+            "0": module("acme", true, &[3, 4]),
+            "2": struct_item("Region", &[], &[]),
+            "3": reexport("IndicesRegion", 2),
+            "4": struct_item("Holder", &[5], &[]),
+            "5": field("region", path("Region", 2, &[]), true),
+        },
+        "paths": {
+            "2": { "crate_id": 0, "path": ["acme", "indices", "Region"], "kind": "struct" },
+            "4": { "crate_id": 0, "path": ["acme", "Holder"], "kind": "struct" },
+        },
+    }));
+    let table = TypeTable::default();
+    let records = vec![
+        record("acme::indices::Region", "struct"),
+        record("acme::Holder", "struct"),
+    ];
+    let (surface, _) = surface(&doc, &table, &records).expect("walks");
+
+    let holder = surface.types.iter().find(|t| t.name == "Holder").unwrap();
+    let TypeKind::Struct(fields) = &holder.kind else {
+        panic!("expected a struct");
+    };
+    assert_eq!(fields[0].ty, Ty::Class("IndicesRegion".into()));
+}
+
 /// Three exported types can end up with the same short name: two structs
 /// both called `Report` in different modules, and a third at the crate
 /// root. Only the root one — the shortest public path — keeps the name;

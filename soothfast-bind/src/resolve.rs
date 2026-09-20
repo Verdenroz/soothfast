@@ -309,7 +309,13 @@ impl<'a> Resolver<'a> {
             .canonical(&rp["id"])
             .unwrap_or_else(|| display.to_string());
         if self.exported.contains(&canonical) {
-            return Ty::Class(last.to_string());
+            // The source spells a reference by its pre-alias name; the
+            // class itself is only ever registered under the alias.
+            let name = self
+                .public_path(&rp["id"])
+                .map(|path| class_name(&path).to_string())
+                .unwrap_or_else(|| last.to_string());
+            return Ty::Class(name);
         }
         if let Some(mapped) = self.table.lookup(&canonical) {
             return mapped.clone();
