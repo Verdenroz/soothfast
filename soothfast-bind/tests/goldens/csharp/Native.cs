@@ -155,6 +155,9 @@ internal static class Native
     internal static extern unsafe int acme_core_peak_level(double* values, nuint values_len);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern unsafe void acme_core_route(byte* providers, nuint providers_len);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe AcmeCoreUsizeArray acme_core_sample_ids(nuint* ids, nuint ids_len);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

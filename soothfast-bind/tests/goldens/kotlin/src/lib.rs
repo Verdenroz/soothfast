@@ -486,6 +486,33 @@ pub extern "system" fn Java_acme_core_Core_nativePeakLevel<'local>(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_acme_core_Core_nativeRoute<'local>(
+    mut env: ::jni::JNIEnv<'local>,
+    _class: ::jni::objects::JClass<'local>,
+    providers: ::jni::objects::JByteArray<'local>
+) {
+    let __len = match env.get_array_length(&providers) {
+        Ok(v) => v as usize,
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ;
+        }
+    };
+    let mut __raw = vec![0; __len];
+    match env.get_byte_array_region(&providers, 0, &mut __raw) {
+        Ok(()) => {}
+        Err(e) => {
+            let pending = matches!(e, ::jni::errors::Error::JavaException);
+            __throw_unless_pending(&mut env, pending, e.to_string());
+            return ;
+        }
+    }
+    let providers: Vec<u8> = __raw.into_iter().map(|v| v as u8).collect();
+    ::acme::route(providers);
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_acme_core_Core_nativeSampleIds<'local>(
     mut env: ::jni::JNIEnv<'local>,
     _class: ::jni::objects::JClass<'local>,

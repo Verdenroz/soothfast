@@ -274,6 +274,10 @@ func PeakLevel(values []float64) Level {
 	return Level(C.core_peak_level((*C.double)(unsafe.Pointer(bufPtr(values))), C.size_t(len(values))))
 }
 
+func Route(providers []uint8) {
+	C.core_route((*C.uint8_t)(unsafe.Pointer(bufPtr(providers))), C.size_t(len(providers)))
+}
+
 func SampleIds(ids []uint) []uint {
 	return uintSlice(C.core_sample_ids((*C.size_t)(unsafe.Pointer(bufPtr(ids))), C.size_t(len(ids))))
 }

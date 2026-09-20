@@ -375,6 +375,11 @@ pub unsafe extern "C" fn acme_core_peak_level(values: *const f64, values_len: us
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn acme_core_route(providers: *const u8, providers_len: usize) {
+    ::acme::route(unsafe { ffi::slice(providers, providers_len) }.to_vec())
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn acme_core_sample_ids(ids: *const usize, ids_len: usize) -> AcmeCoreUsizeArray {
     AcmeCoreUsizeArray::new(::acme::sample_ids(unsafe { ffi::slice(ids, ids_len) }.to_vec()))
 }

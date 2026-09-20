@@ -194,6 +194,10 @@ inline Level peak_level(std::span<const double> values) {
     return static_cast<Level>(raw_result);
 }
 
+inline void route(std::span<const uint8_t> providers) {
+    core_route(providers.data(), providers.size());
+}
+
 inline std::vector<size_t> sample_ids(std::span<const size_t> ids) {
     auto raw_result = core_sample_ids(ids.data(), ids.size());
     return to_vector_usize(raw_result);

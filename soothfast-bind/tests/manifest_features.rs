@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 //! The features a surface was walked with reach every generated manifest's
 //! dependency on the bound crate, so the crate the glue compiles against is
 //! the one rustdoc saw.

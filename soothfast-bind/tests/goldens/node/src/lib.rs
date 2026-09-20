@@ -155,6 +155,11 @@ pub fn flags(values: Vec<bool>) -> Vec<bool> {
     ::acme::flags(values)
 }
 
+#[napi(js_name = "fromItems")]
+pub fn from_items(items: Vec<String>) -> () {
+    ::acme::from_items(items)
+}
+
 #[napi]
 pub fn greet(name: String) -> String {
     ::acme::greet(&name)
@@ -186,6 +191,11 @@ pub fn mutate_counter(mut counter: ClassInstance<'_, Counter>) -> BigInt {
 }
 
 #[napi]
+pub fn names(items: Vec<String>) -> () {
+    ::acme::names(items)
+}
+
+#[napi]
 pub fn normalize(input: Float64Array, factor: f64) -> Float64Array {
     Float64Array::from(::acme::normalize(input.to_vec(), factor))
 }
@@ -198,6 +208,11 @@ pub fn peak_level(values: Float64Array) -> Level {
 #[napi]
 pub fn peek(counter: Option<ClassInstance<'_, Counter>>) -> bool {
     ::acme::peek(counter.as_deref().map(|v| &v.0))
+}
+
+#[napi]
+pub fn route(providers: Buffer) -> () {
+    ::acme::route(providers.to_vec())
 }
 
 #[napi(js_name = "sampleIds")]

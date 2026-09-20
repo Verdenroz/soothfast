@@ -202,3 +202,19 @@ pub fn peek(counter: Option<&Counter>) -> bool {
 pub async fn ping() -> bool {
     true
 }
+
+pub fn from_items<S, I>(items: I)
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let _ = items;
+}
+
+pub fn route(providers: impl IntoIterator<Item = u8>) {
+    let _ = providers;
+}
+
+pub fn names<I: IntoIterator<Item = String>>(items: I) {
+    let _ = items;
+}

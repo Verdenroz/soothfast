@@ -4,11 +4,13 @@
 //! is itself, so the only questions are how it takes its argument, what it
 //! returns, and whether it can fail.
 
-use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde_json::{Value, json};
 
 use crate::gap::Gap;
 use crate::model::{ExportRecord, ExportedFn, Ownership, Param, Receiver, Ty};
-use crate::resolve::{Resolver, SEQUENCES, generic_args};
+use crate::resolve::{Resolver, SEQUENCES, accepted_argument, generic_args, intoiterator_item};
 
 /// Read one function item against the metadata its annotation recorded.
 pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> ExportedFn {
@@ -16,11 +18,16 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
     let function = &item["inner"]["function"];
     r.enter(record.owner.as_deref());
 
-    for param in generic_params(function) {
-        r.record(Gap::Generic {
-            at: at.clone(),
-            param,
-        });
+    let (binds, consumed) = iterator_binds(r, &function["generics"], &at);
+    r.set_iterator_binds(binds);
+
+    for param in generic_params(&function["generics"]) {
+        if !consumed.contains(&param) {
+            r.record(Gap::Generic {
+                at: at.clone(),
+                param,
+            });
+        }
     }
 
     let mut receiver = Receiver::None;
@@ -162,8 +169,8 @@ fn ret_is_borrowed(ty: &Value) -> bool {
 /// Type parameters the signature left open. Lifetimes bind fine and are not
 /// reported; neither is the synthetic parameter behind an `impl Trait`
 /// argument, which [`Resolver::resolve_param`] decides on its own.
-fn generic_params(function: &Value) -> Vec<String> {
-    function["generics"]["params"]
+fn generic_params(generics: &Value) -> Vec<String> {
+    generics["params"]
         .as_array()
         .into_iter()
         .flatten()
@@ -171,4 +178,70 @@ fn generic_params(function: &Value) -> Vec<String> {
         .filter(|p| !p["kind"]["type"]["is_synthetic"].as_bool().unwrap_or(false))
         .filter_map(|p| p["name"].as_str().map(ToString::to_string))
         .collect()
+}
+
+/// Type parameters an `IntoIterator<Item = ...>` bound substitutes with a
+/// list, inline (`I: IntoIterator<Item = String>`) or in a where clause
+/// (`where I: IntoIterator<Item = S>`). An `Item` that is itself one of the
+/// fn's own type parameters resolves through that parameter's own
+/// `Into<T>`/`AsRef` bound, the same target `impl Into<T>` already accepts
+/// in argument position; both names count as consumed even though only `I`
+/// gets a substitution of its own.
+fn iterator_binds(
+    r: &mut Resolver,
+    generics: &Value,
+    at: &str,
+) -> (BTreeMap<String, Ty>, BTreeSet<String>) {
+    let names = generic_params(generics);
+    let mut binds = BTreeMap::new();
+    let mut consumed = BTreeSet::new();
+    for name in &names {
+        let bounds = json!(bounds_of(generics, name));
+        let Some(item) = intoiterator_item(&bounds) else {
+            continue;
+        };
+        let item_ty = match item.get("generic").and_then(Value::as_str) {
+            Some(s) if names.iter().any(|n| n == s) => {
+                let s_bounds = json!(bounds_of(generics, s));
+                let Some(target) = accepted_argument(&s_bounds) else {
+                    continue;
+                };
+                consumed.insert(s.to_string());
+                r.resolve(&target, at)
+            }
+            _ => r.resolve(&item, at),
+        };
+        binds.insert(name.clone(), Ty::List(Box::new(item_ty)));
+        consumed.insert(name.clone());
+    }
+    (binds, consumed)
+}
+
+/// Every trait bound a type parameter carries: inline on its own
+/// declaration, or repeated in a `where` clause naming it by its bare
+/// `{"generic": name}` reference.
+fn bounds_of(generics: &Value, name: &str) -> Vec<Value> {
+    let mut out: Vec<Value> = generics["params"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p["name"].as_str() == Some(name))
+        .flat_map(|p| p["kind"]["type"]["bounds"].as_array().into_iter().flatten())
+        .cloned()
+        .collect();
+    out.extend(
+        generics["where_predicates"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|pred| pred["bound_predicate"]["type"]["generic"].as_str() == Some(name))
+            .flat_map(|pred| {
+                pred["bound_predicate"]["bounds"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+            })
+            .cloned(),
+    );
+    out
 }

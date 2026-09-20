@@ -40,6 +40,7 @@ require "acme_core"
 - `fail`
 - `find_counter`
 - `flags`
+- `from_items`
 - `greet`
 - `index_all`
 - `invert_bits`
@@ -47,8 +48,10 @@ require "acme_core"
 - `levels`
 - `maybe_ratio`
 - `mutate_counter`
+- `names`
 - `normalize`
 - `peak_level`
+- `route`
 - `sample_ids`
 - `scale_into`
 - `scale_optional`

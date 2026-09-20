@@ -58,6 +58,10 @@ public final class Core {
         return Level.values()[nativePeakLevel(values)];
     }
 
+    public static void route(byte[] providers) {
+        nativeRoute(providers);
+    }
+
     public static long[] sampleIds(long[] ids) {
         return nativeSampleIds(ids);
     }
@@ -90,6 +94,7 @@ public final class Core {
     private static native long nativeMutateCounter(long counter);
     private static native double[] nativeNormalize(double[] input, double factor);
     private static native int nativePeakLevel(double[] values);
+    private static native void nativeRoute(byte[] providers);
     private static native long[] nativeSampleIds(long[] ids);
     private static native void nativeScaleInto(double[] values, double factor, double[] out);
     private static native void nativeSplit(double[] src, double[] lo, double[] hi);

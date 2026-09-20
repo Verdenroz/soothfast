@@ -57,6 +57,7 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - `acme_core_mutate_counter`
 - `acme_core_normalize`
 - `acme_core_peak_level`
+- `acme_core_route`
 - `acme_core_sample_ids`
 - `acme_core_scale_into`
 - `acme_core_split`
@@ -69,10 +70,12 @@ A call that can fail takes a trailing `char **error`. On failure it writes a mes
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
 - acme::Counter::refresh: `async fn` cannot cross into c: C has nothing to await with; expose a blocking wrapper instead
 - acme::counters: `Vec<Counter>` cannot cross into c: a sequence of `Counter` has no C spelling that owns its elements; a sequence of one primitive crosses as a pointer and a length
+- acme::from_items: `Vec<String>` cannot cross into c: a sequence of `String` has no C spelling that owns its elements; a sequence of one primitive crosses as a pointer and a length
 - acme::index_all: `HashMap<String, u32>` cannot cross into c: C has no map type; return a sequence of pairs, or an exported type with accessors
 - acme::levels: `Vec<Level>` cannot cross into c: a sequence of `Level` has no C spelling that owns its elements; a sequence of one primitive crosses as a pointer and a length
 - acme::maybe_ratio: `Option<f64>` cannot cross into c: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs
+- acme::names: `Vec<String>` cannot cross into c: a sequence of `String` has no C spelling that owns its elements; a sequence of one primitive crosses as a pointer and a length
 - acme::peek: `Option<Counter>` cannot cross into c: an optional exported type is taken only as a return; take it by reference instead
 - acme::ping: `async fn` cannot cross into c: C has nothing to await with; expose a blocking wrapper instead
 - acme::scale_optional: `Option<f64>` cannot cross into c: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null

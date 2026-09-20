@@ -181,6 +181,12 @@ fn peak_level(values: &[f64]) -> String {
 }
 
 #[extendr]
+fn route(providers: &[u8]) {
+    let providers = providers.to_vec();
+    ::acme::route(providers);
+}
+
+#[extendr]
 fn sample_ids(ids: &[f64]) -> ::std::result::Result<Vec<f64>, String> {
     let ids: Vec<usize> = ids
         .iter()
@@ -256,6 +262,7 @@ extendr_module! {
     fn mutate_counter;
     fn normalize;
     fn peak_level;
+    fn route;
     fn sample_ids;
     fn scale_optional;
     fn set_level;

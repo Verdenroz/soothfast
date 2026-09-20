@@ -127,6 +127,11 @@ pub fn find_counter(start: i64) -> Option<Counter> {
     ::acme::find_counter(start).map(Counter)
 }
 
+#[wasm_bindgen(js_name = fromItems)]
+pub fn from_items(items: Vec<String>) -> () {
+    ::acme::from_items(items)
+}
+
 #[wasm_bindgen]
 pub fn greet(name: &str) -> String {
     ::acme::greet(name)
@@ -158,6 +163,11 @@ pub fn mutate_counter(counter: &mut Counter) -> i64 {
 }
 
 #[wasm_bindgen]
+pub fn names(items: Vec<String>) -> () {
+    ::acme::names(items)
+}
+
+#[wasm_bindgen]
 pub fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
     ::acme::normalize(input, factor)
 }
@@ -170,6 +180,11 @@ pub fn peak_level(values: &[f64]) -> Level {
 #[wasm_bindgen]
 pub async fn ping() -> bool {
     ::acme::ping().await
+}
+
+#[wasm_bindgen]
+pub fn route(providers: Vec<u8>) -> () {
+    ::acme::route(providers)
 }
 
 #[wasm_bindgen(js_name = sampleIds)]

@@ -178,6 +178,17 @@ public static class Core
         }
     }
 
+    public static void Route(ReadOnlySpan<byte> providers)
+    {
+        unsafe
+        {
+            fixed (byte* providersPtr = providers)
+            {
+                Native.acme_core_route(providersPtr, (nuint)providers.Length);
+            }
+        }
+    }
+
     public static nuint[] SampleIds(ReadOnlySpan<nuint> ids)
     {
         unsafe

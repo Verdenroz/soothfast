@@ -48,6 +48,7 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 - `mutateCounter`
 - `normalize`
 - `peakLevel`
+- `route`
 - `sampleIds`
 - `scaleInto`
 - `split`
@@ -60,10 +61,12 @@ A borrowed buffer parameter (`DoubleArray`, `ByteArray`, ...) is read through `G
 - acme::Counter::consume: takes `self` by value, which would empty the handle the binding holds; take `&self` and return a new value instead
 - acme::Counter::refresh: `async fn` cannot cross into kotlin: no Kotlin runtime story yet
 - acme::counters: `Vec<Counter>` cannot cross into kotlin: a sequence of `Counter` has no C spelling that owns its elements; a sequence of one primitive crosses as a pointer and a length
+- acme::from_items: `Vec<String>` cannot cross into kotlin: a sequence of `String` has no C spelling that owns its elements; a sequence of one primitive crosses as a pointer and a length
 - acme::index_all: `HashMap<String, u32>` cannot cross into kotlin: C has no map type; return a sequence of pairs, or an exported type with accessors
 - acme::levels: `Vec<Level>` cannot cross into kotlin: a sequence of `Level` has no C spelling that owns its elements; a sequence of one primitive crosses as a pointer and a length
 - acme::maybe_ratio: `Option<f64>` cannot cross into kotlin: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null
 - acme::merge: crosses the exported type `Counter` by value, which would copy it; derive `Clone` on it (Python then reads a field of it as a fresh handle), take it by reference, or add a method returning what the caller needs
+- acme::names: `Vec<String>` cannot cross into kotlin: a sequence of `String` has no C spelling that owns its elements; a sequence of one primitive crosses as a pointer and a length
 - acme::peek: `Option<Counter>` cannot cross into kotlin: an optional exported type is taken only as a return; take it by reference instead
 - acme::ping: `async fn` cannot cross into kotlin: no Kotlin runtime story yet
 - acme::scale_optional: `Option<f64>` cannot cross into kotlin: `Option<f64>` has no C spelling; only an optional exported type or string does, as a pointer that may be null

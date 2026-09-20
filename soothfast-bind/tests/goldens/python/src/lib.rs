@@ -642,6 +642,11 @@ fn flags(py: Python<'_>, values: Vec<bool>) -> Vec<bool> {
 }
 
 #[pyfunction]
+fn from_items(items: Vec<String>) -> () {
+    ::acme::from_items(items)
+}
+
+#[pyfunction]
 fn greet(name: &str) -> String {
     ::acme::greet(name)
 }
@@ -677,6 +682,11 @@ fn mutate_counter(counter: PyRefMut<'_, Counter>) -> PyResult<i64> {
 }
 
 #[pyfunction]
+fn names(items: Vec<String>) -> () {
+    ::acme::names(items)
+}
+
+#[pyfunction]
 fn normalize(py: Python<'_>, input: BorrowedF64, factor: f64) -> F64Array {
     let out = py.detach(|| ::acme::normalize(input.into_vec(), factor));
     F64Array::new(out)
@@ -707,6 +717,11 @@ async fn ping() -> bool {
 #[pyfunction]
 fn ping_blocking(py: Python<'_>) -> bool {
     py.detach(|| runtime().block_on(::acme::ping()))
+}
+
+#[pyfunction]
+fn route(py: Python<'_>, providers: BorrowedU8) -> () {
+    py.detach(|| ::acme::route(providers.into_vec()))
 }
 
 #[pyfunction]
@@ -783,6 +798,7 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fail, m)?)?;
     m.add_function(wrap_pyfunction!(find_counter, m)?)?;
     m.add_function(wrap_pyfunction!(flags, m)?)?;
+    m.add_function(wrap_pyfunction!(from_items, m)?)?;
     m.add_function(wrap_pyfunction!(greet, m)?)?;
     m.add_function(wrap_pyfunction!(index_all, m)?)?;
     m.add_function(wrap_pyfunction!(invert_bits, m)?)?;
@@ -790,10 +806,12 @@ fn acme_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(levels, m)?)?;
     m.add_function(wrap_pyfunction!(maybe_ratio, m)?)?;
     m.add_function(wrap_pyfunction!(mutate_counter, m)?)?;
+    m.add_function(wrap_pyfunction!(names, m)?)?;
     m.add_function(wrap_pyfunction!(normalize, m)?)?;
     m.add_function(wrap_pyfunction!(peak_level, m)?)?;
     m.add_function(wrap_pyfunction!(peek, m)?)?;
     m.add_function(wrap_pyfunction!(ping, m)?)?;
+    m.add_function(wrap_pyfunction!(route, m)?)?;
     m.add_function(wrap_pyfunction!(sample_ids, m)?)?;
     m.add_function(wrap_pyfunction!(scale_into, m)?)?;
     m.add_function(wrap_pyfunction!(scale_optional, m)?)?;

@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 //! Emitted binding packages, pinned byte for byte.
 //!
 //! Regenerate with `UPDATE_GOLDENS=1 cargo test -p soothfast-bind`.

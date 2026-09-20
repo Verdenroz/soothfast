@@ -39,6 +39,11 @@ pub struct Resolver<'a> {
     /// so callers must tell that apart from a real document's `None`, which
     /// means nothing public actually reaches the item.
     has_module_tree: bool,
+    /// The item being walked's own type parameters an `IntoIterator<Item =
+    /// ...>` bound substitutes with a list, set fresh per function by
+    /// `fn_sig::walk` so a bare `{"generic": "I"}` reference resolves to
+    /// `Vec<Item>` instead of a `Gap::Generic`.
+    iterator_binds: BTreeMap<String, Ty>,
     pub gaps: Vec<Gap>,
 }
 
@@ -63,8 +68,15 @@ impl<'a> Resolver<'a> {
             self_ty: None,
             public: public_paths(doc, index),
             has_module_tree: doc.get("root").is_some(),
+            iterator_binds: BTreeMap::new(),
             gaps: Vec::new(),
         })
+    }
+
+    /// Set what the item about to be walked substitutes a bare
+    /// `{"generic": name}` reference with, per [`fn_sig::iterator_binds`].
+    pub(crate) fn set_iterator_binds(&mut self, binds: BTreeMap<String, Ty>) {
+        self.iterator_binds = binds;
     }
 
     /// The path a glue crate can spell an item by: through public modules
@@ -161,9 +173,16 @@ impl<'a> Resolver<'a> {
     /// Resolve a parameter type. `impl Into<T>` and `impl AsRef<str>` in
     /// argument position bind as the type a caller would pass: the concrete
     /// argument the glue hands over satisfies the bound on its own, so the
-    /// call site needs nothing extra.
+    /// call site needs nothing extra. `impl IntoIterator<Item = T>` binds as
+    /// `Vec<T>` instead.
     pub fn resolve_param(&mut self, ty: &Value, at: &str) -> Ty {
-        match ty.get("impl_trait").and_then(accepted_argument) {
+        let Some(bounds) = ty.get("impl_trait") else {
+            return self.resolve(ty, at);
+        };
+        if let Some(item) = intoiterator_item(bounds) {
+            return Ty::List(Box::new(self.resolve(&item, at)));
+        }
+        match accepted_argument(bounds) {
             Some(target) => self.resolve(&target, at),
             None => self.resolve(ty, at),
         }
@@ -206,6 +225,9 @@ impl<'a> Resolver<'a> {
                 && let Some(owner) = self.self_ty.clone()
             {
                 return Ty::Class(owner);
+            }
+            if let Some(bound) = self.iterator_binds.get(name) {
+                return bound.clone();
             }
             self.record(Gap::Generic {
                 at: at.to_string(),
@@ -365,7 +387,7 @@ pub(crate) fn generic_args(rp: &Value) -> Vec<Value> {
 /// The argument type an `impl Trait` parameter takes outright: `T` for
 /// `impl Into<T>`, `str` for `impl AsRef<str>`, `[u8]` for
 /// `impl AsRef<[u8]>`. Any other bound stays erased.
-fn accepted_argument(bounds: &Value) -> Option<Value> {
+pub(crate) fn accepted_argument(bounds: &Value) -> Option<Value> {
     let [bound] = bounds.as_array()?.as_slice() else {
         return None;
     };
@@ -379,6 +401,26 @@ fn accepted_argument(bounds: &Value) -> Option<Value> {
         "AsRef" if as_ref_target => Some(arg),
         _ => None,
     }
+}
+
+/// The `Item` an `IntoIterator<Item = T>` bound fixes, from a bound list in
+/// any of the three places one can appear: an `impl IntoIterator<Item = T>`
+/// parameter's own bounds, a named type parameter's inline bound, or a
+/// `where` clause naming it. All three carry the same `trait_bound` shape,
+/// differing only in where the caller gathered `bounds` from.
+pub(crate) fn intoiterator_item(bounds: &Value) -> Option<Value> {
+    let bound = bounds.as_array()?.iter().find(|b| {
+        b["trait_bound"]["trait"]["path"]
+            .as_str()
+            .and_then(|p| p.rsplit("::").next())
+            == Some("IntoIterator")
+    })?;
+    let constraints =
+        bound["trait_bound"]["trait"]["args"]["angle_bracketed"]["constraints"].as_array()?;
+    let item = constraints
+        .iter()
+        .find(|c| c["name"].as_str() == Some("Item"))?;
+    Some(item["binding"]["equality"]["type"].clone())
 }
 
 /// `ty` with every `{"generic": name}` node bound in `bindings` replaced.

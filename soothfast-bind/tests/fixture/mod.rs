@@ -275,6 +275,89 @@ fn free_functions(insert: &mut impl FnMut(u64, Value)) {
     insert(58, func("ping", &[], prim("bool"), true));
 }
 
+/// An `IntoIterator<Item = ...>` trait bound, the shape it carries wherever
+/// it appears: an inline bound, a where-clause predicate, or an `impl
+/// Trait` parameter's own synthetic one.
+fn into_iterator_bound(item: Value) -> Value {
+    json!({ "trait_bound": {
+        "trait": { "path": "IntoIterator", "id": 94, "args": { "angle_bracketed": {
+            "args": [], "constraints": [
+                { "name": "Item", "args": Value::Null, "binding": { "equality": { "type": item } } }
+            ] } } },
+        "generic_params": [], "modifier": "none" } })
+}
+
+fn into_string_bound() -> Value {
+    json!({ "trait_bound": {
+        "trait": { "path": "Into", "id": 61, "args": { "angle_bracketed": {
+            "args": [ { "type": path("String", 92, &[]) } ], "constraints": [] } } },
+        "generic_params": [], "modifier": "none" } })
+}
+
+/// The crate's free functions taking a sequence through `IntoIterator`
+/// rather than `Vec<T>` directly, each carrying the bound a different way.
+fn iterator_free_functions(insert: &mut impl FnMut(u64, Value)) {
+    // `I: IntoIterator<Item = S>, S: Into<String>` in a where clause: `S`
+    // never appears as a parameter type on its own, only as `I`'s `Item`.
+    insert(59, {
+        let mut f = func(
+            "from_items",
+            &[("items", json!({ "generic": "I" }))],
+            Value::Null,
+            false,
+        );
+        f["inner"]["function"]["generics"] = json!({
+            "params": [
+                { "name": "S", "kind": { "type": {
+                    "bounds": [], "default": Value::Null, "is_synthetic": false } } },
+                { "name": "I", "kind": { "type": {
+                    "bounds": [], "default": Value::Null, "is_synthetic": false } } }
+            ],
+            "where_predicates": [
+                { "bound_predicate": { "type": { "generic": "I" },
+                    "bounds": [into_iterator_bound(json!({ "generic": "S" }))],
+                    "generic_params": [] } },
+                { "bound_predicate": { "type": { "generic": "S" },
+                    "bounds": [into_string_bound()], "generic_params": [] } }
+            ]
+        });
+        f
+    });
+    // `impl IntoIterator<Item = u8>` directly in argument position.
+    insert(60, {
+        let mut f = func(
+            "route",
+            &[(
+                "providers",
+                json!({ "impl_trait": [into_iterator_bound(prim("u8"))] }),
+            )],
+            Value::Null,
+            false,
+        );
+        f["inner"]["function"]["generics"]["params"] = json!([
+            { "name": "impl IntoIterator<Item = u8>", "kind": { "type": {
+                "bounds": [into_iterator_bound(prim("u8"))],
+                "default": Value::Null, "is_synthetic": true } } }
+        ]);
+        f
+    });
+    // `I: IntoIterator<Item = String>` inline, `Item` already concrete.
+    insert(61, {
+        let mut f = func(
+            "names",
+            &[("items", json!({ "generic": "I" }))],
+            Value::Null,
+            false,
+        );
+        f["inner"]["function"]["generics"]["params"] = json!([
+            { "name": "I", "kind": { "type": {
+                "bounds": [into_iterator_bound(path("String", 92, &[]))],
+                "default": Value::Null, "is_synthetic": false } } }
+        ]);
+        f
+    });
+}
+
 /// The crate's free functions that take or return an `Option`.
 fn optional_free_functions(insert: &mut impl FnMut(u64, Value)) {
     insert(
@@ -555,6 +638,7 @@ pub fn doc() -> Value {
     };
 
     free_functions(&mut insert);
+    iterator_free_functions(&mut insert);
     optional_free_functions(&mut insert);
     failing_free_functions(&mut insert);
     multi_buffer_free_functions(&mut insert);
@@ -585,6 +669,9 @@ pub fn doc() -> Value {
             "29": { "crate_id": 0, "path": ["acme", "counters"], "kind": "function" },
             "56": { "crate_id": 0, "path": ["acme", "invert_bits"], "kind": "function" },
             "58": { "crate_id": 0, "path": ["acme", "ping"], "kind": "function" },
+            "59": { "crate_id": 0, "path": ["acme", "from_items"], "kind": "function" },
+            "60": { "crate_id": 0, "path": ["acme", "route"], "kind": "function" },
+            "61": { "crate_id": 0, "path": ["acme", "names"], "kind": "function" },
             "16": { "crate_id": 0, "path": ["acme", "describe"], "kind": "function" },
             "17": { "crate_id": 0, "path": ["acme", "describe_owned"], "kind": "function" },
             "18": { "crate_id": 0, "path": ["acme", "maybe_ratio"], "kind": "function" },
@@ -640,6 +727,9 @@ pub fn records() -> Vec<ExportRecord> {
         record("acme::counters", "fn"),
         record("acme::invert_bits", "fn"),
         record("acme::ping", "fn"),
+        record("acme::from_items", "fn"),
+        record("acme::route", "fn"),
+        record("acme::names", "fn"),
         record("acme::describe", "fn"),
         record("acme::describe_owned", "fn"),
         record("acme::maybe_ratio", "fn"),

@@ -82,6 +82,7 @@ bool acme_core_is_high(acme_core_level level);
 int64_t acme_core_mutate_counter(acme_core_counter *counter);
 acme_core_f64_array acme_core_normalize(const double *input, size_t input_len, double factor);
 acme_core_level acme_core_peak_level(const double *values, size_t values_len);
+void acme_core_route(const uint8_t *providers, size_t providers_len);
 acme_core_usize_array acme_core_sample_ids(const size_t *ids, size_t ids_len);
 void acme_core_scale_into(const double *values, size_t values_len, double factor, double *out, size_t out_len);
 void acme_core_split(const double *src, size_t src_len, double *lo, size_t lo_len, double *hi, size_t hi_len);

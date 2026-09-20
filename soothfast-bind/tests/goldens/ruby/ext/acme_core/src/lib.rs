@@ -110,6 +110,10 @@ fn flags(values: Vec<bool>) -> Vec<bool> {
     ::acme::flags(values)
 }
 
+fn from_items(items: Vec<String>) -> () {
+    ::acme::from_items(items)
+}
+
 fn greet(name: String) -> String {
     ::acme::greet(&name)
 }
@@ -141,12 +145,20 @@ fn mutate_counter(ruby: &::magnus::Ruby, counter: &Counter) -> Result<i64, ::mag
     Ok(::acme::mutate_counter(&mut counter))
 }
 
+fn names(items: Vec<String>) -> () {
+    ::acme::names(items)
+}
+
 fn normalize(input: Vec<f64>, factor: f64) -> Vec<f64> {
     ::acme::normalize(input, factor)
 }
 
 fn peak_level(ruby: &::magnus::Ruby, values: Vec<f64>) -> ::magnus::Symbol {
     level_to_symbol(ruby, &::acme::peak_level(&values))
+}
+
+fn route(providers: Vec<u8>) -> () {
+    ::acme::route(providers)
 }
 
 fn sample_ids(ids: Vec<usize>) -> Vec<usize> {
@@ -216,6 +228,7 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("fail", ::magnus::function!(fail, 1))?;
     module.define_module_function("find_counter", ::magnus::function!(find_counter, 1))?;
     module.define_module_function("flags", ::magnus::function!(flags, 1))?;
+    module.define_module_function("from_items", ::magnus::function!(from_items, 1))?;
     module.define_module_function("greet", ::magnus::function!(greet, 1))?;
     module.define_module_function("index_all", ::magnus::function!(index_all, 0))?;
     module.define_module_function("invert_bits", ::magnus::function!(invert_bits, 1))?;
@@ -223,8 +236,10 @@ fn init(ruby: &::magnus::Ruby) -> Result<(), ::magnus::Error> {
     module.define_module_function("levels", ::magnus::function!(levels, 0))?;
     module.define_module_function("maybe_ratio", ::magnus::function!(maybe_ratio, 1))?;
     module.define_module_function("mutate_counter", ::magnus::function!(mutate_counter, 1))?;
+    module.define_module_function("names", ::magnus::function!(names, 1))?;
     module.define_module_function("normalize", ::magnus::function!(normalize, 2))?;
     module.define_module_function("peak_level", ::magnus::function!(peak_level, 1))?;
+    module.define_module_function("route", ::magnus::function!(route, 1))?;
     module.define_module_function("sample_ids", ::magnus::function!(sample_ids, 1))?;
     module.define_module_function("scale_into", ::magnus::function!(scale_into, 3))?;
     module.define_module_function("scale_optional", ::magnus::function!(scale_optional, 1))?;

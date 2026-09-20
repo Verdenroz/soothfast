@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 //! Exported surface and wrapper plan over the shared fixture.
 
 mod fixture;
@@ -70,6 +71,34 @@ fn byte_sequences_never_become_lists_of_numbers() {
     assert_eq!(f.params[0].ty, Ty::Bytes);
     assert_eq!(f.params[0].ownership, Ownership::Borrowed);
     assert_eq!(f.ret, Ty::Bytes);
+}
+
+#[test]
+fn an_into_iterator_bound_binds_as_a_list_in_every_shape_it_appears() {
+    let (surface, gaps) = walk();
+
+    // `I: IntoIterator<Item = S>, S: Into<String>` in a where clause: `I`
+    // binds as `Vec<str>` and neither `I` nor `S` is reported as generic,
+    // even though `S` never appears as a parameter type on its own.
+    assert_eq!(
+        find_fn(&surface, "acme::from_items").params[0].ty,
+        Ty::List(Box::new(Ty::Str))
+    );
+    assert!(!gaps.iter().any(|g| g.at() == "acme::from_items"));
+
+    // `impl IntoIterator<Item = u8>` directly in argument position.
+    assert_eq!(
+        find_fn(&surface, "acme::route").params[0].ty,
+        Ty::List(Box::new(Ty::U8))
+    );
+    assert!(!gaps.iter().any(|g| g.at() == "acme::route"));
+
+    // `I: IntoIterator<Item = String>` inline, `Item` already concrete.
+    assert_eq!(
+        find_fn(&surface, "acme::names").params[0].ty,
+        Ty::List(Box::new(Ty::Str))
+    );
+    assert!(!gaps.iter().any(|g| g.at() == "acme::names"));
 }
 
 #[test]
