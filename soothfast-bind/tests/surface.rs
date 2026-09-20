@@ -514,3 +514,48 @@ fn a_type_with_a_lifetime_parameter_is_reported_rather_than_walked() {
         "{gaps:?}"
     );
 }
+
+/// A method's registry id carries the module its own `impl` block sits in,
+/// not the module the type it is on is declared in — the two only match
+/// when every impl block sits beside the struct. When they don't, the owner
+/// has to be found by name among the already-exported types instead of by
+/// splitting the method's own id, or every method on the type is reported
+/// as an unmapped reference to itself.
+#[test]
+fn a_method_declared_outside_its_types_own_module_still_binds() {
+    use fixture::{borrowed, func, method, prim, record, struct_item};
+    use serde_json::Value;
+
+    let doc = stamped(json!({
+        "root": 0,
+        "index": {
+            "0": module("acme", true, &[2]),
+            "2": struct_item("Basket", &[], &[30]),
+            "30": { "name": Value::Null, "docs": Value::Null, "attrs": [],
+                    "inner": { "impl": { "trait": Value::Null, "items": [31] } } },
+            "31": func(
+                "total",
+                &[("self", borrowed(json!({ "generic": "Self" }), false))],
+                prim("i64"),
+                false,
+            ),
+        },
+        "paths": {
+            "2": { "crate_id": 0, "path": ["acme", "Basket"], "kind": "struct" },
+        },
+    }));
+    let table = TypeTable::default();
+    let records = vec![
+        record("acme::Basket", "struct"),
+        method("acme::batch::Basket::total", "Basket"),
+    ];
+    let (surface, gaps) = surface(&doc, &table, &records).expect("walks");
+
+    let f = surface
+        .fns
+        .iter()
+        .find(|f| f.id == "acme::batch::Basket::total")
+        .unwrap_or_else(|| panic!("total not walked: {gaps:?}"));
+    assert_eq!(f.rust_path, "acme::Basket::total");
+    assert!(gaps.is_empty(), "{gaps:?}");
+}

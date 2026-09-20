@@ -110,6 +110,18 @@ impl<'a> Resolver<'a> {
         self.index.get(id)
     }
 
+    /// A method's owning type's own canonical path, found by its bare name.
+    ///
+    /// A method's registry id carries `module_path!()` of its own `impl`
+    /// block, not the type's — the same only when every impl sits beside the
+    /// struct. Splitting the id would misname the owner whenever it doesn't.
+    pub(crate) fn owner_path(&self, name: &str) -> Option<&str> {
+        self.exported
+            .iter()
+            .find(|id| class_name(id) == name)
+            .map(String::as_str)
+    }
+
     pub(crate) fn record(&mut self, gap: Gap) {
         if !self.gaps.contains(&gap) {
             self.gaps.push(gap);

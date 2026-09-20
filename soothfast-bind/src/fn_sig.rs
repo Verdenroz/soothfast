@@ -74,11 +74,11 @@ pub(crate) fn walk(r: &mut Resolver, item: &Value, record: &ExportRecord) -> Exp
 /// The path a glue crate calls the function by: a free fn's own public
 /// path, or a method's owner at its public path.
 fn public_path(r: &Resolver, item: &Value, record: &ExportRecord) -> Option<String> {
-    if record.owner.is_none() {
+    let Some(owner_name) = &record.owner else {
         return r.public_path(&item["id"]);
-    }
-    let (owner_path, name) = record.id.rsplit_once("::")?;
-    let owner = r.find_by_path(owner_path)?;
+    };
+    let name = record.id.rsplit("::").next()?;
+    let owner = r.find_by_path(r.owner_path(owner_name)?)?;
     Some(format!("{}::{name}", r.public_path(&owner["id"])?))
 }
 

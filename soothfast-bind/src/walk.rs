@@ -63,7 +63,7 @@ pub fn surface(
                 }
                 None => resolver.record(missing(record)),
             },
-            "method" => match find_method(&resolver, &record.id) {
+            "method" => match find_method(&resolver, record) {
                 Some(item) => {
                     let item = item.clone();
                     let function = fn_sig::walk(&mut resolver, &item, record);
@@ -216,13 +216,15 @@ fn missing(record: &ExportRecord) -> Gap {
     }
 }
 
-/// Locate a method by its registry id.
+/// Locate a method by its registry record.
 ///
 /// Methods are absent from rustdoc's `paths`, reachable only through the
-/// impl blocks of the type that owns them.
-fn find_method<'a>(r: &Resolver<'a>, id: &str) -> Option<&'a Value> {
-    let (owner_path, name) = id.rsplit_once("::")?;
-    let owner = r.find_by_path(owner_path)?;
+/// impl blocks of the type that owns them, found by [`ExportRecord::owner`]
+/// rather than by splitting the registry id — the id's own module prefix
+/// names the impl block it came from, not necessarily the owner's.
+fn find_method<'a>(r: &Resolver<'a>, record: &ExportRecord) -> Option<&'a Value> {
+    let name = record.id.rsplit("::").next()?;
+    let owner = r.find_by_path(r.owner_path(record.owner.as_deref()?)?)?;
     let inner = &owner["inner"];
     let impls = inner
         .get("struct")
