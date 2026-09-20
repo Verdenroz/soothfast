@@ -161,6 +161,7 @@ fn notes(plan: &BindingPlan) -> Vec<String> {
             )
         })
         .collect();
+    out.extend(plan.notes.clone());
     out.extend(crate::plan::transfer_notes(plan));
     out
 }

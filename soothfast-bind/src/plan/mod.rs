@@ -96,6 +96,11 @@ pub struct BindingPlan {
     /// Free functions, belonging to no class.
     pub functions: Vec<Function>,
     pub gaps: Vec<Gap>,
+    /// A shape every backend renders correctly but not exactly as Rust
+    /// states it, or an item dropped from the surface with nothing lost
+    /// (see [`lower`]'s field/method name resolution) — unlike a [`Gap`],
+    /// nothing here needs a fix.
+    pub notes: Vec<String>,
     /// What the target language can do with a borrowed buffer, decided once
     /// at [`lower`] time so [`offloadable`] and [`transfer_notes`] never have
     /// to be told which language they are answering for.
@@ -227,7 +232,16 @@ pub fn lower(
         .collect();
 
     for ty in &types {
-        let class = class_of(ty, &fns, opts, kind, &mirrored, &cloneable, &mut plan.gaps);
+        let class = class_of(
+            ty,
+            &fns,
+            opts,
+            kind,
+            &mirrored,
+            &cloneable,
+            &mut plan.gaps,
+            &mut plan.notes,
+        );
         plan.classes.push(class);
     }
     plan.functions = fns
@@ -253,6 +267,7 @@ pub fn lower(
     Ok(plan)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn class_of(
     ty: &ExportedType,
     fns: &[&ExportedFn],
@@ -261,6 +276,7 @@ fn class_of(
     mirrored: &BTreeSet<String>,
     cloneable: &BTreeSet<String>,
     gaps: &mut Vec<Gap>,
+    notes: &mut Vec<String>,
 ) -> Class {
     let owned: Vec<&&ExportedFn> = fns
         .iter()
@@ -314,6 +330,12 @@ fn class_of(
         ),
         TypeKind::Enum(v) => (Vec::new(), Some(v.clone())),
     };
+    notes.extend(drop_field_shadowed(
+        &ty.name,
+        &accessors,
+        &mut methods,
+        &mut statics,
+    ));
 
     Class {
         rust_path: ty.rust_path.clone(),
@@ -393,6 +415,36 @@ fn accessors_of(
         });
     }
     out
+}
+
+/// A method whose name doubles a public field's own accessor name would
+/// give a backend that renders an accessor as a same-named method (pyo3's
+/// `#[pymethods]` among them) two inherent fns of one name, which does not
+/// compile. The accessor already reads and writes the field, so the method
+/// is dropped rather than the field losing its reader; nothing is lost,
+/// just reported as a note rather than a gap.
+fn drop_field_shadowed(
+    class: &str,
+    accessors: &[Accessor],
+    methods: &mut Vec<Function>,
+    statics: &mut Vec<Function>,
+) -> Vec<String> {
+    let shadowed = |f: &Function| accessors.iter().any(|a| a.field == f.name);
+    let notes = methods
+        .iter()
+        .chain(statics.iter())
+        .filter(|&f| shadowed(f))
+        .map(|f| {
+            format!(
+                "{class}::{name}: shares its name with the public field \
+                 `{name}`; the accessor already covers it (read and write)",
+                name = f.name
+            )
+        })
+        .collect();
+    methods.retain(|f| !shadowed(f));
+    statics.retain(|f| !shadowed(f));
+    notes
 }
 
 fn function_of(f: &ExportedFn, opts: &BindOptions, owner: Option<&str>) -> Function {
@@ -960,6 +1012,53 @@ mod tests {
             buffer_support: support,
             ..BindingPlan::default()
         }
+    }
+
+    #[test]
+    fn a_method_sharing_its_public_fields_name_is_dropped_with_one_note() {
+        let accessor = Accessor {
+            field: "count".into(),
+            ty: Ty::I64,
+            doc: None,
+        };
+        let mut methods = vec![
+            Function {
+                name: "count".into(),
+                ..buffer_fn()
+            },
+            Function {
+                name: "other".into(),
+                ..buffer_fn()
+            },
+        ];
+        let mut statics = Vec::new();
+        let notes = drop_field_shadowed("Setting", &[accessor], &mut methods, &mut statics);
+        assert_eq!(
+            methods.iter().map(|f| &f.name).collect::<Vec<_>>(),
+            ["other"]
+        );
+        assert_eq!(
+            notes,
+            vec![
+                "Setting::count: shares its name with the public field \
+                 `count`; the accessor already covers it (read and write)"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_method_matching_no_accessor_is_untouched() {
+        // A private field never becomes an `Accessor` (see `accessors_of`),
+        // so a method sharing its name has nothing to yield to.
+        let mut methods = vec![Function {
+            name: "count".into(),
+            ..buffer_fn()
+        }];
+        let mut statics = Vec::new();
+        let notes = drop_field_shadowed("Setting", &[], &mut methods, &mut statics);
+        assert!(notes.is_empty());
+        assert_eq!(methods.len(), 1);
     }
 
     #[test]

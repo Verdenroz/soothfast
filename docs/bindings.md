@@ -280,7 +280,7 @@ A method taking `self` by value, or an exported type crossing by value, is
 reported instead of bound: both would copy a value the caller is still
 holding. Take `&self` and return what the caller needs.
 
-Three idioms a Rust API leans on need no rewriting to bind:
+Four idioms a Rust API leans on need no rewriting to bind:
 
 - **A crate-wide alias** such as `type Result<T> = std::result::Result<T,
   Error>` is expanded to what it names, so a method returning `Result<Chart>`
@@ -291,6 +291,10 @@ Three idioms a Rust API leans on need no rewriting to bind:
 - **An `async fn new`** binds as an awaitable static factory rather than a
   constructor, since no language awaits inside construction:
   `ticker = await Ticker.new("AAPL")`.
+- **A consuming builder method named after one of its own public fields**
+  (`pub fn region(mut self, region: Region) -> Self` beside `pub region:
+  Region`) yields to the field's own accessor, which already reads and
+  writes it; the method is dropped from the surface with a note, not a gap.
 
 A method returning a borrowed value (`&str`, `&[f64]`, `Option<&str>`) is
 owned by the Python glue before it crosses; the other backends report it

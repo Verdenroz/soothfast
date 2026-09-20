@@ -77,7 +77,7 @@ fn doc() -> Value {
             "20": func("new", &[("symbol", into_string())], path("Result", 1, &[json!({ "generic": "Self" })]), true),
             "21": func("chart", &[("self", borrowed(json!({ "generic": "Self" }), false))], path("Result", 1, &[prim("i64")]), true),
             "22": func("nested", &[("self", borrowed(json!({ "generic": "Self" }), false))], path("Outcome", 2, &[prim("u32")]), false),
-            "23": func("symbol", &[("self", borrowed(json!({ "generic": "Self" }), false))], borrowed(prim("str"), false), false),
+            "23": func("tag", &[("self", borrowed(json!({ "generic": "Self" }), false))], borrowed(prim("str"), false), false),
             "5": enum_item("Level", &[60, 61], &[]),
             "60": variant("Low", json!("plain")),
             "61": variant("High", json!("plain")),
@@ -130,7 +130,7 @@ fn walk() -> (Surface, Vec<Gap>) {
         record("acme::core::Client", "struct"),
         record("acme::core::Level", "enum"),
         record("acme::core::Bag", "struct"),
-        method("acme::core::Client::symbol", "Client"),
+        method("acme::core::Client::tag", "Client"),
         record("acme::core::open", "fn"),
         record("acme::core::probe", "fn"),
         record("acme::util::read", "fn"),
@@ -701,13 +701,11 @@ fn python_glue() -> String {
 #[test]
 fn a_borrowed_str_return_is_owned_by_the_python_glue_and_reported_elsewhere() {
     let (surface, gaps) = walk();
-    assert!(find(&surface, "acme::core::Client::symbol").ret_borrowed);
-    assert!(python_glue().contains("self.0.symbol().to_owned()"));
+    assert!(find(&surface, "acme::core::Client::tag").ret_borrowed);
+    assert!(python_glue().contains("self.0.tag().to_owned()"));
     let go = lower(&surface, gaps, &opts(), BindKind::Go).expect("lowers");
     assert!(
-        go.gaps
-            .iter()
-            .any(|g| g.at() == "acme::core::Client::symbol"),
+        go.gaps.iter().any(|g| g.at() == "acme::core::Client::tag"),
         "{:?}",
         go.gaps
     );
@@ -1243,4 +1241,55 @@ fn an_async_method_clones_self_out_before_its_own_await() {
         .expect("clones under the lock");
     let awaits = glue[status..].find(".await").expect("awaits the call");
     assert!(clone_out < awaits, "{}", &glue[status..status + 300]);
+}
+
+/// `Setting { pub count: i64 }` with a consuming `count(self, n) -> Self`:
+/// the field's own name, so its accessor already reads and writes it.
+fn doc_with_shadowed_field() -> Value {
+    let mut doc = doc();
+    doc["index"]["300"] = struct_item("Setting", &[301], &[302]);
+    doc["index"]["301"] = field("count", prim("i64"), true);
+    doc["index"]["302"] = json!({ "name": Value::Null, "docs": Value::Null, "attrs": [],
+        "inner": { "impl": { "trait": Value::Null, "items": [303] } } });
+    doc["index"]["303"] = func(
+        "count",
+        &[("self", json!({ "generic": "Self" })), ("n", prim("i64"))],
+        json!({ "generic": "Self" }),
+        false,
+    );
+    doc["index"]["0"]["inner"]["module"]["items"]
+        .as_array_mut()
+        .expect("items")
+        .push(json!(300));
+    doc["paths"]["300"] = json!({ "crate_id": 0, "path": ["acme", "Setting"], "kind": "struct" });
+    doc
+}
+
+#[test]
+fn a_method_sharing_a_public_fields_name_yields_the_call_shape_to_its_accessor() {
+    let (surface, gaps) = surface(
+        &stamped(doc_with_shadowed_field()),
+        &TypeTable::with_defaults(),
+        &[
+            record("acme::Setting", "struct"),
+            method("acme::Setting::count", "Setting"),
+        ],
+    )
+    .expect("walks");
+    let files = BindKind::Python
+        .emit(&surface, gaps, &opts())
+        .expect("emits");
+    let glue = &files.files["src/lib.rs"];
+
+    assert!(glue.contains("fn count(&self) -> i64"), "{glue}");
+    assert!(!glue.contains("PyRef<'_, Self>"), "{glue}");
+    assert!(!glue.contains("SettingSlot"), "{glue}");
+    assert!(
+        files
+            .notes
+            .iter()
+            .any(|n| n.contains("Setting::count") && n.contains("public field `count`")),
+        "{:?}",
+        files.notes
+    );
 }
