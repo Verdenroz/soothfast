@@ -1,13 +1,36 @@
 # Changelog
 
-## Unreleased (draft vs v0.3.2)
+## 0.3.3 - 2026-09-26
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+A pull request's gate no longer measures its merge-base from scratch when the
+default branch already has. With `gate: true`, the action now gates every
+push to the default branch against its parent, which stores that commit's run
+for the next pull request to reuse. Stored runs are keyed on the backend that
+actually measured and, for callgrind, on the CPU valgrind presents to the
+program, the libc it loads and the valgrind version, rather than the host's
+model name, so hosted runners of different CPU models share them. `measure`
+reuses a stored callgrind run of the same bench binary and measures only
+timing again. A perfcnt run is stored only when a second reading of its
+counters agrees with the first, so one bad reading can no longer fail every
+later gate that reuses it.
+
+### Upgrade notes
+
+A workflow that already calls the action on pushes to its default branch
+starts recording with no change; that is one extra gate per push. For pull
+requests to benefit, cache `.soothfast/runs` in the same job on pushes and
+pull requests alike, and add `.soothfast/` to `.gitignore`, since a run is
+stored under its commit only from a clean tree (see `docs/gating.md`,
+"Reusing a measured reference"). Runs stored by 0.3.2 and earlier are not
+reused: their keys named neither the backend nor the callgrind guest, so the
+first gate after upgrading measures in full. A bench binary built with an
+older harness than the CLI cannot answer the new `--env` probe, and the gate
+then runs without its cache and says so; bump `soothfast` in `Cargo.lock`
+along with the CLI. `measure --no-reuse` measures in full when a stored run
+should not be trusted.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
