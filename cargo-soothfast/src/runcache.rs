@@ -42,6 +42,11 @@ impl<'a> Runs<'a> {
         Runs { stamp, common, env }
     }
 
+    /// The gating backend the bench binary resolved, when it answered.
+    pub fn gating_backend(&self) -> Option<&str> {
+        self.env.as_ref().map(|e| e.gating_backend.as_str())
+    }
+
     /// A stored run measured from `id` (a commit or a binary digest), tagged
     /// with `measured_from`.
     pub fn load(&self, id: &str, measured_from: &str) -> Option<Value> {

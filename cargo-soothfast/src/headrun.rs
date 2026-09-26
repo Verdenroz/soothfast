@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::buildstamp::BuildStamp;
+use crate::buildstamp::{self, BuildStamp};
 use crate::invoke::{self, CommonArgs, Run};
 use crate::runcache::{self, Runs};
 
@@ -20,6 +20,96 @@ pub fn probe<'a>(
     let digest = exe.as_deref().and_then(binary_digest);
     let runs = Runs::new(stamp, common, resolved_env(cmd, common, exe.as_deref()));
     (digest, runs)
+}
+
+/// Measure HEAD's bench binary for `measure`. Under callgrind, a run already
+/// stored for this binary supplies the counters and allocations, and only
+/// timing is measured again; everything else measures in full and stores
+/// the result for the next gate or measure.
+pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
+    let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+    let (digest, runs) = probe("measure", common, &stamp);
+    let stored = match (reuse_plan(reuse, runs.gating_backend()), digest.as_deref()) {
+        (Plan::Reuse, Some(digest)) => {
+            let label = format!("binary {digest}");
+            match runs.load(digest, &label) {
+                Some(doc) => Some((doc, label)),
+                None => {
+                    println!("measure: no stored run for binary {digest}; measuring in full");
+                    None
+                }
+            }
+        }
+        (Plan::Full(why), _) => {
+            println!("measure: {why}; measuring in full");
+            None
+        }
+        (Plan::Reuse, None) => None,
+    };
+    if let Some((doc, label)) = stored {
+        let timing = run_head(common, &["--skip-gating-counters"], stamp.clone())?;
+        match merge_stored(&doc, &label, timing) {
+            Some(run) => {
+                println!("measure: reusing counters for {label}; timing measured fresh");
+                return Ok(run);
+            }
+            None => println!(
+                "measure: stored run for {label} lacks callgrind counts; measuring in full"
+            ),
+        }
+    }
+    let run = run_head(common, &[], stamp.clone())?;
+    cache_head(&runs, &run, digest.as_deref());
+    Ok(run)
+}
+
+#[derive(Debug, PartialEq)]
+enum Plan {
+    Reuse,
+    Full(&'static str),
+}
+
+/// Only callgrind is worth reusing: its counts take minutes and are exact.
+/// perfcnt counts take seconds, and a sweep taken without them would run on
+/// walltime instead, so its complexity verdicts could differ from a full run.
+fn reuse_plan(reuse: bool, backend: Option<&str>) -> Plan {
+    match backend {
+        _ if !reuse => Plan::Full("--no-reuse"),
+        None => Plan::Full("the run cache is off"),
+        Some("callgrind") => Plan::Reuse,
+        Some(_) => Plan::Full("counts other than callgrind are cheap to take"),
+    }
+}
+
+fn run_head(common: &CommonArgs, extra: &[&str], stamp: BuildStamp) -> Result<Run, String> {
+    let records = invoke::run_bench(common, extra).map_err(|e| e.to_string())?;
+    let mut run = invoke::collect(&records);
+    run.build = Some(stamp);
+    Ok(run)
+}
+
+/// HEAD's run from a stored run's callgrind counts and allocations plus a
+/// fresh timing-only pass, which also carries every assertion verdict. `None`
+/// unless the stored run counted every item the timing pass measured.
+fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run> {
+    let counted = invoke::run_from_items_value(&stored["items"]);
+    let same_items = counted.items.keys().eq(timing.items.keys());
+    if !same_items || counted.items.values().any(|m| m.ir.is_none()) {
+        return None;
+    }
+    let mut run = timing;
+    for (id, item) in &mut run.items {
+        let stored = &counted.items[id];
+        item.ir = stored.ir;
+        item.allocs = stored.allocs;
+        item.bytes = stored.bytes;
+    }
+    run.gating_backend = Some("callgrind".into());
+    run.reused = Some(invoke::Reused {
+        from: measured_from.to_string(),
+        metrics: vec!["callgrind.ir", "alloc.allocs", "alloc.bytes"],
+    });
+    Some(run)
 }
 
 /// HEAD's own measurement, if a run already cached one under this binary and
@@ -165,7 +255,92 @@ fn section_header(line: &str) -> Option<(&str, usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{digestible, loaded_section_bytes};
+    use super::{Plan, digestible, loaded_section_bytes, merge_stored, reuse_plan};
+    use crate::invoke::{AssertionOutcome, ItemMetrics, Run};
+    use serde_json::json;
+
+    fn stored(items: serde_json::Value) -> serde_json::Value {
+        json!({ "version": 1, "items": items })
+    }
+
+    fn timing() -> Run {
+        let mut run = Run {
+            gating_backend: Some("walltime".into()),
+            ..Run::default()
+        };
+        run.items.insert(
+            "pkg::a".into(),
+            ItemMetrics {
+                fingerprint: "fp".into(),
+                median_ns: Some(120.0),
+                p99_ns: Some(150.0),
+                allocs: Some(9),
+                ..ItemMetrics::default()
+            },
+        );
+        run.assertions.push(AssertionOutcome {
+            id: "pkg::a".into(),
+            kind: "p99".into(),
+            ok: true,
+            detail: "p99 150ns <= 1000ns".into(),
+        });
+        run
+    }
+
+    #[test]
+    fn only_callgrind_reuses_a_stored_run() {
+        assert_eq!(reuse_plan(true, Some("callgrind")), Plan::Reuse);
+        assert!(matches!(reuse_plan(true, Some("perfcnt")), Plan::Full(_)));
+        assert!(matches!(reuse_plan(true, Some("walltime")), Plan::Full(_)));
+        assert!(matches!(reuse_plan(true, None), Plan::Full(_)));
+    }
+
+    #[test]
+    fn no_reuse_measures_in_full() {
+        assert_eq!(
+            reuse_plan(false, Some("callgrind")),
+            Plan::Full("--no-reuse")
+        );
+    }
+
+    #[test]
+    fn a_hit_takes_counts_from_the_stored_run_and_timing_from_the_fresh_pass() {
+        let doc = stored(json!({ "pkg::a": {
+            "fingerprint": "fp",
+            "callgrind": { "ir": 4567 },
+            "alloc": { "allocs": 3, "bytes": 96 },
+            "walltime": { "median_ns": 999.0, "p99_ns": 1999.0 },
+        }}));
+        let run = merge_stored(&doc, "binary 0123456789abcdef", timing()).expect("hit");
+        let item = &run.items["pkg::a"];
+        assert_eq!(item.ir, Some(4567));
+        assert_eq!((item.allocs, item.bytes), (Some(3), Some(96)));
+        assert_eq!((item.median_ns, item.p99_ns), (Some(120.0), Some(150.0)));
+        assert_eq!(run.assertions.len(), 1);
+        assert_eq!(run.gating_backend.as_deref(), Some("callgrind"));
+        assert_eq!(run.reused.expect("reused").from, "binary 0123456789abcdef");
+    }
+
+    #[test]
+    fn a_stored_run_without_callgrind_counts_is_a_miss() {
+        let perfcnt = stored(json!({ "pkg::a": {
+            "fingerprint": "fp",
+            "perfcnt": { "instructions": 4567 },
+            "alloc": { "allocs": 3, "bytes": 96 },
+        }}));
+        assert!(merge_stored(&perfcnt, "binary x", timing()).is_none());
+        let timing_only = stored(json!({ "pkg::a": {
+            "fingerprint": "fp",
+            "walltime": { "median_ns": 999.0 },
+        }}));
+        assert!(merge_stored(&timing_only, "binary x", timing()).is_none());
+    }
+
+    #[test]
+    fn a_stored_run_of_other_items_is_a_miss() {
+        let doc = stored(json!({ "pkg::b": { "fingerprint": "fp", "callgrind": { "ir": 1 } } }));
+        assert!(merge_stored(&doc, "binary x", timing()).is_none());
+    }
 
     #[test]
     fn section_extraction_returns_none_for_a_non_elf_file() {
