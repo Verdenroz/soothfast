@@ -53,6 +53,125 @@ pub fn probe() -> Result<(), String> {
     }
 }
 
+/// What decides callgrind's Ir besides the binary: the CPU valgrind shows the
+/// guest (not the host's, which valgrind replaces with a synthesized one), the
+/// glibc the guest loads, and the valgrind counting it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Guest {
+    pub cpu: String,
+    /// The version glibc reports, for reading. Distro rebuilds keep it.
+    pub glibc: String,
+    /// Digest of the libc file the guest loaded, which a rebuild does change.
+    pub libc: String,
+    pub valgrind: String,
+}
+
+/// Ask this binary, under valgrind as a measurement runs it, what it sees.
+/// `None` where the guest cannot say (not x86_64, not glibc).
+pub fn guest() -> Option<Guest> {
+    let exe = std::env::current_exe().ok()?;
+    let out = out_file("guest");
+    let run = Command::new("valgrind")
+        .env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
+        .args([
+            "--tool=callgrind",
+            &format!("--callgrind-out-file={}", out.display()),
+        ])
+        .arg(&exe)
+        .arg("--guest-view")
+        .output();
+    let _ = std::fs::remove_file(&out);
+    let run = run.ok().filter(|o| o.status.success())?;
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let mut view = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("guest "))?
+        .splitn(3, ' ');
+    let (cpu, glibc, libc_path) = (view.next()?, view.next()?, view.next()?);
+    let libc = std::fs::read(libc_path.trim()).ok()?;
+    let version = Command::new("valgrind").arg("--version").output().ok()?;
+    Some(Guest {
+        cpu: cpu.to_string(),
+        glibc: glibc.to_string(),
+        libc: format!("{:016x}", soothfast_registry::fnv1a(&libc)),
+        valgrind: String::from_utf8_lossy(&version.stdout).trim().to_string(),
+    })
+}
+
+/// The guest half of [`guest`]: prints `guest <cpuid hash> <glibc version>
+/// <loaded libc path>`, or nothing where any is unknown. The path is hashed
+/// outside valgrind, where reading the file costs nothing.
+pub fn print_guest_view() {
+    if let (Some(cpu), Some((version, path))) = (cpuid_hash(), loaded_glibc()) {
+        println!("guest {cpu} {version} {path}");
+    }
+}
+
+/// Every CPUID leaf a program dispatches on: vendor, feature bits, cache
+/// descriptors. Leaf 1's APIC ID differs per core, so it is masked out.
+#[cfg(target_arch = "x86_64")]
+fn cpuid_hash() -> Option<String> {
+    #[allow(unused_unsafe)]
+    let cpuid = |leaf: u32, sub: u32| unsafe { std::arch::x86_64::__cpuid_count(leaf, sub) };
+    let mut words = Vec::new();
+    let max = cpuid(0, 0).eax;
+    let mut leaves = vec![(0, 0), (1, 0), (7, 0)];
+    for sub in 0..16 {
+        if max < 4 || cpuid(4, sub).eax & 0x1f == 0 {
+            break;
+        }
+        leaves.push((4, sub));
+    }
+    let ext_max = cpuid(0x8000_0000, 0).eax;
+    leaves.extend([(0x8000_0000, 0), (0x8000_0001, 0)]);
+    for (leaf, sub) in leaves {
+        let in_range = if leaf >= 0x8000_0000 {
+            leaf <= ext_max
+        } else {
+            leaf <= max
+        };
+        if !in_range {
+            continue;
+        }
+        let r = cpuid(leaf, sub);
+        let ebx = if leaf == 1 {
+            r.ebx & 0x00ff_ffff
+        } else {
+            r.ebx
+        };
+        words.extend([leaf, sub, r.eax, ebx, r.ecx, r.edx]);
+    }
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    Some(format!("{:016x}", soothfast_registry::fnv1a(&bytes)))
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn cpuid_hash() -> Option<String> {
+    None
+}
+
+/// The glibc version and the path of the libc this process loaded.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn loaded_glibc() -> Option<(String, String)> {
+    use std::ffi::CStr;
+    let version = unsafe { CStr::from_ptr(libc::gnu_get_libc_version()) };
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    let symbol = libc::gnu_get_libc_version as *const libc::c_void;
+    if unsafe { libc::dladdr(symbol, &mut info) } == 0 || info.dli_fname.is_null() {
+        return None;
+    }
+    let path = unsafe { CStr::from_ptr(info.dli_fname) };
+    Some((
+        version.to_str().ok()?.to_string(),
+        path.to_str().ok()?.to_string(),
+    ))
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn loaded_glibc() -> Option<(String, String)> {
+    None
+}
+
 // The sequence number keeps concurrent measurements (measure_all) from
 // colliding on a pid-keyed name.
 fn out_file(tag: &str) -> PathBuf {

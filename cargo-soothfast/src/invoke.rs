@@ -324,6 +324,74 @@ pub fn bench_executable(
         .find_map(|m| m["executable"].as_str().map(PathBuf::from))
 }
 
+/// What a bench binary resolves on this host, from the env line a run starts
+/// with.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HostEnv {
+    pub gating_backend: String,
+    /// Set only when callgrind gates and the harness can see its guest.
+    pub guest: Option<Guest>,
+}
+
+/// What callgrind's counts depend on besides the binary.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Guest {
+    pub cpu: String,
+    pub glibc: String,
+    /// Digest of the loaded libc file; distro rebuilds keep `glibc`.
+    pub libc: String,
+    pub valgrind: String,
+}
+
+impl HostEnv {
+    fn from_line(v: &Value) -> Option<Self> {
+        let field = |k: &str| v[k].as_str().map(String::from);
+        let guest = match (
+            field("guest_cpu"),
+            field("guest_glibc"),
+            field("guest_libc"),
+            field("valgrind"),
+        ) {
+            (Some(cpu), Some(glibc), Some(libc), Some(valgrind)) => Some(Guest {
+                cpu,
+                glibc,
+                libc,
+                valgrind,
+            }),
+            _ => None,
+        };
+        Some(HostEnv {
+            gating_backend: field("gating_backend")?,
+            guest,
+        })
+    }
+}
+
+/// What `exe` resolves on this host for `backend`, as the env line of a real
+/// run would name it. A harness older than `--env`, or a named backend this
+/// host cannot run, exits non-zero and reads as unresolved.
+pub fn host_env(exe: &Path, backend: Option<&str>) -> Result<HostEnv, String> {
+    let mut cmd = Command::new(exe);
+    cmd.arg("--env");
+    if let Some(b) = backend {
+        cmd.args(["--backend", b]);
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| format!("could not run the bench harness: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let why = stderr.lines().last().unwrap_or("").trim();
+        return Err(format!("bench harness does not answer --env ({why})"));
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["type"] == "env")
+        .and_then(|v| HostEnv::from_line(&v))
+        .ok_or_else(|| "bench harness printed no env line for --env".into())
+}
+
 /// One item's collected metrics across backends.
 #[derive(Default, Debug, Clone)]
 pub struct ItemMetrics {
@@ -1518,9 +1586,38 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CommonArgs, ItemMetrics, Run, SaveScope, harness_mismatches, run_from_items_value,
-        run_to_items_value,
+        CommonArgs, Guest, HostEnv, ItemMetrics, Run, SaveScope, harness_mismatches,
+        run_from_items_value, run_to_items_value,
     };
+
+    #[test]
+    fn an_env_line_reads_its_guest_only_when_complete() {
+        let full = serde_json::json!({
+            "type": "env", "gating_backend": "callgrind",
+            "guest_cpu": "0123456789abcdef", "guest_glibc": "2.39",
+            "guest_libc": "fedcba9876543210", "valgrind": "valgrind-3.22.0",
+        });
+        assert_eq!(
+            HostEnv::from_line(&full),
+            Some(HostEnv {
+                gating_backend: "callgrind".into(),
+                guest: Some(Guest {
+                    cpu: "0123456789abcdef".into(),
+                    glibc: "2.39".into(),
+                    libc: "fedcba9876543210".into(),
+                    valgrind: "valgrind-3.22.0".into(),
+                }),
+            })
+        );
+        let partial = serde_json::json!({
+            "type": "env", "gating_backend": "callgrind", "guest_cpu": "0123456789abcdef",
+        });
+        assert_eq!(HostEnv::from_line(&partial).and_then(|e| e.guest), None);
+        assert_eq!(
+            HostEnv::from_line(&serde_json::json!({ "type": "env" })),
+            None
+        );
+    }
 
     #[test]
     fn run_from_items_value_round_trips_run_to_items_value() {
