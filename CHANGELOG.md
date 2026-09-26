@@ -20,6 +20,10 @@
 - Store perfcnt runs only when readings agree (#213)
 - Key stored runs on the backend and guest that measured (#211)
 
+### 📦 Dependencies
+
+- Bump syn from 3.0.4 to 3.0.5 in the all-dependencies group (#203)
+
 ---
 
 ### 🔍 API surface
