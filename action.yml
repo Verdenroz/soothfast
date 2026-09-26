@@ -31,7 +31,10 @@ inputs:
     required: false
     default: ""
   gate:
-    description: Run the gate on pull requests.
+    description: >-
+      Run the gate on pull requests, and on pushes to the default branch
+      gate HEAD against its parent to record the run a later pull request
+      reuses as its reference.
     required: false
     default: "true"
   changelog:
@@ -209,6 +212,15 @@ runs:
       run: |
         echo "::error::soothfast gate failed; see the pull request comment and the soothfast-triage artifact"
         exit 1
+
+    - name: Record a reference run
+      if: github.event_name == 'push' && steps.prepare.outputs.on_default_branch == 'true' && inputs.gate == 'true'
+      shell: bash
+      env:
+        CLI: ${{ steps.resolve.outputs.bin }}
+        PACKAGES: ${{ steps.prepare.outputs.packages }}
+        FEATURES: ${{ inputs.features }}
+      run: "$GITHUB_ACTION_PATH/action/record.sh"
 
     - name: Regenerate derived files
       if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true'
