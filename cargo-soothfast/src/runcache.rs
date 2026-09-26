@@ -65,9 +65,12 @@ impl<'a> Runs<'a> {
 /// which it synthesizes the same on different host models, so it keys on that
 /// guest and the glibc and valgrind that shape its instruction stream. Every
 /// other backend reads the host itself, so it keys on the model name.
-fn host(env: &HostEnv) -> String {
+pub fn host(env: &HostEnv) -> String {
     match (env.gating_backend.as_str(), &env.guest) {
-        ("callgrind", Some(g)) => format!("guest {} glibc {} {}", g.cpu, g.glibc, g.valgrind),
+        ("callgrind", Some(g)) => format!(
+            "guest {} glibc {} {} {}",
+            g.cpu, g.glibc, g.libc, g.valgrind
+        ),
         _ => cpu_model(),
     }
 }
@@ -80,6 +83,7 @@ fn measured_on(env: &HostEnv) -> Value {
     if let Some(g) = &env.guest {
         on["guest_cpu"] = serde_json::json!(g.cpu);
         on["guest_glibc"] = serde_json::json!(g.glibc);
+        on["guest_libc"] = serde_json::json!(g.libc);
         on["valgrind"] = serde_json::json!(g.valgrind);
     }
     on
@@ -191,6 +195,7 @@ mod tests {
             guest: Some(invoke::Guest {
                 cpu: "0123456789abcdef".into(),
                 glibc: "2.39".into(),
+                libc: "fedcba9876543210".into(),
                 valgrind: "valgrind-3.22.0".into(),
             }),
         }
@@ -257,16 +262,17 @@ mod tests {
     fn callgrind_keys_on_its_guest_not_the_host_model() {
         assert_eq!(
             host(&callgrind_guest()),
-            "guest 0123456789abcdef glibc 2.39 valgrind-3.22.0"
+            "guest 0123456789abcdef glibc 2.39 fedcba9876543210 valgrind-3.22.0"
         );
     }
 
     #[test]
-    fn the_guest_cpu_glibc_and_valgrind_are_each_part_of_the_identity() {
+    fn the_guest_cpu_libc_and_valgrind_are_each_part_of_the_identity() {
         let base = key("aaa", &stamp(), &args(), &callgrind_guest());
-        let edits: [fn(&mut invoke::Guest); 3] = [
+        let edits: [fn(&mut invoke::Guest); 4] = [
             |g| g.cpu = "fedcba9876543210".into(),
             |g| g.glibc = "2.41".into(),
+            |g| g.libc = "0000000000000001".into(),
             |g| g.valgrind = "valgrind-3.24.0".into(),
         ];
         for edit in edits {
@@ -296,6 +302,7 @@ mod tests {
         assert_eq!(got["measured_on"]["gating_backend"], "callgrind");
         assert_eq!(got["measured_on"]["guest_cpu"], "0123456789abcdef");
         assert_eq!(got["measured_on"]["guest_glibc"], "2.39");
+        assert_eq!(got["measured_on"]["guest_libc"], "fedcba9876543210");
         assert_eq!(got["measured_on"]["valgrind"], "valgrind-3.22.0");
         if let Some(d) = dir() {
             let key = key(

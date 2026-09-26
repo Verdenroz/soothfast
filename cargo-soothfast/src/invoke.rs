@@ -338,16 +338,24 @@ pub struct HostEnv {
 pub struct Guest {
     pub cpu: String,
     pub glibc: String,
+    /// Digest of the loaded libc file; distro rebuilds keep `glibc`.
+    pub libc: String,
     pub valgrind: String,
 }
 
 impl HostEnv {
     fn from_line(v: &Value) -> Option<Self> {
         let field = |k: &str| v[k].as_str().map(String::from);
-        let guest = match (field("guest_cpu"), field("guest_glibc"), field("valgrind")) {
-            (Some(cpu), Some(glibc), Some(valgrind)) => Some(Guest {
+        let guest = match (
+            field("guest_cpu"),
+            field("guest_glibc"),
+            field("guest_libc"),
+            field("valgrind"),
+        ) {
+            (Some(cpu), Some(glibc), Some(libc), Some(valgrind)) => Some(Guest {
                 cpu,
                 glibc,
+                libc,
                 valgrind,
             }),
             _ => None,
@@ -1586,7 +1594,8 @@ mod tests {
     fn an_env_line_reads_its_guest_only_when_complete() {
         let full = serde_json::json!({
             "type": "env", "gating_backend": "callgrind",
-            "guest_cpu": "0123456789abcdef", "guest_glibc": "2.39", "valgrind": "valgrind-3.22.0",
+            "guest_cpu": "0123456789abcdef", "guest_glibc": "2.39",
+            "guest_libc": "fedcba9876543210", "valgrind": "valgrind-3.22.0",
         });
         assert_eq!(
             HostEnv::from_line(&full),
@@ -1595,6 +1604,7 @@ mod tests {
                 guest: Some(Guest {
                     cpu: "0123456789abcdef".into(),
                     glibc: "2.39".into(),
+                    libc: "fedcba9876543210".into(),
                     valgrind: "valgrind-3.22.0".into(),
                 }),
             })

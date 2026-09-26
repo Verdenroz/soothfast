@@ -56,7 +56,9 @@ outside it that moves the numbers:
 - the machine the counts came from. For `perfcnt` and `walltime` that is the
   CPU model, since retired instructions and time differ across
   microarchitectures. For `callgrind` it is the CPU valgrind presents to the
-  guest, the glibc the guest loads, and the valgrind version. valgrind
+  guest, the libc file the guest loads (its contents, so a distro rebuild
+  that keeps the version number still counts), and the valgrind version
+  string, which a distro-patched valgrind may keep unchanged. valgrind
   synthesizes the same guest CPU on different host models, so callgrind runs
   from differently named CI hosts share a key, while a machine with another
   glibc or valgrind does not.

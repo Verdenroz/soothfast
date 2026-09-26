@@ -1002,7 +1002,14 @@ fn resolved_env(common: &CommonArgs, exe: Option<&std::path::Path>) -> Option<in
         .ok_or_else(|| "HEAD's bench binary did not build".to_string())
         .and_then(|exe| invoke::host_env(exe, common.backend.as_deref()));
     match resolved {
-        Ok(env) => Some(env),
+        Ok(env) => {
+            println!(
+                "gate: run cache keyed on {} ({})",
+                env.gating_backend,
+                runcache::host(&env)
+            );
+            Some(env)
+        }
         Err(why) => {
             println!(
                 "gate: run cache disabled for this invocation: {why} (harness {}, CLI {})",

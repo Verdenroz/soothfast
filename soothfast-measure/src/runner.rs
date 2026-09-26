@@ -251,9 +251,10 @@ fn env_line(env: &Env, json: bool) -> String {
         (perf, true) => {
             let guest = env.guest.as_ref().map_or(String::new(), |g| {
                 format!(
-                    ",\"guest_cpu\":\"{}\",\"guest_glibc\":\"{}\",\"valgrind\":\"{}\"",
+                    ",\"guest_cpu\":\"{}\",\"guest_glibc\":\"{}\",\"guest_libc\":\"{}\",\"valgrind\":\"{}\"",
                     esc(&g.cpu),
                     esc(&g.glibc),
+                    esc(&g.libc),
                     esc(&g.valgrind)
                 )
             });
@@ -704,6 +705,7 @@ mod tests {
         callgrind::Guest {
             cpu: "0123456789abcdef".into(),
             glibc: "2.39".into(),
+            libc: "fedcba9876543210".into(),
             valgrind: "valgrind-3.22.0".into(),
         }
     }
@@ -719,7 +721,7 @@ mod tests {
             &resolve_env(&args, Err("no PMU".into()), || Ok(()), || Some(guest())),
             true,
         );
-        assert!(line.contains(r#""guest_cpu":"0123456789abcdef","guest_glibc":"2.39","valgrind":"valgrind-3.22.0""#), "{line}");
+        assert!(line.contains(r#""guest_cpu":"0123456789abcdef","guest_glibc":"2.39","guest_libc":"fedcba9876543210","valgrind":"valgrind-3.22.0""#), "{line}");
     }
 
     #[test]
