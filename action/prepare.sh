@@ -2,6 +2,7 @@
 # Work out what this run will do and fetch what it needs: the default-branch
 # check, the package list, full history for merge-base and tag lookups, the
 # callgrind fallback, and the rustdoc toolchain when anything regenerates.
+# A default-branch push with the gate on records a reference run.
 # Inputs: GATE REGEN (true|false) PACKAGES RUSTDOC_TOOLCHAIN GH_TOKEN.
 # Outputs: on_default_branch, packages.
 set -euo pipefail
@@ -13,9 +14,11 @@ echo "on_default_branch=$on_default" >>"$GITHUB_OUTPUT"
 
 gating=false
 [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ "$GATE" = true ] && gating=true
+recording=false
+[ "${GITHUB_EVENT_NAME:-}" = push ] && [ "$on_default" = true ] && [ "$GATE" = true ] && recording=true
 regenerating=false
 [ "${GITHUB_EVENT_NAME:-}" != pull_request ] && [ "$on_default" = true ] && [ "$REGEN" = true ] && regenerating=true
-if [ "$gating" = false ] && [ "$regenerating" = false ]; then
+if [ "$gating" = false ] && [ "$recording" = false ] && [ "$regenerating" = false ]; then
   echo "packages=" >>"$GITHUB_OUTPUT"
   exit 0
 fi

@@ -439,8 +439,9 @@ fn with_package(args: &[String], pkg: &str) -> Vec<String> {
 struct Resolved {
     reference: Value,
     current: Run,
-    /// The identical-binaries short circuit ran one timing-only pass, so
-    /// `current` has no gating counters and is not baseline material.
+    /// The identical-binaries short circuit ran one pass, which skips the
+    /// gating counters unless it records a reference, so `current` is not
+    /// baseline material.
     short_circuited: bool,
     harness: invoke::HarnessSync,
 }
@@ -859,17 +860,15 @@ fn measure_ref_interleaved(
             println!(
                 "gate: bench binaries identical (code and data match) — no measurable change possible"
             );
-            // Head shares that machine code, so the cached run is its
+            let record = by_binary.is_none() && recording();
+            let args = identical_pass_args(common.backend.as_deref(), record);
+            let run = measure(None, args);
+            // Head shares that machine code, so a run of it is its
             // measurement too, and the next commit can reuse it from HEAD.
-            if let Some(doc) = &by_binary {
-                cache_head_doc(common, &head_stamp, doc, head_dig.as_deref());
+            if let Some(doc) = identical_pass_cache(by_binary.as_ref(), run.as_ref().ok(), record) {
+                cache_head_doc(common, &head_stamp, &doc, head_dig.as_deref());
             }
-            let args = identical_pass_args(common.backend.as_deref());
-            return Ok((
-                Ref::IdenticalBinaries(measure(None, args)),
-                digests,
-                harness,
-            ));
+            return Ok((Ref::IdenticalBinaries(run), digests, harness));
         }
         if let Some(doc) = by_binary {
             println!("gate: reusing a run measured from the same merge-base binary");
@@ -1038,14 +1037,33 @@ fn cache_head_doc(
     runcache::store(&runcache::key(sha.trim(), stamp, common), doc);
 }
 
+/// Whether this gate runs to record HEAD as a reference (`SOOTHFAST_RECORD=1`,
+/// set by the action on default-branch pushes) rather than to judge a change.
+/// An environment variable, so older CLIs the action installs ignore it.
+fn recording() -> bool {
+    std::env::var("SOOTHFAST_RECORD").is_ok_and(|v| v == "1")
+}
+
 /// Runner args for the single pass taken when both sides' binaries match.
-/// A backend named on the command line may be one of the gating counters,
-/// which measures nothing once those counters are skipped, so it keeps them.
-fn identical_pass_args(backend: Option<&str>) -> &'static [&'static str] {
+/// A pass that `record`s a binary nothing is stored for keeps the gating
+/// counters, so it can be stored as that binary's run. A backend named on the
+/// command line may be one of the gating counters, which measures nothing once
+/// those counters are skipped, so it keeps them.
+fn identical_pass_args(backend: Option<&str>, record: bool) -> &'static [&'static str] {
     match backend {
+        _ if record => &[],
         Some("perfcnt" | "callgrind") => &[],
         _ => &["--skip-gating-counters"],
     }
+}
+
+/// What the identical-binaries branch keeps as HEAD's run: the run already
+/// stored for the binary, else a recording pass. A pass that skipped the gating
+/// counters must never be stored, or a later gate reusing it compares nothing.
+fn identical_pass_cache(stored: Option<&Value>, pass: Option<&Run>, record: bool) -> Option<Value> {
+    stored
+        .cloned()
+        .or_else(|| pass.filter(|_| record).map(ref_doc))
 }
 
 /// A measured run in the reference-document shape `compare` reads.
@@ -1662,7 +1680,8 @@ fn partial(msg: &str) -> i32 {
 mod tests {
     use super::{
         CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare, digestible,
-        identical_pass_args, loaded_section_bytes, save_verdict, walltime_limit,
+        identical_pass_args, identical_pass_cache, loaded_section_bytes, save_verdict,
+        walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
@@ -2018,17 +2037,40 @@ mod tests {
 
     #[test]
     fn a_named_gating_backend_keeps_its_counters_on_the_identical_pass() {
-        assert!(identical_pass_args(Some("perfcnt")).is_empty());
-        assert!(identical_pass_args(Some("callgrind")).is_empty());
+        assert!(identical_pass_args(Some("perfcnt"), false).is_empty());
+        assert!(identical_pass_args(Some("callgrind"), false).is_empty());
     }
 
     #[test]
     fn the_identical_pass_skips_counters_otherwise() {
-        assert_eq!(identical_pass_args(None), ["--skip-gating-counters"]);
+        assert_eq!(identical_pass_args(None, false), ["--skip-gating-counters"]);
         assert_eq!(
-            identical_pass_args(Some("walltime")),
+            identical_pass_args(Some("walltime"), false),
             ["--skip-gating-counters"]
         );
+    }
+
+    #[test]
+    fn only_a_recording_identical_pass_is_stored() {
+        let pass = Run::default();
+        assert!(identical_pass_cache(None, Some(&pass), false).is_none());
+        assert!(identical_pass_cache(None, Some(&pass), true).is_some());
+        assert!(identical_pass_cache(None, None, true).is_none());
+    }
+
+    #[test]
+    fn a_stored_run_is_kept_whatever_the_pass() {
+        let stored = json!({ "version": 1, "items": {} });
+        assert_eq!(
+            identical_pass_cache(Some(&stored), Some(&Run::default()), false),
+            Some(stored)
+        );
+    }
+
+    #[test]
+    fn a_recording_identical_pass_keeps_the_counters() {
+        assert!(identical_pass_args(None, true).is_empty());
+        assert!(identical_pass_args(Some("walltime"), true).is_empty());
     }
 
     fn reused(mut doc: Value) -> Value {
