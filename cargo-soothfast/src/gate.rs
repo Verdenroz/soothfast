@@ -268,6 +268,9 @@ pub fn run(args: &[String]) -> i32 {
         // buildcost pseudo-items have no runnable body to profile.
         failing_ids.retain(|id| !id.starts_with("buildcost::"));
         triage(&g.common, &failing_ids);
+        if let Some(hint) = reuse_hint(&reference, current.gating_backend.as_deref(), regressions) {
+            println!("{hint}");
+        }
         println!(
             "gate: FAILED ({failures} regression(s)){}",
             harness_verdict(&harness, regressions > 0)
@@ -281,6 +284,16 @@ pub fn run(args: &[String]) -> i32 {
         );
         0
     }
+}
+
+/// How to recover when a regression was measured against a stored perfcnt
+/// reference, which one bad reading could have skewed. Callgrind is exact,
+/// so a reused callgrind reference needs no such doubt.
+fn reuse_hint(reference: &Value, backend: Option<&str>, regressions: u32) -> Option<String> {
+    let from = reference["reused_from"].as_str()?;
+    (regressions > 0 && backend == Some("perfcnt")).then(|| {
+        format!("gate: reference reused from {from}; rerun with --no-reuse-base to re-measure")
+    })
 }
 
 /// Put the mismatch in front of the deltas it may have produced: a
@@ -1580,7 +1593,7 @@ fn partial(msg: &str) -> i32 {
 mod tests {
     use super::{
         CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare,
-        identical_pass_args, identical_pass_cache, save_verdict, walltime_limit,
+        identical_pass_args, identical_pass_cache, reuse_hint, save_verdict, walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
@@ -1932,6 +1945,26 @@ mod tests {
             &mut Vec::new(),
         );
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn a_regression_against_a_reused_perfcnt_reference_names_the_recovery() {
+        let reused = json!({ "reused_from": "1aa6c4de", "items": {} });
+        assert_eq!(
+            reuse_hint(&reused, Some("perfcnt"), 1).as_deref(),
+            Some("gate: reference reused from 1aa6c4de; rerun with --no-reuse-base to re-measure")
+        );
+    }
+
+    #[test]
+    fn no_reuse_hint_without_a_reused_perfcnt_regression() {
+        let reused = json!({ "reused_from": "1aa6c4de", "items": {} });
+        assert_eq!(reuse_hint(&reused, Some("perfcnt"), 0), None);
+        assert_eq!(reuse_hint(&reused, Some("callgrind"), 1), None);
+        assert_eq!(
+            reuse_hint(&json!({ "items": {} }), Some("perfcnt"), 1),
+            None
+        );
     }
 
     #[test]
