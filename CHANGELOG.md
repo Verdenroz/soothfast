@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.3.2)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### ✨ Features
+
+- Record a reference run on default-branch pushes (#208)
+
+
 ## 0.3.2 - 2026-09-11
 
 <!-- soothfast:notes -->
