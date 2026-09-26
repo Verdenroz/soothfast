@@ -11,7 +11,8 @@ use crate::buildstamp;
 use crate::gate_config;
 use crate::gate_lock;
 use crate::headrun::{
-    self, binary_digest, cache_head, cache_head_doc, head_from_runcache, ref_doc,
+    self, RECOUNT, Settled, binary_digest, cache_head, cache_head_doc, head_from_runcache, ref_doc,
+    settle, settled_doc,
 };
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::workspace;
@@ -37,10 +38,10 @@ const ASYNC_THRESHOLD_PCT: u64 = 5;
 const BUILD_MS_SOFT_PCT: f64 = 25.0;
 /// A deterministic counter within this of the reference reads as "flat" —
 /// wide enough for perfcnt's tiny run-to-run wobble, far below any real change.
-const COUNTER_FLAT_PCT: f64 = 0.5;
+pub(crate) const COUNTER_FLAT_PCT: f64 = 0.5;
 /// Absolute floor alongside `COUNTER_FLAT_PCT`: below ~30K instructions the
 /// 0.5% cutoff is tighter than perfcnt's own run-to-run wobble.
-const COUNTER_FLAT_ABS: u64 = 150;
+pub(crate) const COUNTER_FLAT_ABS: u64 = 150;
 /// `gate accept --headroom` floor for deterministic counters: a delta must
 /// clear this before it counts as "close to failing," so a bench parked
 /// near the line by measurement noise alone never qualifies.
@@ -780,7 +781,8 @@ fn measure_ref_interleaved(
         IdenticalBinaries(Result<Run, String>),
         /// Reference served by binary identity rather than by commit.
         Cached(Value),
-        Rounds(Box<[Result<Run, String>; 4]>),
+        /// The four rounds, then what HEAD's and the merge-base's runs may store.
+        Rounds(Box<[Result<Run, String>; 4]>, Settled, Settled),
     }
 
     // Worktree builds go to a persistent sibling of the parent target dir so
@@ -813,14 +815,18 @@ fn measure_ref_interleaved(
         && let Some(doc) = runs.load(&base_sha, &base_sha)
     {
         println!("gate: reusing the measured merge-base {base_sha}");
-        let head = match head_from_runcache(&runs, head_dig.as_deref()) {
+        let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
             Some((head, from)) => {
                 println!("gate: reusing HEAD's own run, measured from {from}");
-                head
+                (head, Settled::AsMeasured)
             }
-            None => measure(None, &[])?,
+            None => {
+                let head = measure(None, &[])?;
+                let settled = settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
+                (head, settled)
+            }
         };
-        cache_head(&runs, &head, head_dig.as_deref());
+        cache_head(&runs, &head, head_dig.as_deref(), &settled);
         return Ok(Some(Resolved {
             harness: harness_of(&doc),
             reference: doc,
@@ -866,7 +872,15 @@ fn measure_ref_interleaved(
             // Head shares that machine code, so a run of it is its
             // measurement too, and the next commit can reuse it from HEAD.
             if let Some(doc) = identical_pass_cache(by_binary.as_ref(), run.as_ref().ok(), record) {
-                cache_head_doc(&runs, &doc, head_dig.as_deref());
+                let settled = match (&by_binary, &run) {
+                    (None, Ok(pass)) => {
+                        settle("gate", "HEAD's run", pass, || measure(None, RECOUNT).ok())
+                    }
+                    _ => Settled::AsMeasured,
+                };
+                if let Some(doc) = settled_doc(doc, &settled) {
+                    cache_head_doc(&runs, &doc, head_dig.as_deref());
+                }
             }
             return Ok((Ref::IdenticalBinaries(run), digests, harness));
         }
@@ -874,20 +888,32 @@ fn measure_ref_interleaved(
             println!("gate: reusing a run measured from the same merge-base binary");
             return Ok((Ref::Cached(doc), digests, harness));
         }
+        let rounds = [
+            measure(None, &[]),
+            measure(Some(wt), &[]),
+            measure(None, TIMING_ONLY),
+            measure(Some(wt), TIMING_ONLY),
+        ];
+        // Read again here, where the merge-base worktree still exists; the
+        // comparison itself uses the first reading either way.
+        let (head_settled, base_settled) = match (&rounds[0], &rounds[1]) {
+            (Ok(head), Ok(base)) => (
+                settle("gate", "HEAD's run", head, || measure(None, RECOUNT).ok()),
+                settle("gate", "the merge-base run", base, || {
+                    measure(Some(wt), RECOUNT).ok()
+                }),
+            ),
+            _ => (Settled::Refused, Settled::Refused),
+        };
         Ok((
-            Ref::Rounds(Box::new([
-                measure(None, &[]),
-                measure(Some(wt), &[]),
-                measure(None, TIMING_ONLY),
-                measure(Some(wt), TIMING_ONLY),
-            ])),
+            Ref::Rounds(Box::new(rounds), head_settled, base_settled),
             digests,
             harness,
         ))
     })?;
     let (outcome, digests, harness) = outcome;
 
-    let (base, head) = match outcome {
+    let sides = match outcome {
         Ref::NoBenchTarget => return Ok(None),
         // One cheap pass serves as both sides: real items and assertions,
         // zero deltas by construction.
@@ -901,11 +927,16 @@ fn measure_ref_interleaved(
             }));
         }
         Ref::Cached(doc) => {
-            let head = match head_from_runcache(&runs, head_dig.as_deref()) {
-                Some((head, _)) => head,
-                None => measure(None, &[])?,
+            let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
+                Some((head, _)) => (head, Settled::AsMeasured),
+                None => {
+                    let head = measure(None, &[])?;
+                    let settled =
+                        settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
+                    (head, settled)
+                }
             };
-            cache_head(&runs, &head, head_dig.as_deref());
+            cache_head(&runs, &head, head_dig.as_deref(), &settled);
             return Ok(Some(Resolved {
                 reference: doc,
                 current: head,
@@ -913,23 +944,35 @@ fn measure_ref_interleaved(
                 harness,
             }));
         }
-        Ref::Rounds(rounds) => {
+        Ref::Rounds(rounds, head_settled, base_settled) => {
             let [head1, base1, head2, base2] = *rounds;
-            (combine_rounds(base1?, base2), combine_rounds(head1?, head2))
+            (
+                combine_rounds(base1?, base2),
+                combine_rounds(head1?, head2),
+                head_settled,
+                base_settled,
+            )
         }
     };
+    let (base, head, head_settled, base_settled) = sides;
     let mut reference = ref_doc(&base);
     mark_harness(&mut reference, &harness);
-    if base_known {
-        runs.store(&base_sha, &reference);
+    if let Some(stored) = settled_doc(reference.clone(), &base_settled) {
+        if base_known {
+            runs.store(&base_sha, &stored);
+        }
+        // Keyed by machine code too, so a later merge-base building the same
+        // binary hits even if never gated. Stored regardless of `reuse`.
+        if let Some((_, base_digest)) = &digests {
+            runs.store(base_digest, &stored);
+        }
     }
-    // Keyed by machine code too, so a later merge-base building the same
-    // binary hits even if never gated. Stored regardless of `reuse`.
-    if let Some((head_digest, base_digest)) = &digests {
-        runs.store(base_digest, &reference);
-        runs.store(head_digest, &ref_doc(&head));
+    if let (Some((head_digest, _)), Some(stored)) =
+        (&digests, settled_doc(ref_doc(&head), &head_settled))
+    {
+        runs.store(head_digest, &stored);
     }
-    cache_head(&runs, &head, head_dig.as_deref());
+    cache_head(&runs, &head, head_dig.as_deref(), &head_settled);
     Ok(Some(Resolved {
         reference,
         current: head,
