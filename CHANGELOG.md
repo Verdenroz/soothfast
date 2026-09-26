@@ -14,6 +14,23 @@
 
 - Record a reference run on default-branch pushes (#208)
 
+### 🐛 Fixes
+
+- Key stored runs on the backend and guest that measured (#211)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-measure
+ADDED    soothfast_measure::callgrind::Guest
+ADDED    soothfast_measure::callgrind::guest
+ADDED    soothfast_measure::callgrind::print_guest_view
+CHANGED  soothfast_measure::main (body)
+CHANGED  soothfast_measure::runner::main (body)
+```
+
 
 ## 0.3.2 - 2026-09-11
 
