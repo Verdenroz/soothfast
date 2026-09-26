@@ -801,24 +801,30 @@ fn measure_ref_interleaved(
     let head_stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
     // Naming HEAD's binary costs a no-run build plus an objdump, so it is
     // taken once and threaded to every lookup and store below.
-    let head_dig = head_digest(common);
-    // Computed regardless of `reuse`: a fresh measurement is worth storing
+    let head_exe = invoke::bench_executable(common, None, None);
+    let head_dig = head_exe.as_deref().and_then(binary_digest);
+    let runs = runcache::Runs::new(
+        &head_stamp,
+        common,
+        resolved_backend(common, head_exe.as_deref()),
+    );
+    // Stored regardless of `reuse`: a fresh measurement is worth keeping
     // even for an invocation that declined to trust an existing one.
-    let cache_key = (!base_sha.is_empty()).then(|| runcache::key(&base_sha, &head_stamp, common));
+    let base_known = !base_sha.is_empty();
 
     if reuse
-        && let Some(k) = &cache_key
-        && let Some(doc) = runcache::load(k, &base_sha)
+        && base_known
+        && let Some(doc) = runs.load(&base_sha, &base_sha)
     {
         println!("gate: reusing the measured merge-base {base_sha}");
-        let head = match head_from_runcache(common, &head_stamp, head_dig.as_deref()) {
+        let head = match head_from_runcache(&runs, head_dig.as_deref()) {
             Some((head, from)) => {
                 println!("gate: reusing HEAD's own run, measured from {from}");
                 head
             }
             None => measure(None, &[])?,
         };
-        cache_head(common, &head_stamp, &head, head_dig.as_deref());
+        cache_head(&runs, &head, head_dig.as_deref());
         return Ok(Some(Resolved {
             harness: harness_of(&doc),
             reference: doc,
@@ -850,9 +856,7 @@ fn measure_ref_interleaved(
         // A run measured from byte-identical machine code under the same
         // conditions is that binary's measurement, whatever commit built it.
         let by_binary = match (reuse, &digests) {
-            (true, Some((_, base))) => {
-                runcache::load(&runcache::key(base, &head_stamp, common), &base_sha)
-            }
+            (true, Some((_, base))) => runs.load(base, &base_sha),
             _ => None,
         };
 
@@ -866,7 +870,7 @@ fn measure_ref_interleaved(
             // Head shares that machine code, so a run of it is its
             // measurement too, and the next commit can reuse it from HEAD.
             if let Some(doc) = identical_pass_cache(by_binary.as_ref(), run.as_ref().ok(), record) {
-                cache_head_doc(common, &head_stamp, &doc, head_dig.as_deref());
+                cache_head_doc(&runs, &doc, head_dig.as_deref());
             }
             return Ok((Ref::IdenticalBinaries(run), digests, harness));
         }
@@ -901,11 +905,11 @@ fn measure_ref_interleaved(
             }));
         }
         Ref::Cached(doc) => {
-            let head = match head_from_runcache(common, &head_stamp, head_dig.as_deref()) {
+            let head = match head_from_runcache(&runs, head_dig.as_deref()) {
                 Some((head, _)) => head,
                 None => measure(None, &[])?,
             };
-            cache_head(common, &head_stamp, &head, head_dig.as_deref());
+            cache_head(&runs, &head, head_dig.as_deref());
             return Ok(Some(Resolved {
                 reference: doc,
                 current: head,
@@ -920,19 +924,16 @@ fn measure_ref_interleaved(
     };
     let mut reference = ref_doc(&base);
     mark_harness(&mut reference, &harness);
-    if let Some(k) = &cache_key {
-        runcache::store(k, &reference);
+    if base_known {
+        runs.store(&base_sha, &reference);
     }
     // Keyed by machine code too, so a later merge-base building the same
     // binary hits even if never gated. Stored regardless of `reuse`.
     if let Some((head_digest, base_digest)) = &digests {
-        runcache::store(&runcache::key(base_digest, &head_stamp, common), &reference);
-        runcache::store(
-            &runcache::key(head_digest, &head_stamp, common),
-            &ref_doc(&head),
-        );
+        runs.store(base_digest, &reference);
+        runs.store(head_digest, &ref_doc(&head));
     }
-    cache_head(common, &head_stamp, &head, head_dig.as_deref());
+    cache_head(&runs, &head, head_dig.as_deref());
     Ok(Some(Resolved {
         reference,
         current: head,
@@ -968,65 +969,62 @@ fn harness_of(doc: &Value) -> invoke::HarnessSync {
 /// these conditions, e.g. the `gate` run `gate accept` follows moments later.
 /// Avoids a second full measurement of the same code just to build the
 /// accept report.
-fn head_from_runcache(
-    common: &CommonArgs,
-    stamp: &buildstamp::BuildStamp,
-    digest: Option<&str>,
-) -> Option<(Run, String)> {
-    let (key, measured_from) = head_cache_key(common, stamp, digest)?;
-    let doc = runcache::load(&key, &measured_from)?;
+fn head_from_runcache(runs: &runcache::Runs, digest: Option<&str>) -> Option<(Run, String)> {
+    let (id, measured_from) = head_cache_id(digest)?;
+    let doc = runs.load(&id, &measured_from)?;
     Some((invoke::run_from_items_value(&doc["items"]), measured_from))
 }
 
-/// Cache key for HEAD's own run, and the label saying what it was measured
-/// from. A dirty tree has no commit naming what was built, but the bench
-/// binary integrates every input that decides the numbers, so it can name
-/// its own measurement when the commit cannot.
-fn head_cache_key(
-    common: &CommonArgs,
-    stamp: &buildstamp::BuildStamp,
-    digest: Option<&str>,
-) -> Option<(String, String)> {
+/// What HEAD's own run is stored under, and the label saying what it was
+/// measured from. A dirty tree has no commit naming what was built, but the
+/// bench binary integrates every input that decides the numbers, so it can
+/// name its own measurement when the commit cannot.
+fn head_cache_id(digest: Option<&str>) -> Option<(String, String)> {
     if invoke::tree_is_clean()
         && let Ok(sha) = invoke::git(&["rev-parse", "HEAD"])
     {
         let sha = sha.trim().to_string();
-        return Some((runcache::key(&sha, stamp, common), sha));
+        return Some((sha.clone(), sha));
     }
     let digest = digest?;
-    Some((
-        runcache::key(digest, stamp, common),
-        format!("binary {digest}"),
-    ))
+    Some((digest.to_string(), format!("binary {digest}")))
 }
 
-/// Digest of HEAD's own bench binary.
-fn head_digest(common: &CommonArgs) -> Option<String> {
-    let exe = invoke::bench_executable(common, None, None)?;
-    loaded_section_bytes(&exe).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
+/// Digest of a bench binary's loaded sections.
+fn binary_digest(exe: &std::path::Path) -> Option<String> {
+    loaded_section_bytes(exe).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
+}
+
+/// The gating backend HEAD's bench binary resolves on this host, asked of the
+/// binary itself. `None` disables the run cache for this invocation, and says so.
+fn resolved_backend(common: &CommonArgs, exe: Option<&std::path::Path>) -> Option<String> {
+    let resolved = exe
+        .ok_or_else(|| "HEAD's bench binary did not build".to_string())
+        .and_then(|exe| invoke::gating_backend(exe, common.backend.as_deref()));
+    match resolved {
+        Ok(backend) => Some(backend),
+        Err(why) => {
+            println!(
+                "gate: run cache disabled for this invocation: {why} (harness {}, CLI {})",
+                invoke::harness_versions(),
+                env!("CARGO_PKG_VERSION")
+            );
+            None
+        }
+    }
 }
 
 /// Keep HEAD's run so the next gate finds its reference already measured.
 /// Stored under the bench binary's digest always, and under HEAD's SHA as
 /// well when the tree is clean enough for the commit to name what was built.
-fn cache_head(
-    common: &CommonArgs,
-    stamp: &buildstamp::BuildStamp,
-    head: &Run,
-    digest: Option<&str>,
-) {
-    cache_head_doc(common, stamp, &ref_doc(head), digest);
+fn cache_head(runs: &runcache::Runs, head: &Run, digest: Option<&str>) {
+    cache_head_doc(runs, &ref_doc(head), digest);
 }
 
 /// Keep `doc` as HEAD's measurement.
-fn cache_head_doc(
-    common: &CommonArgs,
-    stamp: &buildstamp::BuildStamp,
-    doc: &Value,
-    digest: Option<&str>,
-) {
+fn cache_head_doc(runs: &runcache::Runs, doc: &Value, digest: Option<&str>) {
     if let Some(digest) = digest {
-        runcache::store(&runcache::key(digest, stamp, common), doc);
+        runs.store(digest, doc);
     }
     if !invoke::tree_is_clean() {
         return;
@@ -1034,7 +1032,7 @@ fn cache_head_doc(
     let Ok(sha) = invoke::git(&["rev-parse", "HEAD"]) else {
         return;
     };
-    runcache::store(&runcache::key(sha.trim(), stamp, common), doc);
+    runs.store(sha.trim(), doc);
 }
 
 /// Whether this gate runs to record HEAD as a reference (`SOOTHFAST_RECORD=1`,
@@ -1098,10 +1096,7 @@ fn bench_text_digests(
     if head == base {
         return None;
     }
-    let digest = |p: &std::path::Path| {
-        loaded_section_bytes(p).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
-    };
-    Some((digest(&head)?, digest(&base)?))
+    Some((binary_digest(&head)?, binary_digest(&base)?))
 }
 
 /// Every allocatable section carrying file contents, name-tagged and

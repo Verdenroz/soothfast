@@ -31,6 +31,7 @@ struct Args {
     triage: Option<String>,
     iters: u64,
     skip_gating_counters: bool,
+    env: bool,
 }
 
 fn parse_args() -> Args {
@@ -49,6 +50,7 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
         triage: None,
         iters: 1,
         skip_gating_counters: false,
+        env: false,
     };
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -89,6 +91,10 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
                 _ => die("--iters needs a positive integer"),
             },
             "--skip-gating-counters" => args.skip_gating_counters = true,
+            "--env" => {
+                args.env = true;
+                args.json = true;
+            }
             other => die(&format!("unknown runner arg {other:?}")),
         }
     }
@@ -166,6 +172,92 @@ fn perf_probe() -> Result<(), String> {
     Err("perfcnt backend is Linux-only".into())
 }
 
+/// Backends a run uses, resolved from the request and what this host allows.
+struct Env {
+    perf: Result<(), String>,
+    use_perf: bool,
+    use_cg: bool,
+    use_wall: bool,
+    use_alloc: bool,
+    gating: &'static str,
+}
+
+/// Explicit choices fail hard when unavailable; auto/all degrade gracefully
+/// but say so (no silent downgrade). `cg_probe` spawns a real valgrind
+/// subprocess, so it's only called when the outcome could actually matter.
+fn resolve_env(
+    args: &Args,
+    perf: Result<(), String>,
+    cg_probe: impl FnOnce() -> Result<(), String>,
+) -> Env {
+    let perf_available = perf.is_ok();
+    if args.backend == Backend::Perfcnt
+        && let Err(e) = &perf
+    {
+        die(&format!("--backend perfcnt unavailable: {e}"));
+    }
+    let cg = if !args.skip_gating_counters && might_need_callgrind(args.backend, perf_available) {
+        Some(cg_probe())
+    } else {
+        None
+    };
+    if args.backend == Backend::Callgrind
+        && let Some(Err(e)) = &cg
+    {
+        die(&format!("--backend callgrind unavailable: {e}"));
+    }
+    let cg_available = matches!(cg, Some(Ok(())));
+    // Gating counters (perfcnt/callgrind) are deterministic: when the caller
+    // already has them from another pass, re-collecting only costs time.
+    let (use_perf, use_cg) = if args.skip_gating_counters {
+        (false, false)
+    } else {
+        resolve_backends(args.backend, perf_available, cg_available)
+    };
+    let use_wall = matches!(
+        args.backend,
+        Backend::Auto | Backend::All | Backend::Walltime
+    );
+    let use_alloc = matches!(args.backend, Backend::Auto | Backend::All | Backend::Alloc);
+    let gating = if use_perf {
+        "perfcnt"
+    } else if use_cg {
+        "callgrind"
+    } else if use_wall {
+        "walltime"
+    } else {
+        "alloc"
+    };
+    Env {
+        perf,
+        use_perf,
+        use_cg,
+        use_wall,
+        use_alloc,
+        gating,
+    }
+}
+
+fn env_line(env: &Env, json: bool) -> String {
+    let gating = env.gating;
+    match (&env.perf, json) {
+        (perf, true) => format!(
+            "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\"}}",
+            perf.is_ok(),
+            esc(perf.as_ref().err().map(String::as_str).unwrap_or("ok")),
+        ),
+        (Ok(()), false) => format!("env: perfcnt available; gating backend = {gating}"),
+        (Err(e), false) => format!("env: perfcnt unavailable ({e}); gating backend = {gating}"),
+    }
+}
+
+/// Resolve this host's backends and print the env line every run starts with.
+fn print_env(args: &Args) -> Env {
+    let env = resolve_env(args, perf_probe(), callgrind::probe);
+    println!("{}", env_line(&env, args.json));
+    env
+}
+
 /// Entry point installed by `soothfast::bench_main!`.
 pub fn main() {
     let args = parse_args();
@@ -183,6 +275,11 @@ pub fn main() {
             Ok(report) => print!("{report}"),
             Err(e) => die(&format!("triage failed: {e}")),
         }
+        return;
+    }
+
+    if args.env {
+        print_env(&args);
         return;
     }
 
@@ -257,63 +354,13 @@ pub fn main() {
         }
     }
 
-    // Resolve backends: explicit choices fail hard when unavailable; auto/all
-    // degrade gracefully but say so (no silent downgrade). callgrind::probe
-    // spawns a real valgrind subprocess, so it's only called when the
-    // outcome could actually matter.
-    let perf = perf_probe();
-    let perf_available = perf.is_ok();
-    if args.backend == Backend::Perfcnt
-        && let Err(e) = &perf
-    {
-        die(&format!("--backend perfcnt unavailable: {e}"));
-    }
-    let cg_probe =
-        if !args.skip_gating_counters && might_need_callgrind(args.backend, perf_available) {
-            Some(callgrind::probe())
-        } else {
-            None
-        };
-    if args.backend == Backend::Callgrind
-        && let Some(Err(e)) = &cg_probe
-    {
-        die(&format!("--backend callgrind unavailable: {e}"));
-    }
-    let cg_available = matches!(cg_probe, Some(Ok(())));
-    // Gating counters (perfcnt/callgrind) are deterministic: when the caller
-    // already has them from another pass, re-collecting only costs time.
-    let (use_perf, use_cg) = if args.skip_gating_counters {
-        (false, false)
-    } else {
-        resolve_backends(args.backend, perf_available, cg_available)
-    };
-    let use_wall = matches!(
-        args.backend,
-        Backend::Auto | Backend::All | Backend::Walltime
-    );
-    let use_alloc = matches!(args.backend, Backend::Auto | Backend::All | Backend::Alloc);
-    let gating = if use_perf {
-        "perfcnt"
-    } else if use_cg {
-        "callgrind"
-    } else if use_wall {
-        "walltime"
-    } else {
-        "alloc"
-    };
-
-    if args.json {
-        println!(
-            "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\"}}",
-            perf.is_ok(),
-            esc(perf.as_ref().err().map(String::as_str).unwrap_or("ok")),
-        );
-    } else {
-        match &perf {
-            Ok(()) => println!("env: perfcnt available; gating backend = {gating}"),
-            Err(e) => println!("env: perfcnt unavailable ({e}); gating backend = {gating}"),
-        }
-    }
+    let Env {
+        use_perf,
+        use_cg,
+        use_wall,
+        use_alloc,
+        ..
+    } = print_env(&args);
 
     if use_wall {
         let noise_pct = walltime::calibrate(args.samples);
@@ -600,6 +647,34 @@ mod tests {
         "GET",
         "/items/{id}",
     );
+
+    #[test]
+    fn the_env_probe_resolves_as_a_run_does() {
+        let hosts: [(Result<(), String>, Result<(), String>); 4] = [
+            (Ok(()), Ok(())),
+            (Ok(()), Err("no valgrind".into())),
+            (Err("no PMU".into()), Ok(())),
+            (Err("no PMU".into()), Err("no valgrind".into())),
+        ];
+        for backend in ["auto", "all", "walltime", "alloc", "perfcnt", "callgrind"] {
+            for (perf, cg) in &hosts {
+                let explicit_unavailable = (backend == "perfcnt" && perf.is_err())
+                    || (backend == "callgrind" && cg.is_err());
+                if explicit_unavailable {
+                    continue;
+                }
+                let line = |argv: &[&str]| {
+                    let args = parse_args_from(argv.iter().map(|a| a.to_string()));
+                    env_line(&resolve_env(&args, perf.clone(), || cg.clone()), args.json)
+                };
+                assert_eq!(
+                    line(&["--env", "--backend", backend]),
+                    line(&["--json", "--backend", backend]),
+                    "{backend} {perf:?} {cg:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn skip_gating_counters_flag_parses() {

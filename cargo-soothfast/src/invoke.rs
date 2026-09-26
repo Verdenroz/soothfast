@@ -324,6 +324,31 @@ pub fn bench_executable(
         .find_map(|m| m["executable"].as_str().map(PathBuf::from))
 }
 
+/// The gating backend `exe` resolves on this host for `backend`, as the env
+/// line of a real run would name it. A harness older than `--env`, or a named
+/// backend this host cannot run, exits non-zero and reads as unresolved.
+pub fn gating_backend(exe: &Path, backend: Option<&str>) -> Result<String, String> {
+    let mut cmd = Command::new(exe);
+    cmd.arg("--env");
+    if let Some(b) = backend {
+        cmd.args(["--backend", b]);
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| format!("could not run the bench harness: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let why = stderr.lines().last().unwrap_or("").trim();
+        return Err(format!("bench harness does not answer --env ({why})"));
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|v| v["type"] == "env")
+        .and_then(|v| v["gating_backend"].as_str().map(String::from))
+        .ok_or_else(|| "bench harness printed no env line for --env".into())
+}
+
 /// One item's collected metrics across backends.
 #[derive(Default, Debug, Clone)]
 pub struct ItemMetrics {
