@@ -34,7 +34,8 @@ inputs:
     description: >-
       Run the gate on pull requests, and on pushes to the default branch
       gate HEAD against its parent to record the run a later pull request
-      reuses as its reference.
+      reuses as its reference. That is one extra measured gate per
+      default-branch push.
     required: false
     default: "true"
   changelog:

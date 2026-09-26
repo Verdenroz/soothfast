@@ -55,8 +55,8 @@ gate: reusing the measured merge-base 1aa6c4de39f9408a4279b9f9d78a6a8ed0de6a39
 ```
 
 The commit is not the only key. A merge-base that was never gated has no run
-under its commit, which on master is most of them, since the gate usually runs
-only on benchmarkable changes. Once such a reference is built, its machine code
+under its commit, which on master is most of them unless every push records
+one (see below). Once such a reference is built, its machine code
 is checked against the cache as well: byte-identical loaded sections under the
 same conditions are the same measurement, whichever commit produced it.
 
@@ -75,8 +75,30 @@ while instructions, Ir and allocation counts gate exactly as they would
 against a freshly measured reference. `--no-reuse-base` measures the
 reference again regardless.
 
-For this to pay off in CI, `.soothfast/runs/` has to outlive the job. Cache
-it keyed on the merge-base commit:
+For this to pay off in CI, the default branch has to measure its own commits,
+and `.soothfast/runs/` has to outlive the job. The [action](ci.md) does the
+first: on a push to the default branch with `gate: true` it runs `cargo
+soothfast gate -p PKG --against-ref HEAD^`, which stores HEAD's run under its
+commit and its bench binary. A pull request whose merge-base is that commit
+reuses it by commit; one whose merge-base came later but builds the same
+binary, such as a bot commit that only touched `CHANGELOG.md`, reuses it by
+binary. A run is stored under the commit only when `git status --porcelain`
+is empty, so `.soothfast/` must be in `.gitignore`; otherwise only the binary
+key is written.
+
+When HEAD builds the same binary as HEAD^ and nothing is stored for it yet,
+as on the first push after adopting the action, the recording gate
+(`SOOTHFAST_RECORD=1`, set by the action) takes one pass with the gating
+counters and stores it. A pull request gate in that state keeps its
+timing-only pass, since no counter can move. cargo-soothfast 0.3.2 and
+earlier skip the counters on that pass and store nothing, so there a
+docs-only push records no run until a later push changes the binary. The action installs the CLI
+version in your `Cargo.lock`, so bumping the action alone does not change this.
+
+The action does not cache `.soothfast/runs/` itself. Put a cache step before
+it in the same job, on pull requests and on the default-branch push alike:
+the cache saves in its post step, after the action has recorded, and the push
+job is what writes the runs pull requests read.
 
 ```yaml
 - uses: actions/cache@v4
@@ -85,11 +107,15 @@ it keyed on the merge-base commit:
     key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}
     restore-keys: |
       soothfast-runs-${{ github.ref_name }}-
+      soothfast-runs-${{ github.event.repository.default_branch }}-
+- uses: Verdenroz/soothfast@<tag-or-sha>
 ```
 
 The key has to be unique per commit, with the prefix in `restore-keys`. An
 exact key that never changes is never rewritten once saved, so the cache
-would keep the first commit's runs and every later commit would miss.
+would keep the first commit's runs and every later commit would miss. The
+second prefix is what lets a pull request, whose `ref_name` is its own merge
+ref, restore the default branch's runs.
 
 ## Thresholds
 

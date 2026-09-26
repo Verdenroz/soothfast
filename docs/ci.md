@@ -2,9 +2,10 @@
 
 soothfast in another repository is one step in the workflow you already
 have. On a pull request it gates performance against the base branch and
-comments the result. On a push to the default branch it regenerates derived
-files and lands them as a pull request authored by soothfast-bot, which
-merges itself once your checks pass.
+comments the result. On a push to the default branch it records a measured
+reference for later pull requests, regenerates derived files, and lands them
+as a pull request authored by soothfast-bot, which merges itself once your
+checks pass.
 
 ```yaml ignore
 jobs:
@@ -42,7 +43,8 @@ appears under Environments and Deployments and on the pull request as
 "deployed to soothfast-bot". If you would rather keep pull requests out of the environment, split the
 step into two jobs with the same `uses:` line: the gate job on
 `pull_request` without an environment and with `changelog: false`, and a
-regeneration job on `push` with the environment and `gate: false`. That split
+regeneration job on `push` with the environment. Leave `gate` on in the push
+job unless you want it to stop recording reference runs. That split
 lets you put a default-branch policy on the environment; its cost is that
 gate comments are then posted by github-actions rather than soothfast-bot,
 since only a job in the environment can obtain a bot token.
@@ -81,7 +83,24 @@ comment falls back to `github.token` (github-actions), or is skipped with a
 warning where that token is read-only, and the gate result still decides the
 step.
 
-**On a push to the default branch.** It measures each package into the
+**On a push to the default branch.** With `gate: true` it first runs `cargo
+soothfast gate -p PKG --against-ref HEAD^` for each package, which stores
+HEAD's run in `.soothfast/runs/` so the next pull request whose merge-base is
+this commit, or builds the same bench binary, reuses it instead of measuring
+its merge-base in a worktree. A regression or an error here is a warning: the
+code is already merged, and the steps after it still run. There is no comment
+and no triage upload. Recording needs two things from your workflow: a cache
+step for `.soothfast/runs/` that wraps this job on pushes as well as on pull
+requests (see [Reusing a measured
+reference](gating.md#reusing-a-measured-reference)), and `.soothfast/` in
+`.gitignore`, since a run is stored under its commit only from a clean tree.
+With cargo-soothfast 0.3.2 or earlier in your `Cargo.lock`, a push whose bench
+binary matches its parent's records nothing unless a run for that binary is
+already stored. Pushes by soothfast-bot can skip the job: they leave the bench
+binary alone, so a pull request based on one finds the previous commit's run
+by binary.
+
+Then it measures each package into the
 `baseline` baseline, regenerates `CHANGELOG.md` against the latest tag (or
 lists the initial surface when there is no tag), regenerates any packages
 named in `spec`, and lands whatever changed as one pull request on
@@ -115,7 +134,7 @@ installed on is refused.
 | Input | Default | Meaning |
 |---|---|---|
 | `packages` | every package with a bench target named `soothfast` | Space-separated packages to gate and measure. `report changelog` uses the same list unless `changelog-packages` says otherwise. |
-| `gate` | `true` | Run the gate on pull requests. |
+| `gate` | `true` | Run the gate on pull requests, and record a reference run on default-branch pushes. |
 | `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes. |
 | `spec` | none | Space-separated packages whose `mode = "generate"` specs to regenerate. |
 | `features` | none | Cargo features for the gate, the baseline measurement, and spec generation. A bench target with `required-features` needs them here. |
