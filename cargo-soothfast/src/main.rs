@@ -15,6 +15,7 @@ mod docs_support;
 mod gate;
 mod gate_config;
 mod gate_lock;
+mod headrun;
 mod invoke;
 mod mcp;
 mod report;
@@ -40,7 +41,9 @@ usage: cargo soothfast <command>
 commands:
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
-           [--target NAME] [--save-baseline NAME]
+           [--target NAME] [--save-baseline NAME] [--no-reuse]
+           (under callgrind, reuses the counts stored for this bench binary
+           and measures only timing again; --no-reuse measures in full)
   gate     [-p PKG] [--filter S] [--backend B] [--samples N] [--features F]
            [--baseline NAME] [--ratchet NAME] [--against-ref REF] [--deps]
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
@@ -146,6 +149,7 @@ fn cmd_measure(args: &[String]) -> i32 {
     let mut common = CommonArgs::default();
     let mut save: Option<String> = None;
     let mut matrix = String::from("default");
+    let mut reuse = true;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         if common.try_parse(a, &mut it) {
@@ -156,6 +160,7 @@ fn cmd_measure(args: &[String]) -> i32 {
                 Some(n) => save = Some(n.clone()),
                 None => return arg_err("--save-baseline needs a name"),
             },
+            "--no-reuse" => reuse = false,
             "--features-matrix" => match it.next() {
                 Some(m) => matrix = m.clone(),
                 None => return arg_err("--features-matrix needs combos like \"default;full\""),
@@ -185,18 +190,13 @@ fn cmd_measure(args: &[String]) -> i32 {
             }
         }
     } else {
-        let records = match invoke::run_bench(&common, &[]) {
+        let run = match headrun::measure(&common, reuse) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("soothfast: {e}");
                 return 1;
             }
         };
-        let mut run = invoke::collect(&records);
-        run.build = Some(buildstamp::capture(
-            common.codegen_units_stamp().as_deref(),
-            None,
-        ));
         if let Some(b) = &run.gating_backend {
             println!("env: gating backend = {b}");
         }

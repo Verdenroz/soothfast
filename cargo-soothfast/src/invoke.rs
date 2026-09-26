@@ -434,6 +434,15 @@ pub struct Run {
     pub gating_backend: Option<String>,
     pub items: BTreeMap<String, ItemMetrics>,
     pub assertions: Vec<AssertionOutcome>,
+    /// Set when some metrics came from a stored run instead of this process.
+    pub reused: Option<Reused>,
+}
+
+/// Which metrics of a run were taken from a stored run, and what it measured.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reused {
+    pub from: String,
+    pub metrics: Vec<&'static str>,
 }
 
 /// Fold raw runner records into per-item metrics.
@@ -579,6 +588,18 @@ pub fn run_from_items_value(items: &Value) -> Run {
     run
 }
 
+/// `run`'s items as a baseline stores them, each marked with what it reused.
+/// Per item, since runs of several packages share one baseline file.
+fn saved_items(run: &Run) -> Value {
+    let mut items = run_to_items_value(run);
+    if let (Some(reused), Some(map)) = (&run.reused, items.as_object_mut()) {
+        for item in map.values_mut() {
+            item["reused"] = json!({ "from": reused.from, "metrics": reused.metrics });
+        }
+    }
+    items
+}
+
 /// Workspace root (parent of the workspace Cargo.toml), via cargo itself.
 /// Resolved once: `git()` calls this on every invocation, and the root
 /// cannot move under a running process.
@@ -646,7 +667,7 @@ pub fn id_pkg(id: &str) -> &str {
 
 /// Persist a run as a named baseline.
 pub fn save_baseline(name: &str, run: &Run, scope: SaveScope) -> io::Result<PathBuf> {
-    let new_items = run_to_items_value(run);
+    let new_items = saved_items(run);
     let mut doc = load_baseline(name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1586,9 +1607,26 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CommonArgs, Guest, HostEnv, ItemMetrics, Run, SaveScope, harness_mismatches,
-        run_from_items_value, run_to_items_value,
+        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, harness_mismatches,
+        run_from_items_value, run_to_items_value, saved_items,
     };
+
+    #[test]
+    fn a_saved_item_says_which_metrics_it_reused() {
+        let mut run = Run::default();
+        run.items.insert("pkg::a".into(), ItemMetrics::default());
+        assert!(saved_items(&run)["pkg::a"].get("reused").is_none());
+        run.reused = Some(Reused {
+            from: "binary 0123456789abcdef".into(),
+            metrics: vec!["callgrind.ir"],
+        });
+        let item = &saved_items(&run)["pkg::a"];
+        assert_eq!(item["reused"]["from"], "binary 0123456789abcdef");
+        assert_eq!(
+            item["reused"]["metrics"],
+            serde_json::json!(["callgrind.ir"])
+        );
+    }
 
     #[test]
     fn an_env_line_reads_its_guest_only_when_complete() {

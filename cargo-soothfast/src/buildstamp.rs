@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use soothfast_site::toml::logical_lines;
 
 /// The build settings behind one measurement run.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BuildStamp {
     /// `rustc` release and host triple.
     pub rustc: String,

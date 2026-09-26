@@ -107,6 +107,26 @@ while instructions, Ir and allocation counts gate exactly as they would
 against a freshly measured reference. `--no-reuse-base` measures the
 reference again regardless.
 
+`cargo soothfast measure` reads the same store. When callgrind gates, it looks
+up a run stored for HEAD's bench binary under the same key, and on a hit takes
+Ir and allocation counts from it while measuring walltime again in a
+timing-only pass:
+
+```console
+measure: reusing counters for binary 3f1c9a0e5b7d2c48; timing measured fresh
+```
+
+Timing is always measured by the process that saves it, so a
+`--save-baseline` never carries walltime from another run or host, and every
+bench assertion (`alloc`, `p99`, `complexity`) is evaluated on fresh data, as
+in a full run. The saved Ir and allocation counts are the stored run's, which
+callgrind makes exact, and each saved item records what it reused under
+`reused`. perfcnt
+counts take seconds to measure, so under perfcnt `measure` always runs in
+full; a run that lacks callgrind counts is treated as a miss; `--no-reuse`
+measures in full regardless. A full `measure` stores its run the way a gate
+stores HEAD's, so a job that saves the runs cache also feeds it from `measure`.
+
 For this to pay off in CI, the default branch has to measure its own commits,
 and `.soothfast/runs/` has to outlive the job. The [action](ci.md) does the
 first: on a push to the default branch with `gate: true` it runs `cargo
