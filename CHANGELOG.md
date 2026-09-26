@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Measure reuses a stored callgrind run of its binary (#212)
 - Record a reference run on default-branch pushes (#208)
 
 ### 🐛 Fixes
