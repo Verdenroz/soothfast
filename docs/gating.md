@@ -90,10 +90,12 @@ When HEAD builds the same binary as HEAD^ and nothing is stored for it yet,
 as on the first push after adopting the action, the recording gate
 (`SOOTHFAST_RECORD=1`, set by the action) takes one pass with the gating
 counters and stores it. A pull request gate in that state keeps its
-timing-only pass, since no counter can move. cargo-soothfast 0.3.2 and
+timing-only pass and stores nothing, since no counter can move and a run
+without them must never serve as a reference. cargo-soothfast 0.3.2 and
 earlier skip the counters on that pass and store nothing, so there a
-docs-only push records no run until a later push changes the binary. The action installs the CLI
-version in your `Cargo.lock`, so bumping the action alone does not change this.
+docs-only push records no run until a later push changes the binary. The
+action installs the CLI version in your `Cargo.lock`, so bumping the action
+alone does not change this.
 
 The action does not cache `.soothfast/runs/` itself. Put a cache step before
 it in the same job, on pull requests and on the default-branch push alike:

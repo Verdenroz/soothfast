@@ -865,10 +865,8 @@ fn measure_ref_interleaved(
             let run = measure(None, args);
             // Head shares that machine code, so a run of it is its
             // measurement too, and the next commit can reuse it from HEAD.
-            match (&by_binary, &run) {
-                (Some(doc), _) => cache_head_doc(common, &head_stamp, doc, head_dig.as_deref()),
-                (None, Ok(run)) => cache_head(common, &head_stamp, run, head_dig.as_deref()),
-                (None, Err(_)) => {}
+            if let Some(doc) = identical_pass_cache(by_binary.as_ref(), run.as_ref().ok(), record) {
+                cache_head_doc(common, &head_stamp, &doc, head_dig.as_deref());
             }
             return Ok((Ref::IdenticalBinaries(run), digests, harness));
         }
@@ -1057,6 +1055,15 @@ fn identical_pass_args(backend: Option<&str>, record: bool) -> &'static [&'stati
         Some("perfcnt" | "callgrind") => &[],
         _ => &["--skip-gating-counters"],
     }
+}
+
+/// What the identical-binaries branch keeps as HEAD's run: the run already
+/// stored for the binary, else a recording pass. A pass that skipped the gating
+/// counters must never be stored, or a later gate reusing it compares nothing.
+fn identical_pass_cache(stored: Option<&Value>, pass: Option<&Run>, record: bool) -> Option<Value> {
+    stored
+        .cloned()
+        .or_else(|| pass.filter(|_| record).map(ref_doc))
 }
 
 /// A measured run in the reference-document shape `compare` reads.
@@ -1673,7 +1680,8 @@ fn partial(msg: &str) -> i32 {
 mod tests {
     use super::{
         CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare, digestible,
-        identical_pass_args, loaded_section_bytes, save_verdict, walltime_limit,
+        identical_pass_args, identical_pass_cache, loaded_section_bytes, save_verdict,
+        walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
@@ -2039,6 +2047,23 @@ mod tests {
         assert_eq!(
             identical_pass_args(Some("walltime"), false),
             ["--skip-gating-counters"]
+        );
+    }
+
+    #[test]
+    fn only_a_recording_identical_pass_is_stored() {
+        let pass = Run::default();
+        assert!(identical_pass_cache(None, Some(&pass), false).is_none());
+        assert!(identical_pass_cache(None, Some(&pass), true).is_some());
+        assert!(identical_pass_cache(None, None, true).is_none());
+    }
+
+    #[test]
+    fn a_stored_run_is_kept_whatever_the_pass() {
+        let stored = json!({ "version": 1, "items": {} });
+        assert_eq!(
+            identical_pass_cache(Some(&stored), Some(&Run::default()), false),
+            Some(stored)
         );
     }
 
