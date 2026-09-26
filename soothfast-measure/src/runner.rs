@@ -32,6 +32,7 @@ struct Args {
     iters: u64,
     skip_gating_counters: bool,
     env: bool,
+    guest_view: bool,
 }
 
 fn parse_args() -> Args {
@@ -51,6 +52,7 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
         iters: 1,
         skip_gating_counters: false,
         env: false,
+        guest_view: false,
     };
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -91,6 +93,7 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
                 _ => die("--iters needs a positive integer"),
             },
             "--skip-gating-counters" => args.skip_gating_counters = true,
+            "--guest-view" => args.guest_view = true,
             "--env" => {
                 args.env = true;
                 args.json = true;
@@ -180,6 +183,8 @@ struct Env {
     use_wall: bool,
     use_alloc: bool,
     gating: &'static str,
+    /// What callgrind's counts depend on, when callgrind gates.
+    guest: Option<callgrind::Guest>,
 }
 
 /// Explicit choices fail hard when unavailable; auto/all degrade gracefully
@@ -189,6 +194,7 @@ fn resolve_env(
     args: &Args,
     perf: Result<(), String>,
     cg_probe: impl FnOnce() -> Result<(), String>,
+    guest_probe: impl FnOnce() -> Option<callgrind::Guest>,
 ) -> Env {
     let perf_available = perf.is_ok();
     if args.backend == Backend::Perfcnt
@@ -235,17 +241,28 @@ fn resolve_env(
         use_wall,
         use_alloc,
         gating,
+        guest: if use_cg { guest_probe() } else { None },
     }
 }
 
 fn env_line(env: &Env, json: bool) -> String {
     let gating = env.gating;
     match (&env.perf, json) {
-        (perf, true) => format!(
-            "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\"}}",
-            perf.is_ok(),
-            esc(perf.as_ref().err().map(String::as_str).unwrap_or("ok")),
-        ),
+        (perf, true) => {
+            let guest = env.guest.as_ref().map_or(String::new(), |g| {
+                format!(
+                    ",\"guest_cpu\":\"{}\",\"guest_glibc\":\"{}\",\"valgrind\":\"{}\"",
+                    esc(&g.cpu),
+                    esc(&g.glibc),
+                    esc(&g.valgrind)
+                )
+            });
+            format!(
+                "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\"{guest}}}",
+                perf.is_ok(),
+                esc(perf.as_ref().err().map(String::as_str).unwrap_or("ok")),
+            )
+        }
         (Ok(()), false) => format!("env: perfcnt available; gating backend = {gating}"),
         (Err(e), false) => format!("env: perfcnt unavailable ({e}); gating backend = {gating}"),
     }
@@ -253,7 +270,7 @@ fn env_line(env: &Env, json: bool) -> String {
 
 /// Resolve this host's backends and print the env line every run starts with.
 fn print_env(args: &Args) -> Env {
-    let env = resolve_env(args, perf_probe(), callgrind::probe);
+    let env = resolve_env(args, perf_probe(), callgrind::probe, callgrind::guest);
     println!("{}", env_line(&env, args.json));
     env
 }
@@ -278,6 +295,10 @@ pub fn main() {
         return;
     }
 
+    if args.guest_view {
+        callgrind::print_guest_view();
+        return;
+    }
     if args.env {
         print_env(&args);
         return;
@@ -665,7 +686,10 @@ mod tests {
                 }
                 let line = |argv: &[&str]| {
                     let args = parse_args_from(argv.iter().map(|a| a.to_string()));
-                    env_line(&resolve_env(&args, perf.clone(), || cg.clone()), args.json)
+                    env_line(
+                        &resolve_env(&args, perf.clone(), || cg.clone(), || Some(guest())),
+                        args.json,
+                    )
                 };
                 assert_eq!(
                     line(&["--env", "--backend", backend]),
@@ -674,6 +698,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn guest() -> callgrind::Guest {
+        callgrind::Guest {
+            cpu: "0123456789abcdef".into(),
+            glibc: "2.39".into(),
+            valgrind: "valgrind-3.22.0".into(),
+        }
+    }
+
+    #[test]
+    fn a_callgrind_env_names_what_its_counts_depend_on() {
+        let args = parse_args_from(
+            ["--env", "--backend", "callgrind"]
+                .map(String::from)
+                .into_iter(),
+        );
+        let line = env_line(
+            &resolve_env(&args, Err("no PMU".into()), || Ok(()), || Some(guest())),
+            true,
+        );
+        assert!(line.contains(r#""guest_cpu":"0123456789abcdef","guest_glibc":"2.39","valgrind":"valgrind-3.22.0""#), "{line}");
+    }
+
+    #[test]
+    fn only_callgrind_asks_the_guest() {
+        let args = parse_args_from(["--env"].map(String::from).into_iter());
+        let env = resolve_env(&args, Ok(()), || Ok(()), || panic!("perfcnt gates here"));
+        assert_eq!(env.gating, "perfcnt");
+        assert!(env.guest.is_none());
     }
 
     #[test]

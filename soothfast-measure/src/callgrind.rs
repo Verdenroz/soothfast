@@ -53,6 +53,107 @@ pub fn probe() -> Result<(), String> {
     }
 }
 
+/// What decides callgrind's Ir besides the binary: the CPU valgrind shows the
+/// guest (not the host's, which valgrind replaces with a synthesized one), the
+/// glibc the guest loads, and the valgrind counting it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Guest {
+    pub cpu: String,
+    pub glibc: String,
+    pub valgrind: String,
+}
+
+/// Ask this binary, under valgrind as a measurement runs it, what it sees.
+/// `None` where the guest cannot say (not x86_64, not glibc).
+pub fn guest() -> Option<Guest> {
+    let exe = std::env::current_exe().ok()?;
+    let out = out_file("guest");
+    let run = Command::new("valgrind")
+        .env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
+        .args([
+            "--tool=callgrind",
+            &format!("--callgrind-out-file={}", out.display()),
+        ])
+        .arg(&exe)
+        .arg("--guest-view")
+        .output();
+    let _ = std::fs::remove_file(&out);
+    let run = run.ok().filter(|o| o.status.success())?;
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let (cpu, glibc) = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("guest "))?
+        .split_once(' ')?;
+    let version = Command::new("valgrind").arg("--version").output().ok()?;
+    Some(Guest {
+        cpu: cpu.to_string(),
+        glibc: glibc.trim().to_string(),
+        valgrind: String::from_utf8_lossy(&version.stdout).trim().to_string(),
+    })
+}
+
+/// The guest half of [`guest`]: prints `guest <cpuid hash> <glibc version>`,
+/// or nothing where either is unknown.
+pub fn print_guest_view() {
+    if let (Some(cpu), Some(glibc)) = (cpuid_hash(), glibc_version()) {
+        println!("guest {cpu} {glibc}");
+    }
+}
+
+/// Every CPUID leaf a program dispatches on: vendor, feature bits, cache
+/// descriptors. Leaf 1's APIC ID differs per core, so it is masked out.
+#[cfg(target_arch = "x86_64")]
+fn cpuid_hash() -> Option<String> {
+    #[allow(unused_unsafe)]
+    let cpuid = |leaf: u32, sub: u32| unsafe { std::arch::x86_64::__cpuid_count(leaf, sub) };
+    let mut words = Vec::new();
+    let max = cpuid(0, 0).eax;
+    let mut leaves = vec![(0, 0), (1, 0), (7, 0)];
+    for sub in 0..16 {
+        if max < 4 || cpuid(4, sub).eax & 0x1f == 0 {
+            break;
+        }
+        leaves.push((4, sub));
+    }
+    let ext_max = cpuid(0x8000_0000, 0).eax;
+    leaves.extend([(0x8000_0000, 0), (0x8000_0001, 0)]);
+    for (leaf, sub) in leaves {
+        let in_range = if leaf >= 0x8000_0000 {
+            leaf <= ext_max
+        } else {
+            leaf <= max
+        };
+        if !in_range {
+            continue;
+        }
+        let r = cpuid(leaf, sub);
+        let ebx = if leaf == 1 {
+            r.ebx & 0x00ff_ffff
+        } else {
+            r.ebx
+        };
+        words.extend([leaf, sub, r.eax, ebx, r.ecx, r.edx]);
+    }
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    Some(format!("{:016x}", soothfast_registry::fnv1a(&bytes)))
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn cpuid_hash() -> Option<String> {
+    None
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn glibc_version() -> Option<String> {
+    let v = unsafe { std::ffi::CStr::from_ptr(libc::gnu_get_libc_version()) };
+    v.to_str().ok().map(String::from)
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn glibc_version() -> Option<String> {
+    None
+}
+
 // The sequence number keeps concurrent measurements (measure_all) from
 // colliding on a pid-keyed name.
 fn out_file(tag: &str) -> PathBuf {

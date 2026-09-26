@@ -806,7 +806,7 @@ fn measure_ref_interleaved(
     let runs = runcache::Runs::new(
         &head_stamp,
         common,
-        resolved_backend(common, head_exe.as_deref()),
+        resolved_env(common, head_exe.as_deref()),
     );
     // Stored regardless of `reuse`: a fresh measurement is worth keeping
     // even for an invocation that declined to trust an existing one.
@@ -995,14 +995,14 @@ fn binary_digest(exe: &std::path::Path) -> Option<String> {
     loaded_section_bytes(exe).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
 }
 
-/// The gating backend HEAD's bench binary resolves on this host, asked of the
-/// binary itself. `None` disables the run cache for this invocation, and says so.
-fn resolved_backend(common: &CommonArgs, exe: Option<&std::path::Path>) -> Option<String> {
+/// What HEAD's bench binary resolves on this host, asked of the binary itself.
+/// `None` disables the run cache for this invocation, and says so.
+fn resolved_env(common: &CommonArgs, exe: Option<&std::path::Path>) -> Option<invoke::HostEnv> {
     let resolved = exe
         .ok_or_else(|| "HEAD's bench binary did not build".to_string())
-        .and_then(|exe| invoke::gating_backend(exe, common.backend.as_deref()));
+        .and_then(|exe| invoke::host_env(exe, common.backend.as_deref()));
     match resolved {
-        Ok(backend) => Some(backend),
+        Ok(env) => Some(env),
         Err(why) => {
             println!(
                 "gate: run cache disabled for this invocation: {why} (harness {}, CLI {})",
