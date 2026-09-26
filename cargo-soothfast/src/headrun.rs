@@ -1,11 +1,14 @@
 //! HEAD's bench binary as the run cache sees it: its digest, what it resolves
 //! on this host, and the runs stored for it. Shared by `gate` and `measure`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::Value;
 
+use crate::agreement::{self, Agreement, Tolerance};
 use crate::buildstamp::{self, BuildStamp};
+use crate::gate;
 use crate::invoke::{self, CommonArgs, Run};
 use crate::runcache::{self, Runs};
 
@@ -64,7 +67,10 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
         }
     }
     let run = run_head(common, &[], stamp.clone())?;
-    cache_head(&runs, &run, digest.as_deref());
+    let settled = settle("measure", "this run", &run, || {
+        run_head(common, RECOUNT, stamp.clone()).ok()
+    });
+    cache_head(&runs, &run, digest.as_deref(), &settled);
     Ok(run)
 }
 
@@ -179,11 +185,127 @@ fn resolved_env(cmd: &str, common: &CommonArgs, exe: Option<&Path>) -> Option<in
     }
 }
 
+/// Runner args that read only the perfcnt counters again.
+pub const RECOUNT: &[&str] = &["--backend", "perfcnt"];
+
+/// What a store may persist of one measured run.
+#[derive(Debug, PartialEq)]
+pub enum Settled {
+    /// Not a perfcnt run: stored as measured.
+    AsMeasured,
+    /// perfcnt instruction counts that agreed across readings, per item.
+    Counts(BTreeMap<String, u64>),
+    /// Some item's readings never agreed: store nothing.
+    Refused,
+}
+
+/// Settle a run before it is stored. A stored run is reused by every later
+/// gate with its key, so perfcnt counts are read again with `recount`, and a
+/// third time where two readings disagree; callgrind is exact and walltime
+/// is never reused, so those runs store as measured. `what` names the run in
+/// the line printed when nothing is stored.
+pub fn settle(
+    cmd: &str,
+    what: &str,
+    run: &Run,
+    mut recount: impl FnMut() -> Option<Run>,
+) -> Settled {
+    if run.gating_backend.as_deref() != Some("perfcnt") {
+        return Settled::AsMeasured;
+    }
+    let outcome = match recount() {
+        Some(second) => settle_counts(run, &second, recount),
+        None => Err(Refusal::Unread),
+    };
+    match outcome {
+        Ok(counts) => return Settled::Counts(counts),
+        Err(Refusal::Unread) => {
+            println!("{cmd}: not storing {what}: its perfcnt counters could not be read again");
+        }
+        Err(Refusal::Spread(spread)) => {
+            for (id, low, high) in spread {
+                let pct = (high - low) as f64 / low.max(1) as f64 * 100.0;
+                println!(
+                    "{cmd}: not storing {what}: {id} instructions read {low} to {high} ({pct:.1}% apart)"
+                );
+            }
+        }
+    }
+    Settled::Refused
+}
+
+#[derive(Debug, PartialEq)]
+enum Refusal {
+    /// A recount did not produce a reading for every item.
+    Unread,
+    /// Items whose readings never agreed, with their lowest and highest.
+    Spread(Vec<(String, u64, u64)>),
+}
+
+fn settle_counts(
+    first: &Run,
+    second: &Run,
+    third: impl FnOnce() -> Option<Run>,
+) -> Result<BTreeMap<String, u64>, Refusal> {
+    let tol = Tolerance {
+        pct: gate::COUNTER_FLAT_PCT,
+        abs: gate::COUNTER_FLAT_ABS,
+    };
+    let reading = |run: &Run, id: &str| run.items.get(id).and_then(|m| m.instructions);
+    let mut pairs = Vec::new();
+    for (id, m) in &first.items {
+        if let Some(a) = m.instructions {
+            pairs.push((id, a, reading(second, id).ok_or(Refusal::Unread)?));
+        }
+    }
+    let disagree = pairs.iter().any(|&(_, a, b)| !agreement::within(a, b, tol));
+    let third = if disagree {
+        Some(third().ok_or(Refusal::Unread)?)
+    } else {
+        None
+    };
+    let mut counts = BTreeMap::new();
+    let mut spread = Vec::new();
+    for (id, a, b) in pairs {
+        let c = match &third {
+            Some(t) => Some(reading(t, id).ok_or(Refusal::Unread)?),
+            None => None,
+        };
+        match agreement::settle(a, b, || c.unwrap_or(a), tol) {
+            Agreement::Store(v) => {
+                counts.insert(id.clone(), v);
+            }
+            Agreement::Refuse { low, high } => spread.push((id.clone(), low, high)),
+        }
+    }
+    if spread.is_empty() {
+        Ok(counts)
+    } else {
+        Err(Refusal::Spread(spread))
+    }
+}
+
+/// `doc` as a store may keep it, or `None` when nothing may be stored.
+pub fn settled_doc(mut doc: Value, settled: &Settled) -> Option<Value> {
+    match settled {
+        Settled::AsMeasured => Some(doc),
+        Settled::Refused => None,
+        Settled::Counts(counts) => {
+            for (id, v) in counts {
+                doc["items"][id]["perfcnt"]["instructions"] = serde_json::json!(v);
+            }
+            Some(doc)
+        }
+    }
+}
+
 /// Keep HEAD's run so the next gate finds its reference already measured.
 /// Stored under the bench binary's digest always, and under HEAD's SHA as
 /// well when the tree is clean enough for the commit to name what was built.
-pub fn cache_head(runs: &Runs, head: &Run, digest: Option<&str>) {
-    cache_head_doc(runs, &ref_doc(head), digest);
+pub fn cache_head(runs: &Runs, head: &Run, digest: Option<&str>, settled: &Settled) {
+    if let Some(doc) = settled_doc(ref_doc(head), settled) {
+        cache_head_doc(runs, &doc, digest);
+    }
 }
 
 /// Keep `doc` as HEAD's measurement.
@@ -266,9 +388,118 @@ fn section_header(line: &str) -> Option<(&str, usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Plan, digestible, loaded_section_bytes, merge_stored, reuse_plan};
-    use crate::invoke::{AssertionOutcome, ItemMetrics, Run};
+    use super::{
+        Plan, Settled, cache_head, digestible, loaded_section_bytes, merge_stored, reuse_plan,
+        settle, settled_doc,
+    };
+    use crate::buildstamp::BuildStamp;
+    use crate::invoke::{AssertionOutcome, CommonArgs, HostEnv, ItemMetrics, Run};
+    use crate::runcache::Runs;
     use serde_json::json;
+    use std::cell::Cell;
+
+    fn perfcnt(instructions: u64) -> Run {
+        let mut run = Run {
+            gating_backend: Some("perfcnt".into()),
+            ..Run::default()
+        };
+        run.items.insert(
+            "pkg::a".into(),
+            ItemMetrics {
+                instructions: Some(instructions),
+                ..ItemMetrics::default()
+            },
+        );
+        run
+    }
+
+    #[test]
+    fn only_perfcnt_runs_are_read_again() {
+        let mut run = perfcnt(3_504_110);
+        run.gating_backend = Some("callgrind".into());
+        let got = settle("gate", "HEAD's run", &run, || panic!("callgrind is exact"));
+        assert_eq!(got, Settled::AsMeasured);
+    }
+
+    #[test]
+    fn agreeing_perfcnt_readings_store_the_first() {
+        let got = settle("gate", "HEAD's run", &perfcnt(3_504_108), || {
+            Some(perfcnt(3_504_111))
+        });
+        assert_eq!(got, Settled::Counts([("pkg::a".into(), 3_504_108)].into()));
+    }
+
+    #[test]
+    fn a_bad_perfcnt_reading_is_outvoted_by_a_third() {
+        let calls = Cell::new(0);
+        let got = settle("gate", "the merge-base run", &perfcnt(3_271_181), || {
+            calls.set(calls.get() + 1);
+            Some(perfcnt(if calls.get() == 1 {
+                3_504_110
+            } else {
+                3_504_111
+            }))
+        });
+        assert_eq!(calls.get(), 2);
+        assert_eq!(got, Settled::Counts([("pkg::a".into(), 3_504_110)].into()));
+    }
+
+    #[test]
+    fn disagreeing_perfcnt_readings_store_nothing() {
+        let calls = Cell::new(0);
+        let got = settle("gate", "the merge-base run", &perfcnt(3_271_181), || {
+            calls.set(calls.get() + 1);
+            Some(perfcnt(if calls.get() == 1 {
+                3_504_110
+            } else {
+                3_389_000
+            }))
+        });
+        assert_eq!(got, Settled::Refused);
+        assert_eq!(settle("gate", "x", &perfcnt(1), || None), Settled::Refused);
+    }
+
+    #[test]
+    fn a_settled_count_replaces_the_stored_reading() {
+        let doc = json!({ "items": { "pkg::a": { "perfcnt": { "instructions": 3_271_181 } } } });
+        let counts = Settled::Counts([("pkg::a".into(), 3_504_110)].into());
+        let stored = settled_doc(doc.clone(), &counts).expect("stored");
+        assert_eq!(
+            stored["items"]["pkg::a"]["perfcnt"]["instructions"],
+            3_504_110
+        );
+        assert_eq!(
+            settled_doc(doc.clone(), &Settled::AsMeasured),
+            Some(doc.clone())
+        );
+        assert_eq!(settled_doc(doc, &Settled::Refused), None);
+    }
+
+    #[test]
+    fn a_refused_perfcnt_run_is_not_stored() {
+        let stamp = BuildStamp {
+            rustc: "1.88.0".into(),
+            codegen_units: "1".into(),
+            profiles: "p".into(),
+            rustflags: "f".into(),
+        };
+        let common = CommonArgs {
+            pkg: Some("test-headrun-refused".into()),
+            ..CommonArgs::default()
+        };
+        let env = HostEnv {
+            gating_backend: "perfcnt".into(),
+            guest: None,
+        };
+        let runs = Runs::new(&stamp, &common, Some(env));
+        cache_head(
+            &runs,
+            &perfcnt(3_271_181),
+            Some("test-headrun-refused"),
+            &Settled::Refused,
+        );
+        assert!(runs.load("test-headrun-refused", "x").is_none());
+    }
 
     fn stored(items: serde_json::Value) -> serde_json::Value {
         json!({ "version": 1, "items": items })
