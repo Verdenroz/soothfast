@@ -17,6 +17,7 @@
 
 ### 🐛 Fixes
 
+- Store perfcnt runs only when readings agree (#213)
 - Key stored runs on the backend and guest that measured (#211)
 
 ---
