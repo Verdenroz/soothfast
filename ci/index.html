@@ -136,9 +136,10 @@ try { var t = localStorage.getItem("soothfast-theme");
 <h1 id="ci">CI<a class="anchor" href="#ci" aria-label="Link to this section">#</a></h1>
 <p>soothfast in another repository is one step in the workflow you already
 have. On a pull request it gates performance against the base branch and
-comments the result. On a push to the default branch it regenerates derived
-files and lands them as a pull request authored by soothfast-bot, which
-merges itself once your checks pass.</p>
+comments the result. On a push to the default branch it records a measured
+reference for later pull requests, regenerates derived files, and lands them
+as a pull request authored by soothfast-bot, which merges itself once your
+checks pass.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">yaml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>jobs:
   soothfast:
     runs-on: ubuntu-latest
@@ -166,7 +167,8 @@ appears under Environments and Deployments and on the pull request as
 "deployed to soothfast-bot". If you would rather keep pull requests out of the environment, split the
 step into two jobs with the same <code>uses:</code> line: the gate job on
 <code>pull_request</code> without an environment and with <code>changelog: false</code>, and a
-regeneration job on <code>push</code> with the environment and <code>gate: false</code>. That split
+regeneration job on <code>push</code> with the environment. Leave <code>gate</code> on in the push
+job unless you want it to stop recording reference runs. That split
 lets you put a default-branch policy on the environment; its cost is that
 gate comments are then posted by github-actions rather than soothfast-bot,
 since only a job in the environment can obtain a bot token.</p>
@@ -196,7 +198,23 @@ anything else. A pull request from a fork has no OIDC identity; there the
 comment falls back to <code>github.token</code> (github-actions), or is skipped with a
 warning where that token is read-only, and the gate result still decides the
 step.</p>
-<p><strong>On a push to the default branch.</strong> It measures each package into the
+<p><strong>On a push to the default branch.</strong> With <code>gate: true</code> it first runs <code>cargo
+soothfast gate -p PKG --against-ref HEAD^</code> for each package, which stores
+HEAD's run in <code>.soothfast/runs/</code> so the next pull request whose merge-base is
+this commit, or builds the same bench binary, reuses it instead of measuring
+its merge-base in a worktree. A regression or an error here is a warning: the
+code is already merged, and the steps after it still run. There is no comment
+and no triage upload. Recording needs two things from your workflow: a cache
+step for <code>.soothfast/runs/</code> that wraps this job on pushes as well as on pull
+requests (see <a href="../gating/#reusing-a-measured-reference">Reusing a measured
+reference</a>), and <code>.soothfast/</code> in
+<code>.gitignore</code>, since a run is stored under its commit only from a clean tree.
+With cargo-soothfast 0.3.2 or earlier in your <code>Cargo.lock</code>, a push whose bench
+binary matches its parent's records nothing unless a run for that binary is
+already stored. Pushes by soothfast-bot can skip the job: they leave the bench
+binary alone, so a pull request based on one finds the previous commit's run
+by binary.</p>
+<p>Then it measures each package into the
 <code>baseline</code> baseline, regenerates <code>CHANGELOG.md</code> against the latest tag (or
 lists the initial surface when there is no tag), regenerates any packages
 named in <code>spec</code>, and lands whatever changed as one pull request on
@@ -226,7 +244,7 @@ installed on is refused.</p>
 <thead><tr><th>Input</th><th>Default</th><th>Meaning</th></tr></thead>
 <tbody>
 <tr><td><code>packages</code></td><td>every package with a bench target named <code>soothfast</code></td><td>Space-separated packages to gate and measure. <code>report changelog</code> uses the same list unless <code>changelog-packages</code> says otherwise.</td></tr>
-<tr><td><code>gate</code></td><td><code>true</code></td><td>Run the gate on pull requests.</td></tr>
+<tr><td><code>gate</code></td><td><code>true</code></td><td>Run the gate on pull requests, and record a reference run on default-branch pushes.</td></tr>
 <tr><td><code>changelog</code></td><td><code>true</code></td><td>Regenerate <code>CHANGELOG.md</code> on default-branch pushes.</td></tr>
 <tr><td><code>spec</code></td><td>none</td><td>Space-separated packages whose <code>mode = &quot;generate&quot;</code> specs to regenerate.</td></tr>
 <tr><td><code>features</code></td><td>none</td><td>Cargo features for the gate, the baseline measurement, and spec generation. A bench target with <code>required-features</code> needs them here.</td></tr>

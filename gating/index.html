@@ -178,8 +178,8 @@ the worktree is never built:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: reusing the measured merge-base 1aa6c4de39f9408a4279b9f9d78a6a8ed0de6a39
 </code></pre></figure>
 <p>The commit is not the only key. A merge-base that was never gated has no run
-under its commit, which on master is most of them, since the gate usually runs
-only on benchmarkable changes. Once such a reference is built, its machine code
+under its commit, which on master is most of them unless every push records
+one (see below). Once such a reference is built, its machine code
 is checked against the cache as well: byte-identical loaded sections under the
 same conditions are the same measurement, whichever commit produced it.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: reusing a run measured from the same merge-base binary
@@ -193,18 +193,44 @@ in a different process, so <code>walltime</code> softens to <code>SOFT</code> fo
 while instructions, Ir and allocation counts gate exactly as they would
 against a freshly measured reference. <code>--no-reuse-base</code> measures the
 reference again regardless.</p>
-<p>For this to pay off in CI, <code>.soothfast/runs/</code> has to outlive the job. Cache
-it keyed on the merge-base commit:</p>
+<p>For this to pay off in CI, the default branch has to measure its own commits,
+and <code>.soothfast/runs/</code> has to outlive the job. The <a href="../ci/">action</a> does the
+first: on a push to the default branch with <code>gate: true</code> it runs <code>cargo
+soothfast gate -p PKG --against-ref HEAD^</code>, which stores HEAD's run under its
+commit and its bench binary. A pull request whose merge-base is that commit
+reuses it by commit; one whose merge-base came later but builds the same
+binary, such as a bot commit that only touched <code>CHANGELOG.md</code>, reuses it by
+binary. A run is stored under the commit only when <code>git status --porcelain</code>
+is empty, so <code>.soothfast/</code> must be in <code>.gitignore</code>; otherwise only the binary
+key is written.</p>
+<p>When HEAD builds the same binary as HEAD^ and nothing is stored for it yet,
+as on the first push after adopting the action, the recording gate
+(<code>SOOTHFAST_RECORD=1</code>, set by the action) takes one pass with the gating
+counters and stores it. A pull request gate in that state keeps its
+timing-only pass and stores nothing, since no counter can move and a run
+without them must never serve as a reference. cargo-soothfast 0.3.2 and
+earlier skip the counters on that pass and store nothing, so there a
+docs-only push records no run until a later push changes the binary. The
+action installs the CLI version in your <code>Cargo.lock</code>, so bumping the action
+alone does not change this.</p>
+<p>The action does not cache <code>.soothfast/runs/</code> itself. Put a cache step before
+it in the same job, on pull requests and on the default-branch push alike:
+the cache saves in its post step, after the action has recorded, and the push
+job is what writes the runs pull requests read.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">yaml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>- uses: actions/cache@v4
   with:
     path: .soothfast/runs
     key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}
     restore-keys: |
       soothfast-runs-${{ github.ref_name }}-
+      soothfast-runs-${{ github.event.repository.default_branch }}-
+- uses: Verdenroz/soothfast@&lt;tag-or-sha&gt;
 </code></pre></figure>
 <p>The key has to be unique per commit, with the prefix in <code>restore-keys</code>. An
 exact key that never changes is never rewritten once saved, so the cache
-would keep the first commit's runs and every later commit would miss.</p>
+would keep the first commit's runs and every later commit would miss. The
+second prefix is what lets a pull request, whose <code>ref_name</code> is its own merge
+ref, restore the default branch's runs.</p>
 <h2 id="thresholds">Thresholds<a class="anchor" href="#thresholds" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap"><table>
 <thead><tr><th>metric</th><th>threshold</th><th>notes</th></tr></thead>
