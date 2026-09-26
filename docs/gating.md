@@ -43,16 +43,46 @@ Measuring the reference side is the most expensive thing the gate does, and
 it repeats. Every push to a branch has the same merge-base, and on master the
 commit gated as HEAD becomes the next commit's reference. A run is therefore
 kept under `.soothfast/runs/`, keyed by the commit and by every condition
-outside it that moves the numbers: the `rustc` version, the pinned
-`codegen-units`, the flags reaching rustc, the CPU model, the locked
-`soothfast` versions the reference is pinned to, and the measurement scope
-(`-p`, `--features`, `--bench`, `--backend`, `--samples`, `--filter`). A
-merge-base with a stored run under the same key is served from there, and
+outside it that moves the numbers:
+
+- the `rustc` version, the pinned `codegen-units`, and the flags reaching
+  rustc;
+- the locked `soothfast` versions the reference is pinned to;
+- the measurement scope: `-p`, `--features`, `--bench`, `--backend`,
+  `--samples`, `--filter`;
+- the gating backend that actually measured, which under the default `auto`
+  is whichever this host can run, so a `perfcnt` run is never served to a
+  gate that fell back to `callgrind`, or the reverse;
+- the machine the counts came from. For `perfcnt` and `walltime` that is the
+  CPU model, since retired instructions and time differ across
+  microarchitectures. For `callgrind` it is the CPU valgrind presents to the
+  guest, the glibc the guest loads, and the valgrind version. valgrind
+  synthesizes the same guest CPU on different host models, so callgrind runs
+  from differently named CI hosts share a key, while a machine with another
+  glibc or valgrind does not.
+
+A merge-base with a stored run under the same key is served from there, and
 the worktree is never built:
 
 ```console
 gate: reusing the measured merge-base 1aa6c4de39f9408a4279b9f9d78a6a8ed0de6a39
 ```
+
+The gate asks HEAD's bench binary which backend it resolves (and, for
+callgrind, what its guest sees) before any lookup. A harness too old to
+answer, or one that cannot run a named `--backend` here, turns the cache off
+for that invocation rather than keying on a guess:
+
+```console
+gate: run cache disabled for this invocation: bench harness does not answer --env (soothfast runner: unknown runner arg "--env") (harness soothfast@0.3.2, ..., CLI ...)
+```
+
+Each stored run records what it was keyed on under `measured_on`, so two runs
+that should have matched can be compared directly. A change to any keyed
+condition, including a CI image that updates glibc or valgrind, starts a new
+key; runs stored under the old one are not migrated, and age out. The same
+holds for runs stored by cargo-soothfast 0.3.2 and earlier, whose keys named
+neither the resolved backend nor the callgrind guest.
 
 The commit is not the only key. A merge-base that was never gated has no run
 under its commit, which on master is most of them unless every push records
