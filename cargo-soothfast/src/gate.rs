@@ -10,8 +10,10 @@ use serde_json::Value;
 use crate::buildstamp;
 use crate::gate_config;
 use crate::gate_lock;
+use crate::headrun::{
+    self, binary_digest, cache_head, cache_head_doc, head_from_runcache, ref_doc,
+};
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
-use crate::runcache;
 use crate::workspace;
 
 /// Deterministic counters gate tight.
@@ -801,13 +803,7 @@ fn measure_ref_interleaved(
     let head_stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
     // Naming HEAD's binary costs a no-run build plus an objdump, so it is
     // taken once and threaded to every lookup and store below.
-    let head_exe = invoke::bench_executable(common, None, None);
-    let head_dig = head_exe.as_deref().and_then(binary_digest);
-    let runs = runcache::Runs::new(
-        &head_stamp,
-        common,
-        resolved_env(common, head_exe.as_deref()),
-    );
+    let (head_dig, runs) = headrun::probe("gate", common, &head_stamp);
     // Stored regardless of `reuse`: a fresh measurement is worth keeping
     // even for an invocation that declined to trust an existing one.
     let base_known = !base_sha.is_empty();
@@ -965,83 +961,6 @@ fn harness_of(doc: &Value) -> invoke::HarnessSync {
     invoke::HarnessSync::from_unpinned(labels)
 }
 
-/// HEAD's own measurement, if a run already cached one under this binary and
-/// these conditions, e.g. the `gate` run `gate accept` follows moments later.
-/// Avoids a second full measurement of the same code just to build the
-/// accept report.
-fn head_from_runcache(runs: &runcache::Runs, digest: Option<&str>) -> Option<(Run, String)> {
-    let (id, measured_from) = head_cache_id(digest)?;
-    let doc = runs.load(&id, &measured_from)?;
-    Some((invoke::run_from_items_value(&doc["items"]), measured_from))
-}
-
-/// What HEAD's own run is stored under, and the label saying what it was
-/// measured from. A dirty tree has no commit naming what was built, but the
-/// bench binary integrates every input that decides the numbers, so it can
-/// name its own measurement when the commit cannot.
-fn head_cache_id(digest: Option<&str>) -> Option<(String, String)> {
-    if invoke::tree_is_clean()
-        && let Ok(sha) = invoke::git(&["rev-parse", "HEAD"])
-    {
-        let sha = sha.trim().to_string();
-        return Some((sha.clone(), sha));
-    }
-    let digest = digest?;
-    Some((digest.to_string(), format!("binary {digest}")))
-}
-
-/// Digest of a bench binary's loaded sections.
-fn binary_digest(exe: &std::path::Path) -> Option<String> {
-    loaded_section_bytes(exe).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
-}
-
-/// What HEAD's bench binary resolves on this host, asked of the binary itself.
-/// `None` disables the run cache for this invocation, and says so.
-fn resolved_env(common: &CommonArgs, exe: Option<&std::path::Path>) -> Option<invoke::HostEnv> {
-    let resolved = exe
-        .ok_or_else(|| "HEAD's bench binary did not build".to_string())
-        .and_then(|exe| invoke::host_env(exe, common.backend.as_deref()));
-    match resolved {
-        Ok(env) => {
-            println!(
-                "gate: run cache keyed on {} ({})",
-                env.gating_backend,
-                runcache::host(&env)
-            );
-            Some(env)
-        }
-        Err(why) => {
-            println!(
-                "gate: run cache disabled for this invocation: {why} (harness {}, CLI {})",
-                invoke::harness_versions(),
-                env!("CARGO_PKG_VERSION")
-            );
-            None
-        }
-    }
-}
-
-/// Keep HEAD's run so the next gate finds its reference already measured.
-/// Stored under the bench binary's digest always, and under HEAD's SHA as
-/// well when the tree is clean enough for the commit to name what was built.
-fn cache_head(runs: &runcache::Runs, head: &Run, digest: Option<&str>) {
-    cache_head_doc(runs, &ref_doc(head), digest);
-}
-
-/// Keep `doc` as HEAD's measurement.
-fn cache_head_doc(runs: &runcache::Runs, doc: &Value, digest: Option<&str>) {
-    if let Some(digest) = digest {
-        runs.store(digest, doc);
-    }
-    if !invoke::tree_is_clean() {
-        return;
-    }
-    let Ok(sha) = invoke::git(&["rev-parse", "HEAD"]) else {
-        return;
-    };
-    runs.store(sha.trim(), doc);
-}
-
 /// Whether this gate runs to record HEAD as a reference (`SOOTHFAST_RECORD=1`,
 /// set by the action on default-branch pushes) rather than to judge a change.
 /// An environment variable, so older CLIs the action installs ignore it.
@@ -1071,19 +990,6 @@ fn identical_pass_cache(stored: Option<&Value>, pass: Option<&Run>, record: bool
         .or_else(|| pass.filter(|_| record).map(ref_doc))
 }
 
-/// A measured run in the reference-document shape `compare` reads.
-fn ref_doc(run: &Run) -> Value {
-    let mut doc = serde_json::json!({ "version": 1 });
-    if let Some(n) = run.noise_pct {
-        doc["noise_pct"] = serde_json::json!(n);
-    }
-    if let Some(b) = &run.build {
-        doc["build"] = b.to_json();
-    }
-    doc["items"] = invoke::run_to_items_value(run);
-    doc
-}
-
 /// Digests of the head and merge-base bench binaries' machine code.
 /// Conservative: any build or extraction failure yields `None`, so the gate
 /// falls through to a real measurement.
@@ -1104,57 +1010,6 @@ fn bench_text_digests(
         return None;
     }
     Some((binary_digest(&head)?, binary_digest(&base)?))
-}
-
-/// Every allocatable section carrying file contents, name-tagged and
-/// concatenated. Whole-file comparison would never match: debug info embeds
-/// the absolute build path, and the two sides build in different directories.
-fn loaded_section_bytes(exe: &std::path::Path) -> Option<Vec<u8>> {
-    let out = std::process::Command::new("objdump")
-        .arg("-h")
-        .arg(exe)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let image = std::fs::read(exe).ok()?;
-    let listing = String::from_utf8_lossy(&out.stdout);
-    let mut lines = listing.lines();
-    let mut buf = Vec::new();
-    while let Some(header) = lines.next() {
-        let Some((name, size, offset)) = section_header(header) else {
-            continue;
-        };
-        let flags = lines.next()?;
-        if !digestible(name, flags) {
-            continue;
-        }
-        let bytes = image.get(offset..offset.checked_add(size)?)?;
-        buf.extend_from_slice(name.as_bytes());
-        buf.push(0);
-        buf.extend_from_slice(bytes);
-    }
-    (!buf.is_empty()).then_some(buf)
-}
-
-/// Sections that carry the binary's identity: loaded into the image and
-/// backed by file contents. `.note.gnu.build-id` is a hash of the whole
-/// output, debug info included, so it differs between builds of identical
-/// code.
-fn digestible(name: &str, flags: &str) -> bool {
-    flags.contains("ALLOC") && flags.contains("CONTENTS") && name != ".note.gnu.build-id"
-}
-
-/// `Idx Name Size VMA LMA File-off Algn` from one `objdump -h` header line.
-fn section_header(line: &str) -> Option<(&str, usize, usize)> {
-    let f: Vec<&str> = line.split_whitespace().collect();
-    if f.len() < 7 || f[0].parse::<u32>().is_err() {
-        return None;
-    }
-    let size = usize::from_str_radix(f[2], 16).ok()?;
-    let offset = usize::from_str_radix(f[5], 16).ok()?;
-    Some((f[1], size, offset))
 }
 
 /// Fold a side's timing-only second round into its full first round. A
@@ -1681,9 +1536,8 @@ fn partial(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare, digestible,
-        identical_pass_args, identical_pass_cache, loaded_section_bytes, save_verdict,
-        walltime_limit,
+        CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare,
+        identical_pass_args, identical_pass_cache, save_verdict, walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
@@ -2379,60 +2233,6 @@ mod tests {
         );
         let merged = combine_rounds(full, Err("unknown runner arg".into()));
         assert_eq!(merged.items["pkg::item"].ir, Some(100));
-    }
-
-    #[test]
-    fn section_extraction_returns_none_for_a_non_elf_file() {
-        let path = std::env::temp_dir().join(format!("soothfast-not-elf-{}", std::process::id()));
-        std::fs::write(&path, b"just text, no sections").unwrap();
-        assert_eq!(loaded_section_bytes(&path), None);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn section_extraction_returns_none_for_a_missing_file() {
-        assert_eq!(
-            loaded_section_bytes(std::path::Path::new("/nonexistent/soothfast-bench")),
-            None
-        );
-    }
-
-    #[test]
-    fn an_executable_matches_itself() {
-        if !objdump_present() {
-            return;
-        }
-        let exe = std::env::current_exe().unwrap();
-        let a = loaded_section_bytes(&exe).expect("test binary has loadable sections");
-        assert_eq!(Some(a), loaded_section_bytes(&exe));
-    }
-
-    #[test]
-    fn the_digest_covers_more_than_the_text_section() {
-        if !objdump_present() {
-            return;
-        }
-        let exe = std::env::current_exe().unwrap();
-        let all = loaded_section_bytes(&exe).unwrap();
-        assert!(all.windows(8).any(|w| w == b".rodata\0"));
-        assert!(all.windows(6).any(|w| w == b".text\0"));
-    }
-
-    #[test]
-    fn the_build_id_note_is_not_digestible() {
-        const LOADED: &str = "CONTENTS, ALLOC, LOAD, READONLY, DATA";
-        assert!(!digestible(".note.gnu.build-id", LOADED));
-        assert!(digestible(".text", "CONTENTS, ALLOC, LOAD, READONLY, CODE"));
-        assert!(digestible("linkme_MEASURED", LOADED));
-        assert!(!digestible(".bss", "ALLOC"));
-        assert!(!digestible(".debug_info", "CONTENTS, READONLY, DEBUGGING"));
-    }
-
-    fn objdump_present() -> bool {
-        std::process::Command::new("objdump")
-            .arg("--version")
-            .output()
-            .is_ok_and(|o| o.status.success())
     }
 
     fn mismatched() -> HarnessSync {

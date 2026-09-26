@@ -15,6 +15,7 @@ mod docs_support;
 mod gate;
 mod gate_config;
 mod gate_lock;
+mod headrun;
 mod invoke;
 mod mcp;
 mod report;
