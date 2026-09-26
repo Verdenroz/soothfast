@@ -440,8 +440,8 @@ struct Resolved {
     reference: Value,
     current: Run,
     /// The identical-binaries short circuit ran one pass, which skips the
-    /// gating counters when a stored run covers the binary, so `current` is
-    /// not baseline material.
+    /// gating counters unless it records a reference, so `current` is not
+    /// baseline material.
     short_circuited: bool,
     harness: invoke::HarnessSync,
 }
@@ -860,7 +860,8 @@ fn measure_ref_interleaved(
             println!(
                 "gate: bench binaries identical (code and data match) — no measurable change possible"
             );
-            let args = identical_pass_args(common.backend.as_deref(), by_binary.is_some());
+            let record = by_binary.is_none() && recording();
+            let args = identical_pass_args(common.backend.as_deref(), record);
             let run = measure(None, args);
             // Head shares that machine code, so a run of it is its
             // measurement too, and the next commit can reuse it from HEAD.
@@ -1038,14 +1039,21 @@ fn cache_head_doc(
     runcache::store(&runcache::key(sha.trim(), stamp, common), doc);
 }
 
+/// Whether this gate runs to record HEAD as a reference (`SOOTHFAST_RECORD=1`,
+/// set by the action on default-branch pushes) rather than to judge a change.
+/// An environment variable, so older CLIs the action installs ignore it.
+fn recording() -> bool {
+    std::env::var("SOOTHFAST_RECORD").is_ok_and(|v| v == "1")
+}
+
 /// Runner args for the single pass taken when both sides' binaries match.
-/// With no run stored for that binary the pass keeps the gating counters, so
-/// it can be stored as one. A backend named on the command line may be one of
-/// the gating counters, which measures nothing once those counters are
-/// skipped, so it keeps them.
-fn identical_pass_args(backend: Option<&str>, stored: bool) -> &'static [&'static str] {
+/// A pass that `record`s a binary nothing is stored for keeps the gating
+/// counters, so it can be stored as that binary's run. A backend named on the
+/// command line may be one of the gating counters, which measures nothing once
+/// those counters are skipped, so it keeps them.
+fn identical_pass_args(backend: Option<&str>, record: bool) -> &'static [&'static str] {
     match backend {
-        _ if !stored => &[],
+        _ if record => &[],
         Some("perfcnt" | "callgrind") => &[],
         _ => &["--skip-gating-counters"],
     }
@@ -2021,23 +2029,23 @@ mod tests {
 
     #[test]
     fn a_named_gating_backend_keeps_its_counters_on_the_identical_pass() {
-        assert!(identical_pass_args(Some("perfcnt"), true).is_empty());
-        assert!(identical_pass_args(Some("callgrind"), true).is_empty());
+        assert!(identical_pass_args(Some("perfcnt"), false).is_empty());
+        assert!(identical_pass_args(Some("callgrind"), false).is_empty());
     }
 
     #[test]
     fn the_identical_pass_skips_counters_otherwise() {
-        assert_eq!(identical_pass_args(None, true), ["--skip-gating-counters"]);
+        assert_eq!(identical_pass_args(None, false), ["--skip-gating-counters"]);
         assert_eq!(
-            identical_pass_args(Some("walltime"), true),
+            identical_pass_args(Some("walltime"), false),
             ["--skip-gating-counters"]
         );
     }
 
     #[test]
-    fn an_identical_pass_with_no_stored_run_keeps_the_counters() {
-        assert!(identical_pass_args(None, false).is_empty());
-        assert!(identical_pass_args(Some("walltime"), false).is_empty());
+    fn a_recording_identical_pass_keeps_the_counters() {
+        assert!(identical_pass_args(None, true).is_empty());
+        assert!(identical_pass_args(Some("walltime"), true).is_empty());
     }
 
     fn reused(mut doc: Value) -> Value {

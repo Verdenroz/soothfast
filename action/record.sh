@@ -15,7 +15,7 @@ features=()
 [ -n "${FEATURES:-}" ] && features=(--features "$FEATURES")
 for pkg in "${pkgs[@]}"; do
   status=0
-  "$CLI" gate -p "$pkg" --against-ref 'HEAD^' "${features[@]}" || status=$?
+  SOOTHFAST_RECORD=1 "$CLI" gate -p "$pkg" --against-ref 'HEAD^' "${features[@]}" || status=$?
   if [ "$status" -ne 0 ]; then
     echo "::warning::soothfast gate for ${pkg} against HEAD^ exited ${status}; a regression still records the run, an error may not"
   fi
