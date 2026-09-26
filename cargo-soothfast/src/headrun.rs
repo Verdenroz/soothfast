@@ -47,14 +47,19 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
         (Plan::Reuse, None) => None,
     };
     if let Some((doc, label)) = stored {
-        let timing = run_head(common, &["--skip-gating-counters"], stamp.clone())?;
-        match merge_stored(&doc, &label, timing) {
+        let merged = if has_callgrind_counts(&doc) {
+            let timing = run_head(common, &["--skip-gating-counters"], stamp.clone())?;
+            merge_stored(&doc, &label, timing)
+        } else {
+            None
+        };
+        match merged {
             Some(run) => {
                 println!("measure: reusing counters for {label}; timing measured fresh");
                 return Ok(run);
             }
             None => println!(
-                "measure: stored run for {label} lacks callgrind counts; measuring in full"
+                "measure: stored run for {label} lacks callgrind counts for these items; measuring in full"
             ),
         }
     }
@@ -93,8 +98,7 @@ fn run_head(common: &CommonArgs, extra: &[&str], stamp: BuildStamp) -> Result<Ru
 /// unless the stored run counted every item the timing pass measured.
 fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run> {
     let counted = invoke::run_from_items_value(&stored["items"]);
-    let same_items = counted.items.keys().eq(timing.items.keys());
-    if !same_items || counted.items.values().any(|m| m.ir.is_none()) {
+    if !has_callgrind_counts(stored) || !counted.items.keys().eq(timing.items.keys()) {
         return None;
     }
     let mut run = timing;
@@ -110,6 +114,13 @@ fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run>
         metrics: vec!["callgrind.ir", "alloc.allocs", "alloc.bytes"],
     });
     Some(run)
+}
+
+/// Whether every item of a stored run carries Ir. Checked before the timing
+/// pass, so a run that cannot be merged costs nothing to find out.
+fn has_callgrind_counts(stored: &Value) -> bool {
+    let items = invoke::run_from_items_value(&stored["items"]).items;
+    !items.is_empty() && items.values().all(|m| m.ir.is_some())
 }
 
 /// HEAD's own measurement, if a run already cached one under this binary and
