@@ -107,6 +107,28 @@ while instructions, Ir and allocation counts gate exactly as they would
 against a freshly measured reference. `--no-reuse-base` measures the
 reference again regardless.
 
+A stored run is reused by every later gate with its key, so a single bad
+reading would fail all of them. callgrind counts are exact, but perfcnt
+counts are not: before a perfcnt run is stored, its instruction counts are
+read a second time, and a third time where the first two disagree by more
+than the gate's counter tolerance (0.5%, or 150 instructions for small
+counts). The run is stored with the reading two of them agree on, or not at
+all:
+
+```console
+gate: not storing the merge-base run: pkg::bench instructions read 3271181 to 3504110 (7.1% apart)
+```
+
+This settles what is stored, not what is compared: the gate in progress
+still compares its first readings. Two readings that agree on the same wrong
+value would still be stored; a bad perfcnt reading has not been seen to
+repeat within one run. When a gate fails against a reused perfcnt reference,
+it says so before its verdict:
+
+```console
+gate: reference reused from 1aa6c4de39f9408a4279b9f9d78a6a8ed0de6a39; rerun with --no-reuse-base to re-measure
+```
+
 `cargo soothfast measure` reads the same store. When callgrind gates, it looks
 up a run stored for HEAD's bench binary under the same key, and on a hit takes
 Ir and allocation counts from it while measuring walltime again in a
