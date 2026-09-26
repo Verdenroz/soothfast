@@ -6,6 +6,7 @@
 //! `docs`, `spec`, `sdk`, `report`, `site`, and `mcp`.
 //! Fully synchronous; everything is subprocess + file I/O.
 
+mod agreement;
 mod buildcost;
 mod buildstamp;
 mod changelog_config;
