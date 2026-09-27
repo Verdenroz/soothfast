@@ -100,11 +100,11 @@ fn run_head(common: &CommonArgs, extra: &[&str], stamp: BuildStamp) -> Result<Ru
 }
 
 /// HEAD's run from a stored run's counters plus a fresh timing-only pass,
-/// which also carries every assertion verdict. Every field but the walltime
-/// ones (and the fingerprint/covers naming the binary actually run) comes
-/// from the stored item, so a counter added to `ItemMetrics` later carries
-/// over without a change here. `None` unless the stored run counted every
-/// item the timing pass measured.
+/// which also carries every assertion verdict. Every field but walltime,
+/// fingerprint/covers, and tolerance_pct (all read off the binary the fresh
+/// pass actually ran) comes from the stored item, so a counter added to
+/// `ItemMetrics` later carries over without a change here. `None` unless the
+/// stored run counted every item the timing pass measured.
 fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run> {
     let counted = invoke::run_from_items_value(&stored["items"]);
     if !has_callgrind_counts(stored) || !counted.items.keys().eq(timing.items.keys()) {
@@ -117,6 +117,7 @@ fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run>
         let merged = ItemMetrics {
             fingerprint: item.fingerprint.clone(),
             covers: item.covers.clone(),
+            tolerance_pct: item.tolerance_pct,
             median_ns: item.median_ns,
             mad_ns: item.mad_ns,
             p99_ns: item.p99_ns,
