@@ -230,7 +230,9 @@ using it, and what a consumer has to do. They stay comments until someone
 writes into them, so an untouched block renders as nothing.</p>
 <p>Pass several <code>-p PKG</code> flags to cover more than one crate, and leave
 <code>--against-ref</code> off entirely for a first release, where there is no earlier
-version to diff against and the draft lists the surface it ships instead.</p>
+version to diff against and the draft lists the surface it ships instead.
+Once <code>CHANGELOG.md</code> carries a prior release, omitting it is refused rather
+than silently replacing a populated Unreleased section with an empty one.</p>
 
 <div class="doc-foot">
   <span>built with <b>cargo soothfast docs build</b></span>
