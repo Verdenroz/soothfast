@@ -148,3 +148,5 @@ writes into them, so an untouched block renders as nothing.
 Pass several `-p PKG` flags to cover more than one crate, and leave
 `--against-ref` off entirely for a first release, where there is no earlier
 version to diff against and the draft lists the surface it ships instead.
+Once `CHANGELOG.md` carries a prior release, omitting it is refused rather
+than silently replacing a populated Unreleased section with an empty one.
