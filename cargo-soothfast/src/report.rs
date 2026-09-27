@@ -269,6 +269,17 @@ fn changelog_cmd(args: &[String]) -> i32 {
         );
         return 0;
     }
+    if a.against_ref.is_none()
+        && let Some(refname) = prior_release_ref(&existing)
+    {
+        return err(&format!(
+            "{} already has a prior release drafted against {refname}, but no \
+             --against-ref was given — regenerating would replace it with an empty \
+             initial-surface section; pass --against-ref {refname} (tags may not have \
+             been fetched)",
+            path.display()
+        ));
+    }
 
     let baseline = match load_baseline_required(&a.baseline) {
         Ok(b) => b,
@@ -431,6 +442,35 @@ fn changelog_already_cut(existing: &str, against_ref: Option<&str>) -> bool {
     }
 }
 
+/// The ref a populated Unreleased section was last drafted against, when
+/// `existing` shows a prior release and `--against-ref` was left out — an
+/// Unreleased heading of the form `Unreleased (draft vs X)` names X
+/// directly; otherwise any released `## ` heading below it supplies its own
+/// version. `None` means there is nothing to lose: an empty or missing
+/// file, or an Unreleased heading that never named a ref.
+fn prior_release_ref(existing: &str) -> Option<String> {
+    let mut headings = existing.lines().filter_map(|l| l.strip_prefix("## "));
+    let top = headings.next()?.trim_start();
+    if let Some(rest) = top.strip_prefix("Unreleased (draft vs ") {
+        return rest.split(')').next().map(str::to_string);
+    }
+    let is_unreleased = |h: &str| h.starts_with("Unreleased") || h.starts_with("[Unreleased]");
+    let released = if is_unreleased(top) {
+        headings.find(|h| !is_unreleased(h.trim_start()))?
+    } else {
+        top
+    };
+    let version = released
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_start_matches('[')
+        .split(']')
+        .next()
+        .unwrap_or("");
+    Some(version.to_string())
+}
+
 const NOTES_START: &str = "<!-- soothfast:notes -->";
 const NOTES_END: &str = "<!-- /soothfast:notes -->";
 
@@ -540,8 +580,8 @@ fn err(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_BOT_AUTHOR, changelog_already_cut, merge_changelog, resolve_bot_author,
-        resolve_features, subjects_excluding_author,
+        DEFAULT_BOT_AUTHOR, changelog_already_cut, merge_changelog, prior_release_ref,
+        resolve_bot_author, resolve_features, subjects_excluding_author,
     };
 
     #[test]
@@ -608,6 +648,46 @@ mod tests {
     fn a_file_with_no_sections_yet_is_not_already_cut() {
         assert!(!changelog_already_cut("", None));
         assert!(!changelog_already_cut("# Changelog\n", Some("v0.1.0")));
+    }
+
+    #[test]
+    fn a_released_section_names_its_own_version() {
+        assert_eq!(
+            prior_release_ref("# Changelog\n\n## 0.1.0 - 2026-08-01\n\n- shipped\n").as_deref(),
+            Some("0.1.0")
+        );
+    }
+
+    #[test]
+    fn a_draft_vs_heading_names_the_ref_it_was_drafted_against() {
+        assert_eq!(
+            prior_release_ref("# Changelog\n\n## Unreleased (draft vs v0.1.1)\n\nold\n").as_deref(),
+            Some("v0.1.1")
+        );
+    }
+
+    #[test]
+    fn a_first_release_has_no_prior_ref() {
+        assert_eq!(prior_release_ref(""), None);
+        assert_eq!(
+            prior_release_ref("# Changelog\n\n## Unreleased (initial public surface)\n\nnew\n"),
+            None
+        );
+        assert_eq!(
+            prior_release_ref("# Changelog\n\n## Unreleased\n\nnew\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_keep_a_changelog_release_under_a_bare_unreleased_heading_is_found() {
+        assert_eq!(
+            prior_release_ref(
+                "# Changelog\n\n## [Unreleased]\n\nstale\n\n## [0.1.0] - 2026-08-01\n\n- shipped\n"
+            )
+            .as_deref(),
+            Some("0.1.0")
+        );
     }
 
     #[test]
