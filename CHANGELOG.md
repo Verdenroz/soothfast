@@ -12,6 +12,7 @@
 
 ### 🐛 Fixes
 
+- Refuse to empty a populated changelog without --against-ref (#223)
 - Carry every counter on a reused callgrind baseline (#221)
 
 
