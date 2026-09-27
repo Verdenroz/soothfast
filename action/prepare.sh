@@ -35,8 +35,6 @@ echo "packages=$PACKAGES" >>"$GITHUB_OUTPUT"
 
 if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
   git fetch --quiet --unshallow --tags
-else
-  git fetch --quiet --tags
 fi
 if [ "$gating" = true ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
   git fetch --quiet origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
