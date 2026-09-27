@@ -1880,6 +1880,13 @@ optional = true
             return;
         };
         assert!(!super::is_worktree_root(&root.join("cargo-soothfast")));
-        assert!(!super::is_worktree_root(&root));
+    }
+
+    #[test]
+    fn the_workspace_root_is_a_worktree_root_only_in_a_linked_worktree() {
+        let Ok(root) = super::workspace_root() else {
+            return;
+        };
+        assert_eq!(super::is_worktree_root(&root), root.join(".git").is_file());
     }
 }
