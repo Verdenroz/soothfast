@@ -1,7 +1,7 @@
 //! HEAD's bench binary as the run cache sees it: its digest, what it resolves
 //! on this host, and the runs stored for it. Shared by `gate` and `measure`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::Value;
@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::agreement::{self, Agreement, Tolerance};
 use crate::buildstamp::{self, BuildStamp};
 use crate::gate;
-use crate::invoke::{self, CommonArgs, Run};
+use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::runcache::{self, Runs};
 
 /// Build HEAD's bench binary once and name it: its digest, and the run cache
@@ -99,28 +99,65 @@ fn run_head(common: &CommonArgs, extra: &[&str], stamp: BuildStamp) -> Result<Ru
     Ok(run)
 }
 
-/// HEAD's run from a stored run's callgrind counts and allocations plus a
-/// fresh timing-only pass, which also carries every assertion verdict. `None`
-/// unless the stored run counted every item the timing pass measured.
+/// HEAD's run from a stored run's counters plus a fresh timing-only pass,
+/// which also carries every assertion verdict. Every field but walltime,
+/// fingerprint/covers, and tolerance_pct (all read off the binary the fresh
+/// pass actually ran) comes from the stored item, so a counter added to
+/// `ItemMetrics` later carries over without a change here. `None` unless the
+/// stored run counted every item the timing pass measured.
 fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run> {
     let counted = invoke::run_from_items_value(&stored["items"]);
     if !has_callgrind_counts(stored) || !counted.items.keys().eq(timing.items.keys()) {
         return None;
     }
     let mut run = timing;
+    let mut metrics = BTreeSet::new();
     for (id, item) in &mut run.items {
         let stored = &counted.items[id];
-        item.ir = stored.ir;
-        item.allocs = stored.allocs;
-        item.bytes = stored.bytes;
+        let merged = ItemMetrics {
+            fingerprint: item.fingerprint.clone(),
+            covers: item.covers.clone(),
+            tolerance_pct: item.tolerance_pct,
+            median_ns: item.median_ns,
+            mad_ns: item.mad_ns,
+            p99_ns: item.p99_ns,
+            wall_rounds: item.wall_rounds.clone(),
+            ..stored.clone()
+        };
+        metrics.extend(
+            COUNTER_METRICS
+                .iter()
+                .filter(|(_, present)| present(&merged))
+                .map(|(name, _)| *name),
+        );
+        *item = merged;
     }
     run.gating_backend = Some("callgrind".into());
     run.reused = Some(invoke::Reused {
         from: measured_from.to_string(),
-        metrics: vec!["callgrind.ir", "alloc.allocs", "alloc.bytes"],
+        metrics: metrics.into_iter().collect(),
     });
     Some(run)
 }
+
+/// A counter's backend-qualified name paired with its presence check.
+type CounterCheck = (&'static str, fn(&ItemMetrics) -> bool);
+
+/// Backend-qualified names for the counters `merge_stored` may carry over,
+/// checked against the merged item so `reused.metrics` reports exactly what
+/// came from the stored run instead of a fixed list.
+const COUNTER_METRICS: &[CounterCheck] = &[
+    ("perfcnt.instructions", |m| m.instructions.is_some()),
+    ("perfcnt.cycles", |m| m.cycles.is_some()),
+    ("perfcnt.cache_refs", |m| m.cache_refs.is_some()),
+    ("callgrind.ir", |m| m.ir.is_some()),
+    ("alloc.allocs", |m| m.allocs.is_some()),
+    ("alloc.bytes", |m| m.bytes.is_some()),
+    ("asyncexec.polls", |m| m.polls.is_some()),
+    ("asyncexec.wakes", |m| m.wakes.is_some()),
+    ("buildcost.build_ms", |m| m.build_ms.is_some()),
+    ("buildcost.size_bytes", |m| m.size_bytes.is_some()),
+];
 
 /// Whether every item of a stored run carries Ir. Checked before the timing
 /// pass, so a run that cannot be merged costs nothing to find out.
@@ -389,8 +426,8 @@ fn section_header(line: &str) -> Option<(&str, usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Plan, Settled, cache_head, digestible, loaded_section_bytes, merge_stored, reuse_plan,
-        settle, settled_doc,
+        Plan, Settled, cache_head, digestible, loaded_section_bytes, merge_stored, ref_doc,
+        reuse_plan, settle, settled_doc,
     };
     use crate::buildstamp::BuildStamp;
     use crate::invoke::{AssertionOutcome, CommonArgs, HostEnv, ItemMetrics, Run};
@@ -582,6 +619,66 @@ mod tests {
     fn a_stored_run_of_other_items_is_a_miss() {
         let doc = stored(json!({ "pkg::b": { "fingerprint": "fp", "callgrind": { "ir": 1 } } }));
         assert!(merge_stored(&doc, "binary x", timing()).is_none());
+    }
+
+    #[test]
+    fn a_hit_carries_every_counter_the_stored_run_has() {
+        let mut full = Run {
+            gating_backend: Some("callgrind".into()),
+            ..Run::default()
+        };
+        full.items.insert(
+            "pkg::a".into(),
+            ItemMetrics {
+                fingerprint: "stored-fp".into(),
+                covers: "stored-covers".into(),
+                median_ns: Some(999.0),
+                mad_ns: Some(9.0),
+                p99_ns: Some(1999.0),
+                wall_rounds: vec![990.0, 1010.0],
+                instructions: Some(42),
+                cycles: Some(100),
+                cache_refs: Some(7),
+                ir: Some(4567),
+                allocs: Some(3),
+                bytes: Some(96),
+                polls: Some(5),
+                wakes: Some(2),
+                ..ItemMetrics::default()
+            },
+        );
+        let doc = ref_doc(&full);
+
+        let mut fresh = timing();
+        fresh.items.get_mut("pkg::a").unwrap().allocs = None;
+
+        let run = merge_stored(&doc, "binary abc", fresh).expect("hit");
+        let item = &run.items["pkg::a"];
+        assert_eq!(item.instructions, Some(42));
+        assert_eq!(item.cycles, Some(100));
+        assert_eq!(item.cache_refs, Some(7));
+        assert_eq!(item.ir, Some(4567));
+        assert_eq!(item.allocs, Some(3));
+        assert_eq!(item.bytes, Some(96));
+        assert_eq!(item.polls, Some(5));
+        assert_eq!(item.wakes, Some(2));
+        assert_eq!((item.median_ns, item.p99_ns), (Some(120.0), Some(150.0)));
+
+        let mut metrics = run.reused.expect("reused").metrics;
+        metrics.sort_unstable();
+        assert_eq!(
+            metrics,
+            vec![
+                "alloc.allocs",
+                "alloc.bytes",
+                "asyncexec.polls",
+                "asyncexec.wakes",
+                "callgrind.ir",
+                "perfcnt.cache_refs",
+                "perfcnt.cycles",
+                "perfcnt.instructions",
+            ]
+        );
     }
 
     #[test]
