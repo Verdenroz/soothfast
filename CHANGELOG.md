@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.3.3)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### 🐛 Fixes
+
+- Carry every counter on a reused callgrind baseline (#221)
+
+
 ## 0.3.3 - 2026-09-26
 
 <!-- soothfast:notes -->
