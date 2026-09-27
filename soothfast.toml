@@ -4,7 +4,7 @@
 
 [site]
 name = "soothfast"
-version = "0.3.3"
+version = "0.3.4"
 repo = "https://github.com/Verdenroz/soothfast"
 
 [[site.nav]]

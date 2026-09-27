@@ -1,13 +1,25 @@
 # Changelog
 
-## Unreleased (draft vs v0.3.3)
+## 0.3.4 - 2026-09-27
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+A `measure` that reuses a stored callgrind run now keeps every counter that
+run recorded, not only `ir`, `allocs` and `bytes`. In 0.3.3 a reuse hit
+dropped the perfcnt and asyncexec counters from the saved baseline, so any
+`soothfast:claim` on `perfcnt.instructions` failed `docs check` with no
+measurement. `report changelog` without `--against-ref` now refuses to run
+when `CHANGELOG.md` already records a release, instead of silently replacing
+a populated Unreleased section with an empty initial-surface one.
+
+### Upgrade notes
+
+Nothing is required. A job that caches a baseline saved by 0.3.3's `measure`
+should drop that cache entry once, since the saved file is missing counters
+and a restored copy keeps failing claims until it is measured again. A
+`report changelog` call that omitted `--against-ref` on a repository with a
+released section now exits nonzero and names the ref to pass.
 <!-- /soothfast:notes -->
 
 ### 🐛 Fixes
