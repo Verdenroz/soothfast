@@ -270,15 +270,32 @@ fn changelog_cmd(args: &[String]) -> i32 {
         return 0;
     }
     if a.against_ref.is_none()
-        && let Some(refname) = prior_release_ref(&existing)
+        && let Some(prior) = prior_release_ref(&existing)
     {
-        return err(&format!(
-            "{} already has a prior release drafted against {refname}, but no \
-             --against-ref was given — regenerating would replace it with an empty \
-             initial-surface section; pass --against-ref {refname} (tags may not have \
-             been fetched)",
-            path.display()
-        ));
+        let msg = match prior {
+            PriorRelease::Drafted(refname) => format!(
+                "{} already has a prior release drafted against {refname}, but no \
+                 --against-ref was given; regenerating would replace it with an empty \
+                 initial-surface section. Pass --against-ref {refname} (tags may not \
+                 have been fetched).",
+                path.display()
+            ),
+            PriorRelease::Released(version) if !version.is_empty() => format!(
+                "{} already has a released {version} section, but no --against-ref \
+                 was given; regenerating would replace the Unreleased section with an \
+                 empty initial-surface one. Pass --against-ref for the tag {version} \
+                 shipped under (tags may not have been fetched).",
+                path.display()
+            ),
+            PriorRelease::Released(_) => format!(
+                "{} already has a released section, but no --against-ref was given; \
+                 regenerating would replace the Unreleased section with an empty \
+                 initial-surface one. Pass --against-ref for the tag it shipped under \
+                 (tags may not have been fetched).",
+                path.display()
+            ),
+        };
+        return err(&msg);
     }
 
     let baseline = match load_baseline_required(&a.baseline) {
@@ -442,17 +459,28 @@ fn changelog_already_cut(existing: &str, against_ref: Option<&str>) -> bool {
     }
 }
 
-/// The ref a populated Unreleased section was last drafted against, when
-/// `existing` shows a prior release and `--against-ref` was left out — an
-/// Unreleased heading of the form `Unreleased (draft vs X)` names X
-/// directly; otherwise any released `## ` heading below it supplies its own
-/// version. `None` means there is nothing to lose: an empty or missing
-/// file, or an Unreleased heading that never named a ref.
-fn prior_release_ref(existing: &str) -> Option<String> {
+/// What a populated Unreleased section says about a prior release, when
+/// `existing` shows one and `--against-ref` was left out. `Drafted` is the
+/// ref an `Unreleased (draft vs X)` heading already names; `Released` is
+/// the version on a released `## ` heading below it, not necessarily a
+/// git ref (this repo's own headings are bare versions like `0.3.3`, not
+/// tags like `v0.3.3`), so a caller shouldn't hand it to `--against-ref`
+/// as-is. `None` means there is nothing to lose: an empty or missing file,
+/// or an Unreleased heading that never named a ref.
+#[derive(Debug, PartialEq)]
+enum PriorRelease {
+    Drafted(String),
+    Released(String),
+}
+
+fn prior_release_ref(existing: &str) -> Option<PriorRelease> {
     let mut headings = existing.lines().filter_map(|l| l.strip_prefix("## "));
     let top = headings.next()?.trim_start();
     if let Some(rest) = top.strip_prefix("Unreleased (draft vs ") {
-        return rest.split(')').next().map(str::to_string);
+        return rest
+            .split(')')
+            .next()
+            .map(|r| PriorRelease::Drafted(r.to_string()));
     }
     let is_unreleased = |h: &str| h.starts_with("Unreleased") || h.starts_with("[Unreleased]");
     let released = if is_unreleased(top) {
@@ -468,7 +496,7 @@ fn prior_release_ref(existing: &str) -> Option<String> {
         .split(']')
         .next()
         .unwrap_or("");
-    Some(version.to_string())
+    Some(PriorRelease::Released(version.to_string()))
 }
 
 const NOTES_START: &str = "<!-- soothfast:notes -->";
@@ -580,8 +608,8 @@ fn err(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_BOT_AUTHOR, changelog_already_cut, merge_changelog, prior_release_ref,
-        resolve_bot_author, resolve_features, subjects_excluding_author,
+        DEFAULT_BOT_AUTHOR, PriorRelease, changelog_already_cut, merge_changelog,
+        prior_release_ref, resolve_bot_author, resolve_features, subjects_excluding_author,
     };
 
     #[test]
@@ -653,16 +681,16 @@ mod tests {
     #[test]
     fn a_released_section_names_its_own_version() {
         assert_eq!(
-            prior_release_ref("# Changelog\n\n## 0.1.0 - 2026-08-01\n\n- shipped\n").as_deref(),
-            Some("0.1.0")
+            prior_release_ref("# Changelog\n\n## 0.1.0 - 2026-08-01\n\n- shipped\n"),
+            Some(PriorRelease::Released("0.1.0".to_string()))
         );
     }
 
     #[test]
     fn a_draft_vs_heading_names_the_ref_it_was_drafted_against() {
         assert_eq!(
-            prior_release_ref("# Changelog\n\n## Unreleased (draft vs v0.1.1)\n\nold\n").as_deref(),
-            Some("v0.1.1")
+            prior_release_ref("# Changelog\n\n## Unreleased (draft vs v0.1.1)\n\nold\n"),
+            Some(PriorRelease::Drafted("v0.1.1".to_string()))
         );
     }
 
@@ -684,9 +712,16 @@ mod tests {
         assert_eq!(
             prior_release_ref(
                 "# Changelog\n\n## [Unreleased]\n\nstale\n\n## [0.1.0] - 2026-08-01\n\n- shipped\n"
-            )
-            .as_deref(),
-            Some("0.1.0")
+            ),
+            Some(PriorRelease::Released("0.1.0".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_released_heading_with_no_version_token_still_refuses() {
+        assert_eq!(
+            prior_release_ref("# Changelog\n\n##  \n\n- shipped\n"),
+            Some(PriorRelease::Released(String::new()))
         );
     }
 
