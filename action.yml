@@ -155,7 +155,7 @@ runs:
         key: cargo-soothfast-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.version }}
     - name: Install cargo-binstall
       if: steps.resolve.outputs.install == 'true' && steps.cache.outputs.cache-hit != 'true'
-      uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+      uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
       with:
         tool: cargo-binstall
     - name: Install cargo-soothfast
