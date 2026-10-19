@@ -411,7 +411,6 @@ impl Reuse {
                 self.measured_on.clone(),
             ) {
                 self.items.store(id, entry);
-            } else {
             }
         }
         self.items.prune();
