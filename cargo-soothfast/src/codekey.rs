@@ -412,10 +412,7 @@ impl Resolver<'_> {
         start: u64,
         end: u64,
     ) -> HashMap<u64, (u64, u64)> {
-        let table_input = |table: u64| {
-            self.input_at(table)
-                .filter(|&j| self.inputs[j].entry == 0 && self.symbol_at(table).is_none())
-        };
+        let table_input = |table: u64| self.table_input(table);
         let mut tables = HashMap::new();
         for (j, bases) in jumptable::group(proofs, table_input) {
             let Some(hash) = self.decode(j, &bases, start, end) else {
@@ -428,14 +425,53 @@ impl Resolver<'_> {
         tables
     }
 
+    /// The input section a table at `table` may be decoded from.
+    fn table_input(&self, table: u64) -> Option<usize> {
+        self.input_at(table)
+            .filter(|&j| self.inputs[j].entry == 0 && self.symbol_at(table).is_none())
+    }
+
+    /// For each candidate table that decodes, the addresses it jumps to.
+    fn table_targets(&self, tables: &[u64], start: u64, end: u64) -> HashMap<u64, Vec<u64>> {
+        let candidates: Vec<jumptable::Proof> = tables
+            .iter()
+            .map(|&table| jumptable::Proof { lea: 0, table })
+            .collect();
+        let mut targets = HashMap::new();
+        for (j, bases) in jumptable::group(&candidates, |t| self.table_input(t)) {
+            let Some(words) = self.decode_words(j, &bases, start, end) else {
+                continue;
+            };
+            let vma = self.inputs[j].vma;
+            let index = |addr: u64| ((addr - vma) / 4) as usize;
+            for (k, &base) in bases.iter().enumerate() {
+                let upto = bases.get(k + 1).map_or(words.len(), |&next| index(next));
+                targets.insert(base, words[index(base)..upto].to_vec());
+            }
+        }
+        targets
+    }
+
     fn decode(&self, input: usize, bases: &[u64], start: u64, end: u64) -> Option<u64> {
+        let words = self.decode_words(input, bases, start, end)?;
+        let mut text = format!("{}:", self.inputs[input].size);
+        for target in words {
+            text.push_str(&format!("{:x},", target - start));
+        }
+        Some(fnv1a(text.as_bytes()))
+    }
+
+    /// The place in `start..end` each word of the input section jumps to,
+    /// measured from the nearest base at or before it. `None` unless every
+    /// word lands there and the section is nothing but such words.
+    fn decode_words(&self, input: usize, bases: &[u64], start: u64, end: u64) -> Option<Vec<u64>> {
         let e = &self.inputs[input];
         let relocated = self.relocs.partition_point(|r| r.offset < e.vma)
             != self.relocs.partition_point(|r| r.offset < e.vma + e.size);
         if !e.size.is_multiple_of(4) || bases.first() != Some(&e.vma) || relocated {
             return None;
         }
-        let mut text = format!("{}:", e.size);
+        let mut targets = Vec::new();
         for (i, word) in self
             .read(e.vma, e.size)?
             .as_chunks::<4>()
@@ -449,9 +485,9 @@ impl Resolver<'_> {
             if target < start || target >= end {
                 return None;
             }
-            text.push_str(&format!("{:x},", target - start));
+            targets.push(target);
         }
-        Some(fnv1a(text.as_bytes()))
+        Some(targets)
     }
 
     /// Hash of everything reachable from `node`. Memoized per root only: a
@@ -565,7 +601,9 @@ impl Span {
     /// Normalize the instructions. A jump table the instructions prove (see
     /// `jumptable`) is hashed as the places in this function it jumps to.
     fn read(&mut self, resolver: &mut Resolver) {
-        let proofs = jumptable::prove(&self.instrs);
+        let proofs = jumptable::prove(&self.instrs, (self.start, self.end), &|tables| {
+            resolver.table_targets(tables, self.start, self.end)
+        });
         let tables = resolver.decode_tables(&proofs, self.start, self.end);
         for (addr, body) in std::mem::take(&mut self.instrs) {
             let table = tables
@@ -1181,7 +1219,10 @@ Idx Name          Size      VMA               LMA               File off  Algn
              \x20   1007:\tmovslq (%rcx,%rax,4),%rax\n\
              \x20   100b:\tadd    %rcx,%rax\n\
              \x20   100e:\tjmp    *%rax\n\
-             \x20   1010:\tret\n"
+             \x20   1010:\tret\n\
+             \x20   1014:\tret\n\
+             \x20   1018:\tret\n\
+             \x20   101c:\tret\n"
         );
         let mut image = vec![0; 0x3000];
         for (i, target) in targets.iter().enumerate() {
@@ -1260,19 +1301,23 @@ Idx Name          Size      VMA               LMA               File off  Algn
             format!(
                 "0000000000001000 <_ZN3foo3bar17h1E>:\n\
                  \x20   1000:\tlea    0x1000(%rip),%rcx        # {t1:x} <t>\n\
-                 \x20   1004:\tmovslq (%rcx,%rax,4),%rax\n\
-                 \x20   1008:\tadd    %rcx,%rax\n\
-                 \x20   100b:\tjmp    *%rax\n\
-                 \x20   100d:\tlea    0x1000(%rip),%rdx        # {t2:x} <t>\n\
-                 \x20   1014:\tmovslq (%rdx,%rax,4),%rax\n\
-                 \x20   1018:\tadd    %rdx,%rax\n\
-                 \x20   101b:\tjmp    *%rax\n"
+                 \x20   1002:\tmovslq (%rcx,%rax,4),%rax\n\
+                 \x20   1004:\tadd    %rcx,%rax\n\
+                 \x20   1006:\tjmp    *%rax\n\
+                 \x20   1008:\tlea    0x1000(%rip),%rdx        # {t2:x} <t>\n\
+                 \x20   100a:\tmovslq (%rdx,%rax,4),%rax\n\
+                 \x20   100c:\tadd    %rdx,%rax\n\
+                 \x20   100e:\tjmp    *%rax\n\
+                 \x20   1010:\tret\n\
+                 \x20   1012:\tret\n\
+                 \x20   1014:\tret\n\
+                 \x20   1016:\tret\n"
             )
         };
         let hash = |t1: u64| {
             let t2 = t1 + 8;
             let mut image = vec![0; 0x3000];
-            for (i, target) in [0x1000u64, 0x1004, 0x1008, 0x100c].iter().enumerate() {
+            for (i, target) in [0x1010u64, 0x1008, 0x1014, 0x1016].iter().enumerate() {
                 let base = if i < 2 { t1 } else { t2 };
                 let word = (*target as i64 - base as i64) as i32;
                 let at = t1 as usize + 4 * i;
