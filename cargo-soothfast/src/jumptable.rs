@@ -177,6 +177,11 @@ fn is_branch(ins: &Ins) -> bool {
     ins.mnemonic.starts_with('j') || ins.mnemonic.starts_with("loop")
 }
 
+/// A nop, as compilers pad between blocks.
+fn is_padding(ins: &Ins) -> bool {
+    ins.mnemonic.starts_with("nop") || (ins.mnemonic == "xchg" && ins.operands == ["%ax", "%ax"])
+}
+
 fn ends_block(ins: &Ins) -> bool {
     is_branch(ins) || matches!(ins.mnemonic, "ret" | "retq" | "ud2" | "hlt" | "int3")
 }
@@ -438,14 +443,33 @@ impl Graph {
         // 0: not reached yet, 1: defined by a good instruction, 2: anything else.
         let mut state = vec![0u8; parsed.len()];
         // Code the graph does not reach from the entry (a landing pad the
-        // unwinder enters) may arrive with anything in the register.
-        let mut reached = vec![false; parsed.len()];
-        for &s in self.succ.iter().flatten() {
-            reached[s] = true;
-        }
+        // unwinder enters) may arrive with anything in the register. Nops
+        // that only pad between blocks are not entered by anyone, nor is the
+        // block they fall into reached through them.
+        let mut padding = vec![false; parsed.len()];
+        let reached = loop {
+            let mut reached = vec![false; parsed.len()];
+            for (i, edges) in self.succ.iter().enumerate() {
+                if !padding[i] {
+                    for &s in edges {
+                        reached[s] = true;
+                    }
+                }
+            }
+            let mut grown = false;
+            for i in 1..parsed.len() {
+                if !reached[i] && !padding[i] && is_padding(&parsed[i].1) {
+                    padding[i] = true;
+                    grown = true;
+                }
+            }
+            if !grown {
+                break reached;
+            }
+        };
         let mut work = Vec::new();
         for (i, seen) in reached.iter().enumerate() {
-            if i == 0 || !seen {
+            if i == 0 || (!seen && !padding[i]) {
                 state[i] = 2;
                 work.push(i);
             }
@@ -678,6 +702,34 @@ mod tests {
             RET,
         ];
         assert!(prove_in(&landing_pad).is_empty());
+    }
+
+    #[test]
+    fn padding_between_blocks_is_not_an_entry() {
+        let padded = [
+            LEA,
+            "jmp    1014 <f+0x14>",
+            "ud2",
+            "nopw   0x0(%rax,%rax,1)",
+            "nop",
+            LOAD,
+            ADD,
+            JMP,
+            RET,
+        ];
+        assert_eq!(prove_in(&padded).len(), 1);
+        let pad_then_pad = [
+            LEA,
+            "jmp    1014 <f+0x14>",
+            "ud2",
+            "nop",
+            "mov    %rbx,%rcx",
+            LOAD,
+            ADD,
+            JMP,
+            RET,
+        ];
+        assert!(prove_in(&pad_then_pad).is_empty());
     }
 
     #[test]
