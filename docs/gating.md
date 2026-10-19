@@ -240,9 +240,8 @@ tables) under local labels, which the symbol table does not keep. For those
 the CLI reads the linker's map: each input section is a real object, since
 rustc gives every constant its own section and code cannot read past the one
 it addresses. A reference then hashes the input section it lands in, not the
-whole output section. Merged pools (`SHF_MERGE`, such as `.rodata.cst8`) are
-one input section in the map, so a constant in a pool is hashed with the rest
-of it.
+whole output section. A merged pool (`SHF_MERGE`) is one input section in the
+map; see below for how the fixed-size ones are split.
 
 The map comes from a second link of the bench target alone
 (`cargo rustc --bench ... -- -C link-arg=-Wl,-Map=...`), written next to the
@@ -261,12 +260,49 @@ A reference outside every input section falls back to the whole output
 section the same way. On aarch64, `adrp`+`add` immediates carry layout and
 only cause misses.
 
-What still misses, and why. A jump table stores code offsets as plain
-integers, so any edit that moves code changes its bytes, and every function
-that switches through one hashes differently, including `main` of the bench
-runner, which every item executes. A constant edited inside a merged pool
-changes the pool for every function that reads from it. Both are sound and
-both cost hits.
+A pool of fixed-size constants (`.rodata.cst8`, `.rodata.cst16`) is split
+into its entries, so a reference hashes only the entry it falls in. That
+assumes code never reads across two entries through one reference, which
+holds because LLVM gives each pool constant its own label and the linker
+merges whole entries. String pools (`.rodata.str*`) stay one object.
+
+A jump table stores code offsets as 32-bit integers, so its bytes change
+whenever code moves. Where the instructions prove how a table is read, it is
+hashed as the places in the function it jumps to instead of as bytes. The
+proof is one straight line in one function:
+
+```text
+lea    table(%rip),%rA
+movslq (%rA,%rI,4),%rB
+add    %rA,%rB
+jmp    *%rB
+```
+
+with no write to either register and no branch into the middle of it. The
+input section holding the table must start at a proven base and hold only
+words that land inside the function, measured from the nearest proven base
+before them. Anything else hashes as bytes. This reads x86-64 assembly
+only; on other architectures every table hashes as bytes.
+
+What still misses, and why:
+
+- code that changed, which is the point;
+- a function that switches through a table whose base register is loaded
+  once at the top and reused across the function. The proof is local to one
+  straight line, so that table hashes as bytes and the function misses after
+  any edit that moves code. The bench runner's `main`, which every item
+  executes, is one, so an edit that changes the size of code anywhere
+  usually misses every item;
+- code that reads a section whose bytes are layout, such as
+  `.eh_frame_hdr`. `measured_items` reaches it through a GOT slot, so it
+  hashes the section and misses whenever code moves;
+- a constant changed inside a string pool, or any data without a sized
+  symbol or a link-map section to bound it;
+- an unreadable map, or a binary that `objdump` cannot disassemble.
+
+All of these are sound and cost hits. An edit that keeps the size of code the
+same, such as changing a constant, leaves the rest of the executed code
+alone, and items that do not read it are reused.
 
 ### The commit-key path
 
