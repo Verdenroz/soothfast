@@ -37,9 +37,9 @@ fn strip_llvm(name: &str) -> Cow<'_, str> {
 /// Callgrind's name for the frames under `main`, which is no symbol.
 const BELOW_MAIN: &str = "(below main)";
 
-/// Prefix of a PLT stub's portable name. A stub is a trampoline fixed by the
-/// symbol it names; the function it reaches is listed under its own object.
-const STUB: &str = "plt:";
+/// Prefix of a portable name for code callgrind could only name by address
+/// (a symbol without a size, a PLT stub): the label objdump gives it.
+const LABELED: &str = "at:";
 
 /// A symbol without callgrind's `'N` marker for functions inside a recursion
 /// cycle.
@@ -133,6 +133,28 @@ fn parse_symbols(listing: &str) -> Vec<Symbol> {
     symbols
 }
 
+/// Rust data symbols `nm` lists without a size: zero sized statics, whose
+/// address code takes and whose content is nothing. Keyed by address.
+fn parse_zero_sized(listing: &str, sections: &[Section]) -> HashMap<u64, String> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let (addr, name) = match f[..] {
+                [addr, _, name] => (addr, name),
+                [addr, size, _, name] if u64::from_str_radix(size, 16) == Ok(0) => (addr, name),
+                _ => return None,
+            };
+            let addr = u64::from_str_radix(addr, 16).ok()?;
+            let in_data = sections
+                .iter()
+                .any(|s| !s.code && addr >= s.vma && addr - s.vma < s.size);
+            (in_data && (name.starts_with("_R") || name.starts_with("_ZN")))
+                .then(|| (addr, strip_llvm(name).into_owned()))
+        })
+        .collect()
+}
+
 /// What a dynamic relocation writes into its slot at load time.
 #[derive(Clone)]
 enum Target {
@@ -198,6 +220,7 @@ struct Resolver<'a> {
     sections: &'a [Section],
     symbols: &'a [Symbol],
     relocs: &'a [Reloc],
+    zero_sized: &'a HashMap<u64, String>,
     image: &'a [u8],
     roots: HashMap<Node, Option<u64>>,
 }
@@ -223,6 +246,9 @@ impl Resolver<'_> {
     fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
         let section = self.section_at(addr)?;
         let code = self.sections[section].code;
+        if let Some(name) = self.zero_sized.get(&addr) {
+            return Some(Place::Code(format!("zst:{name}")));
+        }
         if let Some(i) = self.symbol_at(addr)
             && self.section_at(self.symbols[i].addr) == Some(section)
         {
@@ -319,6 +345,19 @@ impl Resolver<'_> {
     }
 
     fn resolve(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
+        // Reading a relocated slot (a GOT entry) yields what it relocates to,
+        // so that alone names it; the section holding it says nothing more.
+        if let Ok(i) = self.relocs.binary_search_by_key(&addr, |r| r.offset) {
+            let value = match self.relocs[i].target.clone() {
+                Target::Symbol(name) => strip_llvm(&name).into_owned(),
+                Target::Relative(to) => self.describe(to, None)?,
+            };
+            return Some(format!("slot:{value}"));
+        }
+        self.describe(addr, hint)
+    }
+
+    fn describe(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
         Some(match self.place(addr, hint)? {
             Place::Code(name) => name,
             Place::Data(node, off, slot) => {
@@ -396,11 +435,15 @@ struct Span {
 /// Normalized hash per requested function, read off an `objdump -d` stream.
 /// Copies of one name (per-CGU instances) hash together, so any copy changing
 /// changes the name. A name with an unresolvable copy is left out.
+///
+/// Code named by address (`0x...`) or by an `at:` label has no extent in the
+/// symbol table; it runs from its objdump label to the next one. `labels`
+/// receives the `at:` name of each wanted address.
 fn hash_functions(
     resolver: &mut Resolver,
     wanted: &BTreeSet<String>,
     mut disassembly: impl BufRead,
-    stubs: &mut HashMap<String, String>,
+    labels: &mut HashMap<String, String>,
 ) -> HashMap<String, u64> {
     let mut spans: Vec<Span> = Vec::new();
     for s in resolver.symbols {
@@ -422,6 +465,14 @@ fn hash_functions(
     spans.sort_by_key(|s| s.start);
 
     let mut current: Option<usize> = None;
+    let mut labeled: Option<(String, String, bool)> = None;
+    let mut labeled_done: Vec<(String, Option<u64>)> = Vec::new();
+    let mut finish = |labeled: &mut Option<(String, String, bool)>| {
+        if let Some((key, text, resolved)) = labeled.take() {
+            let hash = (resolved && !text.is_empty()).then(|| fnv1a(text.as_bytes()));
+            labeled_done.push((key, hash));
+        }
+    };
     let mut line = Vec::new();
     while matches!(disassembly.read_until(b'\n', &mut line), Ok(n) if n > 0) {
         let text = String::from_utf8_lossy(&line);
@@ -431,9 +482,14 @@ fn hash_functions(
             .and_then(|t| t.split_once(" <"))
             && let Ok(addr) = u64::from_str_radix(addr, 16)
         {
+            finish(&mut labeled);
             let hex = format!("0x{addr:016x}");
-            if wanted.contains(&hex) && name.ends_with("@plt") {
-                stubs.insert(hex, name.to_string());
+            let key = format!("{LABELED}{name}");
+            if !name.starts_with('.') && (wanted.contains(&hex) || wanted.contains(&key)) {
+                if wanted.contains(&hex) {
+                    labels.insert(hex, key.clone());
+                }
+                labeled = Some((key, String::new(), true));
             }
         } else if let Some((addr, body)) = text.split_once(':')
             && let Ok(addr) = u64::from_str_radix(addr.trim(), 16)
@@ -442,19 +498,35 @@ fn hash_functions(
                 let after = spans.partition_point(|s| s.start <= addr);
                 current = after.checked_sub(1).filter(|&c| addr < spans[c].end);
             }
+            let normalized = (current.is_some() || labeled.is_some())
+                .then(|| resolver.normalize(body.trim()))
+                .flatten();
             if let Some(c) = current {
-                match resolver.normalize(body.trim()) {
+                match &normalized {
                     Some(n) => {
-                        spans[c].text.push_str(&n);
+                        spans[c].text.push_str(n);
                         spans[c].text.push('\n');
                     }
                     None => spans[c].resolved = false,
                 }
             }
+            if let Some((_, text, resolved)) = &mut labeled {
+                match &normalized {
+                    Some(n) => {
+                        text.push_str(n);
+                        text.push('\n');
+                    }
+                    None => *resolved = false,
+                }
+            }
         }
         line.clear();
     }
+    finish(&mut labeled);
     let mut copies: HashMap<String, Vec<Option<u64>>> = HashMap::new();
+    for (key, hash) in labeled_done {
+        copies.entry(key).or_default().push(hash);
+    }
     for span in spans {
         let hash = (span.resolved && !span.text.is_empty()).then(|| fnv1a(span.text.as_bytes()));
         for name in span.names {
@@ -482,9 +554,8 @@ fn command_text(program: &str, args: &[&str], bin: &Path) -> Option<String> {
 /// The requested functions of one bench binary, hashed.
 pub struct Binary {
     hashes: HashMap<String, u64>,
-    /// Symbolless code the wanted set named by address, to the name objdump
-    /// gave the stub at that address.
-    stubs: HashMap<String, String>,
+    /// Code the wanted set named by address, to its `at:` name.
+    labels: HashMap<String, String>,
 }
 
 impl Binary {
@@ -493,7 +564,9 @@ impl Binary {
     /// resolved is simply absent.
     pub fn open(bin: &Path, wanted: &BTreeSet<String>) -> Option<Binary> {
         let sections = parse_sections(&command_text("objdump", &["-h"], bin)?);
-        let symbols = parse_symbols(&command_text("nm", &["-S", "--defined-only"], bin)?);
+        let listing = command_text("nm", &["-S", "--defined-only"], bin)?;
+        let symbols = parse_symbols(&listing);
+        let zero_sized = parse_zero_sized(&listing, &sections);
         // Fails on a binary with no dynamic section, which has no relocations.
         let relocs = parse_relocs(&command_text("objdump", &["-R"], bin).unwrap_or_default());
         let image = std::fs::read(bin).ok()?;
@@ -501,6 +574,7 @@ impl Binary {
             sections: &sections,
             symbols: &symbols,
             relocs: &relocs,
+            zero_sized: &zero_sized,
             image: &image,
             roots: HashMap::new(),
         };
@@ -512,31 +586,34 @@ impl Binary {
             .spawn()
             .ok()?;
         let stdout = child.stdout.take()?;
-        let mut stubs = HashMap::new();
-        let hashes = hash_functions(&mut resolver, wanted, BufReader::new(stdout), &mut stubs);
+        let mut labels = HashMap::new();
+        let hashes = hash_functions(&mut resolver, wanted, BufReader::new(stdout), &mut labels);
         child
             .wait()
             .ok()?
             .success()
-            .then_some(Binary { hashes, stubs })
+            .then_some(Binary { hashes, labels })
     }
 
     #[cfg(test)]
     pub fn with_hashes(hashes: HashMap<String, u64>) -> Binary {
         Binary {
             hashes,
-            stubs: HashMap::new(),
+            labels: HashMap::new(),
         }
     }
 
-    /// `functions` with each symbolless address replaced by its stub name;
-    /// `None` if one has no name here.
-    pub fn name_stubs(&self, functions: Vec<(String, String)>) -> Option<Vec<(String, String)>> {
+    /// `functions` with each address replaced by its `at:` name; `None` if
+    /// one has no label here.
+    pub fn name_addresses(
+        &self,
+        functions: Vec<(String, String)>,
+    ) -> Option<Vec<(String, String)>> {
         functions
             .into_iter()
             .map(|(ob, sym)| {
                 if ob == EXE && sym.starts_with("0x") {
-                    Some((ob, format!("{STUB}{}", self.stubs.get(&sym)?)))
+                    Some((ob, self.labels.get(&sym)?.clone()))
                 } else {
                     Some((ob, sym))
                 }
@@ -551,8 +628,6 @@ impl Binary {
         for (ob, sym) in functions {
             if ob != EXE {
                 writeln!(text, "f {ob} {:016x}", file_digest(ob)?).ok()?;
-            } else if let Some(stub) = sym.strip_prefix(STUB) {
-                writeln!(text, "p {stub}").ok()?;
             } else {
                 writeln!(text, "x {sym} {:016x}", self.hashes.get(sym)?).ok()?;
             }
@@ -620,6 +695,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
             sections: &sections,
             symbols: &symbols,
             relocs: &relocs,
+            zero_sized: &HashMap::new(),
             image,
             roots: HashMap::new(),
         };
@@ -697,6 +773,21 @@ Idx Name          Size      VMA               LMA               File off  Algn
         let b = bar(&hashes(SECTIONS, SYMBOLS, &image(7, 2), dis));
         assert!(a.is_some());
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn a_rust_data_symbol_without_a_size_is_zero_sized() {
+        let sections = parse_sections(SECTIONS);
+        let listing = "\
+0000000000001040 t _ZN3foo4code17h1E
+0000000000002008 r _RNvCs1_3foo5EMPTY.llvm.9
+0000000000002010 r _IO_stdin_used
+0000000000002018 0000000000000008 r _RNvCs1_3foo5SIZED
+";
+        assert_eq!(
+            parse_zero_sized(listing, &sections),
+            HashMap::from([(0x2008, "_RNvCs1_3foo5EMPTY".to_string())])
+        );
     }
 
     #[test]
@@ -840,58 +931,60 @@ Idx Name          Size      VMA               LMA               File off  Algn
         );
     }
 
-    #[test]
-    fn only_plt_labels_name_a_symbolless_address() {
+    fn labeled(dis: &str) -> (HashMap<String, u64>, HashMap<String, String>) {
         let (sections, symbols) = (parse_sections(SECTIONS), parse_symbols(SYMBOLS));
         let mut resolver = Resolver {
             sections: &sections,
             symbols: &symbols,
             relocs: &[],
+            zero_sized: &HashMap::new(),
             image: &[],
             roots: HashMap::new(),
         };
-        let wanted: BTreeSet<String> = [
-            "0x0000000000023eb0",
-            "0x0000000000024000",
-            "0x0000000000024100",
-        ]
-        .map(String::from)
-        .into();
-        let dis = "\
-0000000000023eb0 <memcpy@plt>:
-   23eb0:\tjmp    *0x1000(%rip)
-0000000000024000 <_init>:
-   24000:\tret
-0000000000024100 <.text>:
-   24100:\tret
-";
-        let mut stubs = HashMap::new();
-        hash_functions(
+        let wanted: BTreeSet<String> = ["0x0000000000024000", "0x0000000000024100"]
+            .map(String::from)
+            .into();
+        let mut labels = HashMap::new();
+        let hashes = hash_functions(
             &mut resolver,
             &wanted,
             Cursor::new(dis.as_bytes()),
-            &mut stubs,
+            &mut labels,
         );
-        assert_eq!(
-            stubs.into_iter().collect::<Vec<_>>(),
-            [("0x0000000000023eb0".to_string(), "memcpy@plt".to_string())]
-        );
+        (hashes, labels)
     }
 
     #[test]
-    fn a_stub_address_becomes_its_name_and_hashes_by_it() {
-        let mut binary = Binary::with_hashes(HashMap::new());
+    fn code_named_by_address_hashes_by_content_under_its_label() {
+        let dis = |insn: &str| {
+            format!(
+                "0000000000024000 <_init>:\n   24000:\t{insn}\n0000000000024100 <.text>:\n   24100:\tret\n"
+            )
+        };
+        let (ret, labels) = labeled(&dis("ret"));
+        let (hlt, _) = labeled(&dis("hlt"));
+        assert_eq!(
+            labels.into_iter().collect::<Vec<_>>(),
+            [("0x0000000000024000".to_string(), "at:_init".to_string())]
+        );
+        assert_ne!(ret["at:_init"], hlt["at:_init"]);
+        assert!(!ret.contains_key("at:.text"));
+    }
+
+    #[test]
+    fn an_address_takes_its_label_name_and_a_missing_one_has_none() {
+        let mut binary = Binary::with_hashes(HashMap::from([("at:_init".to_string(), 1)]));
         binary
-            .stubs
-            .insert("0x0000000000023eb0".into(), "memcpy@plt".into());
+            .labels
+            .insert("0x0000000000024000".into(), "at:_init".into());
         let named = binary
-            .name_stubs(vec![(EXE.into(), "0x0000000000023eb0".into())])
+            .name_addresses(vec![(EXE.into(), "0x0000000000024000".into())])
             .expect("named");
-        assert_eq!(named, [(EXE.to_string(), "plt:memcpy@plt".to_string())]);
+        assert_eq!(named, [(EXE.to_string(), "at:_init".to_string())]);
         assert!(binary.code_key(&named).is_some());
         assert!(
             binary
-                .name_stubs(vec![(EXE.into(), "0x0000000000000001".into())])
+                .name_addresses(vec![(EXE.into(), "0x0000000000000001".into())])
                 .is_none()
         );
     }

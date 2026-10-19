@@ -237,7 +237,7 @@ impl Stored {
             .values()
             .flatten()
             .flat_map(|e| &e.functions)
-            .filter(|(ob, sym)| ob == codekey::EXE && !sym.starts_with("plt:"))
+            .filter(|(ob, _)| ob == codekey::EXE)
             .map(|(_, sym)| sym.clone())
             .collect()
     }
@@ -399,7 +399,7 @@ impl Reuse {
             let Some(metrics) = run.items.get(id) else {
                 continue;
             };
-            let Some(functions) = binary.name_stubs(functions) else {
+            let Some(functions) = binary.name_addresses(functions) else {
                 continue;
             };
             let assertions = run.assertions.iter().filter(|a| &a.id == id).cloned();
@@ -411,6 +411,7 @@ impl Reuse {
                 self.measured_on.clone(),
             ) {
                 self.items.store(id, entry);
+            } else {
             }
         }
         self.items.prune();
