@@ -200,6 +200,8 @@ enum Node {
     Section(usize),
     /// An input section the link map names, inside an output section.
     Input(usize),
+    /// One entry of a fixed-size constant pool, by start and size.
+    Entry(u64, u64),
 }
 
 /// What an address resolves to.
@@ -269,6 +271,11 @@ impl Resolver<'_> {
         }
         let slot = hint.filter(|h| h.ends_with("$got")).unwrap_or_default();
         let (node, start) = match self.input_at(addr) {
+            Some(i) if self.inputs[i].entry > 0 => {
+                let e = &self.inputs[i];
+                let start = e.vma + (addr - e.vma) / e.entry * e.entry;
+                (Node::Entry(start, e.entry), start)
+            }
             Some(i) => (Node::Input(i), self.inputs[i].vma),
             None => (Node::Section(section), self.sections[section].vma),
         };
@@ -295,6 +302,7 @@ impl Resolver<'_> {
                 let e = &self.inputs[i];
                 Some((self.section_at(e.vma)?, e.vma, e.size))
             }
+            Node::Entry(vma, size) => Some((self.section_at(vma)?, vma, size)),
         }
     }
 
@@ -383,7 +391,7 @@ impl Resolver<'_> {
             Place::Code(name) => name,
             Place::Data(node, off, slot) => {
                 let label = match node {
-                    Node::Symbol(_) | Node::Input(_) => "data",
+                    Node::Symbol(_) | Node::Input(_) | Node::Entry(..) => "data",
                     Node::Section(i) => &self.sections[i].name,
                 };
                 format!("{label}:{:016x}+{off:x}{slot}", self.root_hash(node)?)
@@ -992,10 +1000,49 @@ Idx Name          Size      VMA               LMA               File off  Algn
         let input = [Extent {
             vma: 0x2008,
             size: 8,
+            entry: 0,
         }];
         assert_eq!(hash(&input, 0x2018), hash(&input, 0x201c));
         assert_ne!(hash(&input, 0x2008), hash(&input, 0x2009));
         assert_ne!(hash(&[], 0x2018), hash(&[], 0x201c));
+    }
+
+    #[test]
+    fn a_constant_pool_hashes_only_the_entry_a_function_reads() {
+        let dis = "\
+0000000000001000 <_ZN3foo3bar17h1E>:
+    1000:\tlea    0x1000(%rip),%rax        # 2008 <anon>
+    1007:\tret
+";
+        let (sections, symbols) = (parse_sections(SECTIONS), parse_symbols(SYMBOLS));
+        let pool = [Extent {
+            vma: 0x2008,
+            size: 16,
+            entry: 8,
+        }];
+        let hash = |byte: usize| {
+            let mut image = image(7, 1);
+            image[byte] = 9;
+            let mut resolver = Resolver {
+                sections: &sections,
+                symbols: &symbols,
+                relocs: &[],
+                zero_sized: &HashMap::new(),
+                inputs: &pool,
+                image: &image,
+                roots: HashMap::new(),
+            };
+            let wanted = ["_ZN3foo3bar17h1E".to_string()].into();
+            let hashes = hash_functions(
+                &mut resolver,
+                &wanted,
+                Cursor::new(dis.as_bytes()),
+                &mut HashMap::new(),
+            );
+            bar(&hashes)
+        };
+        assert_eq!(hash(0x2010), hash(0x2017));
+        assert_ne!(hash(0x2008), hash(0x2009));
     }
 
     #[test]

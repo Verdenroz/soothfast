@@ -26,6 +26,17 @@ const KEEP: usize = 64;
 pub struct Extent {
     pub vma: u64,
     pub size: u64,
+    /// Size of one object when the section is a pool of fixed-size constants
+    /// (`.rodata.cstN`), else 0.
+    pub entry: u64,
+}
+
+/// `.rodata.cst8` holds 8-byte objects; other names are one object.
+fn entry_size(section: &str) -> u64 {
+    section
+        .strip_prefix(".rodata.cst")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
 }
 
 /// The extents of the input sections in `text`, read as an lld or mold map
@@ -53,7 +64,12 @@ fn parse_lld(text: &str) -> Vec<Extent> {
             let vma = u64::from_str_radix(f.next()?, 16).ok()?;
             f.next()?;
             let size = u64::from_str_radix(f.next()?, 16).ok()?;
-            Some(Extent { vma, size })
+            let section = line.rsplit_once(":(")?.1.strip_suffix(')')?;
+            Some(Extent {
+                vma,
+                size,
+                entry: entry_size(section),
+            })
         })
         .collect()
 }
@@ -64,21 +80,27 @@ fn parse_gnu(text: &str) -> Vec<Extent> {
     let hex = |s: &str| u64::from_str_radix(s.strip_prefix("0x")?, 16).ok();
     let mut extents = Vec::new();
     let mut named = false;
+    let mut section = "";
     for line in text.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
         let nested = line.starts_with(' ');
         match f[..] {
-            [name] if nested && name.starts_with('.') => named = true,
+            [name] if nested && name.starts_with('.') => {
+                named = true;
+                section = name;
+            }
             [name, addr, size, ..] if nested && name.starts_with('.') => {
                 named = false;
                 if let (Some(vma), Some(size)) = (hex(addr), hex(size)) {
-                    extents.push(Extent { vma, size });
+                    let entry = entry_size(name);
+                    extents.push(Extent { vma, size, entry });
                 }
             }
             [addr, size, ..] if named => {
                 named = false;
                 if let (Some(vma), Some(size)) = (hex(addr), hex(size)) {
-                    extents.push(Extent { vma, size });
+                    let entry = entry_size(section);
+                    extents.push(Extent { vma, size, entry });
                 }
             }
             _ => named = false,
@@ -90,17 +112,18 @@ fn parse_gnu(text: &str) -> Vec<Extent> {
 fn encode(extents: &[Extent]) -> String {
     extents
         .iter()
-        .map(|e| format!("{:x} {:x}\n", e.vma, e.size))
+        .map(|e| format!("{:x} {:x} {:x}\n", e.vma, e.size, e.entry))
         .collect()
 }
 
 fn decode(text: &str) -> Vec<Extent> {
     text.lines()
         .filter_map(|line| {
-            let (vma, size) = line.split_once(' ')?;
+            let mut f = line.split(' ').map(|n| u64::from_str_radix(n, 16).ok());
             Some(Extent {
-                vma: u64::from_str_radix(vma, 16).ok()?,
-                size: u64::from_str_radix(size, 16).ok()?,
+                vma: f.next()??,
+                size: f.next()??,
+                entry: f.next()??,
             })
         })
         .collect()
@@ -170,6 +193,7 @@ mod tests {
             cf50             cf50        0     1                 soothfast::EMPTY
             cf64             cf64       11     1         /w path/deps/bench-1.o:(.rodata..Lanon.1.1)
             cf80             cf80        0     1                 std::thread::Thread::new(x:(y))
+            cf90             cf90       10     8         <internal>:(.rodata.cst8)
 ";
 
     const GNU: &str = "\
@@ -184,11 +208,21 @@ Linker script and memory map
  .rodata.foo    0x0000000000002008       0x10 foo.o
  .rodata._ZN3bar17h0123456789abcdefE
                 0x0000000000002018       0x18 bar.o
+ .rodata.cst16
+                0x0000000000002030       0x20 baz.o
 .data           0x0000000000003000        0x8
 ";
 
     fn at(vma: u64, size: u64) -> Extent {
-        Extent { vma, size }
+        Extent {
+            vma,
+            size,
+            entry: 0,
+        }
+    }
+
+    fn pool(vma: u64, size: u64, entry: u64) -> Extent {
+        Extent { vma, size, entry }
     }
 
     #[test]
@@ -197,9 +231,10 @@ Linker script and memory map
             parse(LLD).expect("parsed"),
             [
                 at(0x2e0, 0x1c),
-                at(0xce40, 0xd8),
+                pool(0xce40, 0xd8, 8),
                 at(0xcf18, 7),
-                at(0xcf64, 0x11)
+                at(0xcf64, 0x11),
+                pool(0xcf90, 0x10, 8)
             ]
         );
     }
@@ -208,7 +243,12 @@ Linker script and memory map
     fn a_gnu_ld_map_yields_its_input_sections_with_wrapped_names() {
         assert_eq!(
             parse(GNU).expect("parsed"),
-            [at(0x2000, 4), at(0x2008, 0x10), at(0x2018, 0x18)]
+            [
+                at(0x2000, 4),
+                at(0x2008, 0x10),
+                at(0x2018, 0x18),
+                pool(0x2030, 0x20, 16)
+            ]
         );
     }
 
