@@ -136,10 +136,17 @@ fn parse_symbols(listing: &str) -> Vec<Symbol> {
     symbols
 }
 
-/// Rust data symbols `nm` lists without a size: zero sized statics, whose
-/// address code takes and whose content is nothing. Keyed by address.
+/// Addresses that name no data to hash, keyed by address:
+/// - Rust data symbols `nm` lists without a size are zero sized statics,
+///   whose address code takes and whose content is nothing (`zst:NAME`);
+/// - `__stop_SEC` is the linker's one-past-the-end of a section. It cannot be
+///   dereferenced, and often sits at the start of whatever follows, which
+///   code reads through its own references (`bound:NAME`). A `__start_SEC`
+///   is not named here: it is a real element address, so it resolves as data.
+///
+/// A sized symbol at the same address is resolved first and wins.
 fn parse_zero_sized(listing: &str, sections: &[Section]) -> HashMap<u64, String> {
-    listing
+    let mut named: Vec<(u64, String)> = listing
         .lines()
         .filter_map(|line| {
             let f: Vec<&str> = line.split_whitespace().collect();
@@ -152,10 +159,18 @@ fn parse_zero_sized(listing: &str, sections: &[Section]) -> HashMap<u64, String>
             let in_data = sections
                 .iter()
                 .any(|s| !s.code && addr >= s.vma && addr - s.vma < s.size);
-            (in_data && (name.starts_with("_R") || name.starts_with("_ZN")))
-                .then(|| (addr, strip_llvm(name).into_owned()))
+            if !in_data {
+                return None;
+            }
+            if name.starts_with("__stop_") {
+                return Some((addr, format!("bound:{name}")));
+            }
+            (name.starts_with("_R") || name.starts_with("_ZN"))
+                .then(|| (addr, format!("zst:{}", strip_llvm(name))))
         })
-        .collect()
+        .collect();
+    named.sort();
+    named.into_iter().rev().collect()
 }
 
 /// What a dynamic relocation writes into its slot at load time.
@@ -265,7 +280,7 @@ impl Resolver<'_> {
             });
         }
         if let Some(name) = self.zero_sized.get(&addr) {
-            return Some(Place::Code(format!("zst:{name}")));
+            return Some(Place::Code(name.clone()));
         }
         if code {
             return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
@@ -909,14 +924,14 @@ Idx Name          Size      VMA               LMA               File off  Algn
 ";
         assert_eq!(
             parse_zero_sized(listing, &sections),
-            HashMap::from([(0x2008, "_RNvCs1_3foo5EMPTY".to_string())])
+            HashMap::from([(0x2008, "zst:_RNvCs1_3foo5EMPTY".to_string())])
         );
     }
 
     #[test]
     fn a_zero_sized_static_does_not_hide_the_object_at_its_address() {
         let (sections, symbols) = (parse_sections(SECTIONS), parse_symbols(SYMBOLS));
-        let zero_sized = HashMap::from([(0x2000, "_RNvCs1_3foo5EMPTY".to_string())]);
+        let zero_sized = HashMap::from([(0x2000, "zst:_RNvCs1_3foo5EMPTY".to_string())]);
         let wanted: BTreeSet<String> = ["_ZN3foo3bar17h1E".to_string()].into();
         let hash = |image: &[u8]| {
             let mut resolver = Resolver {
@@ -1249,6 +1264,71 @@ Idx Name          Size      VMA               LMA               File off  Algn
         };
         assert!(hash(0x2000).is_some());
         assert_eq!(hash(0x2000), hash(0x2010));
+    }
+
+    #[test]
+    fn a_got_slot_for_a_stop_symbol_does_not_walk_the_section_after_it() {
+        let sections = parse_sections(
+            "\
+Idx Name          Size      VMA               LMA               File off  Algn
+  0 .text         00000100  0000000000001000  0000000000001000  00001000  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  1 .got          00000008  0000000000002000  0000000000002000  00002000  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+  2 .after        00000020  0000000000002008  0000000000002008  00002008  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+",
+        );
+        let symbols = parse_symbols(FN_SYMBOLS);
+        let relocs = parse_relocs("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x0000000000002008");
+        let dis = "\
+0000000000001000 <_ZN3foo3bar17h1E>:
+    1000:\tcmp    0x1000(%rip),%rax        # 2000 <_GLOBAL_OFFSET_TABLE_>
+    1007:\tret
+";
+        let hash = |stops: &HashMap<u64, String>, byte: u8| {
+            let mut image = vec![0; 0x3000];
+            image[0x2010] = byte;
+            let mut resolver = Resolver {
+                sections: &sections,
+                symbols: &symbols,
+                relocs: &relocs,
+                zero_sized: stops,
+                inputs: &[],
+                image: &image,
+                roots: HashMap::new(),
+            };
+            let wanted = ["_ZN3foo3bar17h1E".to_string()].into();
+            let hashes = hash_functions(
+                &mut resolver,
+                &wanted,
+                Cursor::new(dis.as_bytes()),
+                &mut HashMap::new(),
+            );
+            bar(&hashes)
+        };
+        let stops = HashMap::from([(0x2008, "bound:__stop_x".to_string())]);
+        assert!(hash(&stops, 1).is_some());
+        assert_eq!(hash(&stops, 1), hash(&stops, 2));
+        assert_ne!(hash(&HashMap::new(), 1), hash(&HashMap::new(), 2));
+    }
+
+    #[test]
+    fn a_stop_symbol_is_named_and_a_start_symbol_is_not() {
+        let sections = parse_sections(SECTIONS);
+        let listing = "\
+0000000000002008 r __stop_linkme_X
+0000000000002010 r __start_linkme_Y
+0000000000002018 r __stop_linkme_Z
+0000000000002018 r __stop_linkme_A
+";
+        assert_eq!(
+            parse_zero_sized(listing, &sections),
+            HashMap::from([
+                (0x2008, "bound:__stop_linkme_X".to_string()),
+                (0x2018, "bound:__stop_linkme_A".to_string()),
+            ])
+        );
     }
 
     #[test]
