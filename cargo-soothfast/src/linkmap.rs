@@ -169,6 +169,7 @@ mod tests {
             cf50             cf50        0     1         /w/target/deps/bench-1.o:(.rodata.EMPTY)
             cf50             cf50        0     1                 soothfast::EMPTY
             cf64             cf64       11     1         /w path/deps/bench-1.o:(.rodata..Lanon.1.1)
+            cf80             cf80        0     1                 std::thread::Thread::new(x:(y))
 ";
 
     const GNU: &str = "\

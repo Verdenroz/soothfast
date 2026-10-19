@@ -229,15 +229,59 @@ used only if all of these hold:
   was judged against (`alloc = N`, `p99 = ...`) are not part of the code.
 
 Items with `sizes(...)` are never reused: a sweep can reach code the
-default-size run never executed. A reference with no sized symbol (the
-constants rustc and LLVM emit under local labels: string literals, panic
-locations, constant pools, jump tables) is hashed as its whole section, so
-an edit that changes any constant in `.rodata` changes every function that
-reads one, and those items are measured again. On aarch64, `adrp`+`add`
-immediates carry layout and only cause misses. Only `callgrind` is reused:
-`perfcnt` and `walltime` hosts behave as before.
+default-size run never executed. Only `callgrind` is reused: `perfcnt` and
+`walltime` hosts behave as before.
 
-A reused item keeps the walltime it was stored with, and a baseline saved
+### Where data begins and ends
+
+A data reference with a sized symbol hashes that symbol. rustc and LLVM emit
+most constants (string literals, panic locations, constant pools, jump
+tables) under local labels, which the symbol table does not keep. For those
+the CLI reads the linker's map: each input section is a real object, since
+rustc gives every constant its own section and code cannot read past the one
+it addresses. A reference then hashes the input section it lands in, not the
+whole output section. Merged pools (`SHF_MERGE`, such as `.rodata.cst8`) are
+one input section in the map, so a constant in a pool is hashed with the rest
+of it.
+
+The map comes from a second link of the bench target alone
+(`cargo rustc --bench ... -- -C link-arg=-Wl,-Map=...`), written next to the
+measured binary as a separate artifact of the same bytes: dependencies are
+not rebuilt and the measured binary is not touched. The CLI checks that the
+two have the same loaded-section digest before it trusts the map, and keeps
+only the section extents under `.soothfast/maps/`, named by that digest, so a
+map is never read for another binary. lld, mold and GNU ld maps are read. A
+map that cannot be built or read is a miss, not a guess:
+
+```console
+gate: no link map for <binary> (unrecognized map format); unnamed constants hash as whole sections
+```
+
+A reference outside every input section falls back to the whole output
+section the same way. On aarch64, `adrp`+`add` immediates carry layout and
+only cause misses.
+
+What still misses, and why. A jump table stores code offsets as plain
+integers, so any edit that moves code changes its bytes, and every function
+that switches through one hashes differently, including `main` of the bench
+runner, which every item executes. A constant edited inside a merged pool
+changes the pool for every function that reads from it. Both are sound and
+both cost hits.
+
+### The commit-key path
+
+When the reference is served by commit key, the gate still measures HEAD. The
+item store is consulted for HEAD alone: an item whose executed code and
+fingerprint match a stored entry is spliced in, the rest are measured, and
+each is compared against the real reference number. Its delta is not assumed
+to be zero.
+
+### Reused items and switches
+
+A reused item reports the stored numbers on both sides, so it shows an exact
+zero delta where a fresh run of the two checkouts would differ by the noise
+callgrind sees from different working directories (about 0.1%). It keeps the
+walltime it was stored with, and a baseline saved
 from the run marks it under `reused` with `from: "item cache"`. `--no-item-cache`
 and `SOOTHFAST_RECORD=1` measure every item. A harness that predates `--id`
 turns it off for that invocation, the way the run cache is turned off:
