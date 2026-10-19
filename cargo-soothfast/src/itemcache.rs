@@ -237,7 +237,7 @@ impl Stored {
             .values()
             .flatten()
             .flat_map(|e| &e.functions)
-            .filter(|(ob, _)| ob == codekey::EXE)
+            .filter(|(ob, sym)| ob == codekey::EXE && !sym.starts_with("plt:"))
             .map(|(_, sym)| sym.clone())
             .collect()
     }
@@ -397,6 +397,9 @@ impl Reuse {
         };
         for (id, functions) in functions {
             let Some(metrics) = run.items.get(id) else {
+                continue;
+            };
+            let Some(functions) = binary.name_stubs(functions) else {
                 continue;
             };
             let assertions = run.assertions.iter().filter(|a| &a.id == id).cloned();

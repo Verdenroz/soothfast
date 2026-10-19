@@ -34,16 +34,37 @@ fn strip_llvm(name: &str) -> Cow<'_, str> {
     Cow::Owned(format!("{}{}", &name[..at], &rest[digits..]))
 }
 
+/// Callgrind's name for the frames under `main`, which is no symbol.
+const BELOW_MAIN: &str = "(below main)";
+
+/// Prefix of a PLT stub's portable name. A stub is a trampoline fixed by the
+/// symbol it names; the function it reaches is listed under its own object.
+const STUB: &str = "plt:";
+
+/// A symbol without callgrind's `'N` marker for functions inside a recursion
+/// cycle.
+fn unmarked(sym: &str) -> &str {
+    match sym.rsplit_once('\'') {
+        Some((name, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => sym,
+    }
+}
+
 /// `functions` as a stored entry keeps them: the object that is `bin` named
-/// [`EXE`], `.llvm.N` suffixes dropped, sorted and deduplicated.
+/// [`EXE`] with its symbols normalized, every other object reduced to its
+/// path (its content decides what ran in it), sorted and deduplicated.
 pub fn portable(bin: &Path, functions: &[(String, String)]) -> Vec<(String, String)> {
     let canonical = bin.canonicalize().ok();
     let is_bin = |ob: &str| Path::new(ob) == bin || canonical.as_deref() == Some(Path::new(ob));
     let set: BTreeSet<(String, String)> = functions
         .iter()
+        .filter(|(ob, sym)| !(is_bin(ob) && sym == BELOW_MAIN))
         .map(|(ob, sym)| {
-            let ob = if is_bin(ob) { EXE } else { ob };
-            (ob.to_string(), strip_llvm(sym).to_string())
+            if is_bin(ob) {
+                (EXE.to_string(), strip_llvm(unmarked(sym)).to_string())
+            } else {
+                (ob.clone(), String::new())
+            }
         })
         .collect();
     set.into_iter().collect()
@@ -379,6 +400,7 @@ fn hash_functions(
     resolver: &mut Resolver,
     wanted: &BTreeSet<String>,
     mut disassembly: impl BufRead,
+    stubs: &mut HashMap<String, String>,
 ) -> HashMap<String, u64> {
     let mut spans: Vec<Span> = Vec::new();
     for s in resolver.symbols {
@@ -403,7 +425,17 @@ fn hash_functions(
     let mut line = Vec::new();
     while matches!(disassembly.read_until(b'\n', &mut line), Ok(n) if n > 0) {
         let text = String::from_utf8_lossy(&line);
-        if let Some((addr, body)) = text.split_once(':')
+        if let Some((addr, name)) = text
+            .trim_end()
+            .strip_suffix(">:")
+            .and_then(|t| t.split_once(" <"))
+            && let Ok(addr) = u64::from_str_radix(addr, 16)
+        {
+            let hex = format!("0x{addr:016x}");
+            if wanted.contains(&hex) {
+                stubs.insert(hex, name.to_string());
+            }
+        } else if let Some((addr, body)) = text.split_once(':')
             && let Ok(addr) = u64::from_str_radix(addr.trim(), 16)
         {
             if current.is_none_or(|c| addr < spans[c].start || addr >= spans[c].end) {
@@ -450,6 +482,9 @@ fn command_text(program: &str, args: &[&str], bin: &Path) -> Option<String> {
 /// The requested functions of one bench binary, hashed.
 pub struct Binary {
     hashes: HashMap<String, u64>,
+    /// Symbolless code the wanted set named by address, to the name objdump
+    /// gave the stub at that address.
+    stubs: HashMap<String, String>,
 }
 
 impl Binary {
@@ -477,13 +512,36 @@ impl Binary {
             .spawn()
             .ok()?;
         let stdout = child.stdout.take()?;
-        let hashes = hash_functions(&mut resolver, wanted, BufReader::new(stdout));
-        child.wait().ok()?.success().then_some(Binary { hashes })
+        let mut stubs = HashMap::new();
+        let hashes = hash_functions(&mut resolver, wanted, BufReader::new(stdout), &mut stubs);
+        child
+            .wait()
+            .ok()?
+            .success()
+            .then_some(Binary { hashes, stubs })
     }
 
     #[cfg(test)]
     pub fn with_hashes(hashes: HashMap<String, u64>) -> Binary {
-        Binary { hashes }
+        Binary {
+            hashes,
+            stubs: HashMap::new(),
+        }
+    }
+
+    /// `functions` with each symbolless address replaced by its stub name;
+    /// `None` if one has no name here.
+    pub fn name_stubs(&self, functions: Vec<(String, String)>) -> Option<Vec<(String, String)>> {
+        functions
+            .into_iter()
+            .map(|(ob, sym)| {
+                if ob == EXE && sym.starts_with("0x") {
+                    Some((ob, format!("{STUB}{}", self.stubs.get(&sym)?)))
+                } else {
+                    Some((ob, sym))
+                }
+            })
+            .collect()
     }
 
     /// The key of `functions` (as [`portable`] returns them) in this binary,
@@ -491,18 +549,24 @@ impl Binary {
     pub fn code_key(&self, functions: &[(String, String)]) -> Option<String> {
         let mut text = String::new();
         for (ob, sym) in functions {
-            if ob == EXE {
-                writeln!(text, "x {sym} {:016x}", self.hashes.get(sym)?).ok()?;
+            if ob != EXE {
+                writeln!(text, "f {ob} {:016x}", file_digest(ob)?).ok()?;
+            } else if let Some(stub) = sym.strip_prefix(STUB) {
+                writeln!(text, "p {stub}").ok()?;
             } else {
-                writeln!(text, "f {ob} {:016x} {sym}", file_digest(ob)?).ok()?;
+                writeln!(text, "x {sym} {:016x}", self.hashes.get(sym)?).ok()?;
             }
         }
         Some(format!("{:016x}", fnv1a(text.as_bytes())))
     }
 }
 
-/// Content digest of a foreign object, read once per path.
+/// Content digest of a foreign object, read once per path. Callgrind's `???`
+/// is valgrind's own trampolines, which the host key pins by valgrind version.
 fn file_digest(path: &str) -> Option<u64> {
+    if path == "???" {
+        return Some(0);
+    }
     static MEMO: OnceLock<Mutex<HashMap<String, Option<u64>>>> = OnceLock::new();
     let mut memo = MEMO.get_or_init(Default::default).lock().ok()?;
     *memo
@@ -562,7 +626,12 @@ Idx Name          Size      VMA               LMA               File off  Algn
         let wanted = ["_ZN3foo3bar17h1E", "_ZN3foo3baz17h2E"]
             .map(String::from)
             .into();
-        hash_functions(&mut resolver, &wanted, Cursor::new(dis.as_bytes()))
+        hash_functions(
+            &mut resolver,
+            &wanted,
+            Cursor::new(dis.as_bytes()),
+            &mut HashMap::new(),
+        )
     }
 
     const DIS: &str = "\
@@ -750,27 +819,48 @@ Idx Name          Size      VMA               LMA               File off  Algn
     }
 
     #[test]
-    fn portable_names_the_bench_binary_and_drops_llvm_suffixes() {
+    fn portable_names_the_bench_binary_and_reduces_other_objects_to_paths() {
+        let f = |ob: &str, sym: &str| (ob.to_string(), sym.to_string());
         let functions = vec![
-            ("/lib/libc.so.6".to_string(), "memcpy".to_string()),
-            ("/w/target/bench".to_string(), "b.llvm.9".to_string()),
-            ("/w/target/bench".to_string(), "a".to_string()),
+            f("/lib/libc.so.6", "memcpy"),
+            f("/lib/libc.so.6", "memmove"),
+            f("/w/target/bench", "b.llvm.9"),
+            f("/w/target/bench", "a'2"),
+            f("/w/target/bench", "(below main)"),
+            f("/w/target/bench", "0x0000000000023eb0"),
         ];
         assert_eq!(
             portable(Path::new("/w/target/bench"), &functions),
             [
-                ("/lib/libc.so.6".to_string(), "memcpy".to_string()),
-                (EXE.to_string(), "a".to_string()),
-                (EXE.to_string(), "b".to_string()),
+                f("/lib/libc.so.6", ""),
+                f(EXE, "0x0000000000023eb0"),
+                f(EXE, "a"),
+                f(EXE, "b"),
             ]
         );
     }
 
     #[test]
+    fn a_stub_address_becomes_its_name_and_hashes_by_it() {
+        let mut binary = Binary::with_hashes(HashMap::new());
+        binary
+            .stubs
+            .insert("0x0000000000023eb0".into(), "memcpy@plt".into());
+        let named = binary
+            .name_stubs(vec![(EXE.into(), "0x0000000000023eb0".into())])
+            .expect("named");
+        assert_eq!(named, [(EXE.to_string(), "plt:memcpy@plt".to_string())]);
+        assert!(binary.code_key(&named).is_some());
+        assert!(
+            binary
+                .name_stubs(vec![(EXE.into(), "0x0000000000000001".into())])
+                .is_none()
+        );
+    }
+
+    #[test]
     fn a_function_missing_from_the_binary_has_no_key() {
-        let binary = Binary {
-            hashes: HashMap::new(),
-        };
+        let binary = Binary::with_hashes(HashMap::new());
         assert_eq!(binary.code_key(&[(EXE.into(), "gone".into())]), None);
     }
 
