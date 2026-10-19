@@ -819,7 +819,29 @@ fn measure_ref_interleaved(
     let head_stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
     // Naming HEAD's binary costs a no-run build plus an objdump, so it is
     // taken once and threaded to every lookup and store below.
-    let (head_dig, runs, _) = headrun::probe("gate", common, &head_stamp);
+    let (head_dig, runs, head_exe) = headrun::probe("gate", common, &head_stamp);
+    // HEAD alone, where the reference is already measured: items whose code
+    // a stored measurement covers are spliced and the rest are measured.
+    let measure_head = |exe: Option<&std::path::Path>| -> Result<Run, String> {
+        let bin = exe.map(|exe| Bin {
+            exe,
+            dir: None,
+            target_dir: None,
+        });
+        let Some(reuse) = bin.and_then(|b| Reuse::plan("gate", common, &runs, &[b])) else {
+            return measure(None, &[]);
+        };
+        let mut run = if reuse.nothing_to_measure(0) {
+            let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+            Reuse::empty_run(stamp)
+        } else {
+            let ids = reuse.id_args(0);
+            measure(None, &ids.iter().map(String::as_str).collect::<Vec<_>>())?
+        };
+        reuse.record(0, &run);
+        reuse.splice(&mut run);
+        Ok(run)
+    };
     // Stored regardless of `reuse`: a fresh measurement is worth keeping
     // even for an invocation that declined to trust an existing one.
     let base_known = !base_sha.is_empty();
@@ -835,7 +857,7 @@ fn measure_ref_interleaved(
                 (head, Settled::AsMeasured)
             }
             None => {
-                let head = measure(None, &[])?;
+                let head = measure_head(head_exe.as_deref())?;
                 let settled = settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
                 (head, settled)
             }
@@ -984,7 +1006,7 @@ fn measure_ref_interleaved(
             let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
                 Some((head, _)) => (head, Settled::AsMeasured),
                 None => {
-                    let head = measure(None, &[])?;
+                    let head = measure_head(head_exe.as_deref())?;
                     let settled =
                         settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
                     (head, settled)
