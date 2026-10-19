@@ -9,6 +9,7 @@
 //! the caller sees as a miss. aarch64 `adrp`+`add` immediates carry layout and
 //! only ever cause misses.
 
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader};
@@ -22,9 +23,15 @@ use soothfast_registry::fnv1a;
 /// different paths name the same functions.
 pub const EXE: &str = "@exe";
 
-/// `.llvm.N` suffixes are per-build; the rest of the name is the identity.
-fn strip_llvm(name: &str) -> &str {
-    name.split(".llvm.").next().unwrap_or(name)
+/// The `.llvm.N` segment is per-build; the rest of the name, an addend
+/// included, is the identity.
+fn strip_llvm(name: &str) -> Cow<'_, str> {
+    let Some(at) = name.find(".llvm.") else {
+        return Cow::Borrowed(name);
+    };
+    let rest = &name[at + ".llvm.".len()..];
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    Cow::Owned(format!("{}{}", &name[..at], &rest[digits..]))
 }
 
 /// `functions` as a stored entry keeps them: the object that is `bin` named
@@ -141,14 +148,37 @@ fn parse_relocs(listing: &str) -> Vec<Reloc> {
     relocs
 }
 
+/// A piece of data a walk can enter.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Node {
+    Symbol(usize),
+    Section(usize),
+}
+
+/// What an address resolves to.
+enum Place {
+    /// Code, named; the layout never enters it.
+    Code(String),
+    /// An offset into data, plus the GOT slot name when objdump gave one.
+    Data(Node, u64, String),
+}
+
+/// One canonical serialization of the data reachable from a root. Nodes are
+/// numbered in visit order and an edge back to a visited node is written as
+/// its number, so a cycle ends and the text does not depend on addresses.
+#[derive(Default)]
+struct Walk {
+    order: HashMap<Node, usize>,
+    out: Vec<u8>,
+}
+
 /// Turns an address into something that does not move with the layout.
 struct Resolver<'a> {
     sections: &'a [Section],
     symbols: &'a [Symbol],
     relocs: &'a [Reloc],
     image: &'a [u8],
-    symbol_hashes: HashMap<usize, Option<u64>>,
-    section_hashes: HashMap<usize, Option<u64>>,
+    roots: HashMap<Node, Option<u64>>,
 }
 
 impl Resolver<'_> {
@@ -167,10 +197,54 @@ impl Resolver<'_> {
         (addr - s.addr < s.size).then_some(i)
     }
 
-    /// Hash of a data range. A relocated slot holds a layout-dependent value
-    /// (or zero) in the file, so its bytes are blanked and the target it
-    /// resolves to is hashed in their place.
-    fn bytes_hash(&mut self, section: usize, addr: u64, size: u64) -> Option<u64> {
+    /// `hint` is the symbol objdump printed next to the address, used only
+    /// for code that has no sized symbol (PLT stubs) and GOT slots.
+    fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
+        let section = self.section_at(addr)?;
+        let code = self.sections[section].code;
+        if let Some(i) = self.symbol_at(addr)
+            && self.section_at(self.symbols[i].addr) == Some(section)
+        {
+            let off = addr - self.symbols[i].addr;
+            return Some(if code {
+                Place::Code(format!("{}+{off:x}", strip_llvm(&self.symbols[i].name)))
+            } else {
+                Place::Data(Node::Symbol(i), off, String::new())
+            });
+        }
+        if code {
+            return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
+        }
+        let slot = hint.filter(|h| h.ends_with("$got")).unwrap_or_default();
+        Some(Place::Data(
+            Node::Section(section),
+            addr - self.sections[section].vma,
+            slot.to_string(),
+        ))
+    }
+
+    /// Section, address and size of a node.
+    fn extent(&self, node: Node) -> Option<(usize, u64, u64)> {
+        match node {
+            Node::Symbol(i) => {
+                let s = &self.symbols[i];
+                Some((self.section_at(s.addr)?, s.addr, s.size))
+            }
+            Node::Section(i) => Some((i, self.sections[i].vma, self.sections[i].size)),
+        }
+    }
+
+    /// Append `node` to the walk. A relocated slot holds a layout-dependent
+    /// value (or zero) in the file, so its bytes are blanked and what it
+    /// points at is walked in their place.
+    fn walk(&self, node: Node, walk: &mut Walk) -> Option<()> {
+        if let Some(n) = walk.order.get(&node) {
+            walk.out.extend(format!("ref#{n};").bytes());
+            return Some(());
+        }
+        let n = walk.order.len();
+        walk.order.insert(node, n);
+        let (section, addr, size) = self.extent(node)?;
         let s = &self.sections[section];
         let contents = s.contents;
         let mut bytes = if contents {
@@ -182,70 +256,58 @@ impl Resolver<'_> {
         };
         let first = self.relocs.partition_point(|r| r.offset < addr);
         let last = self.relocs.partition_point(|r| r.offset < addr + size);
+        if contents {
+            for r in &self.relocs[first..last] {
+                let slot = (r.offset - addr) as usize;
+                bytes[slot..(slot + 8).min(size as usize)].fill(0);
+            }
+        }
+        walk.out.extend(format!("node#{n}:{size}:").bytes());
+        walk.out.extend(bytes);
         for i in first..last {
             let (slot, target) = (self.relocs[i].offset - addr, self.relocs[i].target.clone());
-            let target = match target {
-                Target::Relative(to) => self.resolve(to, None)?,
-                Target::Symbol(name) => format!("sym:{}", strip_llvm(&name)),
-            };
-            if contents {
-                let slot = slot as usize;
-                let end = (slot + 8).min(bytes.len());
-                bytes[slot..end].fill(0);
+            walk.out.extend(format!("@{slot:x}=").bytes());
+            match target {
+                Target::Symbol(name) => walk
+                    .out
+                    .extend(format!("sym:{}", strip_llvm(&name)).bytes()),
+                Target::Relative(to) => match self.place(to, None)? {
+                    Place::Code(name) => walk.out.extend(name.bytes()),
+                    Place::Data(next, off, _) => {
+                        walk.out.extend(format!("+{off:x}(").bytes());
+                        self.walk(next, walk)?;
+                        walk.out.push(b')');
+                    }
+                },
             }
-            bytes.extend(format!("@{slot:x}={target}\n").bytes());
+            walk.out.push(b';');
         }
-        Some(fnv1a(&bytes))
+        Some(())
     }
 
-    fn symbol_hash(&mut self, symbol: usize, section: usize) -> Option<u64> {
-        if let Some(h) = self.symbol_hashes.get(&symbol) {
+    /// Hash of everything reachable from `node`. Memoized per root only: a
+    /// node reached inside another root's walk saw that walk's visit order.
+    fn root_hash(&mut self, node: Node) -> Option<u64> {
+        if let Some(h) = self.roots.get(&node) {
             return *h;
         }
-        // A pointer cycle reaches itself while hashing: the placeholder ends it.
-        self.symbol_hashes.insert(symbol, Some(0));
-        let (addr, size) = (self.symbols[symbol].addr, self.symbols[symbol].size);
-        let h = self.bytes_hash(section, addr, size);
-        self.symbol_hashes.insert(symbol, h);
+        let mut walk = Walk::default();
+        let h = self.walk(node, &mut walk).map(|_| fnv1a(&walk.out));
+        self.roots.insert(node, h);
         h
     }
 
-    fn section_hash(&mut self, section: usize) -> Option<u64> {
-        if let Some(h) = self.section_hashes.get(&section) {
-            return *h;
-        }
-        self.section_hashes.insert(section, Some(0));
-        let (vma, size) = (self.sections[section].vma, self.sections[section].size);
-        let h = self.bytes_hash(section, vma, size);
-        self.section_hashes.insert(section, h);
-        h
-    }
-
-    /// `hint` is the symbol objdump printed next to the address, used only
-    /// for code that has no sized symbol (PLT stubs).
     fn resolve(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
-        let section = self.section_at(addr)?;
-        let code = self.sections[section].code;
-        if let Some(i) = self.symbol_at(addr)
-            && self.section_at(self.symbols[i].addr) == Some(section)
-        {
-            let off = addr - self.symbols[i].addr;
-            return Some(if code {
-                format!("{}+{off:x}", strip_llvm(&self.symbols[i].name))
-            } else {
-                format!("data:{:016x}+{off:x}", self.symbol_hash(i, section)?)
-            });
-        }
-        if code {
-            return hint.map(|h| strip_llvm(h).to_string());
-        }
-        let off = addr - self.sections[section].vma;
-        let slot = hint.filter(|h| h.ends_with("$got")).unwrap_or_default();
-        Some(format!(
-            "{}:{:016x}+{off:x}{slot}",
-            self.sections[section].name,
-            self.section_hash(section)?
-        ))
+        Some(match self.place(addr, hint)? {
+            Place::Code(name) => name,
+            Place::Data(node, off, slot) => {
+                let label = match node {
+                    Node::Symbol(_) => "data",
+                    Node::Section(i) => &self.sections[i].name,
+                };
+                format!("{label}:{:016x}+{off:x}{slot}", self.root_hash(node)?)
+            }
+        })
     }
 
     /// One disassembled instruction (address column already removed).
@@ -321,7 +383,7 @@ fn hash_functions(
     let mut spans: Vec<Span> = Vec::new();
     for s in resolver.symbols {
         let name = strip_llvm(&s.name);
-        if !wanted.contains(name) {
+        if !wanted.contains(name.as_ref()) {
             continue;
         }
         match spans.iter_mut().find(|sp| sp.start == s.addr) {
@@ -405,8 +467,7 @@ impl Binary {
             symbols: &symbols,
             relocs: &relocs,
             image: &image,
-            symbol_hashes: HashMap::new(),
-            section_hashes: HashMap::new(),
+            roots: HashMap::new(),
         };
         let mut child = Command::new("objdump")
             .args(["-d", "--no-show-raw-insn"])
@@ -496,10 +557,11 @@ Idx Name          Size      VMA               LMA               File off  Algn
             symbols: &symbols,
             relocs: &relocs,
             image,
-            symbol_hashes: HashMap::new(),
-            section_hashes: HashMap::new(),
+            roots: HashMap::new(),
         };
-        let wanted = ["_ZN3foo3bar17h1E".to_string()].into();
+        let wanted = ["_ZN3foo3bar17h1E", "_ZN3foo3baz17h2E"]
+            .map(String::from)
+            .into();
         hash_functions(&mut resolver, &wanted, Cursor::new(dis.as_bytes()))
     }
 
@@ -595,6 +657,75 @@ Idx Name          Size      VMA               LMA               File off  Algn
         };
         assert_ne!(with("alpha"), with("beta"));
         assert_eq!(with("alpha"), with("alpha"));
+    }
+
+    #[test]
+    fn llvm_suffixes_drop_but_addends_stay() {
+        assert_eq!(strip_llvm("foo.llvm.12+0x10"), "foo+0x10");
+        assert_eq!(strip_llvm("foo.llvm.12"), "foo");
+        assert_eq!(strip_llvm("foo+0x10"), "foo+0x10");
+    }
+
+    const CYCLE_SYMBOLS: &str = "\
+0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
+0000000000001040 0000000000000020 T _ZN3foo3baz17h2E
+0000000000002000 0000000000000010 r table_a
+0000000000002010 0000000000000008 r table_b
+";
+    const CYCLE_RELOCS: &str = "\
+0000000000002000 R_X86_64_RELATIVE  *ABS*+0x0000000000002010
+0000000000002010 R_X86_64_RELATIVE  *ABS*+0x0000000000002000
+";
+    const CYCLE_DIS: &str = "\
+0000000000001000 <_ZN3foo3bar17h1E>:
+    1000:\tlea    0x1000(%rip),%rax        # 2000 <table_a>
+    1007:\tret
+0000000000001040 <_ZN3foo3baz17h2E>:
+    1040:\tlea    0x1000(%rip),%rax        # 2010 <table_b>
+    1047:\tret
+";
+
+    fn cycle(image: &[u8], dis: &str) -> (Option<u64>, Option<u64>) {
+        let h = hashes_relocated(SECTIONS, CYCLE_SYMBOLS, CYCLE_RELOCS, image, dis);
+        (bar(&h), h.get("_ZN3foo3baz17h2E").copied())
+    }
+
+    #[test]
+    fn a_pointer_cycle_hashes_by_content_whichever_side_is_entered_first() {
+        let base = image(7, 1);
+        let mut moved = base.clone();
+        moved[0x2008] = 9;
+        let swapped = "\
+0000000000001000 <_ZN3foo3baz17h2E>:
+    1000:\tlea    0x1000(%rip),%rax        # 2010 <table_b>
+    1007:\tret
+0000000000001040 <_ZN3foo3bar17h1E>:
+    1040:\tlea    0x1000(%rip),%rax        # 2000 <table_a>
+    1047:\tret
+";
+        let swapped_symbols = CYCLE_SYMBOLS
+            .replace(
+                "1000 0000000000000020 T _ZN3foo3bar",
+                "9999 0000000000000020 T _ZN3foo3bar",
+            )
+            .replace(
+                "1040 0000000000000020 T _ZN3foo3baz",
+                "1000 0000000000000020 T _ZN3foo3baz",
+            )
+            .replace(
+                "9999 0000000000000020 T _ZN3foo3bar",
+                "1040 0000000000000020 T _ZN3foo3bar",
+            );
+        let other = hashes_relocated(SECTIONS, &swapped_symbols, CYCLE_RELOCS, &base, swapped);
+        let (bar_a, baz_a) = cycle(&base, CYCLE_DIS);
+        assert!(bar_a.is_some() && baz_a.is_some());
+        assert_eq!(
+            (bar_a, baz_a),
+            (bar(&other), other.get("_ZN3foo3baz17h2E").copied())
+        );
+        let (bar_b, baz_b) = cycle(&moved, CYCLE_DIS);
+        assert_ne!(bar_a, bar_b);
+        assert_ne!(baz_a, baz_b);
     }
 
     #[test]
