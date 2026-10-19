@@ -160,8 +160,11 @@ fn obtain(
     let digest = binary_digest(exe).ok_or("binary unreadable")?;
     let maps = runcache::state_dir("maps").ok_or("no .soothfast directory")?;
     let stored = maps.join(format!("{digest}.extents"));
-    if let Ok(text) = std::fs::read_to_string(&stored) {
-        return Ok(decode(&text));
+    if let Ok(text) = std::fs::read_to_string(&stored)
+        && let extents = decode(&text)
+        && !extents.is_empty()
+    {
+        return Ok(extents);
     }
     let map = maps.join(format!("{digest}.map"));
     let built = invoke::build_link_map(common, dir, target_dir, &map);
