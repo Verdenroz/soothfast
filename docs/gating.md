@@ -269,33 +269,44 @@ merges whole entries. String pools (`.rodata.str*`) stay one object.
 A jump table stores code offsets as 32-bit integers, so its bytes change
 whenever code moves. Where the instructions prove how a table is read, it is
 hashed as the places in the function it jumps to instead of as bytes. The
-proof is one straight line in one function:
+read must have this shape, in one basic block:
 
 ```text
-lea    table(%rip),%rA
 movslq (%rA,%rI,4),%rB
 add    %rA,%rB
 jmp    *%rB
 ```
 
-with no write to either register and no branch into the middle of it. The
-input section holding the table must start at a proven base and hold only
-words that land inside the function, measured from the nearest proven base
-before them. Anything else hashes as bytes. This reads x86-64 assembly
-only; on other architectures every table hashes as bytes.
+and every definition of `%rA` that reaches the load, along every path from
+the function's entry, must be a `lea` of the same table. The base may be
+loaded once near the top and kept across calls in a callee-saved register; a
+call clobbers the caller-saved ones. The proof builds the function's
+control-flow graph, in which a table jump has an edge to each place its table
+names, and it needs the graph to be complete: an indirect jump that is not a
+proven table jump, or a branch to an address that is no instruction of the
+function (other than a tail call), leaves the function with no proof. Code
+no edge reaches, such as a landing pad the unwinder enters, is assumed to
+arrive with anything in the registers; alignment padding is not code anyone
+enters. The input section holding the table must start at a proven base and
+hold only words that land inside the function, measured from the nearest
+proven base before them. Anything else hashes as bytes. This reads x86-64
+assembly only; on other architectures every table hashes as bytes.
+
+`__stop_SEC` symbols that the linker defines are named, and the section they
+end is hashed, but the section that happens to follow is not: a pointer one
+past the end is never dereferenced.
 
 What still misses, and why:
 
 - code that changed, which is the point;
-- a function that switches through a table whose base register is loaded
-  once at the top and reused across the function. The proof is local to one
-  straight line, so that table hashes as bytes and the function misses after
-  any edit that moves code. The bench runner's `main`, which every item
-  executes, is one, so an edit that changes the size of code anywhere
-  usually misses every item;
+- a function with a jump table whose base can also arrive from a landing pad
+  that rejoins the code after the lea. The unwinder restores callee-saved
+  registers to their values at the call, which this analysis does not
+  recover from the exception tables, so it treats them as unknown there.
+  `std`'s `Once::call` is one, and so is anything else in the executed set
+  with such a table;
 - code that reads a section whose bytes are layout, such as
-  `.eh_frame_hdr`. `measured_items` reaches it through a GOT slot, so it
-  hashes the section and misses whenever code moves;
+  `.eh_frame_hdr`, through a pointer that is not a `__stop_` symbol;
 - a constant changed inside a string pool, or any data without a sized
   symbol or a link-map section to bound it;
 - an unreadable map, or a binary that `objdump` cannot disassemble.
