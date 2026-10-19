@@ -20,6 +20,7 @@ mod gate_lock;
 mod headrun;
 mod invoke;
 mod itemcache;
+mod jumptable;
 mod linkmap;
 mod mcp;
 mod report;

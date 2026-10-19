@@ -19,6 +19,7 @@ use std::sync::{Mutex, OnceLock};
 
 use soothfast_registry::fnv1a;
 
+use crate::jumptable;
 use crate::linkmap::Extent;
 
 /// Stands for the bench binary in a stored function set, so two builds at
@@ -357,6 +358,70 @@ impl Resolver<'_> {
         Some(())
     }
 
+    /// Bytes of `size` at `addr` in the file image, for a section with contents.
+    fn read(&self, addr: u64, size: u64) -> Option<&[u8]> {
+        let s = &self.sections[self.section_at(addr)?];
+        if !s.contents {
+            return None;
+        }
+        let start = usize::try_from(s.offset.checked_add(addr - s.vma)?).ok()?;
+        self.image
+            .get(start..start.checked_add(usize::try_from(size).ok()?)?)
+    }
+
+    /// For each proven `lea`, the hash of the jump table it takes and the
+    /// offset into its section, for every table that decodes. A table decodes
+    /// when its whole input section is words that, from the nearest proven
+    /// base at or before them, land inside the function (`start..end`).
+    /// Anything else stays raw bytes.
+    fn decode_tables(
+        &self,
+        proofs: &[jumptable::Proof],
+        start: u64,
+        end: u64,
+    ) -> HashMap<u64, (u64, u64)> {
+        let table_input = |table: u64| {
+            self.input_at(table)
+                .filter(|&j| self.inputs[j].entry == 0 && self.symbol_at(table).is_none())
+        };
+        let mut tables = HashMap::new();
+        for (j, bases) in jumptable::group(proofs, table_input) {
+            let Some(hash) = self.decode(j, &bases, start, end) else {
+                continue;
+            };
+            for p in proofs.iter().filter(|p| table_input(p.table) == Some(j)) {
+                tables.insert(p.lea, (hash, p.table - self.inputs[j].vma));
+            }
+        }
+        tables
+    }
+
+    fn decode(&self, input: usize, bases: &[u64], start: u64, end: u64) -> Option<u64> {
+        let e = &self.inputs[input];
+        let relocated = self.relocs.partition_point(|r| r.offset < e.vma)
+            != self.relocs.partition_point(|r| r.offset < e.vma + e.size);
+        if !e.size.is_multiple_of(4) || bases.first() != Some(&e.vma) || relocated {
+            return None;
+        }
+        let mut text = format!("{}:", e.size);
+        for (i, word) in self
+            .read(e.vma, e.size)?
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .enumerate()
+        {
+            let at = e.vma + 4 * i as u64;
+            let base = bases[bases.partition_point(|&b| b <= at) - 1];
+            let target = base.wrapping_add_signed(i64::from(i32::from_le_bytes(*word)));
+            if target < start || target >= end {
+                return None;
+            }
+            text.push_str(&format!("{:x},", target - start));
+        }
+        Some(fnv1a(text.as_bytes()))
+    }
+
     /// Hash of everything reachable from `node`. Memoized per root only: a
     /// node reached inside another root's walk saw that walk's visit order.
     fn root_hash(&mut self, node: Node) -> Option<u64> {
@@ -452,13 +517,45 @@ fn strip_rip_displacement(operands: &str) -> String {
     format!("{}{}", &operands[..start], &operands[at..])
 }
 
-/// One function being hashed: its extent, and the normalized text so far.
+/// One function being hashed: its extent, its instructions as disassembled,
+/// and the normalized text once they are read.
 struct Span {
     start: u64,
     end: u64,
     names: Vec<String>,
+    instrs: Vec<(u64, String)>,
     text: String,
     resolved: bool,
+}
+
+impl Span {
+    /// Normalize the instructions. A jump table the instructions prove (see
+    /// `jumptable`) is hashed as the places in this function it jumps to.
+    fn read(&mut self, resolver: &mut Resolver) {
+        let proofs = jumptable::prove(&self.instrs);
+        let tables = resolver.decode_tables(&proofs, self.start, self.end);
+        for (addr, body) in std::mem::take(&mut self.instrs) {
+            let table = tables
+                .get(&addr)
+                .and_then(|&(hash, off)| table_operand(&body, hash, off));
+            match table.or_else(|| resolver.normalize(&body)) {
+                Some(n) => {
+                    self.text.push_str(&n);
+                    self.text.push('\n');
+                }
+                None => self.resolved = false,
+            }
+        }
+    }
+}
+
+/// `lea T(%rip),%rA` with the table in place of its address.
+fn table_operand(body: &str, hash: u64, off: u64) -> Option<String> {
+    let (head, _) = body.rsplit_once("# ")?;
+    Some(format!(
+        "{}# table:{hash:016x}+{off:x}",
+        strip_rip_displacement(head)
+    ))
 }
 
 /// Normalized hash per requested function, read off an `objdump -d` stream.
@@ -486,6 +583,7 @@ fn hash_functions(
                 start: s.addr,
                 end: s.addr + s.size,
                 names: vec![name.to_string()],
+                instrs: Vec::new(),
                 text: String::new(),
                 resolved: true,
             }),
@@ -527,22 +625,13 @@ fn hash_functions(
                 let after = spans.partition_point(|s| s.start <= addr);
                 current = after.checked_sub(1).filter(|&c| addr < spans[c].end);
             }
-            let normalized = (current.is_some() || labeled.is_some())
-                .then(|| resolver.normalize(body.trim()))
-                .flatten();
             if let Some(c) = current {
-                match &normalized {
-                    Some(n) => {
-                        spans[c].text.push_str(n);
-                        spans[c].text.push('\n');
-                    }
-                    None => spans[c].resolved = false,
-                }
+                spans[c].instrs.push((addr, body.trim().to_string()));
             }
             if let Some((_, text, resolved)) = &mut labeled {
-                match &normalized {
+                match resolver.normalize(body.trim()) {
                     Some(n) => {
-                        text.push_str(n);
+                        text.push_str(&n);
                         text.push('\n');
                     }
                     None => *resolved = false,
@@ -552,6 +641,9 @@ fn hash_functions(
         line.clear();
     }
     finish(&mut labeled);
+    for span in &mut spans {
+        span.read(resolver);
+    }
     let mut copies: HashMap<String, Vec<Option<u64>>> = HashMap::new();
     for (key, hash) in labeled_done {
         copies.entry(key).or_default().push(hash);
@@ -1043,6 +1135,120 @@ Idx Name          Size      VMA               LMA               File off  Algn
         };
         assert_eq!(hash(0x2010), hash(0x2017));
         assert_ne!(hash(0x2008), hash(0x2009));
+    }
+
+    const FN_SYMBOLS: &str = "0000000000001000 0000000000000020 T _ZN3foo3bar17h1E\n";
+
+    /// A function switching through the table at `table`, whose words point
+    /// at `targets` (addresses in the function), with `between` after the lea.
+    fn switch(table: u64, targets: &[u64], between: &str) -> (String, Vec<u8>) {
+        let dis = format!(
+            "0000000000001000 <_ZN3foo3bar17h1E>:\n\
+             \x20   1000:\tlea    0x1000(%rip),%rcx        # {table:x} <t>\n{between}\
+             \x20   1007:\tmovslq (%rcx,%rax,4),%rax\n\
+             \x20   100b:\tadd    %rcx,%rax\n\
+             \x20   100e:\tjmp    *%rax\n\
+             \x20   1010:\tret\n"
+        );
+        let mut image = vec![0; 0x3000];
+        for (i, target) in targets.iter().enumerate() {
+            let word = (*target as i64 - table as i64) as i32;
+            let at = table as usize + 4 * i;
+            image[at..at + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        (dis, image)
+    }
+
+    fn table_hash(extent: (u64, u64), dis: &str, image: &[u8]) -> Option<u64> {
+        let (sections, symbols) = (parse_sections(SECTIONS), parse_symbols(FN_SYMBOLS));
+        let inputs = [Extent {
+            vma: extent.0,
+            size: extent.1,
+            entry: 0,
+        }];
+        let mut resolver = Resolver {
+            sections: &sections,
+            symbols: &symbols,
+            relocs: &[],
+            zero_sized: &HashMap::new(),
+            inputs: &inputs,
+            image,
+            roots: HashMap::new(),
+        };
+        let wanted = ["_ZN3foo3bar17h1E".to_string()].into();
+        let hashes = hash_functions(
+            &mut resolver,
+            &wanted,
+            Cursor::new(dis.as_bytes()),
+            &mut HashMap::new(),
+        );
+        bar(&hashes)
+    }
+
+    const TARGETS: [u64; 4] = [0x1010, 0x1014, 0x1018, 0x101c];
+
+    #[test]
+    fn a_proven_table_hashes_the_same_wherever_it_and_the_code_sit() {
+        let hash = |table: u64, targets: &[u64]| {
+            let (dis, image) = switch(table, targets, "");
+            table_hash((table, 16), &dis, &image)
+        };
+        let base = hash(0x2008, &TARGETS);
+        assert!(base.is_some());
+        assert_eq!(base, hash(0x2010, &TARGETS));
+        let mut other = TARGETS;
+        other[2] = 0x1014;
+        assert_ne!(base, hash(0x2008, &other));
+    }
+
+    #[test]
+    fn a_table_with_a_write_to_its_base_register_stays_raw() {
+        let hash = |table: u64| {
+            let (dis, image) = switch(table, &TARGETS, "    1004:\tmov    %rbx,%rcx\n");
+            table_hash((table, 16), &dis, &image)
+        };
+        assert_ne!(hash(0x2008), hash(0x2010));
+    }
+
+    #[test]
+    fn a_table_with_a_word_outside_the_function_stays_raw() {
+        let hash = |table: u64| {
+            let mut targets = TARGETS;
+            targets[3] = 0x1500;
+            let (dis, image) = switch(table, &targets, "");
+            table_hash((table, 16), &dis, &image)
+        };
+        assert_ne!(hash(0x2008), hash(0x2010));
+    }
+
+    #[test]
+    fn two_tables_in_one_section_decode_from_their_own_bases() {
+        let dis = |t1: u64, t2: u64| {
+            format!(
+                "0000000000001000 <_ZN3foo3bar17h1E>:\n\
+                 \x20   1000:\tlea    0x1000(%rip),%rcx        # {t1:x} <t>\n\
+                 \x20   1004:\tmovslq (%rcx,%rax,4),%rax\n\
+                 \x20   1008:\tadd    %rcx,%rax\n\
+                 \x20   100b:\tjmp    *%rax\n\
+                 \x20   100d:\tlea    0x1000(%rip),%rdx        # {t2:x} <t>\n\
+                 \x20   1014:\tmovslq (%rdx,%rax,4),%rax\n\
+                 \x20   1018:\tadd    %rdx,%rax\n\
+                 \x20   101b:\tjmp    *%rax\n"
+            )
+        };
+        let hash = |t1: u64| {
+            let t2 = t1 + 8;
+            let mut image = vec![0; 0x3000];
+            for (i, target) in [0x1000u64, 0x1004, 0x1008, 0x100c].iter().enumerate() {
+                let base = if i < 2 { t1 } else { t2 };
+                let word = (*target as i64 - base as i64) as i32;
+                let at = t1 as usize + 4 * i;
+                image[at..at + 4].copy_from_slice(&word.to_le_bytes());
+            }
+            table_hash((t1, 16), &dis(t1, t2), &image)
+        };
+        assert!(hash(0x2000).is_some());
+        assert_eq!(hash(0x2000), hash(0x2010));
     }
 
     #[test]
