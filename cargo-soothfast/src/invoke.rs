@@ -23,12 +23,19 @@ pub struct CommonArgs {
     /// `codegen-units` measurement builds are pinned to, or `"inherit"` to
     /// leave the project's own profile alone.
     pub codegen_units: Option<String>,
+    /// `--no-item-cache`: measure every item even where a stored measurement
+    /// of the same executed code exists.
+    pub no_item_cache: bool,
 }
 
 impl CommonArgs {
     /// Consume one flag if it belongs to the common set.
     pub fn try_parse<'a>(&mut self, arg: &str, it: &mut impl Iterator<Item = &'a String>) -> bool {
         let slot = match arg {
+            "--no-item-cache" => {
+                self.no_item_cache = true;
+                return true;
+            }
             "-p" | "--package" => &mut self.pkg,
             "--filter" => &mut self.filter,
             "--backend" => &mut self.backend,
@@ -331,6 +338,8 @@ pub struct HostEnv {
     pub gating_backend: String,
     /// Set only when callgrind gates and the harness can see its guest.
     pub guest: Option<Guest>,
+    /// Whether the harness takes `--id` and reports `executed` records.
+    pub item_reuse: bool,
 }
 
 /// What callgrind's counts depend on besides the binary.
@@ -363,6 +372,7 @@ impl HostEnv {
         Some(HostEnv {
             gating_backend: field("gating_backend")?,
             guest,
+            item_reuse: v["item_reuse"].as_bool().unwrap_or(false),
         })
     }
 }
@@ -390,6 +400,30 @@ pub fn host_env(exe: &Path, backend: Option<&str>) -> Result<HostEnv, String> {
         .find(|v| v["type"] == "env")
         .and_then(|v| HostEnv::from_line(&v))
         .ok_or_else(|| "bench harness printed no env line for --env".into())
+}
+
+/// The items `exe` registers with their fingerprints, narrowed by `filter`
+/// the way a run is.
+pub fn list_items(exe: &Path, filter: Option<&str>) -> Option<BTreeMap<String, String>> {
+    let mut cmd = Command::new(exe);
+    cmd.args(["--list", "--json"]);
+    if let Some(f) = filter {
+        cmd.args(["--filter", f]);
+    }
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    Some(
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["type"] == "item")
+            .filter_map(|v| {
+                Some((
+                    v["id"].as_str()?.to_string(),
+                    v["fingerprint"].as_str()?.to_string(),
+                ))
+            })
+            .collect(),
+    )
 }
 
 /// One item's collected metrics across backends.
@@ -434,6 +468,8 @@ pub struct Run {
     pub gating_backend: Option<String>,
     pub items: BTreeMap<String, ItemMetrics>,
     pub assertions: Vec<AssertionOutcome>,
+    /// The `(object, symbol)` pairs each item executed, from a callgrind run.
+    pub executed: BTreeMap<String, Vec<(String, String)>>,
     /// Set when some metrics came from a stored run instead of this process.
     pub reused: Option<Reused>,
 }
@@ -458,6 +494,19 @@ pub fn collect(records: &[Value]) -> Run {
                 ok: rec["ok"].as_bool().unwrap_or(false),
                 detail: rec["detail"].as_str().unwrap_or("").to_string(),
             }),
+            Some("executed") if run.gating_backend.as_deref() == Some("callgrind") => {
+                if let Some(id) = rec["id"].as_str() {
+                    let functions = rec["functions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|f| {
+                            Some((f[0].as_str()?.to_string(), f[1].as_str()?.to_string()))
+                        })
+                        .collect();
+                    run.executed.insert(id.to_string(), functions);
+                }
+            }
             Some("result") => {
                 let Some(id) = rec["id"].as_str() else {
                     continue;
@@ -1629,6 +1678,37 @@ mod tests {
     }
 
     #[test]
+    fn executed_records_are_kept_only_under_callgrind() {
+        let executed = serde_json::json!({
+            "type": "executed", "id": "pkg::a", "functions": [["/bin/bench", "f"]],
+        });
+        let under = |backend: &str| {
+            super::collect(&[
+                serde_json::json!({ "type": "env", "gating_backend": backend }),
+                executed.clone(),
+            ])
+        };
+        assert_eq!(
+            under("callgrind").executed["pkg::a"],
+            [("/bin/bench".to_string(), "f".to_string())]
+        );
+        assert!(under("perfcnt").executed.is_empty());
+    }
+
+    #[test]
+    fn a_harness_advertises_item_reuse_in_its_env_line() {
+        let line = |v: serde_json::Value| HostEnv::from_line(&v).map(|e| e.item_reuse);
+        assert_eq!(
+            line(serde_json::json!({ "gating_backend": "callgrind", "item_reuse": true })),
+            Some(true)
+        );
+        assert_eq!(
+            line(serde_json::json!({ "gating_backend": "callgrind" })),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn an_env_line_reads_its_guest_only_when_complete() {
         let full = serde_json::json!({
             "type": "env", "gating_backend": "callgrind",
@@ -1645,6 +1725,7 @@ mod tests {
                     libc: "fedcba9876543210".into(),
                     valgrind: "valgrind-3.22.0".into(),
                 }),
+                item_reuse: false,
             })
         );
         let partial = serde_json::json!({

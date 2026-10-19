@@ -44,6 +44,11 @@ impl<'a> Runs<'a> {
         Runs { stamp, common, env }
     }
 
+    /// What the bench binary resolved on this host, when it answered.
+    pub fn env(&self) -> Option<&HostEnv> {
+        self.env.as_ref()
+    }
+
     /// The gating backend the bench binary resolved, when it answered.
     pub fn gating_backend(&self) -> Option<&str> {
         self.env.as_ref().map(|e| e.gating_backend.as_str())
@@ -213,12 +218,14 @@ mod tests {
         HostEnv {
             gating_backend: backend.into(),
             guest: None,
+            item_reuse: true,
         }
     }
 
     fn callgrind_guest() -> HostEnv {
         HostEnv {
             gating_backend: "callgrind".into(),
+            item_reuse: true,
             guest: Some(invoke::Guest {
                 cpu: "0123456789abcdef".into(),
                 glibc: "2.39".into(),

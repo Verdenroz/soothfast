@@ -2,7 +2,7 @@
 //! on this host, and the runs stored for it. Shared by `gate` and `measure`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -10,6 +10,7 @@ use crate::agreement::{self, Agreement, Tolerance};
 use crate::buildstamp::{self, BuildStamp};
 use crate::gate;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
+use crate::itemcache::Reuse;
 use crate::runcache::{self, Runs};
 
 /// Build HEAD's bench binary once and name it: its digest, and the run cache
@@ -18,11 +19,11 @@ pub fn probe<'a>(
     cmd: &str,
     common: &'a CommonArgs,
     stamp: &'a BuildStamp,
-) -> (Option<String>, Runs<'a>) {
+) -> (Option<String>, Runs<'a>, Option<PathBuf>) {
     let exe = invoke::bench_executable(common, None, None);
     let digest = exe.as_deref().and_then(binary_digest);
     let runs = Runs::new(stamp, common, resolved_env(cmd, common, exe.as_deref()));
-    (digest, runs)
+    (digest, runs, exe)
 }
 
 /// Measure HEAD's bench binary for `measure`. Under callgrind, a run already
@@ -31,7 +32,7 @@ pub fn probe<'a>(
 /// the result for the next gate or measure.
 pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
     let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
-    let (digest, runs) = probe("measure", common, &stamp);
+    let (digest, runs, exe) = probe("measure", common, &stamp);
     let stored = match (reuse_plan(reuse, runs.gating_backend()), digest.as_deref()) {
         (Plan::Reuse, Some(digest)) => {
             let label = format!("binary {digest}");
@@ -66,11 +67,38 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
             ),
         }
     }
-    let run = run_head(common, &[], stamp.clone())?;
+    let reuse = exe
+        .as_deref()
+        .filter(|_| reuse)
+        .and_then(|exe| Reuse::plan("measure", common, &runs, &[exe]).map(|r| (r, exe)));
+    let run = match reuse {
+        Some((reuse, exe)) => run_reusing(common, &reuse, exe, stamp.clone())?,
+        None => run_head(common, &[], stamp.clone())?,
+    };
     let settled = settle("measure", "this run", &run, || {
         run_head(common, RECOUNT, stamp.clone()).ok()
     });
     cache_head(&runs, &run, digest.as_deref(), &settled);
+    Ok(run)
+}
+
+/// HEAD's run with the items `reuse` covers taken from the store and only the
+/// rest measured; what is measured is kept for the next invocation.
+fn run_reusing(
+    common: &CommonArgs,
+    reuse: &Reuse,
+    exe: &Path,
+    stamp: BuildStamp,
+) -> Result<Run, String> {
+    let mut run = if reuse.nothing_to_measure(0) {
+        Reuse::empty_run(stamp)
+    } else {
+        let ids = reuse.id_args(0);
+        let args: Vec<&str> = ids.iter().map(String::as_str).collect();
+        run_head(common, &args, stamp)?
+    };
+    reuse.record(exe, &run);
+    reuse.splice(&mut run);
     Ok(run)
 }
 
@@ -527,6 +555,7 @@ mod tests {
         let env = HostEnv {
             gating_backend: "perfcnt".into(),
             guest: None,
+            item_reuse: true,
         };
         let runs = Runs::new(&stamp, &common, Some(env));
         cache_head(

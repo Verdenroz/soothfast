@@ -420,6 +420,11 @@ impl Binary {
         child.wait().ok()?.success().then_some(Binary { hashes })
     }
 
+    #[cfg(test)]
+    pub fn with_hashes(hashes: HashMap<String, u64>) -> Binary {
+        Binary { hashes }
+    }
+
     /// The key of `functions` (as [`portable`] returns them) in this binary,
     /// or `None` if any is unhashed here or any foreign object is unreadable.
     pub fn code_key(&self, functions: &[(String, String)]) -> Option<String> {

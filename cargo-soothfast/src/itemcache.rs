@@ -11,9 +11,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::buildstamp::BuildStamp;
 use crate::codekey::{self, Binary};
-use crate::invoke::{self, AssertionOutcome, ItemMetrics};
-use crate::runcache;
+use crate::gate;
+use crate::invoke::{self, AssertionOutcome, CommonArgs, ItemMetrics, Run};
+use crate::runcache::{self, Runs};
 
 /// Entries kept per item. Branches that alternate between a few code states
 /// each keep theirs.
@@ -23,11 +25,15 @@ const PER_ITEM: usize = 8;
 const KEEP: usize = 2048;
 
 /// One measured item and the code it ran.
+#[derive(Clone)]
 pub struct Entry {
     /// Executed functions as [`codekey::portable`] returns them.
     pub functions: Vec<(String, String)>,
+    /// Hash of `functions` in the binary that was measured.
     pub code_key: String,
+    /// The item as measured; its fingerprint names the claims below.
     pub metrics: ItemMetrics,
+    /// Verdicts of the item's claims when it was measured.
     pub assertions: Vec<AssertionOutcome>,
     /// The host conditions the entry was measured under, for explaining a miss.
     pub measured_on: Value,
@@ -156,6 +162,42 @@ impl Items {
         let _ = std::fs::write(self.path(id), doc.to_string());
     }
 
+    /// The entries that stand for an item in every one of `bins`: the same
+    /// entry hashes true in each, so the item ran the same code in all.
+    /// `listed` is each binary's items with their current fingerprints.
+    pub fn reusable(
+        &self,
+        listed: &[BTreeMap<String, String>],
+        bins: &[&Path],
+    ) -> BTreeMap<String, Entry> {
+        let ids: Vec<String> = listed[0]
+            .keys()
+            .filter(|id| listed.iter().all(|l| l.contains_key(*id)))
+            .cloned()
+            .collect();
+        let stored = self.load(&ids);
+        let wanted = stored.wanted();
+        let binaries: Option<Vec<Binary>> =
+            bins.iter().map(|bin| Binary::open(bin, &wanted)).collect();
+        let Some(binaries) = binaries.filter(|_| !wanted.is_empty()) else {
+            return BTreeMap::new();
+        };
+        ids.iter()
+            .filter_map(|id| {
+                let found: Vec<&Entry> = binaries
+                    .iter()
+                    .zip(listed)
+                    .map(|(b, l)| stored.lookup(b, id, &l[id]))
+                    .collect::<Option<_>>()?;
+                let first = found[0];
+                found
+                    .iter()
+                    .all(|e| std::ptr::eq(*e, first))
+                    .then(|| (id.clone(), first.clone()))
+            })
+            .collect()
+    }
+
     /// Drop the oldest item files past [`KEEP`], across every scope.
     pub fn prune(&self) {
         if let Some(root) = self.dir.parent() {
@@ -199,12 +241,162 @@ impl Stored {
             .collect()
     }
 
-    /// The newest entry of `id` whose functions hash to its code key in `bin`.
-    pub fn lookup(&self, bin: &Binary, id: &str) -> Option<&Entry> {
-        self.0
-            .get(id)?
+    /// The newest entry of `id` whose functions hash to its code key in `bin`
+    /// and whose item fingerprint is `fingerprint`. The fingerprint carries
+    /// the claims (`alloc = N`, `p99 = ...`) its stored assertions were
+    /// judged against, which the executed code does not.
+    pub fn lookup(&self, bin: &Binary, id: &str, fingerprint: &str) -> Option<&Entry> {
+        self.0.get(id)?.iter().find(|e| {
+            e.metrics.fingerprint == fingerprint
+                && bin.code_key(&e.functions).as_deref() == Some(&e.code_key)
+        })
+    }
+}
+
+/// What a callgrind measurement may take from the store: the items whose
+/// executed code is the same in every binary measured, and the items left to
+/// run, per binary.
+pub struct Reuse {
+    items: Items,
+    hits: BTreeMap<String, Entry>,
+    todo: Vec<Vec<String>>,
+    measured_on: Value,
+}
+
+impl Reuse {
+    /// Plan the measurement of `bins` (HEAD's binary, then the merge-base's
+    /// when gating). `None`, with the reason printed where the user can act
+    /// on it, when per-item reuse does not apply.
+    pub fn plan(cmd: &str, common: &CommonArgs, runs: &Runs, bins: &[&Path]) -> Option<Reuse> {
+        let env = runs.env().filter(|e| e.gating_backend == "callgrind")?;
+        if common.no_item_cache {
+            println!("{cmd}: per-item reuse off (--no-item-cache); measuring in full");
+            return None;
+        }
+        if gate::recording() {
+            println!("{cmd}: per-item reuse off (SOOTHFAST_RECORD=1); measuring in full");
+            return None;
+        }
+        let backend = common.backend.as_deref();
+        let capable = env.item_reuse
+            && bins[1..]
+                .iter()
+                .all(|bin| invoke::host_env(bin, backend).is_ok_and(|e| e.item_reuse));
+        if !capable {
+            println!(
+                "{cmd}: per-item reuse disabled for this invocation: bench harness does not take --id (harness {}, CLI {})",
+                invoke::harness_versions(),
+                env!("CARGO_PKG_VERSION")
+            );
+            return None;
+        }
+        let listed: Vec<BTreeMap<String, String>> = bins
             .iter()
-            .find(|e| bin.code_key(&e.functions).as_deref() == Some(&e.code_key))
+            .map(|bin| invoke::list_items(bin, common.filter.as_deref()))
+            .collect::<Option<_>>()?;
+        let all: BTreeSet<&String> = listed.iter().flat_map(|l| l.keys()).collect();
+        let items = Items::open(&runs.item_scope()?)?;
+        let hits = items.reusable(&listed, bins);
+        let todo = listed
+            .iter()
+            .map(|l| {
+                l.keys()
+                    .filter(|id| !hits.contains_key(*id))
+                    .cloned()
+                    .collect()
+            })
+            .collect();
+        let what = if bins.len() > 1 {
+            "run identical code on both sides"
+        } else {
+            "run code a stored measurement covers"
+        };
+        println!(
+            "{cmd}: {}/{} items {what}, measuring {}",
+            hits.len(),
+            all.len(),
+            all.len() - hits.len()
+        );
+        Some(Reuse {
+            items,
+            hits,
+            todo,
+            measured_on: runcache::measured_on(env),
+        })
+    }
+
+    /// Runner args naming the items binary `side` still has to measure, none
+    /// when nothing was reused (every item measures).
+    pub fn id_args(&self, side: usize) -> Vec<String> {
+        if self.hits.is_empty() {
+            return Vec::new();
+        }
+        self.todo[side]
+            .iter()
+            .flat_map(|id| ["--id".to_string(), id.clone()])
+            .collect()
+    }
+
+    /// Whether the runner has no item left to measure on `side`.
+    pub fn nothing_to_measure(&self, side: usize) -> bool {
+        !self.hits.is_empty() && self.todo[side].is_empty()
+    }
+
+    /// The run standing in for a side with nothing to measure.
+    pub fn empty_run(stamp: BuildStamp) -> Run {
+        Run {
+            gating_backend: Some("callgrind".into()),
+            build: Some(stamp),
+            ..Default::default()
+        }
+    }
+
+    /// Ids spliced by [`Reuse::splice`].
+    pub fn reused_ids(&self) -> impl Iterator<Item = &String> {
+        self.hits.keys()
+    }
+
+    /// Put the stored metrics and assertions of every reused item into `run`.
+    pub fn splice(&self, run: &mut Run) {
+        for (id, entry) in &self.hits {
+            run.items.insert(id.clone(), entry.metrics.clone());
+            run.assertions.retain(|a| &a.id != id);
+            run.assertions.extend(entry.assertions.iter().cloned());
+        }
+    }
+
+    /// Keep what `run` measured of `bin` for later invocations.
+    pub fn record(&self, bin: &Path, run: &Run) {
+        let functions: BTreeMap<&String, Vec<(String, String)>> = run
+            .executed
+            .iter()
+            .map(|(id, f)| (id, codekey::portable(bin, f)))
+            .collect();
+        let wanted: BTreeSet<String> = functions
+            .values()
+            .flatten()
+            .filter(|(ob, _)| ob == codekey::EXE)
+            .map(|(_, sym)| sym.clone())
+            .collect();
+        let Some(binary) = Binary::open(bin, &wanted) else {
+            return;
+        };
+        for (id, functions) in functions {
+            let Some(metrics) = run.items.get(id) else {
+                continue;
+            };
+            let assertions = run.assertions.iter().filter(|a| &a.id == id).cloned();
+            if let Some(entry) = Entry::measured(
+                &binary,
+                functions,
+                metrics.clone(),
+                assertions.collect(),
+                self.measured_on.clone(),
+            ) {
+                self.items.store(id, entry);
+            }
+        }
+        self.items.prune();
     }
 }
 
@@ -278,6 +470,25 @@ mod tests {
         let stored = items.load(&ids());
         assert_eq!(stored.0["p::a"].len(), PER_ITEM);
         assert_eq!(stored.0["p::a"][0].code_key, format!("k{}", PER_ITEM + 2));
+    }
+
+    #[test]
+    fn a_changed_claim_misses_though_the_code_is_the_same() {
+        let binary = Binary::with_hashes([("f".to_string(), 1)].into());
+        let functions = vec![(codekey::EXE.to_string(), "f".to_string())];
+        let items = scratch("fingerprint");
+        let stored = Entry::measured(
+            &binary,
+            functions,
+            entry("", 1).metrics,
+            Vec::new(),
+            Value::Null,
+        )
+        .expect("hashable");
+        items.store("p::a", stored);
+        let loaded = items.load(&ids());
+        assert!(loaded.lookup(&binary, "p::a", "fp").is_some());
+        assert!(loaded.lookup(&binary, "p::a", "other").is_none());
     }
 
     #[test]
