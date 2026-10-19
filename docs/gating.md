@@ -193,6 +193,62 @@ would keep the first commit's runs and every later commit would miss. The
 second prefix is what lets a pull request, whose `ref_name` is its own merge
 ref, restore the default branch's runs.
 
+## Per-item reuse
+
+The run cache reuses a whole run. Under `callgrind`, the gate and `measure`
+can also reuse a single item, keyed on the machine code the item executed
+rather than on the commit. Callgrind already lists every function a run
+executes; the runner reports that set, and the CLI hashes those functions in
+each bench binary. An item whose executed code hashes the same on both sides
+of a gate is not measured: its stored metrics and assertion verdicts are
+placed on both sides, so its delta is zero, and only the remaining items run
+(`--id` on the runner).
+
+```console
+gate: 14/16 items run identical code on both sides, measuring 2
+```
+
+The whole-run keys above are tried first. Per-item reuse applies on the full
+measurement path and when `measure` finds no run stored for its binary. It
+is a miss, never a guess, whenever anything cannot be resolved. An entry is
+used only if all of these hold:
+
+- every executed function of the bench binary exists there by its exact
+  symbol (`.llvm.N` suffixes dropped) and normalizes to the same
+  instructions. Addresses are normalized out: branch targets and
+  rip-relative displacements become symbols, and a data reference becomes
+  the content of the object it points into;
+- relocated data is hashed by what it points at, so a vtable or function
+  table whose target changed hashes differently even when its bytes in the
+  file do not (a linker may leave a relocated slot zero or filled with an
+  address);
+- every other object the item ran in (libc, the loader, valgrind's
+  preload) has the same content digest. `???`, valgrind's own trampolines,
+  is covered by the valgrind version in the run cache key;
+- the item's fingerprint is unchanged, since the claims a stored assertion
+  was judged against (`alloc = N`, `p99 = ...`) are not part of the code.
+
+Items with `sizes(...)` are never reused: a sweep can reach code the
+default-size run never executed. A reference with no sized symbol (the
+constants rustc and LLVM emit under local labels: string literals, panic
+locations, constant pools, jump tables) is hashed as its whole section, so
+an edit that changes any constant in `.rodata` changes every function that
+reads one, and those items are measured again. On aarch64, `adrp`+`add`
+immediates carry layout and only cause misses. Only `callgrind` is reused:
+`perfcnt` and `walltime` hosts behave as before.
+
+A reused item keeps the walltime it was stored with, and a baseline saved
+from the run marks it under `reused` with `from: "item cache"`. `--no-item-cache`
+and `SOOTHFAST_RECORD=1` measure every item. A harness that predates `--id`
+turns it off for that invocation, the way the run cache is turned off:
+
+```console
+gate: per-item reuse disabled for this invocation: bench harness does not take --id (harness soothfast@0.3.4, ..., CLI ...)
+```
+
+Entries live under `.soothfast/items/`, keyed by the same conditions as a
+run minus the commit and `--filter`, up to eight per item.
+
 ## Thresholds
 
 | metric | threshold | notes |

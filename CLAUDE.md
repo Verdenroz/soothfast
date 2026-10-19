@@ -273,6 +273,13 @@ saved baseline, a named ratchet, or — for CI — the merge-base of the PR bran
 measured live in a temporary worktree, so there's no baseline file to become
 stale in version control.
 
+Gate and `measure` keep measured runs in `.soothfast/runs/` (by commit and by
+bench-binary digest, `runcache.rs`) and, under callgrind, single items in
+`.soothfast/items/` (`itemcache.rs`), keyed on a hash of the machine code the
+item executed (`codekey.rs`, from the `executed` records the runner writes
+from callgrind's out-file). Anything unresolvable is a miss; sweep items are
+never cached; `--no-item-cache` and `SOOTHFAST_RECORD=1` measure in full.
+
 ### Dogfood loop
 
 This repo runs soothfast on itself: `soothfast-registry`, `soothfast-measure`, and
