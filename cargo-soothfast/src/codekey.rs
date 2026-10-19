@@ -246,9 +246,6 @@ impl Resolver<'_> {
     fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
         let section = self.section_at(addr)?;
         let code = self.sections[section].code;
-        if let Some(name) = self.zero_sized.get(&addr) {
-            return Some(Place::Code(format!("zst:{name}")));
-        }
         if let Some(i) = self.symbol_at(addr)
             && self.section_at(self.symbols[i].addr) == Some(section)
         {
@@ -258,6 +255,9 @@ impl Resolver<'_> {
             } else {
                 Place::Data(Node::Symbol(i), off, String::new())
             });
+        }
+        if let Some(name) = self.zero_sized.get(&addr) {
+            return Some(Place::Code(format!("zst:{name}")));
         }
         if code {
             return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
@@ -345,9 +345,13 @@ impl Resolver<'_> {
     }
 
     fn resolve(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
-        // Reading a relocated slot (a GOT entry) yields what it relocates to,
-        // so that alone names it; the section holding it says nothing more.
-        if let Ok(i) = self.relocs.binary_search_by_key(&addr, |r| r.offset) {
+        // Reading a GOT entry yields what it relocates to, so that alone names
+        // it. Elsewhere a relocated address starts an object (a vtable) that
+        // is read past its first slot.
+        let in_got = self
+            .section_at(addr)
+            .is_some_and(|i| self.sections[i].name.starts_with(".got"));
+        if in_got && let Ok(i) = self.relocs.binary_search_by_key(&addr, |r| r.offset) {
             let value = match self.relocs[i].target.clone() {
                 Target::Symbol(name) => strip_llvm(&name).into_owned(),
                 Target::Relative(to) => self.describe(to, None)?,
@@ -788,6 +792,54 @@ Idx Name          Size      VMA               LMA               File off  Algn
             parse_zero_sized(listing, &sections),
             HashMap::from([(0x2008, "_RNvCs1_3foo5EMPTY".to_string())])
         );
+    }
+
+    #[test]
+    fn a_zero_sized_static_does_not_hide_the_object_at_its_address() {
+        let (sections, symbols) = (parse_sections(SECTIONS), parse_symbols(SYMBOLS));
+        let zero_sized = HashMap::from([(0x2000, "_RNvCs1_3foo5EMPTY".to_string())]);
+        let wanted: BTreeSet<String> = ["_ZN3foo3bar17h1E".to_string()].into();
+        let hash = |image: &[u8]| {
+            let mut resolver = Resolver {
+                sections: &sections,
+                symbols: &symbols,
+                relocs: &[],
+                zero_sized: &zero_sized,
+                image,
+                roots: HashMap::new(),
+            };
+            let hashes = hash_functions(
+                &mut resolver,
+                &wanted,
+                Cursor::new(DIS.as_bytes()),
+                &mut HashMap::new(),
+            );
+            bar(&hashes)
+        };
+        assert!(hash(&image(7, 1)).is_some());
+        assert_ne!(hash(&image(7, 1)), hash(&image(8, 1)));
+    }
+
+    #[test]
+    fn a_table_hashes_every_slot_not_just_the_first() {
+        let symbols = SYMBOLS.replace("0000000000000008 r anon", "0000000000000010 r anon");
+        let relocs = |second: u64| {
+            format!(
+                "0000000000002000 R_X86_64_RELATIVE  *ABS*+0x0000000000001000\n\
+                 0000000000002008 R_X86_64_RELATIVE  *ABS*+0x{second:016x}"
+            )
+        };
+        let at = |second: u64| {
+            bar(&hashes_relocated(
+                SECTIONS,
+                &symbols,
+                &relocs(second),
+                &image(7, 1),
+                DIS,
+            ))
+        };
+        assert!(at(0x1000).is_some());
+        assert_ne!(at(0x1000), at(0x1040));
     }
 
     #[test]
