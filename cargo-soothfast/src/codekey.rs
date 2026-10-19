@@ -226,6 +226,9 @@ enum Place {
     Code(String),
     /// An offset into data, plus the GOT slot name when objdump gave one.
     Data(Node, u64, String),
+    /// One past the end of a section: the name, and the section before it,
+    /// which the pointer can still reach backwards.
+    Bounded(String, Node),
 }
 
 /// One canonical serialization of the data reachable from a root. Nodes are
@@ -280,7 +283,16 @@ impl Resolver<'_> {
             });
         }
         if let Some(name) = self.zero_sized.get(&addr) {
-            return Some(Place::Code(name.clone()));
+            match name.strip_prefix("bound:__stop_") {
+                None => return Some(Place::Code(name.clone())),
+                // With no such section ending here, resolve as ordinary data.
+                Some(sec) => {
+                    let ends_here = |s: &Section| s.name == sec && s.vma + s.size == addr;
+                    if let Some(i) = self.sections.iter().position(ends_here) {
+                        return Some(Place::Bounded(name.clone(), Node::Section(i)));
+                    }
+                }
+            }
         }
         if code {
             return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
@@ -361,6 +373,11 @@ impl Resolver<'_> {
                     .extend(format!("sym:{}", strip_llvm(&name)).bytes()),
                 Target::Relative(to) => match self.place(to, None)? {
                     Place::Code(name) => walk.out.extend(name.bytes()),
+                    Place::Bounded(name, next) => {
+                        walk.out.extend(format!("{name}(").bytes());
+                        self.walk(next, walk)?;
+                        walk.out.push(b')');
+                    }
                     Place::Data(next, off, _) => {
                         walk.out.extend(format!("+{off:x}(").bytes());
                         self.walk(next, walk)?;
@@ -469,6 +486,7 @@ impl Resolver<'_> {
     fn describe(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
         Some(match self.place(addr, hint)? {
             Place::Code(name) => name,
+            Place::Bounded(name, node) => format!("{name}:{:016x}", self.root_hash(node)?),
             Place::Data(node, off, slot) => {
                 let label = match node {
                     Node::Symbol(_) | Node::Input(_) | Node::Entry(..) => "data",
@@ -1267,7 +1285,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
     }
 
     #[test]
-    fn a_got_slot_for_a_stop_symbol_does_not_walk_the_section_after_it() {
+    fn a_stop_symbol_hashes_the_section_it_ends_and_not_the_one_after() {
         let sections = parse_sections(
             "\
 Idx Name          Size      VMA               LMA               File off  Algn
@@ -1275,20 +1293,22 @@ Idx Name          Size      VMA               LMA               File off  Algn
                   CONTENTS, ALLOC, LOAD, READONLY, CODE
   1 .got          00000008  0000000000002000  0000000000002000  00002000  2**3
                   CONTENTS, ALLOC, LOAD, DATA
-  2 .after        00000020  0000000000002008  0000000000002008  00002008  2**3
+  2 linkme_x      00000008  0000000000002008  0000000000002008  00002008  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+  3 .after        00000020  0000000000002010  0000000000002010  00002010  2**3
                   CONTENTS, ALLOC, LOAD, DATA
 ",
         );
         let symbols = parse_symbols(FN_SYMBOLS);
-        let relocs = parse_relocs("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x0000000000002008");
+        let relocs = parse_relocs("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x0000000000002010");
         let dis = "\
 0000000000001000 <_ZN3foo3bar17h1E>:
     1000:\tcmp    0x1000(%rip),%rax        # 2000 <_GLOBAL_OFFSET_TABLE_>
     1007:\tret
 ";
-        let hash = |stops: &HashMap<u64, String>, byte: u8| {
+        let hash = |stops: &HashMap<u64, String>, at: usize, byte: u8| {
             let mut image = vec![0; 0x3000];
-            image[0x2010] = byte;
+            image[at] = byte;
             let mut resolver = Resolver {
                 sections: &sections,
                 symbols: &symbols,
@@ -1307,10 +1327,12 @@ Idx Name          Size      VMA               LMA               File off  Algn
             );
             bar(&hashes)
         };
-        let stops = HashMap::from([(0x2008, "bound:__stop_x".to_string())]);
-        assert!(hash(&stops, 1).is_some());
-        assert_eq!(hash(&stops, 1), hash(&stops, 2));
-        assert_ne!(hash(&HashMap::new(), 1), hash(&HashMap::new(), 2));
+        let stops = HashMap::from([(0x2010, "bound:__stop_linkme_x".to_string())]);
+        assert!(hash(&stops, 0x2018, 1).is_some());
+        assert_eq!(hash(&stops, 0x2018, 1), hash(&stops, 0x2018, 2));
+        assert_ne!(hash(&stops, 0x2009, 1), hash(&stops, 0x2009, 2));
+        let none = HashMap::new();
+        assert_ne!(hash(&none, 0x2018, 1), hash(&none, 0x2018, 2));
     }
 
     #[test]
