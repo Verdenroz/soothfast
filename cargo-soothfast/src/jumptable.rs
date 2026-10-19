@@ -467,9 +467,17 @@ impl Graph {
                 break reached;
             }
         };
-        let mut work = Vec::new();
-        for (i, seen) in reached.iter().enumerate() {
-            if i == 0 || (!seen && !padding[i]) {
+        // Only a call unwinds, and it restores callee-saved registers to their
+        // values at the call: an orphan gets their join, else unknown.
+        let has_call = parsed.iter().any(|(_, i)| i.mnemonic.starts_with("call"));
+        let from_calls = !CALLER_SAVED.contains(&reg) && has_call;
+        let orphans: Vec<usize> = (1..parsed.len())
+            .filter(|&i| !reached[i] && !padding[i])
+            .collect();
+        let mut work = vec![0];
+        state[0] = 2;
+        if !from_calls {
+            for &i in &orphans {
                 state[i] = 2;
                 work.push(i);
             }
@@ -490,7 +498,12 @@ impl Graph {
                 Writes::Any => 2,
                 _ => state[i],
             };
-            for &s in &self.succ[i] {
+            let pads: &[usize] = if from_calls && ins.mnemonic.starts_with("call") {
+                &orphans
+            } else {
+                &[]
+            };
+            for &s in self.succ[i].iter().chain(pads) {
                 let merged = if state[s] == 0 {
                     out
                 } else {
@@ -730,6 +743,62 @@ mod tests {
             RET,
         ];
         assert!(prove_in(&pad_then_pad).is_empty());
+    }
+
+    const LEA15: &str = "lea    0x100d(%rip),%r15        # 2010 <anon>";
+    const LOAD15: &str = "movslq (%r15,%rax,4),%rax";
+    const ADD15: &str = "add    %r15,%rax";
+
+    #[test]
+    fn a_landing_pad_inherits_callee_saved_registers_from_the_calls() {
+        let lines = [
+            LEA15,
+            "call   2000 <g>",
+            "jmp    1018 <f+0x18>",
+            "ud2",
+            "mov    %rax,%r14",
+            "jmp    1018 <f+0x18>",
+            LOAD15,
+            ADD15,
+            JMP,
+            RET,
+        ];
+        assert_eq!(prove_in(&lines).len(), 1);
+    }
+
+    #[test]
+    fn a_call_before_the_lea_leaves_the_register_undefined_in_the_pad() {
+        let lines = [
+            "call   2000 <g>",
+            LEA15,
+            "call   2000 <g>",
+            "jmp    101c <f+0x1c>",
+            "ud2",
+            "mov    %rax,%r14",
+            "jmp    101c <f+0x1c>",
+            LOAD15,
+            ADD15,
+            JMP,
+            RET,
+        ];
+        assert!(prove_in(&lines).is_empty());
+    }
+
+    #[test]
+    fn a_caller_saved_base_is_unknown_in_a_landing_pad() {
+        let lines = [
+            LEA,
+            "call   2000 <g>",
+            "jmp    1018 <f+0x18>",
+            "ud2",
+            "mov    %rax,%r14",
+            "jmp    1018 <f+0x18>",
+            LOAD,
+            ADD,
+            JMP,
+            RET,
+        ];
+        assert!(prove_in(&lines).is_empty());
     }
 
     #[test]
