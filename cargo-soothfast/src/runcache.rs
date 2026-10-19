@@ -18,13 +18,15 @@ use crate::invoke::{self, CommonArgs, HostEnv};
 /// per branch, so this holds many branches at a bounded size.
 const KEEP: usize = 32;
 
-fn dir() -> Option<PathBuf> {
-    let d = invoke::workspace_root()
-        .ok()?
-        .join(".soothfast")
-        .join("runs");
+/// `.soothfast/<name>`, created on demand.
+pub fn state_dir(name: &str) -> Option<PathBuf> {
+    let d = invoke::workspace_root().ok()?.join(".soothfast").join(name);
     std::fs::create_dir_all(&d).ok()?;
     Some(d)
+}
+
+fn dir() -> Option<PathBuf> {
+    state_dir("runs")
 }
 
 /// The conditions every run in one gate invocation is keyed under. Without a
@@ -54,6 +56,13 @@ impl<'a> Runs<'a> {
         load(&key(id, self.stamp, self.common, env), measured_from)
     }
 
+    /// The key every per-item entry of this invocation lives under: the
+    /// conditions of a run, without the commit or the filter.
+    pub fn item_scope(&self) -> Option<String> {
+        let env = self.env.as_ref()?;
+        Some(hashed(&conditions(self.stamp, self.common, env)))
+    }
+
     /// Keep `doc` as the measurement of `id`, with the host conditions its
     /// key hashes, so a miss can be explained by diffing two stored runs.
     pub fn store(&self, id: &str, doc: &Value) {
@@ -80,7 +89,7 @@ pub fn host(env: &HostEnv) -> String {
     }
 }
 
-fn measured_on(env: &HostEnv) -> Value {
+pub fn measured_on(env: &HostEnv) -> Value {
     let mut on = serde_json::json!({
         "gating_backend": env.gating_backend,
         "cpu_model": cpu_model(),
@@ -104,8 +113,15 @@ fn measured_on(env: &HostEnv) -> Value {
 /// callgrind, or the reverse; the `--backend` argument stays too, since it
 /// decides which non-gating backends ran alongside.
 fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> String {
-    let scope = [
-        id,
+    let mut parts = vec![id.to_string()];
+    parts.extend(conditions(stamp, common, env));
+    parts.push(common.filter.clone().unwrap_or_default());
+    hashed(&parts)
+}
+
+/// What decides a measurement besides the code and the item filter.
+fn conditions(stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> Vec<String> {
+    [
         &stamp.rustc,
         &stamp.codegen_units,
         &stamp.rustflags,
@@ -117,10 +133,16 @@ fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> Stri
         common.backend.as_deref().unwrap_or(""),
         &env.gating_backend,
         common.samples.as_deref().unwrap_or(""),
-        common.filter.as_deref().unwrap_or(""),
     ]
-    .join("\u{1}");
-    format!("{:016x}", soothfast_registry::fnv1a(scope.as_bytes()))
+    .map(String::from)
+    .to_vec()
+}
+
+fn hashed(parts: &[String]) -> String {
+    format!(
+        "{:016x}",
+        soothfast_registry::fnv1a(parts.join("\u{1}").as_bytes())
+    )
 }
 
 fn load(key: &str, measured_from: &str) -> Option<Value> {
@@ -211,6 +233,46 @@ mod tests {
             pkg: Some("demo".into()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_run_key_hashes_the_joined_conditions_in_order() {
+        let (stamp, args, env) = (stamp(), args(), env("callgrind"));
+        let joined = [
+            "aaa",
+            &stamp.rustc,
+            &stamp.codegen_units,
+            &stamp.rustflags,
+            &host(&env),
+            &invoke::harness_versions(),
+            "demo",
+            "",
+            "",
+            "",
+            "callgrind",
+            "",
+            "",
+        ]
+        .join("\u{1}");
+        assert_eq!(
+            key("aaa", &stamp, &args, &env),
+            format!("{:016x}", soothfast_registry::fnv1a(joined.as_bytes()))
+        );
+    }
+
+    #[test]
+    fn an_item_scope_ignores_the_filter_but_not_the_package() {
+        let (stamp, mut other) = (stamp(), args());
+        let scope = |a: &CommonArgs| {
+            Runs::new(&stamp, a, Some(env("callgrind")))
+                .item_scope()
+                .expect("scope")
+        };
+        let base = scope(&args());
+        other.filter = Some("stats".into());
+        assert_eq!(base, scope(&other));
+        other.pkg = Some("other".into());
+        assert_ne!(base, scope(&other));
     }
 
     #[test]
