@@ -437,8 +437,19 @@ impl Graph {
     fn always_defined(&self, parsed: &[(u64, Ins)], reg: &str, good: &[bool], at: usize) -> bool {
         // 0: not reached yet, 1: defined by a good instruction, 2: anything else.
         let mut state = vec![0u8; parsed.len()];
-        state[0] = 2;
-        let mut work = vec![0];
+        // Code the graph does not reach from the entry (a landing pad the
+        // unwinder enters) may arrive with anything in the register.
+        let mut reached = vec![false; parsed.len()];
+        for &s in self.succ.iter().flatten() {
+            reached[s] = true;
+        }
+        let mut work = Vec::new();
+        for (i, seen) in reached.iter().enumerate() {
+            if i == 0 || !seen {
+                state[i] = 2;
+                work.push(i);
+            }
+        }
         while let Some(i) = work.pop() {
             let ins = &parsed[i].1;
             let out = match writes(ins) {
@@ -649,6 +660,24 @@ mod tests {
     fn an_unknown_indirect_jump_elsewhere_disables_every_proof() {
         assert!(prove_in(&[LEA, LOAD, ADD, JMP, "jmp    *%rdx", RET]).is_empty());
         assert!(prove_in(&[LEA, LOAD, ADD, JMP, "call   *%rdx", RET]).len() == 1);
+    }
+
+    #[test]
+    fn a_block_nothing_reaches_that_writes_the_base_breaks_the_proof() {
+        let plain = [LEA, "jmp    100c <f+0xc>", "ud2", LOAD, ADD, JMP, RET];
+        assert_eq!(prove_in(&plain).len(), 1);
+        let landing_pad = [
+            LEA,
+            "jmp    1014 <f+0x14>",
+            "ud2",
+            "mov    %rbx,%rcx",
+            "jmp    1014 <f+0x14>",
+            LOAD,
+            ADD,
+            JMP,
+            RET,
+        ];
+        assert!(prove_in(&landing_pad).is_empty());
     }
 
     #[test]
