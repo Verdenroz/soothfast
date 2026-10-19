@@ -169,12 +169,12 @@ fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run>
 }
 
 /// A counter's backend-qualified name paired with its presence check.
-type CounterCheck = (&'static str, fn(&ItemMetrics) -> bool);
+pub type CounterCheck = (&'static str, fn(&ItemMetrics) -> bool);
 
 /// Backend-qualified names for the counters `merge_stored` may carry over,
 /// checked against the merged item so `reused.metrics` reports exactly what
 /// came from the stored run instead of a fixed list.
-const COUNTER_METRICS: &[CounterCheck] = &[
+pub const COUNTER_METRICS: &[CounterCheck] = &[
     ("perfcnt.instructions", |m| m.instructions.is_some()),
     ("perfcnt.cycles", |m| m.cycles.is_some()),
     ("perfcnt.cache_refs", |m| m.cache_refs.is_some()),

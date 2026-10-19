@@ -449,6 +449,8 @@ pub struct ItemMetrics {
     /// buildcost pseudo-items
     pub build_ms: Option<u64>,
     pub size_bytes: Option<u64>,
+    /// Set when this item alone came from a stored measurement.
+    pub reused: Option<Reused>,
 }
 
 /// One assertion verdict from the runner.
@@ -631,6 +633,7 @@ pub fn run_from_items_value(items: &Value) -> Run {
                 wakes: v["asyncexec"]["wakes"].as_u64(),
                 build_ms: v["buildcost"]["build_ms"].as_u64(),
                 size_bytes: v["buildcost"]["size_bytes"].as_u64(),
+                reused: None,
             },
         );
     }
@@ -641,9 +644,11 @@ pub fn run_from_items_value(items: &Value) -> Run {
 /// Per item, since runs of several packages share one baseline file.
 fn saved_items(run: &Run) -> Value {
     let mut items = run_to_items_value(run);
-    if let (Some(reused), Some(map)) = (&run.reused, items.as_object_mut()) {
-        for item in map.values_mut() {
-            item["reused"] = json!({ "from": reused.from, "metrics": reused.metrics });
+    if let Some(map) = items.as_object_mut() {
+        for (id, item) in map {
+            if let Some(reused) = run.items[id].reused.as_ref().or(run.reused.as_ref()) {
+                item["reused"] = json!({ "from": reused.from, "metrics": reused.metrics });
+            }
         }
     }
     items
@@ -1709,6 +1714,25 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_item_carries_its_own_reuse_marker() {
+        let mut run = Run::default();
+        run.items.insert("pkg::a".into(), ItemMetrics::default());
+        run.items.insert(
+            "pkg::b".into(),
+            ItemMetrics {
+                reused: Some(Reused {
+                    from: "item cache".into(),
+                    metrics: vec!["callgrind.ir"],
+                }),
+                ..ItemMetrics::default()
+            },
+        );
+        let items = saved_items(&run);
+        assert!(items["pkg::a"].get("reused").is_none());
+        assert_eq!(items["pkg::b"]["reused"]["from"], "item cache");
+    }
+
+    #[test]
     fn an_env_line_reads_its_guest_only_when_complete() {
         let full = serde_json::json!({
             "type": "env", "gating_backend": "callgrind",
@@ -1761,6 +1785,7 @@ mod tests {
                 tolerance_pct: Some(8.0),
                 build_ms: None,
                 size_bytes: None,
+                reused: None,
             },
         );
         let round_tripped = run_from_items_value(&run_to_items_value(&run));

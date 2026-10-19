@@ -14,7 +14,8 @@ use serde_json::{Value, json};
 use crate::buildstamp::BuildStamp;
 use crate::codekey::{self, Binary};
 use crate::gate;
-use crate::invoke::{self, AssertionOutcome, CommonArgs, ItemMetrics, Run};
+use crate::headrun::COUNTER_METRICS;
+use crate::invoke::{self, AssertionOutcome, CommonArgs, ItemMetrics, Reused, Run};
 use crate::runcache::{self, Runs};
 
 /// Entries kept per item. Branches that alternate between a few code states
@@ -359,7 +360,20 @@ impl Reuse {
     /// Put the stored metrics and assertions of every reused item into `run`.
     pub fn splice(&self, run: &mut Run) {
         for (id, entry) in &self.hits {
-            run.items.insert(id.clone(), entry.metrics.clone());
+            let mut metrics = entry.metrics.clone();
+            let mut named: Vec<&'static str> = COUNTER_METRICS
+                .iter()
+                .filter(|(_, present)| present(&metrics))
+                .map(|(name, _)| *name)
+                .collect();
+            if metrics.median_ns.is_some() {
+                named.push("walltime.median_ns");
+            }
+            metrics.reused = Some(Reused {
+                from: "item cache".into(),
+                metrics: named,
+            });
+            run.items.insert(id.clone(), metrics);
             run.assertions.retain(|a| &a.id != id);
             run.assertions.extend(entry.assertions.iter().cloned());
         }
