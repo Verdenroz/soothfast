@@ -432,7 +432,7 @@ fn hash_functions(
             && let Ok(addr) = u64::from_str_radix(addr, 16)
         {
             let hex = format!("0x{addr:016x}");
-            if wanted.contains(&hex) {
+            if wanted.contains(&hex) && name.ends_with("@plt") {
                 stubs.insert(hex, name.to_string());
             }
         } else if let Some((addr, body)) = text.split_once(':')
@@ -837,6 +837,44 @@ Idx Name          Size      VMA               LMA               File off  Algn
                 f(EXE, "a"),
                 f(EXE, "b"),
             ]
+        );
+    }
+
+    #[test]
+    fn only_plt_labels_name_a_symbolless_address() {
+        let (sections, symbols) = (parse_sections(SECTIONS), parse_symbols(SYMBOLS));
+        let mut resolver = Resolver {
+            sections: &sections,
+            symbols: &symbols,
+            relocs: &[],
+            image: &[],
+            roots: HashMap::new(),
+        };
+        let wanted: BTreeSet<String> = [
+            "0x0000000000023eb0",
+            "0x0000000000024000",
+            "0x0000000000024100",
+        ]
+        .map(String::from)
+        .into();
+        let dis = "\
+0000000000023eb0 <memcpy@plt>:
+   23eb0:\tjmp    *0x1000(%rip)
+0000000000024000 <_init>:
+   24000:\tret
+0000000000024100 <.text>:
+   24100:\tret
+";
+        let mut stubs = HashMap::new();
+        hash_functions(
+            &mut resolver,
+            &wanted,
+            Cursor::new(dis.as_bytes()),
+            &mut stubs,
+        );
+        assert_eq!(
+            stubs.into_iter().collect::<Vec<_>>(),
+            [("0x0000000000023eb0".to_string(), "memcpy@plt".to_string())]
         );
     }
 
