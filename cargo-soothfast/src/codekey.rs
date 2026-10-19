@@ -105,10 +105,47 @@ fn parse_symbols(listing: &str) -> Vec<Symbol> {
     symbols
 }
 
+/// What a dynamic relocation writes into its slot at load time.
+#[derive(Clone)]
+enum Target {
+    /// An address inside this image.
+    Relative(u64),
+    /// A named symbol, with its addend.
+    Symbol(String),
+}
+
+struct Reloc {
+    offset: u64,
+    target: Target,
+}
+
+/// Dynamic relocations from `objdump -R`, ordered by slot address.
+fn parse_relocs(listing: &str) -> Vec<Reloc> {
+    let mut relocs: Vec<Reloc> = listing
+        .lines()
+        .filter_map(|line| {
+            let [offset, _, value] = line.split_whitespace().collect::<Vec<_>>()[..] else {
+                return None;
+            };
+            let target = match value.strip_prefix("*ABS*+0x") {
+                Some(addend) => Target::Relative(u64::from_str_radix(addend, 16).ok()?),
+                None => Target::Symbol(value.to_string()),
+            };
+            Some(Reloc {
+                offset: u64::from_str_radix(offset, 16).ok()?,
+                target,
+            })
+        })
+        .collect();
+    relocs.sort_by_key(|r| r.offset);
+    relocs
+}
+
 /// Turns an address into something that does not move with the layout.
 struct Resolver<'a> {
     sections: &'a [Section],
     symbols: &'a [Symbol],
+    relocs: &'a [Reloc],
     image: &'a [u8],
     symbol_hashes: HashMap<usize, Option<u64>>,
     section_hashes: HashMap<usize, Option<u64>>,
@@ -130,22 +167,45 @@ impl Resolver<'_> {
         (addr - s.addr < s.size).then_some(i)
     }
 
-    fn bytes_hash(&self, section: usize, addr: u64, size: u64) -> Option<u64> {
+    /// Hash of a data range. A relocated slot holds a layout-dependent value
+    /// (or zero) in the file, so its bytes are blanked and the target it
+    /// resolves to is hashed in their place.
+    fn bytes_hash(&mut self, section: usize, addr: u64, size: u64) -> Option<u64> {
         let s = &self.sections[section];
-        if !s.contents {
-            return Some(fnv1a(format!("zero{size}").as_bytes()));
+        let contents = s.contents;
+        let mut bytes = if contents {
+            let start = usize::try_from(s.offset.checked_add(addr.checked_sub(s.vma)?)?).ok()?;
+            let end = start.checked_add(usize::try_from(size).ok()?)?;
+            self.image.get(start..end)?.to_vec()
+        } else {
+            format!("zero{size}").into_bytes()
+        };
+        let first = self.relocs.partition_point(|r| r.offset < addr);
+        let last = self.relocs.partition_point(|r| r.offset < addr + size);
+        for i in first..last {
+            let (slot, target) = (self.relocs[i].offset - addr, self.relocs[i].target.clone());
+            let target = match target {
+                Target::Relative(to) => self.resolve(to, None)?,
+                Target::Symbol(name) => format!("sym:{}", strip_llvm(&name)),
+            };
+            if contents {
+                let slot = slot as usize;
+                let end = (slot + 8).min(bytes.len());
+                bytes[slot..end].fill(0);
+            }
+            bytes.extend(format!("@{slot:x}={target}\n").bytes());
         }
-        let start = usize::try_from(s.offset.checked_add(addr.checked_sub(s.vma)?)?).ok()?;
-        let end = start.checked_add(usize::try_from(size).ok()?)?;
-        self.image.get(start..end).map(fnv1a)
+        Some(fnv1a(&bytes))
     }
 
     fn symbol_hash(&mut self, symbol: usize, section: usize) -> Option<u64> {
         if let Some(h) = self.symbol_hashes.get(&symbol) {
             return *h;
         }
-        let s = &self.symbols[symbol];
-        let h = self.bytes_hash(section, s.addr, s.size);
+        // A pointer cycle reaches itself while hashing: the placeholder ends it.
+        self.symbol_hashes.insert(symbol, Some(0));
+        let (addr, size) = (self.symbols[symbol].addr, self.symbols[symbol].size);
+        let h = self.bytes_hash(section, addr, size);
         self.symbol_hashes.insert(symbol, h);
         h
     }
@@ -154,8 +214,9 @@ impl Resolver<'_> {
         if let Some(h) = self.section_hashes.get(&section) {
             return *h;
         }
-        let s = &self.sections[section];
-        let h = self.bytes_hash(section, s.vma, s.size);
+        self.section_hashes.insert(section, Some(0));
+        let (vma, size) = (self.sections[section].vma, self.sections[section].size);
+        let h = self.bytes_hash(section, vma, size);
         self.section_hashes.insert(section, h);
         h
     }
@@ -336,10 +397,13 @@ impl Binary {
     pub fn open(bin: &Path, wanted: &BTreeSet<String>) -> Option<Binary> {
         let sections = parse_sections(&command_text("objdump", &["-h"], bin)?);
         let symbols = parse_symbols(&command_text("nm", &["-S", "--defined-only"], bin)?);
+        // Fails on a binary with no dynamic section, which has no relocations.
+        let relocs = parse_relocs(&command_text("objdump", &["-R"], bin).unwrap_or_default());
         let image = std::fs::read(bin).ok()?;
         let mut resolver = Resolver {
             sections: &sections,
             symbols: &symbols,
+            relocs: &relocs,
             image: &image,
             symbol_hashes: HashMap::new(),
             section_hashes: HashMap::new(),
@@ -410,10 +474,22 @@ Idx Name          Size      VMA               LMA               File off  Algn
     }
 
     fn hashes(sections: &str, symbols: &str, image: &[u8], dis: &str) -> HashMap<String, u64> {
+        hashes_relocated(sections, symbols, "", image, dis)
+    }
+
+    fn hashes_relocated(
+        sections: &str,
+        symbols: &str,
+        relocs: &str,
+        image: &[u8],
+        dis: &str,
+    ) -> HashMap<String, u64> {
         let (sections, symbols) = (parse_sections(sections), parse_symbols(symbols));
+        let relocs = parse_relocs(relocs);
         let mut resolver = Resolver {
             sections: &sections,
             symbols: &symbols,
+            relocs: &relocs,
             image,
             symbol_hashes: HashMap::new(),
             section_hashes: HashMap::new(),
@@ -485,6 +561,35 @@ Idx Name          Size      VMA               LMA               File off  Algn
         let b = bar(&hashes(SECTIONS, SYMBOLS, &image(7, 2), dis));
         assert!(a.is_some());
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn a_relocated_slot_hashes_by_its_target_not_its_bytes() {
+        let at = |addend: u64, slot: u8| {
+            let mut image = image(7, 1);
+            image[0x2000..0x2008].fill(slot);
+            let relocs = format!("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x{addend:016x}");
+            bar(&hashes_relocated(SECTIONS, SYMBOLS, &relocs, &image, DIS))
+        };
+        assert!(at(0x1000, 0).is_some());
+        assert_ne!(at(0x1000, 0), at(0x1040, 0));
+        assert_eq!(at(0x1000, 0), at(0x1000, 9));
+    }
+
+    #[test]
+    fn a_symbolic_relocation_hashes_by_its_name() {
+        let with = |name: &str| {
+            let relocs = format!("0000000000002000 R_X86_64_GLOB_DAT  {name}");
+            bar(&hashes_relocated(
+                SECTIONS,
+                SYMBOLS,
+                &relocs,
+                &image(7, 1),
+                DIS,
+            ))
+        };
+        assert_ne!(with("alpha"), with("beta"));
+        assert_eq!(with("alpha"), with("alpha"));
     }
 
     #[test]
