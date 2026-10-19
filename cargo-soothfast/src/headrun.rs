@@ -10,7 +10,7 @@ use crate::agreement::{self, Agreement, Tolerance};
 use crate::buildstamp::{self, BuildStamp};
 use crate::gate;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
-use crate::itemcache::Reuse;
+use crate::itemcache::{Bin, Reuse};
 use crate::runcache::{self, Runs};
 
 /// Build HEAD's bench binary once and name it: its digest, and the run cache
@@ -67,12 +67,16 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
             ),
         }
     }
-    let reuse = exe
-        .as_deref()
-        .filter(|_| reuse)
-        .and_then(|exe| Reuse::plan("measure", common, &runs, &[exe]).map(|r| (r, exe)));
+    let reuse = exe.as_deref().filter(|_| reuse).and_then(|exe| {
+        let bin = Bin {
+            exe,
+            dir: None,
+            target_dir: None,
+        };
+        Reuse::plan("measure", common, &runs, &[bin])
+    });
     let run = match reuse {
-        Some((reuse, exe)) => run_reusing(common, &reuse, exe, stamp.clone())?,
+        Some(reuse) => run_reusing(common, &reuse, stamp.clone())?,
         None => run_head(common, &[], stamp.clone())?,
     };
     let settled = settle("measure", "this run", &run, || {
@@ -84,12 +88,7 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
 
 /// HEAD's run with the items `reuse` covers taken from the store and only the
 /// rest measured; what is measured is kept for the next invocation.
-fn run_reusing(
-    common: &CommonArgs,
-    reuse: &Reuse,
-    exe: &Path,
-    stamp: BuildStamp,
-) -> Result<Run, String> {
+fn run_reusing(common: &CommonArgs, reuse: &Reuse, stamp: BuildStamp) -> Result<Run, String> {
     let mut run = if reuse.nothing_to_measure(0) {
         Reuse::empty_run(stamp)
     } else {
@@ -97,7 +96,7 @@ fn run_reusing(
         let args: Vec<&str> = ids.iter().map(String::as_str).collect();
         run_head(common, &args, stamp)?
     };
-    reuse.record(exe, &run);
+    reuse.record(0, &run);
     reuse.splice(&mut run);
     Ok(run)
 }

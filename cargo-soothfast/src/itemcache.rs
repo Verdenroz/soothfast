@@ -16,6 +16,7 @@ use crate::codekey::{self, Binary};
 use crate::gate;
 use crate::headrun::COUNTER_METRICS;
 use crate::invoke::{self, AssertionOutcome, CommonArgs, ItemMetrics, Reused, Run};
+use crate::linkmap::{self, Extent};
 use crate::runcache::{self, Runs};
 
 /// Entries kept per item. Branches that alternate between a few code states
@@ -169,7 +170,7 @@ impl Items {
     pub fn reusable(
         &self,
         listed: &[BTreeMap<String, String>],
-        bins: &[&Path],
+        bins: &[(&Path, &[Extent])],
     ) -> BTreeMap<String, Entry> {
         let ids: Vec<String> = listed[0]
             .keys()
@@ -178,8 +179,10 @@ impl Items {
             .collect();
         let stored = self.load(&ids);
         let wanted = stored.wanted();
-        let binaries: Option<Vec<Binary>> =
-            bins.iter().map(|bin| Binary::open(bin, &wanted)).collect();
+        let binaries: Option<Vec<Binary>> = bins
+            .iter()
+            .map(|(bin, inputs)| Binary::open(bin, &wanted, inputs))
+            .collect();
         let Some(binaries) = binaries.filter(|_| !wanted.is_empty()) else {
             return BTreeMap::new();
         };
@@ -262,13 +265,22 @@ pub struct Reuse {
     hits: BTreeMap<String, Entry>,
     todo: Vec<Vec<String>>,
     measured_on: Value,
+    exes: Vec<PathBuf>,
+    inputs: Vec<Vec<Extent>>,
+}
+
+/// A bench binary and where it was built, which a link map needs.
+pub struct Bin<'a> {
+    pub exe: &'a Path,
+    pub dir: Option<&'a Path>,
+    pub target_dir: Option<&'a Path>,
 }
 
 impl Reuse {
     /// Plan the measurement of `bins` (HEAD's binary, then the merge-base's
     /// when gating). `None`, with the reason printed where the user can act
     /// on it, when per-item reuse does not apply.
-    pub fn plan(cmd: &str, common: &CommonArgs, runs: &Runs, bins: &[&Path]) -> Option<Reuse> {
+    pub fn plan(cmd: &str, common: &CommonArgs, runs: &Runs, bins: &[Bin]) -> Option<Reuse> {
         let env = runs.env().filter(|e| e.gating_backend == "callgrind")?;
         if common.no_item_cache {
             println!("{cmd}: per-item reuse off (--no-item-cache); measuring in full");
@@ -282,7 +294,7 @@ impl Reuse {
         let capable = env.item_reuse
             && bins[1..]
                 .iter()
-                .all(|bin| invoke::host_env(bin, backend).is_ok_and(|e| e.item_reuse));
+                .all(|bin| invoke::host_env(bin.exe, backend).is_ok_and(|e| e.item_reuse));
         if !capable {
             println!(
                 "{cmd}: per-item reuse disabled for this invocation: bench harness does not take --id (harness {}, CLI {})",
@@ -293,11 +305,21 @@ impl Reuse {
         }
         let listed: Vec<BTreeMap<String, String>> = bins
             .iter()
-            .map(|bin| invoke::list_items(bin, common.filter.as_deref()))
+            .map(|bin| invoke::list_items(bin.exe, common.filter.as_deref()))
             .collect::<Option<_>>()?;
+        let inputs: Vec<Vec<Extent>> = bins
+            .iter()
+            .map(|b| linkmap::extents(cmd, common, b.exe, b.dir, b.target_dir))
+            .collect();
         let all: BTreeSet<&String> = listed.iter().flat_map(|l| l.keys()).collect();
         let items = Items::open(&runs.item_scope()?)?;
-        let hits = items.reusable(&listed, bins);
+        let exes: Vec<PathBuf> = bins.iter().map(|b| b.exe.to_path_buf()).collect();
+        let pairs: Vec<(&Path, &[Extent])> = exes
+            .iter()
+            .zip(&inputs)
+            .map(|(exe, inputs)| (exe.as_path(), inputs.as_slice()))
+            .collect();
+        let hits = items.reusable(&listed, &pairs);
         let todo = listed
             .iter()
             .map(|l| {
@@ -323,6 +345,8 @@ impl Reuse {
             hits,
             todo,
             measured_on: runcache::measured_on(env),
+            exes,
+            inputs,
         })
     }
 
@@ -379,8 +403,9 @@ impl Reuse {
         }
     }
 
-    /// Keep what `run` measured of `bin` for later invocations.
-    pub fn record(&self, bin: &Path, run: &Run) {
+    /// Keep what `run` measured of binary `side` for later invocations.
+    pub fn record(&self, side: usize, run: &Run) {
+        let bin = self.exes[side].as_path();
         let functions: BTreeMap<&String, Vec<(String, String)>> = run
             .executed
             .iter()
@@ -392,7 +417,7 @@ impl Reuse {
             .filter(|(ob, _)| ob == codekey::EXE)
             .map(|(_, sym)| sym.clone())
             .collect();
-        let Some(binary) = Binary::open(bin, &wanted) else {
+        let Some(binary) = Binary::open(bin, &wanted, &self.inputs[side]) else {
             return;
         };
         for (id, functions) in functions {

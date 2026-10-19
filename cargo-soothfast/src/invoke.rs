@@ -101,6 +101,18 @@ fn bench_build_command(
     build: Build,
     pkgs: &[&str],
 ) -> io::Result<Command> {
+    cargo_command("bench", common, dir, target_dir, build, pkgs)
+}
+
+/// `cargo <verb>` for the bench target, carrying the same inputs for any verb.
+fn cargo_command(
+    verb: &str,
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+    pkgs: &[&str],
+) -> io::Result<Command> {
     let mut cmd = Command::new("cargo");
     if let Some(toolchain) = bench_toolchain() {
         cmd.arg(format!("+{toolchain}"));
@@ -115,7 +127,7 @@ fn bench_build_command(
             ));
         }
     }
-    cmd.arg("bench");
+    cmd.arg(verb);
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
     }
@@ -135,6 +147,32 @@ fn bench_build_command(
         cmd.current_dir(d);
     }
     Ok(cmd)
+}
+
+/// Link the bench target a second time with the linker writing its map to
+/// `map`, and name the executable. `cargo rustc` hands the flag to the bench
+/// crate alone, so dependencies are not rebuilt, and the result is a separate
+/// artifact next to the measured one.
+pub fn build_link_map(
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    map: &Path,
+) -> Option<PathBuf> {
+    let target = common.target.as_deref().unwrap_or("soothfast");
+    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+    let mut cmd = cargo_command("rustc", common, dir, target_dir, Build::Measure, &pkgs).ok()?;
+    cmd.args(["--profile", "bench", "--message-format=json", "--"]);
+    cmd.arg("-C");
+    cmd.arg(format!("link-arg=-Wl,-Map={}", map.display()));
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|m| m["reason"] == "compiler-artifact" && m["target"]["name"] == target)
+        .find_map(|m| m["executable"].as_str().map(PathBuf::from))
 }
 
 /// Workspace member names, resolved once per tree. A gate that cannot name

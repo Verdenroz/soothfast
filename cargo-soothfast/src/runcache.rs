@@ -164,11 +164,12 @@ fn store(key: &str, doc: &Value) {
         return;
     };
     if std::fs::write(d.join(format!("{key}.json")), doc.to_string()).is_ok() {
-        prune(&d);
+        prune_oldest(&d, KEEP);
     }
 }
 
-fn prune(d: &std::path::Path) {
+/// Drop the oldest files of `d` past `keep`.
+pub fn prune_oldest(d: &std::path::Path, keep: usize) {
     let Ok(entries) = std::fs::read_dir(d) else {
         return;
     };
@@ -179,11 +180,11 @@ fn prune(d: &std::path::Path) {
             Some((t, e.path()))
         })
         .collect();
-    if files.len() <= KEEP {
+    if files.len() <= keep {
         return;
     }
     files.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
-    for (_, path) in files.drain(KEEP..) {
+    for (_, path) in files.drain(keep..) {
         let _ = std::fs::remove_file(path);
     }
 }

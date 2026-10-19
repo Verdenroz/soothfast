@@ -19,6 +19,8 @@ use std::sync::{Mutex, OnceLock};
 
 use soothfast_registry::fnv1a;
 
+use crate::linkmap::Extent;
+
 /// Stands for the bench binary in a stored function set, so two builds at
 /// different paths name the same functions.
 pub const EXE: &str = "@exe";
@@ -196,6 +198,8 @@ fn parse_relocs(listing: &str) -> Vec<Reloc> {
 enum Node {
     Symbol(usize),
     Section(usize),
+    /// An input section the link map names, inside an output section.
+    Input(usize),
 }
 
 /// What an address resolves to.
@@ -221,6 +225,7 @@ struct Resolver<'a> {
     symbols: &'a [Symbol],
     relocs: &'a [Reloc],
     zero_sized: &'a HashMap<u64, String>,
+    inputs: &'a [Extent],
     image: &'a [u8],
     roots: HashMap<Node, Option<u64>>,
 }
@@ -263,11 +268,19 @@ impl Resolver<'_> {
             return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
         }
         let slot = hint.filter(|h| h.ends_with("$got")).unwrap_or_default();
-        Some(Place::Data(
-            Node::Section(section),
-            addr - self.sections[section].vma,
-            slot.to_string(),
-        ))
+        let (node, start) = match self.input_at(addr) {
+            Some(i) => (Node::Input(i), self.inputs[i].vma),
+            None => (Node::Section(section), self.sections[section].vma),
+        };
+        Some(Place::Data(node, addr - start, slot.to_string()))
+    }
+
+    fn input_at(&self, addr: u64) -> Option<usize> {
+        let i = self
+            .inputs
+            .partition_point(|e| e.vma <= addr)
+            .checked_sub(1)?;
+        (addr - self.inputs[i].vma < self.inputs[i].size).then_some(i)
     }
 
     /// Section, address and size of a node.
@@ -278,6 +291,10 @@ impl Resolver<'_> {
                 Some((self.section_at(s.addr)?, s.addr, s.size))
             }
             Node::Section(i) => Some((i, self.sections[i].vma, self.sections[i].size)),
+            Node::Input(i) => {
+                let e = &self.inputs[i];
+                Some((self.section_at(e.vma)?, e.vma, e.size))
+            }
         }
     }
 
@@ -366,7 +383,7 @@ impl Resolver<'_> {
             Place::Code(name) => name,
             Place::Data(node, off, slot) => {
                 let label = match node {
-                    Node::Symbol(_) => "data",
+                    Node::Symbol(_) | Node::Input(_) => "data",
                     Node::Section(i) => &self.sections[i].name,
                 };
                 format!("{label}:{:016x}+{off:x}{slot}", self.root_hash(node)?)
@@ -566,7 +583,7 @@ impl Binary {
     /// Hash `wanted` (portable names) in `bin`. `None` where `nm` or `objdump`
     /// is missing or fails; a function that cannot be named uniquely or
     /// resolved is simply absent.
-    pub fn open(bin: &Path, wanted: &BTreeSet<String>) -> Option<Binary> {
+    pub fn open(bin: &Path, wanted: &BTreeSet<String>, inputs: &[Extent]) -> Option<Binary> {
         let sections = parse_sections(&command_text("objdump", &["-h"], bin)?);
         let listing = command_text("nm", &["-S", "--defined-only"], bin)?;
         let symbols = parse_symbols(&listing);
@@ -579,6 +596,7 @@ impl Binary {
             symbols: &symbols,
             relocs: &relocs,
             zero_sized: &zero_sized,
+            inputs,
             image: &image,
             roots: HashMap::new(),
         };
@@ -700,6 +718,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
             symbols: &symbols,
             relocs: &relocs,
             zero_sized: &HashMap::new(),
+            inputs: &[],
             image,
             roots: HashMap::new(),
         };
@@ -805,6 +824,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
                 symbols: &symbols,
                 relocs: &[],
                 zero_sized: &zero_sized,
+                inputs: &[],
                 image,
                 roots: HashMap::new(),
             };
@@ -941,6 +961,44 @@ Idx Name          Size      VMA               LMA               File off  Algn
     }
 
     #[test]
+    fn a_link_map_extent_bounds_a_reference_into_unnamed_data() {
+        let dis = "\
+0000000000001000 <_ZN3foo3bar17h1E>:
+    1000:\tlea    0x1000(%rip),%rax        # 2008 <anon>
+    1007:\tret
+";
+        let (sections, symbols) = (parse_sections(SECTIONS), parse_symbols(SYMBOLS));
+        let hash = |inputs: &[Extent], byte: usize| {
+            let mut image = image(7, 1);
+            image[byte] = 9;
+            let mut resolver = Resolver {
+                sections: &sections,
+                symbols: &symbols,
+                relocs: &[],
+                zero_sized: &HashMap::new(),
+                inputs,
+                image: &image,
+                roots: HashMap::new(),
+            };
+            let wanted = ["_ZN3foo3bar17h1E".to_string()].into();
+            let hashes = hash_functions(
+                &mut resolver,
+                &wanted,
+                Cursor::new(dis.as_bytes()),
+                &mut HashMap::new(),
+            );
+            bar(&hashes)
+        };
+        let input = [Extent {
+            vma: 0x2008,
+            size: 8,
+        }];
+        assert_eq!(hash(&input, 0x2018), hash(&input, 0x201c));
+        assert_ne!(hash(&input, 0x2008), hash(&input, 0x2009));
+        assert_ne!(hash(&[], 0x2018), hash(&[], 0x201c));
+    }
+
+    #[test]
     fn an_unresolvable_reference_leaves_the_function_unhashed() {
         let dis = "\
 0000000000001000 <_ZN3foo3bar17h1E>:
@@ -990,6 +1048,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
             symbols: &symbols,
             relocs: &[],
             zero_sized: &HashMap::new(),
+            inputs: &[],
             image: &[],
             roots: HashMap::new(),
         };
@@ -1065,8 +1124,12 @@ Idx Name          Size      VMA               LMA               File off  Algn
             .to_string();
         let wanted = BTreeSet::from([name.clone()]);
         let functions = [(EXE.to_string(), name)];
-        let first = Binary::open(&exe, &wanted).unwrap().code_key(&functions);
-        let second = Binary::open(&exe, &wanted).unwrap().code_key(&functions);
+        let first = Binary::open(&exe, &wanted, &[])
+            .unwrap()
+            .code_key(&functions);
+        let second = Binary::open(&exe, &wanted, &[])
+            .unwrap()
+            .code_key(&functions);
         assert!(first.is_some());
         assert_eq!(first, second);
     }

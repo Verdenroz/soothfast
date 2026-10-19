@@ -15,7 +15,7 @@ use crate::headrun::{
     settle, settled_doc,
 };
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
-use crate::itemcache::Reuse;
+use crate::itemcache::{Bin, Reuse};
 use crate::workspace;
 
 /// Deterministic counters gate tight.
@@ -903,9 +903,19 @@ fn measure_ref_interleaved(
             println!("gate: reusing a run measured from the same merge-base binary");
             return Ok((Ref::Cached(doc), digests, harness));
         }
-        let item_reuse = digests
-            .as_ref()
-            .and_then(|d| Reuse::plan("gate", common, &runs, &[&d.head_exe, &d.base_exe]));
+        let item_reuse = digests.as_ref().and_then(|d| {
+            let head = Bin {
+                exe: &d.head_exe,
+                dir: None,
+                target_dir: None,
+            };
+            let base = Bin {
+                exe: &d.base_exe,
+                dir: Some(wt),
+                target_dir: wt_target.as_deref(),
+            };
+            Reuse::plan("gate", common, &runs, &[head, base])
+        });
         let measure_side = |side: usize, extra: &[&str]| -> Result<Run, String> {
             let dir = (side == 1).then_some(wt);
             let Some(reuse) = &item_reuse else {
@@ -929,10 +939,10 @@ fn measure_ref_interleaved(
             measure_side(0, TIMING_ONLY),
             measure_side(1, TIMING_ONLY),
         ];
-        if let (Some(reuse), Some(d)) = (&item_reuse, &digests) {
-            for (round, exe) in rounds.iter_mut().zip([&d.head_exe, &d.base_exe]) {
+        if let Some(reuse) = &item_reuse {
+            for (side, round) in rounds.iter_mut().take(2).enumerate() {
                 if let Ok(run) = round {
-                    reuse.record(exe, run);
+                    reuse.record(side, run);
                     reuse.splice(run);
                 }
             }
