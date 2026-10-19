@@ -113,13 +113,6 @@ fn writes(ins: &Ins) -> Writes {
     let m = ins.mnemonic;
     let starts = |names: &[&str]| names.iter().any(|n| m.starts_with(n));
     let is = |names: &[&str]| names.contains(&m);
-    if m.starts_with('j')
-        || starts(&[
-            "cmp", "test", "push", "nop", "endbr", "ret", "ud2", "int3", "hlt", "prefetch",
-        ])
-    {
-        return Writes::Nothing;
-    }
     let one_operand_imul = m == "imul" && ins.operands.len() == 1;
     if starts(&[
         "call", "rep", "loop", "cmpxchg", "xchg", "xadd", "cpuid", "syscall",
@@ -131,6 +124,19 @@ fn writes(ins: &Ins) -> Writes {
         "movsb", "movsw", "movsl", "movsq", "stosb", "stosw", "stosl", "stosq",
     ]) || one_operand_imul
     {
+        return Writes::Any;
+    }
+    if m.starts_with('j')
+        || starts(&[
+            "cmp", "test", "push", "nop", "endbr", "ret", "ud2", "int3", "hlt", "prefetch",
+        ])
+        || is(&[
+            "pause", "lfence", "mfence", "sfence", "cld", "std", "clc", "stc", "cmc",
+        ])
+    {
+        return Writes::Nothing;
+    }
+    if ins.operands.is_empty() {
         return Writes::Any;
     }
     let dest = if starts(&["pop", "inc", "dec", "neg", "not", "set", "bswap"]) {
@@ -217,6 +223,7 @@ fn reads_table(after: &[(u64, Ins)], base: &str, targets: &HashSet<u64>) -> bool
         if targets.contains(addr) {
             return false;
         }
+        let mut tracked = vec![base];
         match (&loaded, &sum) {
             (None, _) => {
                 let is_load = matches!(ins.mnemonic, "movslq" | "movsxd")
@@ -226,8 +233,7 @@ fn reads_table(after: &[(u64, Ins)], base: &str, targets: &HashSet<u64>) -> bool
                     if loaded.is_none() {
                         return false;
                     }
-                } else if disturbs(ins, &[base]) {
-                    return false;
+                    continue;
                 }
             }
             (Some(word), None) => {
@@ -238,9 +244,9 @@ fn reads_table(after: &[(u64, Ins)], base: &str, targets: &HashSet<u64>) -> bool
                     && regs.iter().flatten().any(|f| f == word);
                 if adds {
                     sum = regs[1].clone();
-                } else if disturbs(ins, &[base, word]) {
-                    return false;
+                    continue;
                 }
+                tracked.push(word);
             }
             (Some(_), Some(total)) => {
                 if ins.mnemonic == "jmp"
@@ -253,10 +259,15 @@ fn reads_table(after: &[(u64, Ins)], base: &str, targets: &HashSet<u64>) -> bool
                 {
                     return true;
                 }
-                if disturbs(ins, &[total]) {
-                    return false;
-                }
+                tracked = vec![total];
             }
+        }
+        // Past an unconditional transfer the next instruction is reached some
+        // other way, so the straight line from the lea is over.
+        let leaves = ins.mnemonic == "jmp"
+            || matches!(ins.mnemonic, "ret" | "retq" | "ud2" | "hlt" | "int3");
+        if leaves || disturbs(ins, &tracked) {
+            return false;
         }
     }
     false
@@ -347,6 +358,30 @@ mod tests {
         assert!(prove(&instrs).is_empty());
         instrs[0].1 = "jne    1100 <f+0x100>".to_string();
         assert_eq!(prove(&instrs).len(), 1);
+    }
+
+    #[test]
+    fn a_jump_away_before_the_load_breaks_the_proof() {
+        let away = [
+            TABLE[0],
+            "jmp    1020 <f+0x20>",
+            TABLE[1],
+            TABLE[2],
+            TABLE[3],
+        ];
+        assert!(prove(&code(&away)).is_empty());
+        let exit = [TABLE[0], "ret", TABLE[1], TABLE[2], TABLE[3]];
+        assert!(prove(&code(&exit)).is_empty());
+    }
+
+    #[test]
+    fn an_implicit_writer_breaks_the_proof() {
+        for odd in ["rdtsc", "lahf", "cwtd", "xgetbv", "cmpxchg %rbx,(%rdi)"] {
+            let broken = [TABLE[0], odd, TABLE[1], TABLE[2], TABLE[3]];
+            assert!(prove(&code(&broken)).is_empty(), "{odd}");
+        }
+        let harmless = [TABLE[0], "nop", "pause", TABLE[1], TABLE[2], TABLE[3]];
+        assert_eq!(prove(&code(&harmless)).len(), 1);
     }
 
     #[test]
