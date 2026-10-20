@@ -224,9 +224,8 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
-        // Reading a GOT entry yields what it relocates to, so that alone names
-        // it. Elsewhere a relocated address starts an object (a vtable) that
-        // is read past its first slot.
+        // A GOT entry reads as its relocation target. Elsewhere a relocated
+        // address starts an object (a vtable) read past its first slot.
         let in_got = self
             .section_at(addr)
             .is_some_and(|i| self.sections[i].name.starts_with(".got"));
