@@ -118,8 +118,10 @@ stop the others.
 A pass is stored only if the test leaves its inputs as it found them. A test
 that rewrites its own package files (regenerating goldens, say) prints that
 it changed its inputs and stores nothing, so the next run executes it again.
-A binary cargo never got to, or a nonzero exit cargo reports after every
-binary passed, counts as a failure and stores nothing.
+A binary cargo never got to counts as a failure. When cargo exits non-zero,
+the summary names `doc tests` only if cargo's output reports a failed doc
+test. Otherwise, if every binary passed, it reports `cargo test (exit N)`
+and prints the end of cargo's output.
 
 Doc tests cannot be cached. They run at the end of the same invocation for
 each selected package whose library has doc tests enabled. Pass `--no-doc`
