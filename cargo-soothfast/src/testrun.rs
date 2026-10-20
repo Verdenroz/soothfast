@@ -115,7 +115,7 @@ fn plan(
     selected: &[String],
 ) -> Result<Vec<Planned>, String> {
     let stdout = testbuild::build(selected, &args.cargo_args).map_err(|e| e.to_string())?;
-    let bins = testbuild::collect(&stdout, pkgs);
+    let built = testbuild::collect(&stdout, pkgs);
     let declared = testkey::declared_inputs(root, &cfg.inputs).map_err(|e| e.to_string())?;
     let rustc = testkey::rustc_version().map_err(|e| e.to_string())?;
     let cx = Context {
@@ -125,17 +125,20 @@ fn plan(
         rustc: &rustc,
     };
     let passes = Passes::open();
-    let mut package_inputs: BTreeMap<String, String> = BTreeMap::new();
+    let mut package_inputs: BTreeMap<String, Option<String>> = BTreeMap::new();
     let mut planned = Vec::new();
-    for bin in bins {
-        if let Some(pkg) = pkgs.iter().find(|p| p.name == bin.package)
-            && !package_inputs.contains_key(&bin.package)
-        {
-            let digest = testkey::package_inputs(root, &pkg.dir).map_err(|e| e.to_string())?;
+    for bin in built.tests {
+        if !package_inputs.contains_key(&bin.package) {
+            let siblings: Vec<&TestBin> = built
+                .siblings
+                .iter()
+                .filter(|s| s.package == bin.package)
+                .collect();
+            let digest = package_digest(root, pkgs, &bin.package, &siblings)?;
             package_inputs.insert(bin.package.clone(), digest);
         }
-        let key = package_inputs
-            .get(&bin.package)
+        let key = package_inputs[&bin.package]
+            .as_deref()
             .and_then(|files| testkey::key(&bin.package, &bin.target, &bin.exe, files, &cx));
         let cached = !args.no_cache
             && key
@@ -145,6 +148,21 @@ fn plan(
         planned.push(Planned { bin, key, cached });
     }
     Ok(planned)
+}
+
+/// What a package's tests read besides their own code: its non-Rust files and
+/// the executables its integration tests may spawn.
+fn package_digest(
+    root: &Path,
+    pkgs: &[Package],
+    name: &str,
+    siblings: &[&TestBin],
+) -> Result<Option<String>, String> {
+    let Some(pkg) = pkgs.iter().find(|p| p.name == name) else {
+        return Ok(None);
+    };
+    let files = testkey::package_inputs(root, &pkg.dir).map_err(|e| e.to_string())?;
+    Ok(testkey::siblings_digest(siblings).map(|s| format!("{files}\u{3}{s}")))
 }
 
 fn choose(

@@ -12,6 +12,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::runcache::{self, hex_fnv};
+use crate::testbuild::TestBin;
 use crate::{glob, invoke};
 
 /// Passes kept before the oldest are dropped.
@@ -56,6 +57,25 @@ fn key_of(package: &str, target: &str, digest: &str, package_inputs: &str, cx: &
         cx.rustc,
     ];
     hex_fnv(parts.join("\u{2}").as_bytes())
+}
+
+/// Digest of a package's plain executables, which its integration tests may
+/// spawn. `None` when any cannot be digested.
+pub fn siblings_digest(siblings: &[&TestBin]) -> Option<String> {
+    let digests = siblings
+        .iter()
+        .map(|b| Some((b.label(), crate::headrun::binary_digest(&b.exe)?)))
+        .collect::<Option<Vec<_>>>()?;
+    Some(fold_siblings(digests))
+}
+
+fn fold_siblings(mut digests: Vec<(String, String)>) -> String {
+    digests.sort();
+    let joined: Vec<String> = digests
+        .iter()
+        .map(|(l, d)| format!("{l}\u{0}{d}"))
+        .collect();
+    hex_fnv(joined.join("\n").as_bytes())
 }
 
 /// `rustc -vV`, which names the compiler by release and commit.
@@ -206,6 +226,24 @@ mod tests {
         for k in &moved {
             assert_ne!(*k, base());
         }
+    }
+
+    #[test]
+    fn a_sibling_binary_change_moves_the_key() {
+        let digests = |d: &str| vec![("p cli (bin)".to_string(), d.to_string())];
+        let key = |d: &str| key_of("p", "t", "bin", &fold_siblings(digests(d)), &cx(&[], &[]));
+        assert_eq!(key("one"), key("one"));
+        assert_ne!(key("one"), key("two"));
+    }
+
+    #[test]
+    fn sibling_order_does_not_matter() {
+        let a = ("a".to_string(), "1".to_string());
+        let b = ("b".to_string(), "2".to_string());
+        assert_eq!(
+            fold_siblings(vec![a.clone(), b.clone()]),
+            fold_siblings(vec![b, a])
+        );
     }
 
     #[test]

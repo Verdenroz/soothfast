@@ -62,26 +62,49 @@ fn rendered_diagnostics(stdout: &[u8]) -> Vec<String> {
         .collect()
 }
 
-/// Every test executable named in cargo's JSON, tagged with the workspace
+/// What a build produced for the workspace's packages.
+#[derive(Debug, Default, PartialEq)]
+pub struct Built {
+    /// Test executables.
+    pub tests: Vec<TestBin>,
+    /// Plain `bin` and `example` executables. Integration tests spawn these
+    /// without embedding them, so a test's key must cover their code too.
+    pub siblings: Vec<TestBin>,
+}
+
+/// Every workspace executable named in cargo's JSON, tagged with the
 /// package that owns it.
-pub fn collect(stdout: &[u8], pkgs: &[Package]) -> Vec<TestBin> {
-    let bins: BTreeSet<TestBin> = messages(stdout)
-        .filter(|m| m["reason"] == "compiler-artifact" && m["profile"]["test"] == true)
-        .filter_map(|m| {
-            let exe = PathBuf::from(m["executable"].as_str()?);
-            let manifest = PathBuf::from(m["manifest_path"].as_str()?);
-            let package = pkgs
-                .iter()
-                .find(|p| manifest.parent() == Some(p.manifest_dir.as_path()))?;
-            Some(TestBin {
-                package: package.name.clone(),
-                target: m["target"]["name"].as_str()?.to_string(),
-                kind: m["target"]["kind"][0].as_str()?.to_string(),
-                exe,
-            })
-        })
-        .collect();
-    bins.into_iter().collect()
+pub fn collect(stdout: &[u8], pkgs: &[Package]) -> Built {
+    let mut tests = BTreeSet::new();
+    let mut siblings = BTreeSet::new();
+    for m in messages(stdout).filter(|m| m["reason"] == "compiler-artifact") {
+        let Some(bin) = executable(&m, pkgs) else {
+            continue;
+        };
+        if m["profile"]["test"] == true {
+            tests.insert(bin);
+        } else if matches!(bin.kind.as_str(), "bin" | "example") {
+            siblings.insert(bin);
+        }
+    }
+    Built {
+        tests: tests.into_iter().collect(),
+        siblings: siblings.into_iter().collect(),
+    }
+}
+
+fn executable(m: &Value, pkgs: &[Package]) -> Option<TestBin> {
+    let exe = PathBuf::from(m["executable"].as_str()?);
+    let manifest = PathBuf::from(m["manifest_path"].as_str()?);
+    let package = pkgs
+        .iter()
+        .find(|p| manifest.parent() == Some(p.manifest_dir.as_path()))?;
+    Some(TestBin {
+        package: package.name.clone(),
+        target: m["target"]["name"].as_str()?.to_string(),
+        kind: m["target"]["kind"][0].as_str()?.to_string(),
+        exe,
+    })
 }
 
 #[cfg(test)]
@@ -114,7 +137,7 @@ mod tests {
             artifact("/ws/b/Cargo.toml", "b", "bin", true, Some("/t/b-3")),
         ]
         .join("\n");
-        let bins = collect(out.as_bytes(), &[pkg("a"), pkg("b")]);
+        let bins = collect(out.as_bytes(), &[pkg("a"), pkg("b")]).tests;
         let labels: Vec<String> = bins.iter().map(TestBin::label).collect();
         assert_eq!(labels, ["a a (lib)", "a it (test)", "b b (bin)"]);
         assert_eq!(bins[1].exe, PathBuf::from("/t/it-2"));
@@ -134,19 +157,39 @@ mod tests {
             ),
         ]
         .join("\n");
-        assert!(collect(out.as_bytes(), &[pkg("a")]).is_empty());
+        assert_eq!(collect(out.as_bytes(), &[pkg("a")]), Built::default());
+    }
+
+    #[test]
+    fn plain_bins_and_examples_are_siblings_not_tests() {
+        let out = [
+            artifact("/ws/a/Cargo.toml", "a", "bin", false, Some("/t/a")),
+            artifact(
+                "/ws/a/Cargo.toml",
+                "demo",
+                "example",
+                false,
+                Some("/t/demo"),
+            ),
+            artifact("/ws/a/Cargo.toml", "a", "lib", false, Some("/t/liba.rlib")),
+        ]
+        .join("\n");
+        let built = collect(out.as_bytes(), &[pkg("a")]);
+        assert!(built.tests.is_empty());
+        let labels: Vec<String> = built.siblings.iter().map(TestBin::label).collect();
+        assert_eq!(labels, ["a a (bin)", "a demo (example)"]);
     }
 
     #[test]
     fn a_repeated_artifact_is_one_binary() {
         let line = artifact("/ws/a/Cargo.toml", "a", "lib", true, Some("/t/a-1"));
         let out = format!("{line}\n{line}\nnot json\n");
-        assert_eq!(collect(out.as_bytes(), &[pkg("a")]).len(), 1);
+        assert_eq!(collect(out.as_bytes(), &[pkg("a")]).tests.len(), 1);
     }
 
     #[test]
     fn a_dependency_outside_the_workspace_is_not_collected() {
         let out = artifact("/reg/serde/Cargo.toml", "serde", "lib", true, Some("/t/s"));
-        assert!(collect(out.as_bytes(), &[pkg("a")]).is_empty());
+        assert_eq!(collect(out.as_bytes(), &[pkg("a")]), Built::default());
     }
 }
