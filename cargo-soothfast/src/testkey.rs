@@ -117,8 +117,10 @@ pub fn workspace_inputs(root: &Path, pkgs: &[Package], cfg: &TestConfig) -> io::
     digest(root, ".", |p| testsel::is_workspace_wide(pkgs, cfg, p))
 }
 
-/// Tracked files hash by git's blob id, modified and untracked ones by their
-/// worktree content. Only files `keep` accepts are hashed.
+/// Every file hashes to the blob id git would store for its content, read
+/// from the index when clean and computed from the worktree when modified or
+/// untracked, so a change digests the same before and after it is committed.
+/// Only files `keep` accepts are hashed.
 fn digest(root: &Path, spec: &str, keep: impl Fn(&str) -> bool) -> io::Result<String> {
     let ls = |args: &[&str]| -> io::Result<String> {
         let mut full = vec!["-c", "core.quotepath=false", "ls-files"];
@@ -126,28 +128,39 @@ fn digest(root: &Path, spec: &str, keep: impl Fn(&str) -> bool) -> io::Result<St
         full.extend(["--", spec]);
         invoke::git_in(root, &full)
     };
-    let mut entries: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut ids: BTreeMap<String, String> = BTreeMap::new();
     for line in ls(&["-s"])?.lines() {
         if let Some((meta, path)) = line.split_once('\t') {
-            entries.insert(path.to_string(), Some(meta.to_string()));
+            let id = meta.split_whitespace().nth(1).unwrap_or_default();
+            ids.insert(path.to_string(), id.to_string());
         }
     }
+    let mut dirty: Vec<String> = Vec::new();
     for list in [ls(&["-m"])?, ls(&["--others", "--exclude-standard"])?] {
-        entries.extend(list.lines().map(|path| (path.to_string(), None)));
+        dirty.extend(list.lines().filter(|p| keep(p)).map(String::from));
     }
-    let joined: Vec<String> = entries
+    let (present, gone): (Vec<String>, Vec<String>) =
+        dirty.into_iter().partition(|p| root.join(p).is_file());
+    ids.extend(gone.into_iter().map(|p| (p, "gone".to_string())));
+    ids.extend(blob_ids(root, &present)?);
+    let joined: Vec<String> = ids
         .into_iter()
         .filter(|(path, _)| keep(path))
-        .map(|(path, meta)| {
-            let hash = meta.unwrap_or_else(|| content_hash(&root.join(&path)));
-            format!("{path}\u{0}{hash}")
-        })
+        .map(|(path, id)| format!("{path}\u{0}{id}"))
         .collect();
     Ok(hex_fnv(joined.join("\n").as_bytes()))
 }
 
-fn content_hash(path: &Path) -> String {
-    std::fs::read(path).map_or_else(|_| "gone".into(), |b| hex_fnv(&b))
+/// The blob ids git computes for worktree files, a batch per call.
+fn blob_ids(root: &Path, paths: &[String]) -> io::Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    for chunk in paths.chunks(256) {
+        let mut args = vec!["hash-object", "--"];
+        args.extend(chunk.iter().map(String::as_str));
+        let listing = invoke::git_in(root, &args)?;
+        out.extend(chunk.iter().cloned().zip(listing.lines().map(String::from)));
+    }
+    Ok(out)
 }
 
 /// Keys of executables that passed, one small file each.
@@ -378,13 +391,31 @@ mod tests {
     }
 
     #[test]
-    fn content_hash_tracks_content_and_marks_a_missing_file() {
-        let path = std::env::temp_dir().join(format!("soothfast-content-{}", std::process::id()));
-        std::fs::write(&path, "a").unwrap();
-        let first = content_hash(&path);
-        std::fs::write(&path, "b").unwrap();
-        assert_ne!(first, content_hash(&path));
-        std::fs::remove_file(&path).unwrap();
-        assert_eq!(content_hash(&path), "gone");
+    fn a_file_digests_the_same_dirty_and_committed_and_differently_once_deleted() {
+        let root = std::env::temp_dir().join(format!("soothfast-same-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("pkg")).unwrap();
+        let git = |args: &[&str]| invoke::git_in(&root, args).unwrap();
+        git(&["init", "-q"]);
+        std::fs::write(root.join("pkg/data.json"), "{}").unwrap();
+        let untracked = package_inputs(&root, "pkg").unwrap();
+        git(&["add", "."]);
+        let staged = package_inputs(&root, "pkg").unwrap();
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "x",
+        ]);
+        let committed = package_inputs(&root, "pkg").unwrap();
+        std::fs::remove_file(root.join("pkg/data.json")).unwrap();
+        let deleted = package_inputs(&root, "pkg").unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(untracked, staged);
+        assert_eq!(staged, committed);
+        assert_ne!(committed, deleted);
     }
 }
