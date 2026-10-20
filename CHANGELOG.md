@@ -1,19 +1,41 @@
 # Changelog
 
-## Unreleased (draft vs v0.3.4)
+## 0.4.0 - 2026-10-20
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+Under callgrind, `gate` and `measure` now reuse a single item's measurement
+when the machine code it executed is unchanged, so an edit re-measures only
+the items that run what changed. A dependency upgrade that changes inlined
+code is caught the same way. `cargo soothfast test` is a new replacement for
+`cargo test` that builds only the packages a change can affect and skips test
+binaries that already passed with the same code and inputs. The reusable
+`soothfast-gate.yml` workflow now fails its job when the gate fails; before
+this release, piping the gate through `tee` hid its exit code, so a
+regression never failed the job.
+
+### Upgrade notes
+
+A job calling `soothfast-gate.yml` starts failing on real regressions, which
+it never did before. Per-item reuse needs the CLI and the bench harness both
+at 0.4.0; with an older harness the gate prints that reuse is off and
+measures in full. To reuse items across CI runs, add `.soothfast/items` and
+`.soothfast/maps` to the cache step that already holds `.soothfast/runs` (see
+`docs/gating.md`). Code that called `soothfast_measure::callgrind::measure`
+or `measure_all` directly now gets a `Measurement` with `ir` and the executed
+functions instead of a bare `u64`. `cargo soothfast test` and the `[test]`
+table in `soothfast.toml` are opt-in.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
 
 - Cargo soothfast test, run only affected tests in CI (#237)
 - Reuse unchanged items under callgrind, record on master (#236)
+
+### 🐛 Fixes
+
+- Unblock deploy-docs, one gate comment per crate (#241)
 
 ### 📦 Dependencies
 
