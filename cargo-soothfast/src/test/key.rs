@@ -112,7 +112,8 @@ impl Keyer {
         };
         let siblings: Vec<&TestBin> = self.siblings.iter().filter(|s| s.package == name).collect();
         Ok(Some(PackageDigests {
-            files: package_inputs(&self.root, &pkg.dir).map_err(|e| e.to_string())?,
+            files: package_inputs(&self.root, &self.pkgs, &self.cfg, pkg)
+                .map_err(|e| e.to_string())?,
             siblings: siblings_digest(&siblings),
         }))
     }
@@ -176,9 +177,16 @@ fn fold_siblings(mut digests: Vec<(String, String)>) -> String {
 
 /// Digest of the files under a package dir, tracked or not yet
 /// committed.
-fn package_inputs(root: &Path, dir: &str) -> io::Result<String> {
-    let spec = if dir.is_empty() { "." } else { dir };
-    digest(root, spec, |_| true)
+fn package_inputs(
+    root: &Path,
+    pkgs: &[Package],
+    cfg: &TestConfig,
+    pkg: &Package,
+) -> io::Result<String> {
+    let spec = if pkg.dir.is_empty() { "." } else { &pkg.dir };
+    digest(root, spec, |p| {
+        select::classify(pkgs, cfg, p) == Scope::Package(&pkg.name)
+    })
 }
 
 /// Digest of the files whose change selects every package, so a run they
@@ -388,6 +396,34 @@ mod tests {
     }
 
     #[test]
+    fn a_root_package_hashes_neither_nested_members_nor_ignored_files() {
+        let repo = TempRepo::new("rootpkg");
+        repo.write("src/lib.rs", "a");
+        repo.write("server/src/main.rs", "a");
+        repo.write("docs/index.md", "a");
+        repo.write("tests/fixtures/q.json", "a");
+        repo.git(&["add", "."]);
+        let pkgs = [
+            package("root", "", &repo.root),
+            package("server", "server", &repo.root),
+        ];
+        let cfg = TestConfig {
+            ignore: vec!["docs/**".into(), "tests/fixtures/q.json".into()],
+            inputs: vec!["tests/fixtures/q.json".into()],
+            ..TestConfig::default()
+        };
+        let root_key = || package_inputs(&repo.root, &pkgs, &cfg, &pkgs[0]).unwrap();
+        let before = root_key();
+        repo.write("server/src/main.rs", "b");
+        repo.write("docs/index.md", "b");
+        assert_eq!(before, root_key());
+        repo.write("tests/fixtures/q.json", "b");
+        assert_eq!(before, root_key());
+        repo.write("src/lib.rs", "b");
+        assert_ne!(before, root_key());
+    }
+
+    #[test]
     fn a_workspace_wide_file_moves_the_workspace_inputs() {
         let repo = TempRepo::new("wide");
         repo.write(".cargo/config.toml", "[env]\nA = \"1\"\n");
@@ -440,30 +476,44 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    fn package(name: &str, dir: &str, root: &Path) -> Package {
+        Package {
+            name: name.into(),
+            dir: dir.into(),
+            manifest_dir: root.join(dir),
+            deps: Vec::new(),
+        }
+    }
+
+    fn inputs_of(root: &Path, dir: &str) -> String {
+        let pkgs = [package("pkg", dir, root)];
+        package_inputs(root, &pkgs, &TestConfig::default(), &pkgs[0]).unwrap()
+    }
+
     #[test]
     fn editing_a_rust_file_in_the_package_moves_its_inputs() {
         let repo = TempRepo::new("inputs");
         repo.write("pkg/golden/sample.rs", "fn a() {}");
         repo.git(&["add", "."]);
-        let committed = package_inputs(&repo.root, "pkg").unwrap();
+        let committed = inputs_of(&repo.root, "pkg");
         repo.write("pkg/golden/sample.rs", "fn b() {}");
-        let edited = package_inputs(&repo.root, "pkg").unwrap();
+        let edited = inputs_of(&repo.root, "pkg");
         repo.write("pkg/golden/new.rs", "");
         assert_ne!(committed, edited);
-        assert_ne!(edited, package_inputs(&repo.root, "pkg").unwrap());
+        assert_ne!(edited, inputs_of(&repo.root, "pkg"));
     }
 
     #[test]
     fn a_file_digests_the_same_dirty_and_committed_and_differently_once_deleted() {
         let repo = TempRepo::new("same");
         repo.write("pkg/data.json", "{}");
-        let untracked = package_inputs(&repo.root, "pkg").unwrap();
+        let untracked = inputs_of(&repo.root, "pkg");
         repo.git(&["add", "."]);
-        let staged = package_inputs(&repo.root, "pkg").unwrap();
+        let staged = inputs_of(&repo.root, "pkg");
         repo.commit();
-        let committed = package_inputs(&repo.root, "pkg").unwrap();
+        let committed = inputs_of(&repo.root, "pkg");
         std::fs::remove_file(repo.root.join("pkg/data.json")).unwrap();
-        let deleted = package_inputs(&repo.root, "pkg").unwrap();
+        let deleted = inputs_of(&repo.root, "pkg");
         assert_eq!(untracked, staged);
         assert_eq!(staged, committed);
         assert_ne!(committed, deleted);

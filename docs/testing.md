@@ -31,7 +31,10 @@ history with HEAD, every package is selected and the summary says so.
 Each changed file belongs to the workspace package whose manifest directory
 contains it, taking the longest match. That package is selected, and so is
 every workspace package that depends on it, transitively, through any
-dependency kind, dev-dependencies included.
+dependency kind, dev-dependencies included. A package at the workspace root
+owns every file no nested member owns, so with a root package a change to
+`docs/` or `.github/` selects it and everything that depends on it unless
+`ignore` covers those paths.
 
 These select every package:
 
@@ -64,8 +67,10 @@ The key hashes:
   target are all covered by the code itself. Files pulled in with
   `include_str!` or `include_bytes!` are compiled in, so they count even when
   they live outside the package;
-- every git-tracked file in the package, `.rs` included, by content, plus
-  modified and untracked ones (sources, fixtures, goldens, data files);
+- every file the package owns, `.rs` included, by content, plus modified and
+  untracked ones (sources, fixtures, goldens, data files). That is the same
+  set selection assigns to it: a nested member's files belong to the member,
+  and an ignored file belongs to no package;
 - the files matched by `[test] inputs`, and every file whose change selects
   every package, so a run those files select cannot be served from a pass
   stored before they changed;
