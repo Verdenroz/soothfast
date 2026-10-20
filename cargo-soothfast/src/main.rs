@@ -17,6 +17,7 @@ mod docs_support;
 mod gate;
 mod gate_config;
 mod gate_lock;
+mod glob;
 mod headrun;
 mod invoke;
 mod itemcache;
@@ -36,6 +37,9 @@ mod spec_gate;
 mod spec_gen;
 mod spec_html;
 mod spec_probe;
+mod test_config;
+mod testrun;
+mod testsel;
 mod trend;
 mod workspace;
 
@@ -143,6 +147,7 @@ fn run() -> i32 {
         "sdk" => sdk::run(rest),
         "report" => report::run(rest),
         "mcp" => mcp::run(rest),
+        "test" => testrun::run(rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             0

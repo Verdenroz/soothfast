@@ -32,9 +32,9 @@ fn metadata(dir: Option<&Path>) -> io::Result<Value> {
     Ok(serde_json::from_slice(&out.stdout)?)
 }
 
-/// Every member of this workspace, in name order. `--no-deps` lists exactly
-/// the workspace's own packages, so no dependency can reach the result.
-pub fn members(dir: Option<&Path>) -> io::Result<Vec<String>> {
+/// `cargo metadata --no-deps`: exactly the workspace's own packages, with
+/// their declared (not resolved) dependencies.
+pub fn member_metadata(dir: Option<&Path>) -> io::Result<Value> {
     let mut cmd = Command::new("cargo");
     cmd.args(["metadata", "--no-deps", "--format-version", "1"]);
     cmd.stdout(Stdio::piped());
@@ -46,7 +46,13 @@ pub fn members(dir: Option<&Path>) -> io::Result<Vec<String>> {
     if !out.status.success() {
         return Err(io::Error::other("cargo metadata failed"));
     }
-    let md: Value = serde_json::from_slice(&out.stdout)?;
+    Ok(serde_json::from_slice(&out.stdout)?)
+}
+
+/// Every member of this workspace, in name order. `--no-deps` lists exactly
+/// the workspace's own packages, so no dependency can reach the result.
+pub fn members(dir: Option<&Path>) -> io::Result<Vec<String>> {
+    let md = member_metadata(dir)?;
     let mut names: Vec<String> = md["packages"]
         .as_array()
         .into_iter()
