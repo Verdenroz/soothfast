@@ -1,4 +1,6 @@
-//! Building the selected packages' test executables.
+//! Building, collecting and running the selected packages' test targets.
+//! Runs go through cargo, which owns the test environment (`[env]` config,
+//! target runners, library paths).
 
 use std::collections::BTreeSet;
 use std::io;
@@ -7,12 +9,10 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
-use crate::testsel::Package;
+use super::select::Package;
+use crate::invoke;
 
-/// Target kinds that make up a package's library.
-const LIB_KINDS: &[&str] = &["lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"];
-
-/// One test executable cargo built.
+/// One executable cargo built.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TestBin {
     pub package: String,
@@ -20,6 +20,8 @@ pub struct TestBin {
     /// The target's kinds: `lib`, `bin`, `test`, `bench`, `example`, and
     /// crate types such as `cdylib` alongside `rlib`.
     pub kinds: Vec<String>,
+    /// Whether cargo runs the package's doc tests for this target.
+    pub doctest: bool,
     pub exe: PathBuf,
 }
 
@@ -34,38 +36,57 @@ impl TestBin {
         )
     }
 
-    fn has_kind(&self, wanted: &[&str]) -> bool {
-        self.kinds.iter().any(|k| wanted.contains(&k.as_str()))
-    }
-
     /// Whether the package's doc tests belong to this target.
     pub fn has_doc_tests(&self) -> bool {
-        self.has_kind(&["lib", "rlib", "proc-macro"])
+        self.doctest
     }
 
-    /// The cargo flags that select exactly this target.
+    /// The cargo flags that select exactly this target. A library's kinds
+    /// are its crate types, so anything not a named kind is the library.
     pub fn target_flags(&self) -> Vec<String> {
-        if self.has_kind(LIB_KINDS) {
-            return vec!["--lib".into()];
+        match self.kinds.first().map(String::as_str) {
+            Some(kind @ ("bin" | "test" | "bench" | "example")) => {
+                vec![format!("--{kind}"), self.target.clone()]
+            }
+            _ => vec!["--lib".into()],
         }
-        let kind = self.kinds.first().map_or("bin", String::as_str);
-        vec![format!("--{kind}"), self.target.clone()]
     }
+}
+
+/// `cargo test LEAD -p NAME... CARGO_ARGS EXTRA [-- RUN_ARGS]`.
+fn cargo_test(
+    lead: &[&str],
+    names: &[String],
+    cargo_args: &[String],
+    extra: &[String],
+    run_args: &[String],
+) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("test").args(lead);
+    for n in names {
+        cmd.args(["-p", n]);
+    }
+    cmd.args(cargo_args).args(extra);
+    if !run_args.is_empty() {
+        cmd.arg("--").args(run_args);
+    }
+    cmd
 }
 
 /// `cargo test --no-run` for `names`, returning cargo's JSON messages.
 /// Compiler diagnostics are echoed to stderr as they would read normally.
 pub fn build(names: &[String], cargo_args: &[String]) -> io::Result<Vec<Value>> {
-    let mut cmd = Command::new("cargo");
-    cmd.args(["test", "--no-run", "--message-format=json"]);
-    for n in names {
-        cmd.args(["-p", n]);
-    }
-    cmd.args(cargo_args);
+    let mut cmd = cargo_test(
+        &["--no-run", "--message-format=json"],
+        names,
+        cargo_args,
+        &[],
+        &[],
+    );
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::inherit());
     let out = cmd.output()?;
-    let messages = parse(&out.stdout);
+    let messages: Vec<Value> = invoke::cargo_messages(&out.stdout).collect();
     for m in messages
         .iter()
         .filter(|m| m["reason"] == "compiler-message")
@@ -80,11 +101,39 @@ pub fn build(names: &[String], cargo_args: &[String]) -> io::Result<Vec<Value>> 
     Ok(messages)
 }
 
-fn parse(stdout: &[u8]) -> Vec<Value> {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .collect()
+/// Run one already-built target through `cargo test`, output streaming.
+/// Whether it exited successfully.
+pub fn run_target(bin: &TestBin, cargo_args: &[String], run_args: &[String]) -> io::Result<bool> {
+    let names = std::slice::from_ref(&bin.package);
+    let mut cmd = cargo_test(&[], names, cargo_args, &bin.target_flags(), run_args);
+    Ok(cmd.status()?.success())
+}
+
+/// `cargo test --doc` for `names`; executables cannot be cached, so doc tests
+/// always run.
+pub fn doc_tests(names: &[String], cargo_args: &[String], run_args: &[String]) -> io::Result<bool> {
+    let mut cmd = cargo_test(&["--doc"], names, cargo_args, &[], run_args);
+    Ok(cmd.status()?.success())
+}
+
+/// Whether cargo flags already pick test targets, which `--doc` refuses to
+/// combine with.
+pub fn narrows_targets(cargo_args: &[String]) -> bool {
+    const FLAGS: &[&str] = &[
+        "--lib",
+        "--bin",
+        "--bins",
+        "--test",
+        "--tests",
+        "--example",
+        "--examples",
+        "--bench",
+        "--benches",
+        "--all-targets",
+    ];
+    cargo_args
+        .iter()
+        .any(|a| FLAGS.contains(&a.split_once('=').map_or(a.as_str(), |(f, _)| f)))
 }
 
 /// What a build produced for the workspace's packages.
@@ -111,7 +160,7 @@ pub fn collect(messages: &[Value], pkgs: &[Package]) -> Built {
         };
         if m["profile"]["test"] == true {
             tests.insert(bin);
-        } else if bin.has_kind(&["bin", "example"]) {
+        } else if bin.kinds.iter().any(|k| k == "bin" || k == "example") {
             siblings.insert(bin);
         }
     }
@@ -136,6 +185,7 @@ fn executable(m: &Value, pkgs: &[Package]) -> Option<TestBin> {
         package: package.name.clone(),
         target: m["target"]["name"].as_str()?.to_string(),
         kinds,
+        doctest: m["target"]["doctest"] == true,
         exe,
     })
 }
@@ -161,14 +211,19 @@ mod tests {
         test: bool,
         exe: Option<&str>,
     ) -> String {
+        let doctest = kinds
+            .iter()
+            .any(|k| ["lib", "rlib", "proc-macro"].contains(k));
         json!({ "reason": "compiler-artifact", "manifest_path": manifest,
-                "target": { "name": target, "kind": kinds },
+                "target": { "name": target, "kind": kinds, "doctest": doctest },
                 "profile": { "test": test }, "executable": exe })
         .to_string()
     }
 
     fn collected(lines: &[String], pkgs: &[Package]) -> Built {
-        collect(&parse(lines.join("\n").as_bytes()), pkgs)
+        let stdout = lines.join("\n");
+        let messages: Vec<Value> = invoke::cargo_messages(stdout.as_bytes()).collect();
+        collect(&messages, pkgs)
     }
 
     #[test]
@@ -264,11 +319,24 @@ mod tests {
             package: "p".into(),
             target: name.into(),
             kinds: vec![k.into()],
+            doctest: false,
             exe: PathBuf::new(),
         };
         assert_eq!(kinds("test", "golden").target_flags(), ["--test", "golden"]);
         assert_eq!(kinds("bin", "cli").target_flags(), ["--bin", "cli"]);
         assert_eq!(kinds("bench", "b").target_flags(), ["--bench", "b"]);
         assert!(!kinds("test", "golden").has_doc_tests());
+    }
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn target_selecting_flags_are_detected() {
+        assert!(narrows_targets(&args(&["--release", "--lib"])));
+        assert!(narrows_targets(&args(&["--test=golden"])));
+        assert!(narrows_targets(&args(&["--bin=cli"])));
+        assert!(!narrows_targets(&args(&["--all-features", "--release"])));
     }
 }

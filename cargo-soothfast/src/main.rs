@@ -37,12 +37,7 @@ mod spec_gate;
 mod spec_gen;
 mod spec_html;
 mod spec_probe;
-mod test_config;
-mod testbuild;
-mod testexec;
-mod testkey;
-mod testrun;
-mod testsel;
+mod test;
 mod trend;
 mod workspace;
 
@@ -154,7 +149,7 @@ fn run() -> i32 {
         "sdk" => sdk::run(rest),
         "report" => report::run(rest),
         "mcp" => mcp::run(rest),
-        "test" => testrun::run(rest),
+        "test" => test::run(rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             0

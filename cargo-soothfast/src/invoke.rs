@@ -174,9 +174,7 @@ pub fn build_link_map(
 /// The executable cargo's `--message-format=json` output names for the bench
 /// target `target`.
 fn bench_artifact(stdout: &[u8], target: &str) -> Option<PathBuf> {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+    cargo_messages(stdout)
         .filter(|m| m["reason"] == "compiler-artifact")
         .filter(|m| m["target"]["name"] == target)
         .filter(|m| {
@@ -187,6 +185,13 @@ fn bench_artifact(stdout: &[u8], target: &str) -> Option<PathBuf> {
                 .any(|k| k == "bench")
         })
         .find_map(|m| m["executable"].as_str().map(PathBuf::from))
+}
+
+/// Each line of cargo's `--message-format=json` output that parses as JSON.
+pub fn cargo_messages(stdout: &[u8]) -> impl Iterator<Item = Value> + '_ {
+    stdout
+        .split(|&b| b == b'\n')
+        .filter_map(|l| serde_json::from_str(&String::from_utf8_lossy(l)).ok())
 }
 
 /// Workspace member names, resolved once per tree. A gate that cannot name

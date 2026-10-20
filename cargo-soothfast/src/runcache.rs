@@ -144,7 +144,8 @@ fn conditions(stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> Vec<Str
     .to_vec()
 }
 
-fn hashed(parts: &[String]) -> String {
+/// `parts` joined and hashed, as sixteen hex digits.
+pub(crate) fn hashed(parts: &[String]) -> String {
     hex_fnv(parts.join("\u{1}").as_bytes())
 }
 

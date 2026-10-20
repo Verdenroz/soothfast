@@ -46,11 +46,7 @@ jobs:
         run: |
           selection="--all"
           if [ "$EVENT" = pull_request ]; then
-            if git merge-base "origin/$BASE_REF" HEAD > /dev/null 2>&1; then
-              selection="--base origin/$BASE_REF"
-            else
-              echo "::warning::no merge-base with origin/$BASE_REF; testing every package"
-            fi
+            selection="--base origin/$BASE_REF"
           fi
           cargo run -p cargo-soothfast -- test $selection --all-features
 

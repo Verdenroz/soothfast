@@ -11,9 +11,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::glob;
-use crate::invoke;
-use crate::test_config::TestConfig;
+use super::config::TestConfig;
+use crate::{glob, invoke};
 
 /// Files whose change can alter every package's build.
 const GLOBAL_FILES: &[&str] = &[
@@ -47,7 +46,7 @@ pub struct Selection {
 /// The workspace's packages, from `cargo metadata`.
 pub fn packages(root: &Path) -> io::Result<Vec<Package>> {
     Ok(parse_packages(
-        &crate::workspace::member_metadata(None)?,
+        &crate::workspace::metadata(None, true)?,
         root,
     ))
 }
@@ -85,26 +84,43 @@ fn matches_any(globs: &[String], file: &str) -> bool {
     globs.iter().any(|g| glob::matches(g, file))
 }
 
-/// Whether a change to `file` can affect every package: it is a declared
-/// input, or a build-wide file or one no package owns that `ignore` does not
-/// cover.
-pub fn is_workspace_wide(pkgs: &[Package], cfg: &TestConfig, file: &str) -> bool {
-    matches_any(&cfg.inputs, file)
-        || (!matches_any(&cfg.ignore, file)
-            && (GLOBAL_FILES.contains(&file) || owner(pkgs, file).is_none()))
+/// What a change to one file reaches.
+#[derive(Debug, PartialEq)]
+pub enum Scope<'a> {
+    /// Nothing: `ignore` covers it.
+    Ignored,
+    /// The named package and its dependents.
+    Package(&'a str),
+    /// Every package.
+    Workspace,
+}
+
+/// What a change to `file` reaches. A declared input wins over `ignore`,
+/// and `ignore` wins over a build-wide or unowned file.
+pub fn classify<'a>(pkgs: &'a [Package], cfg: &TestConfig, file: &str) -> Scope<'a> {
+    if matches_any(&cfg.inputs, file) {
+        return Scope::Workspace;
+    }
+    if matches_any(&cfg.ignore, file) {
+        return Scope::Ignored;
+    }
+    if GLOBAL_FILES.contains(&file) {
+        return Scope::Workspace;
+    }
+    owner(pkgs, file).map_or(Scope::Workspace, |p| Scope::Package(&p.name))
 }
 
 /// Select the packages `changed` (root-relative paths) can affect.
 pub fn select(pkgs: &[Package], changed: &BTreeSet<String>, cfg: &TestConfig) -> Selection {
     let mut direct = BTreeSet::new();
     for file in changed {
-        if is_workspace_wide(pkgs, cfg, file) {
-            return everything(pkgs, file);
+        match classify(pkgs, cfg, file) {
+            Scope::Workspace => return everything(pkgs, file),
+            Scope::Ignored => {}
+            Scope::Package(name) => {
+                direct.insert(name);
+            }
         }
-        if matches_any(&cfg.ignore, file) {
-            continue;
-        }
-        direct.extend(owner(pkgs, file).map(|p| p.name.as_str()));
     }
     Selection {
         names: with_dependents(pkgs, direct),
@@ -169,6 +185,14 @@ pub fn changed_files(root: &Path, base: &str) -> io::Result<BTreeSet<String>> {
     Ok(files)
 }
 
+/// Whether `base` and HEAD share history; an unknown `base` is an error.
+pub fn has_merge_base(root: &Path, base: &str) -> io::Result<bool> {
+    let commit = format!("{base}^{{commit}}");
+    invoke::git_in(root, &["rev-parse", "--verify", "--quiet", &commit])
+        .map_err(|_| io::Error::other(format!("unknown ref {base:?}; pass --base REF")))?;
+    Ok(invoke::git_in(root, &["merge-base", base, "HEAD"]).is_ok())
+}
+
 /// The default branch to diff against: `origin/HEAD`, else the first of
 /// `origin/master`, `origin/main`, `master`, `main` that exists.
 pub fn default_base(root: &Path) -> io::Result<String> {
@@ -186,6 +210,7 @@ pub fn default_base(root: &Path) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test::fixture::TempRepo;
     use serde_json::json;
 
     fn pkg(name: &str, dir: &str, deps: &[&str]) -> Package {
@@ -344,7 +369,8 @@ mod tests {
             ignore: vec!["*.md".into()],
             ..TestConfig::default()
         };
-        let wide = |f: &str| is_workspace_wide(&graph(), &cfg, f);
+        let pkgs = graph();
+        let wide = |f: &str| classify(&pkgs, &cfg, f) == Scope::Workspace;
         assert!(wide(".cargo/config.toml"));
         assert!(wide("Makefile"));
         assert!(!wide("README.md"));
@@ -365,29 +391,29 @@ mod tests {
 
     #[test]
     fn changes_are_reported_from_a_workspace_below_the_git_toplevel() {
-        let top = std::env::temp_dir().join(format!("soothfast-sel-{}", std::process::id()));
-        let root = top.join("rust");
-        std::fs::create_dir_all(root.join("pkg")).unwrap();
-        let git = |args: &[&str]| invoke::git_in(&top, args).unwrap();
-        git(&["init", "-q"]);
-        std::fs::write(root.join("pkg/a.rs"), "a").unwrap();
-        std::fs::write(top.join("outside.txt"), "o").unwrap();
-        git(&["add", "."]);
-        git(&[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "commit",
-            "-q",
-            "-m",
-            "x",
-        ]);
-        std::fs::write(root.join("pkg/a.rs"), "b").unwrap();
-        std::fs::write(root.join("pkg/new.rs"), "n").unwrap();
-        std::fs::write(top.join("outside.txt"), "p").unwrap();
-        let got = changed_files(&root, "HEAD").unwrap();
-        std::fs::remove_dir_all(top).unwrap();
+        let repo = TempRepo::new("sel");
+        repo.write("rust/pkg/a.rs", "a");
+        repo.write("outside.txt", "o");
+        repo.git(&["add", "."]);
+        repo.commit();
+        repo.write("rust/pkg/a.rs", "b");
+        repo.write("rust/pkg/new.rs", "n");
+        repo.write("outside.txt", "p");
+        let got = changed_files(&repo.root.join("rust"), "HEAD").unwrap();
         assert_eq!(got, files(&["pkg/a.rs", "pkg/new.rs"]));
+    }
+
+    #[test]
+    fn unrelated_history_has_no_merge_base_and_an_unknown_ref_is_an_error() {
+        let repo = TempRepo::new("mb");
+        repo.write("a", "a");
+        repo.git(&["add", "."]);
+        repo.commit();
+        let first = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["checkout", "-q", "--orphan", "other"]);
+        repo.commit();
+        assert!(has_merge_base(&repo.root, "HEAD").unwrap());
+        assert!(!has_merge_base(&repo.root, &first).unwrap());
+        assert!(has_merge_base(&repo.root, "nope").is_err());
     }
 }

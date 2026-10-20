@@ -1,13 +1,19 @@
 //! `cargo soothfast test`: run only the tests a change can affect.
 
+mod cargo;
+mod config;
+#[cfg(test)]
+mod fixture;
+mod key;
+mod select;
+
 use std::path::Path;
 
-use crate::test_config::TestConfig;
-use crate::testbuild::{self, TestBin};
-use crate::testexec;
-use crate::testkey::{self, Context, Passes};
-use crate::testsel::{self, Package};
-use crate::{invoke, test_config};
+use crate::invoke;
+use cargo::TestBin;
+use config::TestConfig;
+use key::{Keyer, Passes};
+use select::Package;
 
 /// What the command line asked for.
 #[derive(Default, Debug, PartialEq)]
@@ -81,48 +87,72 @@ pub fn run(args: &[String]) -> i32 {
 fn drive(args: &[String]) -> Result<i32, String> {
     let args = parse_args(args)?;
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-    let cfg = test_config::load(&root)?;
-    let pkgs = testsel::packages(&root).map_err(|e| e.to_string())?;
+    let cfg = config::load(&root)?;
+    let pkgs = select::packages(&root).map_err(|e| e.to_string())?;
+    let total = pkgs.len();
     let selected = select_packages(&args, &root, &pkgs, &cfg)?;
+    let mut tally = Tally::default();
     if selected.is_empty() {
-        println!("{}", Tally::default().summary(0, pkgs.len()));
+        println!("{}", tally.summary(0, total));
         return Ok(0);
     }
+    let messages = cargo::build(&selected, &args.cargo_args).map_err(|e| e.to_string())?;
+    let built = cargo::collect(&messages, &pkgs);
+    let mut keyer = Keyer::new(root, pkgs, cfg, args.run_args.clone(), built.siblings)?;
+    run_binaries(&args, &built.tests, &mut keyer, &mut tally)?;
+    let doc = doc_packages(&args, &built.tests);
+    if !doc.is_empty() {
+        println!("test: doc tests for {}", doc.join(", "));
+        tally.doc = doc.len();
+        if !cargo::doc_tests(&doc, &args.cargo_args, &args.run_args).map_err(|e| e.to_string())? {
+            tally.failed.push("doc tests".into());
+        }
+    }
+    println!("{}", tally.summary(selected.len(), total));
+    Ok(i32::from(!tally.failed.is_empty()))
+}
+
+/// Run each test binary a stored pass does not cover. A pass is stored only
+/// if the binary's key is the same after it ran: a test that rewrites its own
+/// inputs would otherwise record a pass for inputs that no longer exist.
+fn run_binaries(
+    args: &TestArgs,
+    tests: &[TestBin],
+    keyer: &mut Keyer,
+    tally: &mut Tally,
+) -> Result<(), String> {
     let passes = Passes::open();
-    let (keyer, planned) = plan(&args, &root, &cfg, &pkgs, &selected, passes.as_ref())?;
-    let mut tally = Tally::default();
-    for p in &planned {
-        let label = p.bin.label();
-        if p.cached {
+    for bin in tests {
+        let label = bin.label();
+        let key = keyer.key(bin)?;
+        let cached = !args.no_cache
+            && key
+                .as_deref()
+                .zip(passes.as_ref())
+                .is_some_and(|(k, passes)| passes.has(k));
+        if cached {
             println!("test: skip {label} (cached pass)");
             tally.skipped += 1;
             continue;
         }
         println!("test: run {label}");
         tally.ran += 1;
-        if !testexec::run_target(&p.bin, &args.cargo_args, &args.run_args)
+        if !cargo::run_target(bin, &args.cargo_args, &args.run_args)
             .map_err(|e| format!("{label}: {e}"))?
         {
             tally.failed.push(label);
-        } else if let Some(passes) = &passes {
-            let after = keyer.key(&p.bin)?;
-            if !passes.record_if_unchanged(&label, p.key.as_deref(), after.as_deref()) {
-                println!("test: {label} changed its inputs; pass not stored");
-            }
+            continue;
+        }
+        let Some(passes) = &passes else {
+            continue;
+        };
+        if keyer.rekey(bin)? != key {
+            println!("test: {label} changed its inputs; pass not stored");
+        } else if let Some(key) = &key {
+            passes.record(&label, key);
         }
     }
-    let doc = doc_packages(&args, &planned);
-    if !doc.is_empty() {
-        println!("test: doc tests for {}", doc.join(", "));
-        tally.doc = doc.len();
-        if !testexec::doc_tests(&doc, &args.cargo_args, &args.run_args)
-            .map_err(|e| e.to_string())?
-        {
-            tally.failed.push("doc tests".into());
-        }
-    }
-    println!("{}", tally.summary(selected.len(), pkgs.len()));
-    Ok(i32::from(!tally.failed.is_empty()))
+    Ok(())
 }
 
 /// The packages to test: exactly those named with `-p`, else what the
@@ -135,14 +165,9 @@ fn select_packages(
 ) -> Result<Vec<String>, String> {
     let names: Vec<String> = if args.only.is_empty() {
         let selection = if args.all {
-            testsel::everything(pkgs, "--all")
+            select::everything(pkgs, "--all")
         } else {
-            let base = match &args.base {
-                Some(b) => b.clone(),
-                None => testsel::default_base(root).map_err(|e| e.to_string())?,
-            };
-            let changed = testsel::changed_files(root, &base).map_err(|e| e.to_string())?;
-            testsel::select(pkgs, &changed, cfg)
+            changed(args, root, pkgs, cfg).map_err(|e| e.to_string())?
         };
         if let Some(why) = &selection.everything_because {
             println!("test: every package selected ({why})");
@@ -155,6 +180,28 @@ fn select_packages(
         .into_iter()
         .filter(|n| !args.exclude.contains(n))
         .collect())
+}
+
+/// What the files changed since the base select, or every package when the
+/// base shares no history with HEAD.
+fn changed(
+    args: &TestArgs,
+    root: &Path,
+    pkgs: &[Package],
+    cfg: &TestConfig,
+) -> std::io::Result<select::Selection> {
+    let base = match &args.base {
+        Some(b) => b.clone(),
+        None => select::default_base(root)?,
+    };
+    if !select::has_merge_base(root, &base)? {
+        return Ok(select::everything(
+            pkgs,
+            &format!("no merge-base with {base}"),
+        ));
+    }
+    let changed = select::changed_files(root, &base)?;
+    Ok(select::select(pkgs, &changed, cfg))
 }
 
 fn named(args: &TestArgs, pkgs: &[Package]) -> Result<Vec<String>, String> {
@@ -175,14 +222,14 @@ fn named(args: &TestArgs, pkgs: &[Package]) -> Result<Vec<String>, String> {
 }
 
 /// Selected packages with a library target, whose doc tests cannot be cached.
-fn doc_packages(args: &TestArgs, planned: &[Planned]) -> Vec<String> {
-    if args.no_doc || testexec::narrows_targets(&args.cargo_args) {
+fn doc_packages(args: &TestArgs, tests: &[TestBin]) -> Vec<String> {
+    if args.no_doc || cargo::narrows_targets(&args.cargo_args) {
         return Vec::new();
     }
-    let mut names: Vec<String> = planned
+    let mut names: Vec<String> = tests
         .iter()
-        .filter(|p| p.bin.has_doc_tests())
-        .map(|p| p.bin.package.clone())
+        .filter(|b| b.has_doc_tests())
+        .map(|b| b.package.clone())
         .collect();
     names.sort();
     names.dedup();
@@ -208,91 +255,6 @@ impl Tally {
         }
         line
     }
-}
-
-/// A built test executable and whether a stored pass already covers it.
-struct Planned {
-    bin: TestBin,
-    key: Option<String>,
-    cached: bool,
-}
-
-/// Computes pass cache keys against the files as they are right now.
-struct Keyer<'a> {
-    root: &'a Path,
-    pkgs: &'a [Package],
-    cfg: &'a TestConfig,
-    run_args: &'a [String],
-    siblings: Vec<TestBin>,
-    rustc: String,
-    env: Vec<(String, String)>,
-}
-
-impl Keyer<'_> {
-    fn key(&self, bin: &TestBin) -> Result<Option<String>, String> {
-        let Some(pkg) = self.pkgs.iter().find(|p| p.name == bin.package) else {
-            return Ok(None);
-        };
-        let siblings: Vec<&TestBin> = self
-            .siblings
-            .iter()
-            .filter(|s| s.package == bin.package)
-            .collect();
-        let Some(spawned) = testkey::siblings_digest(&siblings) else {
-            return Ok(None);
-        };
-        let err = |e: std::io::Error| e.to_string();
-        let files = testkey::package_inputs(self.root, &pkg.dir).map_err(err)?;
-        let declared = testkey::declared_inputs(self.root, &self.cfg.inputs).map_err(err)?;
-        let workspace = testkey::workspace_inputs(self.root, self.pkgs, self.cfg).map_err(err)?;
-        let cx = Context {
-            inputs: &declared,
-            workspace: &workspace,
-            run_args: self.run_args,
-            env: &self.env,
-            rustc: &self.rustc,
-        };
-        let package_inputs = format!("{files}\u{3}{spawned}");
-        Ok(testkey::key(
-            &bin.package,
-            &bin.target,
-            &bin.exe,
-            &package_inputs,
-            &cx,
-        ))
-    }
-}
-
-fn plan<'a>(
-    args: &'a TestArgs,
-    root: &'a Path,
-    cfg: &'a TestConfig,
-    pkgs: &'a [Package],
-    selected: &[String],
-    passes: Option<&Passes>,
-) -> Result<(Keyer<'a>, Vec<Planned>), String> {
-    let messages = testbuild::build(selected, &args.cargo_args).map_err(|e| e.to_string())?;
-    let built = testbuild::collect(&messages, pkgs);
-    let keyer = Keyer {
-        root,
-        pkgs,
-        cfg,
-        run_args: &args.run_args,
-        siblings: built.siblings,
-        rustc: testkey::rustc_version().map_err(|e| e.to_string())?,
-        env: testkey::env_values(&cfg.env),
-    };
-    let mut planned = Vec::new();
-    for bin in built.tests {
-        let key = keyer.key(&bin)?;
-        let cached = !args.no_cache
-            && key
-                .as_deref()
-                .zip(passes)
-                .is_some_and(|(k, passes)| passes.has(k));
-        planned.push(Planned { bin, key, cached });
-    }
-    Ok((keyer, planned))
 }
 
 #[cfg(test)]

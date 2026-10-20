@@ -25,7 +25,8 @@ named packages, and a name that is not a workspace member is an error.
 The changed files are the union of `git diff --name-only BASE...HEAD`, the
 uncommitted changes and the untracked files. `BASE` is `--base`, else the
 merge-base with the default branch (`origin/HEAD`, falling back to
-`origin/master`, `origin/main`, `master`, `main`).
+`origin/master`, `origin/main`, `master`, `main`). When `BASE` shares no
+history with HEAD, every package is selected and the summary says so.
 
 Each changed file belongs to the workspace package whose manifest directory
 contains it, taking the longest match. That package is selected, and so is
@@ -108,9 +109,9 @@ that rewrites its own package files (regenerating goldens, say) prints that
 it changed its inputs and stores nothing, so the next run executes it again.
 
 Doc tests cannot be cached, so `cargo test --doc` runs for each selected
-package with a library target. Pass `--no-doc` to skip them; passing a
-target flag such as `--lib` or `--test NAME` skips them too. `--doc` itself
-is refused, since doc tests always run.
+package whose library has doc tests enabled. Pass `--no-doc` to skip them;
+passing a target flag such as `--lib` or `--test NAME` skips them too.
+`--doc` itself is refused, since doc tests always run.
 
 The command ends with a summary and exits non-zero if anything failed:
 
@@ -138,11 +139,7 @@ outlive the run. This is the shape the workspace's own `check` job uses:
 - run: |
     selection="--all"
     if [ "$EVENT" = pull_request ]; then
-      if git merge-base "origin/$BASE_REF" HEAD > /dev/null 2>&1; then
-        selection="--base origin/$BASE_REF"
-      else
-        echo "::warning::no merge-base with origin/$BASE_REF; testing every package"
-      fi
+      selection="--base origin/$BASE_REF"
     fi
     cargo soothfast test $selection --all-features
   env:
@@ -153,8 +150,8 @@ outlive the run. This is the shape the workspace's own `check` job uses:
 A pull request compares against its base branch. A push to the default
 branch selects every package: a push cannot know which earlier push left a
 package red, and a failed binary has no stored pass, so it re-runs until it
-is fixed while unchanged passing binaries are skipped. When no merge-base
-can be found the step tests every package and says why; it never falls back
-to testing nothing. The cache key follows the one used for measured runs in
+is fixed while unchanged passing binaries are skipped. A base with no
+merge-base selects every package, so the step never falls back to testing
+nothing. The cache key follows the one used for measured runs in
 [Gating](gating.md): a branch restores its own earlier passes, then the
 default branch's.
