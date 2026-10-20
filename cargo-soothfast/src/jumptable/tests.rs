@@ -234,6 +234,49 @@ fn a_landing_pad_inherits_callee_saved_registers_from_the_calls() {
     assert_eq!(prove_in(&lines).len(), 1);
 }
 
+fn unwind_resume_before_a_case_block(callee: &str) -> Vec<Proof> {
+    prove_in(&[
+        LEA15,
+        "call   2000 <g>",
+        "jmp    1018 <f+0x18>",
+        "ud2",
+        "mov    %rbx,%r15",
+        callee,
+        LOAD15,
+        ADD15,
+        JMP,
+        RET,
+    ])
+}
+
+#[test]
+fn a_pad_ending_in_unwind_resume_does_not_flow_into_the_next_block() {
+    for callee in [
+        "call   3000 <_Unwind_Resume@plt>",
+        "call   3000 <_Unwind_Resume@GCC_3.0>",
+        "call   *0x20(%rip)        # 3000 <_Unwind_Resume@GCC_3.0>",
+    ] {
+        assert_eq!(
+            unwind_resume_before_a_case_block(callee).len(),
+            1,
+            "{callee}"
+        );
+    }
+}
+
+#[test]
+fn a_pad_ending_in_another_call_flows_into_the_next_block() {
+    for callee in [
+        "call   3000 <foo>",
+        "call   3000 <_Unwind_Resume_or_Not@plt>",
+    ] {
+        assert!(
+            unwind_resume_before_a_case_block(callee).is_empty(),
+            "{callee}"
+        );
+    }
+}
+
 #[test]
 fn a_call_before_the_lea_leaves_the_register_undefined_in_the_pad() {
     let lines = [

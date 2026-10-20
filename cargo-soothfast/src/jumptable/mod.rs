@@ -193,7 +193,21 @@ fn is_padding(ins: &Ins) -> bool {
 }
 
 fn ends_block(ins: &Ins) -> bool {
-    is_jump(ins.mnemonic) || matches!(ins.mnemonic, "ret" | "retq" | "ud2" | "hlt" | "int3")
+    is_jump(ins.mnemonic)
+        || matches!(ins.mnemonic, "ret" | "retq" | "ud2" | "hlt" | "int3")
+        || is_unwind_resume(ins)
+}
+
+/// A call to `_Unwind_Resume`, which never returns, so nothing follows it.
+fn is_unwind_resume(ins: &Ins) -> bool {
+    ins.mnemonic.starts_with("call")
+        && ins
+            .operands
+            .iter()
+            .copied()
+            .chain(ins.comment)
+            .filter_map(|text| text.split_once("<_Unwind_Resume"))
+            .any(|(_, tail)| tail.starts_with(['>', '@']))
 }
 
 const CALLER_SAVED: &[&str] = &["a", "c", "d", "si", "di", "r8", "r9", "r10", "r11"];
