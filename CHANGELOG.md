@@ -1,13 +1,22 @@
 # Changelog
 
-## Unreleased (draft vs v0.4.0)
+## 0.4.1 - 2026-10-20
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+`cargo soothfast test` now keys a test binary on the files its package owns,
+the same set selection assigns to it. In 0.4.0 a package at the workspace
+root hashed every file in the repository, nested members and `ignore`d paths
+included, so any edit anywhere, a docs-only commit among them, invalidated
+the root package's stored passes and it re-ran on every push.
+
+### Upgrade notes
+
+Nothing is required. The first run after upgrading misses the cache once,
+since keys change. A test that reads a nested member's file or an `ignore`d
+file at runtime is no longer re-run when that file changes; declare such
+files in `[test] inputs`.
 <!-- /soothfast:notes -->
 
 ### 🐛 Fixes
