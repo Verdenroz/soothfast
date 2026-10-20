@@ -65,10 +65,6 @@ impl Reuse {
             println!("{cmd}: per-item reuse off (--no-item-cache); measuring in full");
             return None;
         }
-        if recording {
-            println!("{cmd}: per-item reuse off (SOOTHFAST_RECORD=1); measuring in full");
-            return None;
-        }
         let backend = common.backend.as_deref();
         let capable = env.item_reuse
             && bins[1..]
@@ -92,7 +88,11 @@ impl Reuse {
             .collect();
         let all: BTreeSet<&String> = listed.iter().flat_map(|l| l.keys()).collect();
         let items = Items::open(&runs.item_scope()?)?;
-        let hits = items.reusable(&listed, &sides);
+        let hits = if recording {
+            BTreeMap::new()
+        } else {
+            items.reusable(&listed, &sides)
+        };
         let todo = listed
             .iter()
             .map(|l| {
@@ -102,17 +102,23 @@ impl Reuse {
                     .collect()
             })
             .collect();
-        let what = if bins.len() > 1 {
-            "run identical code on both sides"
+        if recording {
+            println!(
+                "{cmd}: per-item reuse off (SOOTHFAST_RECORD=1); measuring in full and storing the items it measures"
+            );
         } else {
-            "run code a stored measurement covers"
-        };
-        println!(
-            "{cmd}: {}/{} items {what}, measuring {}",
-            hits.len(),
-            all.len(),
-            all.len() - hits.len()
-        );
+            let what = if bins.len() > 1 {
+                "run identical code on both sides"
+            } else {
+                "run code a stored measurement covers"
+            };
+            println!(
+                "{cmd}: {}/{} items {what}, measuring {}",
+                hits.len(),
+                all.len(),
+                all.len() - hits.len()
+            );
+        }
         Some(Reuse {
             items,
             hits,
