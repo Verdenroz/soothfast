@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Testing · soothfast</title>
+<link rel="icon" href="../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../_soothfast/tokens.css">
+<link rel="stylesheet" href="../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.3.4</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../">soothfast</a></li>
+    
+      <li><a href="../measuring/">Measuring</a></li>
+    
+      <li><a href="../gating/">Gating</a></li>
+    
+      <li><a class="active" aria-current="page" href="../testing/">Testing</a></li>
+    
+      <li><a href="../ci/">CI</a></li>
+    
+      <li><a href="../living-docs/">Living docs</a></li>
+    
+      <li><a href="../spec/">Specs</a></li>
+    
+      <li><a href="../sdk/">SDKs</a></li>
+    
+      <li><a href="../reports/">Reports</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="testing">Testing<a class="anchor" href="#testing" aria-label="Link to this section">#</a></h1>
+<p><code>cargo soothfast test</code> is a drop-in for <code>cargo test</code> that does only the work
+a change needs. It builds and runs the test targets of the packages a change
+can affect, and skips any test binary whose code and inputs match a run that
+already passed.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast test --all-features                  # vs the default branch&#39;s merge-base
+<span class="tok-kw">$ </span>cargo soothfast test -p mylib                         # exactly this package, changed or not
+<span class="tok-kw">$ </span>cargo soothfast test --all                            # no selection, cache still applies
+<span class="tok-kw">$ </span>cargo soothfast test --no-cache -- --include-ignored  # re-run everything selected
+</code></pre></figure>
+<p>Flags before <code>--</code> that soothfast does not own go to <code>cargo test</code>: features,
+<code>--release</code>, <code>--profile</code>, <code>--target</code>. Everything after <code>--</code> goes to each test
+binary. <code>--no-doc</code> skips doc tests.</p>
+<p><code>-p</code>/<code>--package</code> replaces the change-based selection: it tests exactly the
+named packages, and a name that is not a workspace member is an error.
+<code>--exclude</code> subtracts from whatever was selected.</p>
+<h2 id="choosing-packages">Choosing packages<a class="anchor" href="#choosing-packages" aria-label="Link to this section">#</a></h2>
+<p>The changed files are the union of <code>git diff --name-only BASE...HEAD</code>, the
+uncommitted changes and the untracked files. <code>BASE</code> is <code>--base</code>, else the
+merge-base with the default branch (<code>origin/HEAD</code>, falling back to
+<code>origin/master</code>, <code>origin/main</code>, <code>master</code>, <code>main</code>). When <code>BASE</code> shares no
+history with HEAD, every package is selected and the summary says so.</p>
+<p>Each changed file belongs to the workspace package whose manifest directory
+contains it, taking the longest match. That package is selected, and so is
+every workspace package that depends on it, transitively, through any
+dependency kind, dev-dependencies included.</p>
+<p>These select every package:</p>
+<ul>
+<li>a change to <code>Cargo.lock</code>, <code>rust-toolchain(.toml)</code>, <code>.cargo/config(.toml)</code> or the root <code>Cargo.toml</code>;</li>
+<li>a change to any file outside every package directory;</li>
+<li>a change to a file an <code>inputs</code> glob matches (below).</li>
+</ul>
+<p>The <code>[test]</code> section of <code>soothfast.toml</code> tunes this:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[test]</span>
+<span class="tok-ty">ignore </span>=<span class="tok-str"> [&quot;docs/**&quot;, &quot;*.md&quot;]        # changes here select nothing</span>
+<span class="tok-ty">inputs </span>=<span class="tok-str"> [&quot;fixtures/shared/**&quot;]     # files tests read from outside a package</span>
+<span class="tok-ty">env    </span>=<span class="tok-str"> [&quot;DATABASE_URL&quot;]           # variables whose values change the result</span></code></pre></figure>
+<p><code>inputs</code> wins over <code>ignore</code>. Ignore only files no test reads.</p>
+<h2 id="the-pass-cache">The pass cache<a class="anchor" href="#the-pass-cache" aria-label="Link to this section">#</a></h2>
+<p>After building, each test executable gets a key. A stored pass under
+<code>.soothfast/tests/&lt;key&gt;</code> means the executable is skipped, with a line naming
+it. Only passes are stored, never failures, and the store keeps the 2048 most
+recently used entries.</p>
+<p>The key hashes:</p>
+<ul>
+<li>the executable's loaded sections, so source changes, features, profile and target are all covered by the code itself. Files pulled in with <code>include_str!</code> or <code>include_bytes!</code> are compiled in, so they count even when they live outside the package;</li>
+<li>every git-tracked file in the package, <code>.rs</code> included, by content, plus modified and untracked ones (sources, fixtures, goldens, data files);</li>
+<li>the files matched by <code>[test] inputs</code>, and every file whose change selects every package, so a run those files select cannot be served from a pass stored before they changed;</li>
+<li>the plain <code>bin</code> and <code>example</code> executables of the package, which its integration tests may spawn without embedding;</li>
+<li>the arguments after <code>--</code>;</li>
+<li>the values of the <code>[test] env</code> variables;</li>
+<li><code>rustc -vV</code>.</li>
+</ul>
+<p><code>RUST_TEST_THREADS</code> and <code>RUST_BACKTRACE</code> are not inputs.</p>
+<h3 id="what-the-key-does-not-see">What the key does not see<a class="anchor" href="#what-the-key-does-not-see" aria-label="Link to this section">#</a></h3>
+<p>A test that reads anything else can pass from the cache after that thing
+changed. Declare what you can with <code>inputs</code> and <code>env</code>; the rest is a known
+limit:</p>
+<ul>
+<li>files outside the package that are not declared;</li>
+<li>external programs a test spawns, such as <code>cargo</code>, <code>objdump</code>, <code>valgrind</code>, <code>node</code> or <code>uv</code>;</li>
+<li>shared libraries such as libc, and the toolchain beyond <code>rustc -vV</code>;</li>
+<li>binaries of other packages, including a bundled example another package's test starts;</li>
+<li>the network and the clock.</li>
+</ul>
+<p>In this workspace no Rust test spawns a binary or example of a package it
+does not own. <code>soothfast-sdk</code>'s <code>embed_server</code> example is started by the
+Python and Node suites, which <code>cargo soothfast test</code> does not run.</p>
+<h2 id="running">Running<a class="anchor" href="#running" aria-label="Link to this section">#</a></h2>
+<p>Each remaining binary runs one after another through cargo itself, as
+<code>cargo test -p PKG --lib</code> (or <code>--bin</code>, <code>--test</code>, <code>--bench NAME</code>) with your
+cargo flags and the arguments after <code>--</code>. The build is already fresh, so
+cargo only runs it, and the test environment (<code>[env]</code> config, target
+runners, library paths) is cargo's own. Output streams as it is produced and
+a failing binary does not stop the others.</p>
+<p>A pass is stored only if the test leaves its inputs as it found them. A test
+that rewrites its own package files (regenerating goldens, say) prints that
+it changed its inputs and stores nothing, so the next run executes it again.</p>
+<p>Doc tests cannot be cached, so <code>cargo test --doc</code> runs for each selected
+package whose library has doc tests enabled. Pass <code>--no-doc</code> to skip them;
+passing a target flag such as <code>--lib</code> or <code>--test NAME</code> skips them too.
+<code>--doc</code> itself is refused, since doc tests always run.</p>
+<p>The command ends with a summary and exits non-zero if anything failed:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>test: 3 of 10 packages selected, 9 binaries run, 4 skipped (cached), doc tests in 3 packages
+</code></pre></figure>
+<h2 id="in-ci">In CI<a class="anchor" href="#in-ci" aria-label="Link to this section">#</a></h2>
+<p>The selection needs history to find a merge-base, and the pass cache needs to
+outlive the run. This is the shape the workspace's own <code>check</code> job uses:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">yaml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>- uses: actions/checkout@v6
+  with:
+    fetch-depth: 0
+    persist-credentials: false
+- uses: actions/cache/restore@v5
+  with:
+    path: .soothfast/tests
+    key: soothfast-tests-${{ github.ref_name }}-${{ github.sha }}
+    restore-keys: |
+      soothfast-tests-${{ github.ref_name }}-
+      soothfast-tests-${{ github.event.repository.default_branch }}-
+- run: |
+    selection=&quot;--all&quot;
+    if [ &quot;$EVENT&quot; = pull_request ]; then
+      selection=&quot;--base origin/$BASE_REF&quot;
+    fi
+    cargo soothfast test $selection --all-features
+  env:
+    EVENT: ${{ github.event_name }}
+    BASE_REF: ${{ github.base_ref }}
+- if: always()
+  uses: actions/cache/save@v5
+  with:
+    path: .soothfast/tests
+    key: soothfast-tests-${{ github.ref_name }}-${{ github.sha }}
+</code></pre></figure>
+<p>A pull request compares against its base branch. A push to the default
+branch selects every package: a push cannot know which earlier push left a
+package red, and a failed binary has no stored pass, so it re-runs until it
+is fixed while unchanged passing binaries are skipped. A base with no
+merge-base selects every package, so the step never falls back to testing
+nothing. The cache key follows the one used for measured runs in
+<a href="../gating/">Gating</a>: a branch restores its own earlier passes, then the
+default branch's. The cache saves even when a test failed, since only passes
+are stored: the next run re-runs the failures and skips what already passed.</p>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#choosing-packages">Choosing packages</a></li>
+  
+    <li><a class="toc-l2" href="#the-pass-cache">The pass cache</a></li>
+  
+    <li><a class="toc-l3" href="#what-the-key-does-not-see">What the key does not see</a></li>
+  
+    <li><a class="toc-l2" href="#running">Running</a></li>
+  
+    <li><a class="toc-l2" href="#in-ci">In CI</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../_soothfast/site.js" defer></script>
+</body>
+</html>
