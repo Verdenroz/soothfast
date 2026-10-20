@@ -122,12 +122,13 @@ fn parse_packages(meta: &Value, root: &Path) -> Vec<Package> {
 pub fn select(pkgs: &[Package], changed: &BTreeSet<String>, cfg: &TestConfig) -> Selection {
     let mut direct = BTreeSet::new();
     for file in changed {
+        if cfg.inputs.iter().any(|g| glob::matches(g, file)) {
+            return everything(pkgs, file);
+        }
         if cfg.ignore.iter().any(|g| glob::matches(g, file)) {
             continue;
         }
-        if GLOBAL_FILES.contains(&file.as_str())
-            || cfg.inputs.iter().any(|g| glob::matches(g, file))
-        {
+        if GLOBAL_FILES.contains(&file.as_str()) {
             return everything(pkgs, file);
         }
         match owner(pkgs, file) {
@@ -322,6 +323,17 @@ mod tests {
             sel.everything_because.as_deref(),
             Some("unrelated/shared/f.json")
         );
+    }
+
+    #[test]
+    fn a_declared_input_wins_over_ignore() {
+        let cfg = TestConfig {
+            ignore: vec!["docs/**".into()],
+            inputs: vec!["docs/claims.md".into()],
+            ..TestConfig::default()
+        };
+        let sel = select(&graph(), &files(&["docs/claims.md"]), &cfg);
+        assert_eq!(sel.names.len(), 5);
     }
 
     #[test]
