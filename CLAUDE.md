@@ -283,7 +283,7 @@ second `cargo rustc` link (`linkmap.rs`, under `.soothfast/maps/`); jump
 tables are hashed by target only where a control-flow proof shows how they
 are read (`jumptable/`). Anything unresolvable is a miss; sweep items and
 failed claims are never cached; `--no-item-cache`, `--no-reuse-base` and
-`SOOTHFAST_RECORD=1` measure in full.
+`SOOTHFAST_RECORD=1` measure in full, and a recording run still stores them.
 
 ### Dogfood loop
 

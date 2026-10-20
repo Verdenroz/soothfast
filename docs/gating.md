@@ -171,21 +171,29 @@ docs-only push records no run until a later push changes the binary. The
 action installs the CLI version in your `Cargo.lock`, so bumping the action
 alone does not change this.
 
-The action does not cache `.soothfast/runs/` itself. Put a cache step before
-it in the same job, on pull requests and on the default-branch push alike:
-the cache saves in its post step, after the action has recorded, and the push
+The action does not cache `.soothfast/runs/` itself, nor the per-item store
+and link maps that [per-item reuse](#per-item-reuse) reads. Put a cache step
+before it in the same job, on pull requests and on the default-branch push
+alike: the cache saves in its post step, after the action has recorded, and the push
 job is what writes the runs pull requests read.
 
 ```yaml
 - uses: actions/cache@v4
   with:
-    path: .soothfast/runs
+    path: |
+      .soothfast/runs
+      .soothfast/items
+      .soothfast/maps
     key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}
     restore-keys: |
       soothfast-runs-${{ github.ref_name }}-
       soothfast-runs-${{ github.event.repository.default_branch }}-
 - uses: Verdenroz/soothfast@<tag-or-sha>
 ```
+
+Items and maps are cached with the runs because the default-branch push
+stores the entries a pull request reuses, and a job that restores none of
+them measures every item.
 
 The key has to be unique per commit, with the prefix in `restore-keys`. An
 exact key that never changes is never rewritten once saved, so the cache
@@ -308,11 +316,12 @@ What still misses, and why:
 
 - code that changed, which is the point;
 - a function that keeps its jump-table base in a callee-saved register it
-  also uses for another value across calls, where a landing pad rejoins the
-  code before the table load. Which call unwinds to which pad is in the
-  exception tables, which are not read, so every call's value reaches the
-  pad. `std`'s `Once::call` is one, and every item runs it, so an edit that
-  moves code misses every item;
+  also uses for another value across calls, where a landing pad that does
+  not end in `_Unwind_Resume` rejoins the code before the table load. Which
+  call unwinds to which pad is in the exception tables, which are not read,
+  so every call's value reaches the pad. A pad that ends in `_Unwind_Resume`
+  rejoins nothing, which is how `std`'s `Once::call` proves and an edit that
+  moves code still reuses the items it does not touch;
 - code that reads a section whose bytes are layout, such as
   `.eh_frame_hdr`, through a pointer that is not a `__stop_` symbol;
 - a constant changed inside a string pool, or any data without a sized
@@ -338,7 +347,8 @@ zero delta where a fresh run of the two checkouts would differ by the noise
 callgrind sees from different working directories (about 0.1%). It keeps the
 walltime it was stored with, and a baseline saved
 from the run marks it under `reused` with `from: "item cache"`. `--no-item-cache`,
-`--no-reuse-base` and `SOOTHFAST_RECORD=1` measure every item. A harness that predates `--id`
+`--no-reuse-base` and `SOOTHFAST_RECORD=1` measure every item; a recording run
+still stores what it measured, so pull requests find it. A harness that predates `--id`
 turns it off for that invocation, the way the run cache is turned off:
 
 ```console
