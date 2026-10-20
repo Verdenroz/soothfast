@@ -411,6 +411,8 @@ mod tests {
         repo.commit();
         let first = repo.git(&["rev-parse", "HEAD"]);
         repo.git(&["checkout", "-q", "--orphan", "other"]);
+        repo.write("a", "b");
+        repo.git(&["add", "."]);
         repo.commit();
         assert!(has_merge_base(&repo.root, "HEAD").unwrap());
         assert!(!has_merge_base(&repo.root, &first).unwrap());
