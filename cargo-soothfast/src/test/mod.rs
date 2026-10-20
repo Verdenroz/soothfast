@@ -10,7 +10,7 @@ pub(crate) mod rustdoc;
 mod select;
 pub(crate) mod shim;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::{buildstamp, invoke, runcache};
 use cargo::TestBin;
@@ -107,7 +107,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
         &args.cargo_args,
         std::env::var("CARGO_BUILD_TARGET").ok(),
     );
-    let cargo_home = std::env::var_os("CARGO_HOME").map(PathBuf::from);
+    let cargo_home = runner::cargo_home(|k| std::env::var(k).ok());
     let mode = runner::detect(
         &triples,
         &args.cargo_args,

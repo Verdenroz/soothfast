@@ -59,8 +59,13 @@ pub fn detect(
     env: impl Fn(&str) -> Option<String>,
     config_files: &[(PathBuf, String)],
 ) -> Runner {
-    if cargo_args.iter().any(|a| a.contains("runner")) {
-        return Runner::Fallback("a --config argument sets a target runner".into());
+    for value in config_values(cargo_args) {
+        if !value.contains('=') {
+            return Runner::Fallback(format!("--config {value} names a config file"));
+        }
+        if let Some(key) = config_key(value) {
+            return Runner::Fallback(format!("--config {value} sets `{key}`"));
+        }
     }
     for (path, text) in config_files {
         if let Some(key) = config_key(text) {
@@ -77,6 +82,20 @@ pub fn detect(
         ),
         _ => Runner::Fallback("the targets have different runners".into()),
     }
+}
+
+/// The values given to `--config`, spelled either way.
+fn config_values(cargo_args: &[String]) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut it = cargo_args.iter();
+    while let Some(a) = it.next() {
+        match a.strip_prefix("--config=") {
+            Some(v) => out.push(v),
+            None if a == "--config" => out.extend(it.next().map(String::as_str)),
+            None => {}
+        }
+    }
+    out
 }
 
 /// A config key the shim cannot account for: a runner, or `build.target`,
@@ -97,8 +116,18 @@ fn config_key(text: &str) -> Option<&'static str> {
     None
 }
 
+/// `CARGO_HOME`, else the `.cargo` directory in the user's home, where cargo
+/// reads its global config whether or not the workspace sits under it.
+pub fn cargo_home(env: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    env("CARGO_HOME").map(PathBuf::from).or_else(|| {
+        env("HOME")
+            .or_else(|| env("USERPROFILE"))
+            .map(|h| PathBuf::from(h).join(".cargo"))
+    })
+}
+
 /// Every config file cargo reads from `root`: each ancestor's `.cargo`
-/// directory, then `CARGO_HOME`.
+/// directory, then the cargo home.
 pub fn config_files(root: &Path, cargo_home: Option<PathBuf>) -> Vec<(PathBuf, String)> {
     let dirs = root.ancestors().map(|d| d.join(".cargo")).chain(cargo_home);
     dirs.flat_map(|d| [d.join("config.toml"), d.join("config")])
@@ -201,6 +230,49 @@ mod tests {
         let cargo_args = args(&["--config", "target.x86_64-unknown-linux-gnu.runner='qemu'"]);
         assert!(matches!(
             detect(&t, &cargo_args, no_env, &[]),
+            Runner::Fallback(_)
+        ));
+        let file = args(&["--config=ci/cargo.toml"]);
+        assert!(matches!(
+            detect(&t, &file, no_env, &[]),
+            Runner::Fallback(_)
+        ));
+    }
+
+    #[test]
+    fn a_feature_named_runner_keeps_the_shim() {
+        let t = args(&["x86_64-unknown-linux-gnu"]);
+        let cargo_args = args(&["--features", "soothfast/runner", "--config", "build.jobs=2"]);
+        assert_eq!(
+            detect(&t, &cargo_args, no_env, &[]),
+            Runner::Shim(Vec::new())
+        );
+    }
+
+    #[test]
+    fn the_cargo_home_defaults_to_the_users_home() {
+        let env = |k: &str| (k == "HOME").then(|| "/home/u".to_string());
+        assert_eq!(cargo_home(env), Some(PathBuf::from("/home/u/.cargo")));
+        let set = |k: &str| (k == "CARGO_HOME").then(|| "/opt/cargo".to_string());
+        assert_eq!(cargo_home(set), Some(PathBuf::from("/opt/cargo")));
+    }
+
+    #[test]
+    fn a_home_runner_falls_back_for_a_workspace_outside_home() {
+        let base = std::env::temp_dir().join(format!("soothfast-home-{}", std::process::id()));
+        let (root, home) = (base.join("srv/ws"), base.join("home/.cargo"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join("config.toml"),
+            "[target.'cfg(unix)']\nrunner = \"sudo\"\n",
+        )
+        .unwrap();
+        let files = config_files(&root, Some(home));
+        std::fs::remove_dir_all(&base).unwrap();
+        let t = args(&["x86_64-unknown-linux-gnu"]);
+        assert!(matches!(
+            detect(&t, &[], no_env, &files),
             Runner::Fallback(_)
         ));
     }
