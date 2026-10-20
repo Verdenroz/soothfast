@@ -12,10 +12,9 @@
 //! extents read from it are kept under `.soothfast/maps/`, named by the
 //! digest of the binary they describe, so they are never read for another.
 
-use std::path::Path;
-
 use crate::headrun::binary_digest;
 use crate::invoke::{self, CommonArgs};
+use crate::itemreuse::Bin;
 use crate::runcache;
 
 /// Maps kept before the oldest are dropped.
@@ -137,35 +136,24 @@ fn decode(text: &str) -> Vec<Extent> {
         .collect()
 }
 
-/// The extents for the bench binary `exe`, built in `dir` (HEAD's tree when
-/// `None`). Empty, with a line saying why, when no map can be had for this
+/// The extents for the bench binary `bin`, built in its `dir` (HEAD's tree
+/// when `None`). Empty, with a line saying why, when no map can be had for this
 /// exact binary; references into unnamed data then hash as a whole section.
-pub fn extents(
-    cmd: &str,
-    common: &CommonArgs,
-    exe: &Path,
-    dir: Option<&Path>,
-    target_dir: Option<&Path>,
-) -> Vec<Extent> {
-    match obtain(common, exe, dir, target_dir) {
+pub fn extents(cmd: &str, common: &CommonArgs, bin: &Bin) -> Vec<Extent> {
+    match obtain(common, bin) {
         Ok(extents) => extents,
         Err(why) => {
             println!(
                 "{cmd}: no link map for {} ({why}); unnamed constants hash as whole sections",
-                exe.display()
+                bin.exe.display()
             );
             Vec::new()
         }
     }
 }
 
-fn obtain(
-    common: &CommonArgs,
-    exe: &Path,
-    dir: Option<&Path>,
-    target_dir: Option<&Path>,
-) -> Result<Vec<Extent>, String> {
-    let digest = binary_digest(exe).ok_or("binary unreadable")?;
+fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
+    let digest = bin.digest.ok_or("binary unreadable")?;
     let maps = runcache::state_dir("maps").ok_or("no .soothfast directory")?;
     let stored = maps.join(format!("{digest}.extents"));
     if let Ok(text) = std::fs::read_to_string(&stored)
@@ -177,10 +165,10 @@ fn obtain(
     // Kept, not removed: cargo answers a repeated map build as fresh without
     // relinking, so the map from the first link is the only one there is.
     let map = maps.join(format!("{digest}.map"));
-    let built = invoke::build_link_map(common, dir, target_dir, &map);
+    let built = invoke::build_link_map(common, bin.dir, bin.target_dir, &map);
     let text = std::fs::read_to_string(&map);
     let built = built.ok_or("the map build failed")?;
-    if binary_digest(&built).as_deref() != Some(digest.as_str()) {
+    if binary_digest(&built).as_deref() != Some(digest) {
         return Err("the map build links different code".into());
     }
     let extents = parse(&text.map_err(|e| e.to_string())?).ok_or("unrecognized map format")?;

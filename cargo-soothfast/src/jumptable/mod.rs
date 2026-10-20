@@ -25,6 +25,14 @@ pub struct Proof {
     pub table: u64,
 }
 
+/// What [`prove`] found: the proven bases, and for every table whose words
+/// decoded, the places in the function it jumps to.
+#[derive(Default)]
+pub struct Proven {
+    pub proofs: Vec<Proof>,
+    pub targets: HashMap<u64, Vec<u64>>,
+}
+
 /// How far past a `lea` the rest of the pattern may sit.
 const WINDOW: usize = 32;
 
@@ -169,14 +177,14 @@ fn scaled_base(operand: &str) -> Option<String> {
 }
 
 fn direct_target(ins: &Ins) -> Option<u64> {
-    let m = ins.mnemonic;
-    (m.starts_with('j') || m.starts_with("loop"))
+    is_jump(ins.mnemonic)
         .then(|| u64::from_str_radix(ins.operands.first()?.split_whitespace().next()?, 16).ok())
         .flatten()
 }
 
-fn is_branch(ins: &Ins) -> bool {
-    ins.mnemonic.starts_with('j') || ins.mnemonic.starts_with("loop")
+/// A jump or a loop, conditional or not.
+pub fn is_jump(mnemonic: &str) -> bool {
+    mnemonic.starts_with('j') || mnemonic.starts_with("loop")
 }
 
 /// A nop, as compilers pad between blocks.
@@ -185,7 +193,7 @@ fn is_padding(ins: &Ins) -> bool {
 }
 
 fn ends_block(ins: &Ins) -> bool {
-    is_branch(ins) || matches!(ins.mnemonic, "ret" | "retq" | "ud2" | "hlt" | "int3")
+    is_jump(ins.mnemonic) || matches!(ins.mnemonic, "ret" | "retq" | "ud2" | "hlt" | "int3")
 }
 
 const CALLER_SAVED: &[&str] = &["a", "c", "d", "si", "di", "r8", "r9", "r10", "r11"];
@@ -221,13 +229,13 @@ struct Candidate {
 /// leaves it by an unconditional tail jump. Otherwise nothing is proven. A
 /// candidate that fails is dropped, and the rest are checked again against
 /// the graph without it.
-pub fn prove(instrs: &[(u64, String)], span: (u64, u64), decode: &Decoder) -> Vec<Proof> {
+pub fn prove(instrs: &[(u64, String)], span: (u64, u64), decode: &Decoder) -> Proven {
     let Some(parsed) = instrs
         .iter()
         .map(|(addr, body)| Some((*addr, parse(body)?)))
         .collect::<Option<Vec<(u64, Ins)>>>()
     else {
-        return Vec::new();
+        return Proven::default();
     };
     let at: HashMap<u64, usize> = parsed
         .iter()
@@ -243,16 +251,16 @@ pub fn prove(instrs: &[(u64, String)], span: (u64, u64), decode: &Decoder) -> Ve
         let targets = decode(&tables);
         active.retain(|c| targets.contains_key(&c.table));
         if active.is_empty() {
-            return Vec::new();
+            return Proven::default();
         }
         let Some(graph) = Graph::build(&parsed, &at, span, &active, &targets) else {
-            return Vec::new();
+            return Proven::default();
         };
         let before = active.len();
         active.retain(|c| graph.reads_table(&parsed, c, &leas));
         if active.len() == before {
             let proven: HashSet<u64> = active.iter().map(|c| c.table).collect();
-            return leas
+            let proofs = leas
                 .iter()
                 .filter(|l| proven.contains(&l.table))
                 .map(|l| Proof {
@@ -260,6 +268,7 @@ pub fn prove(instrs: &[(u64, String)], span: (u64, u64), decode: &Decoder) -> Ve
                     table: l.table,
                 })
                 .collect();
+            return Proven { proofs, targets };
         }
     }
 }
@@ -365,6 +374,10 @@ fn completes(after: &[(u64, Ins)], base: &str, word: &str) -> Option<usize> {
 struct Graph {
     succ: Vec<Vec<usize>>,
     leader: Vec<bool>,
+    /// Instructions the graph does not reach from the entry and that are not
+    /// padding: landing pads the unwinder enters.
+    orphans: Vec<usize>,
+    has_call: bool,
 }
 
 impl Graph {
@@ -387,7 +400,7 @@ impl Graph {
             if ins.mnemonic == "(bad)" {
                 return None;
             }
-            if is_branch(ins) {
+            if is_jump(ins.mnemonic) {
                 if let Some(next) = next {
                     leader[next] = true;
                 }
@@ -421,7 +434,14 @@ impl Graph {
                 succ[i].extend(next);
             }
         }
-        Some(Graph { succ, leader })
+        let orphans = orphans(parsed, &succ);
+        let has_call = parsed.iter().any(|(_, i)| i.mnemonic.starts_with("call"));
+        Some(Graph {
+            succ,
+            leader,
+            orphans,
+            has_call,
+        })
     }
 
     /// Whether the candidate's load, add and jump share a block, and the
@@ -430,12 +450,13 @@ impl Graph {
         if self.leader[c.load + 1..=c.jmp].iter().any(|&l| l) {
             return false;
         }
-        let good: Vec<bool> = (0..parsed.len())
-            .map(|i| {
-                leas.iter()
-                    .any(|l| l.at == i && l.table == c.table && l.dest == c.base)
-            })
-            .collect();
+        let mut good = vec![false; parsed.len()];
+        for l in leas
+            .iter()
+            .filter(|l| l.table == c.table && l.dest == c.base)
+        {
+            good[l.at] = true;
+        }
         self.always_defined(parsed, &c.base, &good, c.load)
     }
 
@@ -444,42 +465,13 @@ impl Graph {
     fn always_defined(&self, parsed: &[(u64, Ins)], reg: &str, good: &[bool], at: usize) -> bool {
         // 0: not reached yet, 1: defined by a good instruction, 2: anything else.
         let mut state = vec![0u8; parsed.len()];
-        // Code the graph does not reach from the entry (a landing pad the
-        // unwinder enters) may arrive with anything in the register. Nops
-        // that only pad between blocks are not entered by anyone, nor is the
-        // block they fall into reached through them.
-        let mut padding = vec![false; parsed.len()];
-        let reached = loop {
-            let mut reached = vec![false; parsed.len()];
-            for (i, edges) in self.succ.iter().enumerate() {
-                if !padding[i] {
-                    for &s in edges {
-                        reached[s] = true;
-                    }
-                }
-            }
-            let mut grown = false;
-            for i in 1..parsed.len() {
-                if !reached[i] && !padding[i] && is_padding(&parsed[i].1) {
-                    padding[i] = true;
-                    grown = true;
-                }
-            }
-            if !grown {
-                break reached;
-            }
-        };
         // Only a call unwinds, and it restores callee-saved registers to their
         // values at the call: an orphan gets their join, else unknown.
-        let has_call = parsed.iter().any(|(_, i)| i.mnemonic.starts_with("call"));
-        let from_calls = !CALLER_SAVED.contains(&reg) && has_call;
-        let orphans: Vec<usize> = (1..parsed.len())
-            .filter(|&i| !reached[i] && !padding[i])
-            .collect();
+        let from_calls = !CALLER_SAVED.contains(&reg) && self.has_call;
         let mut work = vec![0];
         state[0] = 2;
         if !from_calls {
-            for &i in &orphans {
+            for &i in &self.orphans {
                 state[i] = 2;
                 work.push(i);
             }
@@ -501,7 +493,7 @@ impl Graph {
                 _ => state[i],
             };
             let pads: &[usize] = if from_calls && ins.mnemonic.starts_with("call") {
-                &orphans
+                &self.orphans
             } else {
                 &[]
             };
@@ -521,15 +513,46 @@ impl Graph {
     }
 }
 
-/// Proven table bases grouped by the section a caller maps them to.
+/// Code the graph does not reach from the entry (a landing pad the unwinder
+/// enters), which may arrive with anything in a register. Nops that only pad
+/// between blocks are not entered by anyone, nor is the block they fall into
+/// reached through them.
+fn orphans(parsed: &[(u64, Ins)], succ: &[Vec<usize>]) -> Vec<usize> {
+    let mut padding = vec![false; parsed.len()];
+    let reached = loop {
+        let mut reached = vec![false; parsed.len()];
+        for (i, edges) in succ.iter().enumerate() {
+            if !padding[i] {
+                for &s in edges {
+                    reached[s] = true;
+                }
+            }
+        }
+        let mut grown = false;
+        for i in 1..parsed.len() {
+            if !reached[i] && !padding[i] && is_padding(&parsed[i].1) {
+                padding[i] = true;
+                grown = true;
+            }
+        }
+        if !grown {
+            break reached;
+        }
+    };
+    (1..parsed.len())
+        .filter(|&i| !reached[i] && !padding[i])
+        .collect()
+}
+
+/// Table bases grouped by the section a caller maps them to.
 pub fn group(
-    proofs: &[Proof],
+    tables: impl IntoIterator<Item = u64>,
     section_of: impl Fn(u64) -> Option<usize>,
 ) -> HashMap<usize, Vec<u64>> {
     let mut grouped: HashMap<usize, Vec<u64>> = HashMap::new();
-    for p in proofs {
-        if let Some(k) = section_of(p.table) {
-            grouped.entry(k).or_default().push(p.table);
+    for table in tables {
+        if let Some(k) = section_of(table) {
+            grouped.entry(k).or_default().push(table);
         }
     }
     for bases in grouped.values_mut() {
@@ -540,280 +563,4 @@ pub fn group(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Instruction `i` sits at `0x1000 + 4 * i`.
-    fn at(i: u64) -> u64 {
-        0x1000 + 4 * i
-    }
-
-    fn code(lines: &[&str]) -> Vec<(u64, String)> {
-        lines
-            .iter()
-            .enumerate()
-            .map(|(i, l)| (at(i as u64), l.to_string()))
-            .collect()
-    }
-
-    /// Every table jumps to the last instruction.
-    fn prove_in(lines: &[&str]) -> Vec<Proof> {
-        let instrs = code(lines);
-        let last = instrs.last().map(|(a, _)| *a).unwrap_or(0);
-        let span = (0x1000, last + 4);
-        prove(&instrs, span, &|tables| {
-            tables.iter().map(|t| (*t, vec![last])).collect()
-        })
-    }
-
-    const LEA: &str = "lea    0x100d(%rip),%rcx        # 2010 <anon>";
-    const LOAD: &str = "movslq (%rcx,%rax,4),%rax";
-    const ADD: &str = "add    %rcx,%rax";
-    const JMP: &str = "jmp    *%rax";
-    const RET: &str = "ret";
-
-    #[test]
-    fn the_exact_dataflow_proves_a_table() {
-        assert_eq!(
-            prove_in(&[LEA, LOAD, ADD, JMP, RET]),
-            [Proof {
-                lea: 0x1000,
-                table: 0x2010
-            }]
-        );
-    }
-
-    #[test]
-    fn either_add_order_and_a_notrack_jump_prove_it() {
-        let swapped = [
-            "lea    0x100d(%rip),%rdx        # 2010 <anon>",
-            "movslq (%rdx,%rcx,4),%rax",
-            "add    %rax,%rdx",
-            "notrack jmp *%rdx",
-            RET,
-        ];
-        assert_eq!(prove_in(&swapped).len(), 1);
-    }
-
-    #[test]
-    fn a_write_to_the_base_register_breaks_the_proof() {
-        assert!(prove_in(&[LEA, "mov    %rbx,%rcx", LOAD, ADD, JMP, RET]).is_empty());
-    }
-
-    #[test]
-    fn a_write_to_the_loaded_or_summed_register_breaks_the_proof() {
-        assert!(prove_in(&[LEA, LOAD, "xor    %eax,%eax", ADD, JMP, RET]).is_empty());
-        assert!(prove_in(&[LEA, LOAD, ADD, "inc    %rax", JMP, RET]).is_empty());
-    }
-
-    #[test]
-    fn a_jump_away_or_an_exit_before_the_jump_breaks_the_proof() {
-        assert!(prove_in(&[LEA, "jmp    1018 <f+0x18>", LOAD, ADD, JMP, RET]).is_empty());
-        assert!(prove_in(&[LEA, RET, LOAD, ADD, JMP, RET]).is_empty());
-    }
-
-    #[test]
-    fn an_implicit_writer_breaks_the_proof() {
-        for odd in [
-            "rdtsc",
-            "lahf",
-            "cwtd",
-            "xgetbv",
-            "cmpxchg %rbx,(%rdi)",
-            "lock cmpxchg %rbx,(%rdi)",
-        ] {
-            assert!(
-                prove_in(&[LEA, odd, LOAD, ADD, JMP, RET]).is_empty(),
-                "{odd}"
-            );
-        }
-        assert_eq!(
-            prove_in(&[LEA, "nop", "pause", LOAD, ADD, JMP, RET]).len(),
-            1
-        );
-    }
-
-    #[test]
-    fn a_load_that_is_not_scaled_by_four_is_no_proof() {
-        assert!(prove_in(&[LEA, "movslq (%rcx,%rax,8),%rax", ADD, JMP, RET]).is_empty());
-    }
-
-    #[test]
-    fn a_branch_into_the_block_breaks_the_proof() {
-        // The conditional jump targets the add, so another path reaches it.
-        assert!(prove_in(&[LEA, "jne    100c <f+0xc>", LOAD, ADD, JMP, RET]).is_empty());
-        // Targeting the final ret leaves the block alone.
-        assert_eq!(
-            prove_in(&[LEA, "jne    1014 <f+0x14>", LOAD, ADD, JMP, RET]).len(),
-            1
-        );
-    }
-
-    #[test]
-    fn a_base_hoisted_across_a_call_in_a_callee_saved_register_proves() {
-        let lea = "lea    0x100d(%rip),%r14        # 2010 <anon>";
-        let load = "movslq (%r14,%rax,4),%rax";
-        let add = "add    %r14,%rax";
-        let hoisted = [lea, "call   2000 <g>", load, add, JMP, RET];
-        assert_eq!(prove_in(&hoisted).len(), 1);
-    }
-
-    #[test]
-    fn the_same_across_a_call_in_a_caller_saved_register_does_not() {
-        assert!(prove_in(&[LEA, "call   2000 <g>", LOAD, ADD, JMP, RET]).is_empty());
-    }
-
-    #[test]
-    fn a_path_that_redefines_the_base_before_the_load_does_not_prove() {
-        let lea = "lea    0x100d(%rip),%r14        # 2010 <anon>";
-        let load = "movslq (%r14,%rax,4),%rax";
-        let add = "add    %r14,%rax";
-        let lines = [
-            lea,
-            "jne    1010 <f+0x10>",
-            "mov    %rbx,%r14",
-            "nop",
-            load,
-            add,
-            JMP,
-            RET,
-        ];
-        assert!(prove_in(&lines).is_empty());
-    }
-
-    #[test]
-    fn a_loop_back_edge_that_keeps_the_lea_dominant_proves() {
-        let lea = "lea    0x100d(%rip),%r14        # 2010 <anon>";
-        let load = "movslq (%r14,%rax,4),%rax";
-        let add = "add    %r14,%rax";
-        let lines = [
-            lea,
-            load,
-            add,
-            JMP,
-            "dec    %rdi",
-            "jmp    1004 <f+0x4>",
-            RET,
-        ];
-        let instrs = code(&lines);
-        let proofs = prove(&instrs, (0x1000, 0x1020), &|tables| {
-            tables.iter().map(|t| (*t, vec![at(4), at(6)])).collect()
-        });
-        assert_eq!(proofs.len(), 1);
-    }
-
-    #[test]
-    fn an_unknown_indirect_jump_elsewhere_disables_every_proof() {
-        assert!(prove_in(&[LEA, LOAD, ADD, JMP, "jmp    *%rdx", RET]).is_empty());
-        assert!(prove_in(&[LEA, LOAD, ADD, JMP, "call   *%rdx", RET]).len() == 1);
-    }
-
-    #[test]
-    fn a_block_nothing_reaches_that_writes_the_base_breaks_the_proof() {
-        let plain = [LEA, "jmp    100c <f+0xc>", "ud2", LOAD, ADD, JMP, RET];
-        assert_eq!(prove_in(&plain).len(), 1);
-        let landing_pad = [
-            LEA,
-            "jmp    1014 <f+0x14>",
-            "ud2",
-            "mov    %rbx,%rcx",
-            "jmp    1014 <f+0x14>",
-            LOAD,
-            ADD,
-            JMP,
-            RET,
-        ];
-        assert!(prove_in(&landing_pad).is_empty());
-    }
-
-    #[test]
-    fn padding_between_blocks_is_not_an_entry() {
-        let padded = [
-            LEA,
-            "jmp    1014 <f+0x14>",
-            "ud2",
-            "nopw   0x0(%rax,%rax,1)",
-            "nop",
-            LOAD,
-            ADD,
-            JMP,
-            RET,
-        ];
-        assert_eq!(prove_in(&padded).len(), 1);
-        let pad_then_pad = [
-            LEA,
-            "jmp    1014 <f+0x14>",
-            "ud2",
-            "nop",
-            "mov    %rbx,%rcx",
-            LOAD,
-            ADD,
-            JMP,
-            RET,
-        ];
-        assert!(prove_in(&pad_then_pad).is_empty());
-    }
-
-    const LEA15: &str = "lea    0x100d(%rip),%r15        # 2010 <anon>";
-    const LOAD15: &str = "movslq (%r15,%rax,4),%rax";
-    const ADD15: &str = "add    %r15,%rax";
-
-    #[test]
-    fn a_landing_pad_inherits_callee_saved_registers_from_the_calls() {
-        let lines = [
-            LEA15,
-            "call   2000 <g>",
-            "jmp    1018 <f+0x18>",
-            "ud2",
-            "mov    %rax,%r14",
-            "jmp    1018 <f+0x18>",
-            LOAD15,
-            ADD15,
-            JMP,
-            RET,
-        ];
-        assert_eq!(prove_in(&lines).len(), 1);
-    }
-
-    #[test]
-    fn a_call_before_the_lea_leaves_the_register_undefined_in_the_pad() {
-        let lines = [
-            "call   2000 <g>",
-            LEA15,
-            "call   2000 <g>",
-            "jmp    101c <f+0x1c>",
-            "ud2",
-            "mov    %rax,%r14",
-            "jmp    101c <f+0x1c>",
-            LOAD15,
-            ADD15,
-            JMP,
-            RET,
-        ];
-        assert!(prove_in(&lines).is_empty());
-    }
-
-    #[test]
-    fn a_caller_saved_base_is_unknown_in_a_landing_pad() {
-        let lines = [
-            LEA,
-            "call   2000 <g>",
-            "jmp    1018 <f+0x18>",
-            "ud2",
-            "mov    %rax,%r14",
-            "jmp    1018 <f+0x18>",
-            LOAD,
-            ADD,
-            JMP,
-            RET,
-        ];
-        assert!(prove_in(&lines).is_empty());
-    }
-
-    #[test]
-    fn registers_alias_across_widths() {
-        assert_eq!(family("%eax"), family("%rax"));
-        assert_eq!(family("%r10d"), family("%r10"));
-        assert_ne!(family("%r10"), family("%r11"));
-    }
-}
+mod tests;

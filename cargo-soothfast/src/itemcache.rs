@@ -11,13 +11,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::buildstamp::BuildStamp;
 use crate::codekey::{self, Binary};
-use crate::gate;
-use crate::headrun::COUNTER_METRICS;
-use crate::invoke::{self, AssertionOutcome, CommonArgs, ItemMetrics, Reused, Run};
-use crate::linkmap::{self, Extent};
-use crate::runcache::{self, Runs};
+use crate::invoke::{self, AssertionOutcome, ItemMetrics};
+use crate::linkmap::Extent;
+use crate::runcache;
 
 /// Entries kept per item. Branches that alternate between a few code states
 /// each keep theirs.
@@ -68,9 +65,7 @@ impl Entry {
             "functions": self.functions,
             "code_key": self.code_key,
             "item": invoke::run_to_items_value(&run)[id],
-            "assertions": self.assertions.iter().map(|a| json!({
-                "kind": a.kind, "ok": a.ok, "detail": a.detail,
-            })).collect::<Vec<_>>(),
+            "assertions": self.assertions.iter().map(AssertionOutcome::verdict_json).collect::<Vec<_>>(),
             "measured_on": self.measured_on,
         })
     }
@@ -79,20 +74,13 @@ impl Entry {
         let functions = v["functions"]
             .as_array()?
             .iter()
-            .map(|f| Some((f[0].as_str()?.to_string(), f[1].as_str()?.to_string())))
+            .map(invoke::pair)
             .collect::<Option<_>>()?;
         let mut run = invoke::run_from_items_value(&json!({ id: v["item"] }));
         let assertions = v["assertions"]
             .as_array()?
             .iter()
-            .map(|a| {
-                Some(AssertionOutcome {
-                    id: id.to_string(),
-                    kind: a["kind"].as_str()?.to_string(),
-                    ok: a["ok"].as_bool()?,
-                    detail: a["detail"].as_str()?.to_string(),
-                })
-            })
+            .map(|a| AssertionOutcome::from_verdict_json(id, a))
             .collect::<Option<_>>()?;
         Some(Entry {
             functions,
@@ -120,8 +108,8 @@ impl Items {
     }
 
     fn path(&self, id: &str) -> PathBuf {
-        let name = soothfast_registry::fnv1a(id.as_bytes());
-        self.dir.join(format!("{name:016x}.json"))
+        self.dir
+            .join(format!("{}.json", runcache::hex_fnv(id.as_bytes())))
     }
 
     fn read(&self, id: &str) -> Vec<Entry> {
@@ -164,13 +152,14 @@ impl Items {
         let _ = std::fs::write(self.path(id), doc.to_string());
     }
 
-    /// The entries that stand for an item in every one of `bins`: the same
-    /// entry hashes true in each, so the item ran the same code in all.
-    /// `listed` is each binary's items with their current fingerprints.
+    /// The entries that stand for an item in every one of `bins` (each with
+    /// its link-map extents): the same entry hashes true in each, so the item
+    /// ran the same code in all. `listed` is each binary's items with their
+    /// current fingerprints.
     pub fn reusable(
         &self,
         listed: &[BTreeMap<String, String>],
-        bins: &[(&Path, &[Extent])],
+        bins: &[(PathBuf, Vec<Extent>)],
     ) -> BTreeMap<String, Entry> {
         let ids: Vec<String> = listed[0]
             .keys()
@@ -222,15 +211,9 @@ fn prune(root: &Path, keep: usize) {
         let Ok(items) = std::fs::read_dir(scope.path()) else {
             continue;
         };
-        files.extend(items.flatten().filter_map(|e| {
-            let t = e.metadata().ok()?.modified().ok()?;
-            Some((t, e.path()))
-        }));
+        files.extend(items.flatten().filter_map(runcache::modified));
     }
-    files.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
-    for (_, path) in files.into_iter().skip(keep) {
-        let _ = std::fs::remove_file(path);
-    }
+    runcache::drop_oldest(files, keep);
 }
 
 /// Entries loaded for a set of items, to be matched against binaries.
@@ -239,13 +222,7 @@ pub struct Stored(BTreeMap<String, Vec<Entry>>);
 impl Stored {
     /// The bench-binary functions every entry would need hashed.
     pub fn wanted(&self) -> BTreeSet<String> {
-        self.0
-            .values()
-            .flatten()
-            .flat_map(|e| &e.functions)
-            .filter(|(ob, _)| ob == codekey::EXE)
-            .map(|(_, sym)| sym.clone())
-            .collect()
+        codekey::exe_symbols(self.0.values().flatten().flat_map(|e| &e.functions))
     }
 
     /// The newest entry of `id` whose functions hash to its code key in `bin`
@@ -257,216 +234,6 @@ impl Stored {
             e.metrics.fingerprint == fingerprint
                 && bin.code_key(&e.functions).as_deref() == Some(&e.code_key)
         })
-    }
-}
-
-/// What a callgrind measurement may take from the store: the items whose
-/// executed code is the same in every binary measured, and the items left to
-/// run, per binary.
-pub struct Reuse {
-    items: Items,
-    hits: BTreeMap<String, Entry>,
-    todo: Vec<Vec<String>>,
-    measured_on: Value,
-    exes: Vec<PathBuf>,
-    inputs: Vec<Vec<Extent>>,
-}
-
-/// A bench binary and where it was built, which a link map needs.
-pub struct Bin<'a> {
-    pub exe: &'a Path,
-    pub dir: Option<&'a Path>,
-    pub target_dir: Option<&'a Path>,
-}
-
-impl Reuse {
-    /// Plan the measurement of `bins` (HEAD's binary, then the merge-base's
-    /// when gating). `None`, with the reason printed where the user can act
-    /// on it, when per-item reuse does not apply.
-    pub fn plan(cmd: &str, common: &CommonArgs, runs: &Runs, bins: &[Bin]) -> Option<Reuse> {
-        let env = runs.env().filter(|e| e.gating_backend == "callgrind")?;
-        if common.no_item_cache {
-            println!("{cmd}: per-item reuse off (--no-item-cache); measuring in full");
-            return None;
-        }
-        if gate::recording() {
-            println!("{cmd}: per-item reuse off (SOOTHFAST_RECORD=1); measuring in full");
-            return None;
-        }
-        let backend = common.backend.as_deref();
-        let capable = env.item_reuse
-            && bins[1..]
-                .iter()
-                .all(|bin| invoke::host_env(bin.exe, backend).is_ok_and(|e| e.item_reuse));
-        if !capable {
-            println!(
-                "{cmd}: per-item reuse disabled for this invocation: bench harness does not take --id (harness {}, CLI {})",
-                invoke::harness_versions(),
-                env!("CARGO_PKG_VERSION")
-            );
-            return None;
-        }
-        let listed: Vec<BTreeMap<String, String>> = bins
-            .iter()
-            .map(|bin| invoke::list_items(bin.exe, common.filter.as_deref()))
-            .collect::<Option<_>>()?;
-        let inputs: Vec<Vec<Extent>> = bins
-            .iter()
-            .map(|b| linkmap::extents(cmd, common, b.exe, b.dir, b.target_dir))
-            .collect();
-        let all: BTreeSet<&String> = listed.iter().flat_map(|l| l.keys()).collect();
-        let items = Items::open(&runs.item_scope()?)?;
-        let exes: Vec<PathBuf> = bins.iter().map(|b| b.exe.to_path_buf()).collect();
-        let pairs: Vec<(&Path, &[Extent])> = exes
-            .iter()
-            .zip(&inputs)
-            .map(|(exe, inputs)| (exe.as_path(), inputs.as_slice()))
-            .collect();
-        let hits = items.reusable(&listed, &pairs);
-        let todo = listed
-            .iter()
-            .map(|l| {
-                l.keys()
-                    .filter(|id| !hits.contains_key(*id))
-                    .cloned()
-                    .collect()
-            })
-            .collect();
-        let what = if bins.len() > 1 {
-            "run identical code on both sides"
-        } else {
-            "run code a stored measurement covers"
-        };
-        println!(
-            "{cmd}: {}/{} items {what}, measuring {}",
-            hits.len(),
-            all.len(),
-            all.len() - hits.len()
-        );
-        Some(Reuse {
-            items,
-            hits,
-            todo,
-            measured_on: runcache::measured_on(env),
-            exes,
-            inputs,
-        })
-    }
-
-    /// Measure what binary `side` still needs: `measure` gets `extra` plus an
-    /// `--id` per item left, and a side with nothing left gets an empty run.
-    pub fn measure_side(
-        &self,
-        side: usize,
-        extra: &[&str],
-        stamp: impl FnOnce() -> BuildStamp,
-        measure: impl FnOnce(&[&str]) -> Result<Run, String>,
-    ) -> Result<Run, String> {
-        if self.hits.is_empty() {
-            return measure(extra);
-        }
-        if self.todo[side].is_empty() {
-            return Ok(Run {
-                gating_backend: Some("callgrind".into()),
-                build: Some(stamp()),
-                ..Default::default()
-            });
-        }
-        let ids: Vec<&str> = self.todo[side]
-            .iter()
-            .flat_map(|id| ["--id", id.as_str()])
-            .collect();
-        measure(&[extra, &ids].concat())
-    }
-
-    /// A lone binary's run: the items left measured and kept, the rest spliced.
-    pub fn run_alone(
-        &self,
-        stamp: impl FnOnce() -> BuildStamp,
-        measure: impl FnOnce(&[&str]) -> Result<Run, String>,
-    ) -> Result<Run, String> {
-        let mut run = self.measure_side(0, &[], stamp, measure)?;
-        self.record(0, &run);
-        self.splice(&mut run);
-        Ok(run)
-    }
-
-    /// Ids spliced by [`Reuse::splice`].
-    pub fn reused_ids(&self) -> impl Iterator<Item = &String> {
-        self.hits.keys()
-    }
-
-    /// Put the stored metrics and assertions of every reused item into `run`.
-    pub fn splice(&self, run: &mut Run) {
-        for (id, entry) in &self.hits {
-            let mut metrics = entry.metrics.clone();
-            let mut named: Vec<&'static str> = COUNTER_METRICS
-                .iter()
-                .filter(|(_, present)| present(&metrics))
-                .map(|(name, _)| *name)
-                .collect();
-            if metrics.median_ns.is_some() {
-                named.push("walltime.median_ns");
-            }
-            metrics.reused = Some(Reused {
-                from: "item cache".into(),
-                metrics: named,
-            });
-            run.items.insert(id.clone(), metrics);
-            run.assertions.retain(|a| &a.id != id);
-            run.assertions.extend(entry.assertions.iter().cloned());
-        }
-    }
-
-    /// Keep what `run` measured of binary `side` for later invocations.
-    /// An item with a failed claim is not kept: a failure is re-measured, as
-    /// the run cache never saves a run whose assertions failed.
-    pub fn record(&self, side: usize, run: &Run) {
-        if run.executed.is_empty() {
-            return;
-        }
-        let bin = self.exes[side].as_path();
-        let functions: BTreeMap<&String, Vec<(String, String)>> = run
-            .executed
-            .iter()
-            .map(|(id, f)| (id, codekey::portable(bin, f)))
-            .collect();
-        let wanted: BTreeSet<String> = functions
-            .values()
-            .flatten()
-            .filter(|(ob, _)| ob == codekey::EXE)
-            .map(|(_, sym)| sym.clone())
-            .collect();
-        let Some(binary) = Binary::open(bin, &wanted, &self.inputs[side]) else {
-            return;
-        };
-        for (id, functions) in functions {
-            let Some(metrics) = run.items.get(id) else {
-                continue;
-            };
-            let Some(functions) = binary.name_addresses(functions) else {
-                continue;
-            };
-            let assertions: Vec<AssertionOutcome> = run
-                .assertions
-                .iter()
-                .filter(|a| &a.id == id)
-                .cloned()
-                .collect();
-            if assertions.iter().any(|a| !a.ok) {
-                continue;
-            }
-            if let Some(entry) = Entry::measured(
-                &binary,
-                functions,
-                metrics.clone(),
-                assertions,
-                self.measured_on.clone(),
-            ) {
-                self.items.store(id, entry);
-            }
-        }
-        self.items.prune();
     }
 }
 

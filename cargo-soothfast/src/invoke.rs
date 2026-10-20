@@ -168,10 +168,24 @@ pub fn build_link_map(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
     let out = cmd.output().ok().filter(|o| o.status.success())?;
-    String::from_utf8_lossy(&out.stdout)
+    bench_artifact(&out.stdout, target)
+}
+
+/// The executable cargo's `--message-format=json` output names for the bench
+/// target `target`.
+fn bench_artifact(stdout: &[u8], target: &str) -> Option<PathBuf> {
+    String::from_utf8_lossy(stdout)
         .lines()
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter(|m| m["reason"] == "compiler-artifact" && m["target"]["name"] == target)
+        .filter(|m| m["reason"] == "compiler-artifact")
+        .filter(|m| m["target"]["name"] == target)
+        .filter(|m| {
+            m["target"]["kind"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|k| k == "bench")
+        })
         .find_map(|m| m["executable"].as_str().map(PathBuf::from))
 }
 
@@ -354,19 +368,7 @@ pub fn bench_executable(
     if !out.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter(|m| m["reason"] == "compiler-artifact")
-        .filter(|m| m["target"]["name"] == target)
-        .filter(|m| {
-            m["target"]["kind"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|k| k == "bench")
-        })
-        .find_map(|m| m["executable"].as_str().map(PathBuf::from))
+    bench_artifact(&out.stdout, target)
 }
 
 /// What a bench binary resolves on this host, from the env line a run starts
@@ -500,6 +502,28 @@ pub struct AssertionOutcome {
     pub detail: String,
 }
 
+impl AssertionOutcome {
+    /// The verdict without its item id, as a per-item store keeps it.
+    pub fn verdict_json(&self) -> Value {
+        json!({ "kind": self.kind, "ok": self.ok, "detail": self.detail })
+    }
+
+    /// A verdict of item `id` read back from [`AssertionOutcome::verdict_json`].
+    pub fn from_verdict_json(id: &str, v: &Value) -> Option<AssertionOutcome> {
+        Some(AssertionOutcome {
+            id: id.to_string(),
+            kind: v["kind"].as_str()?.to_string(),
+            ok: v["ok"].as_bool()?,
+            detail: v["detail"].as_str()?.to_string(),
+        })
+    }
+}
+
+/// An `[object, symbol]` pair of an `executed` record.
+pub fn pair(v: &Value) -> Option<(String, String)> {
+    Some((v[0].as_str()?.to_string(), v[1].as_str()?.to_string()))
+}
+
 /// A full measurement run, keyed by item ID.
 #[derive(Default, Debug)]
 pub struct Run {
@@ -540,9 +564,7 @@ pub fn collect(records: &[Value]) -> Run {
                         .as_array()
                         .into_iter()
                         .flatten()
-                        .filter_map(|f| {
-                            Some((f[0].as_str()?.to_string(), f[1].as_str()?.to_string()))
-                        })
+                        .filter_map(pair)
                         .collect();
                     run.executed.insert(id.to_string(), functions);
                 }

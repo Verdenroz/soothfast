@@ -15,7 +15,7 @@ use crate::headrun::{
     settle, settled_doc,
 };
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
-use crate::itemcache::{Bin, Reuse};
+use crate::itemreuse::{Bin, Reuse};
 use crate::workspace;
 
 /// Deterministic counters gate tight.
@@ -823,16 +823,15 @@ fn measure_ref_interleaved(
     // HEAD alone, where the reference is already measured: items whose code
     // a stored measurement covers are spliced and the rest are measured.
     let measure_head = |exe: Option<&std::path::Path>| -> Result<Run, String> {
-        let bin = exe.map(|exe| Bin {
-            exe,
-            dir: None,
-            target_dir: None,
-        });
-        let Some(reuse) = bin.and_then(|b| Reuse::plan("gate", common, &runs, &[b])) else {
-            return measure(None, &[]);
-        };
-        let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
-        reuse.run_alone(stamp, |args| measure(None, args))
+        Reuse::measure_head(
+            "gate",
+            common,
+            &runs,
+            exe.map(|exe| Bin::head(exe, head_dig.as_deref())),
+            recording(),
+            || buildstamp::capture(common.codegen_units_stamp().as_deref(), None),
+            |args| measure(None, args),
+        )
     };
     // Stored regardless of `reuse`: a fresh measurement is worth keeping
     // even for an invocation that declined to trust an existing one.
@@ -921,17 +920,14 @@ fn measure_ref_interleaved(
             println!("gate: per-item reuse off (--no-reuse-base); measuring in full");
         }
         let item_reuse = digests.as_ref().filter(|_| reuse).and_then(|d| {
-            let head = Bin {
-                exe: &d.head_exe,
-                dir: None,
-                target_dir: None,
-            };
+            let head = Bin::head(&d.head_exe, Some(&d.head));
             let base = Bin {
                 exe: &d.base_exe,
+                digest: Some(&d.base),
                 dir: Some(wt),
                 target_dir: wt_target.as_deref(),
             };
-            Reuse::plan("gate", common, &runs, &[head, base])
+            Reuse::plan("gate", common, &runs, &[head, base], recording())
         });
         let measure_side = |side: usize, extra: &[&str]| -> Result<Run, String> {
             let dir = (side == 1).then_some(wt);
@@ -950,8 +946,7 @@ fn measure_ref_interleaved(
         if let Some(reuse) = &item_reuse {
             for (side, round) in rounds.iter_mut().take(2).enumerate() {
                 if let Ok(run) = round {
-                    reuse.record(side, run);
-                    reuse.splice(run);
+                    reuse.finish(side, run);
                 }
             }
             reused = reuse.reused_ids().cloned().collect();

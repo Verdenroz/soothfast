@@ -7,7 +7,8 @@
 //! Reuse is safe because the key pins every condition that moves the
 //! numbers, so a run measured any other way cannot be served from here.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde_json::Value;
 
@@ -144,10 +145,12 @@ fn conditions(stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> Vec<Str
 }
 
 fn hashed(parts: &[String]) -> String {
-    format!(
-        "{:016x}",
-        soothfast_registry::fnv1a(parts.join("\u{1}").as_bytes())
-    )
+    hex_fnv(parts.join("\u{1}").as_bytes())
+}
+
+/// `bytes` hashed, as sixteen hex digits.
+pub(crate) fn hex_fnv(bytes: &[u8]) -> String {
+    format!("{:016x}", soothfast_registry::fnv1a(bytes))
 }
 
 fn load(key: &str, measured_from: &str) -> Option<Value> {
@@ -169,22 +172,23 @@ fn store(key: &str, doc: &Value) {
 }
 
 /// Drop the oldest files of `d` past `keep`.
-pub fn prune_oldest(d: &std::path::Path, keep: usize) {
+pub fn prune_oldest(d: &Path, keep: usize) {
     let Ok(entries) = std::fs::read_dir(d) else {
         return;
     };
-    let mut files: Vec<_> = entries
-        .flatten()
-        .filter_map(|e| {
-            let t = e.metadata().ok()?.modified().ok()?;
-            Some((t, e.path()))
-        })
-        .collect();
-    if files.len() <= keep {
-        return;
-    }
+    drop_oldest(entries.flatten().filter_map(modified).collect(), keep);
+}
+
+/// A directory entry's modification time and path.
+pub fn modified(e: std::fs::DirEntry) -> Option<(SystemTime, PathBuf)> {
+    let t = e.metadata().ok()?.modified().ok()?;
+    Some((t, e.path()))
+}
+
+/// Remove all but the `keep` newest of `files`.
+pub fn drop_oldest(mut files: Vec<(SystemTime, PathBuf)>, keep: usize) {
     files.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
-    for (_, path) in files.drain(keep..) {
+    for (_, path) in files.into_iter().skip(keep) {
         let _ = std::fs::remove_file(path);
     }
 }
