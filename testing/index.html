@@ -160,7 +160,10 @@ history with HEAD, every package is selected and the summary says so.</p>
 <p>Each changed file belongs to the workspace package whose manifest directory
 contains it, taking the longest match. That package is selected, and so is
 every workspace package that depends on it, transitively, through any
-dependency kind, dev-dependencies included.</p>
+dependency kind, dev-dependencies included. A package at the workspace root
+owns every file no nested member owns, so with a root package a change to
+<code>docs/</code> or <code>.github/</code> selects it and everything that depends on it unless
+<code>ignore</code> covers those paths.</p>
 <p>These select every package:</p>
 <ul>
 <li>a change to <code>Cargo.lock</code>, <code>rust-toolchain(.toml)</code>, <code>.cargo/config(.toml)</code> or the root <code>Cargo.toml</code>;</li>
@@ -181,7 +184,7 @@ recently used entries.</p>
 <p>The key hashes:</p>
 <ul>
 <li>the executable's loaded sections, so source changes, features, profile and target are all covered by the code itself. Files pulled in with <code>include_str!</code> or <code>include_bytes!</code> are compiled in, so they count even when they live outside the package;</li>
-<li>every git-tracked file in the package, <code>.rs</code> included, by content, plus modified and untracked ones (sources, fixtures, goldens, data files);</li>
+<li>every file the package owns, <code>.rs</code> included, by content, plus modified and untracked ones (sources, fixtures, goldens, data files). That is the same set selection assigns to it: a nested member's files belong to the member, and an ignored file belongs to no package;</li>
 <li>the files matched by <code>[test] inputs</code>, and every file whose change selects every package, so a run those files select cannot be served from a pass stored before they changed;</li>
 <li>the plain <code>bin</code> and <code>example</code> executables of the package, which its integration tests may spawn without embedding;</li>
 <li>the arguments after <code>--</code>;</li>
