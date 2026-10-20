@@ -43,14 +43,14 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
-          BEFORE: ${{ github.event.before }}
         run: |
-          if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"; else base="$BEFORE"; fi
-          if git merge-base "$base" HEAD > /dev/null 2>&1; then
-            selection="--base $base"
-          else
-            echo "::warning::no merge-base with $base; testing every package"
-            selection="--all"
+          selection="--all"
+          if [ "$EVENT" = pull_request ]; then
+            if git merge-base "origin/$BASE_REF" HEAD > /dev/null 2>&1; then
+              selection="--base origin/$BASE_REF"
+            else
+              echo "::warning::no merge-base with origin/$BASE_REF; testing every package"
+            fi
           fi
           cargo run -p cargo-soothfast -- test $selection --all-features
 
