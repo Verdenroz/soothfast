@@ -179,11 +179,14 @@ impl Items {
             .collect();
         let stored = self.load(&ids);
         let wanted = stored.wanted();
+        if wanted.is_empty() {
+            return BTreeMap::new();
+        }
         let binaries: Option<Vec<Binary>> = bins
             .iter()
             .map(|(bin, inputs)| Binary::open(bin, &wanted, inputs))
             .collect();
-        let Some(binaries) = binaries.filter(|_| !wanted.is_empty()) else {
+        let Some(binaries) = binaries else {
             return BTreeMap::new();
         };
         ids.iter()
@@ -350,30 +353,42 @@ impl Reuse {
         })
     }
 
-    /// Runner args naming the items binary `side` still has to measure, none
-    /// when nothing was reused (every item measures).
-    pub fn id_args(&self, side: usize) -> Vec<String> {
+    /// Measure what binary `side` still needs: `measure` gets `extra` plus an
+    /// `--id` per item left, and a side with nothing left gets an empty run.
+    pub fn measure_side(
+        &self,
+        side: usize,
+        extra: &[&str],
+        stamp: impl FnOnce() -> BuildStamp,
+        measure: impl FnOnce(&[&str]) -> Result<Run, String>,
+    ) -> Result<Run, String> {
         if self.hits.is_empty() {
-            return Vec::new();
+            return measure(extra);
         }
-        self.todo[side]
+        if self.todo[side].is_empty() {
+            return Ok(Run {
+                gating_backend: Some("callgrind".into()),
+                build: Some(stamp()),
+                ..Default::default()
+            });
+        }
+        let ids: Vec<&str> = self.todo[side]
             .iter()
-            .flat_map(|id| ["--id".to_string(), id.clone()])
-            .collect()
+            .flat_map(|id| ["--id", id.as_str()])
+            .collect();
+        measure(&[extra, &ids].concat())
     }
 
-    /// Whether the runner has no item left to measure on `side`.
-    pub fn nothing_to_measure(&self, side: usize) -> bool {
-        !self.hits.is_empty() && self.todo[side].is_empty()
-    }
-
-    /// The run standing in for a side with nothing to measure.
-    pub fn empty_run(stamp: BuildStamp) -> Run {
-        Run {
-            gating_backend: Some("callgrind".into()),
-            build: Some(stamp),
-            ..Default::default()
-        }
+    /// A lone binary's run: the items left measured and kept, the rest spliced.
+    pub fn run_alone(
+        &self,
+        stamp: impl FnOnce() -> BuildStamp,
+        measure: impl FnOnce(&[&str]) -> Result<Run, String>,
+    ) -> Result<Run, String> {
+        let mut run = self.measure_side(0, &[], stamp, measure)?;
+        self.record(0, &run);
+        self.splice(&mut run);
+        Ok(run)
     }
 
     /// Ids spliced by [`Reuse::splice`].
@@ -404,7 +419,12 @@ impl Reuse {
     }
 
     /// Keep what `run` measured of binary `side` for later invocations.
+    /// An item with a failed claim is not kept: a failure is re-measured, as
+    /// the run cache never saves a run whose assertions failed.
     pub fn record(&self, side: usize, run: &Run) {
+        if run.executed.is_empty() {
+            return;
+        }
         let bin = self.exes[side].as_path();
         let functions: BTreeMap<&String, Vec<(String, String)>> = run
             .executed
@@ -427,12 +447,20 @@ impl Reuse {
             let Some(functions) = binary.name_addresses(functions) else {
                 continue;
             };
-            let assertions = run.assertions.iter().filter(|a| &a.id == id).cloned();
+            let assertions: Vec<AssertionOutcome> = run
+                .assertions
+                .iter()
+                .filter(|a| &a.id == id)
+                .cloned()
+                .collect();
+            if assertions.iter().any(|a| !a.ok) {
+                continue;
+            }
             if let Some(entry) = Entry::measured(
                 &binary,
                 functions,
                 metrics.clone(),
-                assertions.collect(),
+                assertions,
                 self.measured_on.clone(),
             ) {
                 self.items.store(id, entry);

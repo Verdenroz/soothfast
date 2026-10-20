@@ -88,6 +88,30 @@ struct Symbol {
     name: String,
 }
 
+/// Digest of the thread-local initial image (`.tdata` contents, `.tbss`
+/// sizes). Code reaches it through `%fs` offsets, which name no address.
+fn tls_digest(listing: &str, image: &[u8]) -> Option<u64> {
+    let mut lines = listing.lines();
+    let mut text = Vec::new();
+    while let Some(header) = lines.next() {
+        let f: Vec<&str> = header.split_whitespace().collect();
+        if f.len() < 7 || f[0].parse::<u32>().is_err() {
+            continue;
+        }
+        let Some(flags) = lines.next() else { break };
+        if !flags.contains("THREAD_LOCAL") {
+            continue;
+        }
+        let size = usize::from_str_radix(f[2], 16).ok()?;
+        text.extend(format!("{}:{size}:", f[1]).bytes());
+        if flags.contains("CONTENTS") {
+            let offset = usize::from_str_radix(f[5], 16).ok()?;
+            text.extend(image.get(offset..offset.checked_add(size)?)?);
+        }
+    }
+    Some(fnv1a(&text))
+}
+
 fn parse_sections(listing: &str) -> Vec<Section> {
     let mut lines = listing.lines();
     let mut sections = Vec::new();
@@ -748,6 +772,9 @@ pub struct Binary {
     hashes: HashMap<String, u64>,
     /// Code the wanted set named by address, to its `at:` name.
     labels: HashMap<String, String>,
+    /// Folded into every key: a thread-local's initial value is data no
+    /// instruction names by address.
+    tls: u64,
 }
 
 impl Binary {
@@ -755,13 +782,20 @@ impl Binary {
     /// is missing or fails; a function that cannot be named uniquely or
     /// resolved is simply absent.
     pub fn open(bin: &Path, wanted: &BTreeSet<String>, inputs: &[Extent]) -> Option<Binary> {
-        let sections = parse_sections(&command_text("objdump", &["-h"], bin)?);
+        let headers = command_text("objdump", &["-h"], bin)?;
+        let sections = parse_sections(&headers);
         let listing = command_text("nm", &["-S", "--defined-only"], bin)?;
         let symbols = parse_symbols(&listing);
         let zero_sized = parse_zero_sized(&listing, &sections);
         // Fails on a binary with no dynamic section, which has no relocations.
         let relocs = parse_relocs(&command_text("objdump", &["-R"], bin).unwrap_or_default());
         let image = std::fs::read(bin).ok()?;
+        // Only a position-independent image (ET_DYN) names every address it
+        // uses rip-relative; a fixed-address one hides data in immediates.
+        if image.get(..4) != Some(b"\x7fELF") || image.get(16..18) != Some(&[3, 0]) {
+            return None;
+        }
+        let tls = tls_digest(&headers, &image)?;
         let mut resolver = Resolver {
             sections: &sections,
             symbols: &symbols,
@@ -781,11 +815,11 @@ impl Binary {
         let stdout = child.stdout.take()?;
         let mut labels = HashMap::new();
         let hashes = hash_functions(&mut resolver, wanted, BufReader::new(stdout), &mut labels);
-        child
-            .wait()
-            .ok()?
-            .success()
-            .then_some(Binary { hashes, labels })
+        child.wait().ok()?.success().then_some(Binary {
+            hashes,
+            labels,
+            tls,
+        })
     }
 
     #[cfg(test)]
@@ -793,6 +827,7 @@ impl Binary {
         Binary {
             hashes,
             labels: HashMap::new(),
+            tls: 0,
         }
     }
 
@@ -817,7 +852,7 @@ impl Binary {
     /// The key of `functions` (as [`portable`] returns them) in this binary,
     /// or `None` if any is unhashed here or any foreign object is unreadable.
     pub fn code_key(&self, functions: &[(String, String)]) -> Option<String> {
-        let mut text = String::new();
+        let mut text = format!("tls {:016x}\n", self.tls);
         for (ob, sym) in functions {
             if ob != EXE {
                 writeln!(text, "f {ob} {:016x}", file_digest(ob)?).ok()?;
@@ -1498,6 +1533,27 @@ Idx Name          Size      VMA               LMA               File off  Algn
                 .name_addresses(vec![(EXE.into(), "0x0000000000000001".into())])
                 .is_none()
         );
+    }
+
+    #[test]
+    fn the_thread_local_image_is_hashed_and_other_sections_are_not() {
+        let listing = "\
+Idx Name          Size      VMA               LMA               File off  Algn
+  0 .tdata        00000004  0000000000003000  0000000000003000  00000010  2**2
+                  CONTENTS, ALLOC, LOAD, DATA, THREAD_LOCAL
+  1 .tbss         00000008  0000000000003004  0000000000003004  00000014  2**3
+                  ALLOC, THREAD_LOCAL
+  2 .rodata       00000004  0000000000002000  0000000000002000  00000020  2**2
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+";
+        let digest = |tdata: u8, rodata: u8| {
+            let mut image = vec![0; 0x40];
+            image[0x10] = tdata;
+            image[0x20] = rodata;
+            tls_digest(listing, &image)
+        };
+        assert_ne!(digest(4, 0), digest(64, 0));
+        assert_eq!(digest(4, 0), digest(4, 9));
     }
 
     #[test]

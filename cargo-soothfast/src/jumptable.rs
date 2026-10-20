@@ -34,7 +34,9 @@ struct Ins<'a> {
     comment: Option<&'a str>,
 }
 
-const PREFIXES: &[&str] = &["notrack", "bnd", "rex", "data16", "cs", "ds"];
+const PREFIXES: &[&str] = &[
+    "notrack", "bnd", "rex", "data16", "cs", "ds", "lock", "xacquire", "xrelease",
+];
 
 fn parse(body: &str) -> Option<Ins<'_>> {
     let (code, comment) = match body.split_once("# ") {
@@ -612,7 +614,14 @@ mod tests {
 
     #[test]
     fn an_implicit_writer_breaks_the_proof() {
-        for odd in ["rdtsc", "lahf", "cwtd", "xgetbv", "cmpxchg %rbx,(%rdi)"] {
+        for odd in [
+            "rdtsc",
+            "lahf",
+            "cwtd",
+            "xgetbv",
+            "cmpxchg %rbx,(%rdi)",
+            "lock cmpxchg %rbx,(%rdi)",
+        ] {
             assert!(
                 prove_in(&[LEA, odd, LOAD, ADD, JMP, RET]).is_empty(),
                 "{odd}"

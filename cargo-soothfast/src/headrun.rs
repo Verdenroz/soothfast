@@ -76,28 +76,16 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
         Reuse::plan("measure", common, &runs, &[bin])
     });
     let run = match reuse {
-        Some(reuse) => run_reusing(common, &reuse, stamp.clone())?,
+        Some(reuse) => reuse.run_alone(
+            || stamp.clone(),
+            |args| run_head(common, args, stamp.clone()),
+        )?,
         None => run_head(common, &[], stamp.clone())?,
     };
     let settled = settle("measure", "this run", &run, || {
         run_head(common, RECOUNT, stamp.clone()).ok()
     });
     cache_head(&runs, &run, digest.as_deref(), &settled);
-    Ok(run)
-}
-
-/// HEAD's run with the items `reuse` covers taken from the store and only the
-/// rest measured; what is measured is kept for the next invocation.
-fn run_reusing(common: &CommonArgs, reuse: &Reuse, stamp: BuildStamp) -> Result<Run, String> {
-    let mut run = if reuse.nothing_to_measure(0) {
-        Reuse::empty_run(stamp)
-    } else {
-        let ids = reuse.id_args(0);
-        let args: Vec<&str> = ids.iter().map(String::as_str).collect();
-        run_head(common, &args, stamp)?
-    };
-    reuse.record(0, &run);
-    reuse.splice(&mut run);
     Ok(run)
 }
 

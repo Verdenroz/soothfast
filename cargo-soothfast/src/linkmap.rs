@@ -8,9 +8,9 @@
 //!
 //! The map comes from a second build of the bench target alone
 //! (`cargo rustc`), which links a separate artifact of the same bytes and
-//! leaves dependencies and the measured binary untouched. It is kept as a
-//! list of extents under `.soothfast/maps/`, named by the digest of the
-//! binary it describes, so it is never read for another binary.
+//! leaves dependencies and the measured binary untouched. The map and the
+//! extents read from it are kept under `.soothfast/maps/`, named by the
+//! digest of the binary they describe, so they are never read for another.
 
 use std::path::Path;
 
@@ -39,11 +39,14 @@ fn entry_size(section: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// The extents of the input sections in `text`, read as an lld or mold map
-/// (the same layout) or a GNU ld map. `None` for any other format.
+/// The extents of the input sections in `text`, read as an lld, mold or GNU ld
+/// map. `None` for any other format.
 pub fn parse(text: &str) -> Option<Vec<Extent>> {
-    let mut extents = if text.lines().next()?.contains("VMA") {
-        parse_lld(text)
+    let header = text.lines().next()?;
+    let mut extents = if header.contains("VMA") && header.contains("LMA") {
+        parse_columns(text, 16, 16)
+    } else if header.contains("VMA") {
+        parse_columns(text, 16, 10)
     } else if text.contains("Linker script and memory map") {
         parse_gnu(text)
     } else {
@@ -54,16 +57,21 @@ pub fn parse(text: &str) -> Option<Vec<Extent>> {
     (!extents.is_empty()).then_some(extents)
 }
 
-/// `VMA LMA Size Align Out In Symbol` rows, hexadecimal without a prefix. An
-/// input section is a row whose last column reads `file:(section)`.
-fn parse_lld(text: &str) -> Vec<Extent> {
+/// lld writes `VMA LMA Size Align Out In Symbol` rows in bare hexadecimal;
+/// mold writes `VMA Size Align Out In Symbol` with a `0x` VMA and a decimal
+/// size. An input section is a row whose last column reads `file:(section)`.
+fn parse_columns(text: &str, vma_radix: u32, size_radix: u32) -> Vec<Extent> {
+    let lma = size_radix == 16;
     text.lines()
         .filter(|line| line.ends_with(')') && line.contains(":("))
         .filter_map(|line| {
             let mut f = line.split_whitespace();
-            let vma = u64::from_str_radix(f.next()?, 16).ok()?;
-            f.next()?;
-            let size = u64::from_str_radix(f.next()?, 16).ok()?;
+            let vma = f.next()?;
+            let vma = u64::from_str_radix(vma.strip_prefix("0x").unwrap_or(vma), vma_radix).ok()?;
+            if lma {
+                f.next()?;
+            }
+            let size = u64::from_str_radix(f.next()?, size_radix).ok()?;
             let section = line.rsplit_once(":(")?.1.strip_suffix(')')?;
             Some(Extent {
                 vma,
@@ -166,10 +174,11 @@ fn obtain(
     {
         return Ok(extents);
     }
+    // Kept, not removed: cargo answers a repeated map build as fresh without
+    // relinking, so the map from the first link is the only one there is.
     let map = maps.join(format!("{digest}.map"));
     let built = invoke::build_link_map(common, dir, target_dir, &map);
     let text = std::fs::read_to_string(&map);
-    let _ = std::fs::remove_file(&map);
     let built = built.ok_or("the map build failed")?;
     if binary_digest(&built).as_deref() != Some(digest.as_str()) {
         return Err("the map build links different code".into());
@@ -229,7 +238,7 @@ Linker script and memory map
     }
 
     #[test]
-    fn an_lld_or_mold_map_yields_its_input_sections() {
+    fn an_lld_map_yields_its_input_sections() {
         assert_eq!(
             parse(LLD).expect("parsed"),
             [
@@ -239,6 +248,23 @@ Linker script and memory map
                 at(0xcf64, 0x11),
                 pool(0xcf90, 0x10, 8)
             ]
+        );
+    }
+
+    const MOLD: &str = "\
+               VMA       Size Align Out     In      Symbol
+                 0         64     8 EHDR
+            0xd850      16120     8 .rodata
+            0xd850          1     1         m.cgu.0.rcgu.o:(.rodata..Lanon.1)
+            0xd851         20     1         m.cgu.0.rcgu.o:(.rodata..Lanon.2)
+            0xd868         16    16         <internal>:(.rodata.cst16)
+";
+
+    #[test]
+    fn a_mold_map_reads_its_hex_addresses_and_decimal_sizes() {
+        assert_eq!(
+            parse(MOLD).expect("parsed"),
+            [at(0xd850, 1), at(0xd851, 20), pool(0xd868, 16, 16)]
         );
     }
 

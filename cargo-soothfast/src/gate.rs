@@ -831,16 +831,8 @@ fn measure_ref_interleaved(
         let Some(reuse) = bin.and_then(|b| Reuse::plan("gate", common, &runs, &[b])) else {
             return measure(None, &[]);
         };
-        let mut run = if reuse.nothing_to_measure(0) {
-            let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
-            Reuse::empty_run(stamp)
-        } else {
-            let ids = reuse.id_args(0);
-            measure(None, &ids.iter().map(String::as_str).collect::<Vec<_>>())?
-        };
-        reuse.record(0, &run);
-        reuse.splice(&mut run);
-        Ok(run)
+        let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+        reuse.run_alone(stamp, |args| measure(None, args))
     };
     // Stored regardless of `reuse`: a fresh measurement is worth keeping
     // even for an invocation that declined to trust an existing one.
@@ -925,7 +917,10 @@ fn measure_ref_interleaved(
             println!("gate: reusing a run measured from the same merge-base binary");
             return Ok((Ref::Cached(doc), digests, harness));
         }
-        let item_reuse = digests.as_ref().and_then(|d| {
+        if !reuse {
+            println!("gate: per-item reuse off (--no-reuse-base); measuring in full");
+        }
+        let item_reuse = digests.as_ref().filter(|_| reuse).and_then(|d| {
             let head = Bin {
                 exe: &d.head_exe,
                 dir: None,
@@ -943,17 +938,8 @@ fn measure_ref_interleaved(
             let Some(reuse) = &item_reuse else {
                 return measure(dir, extra);
             };
-            if reuse.nothing_to_measure(side) {
-                let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), dir);
-                return Ok(Reuse::empty_run(stamp));
-            }
-            let ids = reuse.id_args(side);
-            let args: Vec<&str> = extra
-                .iter()
-                .copied()
-                .chain(ids.iter().map(String::as_str))
-                .collect();
-            measure(dir, &args)
+            let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), dir);
+            reuse.measure_side(side, extra, stamp, |args| measure(dir, args))
         };
         let mut rounds = [
             measure_side(0, &[]),
