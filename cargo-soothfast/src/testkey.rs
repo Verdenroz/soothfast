@@ -1,8 +1,8 @@
 //! The pass cache: which test executables already passed, and under what
 //! inputs.
 //!
-//! A key covers the executable's loaded code, every git-tracked non-Rust
-//! file in its package (fixtures, goldens), files named by `[test] inputs`,
+//! A key covers the executable's loaded code, every git-tracked file in its
+//! package (sources, fixtures, goldens), files named by `[test] inputs`,
 //! the run arguments, the `[test] env` variables and the rustc version.
 //! Anything a test reads beyond those (files outside the package, the
 //! network, the clock) is invisible here and can yield a stale pass.
@@ -84,11 +84,11 @@ pub fn rustc_version() -> io::Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// Digest of the non-Rust files under a package dir, tracked or not yet
+/// Digest of the files under a package dir, tracked or not yet
 /// committed.
 pub fn package_inputs(root: &Path, dir: &str) -> io::Result<String> {
     let spec = if dir.is_empty() { "." } else { dir };
-    digest(root, spec, |p| !p.ends_with(".rs"))
+    digest(root, spec, |_| true)
 }
 
 /// Digest of the files any `[test] inputs` glob matches.
@@ -266,6 +266,23 @@ mod tests {
         passes.record("abc", "p t (lib)");
         assert!(passes.has("abc"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn editing_a_rust_file_in_the_package_moves_its_inputs() {
+        let root = std::env::temp_dir().join(format!("soothfast-inputs-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("pkg/golden")).unwrap();
+        let git = |args: &[&str]| invoke::git_in(&root, args).unwrap();
+        git(&["init", "-q"]);
+        std::fs::write(root.join("pkg/golden/sample.rs"), "fn a() {}").unwrap();
+        git(&["add", "."]);
+        let committed = package_inputs(&root, "pkg").unwrap();
+        std::fs::write(root.join("pkg/golden/sample.rs"), "fn b() {}").unwrap();
+        let edited = package_inputs(&root, "pkg").unwrap();
+        std::fs::write(root.join("pkg/golden/new.rs"), "").unwrap();
+        assert_ne!(committed, edited);
+        assert_ne!(edited, package_inputs(&root, "pkg").unwrap());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

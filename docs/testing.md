@@ -59,8 +59,8 @@ The key hashes:
   target are all covered by the code itself. Files pulled in with
   `include_str!` or `include_bytes!` are compiled in, so they count even when
   they live outside the package;
-- every git-tracked file in the package that is not `.rs`, by content, plus
-  modified and untracked ones (fixtures, goldens, data files);
+- every git-tracked file in the package, `.rs` included, by content, plus
+  modified and untracked ones (sources, fixtures, goldens, data files);
 - the files matched by `[test] inputs`;
 - the plain `bin` and `example` executables of the package, which its
   integration tests may spawn without embedding;
@@ -76,8 +76,7 @@ A test that reads anything else can pass from the cache after that thing
 changed. Declare what you can with `inputs` and `env`; the rest is a known
 limit:
 
-- files outside the package that are not declared, and `.rs` files read at
-  run time (they count only through compilation);
+- files outside the package that are not declared;
 - external programs a test spawns, such as `cargo`, `objdump`, `valgrind`,
   `node` or `uv`;
 - shared libraries such as libc, and the toolchain beyond `rustc -vV`;
