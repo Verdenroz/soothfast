@@ -6,9 +6,13 @@ use crate::{invoke, test_config};
 /// What the command line asked for.
 #[derive(Default, Debug, PartialEq)]
 pub struct TestArgs {
+    /// `--base`: the ref changes are measured from.
     pub base: Option<String>,
+    /// `--all`: select every package.
     pub all: bool,
+    /// `--no-cache`: run cached passes again.
     pub no_cache: bool,
+    /// `--no-doc`: skip doc tests.
     pub no_doc: bool,
     /// `-p`/`--package` values; narrow the selection.
     pub only: Vec<String>,

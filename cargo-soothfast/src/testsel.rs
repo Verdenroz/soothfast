@@ -125,7 +125,9 @@ pub fn select(pkgs: &[Package], changed: &BTreeSet<String>, cfg: &TestConfig) ->
         if cfg.ignore.iter().any(|g| glob::matches(g, file)) {
             continue;
         }
-        if GLOBAL_FILES.contains(&file.as_str()) {
+        if GLOBAL_FILES.contains(&file.as_str())
+            || cfg.inputs.iter().any(|g| glob::matches(g, file))
+        {
             return everything(pkgs, file);
         }
         match owner(pkgs, file) {
@@ -306,6 +308,20 @@ mod tests {
             assert_eq!(sel.names.len(), 5, "{f}");
             assert_eq!(sel.everything_because.as_deref(), Some(f));
         }
+    }
+
+    #[test]
+    fn a_declared_input_inside_a_package_selects_everything() {
+        let cfg = TestConfig {
+            inputs: vec!["unrelated/shared/**".into()],
+            ..TestConfig::default()
+        };
+        let sel = select(&graph(), &files(&["unrelated/shared/f.json"]), &cfg);
+        assert_eq!(sel.names.len(), 5);
+        assert_eq!(
+            sel.everything_because.as_deref(),
+            Some("unrelated/shared/f.json")
+        );
     }
 
     #[test]
