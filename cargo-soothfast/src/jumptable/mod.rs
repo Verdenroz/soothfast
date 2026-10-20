@@ -115,7 +115,7 @@ fn family(reg: &str) -> Option<String> {
 
 enum Writes {
     Nothing,
-    Reg(String),
+    Reg(Vec<String>),
     /// Anything may change, as at a call or an implicit-operand instruction.
     Any,
 }
@@ -126,7 +126,13 @@ fn writes(ins: &Ins) -> Writes {
     let is = |names: &[&str]| names.contains(&m);
     let one_operand_imul = m == "imul" && ins.operands.len() == 1;
     if starts(&[
-        "call", "rep", "loop", "cmpxchg", "xchg", "xadd", "cpuid", "syscall",
+        "call",
+        "rep",
+        "loop",
+        "cmpxchg8b",
+        "cmpxchg16b",
+        "cpuid",
+        "syscall",
     ]) || is(&[
         "mul", "mulb", "mulw", "mull", "mulq", "div", "divb", "divw", "divl", "divq",
     ]) || is(&[
@@ -136,6 +142,14 @@ fn writes(ins: &Ins) -> Writes {
     ]) || one_operand_imul
     {
         return Writes::Any;
+    }
+    if starts(&["cmpxchg", "xchg", "xadd"]) {
+        let mut regs: Vec<String> = ins.operands.iter().filter_map(|o| family(o)).collect();
+        if m.starts_with("cmpxchg") {
+            regs.retain(|r| ins.operands.last().and_then(|o| family(o)).as_ref() == Some(r));
+            regs.push("a".into());
+        }
+        return Writes::Reg(regs);
     }
     if m.starts_with('j')
         || starts(&[
@@ -156,7 +170,7 @@ fn writes(ins: &Ins) -> Writes {
         ins.operands.last()
     };
     match dest.and_then(|d| family(d)) {
-        Some(f) => Writes::Reg(f),
+        Some(f) => Writes::Reg(vec![f]),
         None => Writes::Nothing,
     }
 }
@@ -165,7 +179,7 @@ fn disturbs(ins: &Ins, regs: &[&str]) -> bool {
     match writes(ins) {
         Writes::Nothing => false,
         Writes::Any => true,
-        Writes::Reg(f) => regs.contains(&f.as_str()),
+        Writes::Reg(fs) => fs.iter().any(|f| regs.contains(&f.as_str())),
     }
 }
 
@@ -493,7 +507,7 @@ impl Graph {
         while let Some(i) = work.pop() {
             let ins = &parsed[i].1;
             let out = match writes(ins) {
-                Writes::Reg(f) if f == reg => {
+                Writes::Reg(fs) if fs.iter().any(|f| f == reg) => {
                     if good[i] {
                         1
                     } else {

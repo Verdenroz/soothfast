@@ -77,8 +77,10 @@ fn an_implicit_writer_breaks_the_proof() {
         "lahf",
         "cwtd",
         "xgetbv",
-        "cmpxchg %rbx,(%rdi)",
-        "lock cmpxchg %rbx,(%rdi)",
+        "cmpxchg16b (%rdi)",
+        "xchg   %rbx,%rcx",
+        "lock xadd %rcx,(%rdi)",
+        "cmpxchg %rbx,%rcx",
     ] {
         assert!(
             prove_in(&[LEA, odd, LOAD, ADD, JMP, RET]).is_empty(),
@@ -89,6 +91,18 @@ fn an_implicit_writer_breaks_the_proof() {
         prove_in(&[LEA, "nop", "pause", LOAD, ADD, JMP, RET]).len(),
         1
     );
+}
+
+#[test]
+fn an_exchange_with_memory_writes_only_its_register_operands() {
+    for ok in [
+        "lock cmpxchg %rbx,(%rdi)",
+        "xchg   %eax,(%rdi)",
+        "lock xadd %rbx,(%rdi)",
+        "xchg   %rbx,%rdx",
+    ] {
+        assert_eq!(prove_in(&[LEA, ok, LOAD, ADD, JMP, RET]).len(), 1, "{ok}");
+    }
 }
 
 #[test]
