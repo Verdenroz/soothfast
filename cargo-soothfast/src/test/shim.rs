@@ -28,6 +28,8 @@ pub struct Plan {
     pub runner: Vec<String>,
     /// Keyed executables, by the path cargo reported for them.
     pub entries: BTreeMap<PathBuf, Entry>,
+    /// Set under `--no-doc`: whose doc tests the rustdoc wrapper skips.
+    pub doc_skip: Option<DocSkip>,
 }
 
 /// One keyed executable.
@@ -37,7 +39,16 @@ pub struct Entry {
     pub cached: bool,
 }
 
-#[allow(dead_code)] // `write` and `status` are the run step's half of the plan.
+/// The doc tests `--no-doc` skips: the selected packages' library crates,
+/// built from sources under the workspace root.
+#[derive(Debug, PartialEq)]
+pub struct DocSkip {
+    /// `RUSTDOC` before the run step replaced it.
+    pub original: Option<String>,
+    pub crates: Vec<String>,
+    pub root: PathBuf,
+}
+
 impl Plan {
     pub fn write(&self, path: &Path) -> io::Result<()> {
         let entries: serde_json::Map<String, Value> = self
@@ -48,20 +59,37 @@ impl Plan {
                 (exe.to_string_lossy().into_owned(), entry)
             })
             .collect();
-        let plan = json!({ "results": self.results, "runner": self.runner, "entries": entries });
+        let doc_skip = self
+            .doc_skip
+            .as_ref()
+            .map(|d| json!({ "original": d.original, "crates": d.crates, "root": d.root }));
+        let plan = json!({
+            "results": self.results,
+            "runner": self.runner,
+            "entries": entries,
+            "doc_skip": doc_skip,
+        });
         std::fs::write(path, plan.to_string())
     }
 
     pub fn read(path: &Path) -> io::Result<Plan> {
         let v: Value = serde_json::from_slice(&std::fs::read(path)?)?;
         let malformed = || io::Error::other(format!("malformed test plan {}", path.display()));
-        let runner = v["runner"]
-            .as_array()
-            .ok_or_else(malformed)?
-            .iter()
-            .map(|a| a.as_str().map(String::from))
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(malformed)?;
+        let strings = |v: &Value| {
+            v.as_array()?
+                .iter()
+                .map(|a| a.as_str().map(String::from))
+                .collect::<Option<Vec<_>>>()
+        };
+        let runner = strings(&v["runner"]).ok_or_else(malformed)?;
+        let doc_skip = match &v["doc_skip"] {
+            Value::Null => None,
+            d => Some(DocSkip {
+                original: d["original"].as_str().map(String::from),
+                crates: strings(&d["crates"]).ok_or_else(malformed)?,
+                root: PathBuf::from(d["root"].as_str().ok_or_else(malformed)?),
+            }),
+        };
         let entries = v["entries"]
             .as_object()
             .ok_or_else(malformed)?
@@ -79,6 +107,7 @@ impl Plan {
             results: PathBuf::from(v["results"].as_str().ok_or_else(malformed)?),
             runner,
             entries,
+            doc_skip,
         })
     }
 
@@ -200,6 +229,7 @@ mod tests {
                     (PathBuf::from(exe), entry)
                 })
                 .collect(),
+            doc_skip: None,
         }
     }
 
@@ -212,6 +242,11 @@ mod tests {
         let dir = Dir::new("roundtrip");
         let mut written = plan(&dir.0, &[("/t/a-1", true), ("/t/b-2", false)]);
         written.runner = argv(&["qemu-x86_64", "-L", "/sysroot"]);
+        written.doc_skip = Some(DocSkip {
+            original: Some("/opt/rustdoc".into()),
+            crates: argv(&["a", "b_c"]),
+            root: PathBuf::from("/ws"),
+        });
         let file = dir.0.join("plan.json");
         written.write(&file).unwrap();
         assert_eq!(Plan::read(&file).unwrap(), written);
