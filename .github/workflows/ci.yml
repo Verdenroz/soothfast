@@ -43,8 +43,9 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"; else base="HEAD^"; fi
+          if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"; else base="$BEFORE"; fi
           if git merge-base "$base" HEAD > /dev/null 2>&1; then
             selection="--base $base"
           else

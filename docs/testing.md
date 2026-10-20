@@ -124,7 +124,7 @@ outlive the run. This is the shape the workspace's own `check` job uses:
       soothfast-tests-${{ github.ref_name }}-
       soothfast-tests-${{ github.event.repository.default_branch }}-
 - run: |
-    if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"; else base="HEAD^"; fi
+    if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"; else base="$BEFORE"; fi
     if git merge-base "$base" HEAD > /dev/null 2>&1; then
       selection="--base $base"
     else
@@ -135,10 +135,12 @@ outlive the run. This is the shape the workspace's own `check` job uses:
   env:
     EVENT: ${{ github.event_name }}
     BASE_REF: ${{ github.base_ref }}
+    BEFORE: ${{ github.event.before }}
 ```
 
 A pull request compares against its base branch and a push to the default
-branch against its parent. When no merge-base can be found, the step tests
+branch against the commit it replaced. When no merge-base can be found (a
+force push, or a new branch whose `before` is all zeros), the step tests
 every package and says why; it never falls back to testing nothing. The
 cache key follows the one used for measured runs in [Gating](gating.md): a
 branch restores its own earlier passes, then the default branch's.
