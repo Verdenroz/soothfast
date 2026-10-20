@@ -101,7 +101,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-triage
+          name: soothfast-triage-${{ inputs.package }}
           path: .soothfast/triage/
           if-no-files-found: ignore
       # The broker posts the comment as soothfast-bot; a fork pull request has
@@ -112,11 +112,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          MARKER: "<!-- soothfast-gate -->"
+          # One comment per package: the matrix legs would overwrite each other.
+          MARKER: "<!-- soothfast-gate-${{ inputs.package }} -->"
+          PACKAGE: ${{ inputs.package }}
           BODY_FILE: ${{ runner.temp }}/soothfast-gate-comment.md
         run: |
           {
-            echo '## soothfast gate'
+            echo "## soothfast gate: ${PACKAGE}"
             echo '```'
             tail -n 60 gate-output.txt | sed 's/```/` ` `/g'
             echo '```'
