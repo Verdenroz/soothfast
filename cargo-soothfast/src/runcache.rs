@@ -7,7 +7,8 @@
 //! Reuse is safe because the key pins every condition that moves the
 //! numbers, so a run measured any other way cannot be served from here.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde_json::Value;
 
@@ -18,13 +19,15 @@ use crate::invoke::{self, CommonArgs, HostEnv};
 /// per branch, so this holds many branches at a bounded size.
 const KEEP: usize = 32;
 
-fn dir() -> Option<PathBuf> {
-    let d = invoke::workspace_root()
-        .ok()?
-        .join(".soothfast")
-        .join("runs");
+/// `.soothfast/<name>`, created on demand.
+pub fn state_dir(name: &str) -> Option<PathBuf> {
+    let d = invoke::workspace_root().ok()?.join(".soothfast").join(name);
     std::fs::create_dir_all(&d).ok()?;
     Some(d)
+}
+
+fn dir() -> Option<PathBuf> {
+    state_dir("runs")
 }
 
 /// The conditions every run in one gate invocation is keyed under. Without a
@@ -42,6 +45,11 @@ impl<'a> Runs<'a> {
         Runs { stamp, common, env }
     }
 
+    /// What the bench binary resolved on this host, when it answered.
+    pub fn env(&self) -> Option<&HostEnv> {
+        self.env.as_ref()
+    }
+
     /// The gating backend the bench binary resolved, when it answered.
     pub fn gating_backend(&self) -> Option<&str> {
         self.env.as_ref().map(|e| e.gating_backend.as_str())
@@ -52,6 +60,13 @@ impl<'a> Runs<'a> {
     pub fn load(&self, id: &str, measured_from: &str) -> Option<Value> {
         let env = self.env.as_ref()?;
         load(&key(id, self.stamp, self.common, env), measured_from)
+    }
+
+    /// The key every per-item entry of this invocation lives under: the
+    /// conditions of a run, without the commit or the filter.
+    pub fn item_scope(&self) -> Option<String> {
+        let env = self.env.as_ref()?;
+        Some(hashed(&conditions(self.stamp, self.common, env)))
     }
 
     /// Keep `doc` as the measurement of `id`, with the host conditions its
@@ -80,7 +95,7 @@ pub fn host(env: &HostEnv) -> String {
     }
 }
 
-fn measured_on(env: &HostEnv) -> Value {
+pub fn measured_on(env: &HostEnv) -> Value {
     let mut on = serde_json::json!({
         "gating_backend": env.gating_backend,
         "cpu_model": cpu_model(),
@@ -104,8 +119,15 @@ fn measured_on(env: &HostEnv) -> Value {
 /// callgrind, or the reverse; the `--backend` argument stays too, since it
 /// decides which non-gating backends ran alongside.
 fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> String {
-    let scope = [
-        id,
+    let mut parts = vec![id.to_string()];
+    parts.extend(conditions(stamp, common, env));
+    parts.push(common.filter.clone().unwrap_or_default());
+    hashed(&parts)
+}
+
+/// What decides a measurement besides the code and the item filter.
+fn conditions(stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> Vec<String> {
+    [
         &stamp.rustc,
         &stamp.codegen_units,
         &stamp.rustflags,
@@ -117,10 +139,18 @@ fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> Stri
         common.backend.as_deref().unwrap_or(""),
         &env.gating_backend,
         common.samples.as_deref().unwrap_or(""),
-        common.filter.as_deref().unwrap_or(""),
     ]
-    .join("\u{1}");
-    format!("{:016x}", soothfast_registry::fnv1a(scope.as_bytes()))
+    .map(String::from)
+    .to_vec()
+}
+
+fn hashed(parts: &[String]) -> String {
+    hex_fnv(parts.join("\u{1}").as_bytes())
+}
+
+/// `bytes` hashed, as sixteen hex digits.
+pub(crate) fn hex_fnv(bytes: &[u8]) -> String {
+    format!("{:016x}", soothfast_registry::fnv1a(bytes))
 }
 
 fn load(key: &str, measured_from: &str) -> Option<Value> {
@@ -137,26 +167,28 @@ fn store(key: &str, doc: &Value) {
         return;
     };
     if std::fs::write(d.join(format!("{key}.json")), doc.to_string()).is_ok() {
-        prune(&d);
+        prune_oldest(&d, KEEP);
     }
 }
 
-fn prune(d: &std::path::Path) {
+/// Drop the oldest files of `d` past `keep`.
+pub fn prune_oldest(d: &Path, keep: usize) {
     let Ok(entries) = std::fs::read_dir(d) else {
         return;
     };
-    let mut files: Vec<_> = entries
-        .flatten()
-        .filter_map(|e| {
-            let t = e.metadata().ok()?.modified().ok()?;
-            Some((t, e.path()))
-        })
-        .collect();
-    if files.len() <= KEEP {
-        return;
-    }
+    drop_oldest(entries.flatten().filter_map(modified).collect(), keep);
+}
+
+/// A directory entry's modification time and path.
+pub fn modified(e: std::fs::DirEntry) -> Option<(SystemTime, PathBuf)> {
+    let t = e.metadata().ok()?.modified().ok()?;
+    Some((t, e.path()))
+}
+
+/// Remove all but the `keep` newest of `files`.
+pub fn drop_oldest(mut files: Vec<(SystemTime, PathBuf)>, keep: usize) {
     files.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
-    for (_, path) in files.drain(KEEP..) {
+    for (_, path) in files.into_iter().skip(keep) {
         let _ = std::fs::remove_file(path);
     }
 }
@@ -191,12 +223,14 @@ mod tests {
         HostEnv {
             gating_backend: backend.into(),
             guest: None,
+            item_reuse: true,
         }
     }
 
     fn callgrind_guest() -> HostEnv {
         HostEnv {
             gating_backend: "callgrind".into(),
+            item_reuse: true,
             guest: Some(invoke::Guest {
                 cpu: "0123456789abcdef".into(),
                 glibc: "2.39".into(),
@@ -211,6 +245,46 @@ mod tests {
             pkg: Some("demo".into()),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_run_key_hashes_the_joined_conditions_in_order() {
+        let (stamp, args, env) = (stamp(), args(), env("callgrind"));
+        let joined = [
+            "aaa",
+            &stamp.rustc,
+            &stamp.codegen_units,
+            &stamp.rustflags,
+            &host(&env),
+            &invoke::harness_versions(),
+            "demo",
+            "",
+            "",
+            "",
+            "callgrind",
+            "",
+            "",
+        ]
+        .join("\u{1}");
+        assert_eq!(
+            key("aaa", &stamp, &args, &env),
+            format!("{:016x}", soothfast_registry::fnv1a(joined.as_bytes()))
+        );
+    }
+
+    #[test]
+    fn an_item_scope_ignores_the_filter_but_not_the_package() {
+        let (stamp, mut other) = (stamp(), args());
+        let scope = |a: &CommonArgs| {
+            Runs::new(&stamp, a, Some(env("callgrind")))
+                .item_scope()
+                .expect("scope")
+        };
+        let base = scope(&args());
+        other.filter = Some("stats".into());
+        assert_eq!(base, scope(&other));
+        other.pkg = Some("other".into());
+        assert_ne!(base, scope(&other));
     }
 
     #[test]

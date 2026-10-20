@@ -2,14 +2,16 @@
 //! on this host, and the runs stored for it. Shared by `gate` and `measure`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 use crate::agreement::{self, Agreement, Tolerance};
 use crate::buildstamp::{self, BuildStamp};
+use crate::codekey;
 use crate::gate;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
+use crate::itemreuse::{Bin, Reuse};
 use crate::runcache::{self, Runs};
 
 /// Build HEAD's bench binary once and name it: its digest, and the run cache
@@ -18,11 +20,11 @@ pub fn probe<'a>(
     cmd: &str,
     common: &'a CommonArgs,
     stamp: &'a BuildStamp,
-) -> (Option<String>, Runs<'a>) {
+) -> (Option<String>, Runs<'a>, Option<PathBuf>) {
     let exe = invoke::bench_executable(common, None, None);
     let digest = exe.as_deref().and_then(binary_digest);
     let runs = Runs::new(stamp, common, resolved_env(cmd, common, exe.as_deref()));
-    (digest, runs)
+    (digest, runs, exe)
 }
 
 /// Measure HEAD's bench binary for `measure`. Under callgrind, a run already
@@ -31,7 +33,7 @@ pub fn probe<'a>(
 /// the result for the next gate or measure.
 pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
     let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
-    let (digest, runs) = probe("measure", common, &stamp);
+    let (digest, runs, exe) = probe("measure", common, &stamp);
     let stored = match (reuse_plan(reuse, runs.gating_backend()), digest.as_deref()) {
         (Plan::Reuse, Some(digest)) => {
             let label = format!("binary {digest}");
@@ -66,7 +68,19 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
             ),
         }
     }
-    let run = run_head(common, &[], stamp.clone())?;
+    let head = exe
+        .as_deref()
+        .filter(|_| reuse)
+        .map(|exe| Bin::head(exe, digest.as_deref()));
+    let run = Reuse::measure_head(
+        "measure",
+        common,
+        &runs,
+        head,
+        gate::recording(),
+        || stamp.clone(),
+        |args| run_head(common, args, stamp.clone()),
+    )?;
     let settled = settle("measure", "this run", &run, || {
         run_head(common, RECOUNT, stamp.clone()).ok()
     });
@@ -124,12 +138,7 @@ fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run>
             wall_rounds: item.wall_rounds.clone(),
             ..stored.clone()
         };
-        metrics.extend(
-            COUNTER_METRICS
-                .iter()
-                .filter(|(_, present)| present(&merged))
-                .map(|(name, _)| *name),
-        );
+        metrics.extend(reused_metrics(&merged, false));
         *item = merged;
     }
     run.gating_backend = Some("callgrind".into());
@@ -143,9 +152,9 @@ fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run>
 /// A counter's backend-qualified name paired with its presence check.
 type CounterCheck = (&'static str, fn(&ItemMetrics) -> bool);
 
-/// Backend-qualified names for the counters `merge_stored` may carry over,
-/// checked against the merged item so `reused.metrics` reports exactly what
-/// came from the stored run instead of a fixed list.
+/// Backend-qualified names for the counters a stored item may carry over,
+/// checked against the item so `reused.metrics` reports exactly what came
+/// from the store instead of a fixed list.
 const COUNTER_METRICS: &[CounterCheck] = &[
     ("perfcnt.instructions", |m| m.instructions.is_some()),
     ("perfcnt.cycles", |m| m.cycles.is_some()),
@@ -158,6 +167,20 @@ const COUNTER_METRICS: &[CounterCheck] = &[
     ("buildcost.build_ms", |m| m.build_ms.is_some()),
     ("buildcost.size_bytes", |m| m.size_bytes.is_some()),
 ];
+
+/// The backend-qualified names of the metrics `item` carries, its walltime
+/// median too when `walltime` is set.
+pub fn reused_metrics(item: &ItemMetrics, walltime: bool) -> Vec<&'static str> {
+    let mut named: Vec<&'static str> = COUNTER_METRICS
+        .iter()
+        .filter(|(_, present)| present(item))
+        .map(|(name, _)| *name)
+        .collect();
+    if walltime && item.median_ns.is_some() {
+        named.push("walltime.median_ns");
+    }
+    named
+}
 
 /// Whether every item of a stored run carries Ir. Checked before the timing
 /// pass, so a run that cannot be merged costs nothing to find out.
@@ -193,7 +216,7 @@ fn head_cache_id(digest: Option<&str>) -> Option<(String, String)> {
 
 /// Digest of a bench binary's loaded sections.
 pub fn binary_digest(exe: &Path) -> Option<String> {
-    loaded_section_bytes(exe).map(|b| format!("{:016x}", soothfast_registry::fnv1a(&b)))
+    loaded_section_bytes(exe).map(|b| runcache::hex_fnv(&b))
 }
 
 /// What HEAD's bench binary resolves on this host, asked of the binary itself.
@@ -386,18 +409,15 @@ pub fn loaded_section_bytes(exe: &Path) -> Option<Vec<u8>> {
     }
     let image = std::fs::read(exe).ok()?;
     let listing = String::from_utf8_lossy(&out.stdout);
-    let mut lines = listing.lines();
     let mut buf = Vec::new();
-    while let Some(header) = lines.next() {
-        let Some((name, size, offset)) = section_header(header) else {
-            continue;
-        };
-        let flags = lines.next()?;
-        if !digestible(name, flags) {
+    for section in codekey::section_headers(&listing) {
+        if !digestible(section.name, section.flags) {
             continue;
         }
+        let offset = usize::try_from(section.offset).ok()?;
+        let size = usize::try_from(section.size).ok()?;
         let bytes = image.get(offset..offset.checked_add(size)?)?;
-        buf.extend_from_slice(name.as_bytes());
+        buf.extend_from_slice(section.name.as_bytes());
         buf.push(0);
         buf.extend_from_slice(bytes);
     }
@@ -410,17 +430,6 @@ pub fn loaded_section_bytes(exe: &Path) -> Option<Vec<u8>> {
 /// code.
 fn digestible(name: &str, flags: &str) -> bool {
     flags.contains("ALLOC") && flags.contains("CONTENTS") && name != ".note.gnu.build-id"
-}
-
-/// `Idx Name Size VMA LMA File-off Algn` from one `objdump -h` header line.
-fn section_header(line: &str) -> Option<(&str, usize, usize)> {
-    let f: Vec<&str> = line.split_whitespace().collect();
-    if f.len() < 7 || f[0].parse::<u32>().is_err() {
-        return None;
-    }
-    let size = usize::from_str_radix(f[2], 16).ok()?;
-    let offset = usize::from_str_radix(f[5], 16).ok()?;
-    Some((f[1], size, offset))
 }
 
 #[cfg(test)]
@@ -527,6 +536,7 @@ mod tests {
         let env = HostEnv {
             gating_backend: "perfcnt".into(),
             guest: None,
+            item_reuse: true,
         };
         let runs = Runs::new(&stamp, &common, Some(env));
         cache_head(

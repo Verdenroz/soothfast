@@ -26,6 +26,7 @@ struct Args {
     list_routes: bool,
     backend: Backend,
     filter: Option<String>,
+    ids: Vec<String>,
     samples: u32,
     callgrind_exec: Option<String>,
     triage: Option<String>,
@@ -46,6 +47,7 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
         list_routes: false,
         backend: Backend::Auto,
         filter: None,
+        ids: Vec::new(),
         samples: walltime::DEFAULT_SAMPLES,
         callgrind_exec: None,
         triage: None,
@@ -75,6 +77,10 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
             "--filter" => match it.next() {
                 Some(f) => args.filter = Some(f),
                 None => die("--filter needs a value"),
+            },
+            "--id" => match it.next() {
+                Some(id) => args.ids.push(id),
+                None => die("--id needs an item id"),
             },
             "--samples" => match it.next().and_then(|s| s.parse().ok()) {
                 Some(n) if n > 0 => args.samples = n,
@@ -259,7 +265,7 @@ fn env_line(env: &Env, json: bool) -> String {
                 )
             });
             format!(
-                "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\"{guest}}}",
+                "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\",\"item_reuse\":true{guest}}}",
                 perf.is_ok(),
                 esc(perf.as_ref().err().map(String::as_str).unwrap_or("ok")),
             )
@@ -337,6 +343,9 @@ pub fn main() {
     if let Some(f) = &args.filter {
         entries.retain(|e| e.id.contains(f.as_str()));
     }
+    if !args.ids.is_empty() {
+        entries.retain(|e| args.ids.contains(&e.id));
+    }
 
     if args.list {
         if entries.is_empty() {
@@ -398,7 +407,7 @@ pub fn main() {
     // Only Ir collection is safe to parallelize: it counts instructions, not
     // time, so concurrent valgrind children cannot disturb each other's
     // numbers. Everything else below stays serial.
-    let cg_irs: Vec<Result<u64, String>> = if use_cg {
+    let cg_runs: Vec<Result<callgrind::Measurement, String>> = if use_cg {
         let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
         callgrind::measure_all(&ids)
     } else {
@@ -445,8 +454,8 @@ pub fn main() {
             );
         }
         if use_cg {
-            match &cg_irs[idx] {
-                Ok(ir) => {
+            match &cg_runs[idx] {
+                Ok(callgrind::Measurement { ir, functions }) => {
                     emit_result(
                         e,
                         "callgrind",
@@ -454,6 +463,9 @@ pub fn main() {
                         &format!("callgrind ir={ir}"),
                         args.json,
                     );
+                    if args.json && item.sized_runner.is_none() {
+                        println!("{}", executed_json(&e.id, functions));
+                    }
                     // Standing in for perfcnt (no PMU access)
                     if !use_perf {
                         emit_result(
@@ -514,6 +526,18 @@ fn emit_result(e: &Entry, backend: &str, metrics_json: &str, human: &str, json: 
     } else {
         println!("{:<44} {human}", e.id);
     }
+}
+
+fn executed_json(id: &str, functions: &[(String, String)]) -> String {
+    let pairs: Vec<String> = functions
+        .iter()
+        .map(|(ob, sym)| format!("[\"{}\",\"{}\"]", esc(ob), esc(sym)))
+        .collect();
+    format!(
+        "{{\"type\":\"executed\",\"id\":\"{}\",\"functions\":[{}]}}",
+        esc(id),
+        pairs.join(",")
+    )
 }
 
 fn emit_assertion(id: &str, kind: &str, ok: bool, detail: &str, json: bool) {
@@ -730,6 +754,38 @@ mod tests {
         let env = resolve_env(&args, Ok(()), || Ok(()), || panic!("perfcnt gates here"));
         assert_eq!(env.gating, "perfcnt");
         assert!(env.guest.is_none());
+    }
+
+    #[test]
+    fn id_allowlist_is_repeatable_and_exact() {
+        let argv = ["--id", "a::x", "--filter", "a", "--id", "b::y"].map(String::from);
+        let args = parse_args_from(argv.into_iter());
+        assert_eq!(args.ids, ["a::x", "b::y"]);
+        assert_eq!(args.filter.as_deref(), Some("a"));
+        assert!(parse_args_from(std::iter::empty()).ids.is_empty());
+    }
+
+    #[test]
+    fn the_env_line_advertises_item_reuse() {
+        let line = env_line(
+            &resolve_env(
+                &parse_args_from(["--env"].map(String::from).into_iter()),
+                Ok(()),
+                || Ok(()),
+                || None,
+            ),
+            true,
+        );
+        assert!(line.contains(r#""item_reuse":true"#), "{line}");
+    }
+
+    #[test]
+    fn executed_records_carry_escaped_pairs() {
+        let functions = [("/b\"in".to_string(), "_ZN1a".to_string())];
+        assert_eq!(
+            executed_json("p::f", &functions),
+            r#"{"type":"executed","id":"p::f","functions":[["/b\"in","_ZN1a"]]}"#
+        );
     }
 
     #[test]

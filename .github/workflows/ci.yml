@@ -194,7 +194,9 @@ jobs:
   # Dogfood: gate each self-bench crate's perf against the PR's merge-base.
   # Keep this package list in sync with Makefile's BENCH_CRATES.
   gate:
-    if: github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]')
+    if: >-
+      (github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]'))
+      || (github.event_name == 'push' && github.ref == 'refs/heads/master' && !endsWith(github.actor, '[bot]'))
     needs: [build-cli]
     strategy:
       matrix:

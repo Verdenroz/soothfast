@@ -171,15 +171,19 @@ docs-only push records no run until a later push changes the binary. The
 action installs the CLI version in your `Cargo.lock`, so bumping the action
 alone does not change this.
 
-The action does not cache `.soothfast/runs/` itself. Put a cache step before
-it in the same job, on pull requests and on the default-branch push alike:
-the cache saves in its post step, after the action has recorded, and the push
+The action does not cache `.soothfast/runs/` itself, nor the per-item store
+and link maps that [per-item reuse](#per-item-reuse) reads. Put a cache step
+before it in the same job, on pull requests and on the default-branch push
+alike: the cache saves in its post step, after the action has recorded, and the push
 job is what writes the runs pull requests read.
 
 ```yaml
 - uses: actions/cache@v4
   with:
-    path: .soothfast/runs
+    path: |
+      .soothfast/runs
+      .soothfast/items
+      .soothfast/maps
     key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}
     restore-keys: |
       soothfast-runs-${{ github.ref_name }}-
@@ -187,11 +191,172 @@ job is what writes the runs pull requests read.
 - uses: Verdenroz/soothfast@<tag-or-sha>
 ```
 
+Items and maps are cached with the runs because the default-branch push
+stores the entries a pull request reuses, and a job that restores none of
+them measures every item.
+
 The key has to be unique per commit, with the prefix in `restore-keys`. An
 exact key that never changes is never rewritten once saved, so the cache
 would keep the first commit's runs and every later commit would miss. The
 second prefix is what lets a pull request, whose `ref_name` is its own merge
 ref, restore the default branch's runs.
+
+## Per-item reuse
+
+The run cache reuses a whole run. Under `callgrind`, the gate and `measure`
+can also reuse a single item, keyed on the machine code the item executed
+rather than on the commit. Callgrind already lists every function a run
+executes; the runner reports that set, and the CLI hashes those functions in
+each bench binary. An item whose executed code hashes the same on both sides
+of a gate is not measured: its stored metrics and assertion verdicts are
+placed on both sides, so its delta is zero, and only the remaining items run
+(`--id` on the runner).
+
+```console
+gate: 14/16 items run identical code on both sides, measuring 2
+```
+
+The whole-run keys above are tried first. Per-item reuse applies on the full
+measurement path and when `measure` finds no run stored for its binary. It
+is a miss, never a guess, whenever anything cannot be resolved. An entry is
+used only if all of these hold:
+
+- every executed function of the bench binary exists there by its exact
+  symbol (`.llvm.N` suffixes dropped) and normalizes to the same
+  instructions. Addresses are normalized out: branch targets and
+  rip-relative displacements become symbols, and a data reference becomes
+  the content of the object it points into;
+- relocated data is hashed by what it points at, so a vtable or function
+  table whose target changed hashes differently even when its bytes in the
+  file do not (a linker may leave a relocated slot zero or filled with an
+  address);
+- every other object the item ran in (libc, the loader, valgrind's
+  preload) has the same content digest. `???`, valgrind's own trampolines,
+  is covered by the valgrind version in the run cache key;
+- the item's fingerprint is unchanged, since the claims a stored assertion
+  was judged against (`alloc = N`, `p99 = ...`) are not part of the code;
+- the thread-local initial image (`.tdata`, and the size of `.tbss`) is
+  unchanged. Code reads it through `%fs` offsets that name no address, so it
+  is part of every key.
+
+An item whose claims failed is never stored, so a failure is measured again
+rather than replayed. A binary not linked position-independent is never
+reused: its code can name data by absolute address, which is not resolved.
+
+Items with `sizes(...)` are never reused: a sweep can reach code the
+default-size run never executed. Only `callgrind` is reused: `perfcnt` and
+`walltime` hosts behave as before.
+
+### Where data begins and ends
+
+A data reference with a sized symbol hashes that symbol. rustc and LLVM emit
+most constants (string literals, panic locations, constant pools, jump
+tables) under local labels, which the symbol table does not keep. For those
+the CLI reads the linker's map: each input section is a real object, since
+rustc gives every constant its own section and code cannot read past the one
+it addresses. A reference then hashes the input section it lands in, not the
+whole output section. A merged pool (`SHF_MERGE`) is one input section in the
+map; see below for how the fixed-size ones are split.
+
+The map comes from a second link of the bench target alone
+(`cargo rustc --bench ... -- -C link-arg=-Wl,-Map=...`), written next to the
+measured binary as a separate artifact of the same bytes: dependencies are
+not rebuilt and the measured binary is not touched. The CLI checks that the
+two have the same loaded-section digest before it trusts the map, and keeps
+the map and its extents under `.soothfast/maps/`, named by that digest, so a
+map is never read for another binary. lld, mold and GNU ld maps are read. A
+map that cannot be built or read is a miss, not a guess:
+
+```console
+gate: no link map for <binary> (unrecognized map format); unnamed constants hash as whole sections
+```
+
+A reference outside every input section falls back to the whole output
+section the same way. On aarch64, `adrp`+`add` immediates carry layout and
+only cause misses.
+
+A pool of fixed-size constants (`.rodata.cst8`, `.rodata.cst16`) is split
+into its entries, so a reference hashes only the entry it falls in. That
+assumes code never reads across two entries through one reference, which
+holds because LLVM gives each pool constant its own label and the linker
+merges whole entries. String pools (`.rodata.str*`) stay one object.
+
+A jump table stores code offsets as 32-bit integers, so its bytes change
+whenever code moves. Where the instructions prove how a table is read, it is
+hashed as the places in the function it jumps to instead of as bytes. The
+read must have this shape, in one basic block:
+
+```text
+movslq (%rA,%rI,4),%rB
+add    %rA,%rB
+jmp    *%rB
+```
+
+and every definition of `%rA` that reaches the load, along every path from
+the function's entry, must be a `lea` of the same table. The base may be
+loaded once near the top and kept across calls in a callee-saved register; a
+call clobbers the caller-saved ones. The proof builds the function's
+control-flow graph, in which a table jump has an edge to each place its table
+names, and it needs the graph to be complete: an indirect jump that is not a
+proven table jump, or a branch to an address that is no instruction of the
+function (other than a tail call), leaves the function with no proof. Code
+no edge reaches is a landing pad the unwinder enters from a call, with the
+callee-saved registers restored to their values at that call, so it starts
+from the join of every call in the function for those registers and from
+nothing known for the rest. Alignment padding is not code anyone enters. The input section holding the table must start at a proven base and
+hold only words that land inside the function, measured from the nearest
+proven base before them. Anything else hashes as bytes. This reads x86-64
+assembly only; on other architectures every table hashes as bytes.
+
+`__stop_SEC` symbols that the linker defines are named, and the section they
+end is hashed, but the section that happens to follow is not: a pointer one
+past the end is never dereferenced.
+
+What still misses, and why:
+
+- code that changed, which is the point;
+- a function that keeps its jump-table base in a callee-saved register it
+  also uses for another value across calls, where a landing pad that does
+  not end in `_Unwind_Resume` rejoins the code before the table load. Which
+  call unwinds to which pad is in the exception tables, which are not read,
+  so every call's value reaches the pad. A pad that ends in `_Unwind_Resume`
+  rejoins nothing, which is how `std`'s `Once::call` proves and an edit that
+  moves code still reuses the items it does not touch;
+- code that reads a section whose bytes are layout, such as
+  `.eh_frame_hdr`, through a pointer that is not a `__stop_` symbol;
+- a constant changed inside a string pool, or any data without a sized
+  symbol or a link-map section to bound it;
+- an unreadable map, or a binary that `objdump` cannot disassemble.
+
+All of these are sound and cost hits. An edit that keeps the size of code the
+same, such as changing a constant, leaves the rest of the executed code
+alone, and items that do not read it are reused.
+
+### The commit-key path
+
+When the reference is served by commit key, the gate still measures HEAD. The
+item store is consulted for HEAD alone: an item whose executed code and
+fingerprint match a stored entry is spliced in, the rest are measured, and
+each is compared against the real reference number. Its delta is not assumed
+to be zero.
+
+### Reused items and switches
+
+A reused item reports the stored numbers on both sides, so it shows an exact
+zero delta where a fresh run of the two checkouts would differ by the noise
+callgrind sees from different working directories (about 0.1%). It keeps the
+walltime it was stored with, and a baseline saved
+from the run marks it under `reused` with `from: "item cache"`. `--no-item-cache`,
+`--no-reuse-base` and `SOOTHFAST_RECORD=1` measure every item; a recording run
+still stores what it measured, so pull requests find it. A harness that predates `--id`
+turns it off for that invocation, the way the run cache is turned off:
+
+```console
+gate: per-item reuse disabled for this invocation: bench harness does not take --id (harness soothfast@0.3.4, ..., CLI ...)
+```
+
+Entries live under `.soothfast/items/`, keyed by the same conditions as a
+run minus the commit and `--filter`, up to eight per item.
 
 ## Thresholds
 

@@ -184,8 +184,9 @@ fn out_file(tag: &str) -> PathBuf {
 }
 
 /// Run this bench binary under callgrind executing `id` for `iters`
-/// iterations; return total Ir (and the out-file path for annotation).
-fn run_ir(id: &str, iters: u64, tag: &str) -> Result<(u64, PathBuf), String> {
+/// iterations; return total Ir and the out-file text. `mangled` keeps the
+/// symbol-table spelling of function names instead of demangling them.
+fn run_ir(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<(u64, String), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let out = out_file(tag);
     let status = Command::new("valgrind")
@@ -194,6 +195,7 @@ fn run_ir(id: &str, iters: u64, tag: &str) -> Result<(u64, PathBuf), String> {
             "--tool=callgrind",
             "--compress-strings=no",
             "--compress-pos=no",
+            &format!("--demangle={}", if mangled { "no" } else { "yes" }),
             &format!("--callgrind-out-file={}", out.display()),
         ])
         .arg(&exe)
@@ -208,6 +210,7 @@ fn run_ir(id: &str, iters: u64, tag: &str) -> Result<(u64, PathBuf), String> {
         ));
     }
     let text = std::fs::read_to_string(&out).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&out);
     let summary = text
         .lines()
         .rev()
@@ -218,7 +221,7 @@ fn run_ir(id: &str, iters: u64, tag: &str) -> Result<(u64, PathBuf), String> {
         .next()
         .and_then(|v| v.parse().ok())
         .ok_or("unparseable summary line")?;
-    Ok((ir, out))
+    Ok((ir, text))
 }
 
 /// Iterations in the low run; the high run does twice this.
@@ -234,14 +237,23 @@ fn run_ir(id: &str, iters: u64, tag: &str) -> Result<(u64, PathBuf), String> {
 /// less than it looks like it does.
 const K: u64 = 10;
 
+/// One item's callgrind result: per-iteration Ir, and every function the
+/// longer run executed as sorted, deduplicated `(object, mangled symbol)`.
+pub struct Measurement {
+    /// Instructions per iteration.
+    pub ir: u64,
+    /// Executed `(object, mangled symbol)` pairs.
+    pub functions: Vec<(String, String)>,
+}
+
 /// Per-iteration Ir for one item.
-pub fn measure(id: &str) -> Result<u64, String> {
-    let (low, f1) = run_ir(id, K, "k1")?;
-    let (high, f2) = run_ir(id, 2 * K, "k2")?;
-    for f in [f1, f2] {
-        let _ = std::fs::remove_file(f);
-    }
-    Ok(high.saturating_sub(low) / K)
+pub fn measure(id: &str) -> Result<Measurement, String> {
+    let (low, _) = run_ir(id, K, "k1", true)?;
+    let (high, text) = run_ir(id, 2 * K, "k2", true)?;
+    Ok(Measurement {
+        ir: high.saturating_sub(low) / K,
+        functions: executed(&text),
+    })
 }
 
 // Each measurement holds a live valgrind child with a real memory footprint,
@@ -250,14 +262,14 @@ const MAX_PARALLEL: usize = 4;
 
 /// Per-iteration Ir for many items, measured concurrently (Ir counts are
 /// timing-independent). Results come back in input order.
-pub fn measure_all(ids: &[&str]) -> Vec<Result<u64, String>> {
+pub fn measure_all(ids: &[&str]) -> Vec<Result<Measurement, String>> {
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
         .min(MAX_PARALLEL)
         .min(ids.len());
     let next = AtomicUsize::new(0);
-    let slots: Vec<Mutex<Option<Result<u64, String>>>> =
+    let slots: Vec<Mutex<Option<Result<Measurement, String>>>> =
         ids.iter().map(|_| Mutex::new(None)).collect();
     std::thread::scope(|s| {
         for _ in 0..workers {
@@ -280,36 +292,51 @@ pub fn measure_all(ids: &[&str]) -> Vec<Result<u64, String>> {
         .collect()
 }
 
-/// Human triage report: top self-cost functions for one item's workload.
-pub fn annotate(id: &str) -> Result<String, String> {
-    let (total, path) = run_ir(id, 1, "annotate")?;
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&path);
-
-    // Callgrind format (uncompressed): "fn=<name>" starts a function block;
-    // following "<pos> <cost>" lines are its self costs.
-    let mut costs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-    let mut current: Option<String> = None;
-    // The cost line after "calls=" is the call's inclusive cost — not self.
+/// Self cost per `(object, function)` cost line of an uncompressed callgrind
+/// out-file. `fn=` starts a function block, `ob=` sets the object the
+/// following blocks belong to, and the cost line after `calls=` is the call's
+/// inclusive cost, not self.
+fn function_costs(text: &str) -> impl Iterator<Item = (&str, &str, u64)> {
+    let (mut object, mut current) = ("", None);
     let mut skip_next_cost = false;
-    for line in text.lines() {
-        if let Some(name) = line.strip_prefix("fn=") {
-            current = Some(name.to_string());
+    text.lines().filter_map(move |line| {
+        if let Some(ob) = line.strip_prefix("ob=") {
+            object = ob;
+        } else if let Some(name) = line.strip_prefix("fn=") {
+            current = Some(name);
             skip_next_cost = false;
         } else if line.starts_with("calls=") {
             skip_next_cost = true;
         } else if line.starts_with(|c: char| c.is_ascii_digit()) {
             if skip_next_cost {
                 skip_next_cost = false;
-            } else if let Some(fn_name) = &current
+            } else if let Some(name) = current
                 && let Some(cost) = line
                     .split_whitespace()
                     .nth(1)
                     .and_then(|v| v.parse::<u64>().ok())
             {
-                *costs.entry(fn_name.clone()).or_default() += cost;
+                return Some((object, name, cost));
             }
         }
+        None
+    })
+}
+
+fn executed(text: &str) -> Vec<(String, String)> {
+    let set: std::collections::BTreeSet<(&str, &str)> =
+        function_costs(text).map(|(ob, f, _)| (ob, f)).collect();
+    set.into_iter()
+        .map(|(ob, f)| (ob.to_string(), f.to_string()))
+        .collect()
+}
+
+/// Human triage report: top self-cost functions for one item's workload.
+pub fn annotate(id: &str) -> Result<String, String> {
+    let (total, text) = run_ir(id, 1, "annotate", false)?;
+    let mut costs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for (_, name, cost) in function_costs(&text) {
+        *costs.entry(name.to_string()).or_default() += cost;
     }
     let mut ranked: Vec<(String, u64)> = costs.into_iter().collect();
     ranked.sort_by_key(|(_, cost)| std::cmp::Reverse(*cost));
@@ -324,10 +351,56 @@ pub fn annotate(id: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::out_file;
+    use super::{executed, function_costs, out_file};
+
+    const OUT: &str = "\
+events: Ir
+ob=/work/bench
+fl=/src/lib.rs
+fn=_ZN5bench4hot17h0123456789abcdefE
+10 100
+cfn=_ZN5bench4cold17h0123456789abcdefE
+calls=2 20
+11 900
+12 5
+ob=/lib/ld-linux.so
+fn=_dl_relocate
+3 40
+ob=/work/bench
+fn=_ZN5bench4hot17h0123456789abcdefE
+13 7
+summary: 1052
+";
 
     #[test]
     fn out_files_never_collide_even_with_the_same_tag() {
         assert_ne!(out_file("k1"), out_file("k1"));
+    }
+
+    #[test]
+    fn self_costs_skip_the_inclusive_line_after_calls() {
+        let hot = "_ZN5bench4hot17h0123456789abcdefE";
+        let costs: Vec<_> = function_costs(OUT).collect();
+        assert_eq!(
+            costs,
+            [
+                ("/work/bench", hot, 100),
+                ("/work/bench", hot, 5),
+                ("/lib/ld-linux.so", "_dl_relocate", 40),
+                ("/work/bench", hot, 7),
+            ]
+        );
+    }
+
+    #[test]
+    fn executed_functions_are_sorted_and_deduplicated_per_object() {
+        let want: Vec<(String, String)> = vec![
+            ("/lib/ld-linux.so".into(), "_dl_relocate".into()),
+            (
+                "/work/bench".into(),
+                "_ZN5bench4hot17h0123456789abcdefE".into(),
+            ),
+        ];
+        assert_eq!(executed(OUT), want);
     }
 }

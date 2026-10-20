@@ -23,12 +23,19 @@ pub struct CommonArgs {
     /// `codegen-units` measurement builds are pinned to, or `"inherit"` to
     /// leave the project's own profile alone.
     pub codegen_units: Option<String>,
+    /// `--no-item-cache`: measure every item even where a stored measurement
+    /// of the same executed code exists.
+    pub no_item_cache: bool,
 }
 
 impl CommonArgs {
     /// Consume one flag if it belongs to the common set.
     pub fn try_parse<'a>(&mut self, arg: &str, it: &mut impl Iterator<Item = &'a String>) -> bool {
         let slot = match arg {
+            "--no-item-cache" => {
+                self.no_item_cache = true;
+                return true;
+            }
             "-p" | "--package" => &mut self.pkg,
             "--filter" => &mut self.filter,
             "--backend" => &mut self.backend,
@@ -94,6 +101,18 @@ fn bench_build_command(
     build: Build,
     pkgs: &[&str],
 ) -> io::Result<Command> {
+    cargo_command("bench", common, dir, target_dir, build, pkgs)
+}
+
+/// `cargo <verb>` for the bench target, carrying the same inputs for any verb.
+fn cargo_command(
+    verb: &str,
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+    pkgs: &[&str],
+) -> io::Result<Command> {
     let mut cmd = Command::new("cargo");
     if let Some(toolchain) = bench_toolchain() {
         cmd.arg(format!("+{toolchain}"));
@@ -108,7 +127,7 @@ fn bench_build_command(
             ));
         }
     }
-    cmd.arg("bench");
+    cmd.arg(verb);
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
     }
@@ -128,6 +147,46 @@ fn bench_build_command(
         cmd.current_dir(d);
     }
     Ok(cmd)
+}
+
+/// Link the bench target a second time with the linker writing its map to
+/// `map`, and name the executable. `cargo rustc` hands the flag to the bench
+/// crate alone, so dependencies are not rebuilt, and the result is a separate
+/// artifact next to the measured one.
+pub fn build_link_map(
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    map: &Path,
+) -> Option<PathBuf> {
+    let target = common.target.as_deref().unwrap_or("soothfast");
+    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+    let mut cmd = cargo_command("rustc", common, dir, target_dir, Build::Measure, &pkgs).ok()?;
+    cmd.args(["--profile", "bench", "--message-format=json", "--"]);
+    cmd.arg("-C");
+    cmd.arg(format!("link-arg=-Wl,-Map={}", map.display()));
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    bench_artifact(&out.stdout, target)
+}
+
+/// The executable cargo's `--message-format=json` output names for the bench
+/// target `target`.
+fn bench_artifact(stdout: &[u8], target: &str) -> Option<PathBuf> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|m| m["reason"] == "compiler-artifact")
+        .filter(|m| m["target"]["name"] == target)
+        .filter(|m| {
+            m["target"]["kind"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|k| k == "bench")
+        })
+        .find_map(|m| m["executable"].as_str().map(PathBuf::from))
 }
 
 /// Workspace member names, resolved once per tree. A gate that cannot name
@@ -309,19 +368,7 @@ pub fn bench_executable(
     if !out.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter(|m| m["reason"] == "compiler-artifact")
-        .filter(|m| m["target"]["name"] == target)
-        .filter(|m| {
-            m["target"]["kind"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|k| k == "bench")
-        })
-        .find_map(|m| m["executable"].as_str().map(PathBuf::from))
+    bench_artifact(&out.stdout, target)
 }
 
 /// What a bench binary resolves on this host, from the env line a run starts
@@ -331,6 +378,8 @@ pub struct HostEnv {
     pub gating_backend: String,
     /// Set only when callgrind gates and the harness can see its guest.
     pub guest: Option<Guest>,
+    /// Whether the harness takes `--id` and reports `executed` records.
+    pub item_reuse: bool,
 }
 
 /// What callgrind's counts depend on besides the binary.
@@ -363,6 +412,7 @@ impl HostEnv {
         Some(HostEnv {
             gating_backend: field("gating_backend")?,
             guest,
+            item_reuse: v["item_reuse"].as_bool().unwrap_or(false),
         })
     }
 }
@@ -392,6 +442,30 @@ pub fn host_env(exe: &Path, backend: Option<&str>) -> Result<HostEnv, String> {
         .ok_or_else(|| "bench harness printed no env line for --env".into())
 }
 
+/// The items `exe` registers with their fingerprints, narrowed by `filter`
+/// the way a run is.
+pub fn list_items(exe: &Path, filter: Option<&str>) -> Option<BTreeMap<String, String>> {
+    let mut cmd = Command::new(exe);
+    cmd.args(["--list", "--json"]);
+    if let Some(f) = filter {
+        cmd.args(["--filter", f]);
+    }
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    Some(
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|v| v["type"] == "item")
+            .filter_map(|v| {
+                Some((
+                    v["id"].as_str()?.to_string(),
+                    v["fingerprint"].as_str()?.to_string(),
+                ))
+            })
+            .collect(),
+    )
+}
+
 /// One item's collected metrics across backends.
 #[derive(Default, Debug, Clone)]
 pub struct ItemMetrics {
@@ -415,6 +489,8 @@ pub struct ItemMetrics {
     /// buildcost pseudo-items
     pub build_ms: Option<u64>,
     pub size_bytes: Option<u64>,
+    /// Set when this item alone came from a stored measurement.
+    pub reused: Option<Reused>,
 }
 
 /// One assertion verdict from the runner.
@@ -426,6 +502,28 @@ pub struct AssertionOutcome {
     pub detail: String,
 }
 
+impl AssertionOutcome {
+    /// The verdict without its item id, as a per-item store keeps it.
+    pub fn verdict_json(&self) -> Value {
+        json!({ "kind": self.kind, "ok": self.ok, "detail": self.detail })
+    }
+
+    /// A verdict of item `id` read back from [`AssertionOutcome::verdict_json`].
+    pub fn from_verdict_json(id: &str, v: &Value) -> Option<AssertionOutcome> {
+        Some(AssertionOutcome {
+            id: id.to_string(),
+            kind: v["kind"].as_str()?.to_string(),
+            ok: v["ok"].as_bool()?,
+            detail: v["detail"].as_str()?.to_string(),
+        })
+    }
+}
+
+/// An `[object, symbol]` pair of an `executed` record.
+pub fn pair(v: &Value) -> Option<(String, String)> {
+    Some((v[0].as_str()?.to_string(), v[1].as_str()?.to_string()))
+}
+
 /// A full measurement run, keyed by item ID.
 #[derive(Default, Debug)]
 pub struct Run {
@@ -434,6 +532,8 @@ pub struct Run {
     pub gating_backend: Option<String>,
     pub items: BTreeMap<String, ItemMetrics>,
     pub assertions: Vec<AssertionOutcome>,
+    /// The `(object, symbol)` pairs each item executed, from a callgrind run.
+    pub executed: BTreeMap<String, Vec<(String, String)>>,
     /// Set when some metrics came from a stored run instead of this process.
     pub reused: Option<Reused>,
 }
@@ -458,6 +558,17 @@ pub fn collect(records: &[Value]) -> Run {
                 ok: rec["ok"].as_bool().unwrap_or(false),
                 detail: rec["detail"].as_str().unwrap_or("").to_string(),
             }),
+            Some("executed") if run.gating_backend.as_deref() == Some("callgrind") => {
+                if let Some(id) = rec["id"].as_str() {
+                    let functions = rec["functions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(pair)
+                        .collect();
+                    run.executed.insert(id.to_string(), functions);
+                }
+            }
             Some("result") => {
                 let Some(id) = rec["id"].as_str() else {
                     continue;
@@ -582,6 +693,7 @@ pub fn run_from_items_value(items: &Value) -> Run {
                 wakes: v["asyncexec"]["wakes"].as_u64(),
                 build_ms: v["buildcost"]["build_ms"].as_u64(),
                 size_bytes: v["buildcost"]["size_bytes"].as_u64(),
+                reused: None,
             },
         );
     }
@@ -592,9 +704,11 @@ pub fn run_from_items_value(items: &Value) -> Run {
 /// Per item, since runs of several packages share one baseline file.
 fn saved_items(run: &Run) -> Value {
     let mut items = run_to_items_value(run);
-    if let (Some(reused), Some(map)) = (&run.reused, items.as_object_mut()) {
-        for item in map.values_mut() {
-            item["reused"] = json!({ "from": reused.from, "metrics": reused.metrics });
+    if let Some(map) = items.as_object_mut() {
+        for (id, item) in map {
+            if let Some(reused) = run.items[id].reused.as_ref().or(run.reused.as_ref()) {
+                item["reused"] = json!({ "from": reused.from, "metrics": reused.metrics });
+            }
         }
     }
     items
@@ -1629,6 +1743,56 @@ mod tests {
     }
 
     #[test]
+    fn executed_records_are_kept_only_under_callgrind() {
+        let executed = serde_json::json!({
+            "type": "executed", "id": "pkg::a", "functions": [["/bin/bench", "f"]],
+        });
+        let under = |backend: &str| {
+            super::collect(&[
+                serde_json::json!({ "type": "env", "gating_backend": backend }),
+                executed.clone(),
+            ])
+        };
+        assert_eq!(
+            under("callgrind").executed["pkg::a"],
+            [("/bin/bench".to_string(), "f".to_string())]
+        );
+        assert!(under("perfcnt").executed.is_empty());
+    }
+
+    #[test]
+    fn a_harness_advertises_item_reuse_in_its_env_line() {
+        let line = |v: serde_json::Value| HostEnv::from_line(&v).map(|e| e.item_reuse);
+        assert_eq!(
+            line(serde_json::json!({ "gating_backend": "callgrind", "item_reuse": true })),
+            Some(true)
+        );
+        assert_eq!(
+            line(serde_json::json!({ "gating_backend": "callgrind" })),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_saved_item_carries_its_own_reuse_marker() {
+        let mut run = Run::default();
+        run.items.insert("pkg::a".into(), ItemMetrics::default());
+        run.items.insert(
+            "pkg::b".into(),
+            ItemMetrics {
+                reused: Some(Reused {
+                    from: "item cache".into(),
+                    metrics: vec!["callgrind.ir"],
+                }),
+                ..ItemMetrics::default()
+            },
+        );
+        let items = saved_items(&run);
+        assert!(items["pkg::a"].get("reused").is_none());
+        assert_eq!(items["pkg::b"]["reused"]["from"], "item cache");
+    }
+
+    #[test]
     fn an_env_line_reads_its_guest_only_when_complete() {
         let full = serde_json::json!({
             "type": "env", "gating_backend": "callgrind",
@@ -1645,6 +1809,7 @@ mod tests {
                     libc: "fedcba9876543210".into(),
                     valgrind: "valgrind-3.22.0".into(),
                 }),
+                item_reuse: false,
             })
         );
         let partial = serde_json::json!({
@@ -1680,6 +1845,7 @@ mod tests {
                 tolerance_pct: Some(8.0),
                 build_ms: None,
                 size_bytes: None,
+                reused: None,
             },
         );
         let round_tripped = run_from_items_value(&run_to_items_value(&run));

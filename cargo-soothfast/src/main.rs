@@ -10,6 +10,7 @@ mod agreement;
 mod buildcost;
 mod buildstamp;
 mod changelog_config;
+mod codekey;
 mod coverage;
 mod docs;
 mod docs_support;
@@ -18,6 +19,10 @@ mod gate_config;
 mod gate_lock;
 mod headrun;
 mod invoke;
+mod itemcache;
+mod itemreuse;
+mod jumptable;
+mod linkmap;
 mod mcp;
 mod report;
 mod runcache;
@@ -43,13 +48,16 @@ commands:
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]
+           [--no-item-cache]
            (under callgrind, reuses the counts stored for this bench binary
-           and measures only timing again; --no-reuse measures in full)
+           and measures only timing again; --no-reuse measures in full;
+           --no-item-cache measures every item rather than reusing those
+           whose executed code a stored measurement already covers)
   gate     [-p PKG] [--filter S] [--backend B] [--samples N] [--features F]
            [--baseline NAME] [--ratchet NAME] [--against-ref REF] [--deps]
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
            [--codegen-units N|inherit] [--no-reuse-base] [--allow-gone]
-           [--allow-harness-change]
+           [--allow-harness-change] [--no-item-cache]
            (--save-baseline persists the measured head run after a pass)
            (--allow-harness-change passes a run whose reference could not be
            pinned to HEAD's soothfast, where the delta may be the harness)

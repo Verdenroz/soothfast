@@ -273,6 +273,18 @@ saved baseline, a named ratchet, or — for CI — the merge-base of the PR bran
 measured live in a temporary worktree, so there's no baseline file to become
 stale in version control.
 
+Gate and `measure` keep measured runs in `.soothfast/runs/` (by commit and by
+bench-binary digest, `runcache.rs`) and, under callgrind, single items in
+`.soothfast/items/` (`itemcache.rs` stores, `itemreuse.rs` plans and splices),
+keyed on a hash of the machine code the item executed (`codekey/`, from the
+`executed` records the runner writes from callgrind's out-file). Unnamed
+constants are bounded by input-section extents from the linker map of a
+second `cargo rustc` link (`linkmap.rs`, under `.soothfast/maps/`); jump
+tables are hashed by target only where a control-flow proof shows how they
+are read (`jumptable/`). Anything unresolvable is a miss; sweep items and
+failed claims are never cached; `--no-item-cache`, `--no-reuse-base` and
+`SOOTHFAST_RECORD=1` measure in full, and a recording run still stores them.
+
 ### Dogfood loop
 
 This repo runs soothfast on itself: `soothfast-registry`, `soothfast-measure`, and
@@ -289,7 +301,10 @@ claim being enforced, not a bug in the check.
 - `ci.yml` — `check` (fmt/clippy/test), `msrv` (pins to Rust 1.88), `docs`
   (dogfood: `make baselines` then `docs check`/`docs capture` against the
   fresh baseline, plus the `llms-gate` drift gate), `deploy-docs`
-  (master-only: rebuilds and publishes the native site build to `gh-pages`).
+  (master-only: rebuilds and publishes the native site build to `gh-pages`),
+  `gate` (pull requests gate each self-bench crate against the merge-base;
+  a master push records HEAD against `HEAD^` so the next pull request finds
+  its runs and items in the cache).
 - `security.yml` — `cargo-deny` (advisories/bans/licenses/sources per
   `deny.toml`) and `zizmor` (static analysis of the workflows themselves);
   runs on push/PR and weekly so newly disclosed advisories surface without

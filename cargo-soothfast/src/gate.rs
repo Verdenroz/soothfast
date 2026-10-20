@@ -15,6 +15,7 @@ use crate::headrun::{
     settle, settled_doc,
 };
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
+use crate::itemreuse::{Bin, Reuse};
 use crate::workspace;
 
 /// Deterministic counters gate tight.
@@ -818,7 +819,20 @@ fn measure_ref_interleaved(
     let head_stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
     // Naming HEAD's binary costs a no-run build plus an objdump, so it is
     // taken once and threaded to every lookup and store below.
-    let (head_dig, runs) = headrun::probe("gate", common, &head_stamp);
+    let (head_dig, runs, head_exe) = headrun::probe("gate", common, &head_stamp);
+    // HEAD alone, where the reference is already measured: items whose code
+    // a stored measurement covers are spliced and the rest are measured.
+    let measure_head = |exe: Option<&std::path::Path>| -> Result<Run, String> {
+        Reuse::measure_head(
+            "gate",
+            common,
+            &runs,
+            exe.map(|exe| Bin::head(exe, head_dig.as_deref())),
+            recording(),
+            || buildstamp::capture(common.codegen_units_stamp().as_deref(), None),
+            |args| measure(None, args),
+        )
+    };
     // Stored regardless of `reuse`: a fresh measurement is worth keeping
     // even for an invocation that declined to trust an existing one.
     let base_known = !base_sha.is_empty();
@@ -834,7 +848,7 @@ fn measure_ref_interleaved(
                 (head, Settled::AsMeasured)
             }
             None => {
-                let head = measure(None, &[])?;
+                let head = measure_head(head_exe.as_deref())?;
                 let settled = settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
                 (head, settled)
             }
@@ -849,6 +863,7 @@ fn measure_ref_interleaved(
     }
 
     println!("gate: measuring merge-base of {refname} in worktree (interleaved rounds)");
+    let mut reused: BTreeSet<String> = BTreeSet::new();
     let pkg = common.pkg.clone();
     let target = common.target.clone().unwrap_or_else(|| "soothfast".into());
     let outcome = invoke::with_merge_base_worktree(refname, |wt| {
@@ -871,11 +886,11 @@ fn measure_ref_interleaved(
         // A run measured from byte-identical machine code under the same
         // conditions is that binary's measurement, whatever commit built it.
         let by_binary = match (reuse, &digests) {
-            (true, Some((_, base))) => runs.load(base, &base_sha),
+            (true, Some(d)) => runs.load(&d.base, &base_sha),
             _ => None,
         };
 
-        if digests.as_ref().is_some_and(|(head, base)| head == base) {
+        if digests.as_ref().is_some_and(|d| d.head == d.base) {
             println!(
                 "gate: bench binaries identical (code and data match) — no measurable change possible"
             );
@@ -901,12 +916,41 @@ fn measure_ref_interleaved(
             println!("gate: reusing a run measured from the same merge-base binary");
             return Ok((Ref::Cached(doc), digests, harness));
         }
-        let rounds = [
-            measure(None, &[]),
-            measure(Some(wt), &[]),
-            measure(None, TIMING_ONLY),
-            measure(Some(wt), TIMING_ONLY),
+        if !reuse {
+            println!("gate: per-item reuse off (--no-reuse-base); measuring in full");
+        }
+        let item_reuse = digests.as_ref().filter(|_| reuse).and_then(|d| {
+            let head = Bin::head(&d.head_exe, Some(&d.head));
+            let base = Bin {
+                exe: &d.base_exe,
+                digest: Some(&d.base),
+                dir: Some(wt),
+                target_dir: wt_target.as_deref(),
+            };
+            Reuse::plan("gate", common, &runs, &[head, base], recording())
+        });
+        let measure_side = |side: usize, extra: &[&str]| -> Result<Run, String> {
+            let dir = (side == 1).then_some(wt);
+            let Some(reuse) = &item_reuse else {
+                return measure(dir, extra);
+            };
+            let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), dir);
+            reuse.measure_side(side, extra, stamp, |args| measure(dir, args))
+        };
+        let mut rounds = [
+            measure_side(0, &[]),
+            measure_side(1, &[]),
+            measure_side(0, TIMING_ONLY),
+            measure_side(1, TIMING_ONLY),
         ];
+        if let Some(reuse) = &item_reuse {
+            for (side, round) in rounds.iter_mut().take(2).enumerate() {
+                if let Ok(run) = round {
+                    reuse.finish(side, run);
+                }
+            }
+            reused = reuse.reused_ids().cloned().collect();
+        }
         // Read again here, where the merge-base worktree still exists; the
         // comparison itself uses the first reading either way.
         let (head_settled, base_settled) = match (&rounds[0], &rounds[1]) {
@@ -943,7 +987,7 @@ fn measure_ref_interleaved(
             let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
                 Some((head, _)) => (head, Settled::AsMeasured),
                 None => {
-                    let head = measure(None, &[])?;
+                    let head = measure_head(head_exe.as_deref())?;
                     let settled =
                         settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
                     (head, settled)
@@ -969,6 +1013,9 @@ fn measure_ref_interleaved(
     };
     let (base, head, head_settled, base_settled) = sides;
     let mut reference = ref_doc(&base);
+    for id in &reused {
+        reference["items"][id.as_str()]["reused_from"] = serde_json::json!("item cache");
+    }
     mark_harness(&mut reference, &harness);
     if let Some(stored) = settled_doc(reference.clone(), &base_settled) {
         if base_known {
@@ -976,14 +1023,12 @@ fn measure_ref_interleaved(
         }
         // Keyed by machine code too, so a later merge-base building the same
         // binary hits even if never gated. Stored regardless of `reuse`.
-        if let Some((_, base_digest)) = &digests {
-            runs.store(base_digest, &stored);
+        if let Some(d) = &digests {
+            runs.store(&d.base, &stored);
         }
     }
-    if let (Some((head_digest, _)), Some(stored)) =
-        (&digests, settled_doc(ref_doc(&head), &head_settled))
-    {
-        runs.store(head_digest, &stored);
+    if let (Some(d), Some(stored)) = (&digests, settled_doc(ref_doc(&head), &head_settled)) {
+        runs.store(&d.head, &stored);
     }
     cache_head(&runs, &head, head_dig.as_deref(), &head_settled);
     Ok(Some(Resolved {
@@ -1020,7 +1065,7 @@ fn harness_of(doc: &Value) -> invoke::HarnessSync {
 /// Whether this gate runs to record HEAD as a reference (`SOOTHFAST_RECORD=1`,
 /// set by the action on default-branch pushes) rather than to judge a change.
 /// An environment variable, so older CLIs the action installs ignore it.
-fn recording() -> bool {
+pub fn recording() -> bool {
     std::env::var("SOOTHFAST_RECORD").is_ok_and(|v| v == "1")
 }
 
@@ -1046,14 +1091,21 @@ fn identical_pass_cache(stored: Option<&Value>, pass: Option<&Run>, record: bool
         .or_else(|| pass.filter(|_| record).map(ref_doc))
 }
 
-/// Digests of the head and merge-base bench binaries' machine code.
+/// The head and merge-base bench binaries, with digests of their machine code.
+struct Binaries {
+    head: String,
+    base: String,
+    head_exe: std::path::PathBuf,
+    base_exe: std::path::PathBuf,
+}
+
 /// Conservative: any build or extraction failure yields `None`, so the gate
 /// falls through to a real measurement.
 fn bench_text_digests(
     common: &CommonArgs,
     wt: &std::path::Path,
     wt_target: Option<&std::path::Path>,
-) -> Option<(String, String)> {
+) -> Option<Binaries> {
     let (Some(head), Some(base)) = (
         invoke::bench_executable(common, None, None),
         invoke::bench_executable(common, Some(wt), wt_target),
@@ -1065,7 +1117,12 @@ fn bench_text_digests(
     if head == base {
         return None;
     }
-    Some((binary_digest(&head)?, binary_digest(&base)?))
+    Some(Binaries {
+        head: binary_digest(&head)?,
+        base: binary_digest(&base)?,
+        head_exe: head,
+        base_exe: base,
+    })
 }
 
 /// Fold a side's timing-only second round into its full first round. A
