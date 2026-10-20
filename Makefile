@@ -34,7 +34,7 @@ help: ## Show available commands
 check: ## fmt + clippy (-D warnings) + tests (--all-features: exercises the runner-gated doc examples)
 	$(CARGO) fmt --all -- --check
 	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
-	$(CARGO) test --workspace --all-features
+	$(SOOTHFAST) test --all-features
 
 bot-check: ## Type-check + test the soothfast-bot Worker, shellcheck the action scripts
 	npm --prefix bot run check

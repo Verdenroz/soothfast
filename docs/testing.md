@@ -105,3 +105,40 @@ The command ends with a summary and exits non-zero if anything failed:
 ```text
 test: 3 of 10 packages selected, 9 binaries run, 4 skipped (cached), doc tests in 3 packages
 ```
+
+## In CI
+
+The selection needs history to find a merge-base, and the pass cache needs to
+outlive the run. This is the shape the workspace's own `check` job uses:
+
+```yaml
+- uses: actions/checkout@v6
+  with:
+    fetch-depth: 0
+    persist-credentials: false
+- uses: actions/cache@v5
+  with:
+    path: .soothfast/tests
+    key: soothfast-tests-${{ github.ref_name }}-${{ github.sha }}
+    restore-keys: |
+      soothfast-tests-${{ github.ref_name }}-
+      soothfast-tests-${{ github.event.repository.default_branch }}-
+- run: |
+    if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"; else base="HEAD^"; fi
+    if git merge-base "$base" HEAD > /dev/null 2>&1; then
+      selection="--base $base"
+    else
+      echo "::warning::no merge-base with $base; testing every package"
+      selection="--all"
+    fi
+    cargo soothfast test $selection --all-features
+  env:
+    EVENT: ${{ github.event_name }}
+    BASE_REF: ${{ github.base_ref }}
+```
+
+A pull request compares against its base branch and a push to the default
+branch against its parent. When no merge-base can be found, the step tests
+every package and says why; it never falls back to testing nothing. The
+cache key follows the one used for measured runs in [Gating](gating.md): a
+branch restores its own earlier passes, then the default branch's.

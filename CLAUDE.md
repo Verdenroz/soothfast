@@ -21,7 +21,7 @@ either drifts from reality.
 
 ```bash
 make help          # list all Make targets
-make check          # fmt --check + clippy -D warnings + cargo test --workspace (mirrors CI's check job)
+make check          # fmt --check + clippy -D warnings + `cargo soothfast test` (mirrors CI's check job)
 make baselines      # measure BENCH_CRATES (soothfast-registry, soothfast-measure, soothfast-docs) into the shared "self" baseline
 make ci             # docs check/capture against this build's own baseline (mirrors CI's docs job)
 make gate           # merge-base gates vs origin/master (or BASE=<ref>): self-benches + build cost

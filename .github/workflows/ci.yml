@@ -23,6 +23,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          fetch-depth: 0 # the test base is a merge-base
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
@@ -31,7 +32,26 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features
-      - run: cargo test --workspace --all-features
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/tests
+          key: soothfast-tests-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            soothfast-tests-${{ github.ref_name }}-
+            soothfast-tests-${{ github.event.repository.default_branch }}-
+      - name: Test the packages the change affects
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"; else base="HEAD^"; fi
+          if git merge-base "$base" HEAD > /dev/null 2>&1; then
+            selection="--base $base"
+          else
+            echo "::warning::no merge-base with $base; testing every package"
+            selection="--all"
+          fi
+          cargo run -p cargo-soothfast -- test $selection --all-features
 
   msrv:
     if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
