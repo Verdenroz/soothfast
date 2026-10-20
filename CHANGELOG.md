@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased (draft vs v0.3.4)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### ✨ Features
+
+- Cargo soothfast test, run only affected tests in CI (#237)
+- Reuse unchanged items under callgrind, record on master (#236)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-measure
+ADDED    soothfast_measure::callgrind::Measurement
+CHANGED  soothfast_measure::callgrind::annotate (body)
+CHANGED  soothfast_measure::callgrind::measure (signature)
+CHANGED  soothfast_measure::callgrind::measure_all (signature)
+CHANGED  soothfast_measure::main (body)
+CHANGED  soothfast_measure::runner::main (body)
+```
+
+
 ## 0.3.4 - 2026-09-27
 
 <!-- soothfast:notes -->
