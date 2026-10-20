@@ -33,6 +33,7 @@ Direct cargo:
 
 ```bash
 cargo test --workspace                                    # all tests
+cargo run -p cargo-soothfast -- test --all-features       # only affected packages; skips binaries with a stored pass (docs/testing.md)
 cargo test -p soothfast-measure stats::                      # single crate / module
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
