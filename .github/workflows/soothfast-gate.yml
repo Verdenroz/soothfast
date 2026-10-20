@@ -82,18 +82,17 @@ jobs:
           changelog: "false"
       - name: Run gate
         id: gate
-        # A push records HEAD against its parent for later pull requests to
-        # reuse; the code is already merged, so it never fails the job.
-        continue-on-error: ${{ github.event_name == 'push' }}
+        # bash, not the default `bash -e`: pipefail keeps the gate's exit code
+        # through tee.
+        shell: bash
         run: |
-          REF="${INPUTS_BASE_REF}"
-          if [ -z "$REF" ]; then REF="origin/${GITHUB_BASE_REF:-master}"; fi
-          if [ "$EVENT_NAME" = push ]; then
-            REF='HEAD^'
-            export SOOTHFAST_RECORD=1
+          if [ -x bin/cargo-soothfast ]; then CLI=bin/cargo-soothfast; else CLI=cargo-soothfast; fi
+          if [ "$EVENT_NAME" = push ] && [ -z "$INPUTS_BASE_REF" ]; then
+            CLI="$CLI" PACKAGES="$INPUTS_PACKAGE" .soothfast-action/action/record.sh
+            exit 0
           fi
-          if [ -x bin/cargo-soothfast ]; then set -- bin/cargo-soothfast; else set -- cargo soothfast; fi
-          "$@" gate -p "${INPUTS_PACKAGE}" --against-ref "$REF" | tee gate-output.txt
+          REF="${INPUTS_BASE_REF:-origin/${GITHUB_BASE_REF:-master}}"
+          "$CLI" gate -p "$INPUTS_PACKAGE" --against-ref "$REF" | tee gate-output.txt
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUTS_BASE_REF: ${{ inputs.base-ref }}

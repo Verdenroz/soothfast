@@ -196,7 +196,7 @@ jobs:
   gate:
     if: >-
       (github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]'))
-      || (github.event_name == 'push' && github.ref == 'refs/heads/master')
+      || (github.event_name == 'push' && github.ref == 'refs/heads/master' && !endsWith(github.actor, '[bot]'))
     needs: [build-cli]
     strategy:
       matrix:
