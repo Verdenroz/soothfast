@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
-use crate::invoke::{ItemMetrics, Run};
+use crate::invoke::{self, ItemMetrics, Run};
 
 /// Measure each combo: `cargo clean -p PKG` then a timed release build,
 /// artifact size taken as the largest emitted file for the package.
@@ -67,10 +67,7 @@ pub fn measure_in(
 
         // Largest artifact emitted for this package (rlib for libs, bin for
         // bins), matched on target name — package_id formats vary by source.
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let size_bytes = stdout
-            .lines()
-            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        let size_bytes = invoke::cargo_messages(&out.stdout)
             .filter(|v| v["reason"] == "compiler-artifact")
             .filter(|v| {
                 v["target"]["name"]

@@ -17,6 +17,7 @@ mod docs_support;
 mod gate;
 mod gate_config;
 mod gate_lock;
+mod glob;
 mod headrun;
 mod invoke;
 mod itemcache;
@@ -36,6 +37,7 @@ mod spec_gate;
 mod spec_gen;
 mod spec_html;
 mod spec_probe;
+mod test;
 mod trend;
 mod workspace;
 
@@ -105,6 +107,10 @@ commands:
   report   changelog -p PKG [-p PKG ...] [--against-ref REF] [--features F]
            [--bot-author NAME]
            (no --against-ref: first release, lists the surface it ships)
+  test     [--base REF | --all] [--no-cache] [--no-doc] [cargo test args...] [-- test args...]
+           (drop-in for `cargo test`: builds and runs only the packages a change
+           can affect, and skips test binaries whose code and inputs match a
+           stored pass; doc tests always run)
   mcp      -p PKG [--baseline NAME] [--features F]   (agent-facing server on stdio)
 
 `--features F` builds the bench binary / rustdoc surface with those cargo
@@ -143,6 +149,7 @@ fn run() -> i32 {
         "sdk" => sdk::run(rest),
         "report" => report::run(rest),
         "mcp" => mcp::run(rest),
+        "test" => test::run(rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             0

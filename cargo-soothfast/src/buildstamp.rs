@@ -5,6 +5,7 @@
 //! records the rest here, so a comparison across differing settings reports
 //! that rather than reporting the settings as a regression.
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -99,16 +100,21 @@ pub fn compare(reference: &Value, current: &BuildStamp) -> Option<Mismatch> {
     })
 }
 
-fn rustc_version(dir: Option<&Path>) -> String {
+/// `rustc -vV`, which names the compiler by release, commit and host.
+pub(crate) fn rustc_vv(dir: Option<&Path>) -> io::Result<String> {
     let mut cmd = Command::new("rustc");
     cmd.arg("-vV");
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
-    let Ok(out) = cmd.output() else {
+    let out = cmd.output()?;
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn rustc_version(dir: Option<&Path>) -> String {
+    let Ok(text) = rustc_vv(dir) else {
         return String::new();
     };
-    let text = String::from_utf8_lossy(&out.stdout);
     let field = |name: &str| {
         text.lines()
             .find_map(|l| l.strip_prefix(name))

@@ -13,10 +13,16 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
-/// `cargo metadata` for a tree, with the resolved dependency graph.
-fn metadata(dir: Option<&Path>) -> io::Result<Value> {
+/// `cargo metadata` for a tree: with the resolved dependency graph, or with
+/// `no_deps` exactly the workspace's own packages and their declared
+/// dependencies.
+pub fn metadata(dir: Option<&Path>, no_deps: bool) -> io::Result<Value> {
     let mut cmd = Command::new("cargo");
-    cmd.args(["metadata", "--format-version", "1"]);
+    cmd.arg("metadata");
+    if no_deps {
+        cmd.arg("--no-deps");
+    }
+    cmd.args(["--format-version", "1"]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     if let Some(d) = dir {
@@ -35,18 +41,7 @@ fn metadata(dir: Option<&Path>) -> io::Result<Value> {
 /// Every member of this workspace, in name order. `--no-deps` lists exactly
 /// the workspace's own packages, so no dependency can reach the result.
 pub fn members(dir: Option<&Path>) -> io::Result<Vec<String>> {
-    let mut cmd = Command::new("cargo");
-    cmd.args(["metadata", "--no-deps", "--format-version", "1"]);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    if let Some(d) = dir {
-        cmd.current_dir(d);
-    }
-    let out = cmd.output()?;
-    if !out.status.success() {
-        return Err(io::Error::other("cargo metadata failed"));
-    }
-    let md: Value = serde_json::from_slice(&out.stdout)?;
+    let md = metadata(dir, true)?;
     let mut names: Vec<String> = md["packages"]
         .as_array()
         .into_iter()
@@ -68,7 +63,7 @@ pub fn members(dir: Option<&Path>) -> io::Result<Vec<String>> {
 /// The order is alphabetical rather than graph order, so two crates that
 /// both define a type of the same name always disambiguate the same way.
 pub fn local_deps(pkg: &str, dir: Option<&Path>) -> io::Result<Vec<String>> {
-    collect(pkg, &metadata(dir)?)
+    collect(pkg, &metadata(dir, false)?)
 }
 
 /// The walk itself, over metadata already in hand — the seam tests use.
@@ -113,7 +108,7 @@ fn collect(pkg: &str, meta: &Value) -> io::Result<Vec<String>> {
 /// not exist there yet means the crate is newly measured, which is a
 /// different fact from a bench that failed to run.
 pub fn has_bench_target(pkg: &str, target: &str, dir: Option<&Path>) -> io::Result<bool> {
-    Ok(bench_target_in(&metadata(dir)?, pkg, target))
+    Ok(bench_target_in(&metadata(dir, false)?, pkg, target))
 }
 
 /// The lookup itself, over metadata already in hand — the seam tests use.
