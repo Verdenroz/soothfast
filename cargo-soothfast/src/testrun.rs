@@ -1,12 +1,12 @@
 //! `cargo soothfast test`: run only the tests a change can affect.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::test_config::TestConfig;
 use crate::testbuild::{self, TestBin};
-use crate::testexec::{self, Runner};
+use crate::testexec;
 use crate::testkey::{self, Context, Passes};
-use crate::testsel::{self, Package, Selection};
+use crate::testsel::{self, Package};
 use crate::{invoke, test_config};
 
 /// What the command line asked for.
@@ -20,7 +20,7 @@ pub struct TestArgs {
     pub no_cache: bool,
     /// `--no-doc`: skip doc tests.
     pub no_doc: bool,
-    /// `-p`/`--package` values; narrow the selection.
+    /// `-p`/`--package` values; select exactly these packages.
     pub only: Vec<String>,
     /// `--exclude` values; drop from the selection.
     pub exclude: Vec<String>,
@@ -35,26 +35,32 @@ pub fn parse_args(args: &[String]) -> Result<TestArgs, String> {
     let mut out = TestArgs::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        let mut value = |flag: &str| {
-            it.next()
-                .cloned()
+        let (flag, inline) = match a.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
+            _ => (a.as_str(), None),
+        };
+        let mut value = || {
+            inline
+                .clone()
+                .or_else(|| it.next().cloned())
                 .ok_or_else(|| format!("{flag} needs a value"))
         };
-        match a.as_str() {
+        match flag {
             "--" => {
                 out.run_args = it.cloned().collect();
                 break;
             }
-            "--base" => out.base = Some(value("--base")?),
+            "--base" => out.base = Some(value()?),
             "--all" => out.all = true,
             "--no-cache" => out.no_cache = true,
             "--no-doc" => out.no_doc = true,
-            "-p" | "--package" => out.only.push(value(a)?),
-            "--exclude" => out.exclude.push(value(a)?),
+            "--doc" => return Err("doc tests always run; use --no-doc to skip them".into()),
+            "-p" | "--package" => out.only.push(value()?),
+            "--exclude" => out.exclude.push(value()?),
             "--workspace" => {}
-            other => match other.strip_prefix("--package=") {
-                Some(p) => out.only.push(p.to_string()),
-                None => out.cargo_args.push(other.to_string()),
+            _ => match a.strip_prefix("-p") {
+                Some(name) if !name.is_empty() => out.only.push(name.to_string()),
+                _ => out.cargo_args.push(a.clone()),
             },
         }
     }
@@ -77,18 +83,13 @@ fn drive(args: &[String]) -> Result<i32, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let cfg = test_config::load(&root)?;
     let pkgs = testsel::packages(&root).map_err(|e| e.to_string())?;
-    let selection = choose(&args, &pkgs, &cfg)?;
-    let selected = narrowed(&args, &pkgs, selection.names);
-    if let Some(why) = &selection.everything_because {
-        println!("test: every package selected ({why})");
-    }
+    let selected = select_packages(&args, &root, &pkgs, &cfg)?;
     if selected.is_empty() {
         println!("{}", Tally::default().summary(0, pkgs.len()));
         return Ok(0);
     }
-    let planned = plan(&args, &root, &cfg, &pkgs, &selected)?;
-    let runner = Runner::new().map_err(|e| e.to_string())?;
     let passes = Passes::open();
+    let (keyer, planned) = plan(&args, &root, &cfg, &pkgs, &selected, passes.as_ref())?;
     let mut tally = Tally::default();
     for p in &planned {
         let label = p.bin.label();
@@ -99,15 +100,15 @@ fn drive(args: &[String]) -> Result<i32, String> {
         }
         println!("test: run {label}");
         tally.ran += 1;
-        if runner
-            .run(&p.bin, p.pkg, &args.run_args)
+        if !testexec::run_target(&p.bin, &args.cargo_args, &args.run_args)
             .map_err(|e| format!("{label}: {e}"))?
         {
-            if let (Some(key), Some(passes)) = (&p.key, &passes) {
-                passes.record(key, &label);
-            }
-        } else {
             tally.failed.push(label);
+        } else if let Some(passes) = &passes {
+            let after = keyer.key(&p.bin)?;
+            if !passes.record_if_unchanged(&label, p.key.as_deref(), after.as_deref()) {
+                println!("test: {label} changed its inputs; pass not stored");
+            }
         }
     }
     let doc = doc_packages(&args, &planned);
@@ -124,17 +125,68 @@ fn drive(args: &[String]) -> Result<i32, String> {
     Ok(i32::from(!tally.failed.is_empty()))
 }
 
+/// The packages to test: exactly those named with `-p`, else what the
+/// change selects (or `--all`), minus `--exclude`.
+fn select_packages(
+    args: &TestArgs,
+    root: &Path,
+    pkgs: &[Package],
+    cfg: &TestConfig,
+) -> Result<Vec<String>, String> {
+    let names: Vec<String> = if args.only.is_empty() {
+        let selection = if args.all {
+            testsel::everything(pkgs, "--all")
+        } else {
+            let base = match &args.base {
+                Some(b) => b.clone(),
+                None => testsel::default_base(root).map_err(|e| e.to_string())?,
+            };
+            let changed = testsel::changed_files(root, &base).map_err(|e| e.to_string())?;
+            testsel::select(pkgs, &changed, cfg)
+        };
+        if let Some(why) = &selection.everything_because {
+            println!("test: every package selected ({why})");
+        }
+        selection.names.into_iter().collect()
+    } else {
+        named(args, pkgs)?
+    };
+    Ok(names
+        .into_iter()
+        .filter(|n| !args.exclude.contains(n))
+        .collect())
+}
+
+fn named(args: &TestArgs, pkgs: &[Package]) -> Result<Vec<String>, String> {
+    for name in &args.only {
+        if !pkgs.iter().any(|p| &p.name == name) {
+            let members: Vec<&str> = pkgs.iter().map(|p| p.name.as_str()).collect();
+            return Err(format!(
+                "no workspace package {name:?}; members: {}",
+                members.join(", ")
+            ));
+        }
+    }
+    Ok(pkgs
+        .iter()
+        .map(|p| p.name.clone())
+        .filter(|n| args.only.contains(n))
+        .collect())
+}
+
 /// Selected packages with a library target, whose doc tests cannot be cached.
 fn doc_packages(args: &TestArgs, planned: &[Planned]) -> Vec<String> {
     if args.no_doc || testexec::narrows_targets(&args.cargo_args) {
         return Vec::new();
     }
-    let names: BTreeSet<&str> = planned
+    let mut names: Vec<String> = planned
         .iter()
-        .filter(|p| matches!(p.bin.kind.as_str(), "lib" | "proc-macro"))
-        .map(|p| p.bin.package.as_str())
+        .filter(|p| p.bin.has_doc_tests())
+        .map(|p| p.bin.package.clone())
         .collect();
-    names.into_iter().map(String::from).collect()
+    names.sort();
+    names.dedup();
+    names
 }
 
 #[derive(Default)]
@@ -159,104 +211,88 @@ impl Tally {
 }
 
 /// A built test executable and whether a stored pass already covers it.
-struct Planned<'a> {
+struct Planned {
     bin: TestBin,
-    pkg: &'a Package,
     key: Option<String>,
     cached: bool,
 }
 
+/// Computes pass cache keys against the files as they are right now.
+struct Keyer<'a> {
+    root: &'a Path,
+    pkgs: &'a [Package],
+    cfg: &'a TestConfig,
+    run_args: &'a [String],
+    siblings: Vec<TestBin>,
+    rustc: String,
+    env: Vec<(String, String)>,
+}
+
+impl Keyer<'_> {
+    fn key(&self, bin: &TestBin) -> Result<Option<String>, String> {
+        let Some(pkg) = self.pkgs.iter().find(|p| p.name == bin.package) else {
+            return Ok(None);
+        };
+        let siblings: Vec<&TestBin> = self
+            .siblings
+            .iter()
+            .filter(|s| s.package == bin.package)
+            .collect();
+        let Some(spawned) = testkey::siblings_digest(&siblings) else {
+            return Ok(None);
+        };
+        let err = |e: std::io::Error| e.to_string();
+        let files = testkey::package_inputs(self.root, &pkg.dir).map_err(err)?;
+        let declared = testkey::declared_inputs(self.root, &self.cfg.inputs).map_err(err)?;
+        let workspace = testkey::workspace_inputs(self.root, self.pkgs, self.cfg).map_err(err)?;
+        let cx = Context {
+            inputs: &declared,
+            workspace: &workspace,
+            run_args: self.run_args,
+            env: &self.env,
+            rustc: &self.rustc,
+        };
+        let package_inputs = format!("{files}\u{3}{spawned}");
+        Ok(testkey::key(
+            &bin.package,
+            &bin.target,
+            &bin.exe,
+            &package_inputs,
+            &cx,
+        ))
+    }
+}
+
 fn plan<'a>(
-    args: &TestArgs,
-    root: &Path,
-    cfg: &test_config::TestConfig,
+    args: &'a TestArgs,
+    root: &'a Path,
+    cfg: &'a TestConfig,
     pkgs: &'a [Package],
     selected: &[String],
-) -> Result<Vec<Planned<'a>>, String> {
-    let stdout = testbuild::build(selected, &args.cargo_args).map_err(|e| e.to_string())?;
-    let built = testbuild::collect(&stdout, pkgs);
-    let declared = testkey::declared_inputs(root, &cfg.inputs).map_err(|e| e.to_string())?;
-    let rustc = testkey::rustc_version().map_err(|e| e.to_string())?;
-    let cx = Context {
-        inputs: &declared,
+    passes: Option<&Passes>,
+) -> Result<(Keyer<'a>, Vec<Planned>), String> {
+    let messages = testbuild::build(selected, &args.cargo_args).map_err(|e| e.to_string())?;
+    let built = testbuild::collect(&messages, pkgs);
+    let keyer = Keyer {
+        root,
+        pkgs,
+        cfg,
         run_args: &args.run_args,
-        env: &cfg.env,
-        rustc: &rustc,
+        siblings: built.siblings,
+        rustc: testkey::rustc_version().map_err(|e| e.to_string())?,
+        env: testkey::env_values(&cfg.env),
     };
-    let passes = Passes::open();
-    let mut package_inputs: BTreeMap<String, Option<String>> = BTreeMap::new();
     let mut planned = Vec::new();
     for bin in built.tests {
-        let Some(pkg) = pkgs.iter().find(|p| p.name == bin.package) else {
-            continue;
-        };
-        if !package_inputs.contains_key(&bin.package) {
-            let siblings: Vec<&TestBin> = built
-                .siblings
-                .iter()
-                .filter(|s| s.package == bin.package)
-                .collect();
-            let digest = package_digest(root, pkg, &siblings)?;
-            package_inputs.insert(bin.package.clone(), digest);
-        }
-        let key = package_inputs[&bin.package]
-            .as_deref()
-            .and_then(|files| testkey::key(&bin.package, &bin.target, &bin.exe, files, &cx));
+        let key = keyer.key(&bin)?;
         let cached = !args.no_cache
             && key
                 .as_deref()
-                .zip(passes.as_ref())
+                .zip(passes)
                 .is_some_and(|(k, passes)| passes.has(k));
-        planned.push(Planned {
-            bin,
-            pkg,
-            key,
-            cached,
-        });
+        planned.push(Planned { bin, key, cached });
     }
-    Ok(planned)
-}
-
-/// What a package's tests read besides their own code: its non-Rust files and
-/// the executables its integration tests may spawn.
-fn package_digest(
-    root: &Path,
-    pkg: &Package,
-    siblings: &[&TestBin],
-) -> Result<Option<String>, String> {
-    let files = testkey::package_inputs(root, &pkg.dir).map_err(|e| e.to_string())?;
-    Ok(testkey::siblings_digest(siblings).map(|s| format!("{files}\u{3}{s}")))
-}
-
-fn choose(
-    args: &TestArgs,
-    pkgs: &[Package],
-    cfg: &test_config::TestConfig,
-) -> Result<Selection, String> {
-    if args.all {
-        return Ok(testsel::everything(pkgs, "--all"));
-    }
-    let base = match &args.base {
-        Some(b) => b.clone(),
-        None => testsel::default_base().map_err(|e| e.to_string())?,
-    };
-    let changed = testsel::changed_files(&base).map_err(|e| e.to_string())?;
-    Ok(testsel::select(pkgs, &changed, cfg))
-}
-
-/// The selection after `-p` and `--exclude`.
-fn narrowed(
-    args: &TestArgs,
-    pkgs: &[Package],
-    names: std::collections::BTreeSet<String>,
-) -> Vec<String> {
-    pkgs.iter()
-        .map(|p| p.name.as_str())
-        .filter(|n| names.contains(*n))
-        .filter(|n| args.only.is_empty() || args.only.iter().any(|o| o == n))
-        .filter(|n| !args.exclude.iter().any(|e| e == n))
-        .map(String::from)
-        .collect()
+    Ok((keyer, planned))
 }
 
 #[cfg(test)]
@@ -266,6 +302,15 @@ mod tests {
     fn parse(list: &[&str]) -> TestArgs {
         let argv: Vec<String> = list.iter().map(|s| s.to_string()).collect();
         parse_args(&argv).unwrap()
+    }
+
+    fn pkg(name: &str) -> Package {
+        Package {
+            name: name.into(),
+            dir: name.into(),
+            manifest_dir: name.into(),
+            deps: Vec::new(),
+        }
     }
 
     #[test]
@@ -290,11 +335,53 @@ mod tests {
     }
 
     #[test]
-    fn package_flags_narrow_instead_of_passing_through() {
-        let a = parse(&["-p", "a", "--package=b", "--exclude", "c", "--workspace"]);
-        assert_eq!(a.only, ["a", "b"]);
-        assert_eq!(a.exclude, ["c"]);
+    fn package_flags_in_every_spelling_are_taken() {
+        let a = parse(&[
+            "-p",
+            "a",
+            "--package=b",
+            "-pc",
+            "--package",
+            "d",
+            "--exclude=e",
+            "--workspace",
+        ]);
+        assert_eq!(a.only, ["a", "b", "c", "d"]);
+        assert_eq!(a.exclude, ["e"]);
         assert!(a.cargo_args.is_empty());
+    }
+
+    #[test]
+    fn equals_joined_values_reach_their_owners() {
+        let a = parse(&["--base=origin/main", "--test=golden", "--profile=release"]);
+        assert_eq!(a.base.as_deref(), Some("origin/main"));
+        assert_eq!(a.cargo_args, ["--test=golden", "--profile=release"]);
+    }
+
+    #[test]
+    fn doc_is_refused_with_a_hint() {
+        let err = parse_args(&["--doc".to_string()]).unwrap_err();
+        assert!(err.contains("--no-doc"));
+    }
+
+    #[test]
+    fn p_selects_exactly_the_named_packages() {
+        let pkgs = [pkg("a"), pkg("b"), pkg("c")];
+        let args = TestArgs {
+            only: vec!["c".into(), "a".into()],
+            ..TestArgs::default()
+        };
+        assert_eq!(named(&args, &pkgs).unwrap(), ["a", "c"]);
+    }
+
+    #[test]
+    fn an_unknown_package_is_an_error_listing_the_members() {
+        let args = TestArgs {
+            only: vec!["soothfast-sit".into()],
+            ..TestArgs::default()
+        };
+        let err = named(&args, &[pkg("a"), pkg("b")]).unwrap_err();
+        assert!(err.contains("soothfast-sit") && err.contains("a, b"));
     }
 
     #[test]

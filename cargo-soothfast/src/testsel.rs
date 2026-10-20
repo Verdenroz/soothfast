@@ -35,9 +35,6 @@ pub struct Package {
     pub manifest_dir: PathBuf,
     /// Names of the packages this one declares a dependency on, any kind.
     pub deps: Vec<String>,
-    /// The `CARGO_PKG_*` variables cargo sets when it runs this package's
-    /// tests.
-    pub env: Vec<(String, String)>,
 }
 
 /// The packages selected, and why every one was if all were.
@@ -56,7 +53,6 @@ pub fn packages(root: &Path) -> io::Result<Vec<Package>> {
 }
 
 fn parse_packages(meta: &Value, root: &Path) -> Vec<Package> {
-    let field = |p: &Value, k: &str| p[k].as_str().unwrap_or_default().to_string();
     meta["packages"]
         .as_array()
         .into_iter()
@@ -69,38 +65,6 @@ fn parse_packages(meta: &Value, root: &Path) -> Vec<Package> {
                 .ok()?
                 .to_string_lossy()
                 .replace('\\', "/");
-            let name = field(p, "name");
-            let version = field(p, "version");
-            let part = |i: usize| {
-                version
-                    .split(['.', '-', '+'])
-                    .nth(i)
-                    .unwrap_or("")
-                    .to_string()
-            };
-            let authors: Vec<&str> = p["authors"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .collect();
-            let env = vec![
-                ("CARGO_PKG_NAME".into(), name.clone()),
-                ("CARGO_PKG_VERSION".into(), version.clone()),
-                ("CARGO_PKG_VERSION_MAJOR".into(), part(0)),
-                ("CARGO_PKG_VERSION_MINOR".into(), part(1)),
-                ("CARGO_PKG_VERSION_PATCH".into(), part(2)),
-                ("CARGO_PKG_AUTHORS".into(), authors.join(":")),
-                ("CARGO_PKG_DESCRIPTION".into(), field(p, "description")),
-                ("CARGO_PKG_HOMEPAGE".into(), field(p, "homepage")),
-                ("CARGO_PKG_REPOSITORY".into(), field(p, "repository")),
-                ("CARGO_PKG_LICENSE".into(), field(p, "license")),
-                ("CARGO_PKG_RUST_VERSION".into(), field(p, "rust_version")),
-                (
-                    "CARGO_MANIFEST_DIR".into(),
-                    manifest_dir.display().to_string(),
-                ),
-            ];
             let deps = p["dependencies"]
                 .as_array()
                 .into_iter()
@@ -108,35 +72,39 @@ fn parse_packages(meta: &Value, root: &Path) -> Vec<Package> {
                 .filter_map(|d| d["name"].as_str().map(String::from))
                 .collect();
             Some(Package {
-                name,
+                name: p["name"].as_str()?.to_string(),
                 dir,
                 manifest_dir,
                 deps,
-                env,
             })
         })
         .collect()
+}
+
+fn matches_any(globs: &[String], file: &str) -> bool {
+    globs.iter().any(|g| glob::matches(g, file))
+}
+
+/// Whether a change to `file` can affect every package: it is a declared
+/// input, or a build-wide file or one no package owns that `ignore` does not
+/// cover.
+pub fn is_workspace_wide(pkgs: &[Package], cfg: &TestConfig, file: &str) -> bool {
+    matches_any(&cfg.inputs, file)
+        || (!matches_any(&cfg.ignore, file)
+            && (GLOBAL_FILES.contains(&file) || owner(pkgs, file).is_none()))
 }
 
 /// Select the packages `changed` (root-relative paths) can affect.
 pub fn select(pkgs: &[Package], changed: &BTreeSet<String>, cfg: &TestConfig) -> Selection {
     let mut direct = BTreeSet::new();
     for file in changed {
-        if cfg.inputs.iter().any(|g| glob::matches(g, file)) {
+        if is_workspace_wide(pkgs, cfg, file) {
             return everything(pkgs, file);
         }
-        if cfg.ignore.iter().any(|g| glob::matches(g, file)) {
+        if matches_any(&cfg.ignore, file) {
             continue;
         }
-        if GLOBAL_FILES.contains(&file.as_str()) {
-            return everything(pkgs, file);
-        }
-        match owner(pkgs, file) {
-            Some(p) => {
-                direct.insert(p.name.as_str());
-            }
-            None => return everything(pkgs, file),
-        }
+        direct.extend(owner(pkgs, file).map(|p| p.name.as_str()));
     }
     Selection {
         names: with_dependents(pkgs, direct),
@@ -183,32 +151,34 @@ fn with_dependents(pkgs: &[Package], direct: BTreeSet<&str>) -> BTreeSet<String>
     seen.into_iter().map(String::from).collect()
 }
 
-/// Root-relative paths changed since `base`'s merge-base with HEAD, plus
-/// uncommitted and untracked ones.
-pub fn changed_files(base: &str) -> io::Result<BTreeSet<String>> {
+/// Workspace-relative paths changed since `base`'s merge-base with HEAD,
+/// plus uncommitted and untracked ones. The workspace may sit below the git
+/// toplevel; `--relative` and `ls-files` both report paths from `root`.
+pub fn changed_files(root: &Path, base: &str) -> io::Result<BTreeSet<String>> {
     let range = format!("{base}...HEAD");
     let mut files = BTreeSet::new();
     for args in [
-        vec!["diff", "--name-only", "--no-renames", range.as_str()],
-        vec!["diff", "--name-only", "--no-renames", "HEAD"],
+        vec!["diff", "--name-only", "--no-renames", "--relative", &range],
+        vec!["diff", "--name-only", "--no-renames", "--relative", "HEAD"],
         vec!["ls-files", "--others", "--exclude-standard"],
     ] {
         let mut full = vec!["-c", "core.quotepath=false"];
         full.extend(args);
-        files.extend(invoke::git(&full)?.lines().map(String::from));
+        files.extend(invoke::git_in(root, &full)?.lines().map(String::from));
     }
     Ok(files)
 }
 
 /// The default branch to diff against: `origin/HEAD`, else the first of
 /// `origin/master`, `origin/main`, `master`, `main` that exists.
-pub fn default_base() -> io::Result<String> {
-    if let Ok(head) = invoke::git(&["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
+pub fn default_base(root: &Path) -> io::Result<String> {
+    let git = |args: &[&str]| invoke::git_in(root, args);
+    if let Ok(head) = git(&["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
         return Ok(head);
     }
     ["origin/master", "origin/main", "master", "main"]
         .into_iter()
-        .find(|b| invoke::git(&["rev-parse", "--verify", "--quiet", b]).is_ok())
+        .find(|b| git(&["rev-parse", "--verify", "--quiet", b]).is_ok())
         .map(String::from)
         .ok_or_else(|| io::Error::other("no default branch found; pass --base REF"))
 }
@@ -224,7 +194,6 @@ mod tests {
             dir: dir.into(),
             manifest_dir: PathBuf::from("/ws").join(dir),
             deps: deps.iter().map(|d| d.to_string()).collect(),
-            env: Vec::new(),
         }
     }
 
@@ -370,18 +339,55 @@ mod tests {
     }
 
     #[test]
-    fn metadata_becomes_packages_with_relative_dirs_and_env() {
+    fn workspace_wide_covers_globals_and_unowned_files_unless_ignored() {
+        let cfg = TestConfig {
+            ignore: vec!["*.md".into()],
+            ..TestConfig::default()
+        };
+        let wide = |f: &str| is_workspace_wide(&graph(), &cfg, f);
+        assert!(wide(".cargo/config.toml"));
+        assert!(wide("Makefile"));
+        assert!(!wide("README.md"));
+        assert!(!wide("core/src/lib.rs"));
+    }
+
+    #[test]
+    fn metadata_becomes_packages_with_relative_dirs() {
         let meta = json!({ "packages": [{
-            "name": "core", "version": "1.2.3-rc.1", "authors": ["a", "b"],
+            "name": "core",
             "manifest_path": "/ws/core/Cargo.toml",
             "dependencies": [{ "name": "serde" }, { "name": "macros" }]
         }]});
         let pkgs = parse_packages(&meta, Path::new("/ws"));
         assert_eq!(pkgs[0].dir, "core");
         assert_eq!(pkgs[0].deps, ["serde", "macros"]);
-        let env: BTreeMap<_, _> = pkgs[0].env.iter().cloned().collect();
-        assert_eq!(env["CARGO_PKG_VERSION_MINOR"], "2");
-        assert_eq!(env["CARGO_PKG_AUTHORS"], "a:b");
-        assert_eq!(env["CARGO_MANIFEST_DIR"], "/ws/core");
+    }
+
+    #[test]
+    fn changes_are_reported_from_a_workspace_below_the_git_toplevel() {
+        let top = std::env::temp_dir().join(format!("soothfast-sel-{}", std::process::id()));
+        let root = top.join("rust");
+        std::fs::create_dir_all(root.join("pkg")).unwrap();
+        let git = |args: &[&str]| invoke::git_in(&top, args).unwrap();
+        git(&["init", "-q"]);
+        std::fs::write(root.join("pkg/a.rs"), "a").unwrap();
+        std::fs::write(top.join("outside.txt"), "o").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "x",
+        ]);
+        std::fs::write(root.join("pkg/a.rs"), "b").unwrap();
+        std::fs::write(root.join("pkg/new.rs"), "n").unwrap();
+        std::fs::write(top.join("outside.txt"), "p").unwrap();
+        let got = changed_files(&root, "HEAD").unwrap();
+        std::fs::remove_dir_all(top).unwrap();
+        assert_eq!(got, files(&["pkg/a.rs", "pkg/new.rs"]));
     }
 }

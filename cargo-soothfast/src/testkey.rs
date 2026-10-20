@@ -2,8 +2,9 @@
 //! inputs.
 //!
 //! A key covers the executable's loaded code, every git-tracked file in its
-//! package (sources, fixtures, goldens), files named by `[test] inputs`,
-//! the run arguments, the `[test] env` variables and the rustc version.
+//! package (sources, fixtures, goldens), files named by `[test] inputs`, the
+//! files that select every package, the run arguments, the `[test] env`
+//! variables and the rustc version.
 //! Anything a test reads beyond those (files outside the package, the
 //! network, the clock) is invisible here and can yield a stale pass.
 
@@ -12,18 +13,32 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::runcache::{self, hex_fnv};
+use crate::test_config::TestConfig;
 use crate::testbuild::TestBin;
+use crate::testsel::{self, Package};
 use crate::{glob, invoke};
 
 /// Passes kept before the oldest are dropped.
 const KEEP: usize = 2048;
 
-/// Everything a key hashes besides the executable itself.
+/// Everything a key hashes besides the executable and its package.
 pub struct Context<'a> {
+    /// Digest of the files `[test] inputs` names.
     pub inputs: &'a str,
+    /// Digest of the files that select every package.
+    pub workspace: &'a str,
     pub run_args: &'a [String],
-    pub env: &'a [String],
+    /// `[test] env` variables with their current values.
+    pub env: &'a [(String, String)],
     pub rustc: &'a str,
+}
+
+/// The current value of each named variable, empty when unset.
+pub fn env_values(names: &[String]) -> Vec<(String, String)> {
+    names
+        .iter()
+        .map(|n| (n.clone(), std::env::var(n).unwrap_or_default()))
+        .collect()
 }
 
 /// The pass cache key for one executable, or `None` when its code cannot be
@@ -40,18 +55,15 @@ pub fn key(
 }
 
 fn key_of(package: &str, target: &str, digest: &str, package_inputs: &str, cx: &Context) -> String {
-    let env: Vec<String> = cx
-        .env
-        .iter()
-        .map(|n| format!("{n}={}", std::env::var(n).unwrap_or_default()))
-        .collect();
+    let env: Vec<String> = cx.env.iter().map(|(n, v)| format!("{n}={v}")).collect();
     let parts = [
-        "soothfast-test-v1",
+        "soothfast-test-v2",
         package,
         target,
         digest,
         package_inputs,
         cx.inputs,
+        cx.workspace,
         &cx.run_args.join("\u{1}"),
         &env.join("\u{1}"),
         cx.rustc,
@@ -99,8 +111,14 @@ pub fn declared_inputs(root: &Path, globs: &[String]) -> io::Result<String> {
     digest(root, ".", |p| globs.iter().any(|g| glob::matches(g, p)))
 }
 
+/// Digest of the files whose change selects every package, so a run they
+/// select cannot be served from a pass stored before they changed.
+pub fn workspace_inputs(root: &Path, pkgs: &[Package], cfg: &TestConfig) -> io::Result<String> {
+    digest(root, ".", |p| testsel::is_workspace_wide(pkgs, cfg, p))
+}
+
 /// Tracked files hash by git's blob id, modified and untracked ones by their
-/// worktree content.
+/// worktree content. Only files `keep` accepts are hashed.
 fn digest(root: &Path, spec: &str, keep: impl Fn(&str) -> bool) -> io::Result<String> {
     let ls = |args: &[&str]| -> io::Result<String> {
         let mut full = vec!["-c", "core.quotepath=false", "ls-files"];
@@ -108,21 +126,22 @@ fn digest(root: &Path, spec: &str, keep: impl Fn(&str) -> bool) -> io::Result<St
         full.extend(["--", spec]);
         invoke::git_in(root, &full)
     };
-    let mut entries: BTreeMap<String, String> = BTreeMap::new();
+    let mut entries: BTreeMap<String, Option<String>> = BTreeMap::new();
     for line in ls(&["-s"])?.lines() {
         if let Some((meta, path)) = line.split_once('\t') {
-            entries.insert(path.to_string(), meta.to_string());
+            entries.insert(path.to_string(), Some(meta.to_string()));
         }
     }
     for list in [ls(&["-m"])?, ls(&["--others", "--exclude-standard"])?] {
-        for path in list.lines() {
-            entries.insert(path.to_string(), content_hash(&root.join(path)));
-        }
+        entries.extend(list.lines().map(|path| (path.to_string(), None)));
     }
     let joined: Vec<String> = entries
         .into_iter()
         .filter(|(path, _)| keep(path))
-        .map(|(path, hash)| format!("{path}\u{0}{hash}"))
+        .map(|(path, meta)| {
+            let hash = meta.unwrap_or_else(|| content_hash(&root.join(&path)));
+            format!("{path}\u{0}{hash}")
+        })
         .collect();
     Ok(hex_fnv(joined.join("\n").as_bytes()))
 }
@@ -145,7 +164,7 @@ impl Passes {
     }
 
     #[cfg(test)]
-    fn at(dir: PathBuf) -> Passes {
+    pub(crate) fn at(dir: PathBuf) -> Passes {
         Passes { dir }
     }
 
@@ -162,12 +181,28 @@ impl Passes {
         }
     }
 
-    /// Store a pass. Best effort: a pass that cannot be written costs a
-    /// re-run, nothing else.
-    pub fn record(&self, key: &str, label: &str) {
-        if std::fs::write(self.dir.join(key), label).is_ok() {
+    /// Store a pass under the key computed before the test ran, unless the
+    /// key computed after it differs: a test that rewrites its own inputs
+    /// would otherwise record a pass for inputs that no longer exist. A run
+    /// with no key stores nothing. Whether the inputs were left alone.
+    ///
+    /// Best effort: a pass that cannot be written costs a re-run, nothing
+    /// else.
+    pub fn record_if_unchanged(
+        &self,
+        label: &str,
+        before: Option<&str>,
+        after: Option<&str>,
+    ) -> bool {
+        if before != after {
+            return false;
+        }
+        if let Some(key) = before
+            && std::fs::write(self.dir.join(key), label).is_ok()
+        {
             runcache::prune_oldest(&self.dir, KEEP);
         }
+        true
     }
 }
 
@@ -175,9 +210,10 @@ impl Passes {
 mod tests {
     use super::*;
 
-    fn cx<'a>(run_args: &'a [String], env: &'a [String]) -> Context<'a> {
+    fn cx<'a>(run_args: &'a [String], env: &'a [(String, String)]) -> Context<'a> {
         Context {
             inputs: "decl",
+            workspace: "wide",
             run_args,
             env,
             rustc: "rustc 1",
@@ -222,6 +258,16 @@ mod tests {
                     ..cx(&[], &[])
                 },
             ),
+            key_of(
+                "p",
+                "t",
+                "bin",
+                "files",
+                &Context {
+                    workspace: "wide2",
+                    ..cx(&[], &[])
+                },
+            ),
         ];
         for k in &moved {
             assert_ne!(*k, base());
@@ -247,14 +293,60 @@ mod tests {
     }
 
     #[test]
-    fn a_listed_env_var_moves_the_key_and_an_unlisted_one_does_not() {
-        // SAFETY: no other test reads these names.
-        unsafe { std::env::set_var("SOOTHFAST_TEST_KEY_A", "1") };
-        let listed = vec!["SOOTHFAST_TEST_KEY_A".to_string()];
-        let with = key_of("p", "t", "bin", "files", &cx(&[], &listed));
-        unsafe { std::env::set_var("SOOTHFAST_TEST_KEY_A", "2") };
-        assert_ne!(with, key_of("p", "t", "bin", "files", &cx(&[], &listed)));
-        assert_eq!(base(), key_of("p", "t", "bin", "files", &cx(&[], &[])));
+    fn a_listed_env_value_moves_the_key() {
+        let env = |v: &str| vec![("DATABASE_URL".to_string(), v.to_string())];
+        let key = |v: &str| key_of("p", "t", "bin", "files", &cx(&[], &env(v)));
+        assert_eq!(key("a"), key("a"));
+        assert_ne!(key("a"), key("b"));
+        assert_ne!(key("a"), base());
+    }
+
+    #[test]
+    fn env_values_default_to_empty_when_unset() {
+        let got = env_values(&["SOOTHFAST_SURELY_UNSET_VAR".to_string()]);
+        assert_eq!(
+            got,
+            [("SOOTHFAST_SURELY_UNSET_VAR".to_string(), String::new())]
+        );
+    }
+
+    #[test]
+    fn a_workspace_wide_file_moves_the_workspace_inputs() {
+        let root = std::env::temp_dir().join(format!("soothfast-wide-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("pkg")).unwrap();
+        std::fs::create_dir_all(root.join(".cargo")).unwrap();
+        let git = |args: &[&str]| invoke::git_in(&root, args).unwrap();
+        git(&["init", "-q"]);
+        std::fs::write(root.join(".cargo/config.toml"), "[env]\nA = \"1\"\n").unwrap();
+        std::fs::write(root.join("pkg/lib.rs"), "a").unwrap();
+        git(&["add", "."]);
+        let pkgs = vec![Package {
+            name: "pkg".into(),
+            dir: "pkg".into(),
+            manifest_dir: root.join("pkg"),
+            deps: Vec::new(),
+        }];
+        let cfg = TestConfig::default();
+        let before = workspace_inputs(&root, &pkgs, &cfg).unwrap();
+        std::fs::write(root.join("pkg/lib.rs"), "b").unwrap();
+        let package_edit = workspace_inputs(&root, &pkgs, &cfg).unwrap();
+        std::fs::write(root.join(".cargo/config.toml"), "[env]\nA = \"2\"\n").unwrap();
+        let config_edit = workspace_inputs(&root, &pkgs, &cfg).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(before, package_edit);
+        assert_ne!(before, config_edit);
+    }
+
+    #[test]
+    fn a_pass_is_stored_only_when_the_test_left_its_inputs_alone() {
+        let dir = std::env::temp_dir().join(format!("soothfast-settle-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let passes = Passes::at(dir.clone());
+        assert!(passes.record_if_unchanged("p t (lib)", Some("same"), Some("same")));
+        assert!(passes.has("same"));
+        assert!(!passes.record_if_unchanged("p t (lib)", Some("before"), Some("after")));
+        assert!(!passes.has("before") && !passes.has("after"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -263,7 +355,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let passes = Passes::at(dir.clone());
         assert!(!passes.has("abc"));
-        passes.record("abc", "p t (lib)");
+        passes.record_if_unchanged("p t (lib)", Some("abc"), Some("abc"));
         assert!(passes.has("abc"));
         std::fs::remove_dir_all(dir).unwrap();
     }

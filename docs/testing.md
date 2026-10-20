@@ -7,7 +7,7 @@ already passed.
 
 ```console
 $ cargo soothfast test --all-features                  # vs the default branch's merge-base
-$ cargo soothfast test --base origin/master -p mylib    # narrow to one package
+$ cargo soothfast test -p mylib                         # exactly this package, changed or not
 $ cargo soothfast test --all                            # no selection, cache still applies
 $ cargo soothfast test --no-cache -- --include-ignored  # re-run everything selected
 ```
@@ -15,6 +15,10 @@ $ cargo soothfast test --no-cache -- --include-ignored  # re-run everything sele
 Flags before `--` that soothfast does not own go to `cargo test`: features,
 `--release`, `--profile`, `--target`. Everything after `--` goes to each test
 binary. `--no-doc` skips doc tests.
+
+`-p`/`--package` replaces the change-based selection: it tests exactly the
+named packages, and a name that is not a workspace member is an error.
+`--exclude` subtracts from whatever was selected.
 
 ## Choosing packages
 
@@ -61,7 +65,9 @@ The key hashes:
   they live outside the package;
 - every git-tracked file in the package, `.rs` included, by content, plus
   modified and untracked ones (sources, fixtures, goldens, data files);
-- the files matched by `[test] inputs`;
+- the files matched by `[test] inputs`, and every file whose change selects
+  every package, so a run those files select cannot be served from a pass
+  stored before they changed;
 - the plain `bin` and `example` executables of the package, which its
   integration tests may spawn without embedding;
 - the arguments after `--`;
@@ -90,15 +96,21 @@ Python and Node suites, which `cargo soothfast test` does not run.
 
 ## Running
 
-Each remaining binary runs directly, one after another, with its package
-directory as the working directory and the environment cargo sets for tests
-(`CARGO_MANIFEST_DIR`, `CARGO_PKG_*`, `CARGO_CRATE_NAME`,
-`CARGO_TARGET_TMPDIR`). Output streams as it is produced and a failing
-binary does not stop the others.
+Each remaining binary runs one after another through cargo itself, as
+`cargo test -p PKG --lib` (or `--bin`, `--test`, `--bench NAME`) with your
+cargo flags and the arguments after `--`. The build is already fresh, so
+cargo only runs it, and the test environment (`[env]` config, target
+runners, library paths) is cargo's own. Output streams as it is produced and
+a failing binary does not stop the others.
+
+A pass is stored only if the test leaves its inputs as it found them. A test
+that rewrites its own package files (regenerating goldens, say) prints that
+it changed its inputs and stores nothing, so the next run executes it again.
 
 Doc tests cannot be cached, so `cargo test --doc` runs for each selected
 package with a library target. Pass `--no-doc` to skip them; passing a
-target flag such as `--lib` or `--test NAME` skips them too.
+target flag such as `--lib` or `--test NAME` skips them too. `--doc` itself
+is refused, since doc tests always run.
 
 The command ends with a summary and exits non-zero if anything failed:
 
@@ -124,23 +136,25 @@ outlive the run. This is the shape the workspace's own `check` job uses:
       soothfast-tests-${{ github.ref_name }}-
       soothfast-tests-${{ github.event.repository.default_branch }}-
 - run: |
-    if [ "$EVENT" = pull_request ]; then base="origin/$BASE_REF"; else base="$BEFORE"; fi
-    if git merge-base "$base" HEAD > /dev/null 2>&1; then
-      selection="--base $base"
-    else
-      echo "::warning::no merge-base with $base; testing every package"
-      selection="--all"
+    selection="--all"
+    if [ "$EVENT" = pull_request ]; then
+      if git merge-base "origin/$BASE_REF" HEAD > /dev/null 2>&1; then
+        selection="--base origin/$BASE_REF"
+      else
+        echo "::warning::no merge-base with origin/$BASE_REF; testing every package"
+      fi
     fi
     cargo soothfast test $selection --all-features
   env:
     EVENT: ${{ github.event_name }}
     BASE_REF: ${{ github.base_ref }}
-    BEFORE: ${{ github.event.before }}
 ```
 
-A pull request compares against its base branch and a push to the default
-branch against the commit it replaced. When no merge-base can be found (a
-force push, or a new branch whose `before` is all zeros), the step tests
-every package and says why; it never falls back to testing nothing. The
-cache key follows the one used for measured runs in [Gating](gating.md): a
-branch restores its own earlier passes, then the default branch's.
+A pull request compares against its base branch. A push to the default
+branch selects every package: a push cannot know which earlier push left a
+package red, and a failed binary has no stored pass, so it re-runs until it
+is fixed while unchanged passing binaries are skipped. When no merge-base
+can be found the step tests every package and says why; it never falls back
+to testing nothing. The cache key follows the one used for measured runs in
+[Gating](gating.md): a branch restores its own earlier passes, then the
+default branch's.
