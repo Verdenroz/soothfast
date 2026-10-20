@@ -15,6 +15,16 @@
 - Cargo soothfast test, run only affected tests in CI (#237)
 - Reuse unchanged items under callgrind, record on master (#236)
 
+### 📦 Dependencies
+
+- Bump the all-dependencies group across 1 directory with 3 updates (#235)
+- Bump zizmorcore/zizmor-action from 0.6.3 to 0.6.4 (#232)
+- Bump taiki-e/install-action from 2.87.2 to 2.87.20 (#231)
+- Bump github/codeql-action/upload-sarif from 4.37.9 to 4.38.2 (#230)
+- Bump @cloudflare/workers-types from 5.20260905.1 to 5.20260924.1 in /bot (#229)
+- Bump cloudflare/wrangler-action from 4.0.0 to 4.1.3 (#228)
+- Bump astral-sh/setup-uv from 10.0.1 to 10.2.0 (#227)
+
 ---
 
 ### 🔍 API surface
