@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.4.0)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### 🐛 Fixes
+
+- Key a test on the files its package owns (#245)
+
+
 ## 0.4.0 - 2026-10-20
 
 <!-- soothfast:notes -->
