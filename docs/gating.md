@@ -226,7 +226,14 @@ used only if all of these hold:
   preload) has the same content digest. `???`, valgrind's own trampolines,
   is covered by the valgrind version in the run cache key;
 - the item's fingerprint is unchanged, since the claims a stored assertion
-  was judged against (`alloc = N`, `p99 = ...`) are not part of the code.
+  was judged against (`alloc = N`, `p99 = ...`) are not part of the code;
+- the thread-local initial image (`.tdata`, and the size of `.tbss`) is
+  unchanged. Code reads it through `%fs` offsets that name no address, so it
+  is part of every key.
+
+An item whose claims failed is never stored, so a failure is measured again
+rather than replayed. A binary not linked position-independent is never
+reused: its code can name data by absolute address, which is not resolved.
 
 Items with `sizes(...)` are never reused: a sweep can reach code the
 default-size run never executed. Only `callgrind` is reused: `perfcnt` and
@@ -248,7 +255,7 @@ The map comes from a second link of the bench target alone
 measured binary as a separate artifact of the same bytes: dependencies are
 not rebuilt and the measured binary is not touched. The CLI checks that the
 two have the same loaded-section digest before it trusts the map, and keeps
-only the section extents under `.soothfast/maps/`, named by that digest, so a
+the map and its extents under `.soothfast/maps/`, named by that digest, so a
 map is never read for another binary. lld, mold and GNU ld maps are read. A
 map that cannot be built or read is a miss, not a guess:
 
@@ -285,9 +292,10 @@ control-flow graph, in which a table jump has an edge to each place its table
 names, and it needs the graph to be complete: an indirect jump that is not a
 proven table jump, or a branch to an address that is no instruction of the
 function (other than a tail call), leaves the function with no proof. Code
-no edge reaches, such as a landing pad the unwinder enters, is assumed to
-arrive with anything in the registers; alignment padding is not code anyone
-enters. The input section holding the table must start at a proven base and
+no edge reaches is a landing pad the unwinder enters from a call, with the
+callee-saved registers restored to their values at that call, so it starts
+from the join of every call in the function for those registers and from
+nothing known for the rest. Alignment padding is not code anyone enters. The input section holding the table must start at a proven base and
 hold only words that land inside the function, measured from the nearest
 proven base before them. Anything else hashes as bytes. This reads x86-64
 assembly only; on other architectures every table hashes as bytes.
@@ -299,12 +307,12 @@ past the end is never dereferenced.
 What still misses, and why:
 
 - code that changed, which is the point;
-- a function with a jump table whose base can also arrive from a landing pad
-  that rejoins the code after the lea. The unwinder restores callee-saved
-  registers to their values at the call, which this analysis does not
-  recover from the exception tables, so it treats them as unknown there.
-  `std`'s `Once::call` is one, and so is anything else in the executed set
-  with such a table;
+- a function that keeps its jump-table base in a callee-saved register it
+  also uses for another value across calls, where a landing pad rejoins the
+  code before the table load. Which call unwinds to which pad is in the
+  exception tables, which are not read, so every call's value reaches the
+  pad. `std`'s `Once::call` is one, and every item runs it, so an edit that
+  moves code misses every item;
 - code that reads a section whose bytes are layout, such as
   `.eh_frame_hdr`, through a pointer that is not a `__stop_` symbol;
 - a constant changed inside a string pool, or any data without a sized
@@ -329,8 +337,8 @@ A reused item reports the stored numbers on both sides, so it shows an exact
 zero delta where a fresh run of the two checkouts would differ by the noise
 callgrind sees from different working directories (about 0.1%). It keeps the
 walltime it was stored with, and a baseline saved
-from the run marks it under `reused` with `from: "item cache"`. `--no-item-cache`
-and `SOOTHFAST_RECORD=1` measure every item. A harness that predates `--id`
+from the run marks it under `reused` with `from: "item cache"`. `--no-item-cache`,
+`--no-reuse-base` and `SOOTHFAST_RECORD=1` measure every item. A harness that predates `--id`
 turns it off for that invocation, the way the run cache is turned off:
 
 ```console

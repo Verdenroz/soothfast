@@ -275,12 +275,15 @@ stale in version control.
 
 Gate and `measure` keep measured runs in `.soothfast/runs/` (by commit and by
 bench-binary digest, `runcache.rs`) and, under callgrind, single items in
-`.soothfast/items/` (`itemcache.rs`), keyed on a hash of the machine code the
-item executed (`codekey.rs`, from the `executed` records the runner writes
-from callgrind's out-file). Unnamed constants are bounded by input-section
-extents from the linker map of a second `cargo rustc` link (`linkmap.rs`,
-under `.soothfast/maps/`). Anything unresolvable is a miss; sweep items are
-never cached; `--no-item-cache` and `SOOTHFAST_RECORD=1` measure in full.
+`.soothfast/items/` (`itemcache.rs` stores, `itemreuse.rs` plans and splices),
+keyed on a hash of the machine code the item executed (`codekey/`, from the
+`executed` records the runner writes from callgrind's out-file). Unnamed
+constants are bounded by input-section extents from the linker map of a
+second `cargo rustc` link (`linkmap.rs`, under `.soothfast/maps/`); jump
+tables are hashed by target only where a control-flow proof shows how they
+are read (`jumptable/`). Anything unresolvable is a miss; sweep items and
+failed claims are never cached; `--no-item-cache`, `--no-reuse-base` and
+`SOOTHFAST_RECORD=1` measure in full.
 
 ### Dogfood loop
 
