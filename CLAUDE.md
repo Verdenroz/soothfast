@@ -301,7 +301,10 @@ claim being enforced, not a bug in the check.
 - `ci.yml` — `check` (fmt/clippy/test), `msrv` (pins to Rust 1.88), `docs`
   (dogfood: `make baselines` then `docs check`/`docs capture` against the
   fresh baseline, plus the `llms-gate` drift gate), `deploy-docs`
-  (master-only: rebuilds and publishes the native site build to `gh-pages`).
+  (master-only: rebuilds and publishes the native site build to `gh-pages`),
+  `gate` (pull requests gate each self-bench crate against the merge-base;
+  a master push records HEAD against `HEAD^` so the next pull request finds
+  its runs and items in the cache).
 - `security.yml` — `cargo-deny` (advisories/bans/licenses/sources per
   `deny.toml`) and `zizmor` (static analysis of the workflows themselves);
   runs on push/PR and weekly so newly disclosed advisories surface without
