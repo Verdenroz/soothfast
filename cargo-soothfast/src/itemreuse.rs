@@ -51,8 +51,8 @@ pub struct Reuse {
 impl Reuse {
     /// Plan the measurement of `bins` (HEAD's binary, then the merge-base's
     /// when gating). `None`, with the reason printed where the user can act
-    /// on it, when per-item reuse does not apply. `recording` is a gate run
-    /// that records HEAD as a reference, which measures in full.
+    /// on it, when per-item reuse does not apply. A `recording` run reuses
+    /// nothing and measures in full, but its plan still stores what it measures.
     pub fn plan(
         cmd: &str,
         common: &CommonArgs,
@@ -78,35 +78,32 @@ impl Reuse {
             );
             return None;
         }
-        let listed: Vec<BTreeMap<String, String>> = bins
-            .iter()
-            .map(|bin| invoke::list_items(bin.exe, common.filter.as_deref()))
-            .collect::<Option<_>>()?;
         let sides: Vec<(PathBuf, Vec<Extent>)> = bins
             .iter()
             .map(|b| (b.exe.to_path_buf(), linkmap::extents(cmd, common, b)))
             .collect();
-        let all: BTreeSet<&String> = listed.iter().flat_map(|l| l.keys()).collect();
         let items = Items::open(&runs.item_scope()?)?;
-        let hits = if recording {
-            BTreeMap::new()
-        } else {
-            items.reusable(&listed, &sides)
-        };
-        let todo = listed
-            .iter()
-            .map(|l| {
-                l.keys()
-                    .filter(|id| !hits.contains_key(*id))
-                    .cloned()
-                    .collect()
-            })
-            .collect();
-        if recording {
+        let (hits, todo) = if recording {
             println!(
                 "{cmd}: per-item reuse off (SOOTHFAST_RECORD=1); measuring in full and storing the items it measures"
             );
+            (BTreeMap::new(), Vec::new())
         } else {
+            let listed: Vec<BTreeMap<String, String>> = bins
+                .iter()
+                .map(|bin| invoke::list_items(bin.exe, common.filter.as_deref()))
+                .collect::<Option<_>>()?;
+            let all: BTreeSet<&String> = listed.iter().flat_map(|l| l.keys()).collect();
+            let hits = items.reusable(&listed, &sides);
+            let todo = listed
+                .iter()
+                .map(|l| {
+                    l.keys()
+                        .filter(|id| !hits.contains_key(*id))
+                        .cloned()
+                        .collect()
+                })
+                .collect();
             let what = if bins.len() > 1 {
                 "run identical code on both sides"
             } else {
@@ -118,7 +115,8 @@ impl Reuse {
                 all.len(),
                 all.len() - hits.len()
             );
-        }
+            (hits, todo)
+        };
         Some(Reuse {
             items,
             hits,

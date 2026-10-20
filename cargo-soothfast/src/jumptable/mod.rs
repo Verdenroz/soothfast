@@ -520,11 +520,14 @@ impl Graph {
                 Writes::Any => 2,
                 _ => state[i],
             };
-            let pads: &[usize] = if from_calls && ins.mnemonic.starts_with("call") {
-                &self.orphans
-            } else {
-                &[]
-            };
+            // `_Unwind_Resume` carries the exception out of this frame, never
+            // into one of its pads.
+            let pads: &[usize] =
+                if from_calls && ins.mnemonic.starts_with("call") && !is_unwind_resume(ins) {
+                    &self.orphans
+                } else {
+                    &[]
+                };
             for &s in self.succ[i].iter().chain(pads) {
                 let merged = if state[s] == 0 {
                     out

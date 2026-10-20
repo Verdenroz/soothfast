@@ -332,3 +332,22 @@ fn registers_alias_across_widths() {
     assert_eq!(family("%r10d"), family("%r10"));
     assert_ne!(family("%r10"), family("%r11"));
 }
+
+#[test]
+fn unwind_resume_does_not_unwind_into_another_pad() {
+    let lines = [
+        LEA15,
+        "call   2000 <g>",
+        "jmp    1020 <f+0x20>",
+        "ud2",
+        "mov    %rbx,%r15",
+        "call   3000 <_Unwind_Resume@plt>",
+        "mov    %rax,%r14",
+        "jmp    1020 <f+0x20>",
+        LOAD15,
+        ADD15,
+        JMP,
+        RET,
+    ];
+    assert_eq!(prove_in(&lines).len(), 1);
+}
