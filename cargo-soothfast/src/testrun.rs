@@ -1,5 +1,10 @@
 //! `cargo soothfast test`: run only the tests a change can affect.
 
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use crate::testbuild::{self, TestBin};
+use crate::testkey::{self, Context, Passes};
 use crate::testsel::{self, Package, Selection};
 use crate::{invoke, test_config};
 
@@ -85,7 +90,61 @@ fn drive(args: &[String]) -> Result<i32, String> {
             pkgs.len()
         ),
     }
+    if selected.is_empty() {
+        return Ok(0);
+    }
+    for p in plan(&args, &root, &cfg, &pkgs, &selected)? {
+        let state = if p.cached { "cached" } else { "to run" };
+        println!("  {state:<7} {}", p.bin.label());
+    }
     Ok(0)
+}
+
+/// A built test executable and whether a stored pass already covers it.
+struct Planned {
+    bin: TestBin,
+    key: Option<String>,
+    cached: bool,
+}
+
+fn plan(
+    args: &TestArgs,
+    root: &Path,
+    cfg: &test_config::TestConfig,
+    pkgs: &[Package],
+    selected: &[String],
+) -> Result<Vec<Planned>, String> {
+    let stdout = testbuild::build(selected, &args.cargo_args).map_err(|e| e.to_string())?;
+    let bins = testbuild::collect(&stdout, pkgs);
+    let declared = testkey::declared_inputs(root, &cfg.inputs).map_err(|e| e.to_string())?;
+    let rustc = testkey::rustc_version().map_err(|e| e.to_string())?;
+    let cx = Context {
+        inputs: &declared,
+        run_args: &args.run_args,
+        env: &cfg.env,
+        rustc: &rustc,
+    };
+    let passes = Passes::open();
+    let mut package_inputs: BTreeMap<String, String> = BTreeMap::new();
+    let mut planned = Vec::new();
+    for bin in bins {
+        if let Some(pkg) = pkgs.iter().find(|p| p.name == bin.package)
+            && !package_inputs.contains_key(&bin.package)
+        {
+            let digest = testkey::package_inputs(root, &pkg.dir).map_err(|e| e.to_string())?;
+            package_inputs.insert(bin.package.clone(), digest);
+        }
+        let key = package_inputs
+            .get(&bin.package)
+            .and_then(|files| testkey::key(&bin.package, &bin.target, &bin.exe, files, &cx));
+        let cached = !args.no_cache
+            && key
+                .as_deref()
+                .zip(passes.as_ref())
+                .is_some_and(|(k, passes)| passes.has(k));
+        planned.push(Planned { bin, key, cached });
+    }
+    Ok(planned)
 }
 
 fn choose(

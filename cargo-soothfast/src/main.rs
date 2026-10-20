@@ -38,6 +38,8 @@ mod spec_gen;
 mod spec_html;
 mod spec_probe;
 mod test_config;
+mod testbuild;
+mod testkey;
 mod testrun;
 mod testsel;
 mod trend;
