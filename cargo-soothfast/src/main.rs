@@ -150,6 +150,7 @@ fn run() -> i32 {
         "report" => report::run(rest),
         "mcp" => mcp::run(rest),
         "test" => test::run(rest),
+        test::shim::SUBCOMMAND => test::shim::run(rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             0

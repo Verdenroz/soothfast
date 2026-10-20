@@ -6,6 +6,7 @@ mod config;
 mod fixture;
 mod key;
 mod select;
+pub(crate) mod shim;
 
 use std::path::Path;
 
