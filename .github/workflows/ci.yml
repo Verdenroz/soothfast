@@ -32,7 +32,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .soothfast/tests
           key: soothfast-tests-${{ github.ref_name }}-${{ github.sha }}
@@ -49,6 +49,13 @@ jobs:
             selection="--base origin/$BASE_REF"
           fi
           cargo run -p cargo-soothfast -- test $selection --all-features
+      # Saved even when a test failed: only passes are stored, so the next run
+      # re-runs just the failures.
+      - if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/tests
+          key: soothfast-tests-${{ github.ref_name }}-${{ github.sha }}
 
   msrv:
     if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')

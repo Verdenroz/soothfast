@@ -129,7 +129,7 @@ outlive the run. This is the shape the workspace's own `check` job uses:
   with:
     fetch-depth: 0
     persist-credentials: false
-- uses: actions/cache@v5
+- uses: actions/cache/restore@v5
   with:
     path: .soothfast/tests
     key: soothfast-tests-${{ github.ref_name }}-${{ github.sha }}
@@ -145,6 +145,11 @@ outlive the run. This is the shape the workspace's own `check` job uses:
   env:
     EVENT: ${{ github.event_name }}
     BASE_REF: ${{ github.base_ref }}
+- if: always()
+  uses: actions/cache/save@v5
+  with:
+    path: .soothfast/tests
+    key: soothfast-tests-${{ github.ref_name }}-${{ github.sha }}
 ```
 
 A pull request compares against its base branch. A push to the default
@@ -154,4 +159,5 @@ is fixed while unchanged passing binaries are skipped. A base with no
 merge-base selects every package, so the step never falls back to testing
 nothing. The cache key follows the one used for measured runs in
 [Gating](gating.md): a branch restores its own earlier passes, then the
-default branch's.
+default branch's. The cache saves even when a test failed, since only passes
+are stored: the next run re-runs the failures and skips what already passed.
