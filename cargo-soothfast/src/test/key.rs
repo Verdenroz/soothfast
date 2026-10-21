@@ -33,14 +33,11 @@ pub struct Keyer {
     rustc: String,
     siblings: Vec<TestBin>,
     workspace: String,
-    packages: BTreeMap<String, PackageDigests>,
-}
-
-/// Digests of one package's files and of its plain executables, `None`
-/// when one of those cannot be digested.
-struct PackageDigests {
-    files: String,
-    siblings: Option<String>,
+    files: BTreeMap<String, String>,
+    sibling_sets: BTreeMap<String, Option<String>>,
+    /// Executable digests by path, taken once per round: the run step is the
+    /// build's own invocation, so nothing relinks an executable within it.
+    exes: BTreeMap<PathBuf, Option<String>>,
 }
 
 impl Keyer {
@@ -63,24 +60,30 @@ impl Keyer {
             run_args,
             siblings,
             workspace,
-            packages: BTreeMap::new(),
+            files: BTreeMap::new(),
+            sibling_sets: BTreeMap::new(),
+            exes: BTreeMap::new(),
         })
     }
 
     /// The pass cache key for `bin`, or `None` when its code or a sibling's
     /// cannot be digested.
     pub fn key(&mut self, bin: &TestBin) -> Result<Option<String>, String> {
-        if !self.packages.contains_key(&bin.package) {
-            let Some(digests) = self.package_digests(&bin.package)? else {
-                return Ok(None);
-            };
-            self.packages.insert(bin.package.clone(), digests);
+        let Some(pkg) = self.pkgs.iter().find(|p| p.name == bin.package) else {
+            return Ok(None);
+        };
+        if !self.files.contains_key(&bin.package) {
+            let files = package_inputs(&self.root, &self.pkgs, &self.cfg, pkg)
+                .map_err(|e| e.to_string())?;
+            self.files.insert(bin.package.clone(), files);
         }
-        let pkg = &self.packages[&bin.package];
-        let Some((siblings, digest)) = pkg
-            .siblings
-            .as_deref()
-            .zip(headrun::binary_digest(&bin.exe))
+        if !self.sibling_sets.contains_key(&bin.package) {
+            let siblings = self.siblings_digest(&bin.package);
+            self.sibling_sets.insert(bin.package.clone(), siblings);
+        }
+        let Some((siblings, digest)) = self.sibling_sets[&bin.package]
+            .clone()
+            .zip(self.exe_digest(&bin.exe))
         else {
             return Ok(None);
         };
@@ -88,8 +91,8 @@ impl Keyer {
             package: &bin.package,
             target: &bin.target,
             digest: &digest,
-            files: &pkg.files,
-            siblings,
+            files: &self.files[&bin.package],
+            siblings: &siblings,
             workspace: &self.workspace,
             run_args: &self.run_args,
             env: &self.env,
@@ -97,25 +100,36 @@ impl Keyer {
         })))
     }
 
-    /// `bin`'s key with the workspace and its package digested afresh, to
-    /// tell whether running it changed its own inputs.
+    /// `bin`'s key with the workspace and its package's files digested
+    /// afresh, to tell whether running it changed its own inputs.
     pub fn rekey(&mut self, bin: &TestBin) -> Result<Option<String>, String> {
         self.workspace =
             workspace_inputs(&self.root, &self.pkgs, &self.cfg).map_err(|e| e.to_string())?;
-        self.packages.remove(&bin.package);
+        self.files.remove(&bin.package);
         self.key(bin)
     }
 
-    fn package_digests(&self, name: &str) -> Result<Option<PackageDigests>, String> {
-        let Some(pkg) = self.pkgs.iter().find(|p| p.name == name) else {
-            return Ok(None);
-        };
-        let siblings: Vec<&TestBin> = self.siblings.iter().filter(|s| s.package == name).collect();
-        Ok(Some(PackageDigests {
-            files: package_inputs(&self.root, &self.pkgs, &self.cfg, pkg)
-                .map_err(|e| e.to_string())?,
-            siblings: siblings_digest(&siblings),
-        }))
+    fn exe_digest(&mut self, exe: &Path) -> Option<String> {
+        self.exes
+            .entry(exe.to_path_buf())
+            .or_insert_with(|| headrun::binary_digest(exe))
+            .clone()
+    }
+
+    /// Digest of a package's plain executables, which its integration tests
+    /// may spawn. `None` when any cannot be digested.
+    fn siblings_digest(&mut self, package: &str) -> Option<String> {
+        let siblings: Vec<(String, PathBuf)> = self
+            .siblings
+            .iter()
+            .filter(|s| s.package == package)
+            .map(|s| (s.label(), s.exe.clone()))
+            .collect();
+        let digests = siblings
+            .into_iter()
+            .map(|(label, exe)| Some((label, self.exe_digest(&exe)?)))
+            .collect::<Option<Vec<_>>>()?;
+        Some(fold_siblings(digests))
     }
 }
 
@@ -154,16 +168,6 @@ fn key_of(p: KeyParts) -> String {
         env.join("\u{2}"),
         p.rustc.into(),
     ])
-}
-
-/// Digest of a package's plain executables, which its integration tests may
-/// spawn. `None` when any cannot be digested.
-fn siblings_digest(siblings: &[&TestBin]) -> Option<String> {
-    let digests = siblings
-        .iter()
-        .map(|b| Some((b.label(), headrun::binary_digest(&b.exe)?)))
-        .collect::<Option<Vec<_>>>()?;
-    Some(fold_siblings(digests))
 }
 
 fn fold_siblings(mut digests: Vec<(String, String)>) -> String {
@@ -517,5 +521,79 @@ mod tests {
         assert_eq!(untracked, staged);
         assert_eq!(staged, committed);
         assert_ne!(committed, deleted);
+    }
+
+    #[cfg(unix)]
+    struct Round {
+        repo: TempRepo,
+        keyer: Keyer,
+        tests: [TestBin; 2],
+    }
+
+    #[cfg(unix)]
+    fn bin(repo: &TempRepo, target: &str, kind: &str) -> TestBin {
+        let exe = repo.root.join("exes").join(target);
+        std::os::unix::fs::symlink(std::env::current_exe().unwrap(), &exe).unwrap();
+        TestBin {
+            package: "pkg".into(),
+            target: target.into(),
+            kinds: vec![kind.into()],
+            doctest: false,
+            exe,
+        }
+    }
+
+    #[cfg(unix)]
+    /// Package `pkg` with two test binaries and a `tool` sibling, every
+    /// executable a symlink to this test binary.
+    fn round(name: &str) -> Round {
+        let repo = TempRepo::new(name);
+        repo.write(".gitignore", "exes/\n");
+        repo.write("pkg/src/lib.rs", "");
+        std::fs::create_dir_all(repo.root.join("exes")).unwrap();
+        let tests = [bin(&repo, "a", "test"), bin(&repo, "b", "test")];
+        let sibling = bin(&repo, "tool", "bin");
+        let keyer = Keyer::new(
+            repo.root.clone(),
+            vec![package("pkg", "pkg", &repo.root)],
+            TestConfig::default(),
+            Vec::new(),
+            vec![sibling],
+        )
+        .unwrap();
+        Round { repo, keyer, tests }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rekeying_reuses_the_rounds_executable_digests() {
+        let Round {
+            repo,
+            mut keyer,
+            tests,
+        } = round("rekey-memo");
+        let keys: Vec<_> = tests.iter().map(|t| keyer.key(t).unwrap()).collect();
+        assert!(keys.iter().all(Option::is_some));
+        for exe in ["a", "b", "tool"] {
+            std::fs::remove_file(repo.root.join("exes").join(exe)).unwrap();
+        }
+        for (test, key) in tests.iter().zip(&keys) {
+            assert_eq!(&keyer.rekey(test).unwrap(), key);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_package_file_one_test_writes_moves_the_next_tests_rekey() {
+        let Round {
+            repo,
+            mut keyer,
+            tests,
+        } = round("rekey-files");
+        let [a, b] = &tests;
+        let (ka, kb) = (keyer.key(a).unwrap(), keyer.key(b).unwrap());
+        assert_eq!(keyer.rekey(a).unwrap(), ka);
+        repo.write("pkg/golden/out.json", "{}");
+        assert_ne!(keyer.rekey(b).unwrap(), kb);
     }
 }
