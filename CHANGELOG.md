@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.4.3)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### 🐛 Fixes
+
+- Honor --no-run in cargo soothfast test (#263)
+
+
 ## 0.4.3 - 2026-10-20
 
 <!-- soothfast:notes -->
