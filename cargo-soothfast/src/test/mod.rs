@@ -30,6 +30,8 @@ pub struct TestArgs {
     pub no_cache: bool,
     /// `--no-doc`: skip doc tests.
     pub no_doc: bool,
+    /// `--no-run`: build the test binaries and run nothing.
+    pub no_run: bool,
     /// `-p`/`--package` values; select exactly these packages.
     pub only: Vec<String>,
     /// `--exclude` values; drop from the selection.
@@ -64,6 +66,7 @@ pub fn parse_args(args: &[String]) -> Result<TestArgs, String> {
             "--all" => out.all = true,
             "--no-cache" => out.no_cache = true,
             "--no-doc" => out.no_doc = true,
+            "--no-run" => out.no_run = true,
             "--doc" => return Err("doc tests always run; use --no-doc to skip them".into()),
             "-p" | "--package" => out.only.push(value()?),
             "--exclude" => out.exclude.push(value()?),
@@ -104,6 +107,14 @@ fn drive(args: &[String]) -> Result<i32, String> {
     let run_dir = RunDir::create()?;
     let messages = cargo::build(&selected, &args.cargo_args).map_err(|e| e.to_string())?;
     let built = cargo::collect(&messages, &pkgs);
+    if args.no_run {
+        println!(
+            "test: {} of {total} packages selected, {} binaries built, not run (--no-run)",
+            selected.len(),
+            built.tests.len()
+        );
+        return Ok(0);
+    }
     let triples = runner::triples(
         &host_triple()?,
         &args.cargo_args,
@@ -482,6 +493,13 @@ mod tests {
             manifest_dir: name.into(),
             deps: Vec::new(),
         }
+    }
+
+    #[test]
+    fn no_run_is_a_soothfast_flag_and_not_passed_to_cargo() {
+        let a = parse(&["--no-run", "--release"]);
+        assert!(a.no_run);
+        assert_eq!(a.cargo_args, vec!["--release"]);
     }
 
     #[test]
