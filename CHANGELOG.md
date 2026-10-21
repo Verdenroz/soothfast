@@ -1,13 +1,18 @@
 # Changelog
 
-## Unreleased (draft vs v0.4.3)
+## 0.4.4 - 2026-10-21
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+`cargo soothfast test --no-run` failed in 0.4.3 whenever a change selected
+any package, because the flag reached cargo twice. It now builds the
+selected packages' test binaries and stops: nothing runs, and no pass is
+read or stored.
+
+### Upgrade notes
+
+Nothing is required.
 <!-- /soothfast:notes -->
 
 ### 🐛 Fixes
