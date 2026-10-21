@@ -207,19 +207,41 @@ limit:</p>
 does not own. <code>soothfast-sdk</code>'s <code>embed_server</code> example is started by the
 Python and Node suites, which <code>cargo soothfast test</code> does not run.</p>
 <h2 id="running">Running<a class="anchor" href="#running" aria-label="Link to this section">#</a></h2>
-<p>Each remaining binary runs one after another through cargo itself, as
-<code>cargo test -p PKG --lib</code> (or <code>--bin</code>, <code>--test</code>, <code>--bench NAME</code>) with your
-cargo flags and the arguments after <code>--</code>. The build is already fresh, so
-cargo only runs it, and the test environment (<code>[env]</code> config, target
-runners, library paths) is cargo's own. Output streams as it is produced and
-a failing binary does not stop the others.</p>
+<p>Every binary runs in one <code>cargo test</code>: the build's own invocation, with the
+same packages and flags, without <code>--no-run</code>, and with <code>--no-fail-fast</code>. The
+build is already fresh and resolves the same features, so cargo compiles
+nothing and only runs. The test environment (<code>[env]</code> config, library paths,
+the working directory, <code>CARGO_*</code> variables) is cargo's own, and output
+streams as it is produced.</p>
+<p>soothfast sets itself as cargo's target runner for that invocation, so cargo
+hands it each test executable. One with a stored pass is skipped with a
+<code>test: skip ... (cached pass)</code> line and never starts. The rest run, and each
+one's exit status is recorded for the summary. A failing binary does not
+stop the others.</p>
 <p>A pass is stored only if the test leaves its inputs as it found them. A test
 that rewrites its own package files (regenerating goldens, say) prints that
-it changed its inputs and stores nothing, so the next run executes it again.</p>
-<p>Doc tests cannot be cached, so <code>cargo test --doc</code> runs for each selected
-package whose library has doc tests enabled. Pass <code>--no-doc</code> to skip them;
-passing a target flag such as <code>--lib</code> or <code>--test NAME</code> skips them too.
-<code>--doc</code> itself is refused, since doc tests always run.</p>
+it changed its inputs and stores nothing, so the next run executes it again.
+A binary cargo never got to counts as a failure. When cargo exits non-zero,
+the summary names <code>doc tests</code> only if cargo's output reports a failed doc
+test. Otherwise, if every binary passed, it reports <code>cargo test (exit N)</code>
+and prints the end of cargo's output.</p>
+<p>Doc tests cannot be cached. They run at the end of the same invocation for
+each selected package whose library has doc tests enabled. Pass <code>--no-doc</code>
+to skip them: cargo then runs a rustdoc wrapper that skips the selected
+packages' doc tests, so the build and the run keep the same targets and the
+same keys. Any other rustdoc call, such as a test that builds a generated
+crate's doc tests, passes through to the real rustdoc. A target flag such as
+<code>--lib</code> or <code>--test NAME</code> skips doc tests too. <code>--doc</code> itself is refused,
+since doc tests always run.</p>
+<h3 id="a-runner-you-configured">A runner you configured<a class="anchor" href="#a-runner-you-configured" aria-label="Link to this section">#</a></h3>
+<p>A runner in <code>CARGO_TARGET_&lt;TRIPLE&gt;_RUNNER</code> (<code>valgrind</code>, <code>qemu-aarch64</code>) is
+kept: soothfast runs each uncached binary through it. A runner, or a default
+<code>build.target</code>, set in a cargo config file or a <code>--config</code> argument cannot be
+chained that way, so each binary instead runs through its own
+<code>cargo test -p PKG --lib</code> (or <code>--bin</code>, <code>--test</code>, <code>--bench NAME</code>), followed by
+<code>cargo test --doc</code>. The command prints which setting caused it. Per-package
+runs can resolve features apart from the build, so expect them to recompile
+some crates.</p>
 <p>The command ends with a summary and exits non-zero if anything failed:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>test: 3 of 10 packages selected, 9 binaries run, 4 skipped (cached), doc tests in 3 packages
 </code></pre></figure>
@@ -280,6 +302,8 @@ are stored: the next run re-runs the failures and skips what already passed.</p>
     <li><a class="toc-l3" href="#what-the-key-does-not-see">What the key does not see</a></li>
   
     <li><a class="toc-l2" href="#running">Running</a></li>
+  
+    <li><a class="toc-l3" href="#a-runner-you-configured">A runner you configured</a></li>
   
     <li><a class="toc-l2" href="#in-ci">In CI</a></li>
   
