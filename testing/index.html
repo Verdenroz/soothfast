@@ -176,6 +176,28 @@ owns every file no nested member owns, so with a root package a change to
 <span class="tok-ty">inputs </span>=<span class="tok-str"> [&quot;fixtures/shared/**&quot;]     # files tests read from outside a package</span>
 <span class="tok-ty">env    </span>=<span class="tok-str"> [&quot;DATABASE_URL&quot;]           # variables whose values change the result</span></code></pre></figure>
 <p><code>inputs</code> wins over <code>ignore</code>. Ignore only files no test reads.</p>
+<h3 id="allow-lists">Allow-lists<a class="anchor" href="#allow-lists" aria-label="Link to this section">#</a></h3>
+<p>A package that owns many files no test reads, most often a package at the
+workspace root, can list the files that matter instead of ignoring the rest:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[test.packages.mylib]</span>
+<span class="tok-ty">files </span>=<span class="tok-str"> [&quot;src/**&quot;, &quot;tests/**&quot;, &quot;benches/**&quot;, &quot;examples/**&quot;, &quot;build.rs&quot;, &quot;docs/**&quot;]</span></code></pre></figure>
+<p>The globs are relative to the package's manifest directory. A file the
+package owns that matches none of them selects nothing and is left out of
+the package's key, so a new file at the workspace root no longer re-runs
+the root package's tests. <code>inputs</code> still wins over the list, <code>ignore</code> still
+subtracts from it, and the files that select every package (<code>Cargo.toml</code>,
+<code>Cargo.lock</code>, the toolchain and cargo config) select every package whatever
+it lists, and a package's own <code>Cargo.toml</code> always counts for it. A nested
+member's files belong to the member, not to the root's list. A package without a table keeps every file it owns.</p>
+<p>List everything the package's tests read from inside its directory:
+fixtures, goldens, data files, and the generated <code>tests/soothfast_docs/</code>
+and <code>examples/soothfast_capture/</code> targets (<code>tests/**</code> and <code>examples/**</code>
+cover them). Files pulled in with <code>include_str!</code> or <code>include_bytes!</code> are in
+the key through the executable even when the list leaves them out. The list
+is about what tests read, not what <code>cargo package</code> ships: a test may read a
+file the manifest's <code>exclude</code> drops, and that file still needs listing.</p>
+<p>A table naming a package the workspace does not have is an error, and so
+is a table with no <code>files</code>.</p>
 <h2 id="the-pass-cache">The pass cache<a class="anchor" href="#the-pass-cache" aria-label="Link to this section">#</a></h2>
 <p>After building, each test executable gets a key. A stored pass under
 <code>.soothfast/tests/&lt;key&gt;</code> means the executable is skipped, with a line naming
@@ -197,7 +219,8 @@ recently used entries.</p>
 changed. Declare what you can with <code>inputs</code> and <code>env</code>; the rest is a known
 limit:</p>
 <ul>
-<li>files outside the package that are not declared;</li>
+<li>files outside the package that are not declared, including ones a test reaches by a relative path such as <code>../fixtures/x</code> or <code>concat!(env!(&quot;CARGO_MANIFEST_DIR&quot;), &quot;/../x&quot;)</code>;</li>
+<li>files inside the package that its allow-list leaves out;</li>
 <li>external programs a test spawns, such as <code>cargo</code>, <code>objdump</code>, <code>valgrind</code>, <code>node</code> or <code>uv</code>;</li>
 <li>shared libraries such as libc, and the toolchain beyond <code>rustc -vV</code>;</li>
 <li>binaries of other packages, including a bundled example another package's test starts;</li>
@@ -296,6 +319,8 @@ are stored: the next run re-runs the failures and skips what already passed.</p>
   <ul class="toc-list" id="toc">
   
     <li><a class="toc-l2" href="#choosing-packages">Choosing packages</a></li>
+  
+    <li><a class="toc-l3" href="#allow-lists">Allow-lists</a></li>
   
     <li><a class="toc-l2" href="#the-pass-cache">The pass cache</a></li>
   
