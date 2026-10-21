@@ -398,10 +398,12 @@ one, make walltime advisory:
 walltime = "advisory"
 ```
 
-A walltime overrun then prints as `SOFT` with the reason `walltime is
-advisory in soothfast.toml` and never fails the gate. `gate accept` records no
-walltime entry for it. Instructions, Ir, allocations, polls and wakes, and
-size gate exactly as before. The default, `"hard"`, keeps the row above.
+Walltime slower than the reference then prints as `SOFT` with the reason
+`walltime is advisory in soothfast.toml` and never fails the gate. `gate
+accept` records no walltime entry for it. Instructions, Ir, allocations, polls
+and wakes, and size gate exactly as before, and so does a bench's own `p99`
+claim: that is a number the bench declares, not a comparison with the
+reference. The default, `"hard"`, keeps the row above.
 
 ## Build settings
 

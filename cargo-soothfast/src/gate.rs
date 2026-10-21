@@ -76,7 +76,6 @@ struct GateArgs {
     matrix: String,
     save_baseline: Option<String>,
     reuse_base: bool,
-    walltime_advisory: bool,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -98,7 +97,6 @@ pub fn run(args: &[String]) -> i32 {
         matrix: "default".into(),
         save_baseline: None,
         reuse_base: true,
-        walltime_advisory: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -134,10 +132,10 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
-    match gate_config::apply(&mut g.common) {
-        Ok(cfg) => g.walltime_advisory = cfg.walltime_advisory,
+    let walltime_advisory = match gate_config::apply(&mut g.common) {
+        Ok(cfg) => cfg.walltime_advisory,
         Err(e) => return err(&e),
-    }
+    };
 
     let mut regressions = 0u32;
     let mut failing_ids: Vec<String> = Vec::new();
@@ -185,7 +183,7 @@ pub fn run(args: &[String]) -> i32 {
         buildcost_mode,
         accepted,
         headroom_pct: None,
-        walltime_advisory: g.walltime_advisory,
+        walltime_advisory,
     };
     regressions += compare(
         &reference,
@@ -611,7 +609,6 @@ fn accept_cmd(args: &[String]) -> i32 {
         matrix: a.matrix,
         save_baseline: None,
         reuse_base: true,
-        walltime_advisory,
     };
     let Resolved {
         reference,
@@ -1149,9 +1146,10 @@ fn bench_text_digests(
 
 fn round_duration(d: Duration) -> String {
     let secs = d.as_secs();
-    match secs {
-        0..60 => format!("{secs}s"),
-        _ => format!("{}m{:02}s", secs / 60, secs % 60),
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format!("{}m{:02}s", secs / 60, secs % 60)
     }
 }
 

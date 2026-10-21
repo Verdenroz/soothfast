@@ -32,17 +32,17 @@ pub fn load(dir: &Path) -> Result<GateConfig, String> {
 }
 
 /// Fill in what the CLI did not set from the repo's `soothfast.toml`, and
-/// return the settings that have no CLI flag.
+/// return the file's settings.
 pub fn apply(common: &mut CommonArgs) -> Result<GateConfig, String> {
     let Ok(root) = invoke::workspace_root() else {
         return Ok(GateConfig::default());
     };
-    let mut cfg = load(&root)?;
+    let cfg = load(&root)?;
     if common.codegen_units.is_none() {
-        common.codegen_units = cfg.codegen_units.take();
+        common.codegen_units = cfg.codegen_units.clone();
     }
     if common.features.is_none() {
-        common.features = cfg.features.take();
+        common.features = cfg.features.clone();
     }
     Ok(cfg)
 }
@@ -76,8 +76,9 @@ fn set(cfg: &mut GateConfig, key: &str, value: TomlValue) -> Result<(), String> 
         ("codegen-units", TomlValue::Int(n)) => cfg.codegen_units = Some(n.to_string()),
         ("codegen-units", TomlValue::Str(s)) => cfg.codegen_units = Some(s),
         ("features", TomlValue::Str(s)) => cfg.features = Some(s),
-        ("walltime", TomlValue::Str(s)) if s == "hard" => cfg.walltime_advisory = false,
-        ("walltime", TomlValue::Str(s)) if s == "advisory" => cfg.walltime_advisory = true,
+        ("walltime", TomlValue::Str(s)) if s == "hard" || s == "advisory" => {
+            cfg.walltime_advisory = s == "advisory"
+        }
         ("walltime", _) => return Err("`walltime` under [gate] is \"hard\" or \"advisory\"".into()),
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [gate]")),
     }
