@@ -15,6 +15,9 @@ pub struct GateConfig {
     pub codegen_units: Option<String>,
     /// Cargo features every `gate`, `measure` and `spec gen` build carries.
     pub features: Option<String>,
+    /// `walltime = "advisory"`: a walltime overrun prints as SOFT and never
+    /// fails the gate. Deterministic counters gate as usual.
+    pub walltime_advisory: bool,
 }
 
 /// Read `soothfast.toml` from a directory. An absent file just means
@@ -28,22 +31,20 @@ pub fn load(dir: &Path) -> Result<GateConfig, String> {
     }
 }
 
-/// Fill in what the CLI did not set from the repo's `soothfast.toml`.
-pub fn apply(common: &mut CommonArgs) -> Result<(), String> {
-    if common.codegen_units.is_some() && common.features.is_some() {
-        return Ok(());
-    }
+/// Fill in what the CLI did not set from the repo's `soothfast.toml`, and
+/// return the settings that have no CLI flag.
+pub fn apply(common: &mut CommonArgs) -> Result<GateConfig, String> {
     let Ok(root) = invoke::workspace_root() else {
-        return Ok(());
+        return Ok(GateConfig::default());
     };
-    let cfg = load(&root)?;
+    let mut cfg = load(&root)?;
     if common.codegen_units.is_none() {
-        common.codegen_units = cfg.codegen_units;
+        common.codegen_units = cfg.codegen_units.take();
     }
     if common.features.is_none() {
-        common.features = cfg.features;
+        common.features = cfg.features.take();
     }
-    Ok(())
+    Ok(cfg)
 }
 
 /// Parse the `[gate]` section of a `soothfast.toml`.
@@ -75,6 +76,17 @@ fn set(cfg: &mut GateConfig, key: &str, value: TomlValue) -> Result<(), String> 
         ("codegen-units", TomlValue::Int(n)) => cfg.codegen_units = Some(n.to_string()),
         ("codegen-units", TomlValue::Str(s)) => cfg.codegen_units = Some(s),
         ("features", TomlValue::Str(s)) => cfg.features = Some(s),
+        ("walltime", TomlValue::Str(s)) => {
+            cfg.walltime_advisory = match s.as_str() {
+                "hard" => false,
+                "advisory" => true,
+                other => {
+                    return Err(format!(
+                        "`walltime` under [gate] is \"hard\" or \"advisory\", not {other:?}"
+                    ));
+                }
+            }
+        }
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [gate]")),
     }
     Ok(())
@@ -119,6 +131,20 @@ mod tests {
             parse("[site]\nname = \"x\"\n").unwrap(),
             GateConfig::default()
         );
+    }
+
+    #[test]
+    fn reads_walltime_mode() {
+        let advisory = |text| parse(text).unwrap().walltime_advisory;
+        assert!(advisory("[gate]\nwalltime = \"advisory\"\n"));
+        assert!(!advisory("[gate]\nwalltime = \"hard\"\n"));
+        assert!(!GateConfig::default().walltime_advisory);
+    }
+
+    #[test]
+    fn an_unknown_walltime_mode_is_an_error() {
+        assert!(parse("[gate]\nwalltime = \"soft\"\n").is_err());
+        assert!(parse("[gate]\nwalltime = true\n").is_err());
     }
 
     #[test]

@@ -75,6 +75,7 @@ struct GateArgs {
     matrix: String,
     save_baseline: Option<String>,
     reuse_base: bool,
+    walltime_advisory: bool,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -96,6 +97,7 @@ pub fn run(args: &[String]) -> i32 {
         matrix: "default".into(),
         save_baseline: None,
         reuse_base: true,
+        walltime_advisory: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -131,8 +133,9 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
-    if let Err(e) = gate_config::apply(&mut g.common) {
-        return err(&e);
+    match gate_config::apply(&mut g.common) {
+        Ok(cfg) => g.walltime_advisory = cfg.walltime_advisory,
+        Err(e) => return err(&e),
     }
 
     let mut regressions = 0u32;
@@ -181,6 +184,7 @@ pub fn run(args: &[String]) -> i32 {
         buildcost_mode,
         accepted,
         headroom_pct: None,
+        walltime_advisory: g.walltime_advisory,
     };
     regressions += compare(
         &reference,
@@ -586,9 +590,10 @@ fn accept_cmd(args: &[String]) -> i32 {
             other => return err(&format!("unknown gate accept arg {other:?}")),
         }
     }
-    if let Err(e) = gate_config::apply(&mut a.common) {
-        return err(&e);
-    }
+    let walltime_advisory = match gate_config::apply(&mut a.common) {
+        Ok(cfg) => cfg.walltime_advisory,
+        Err(e) => return err(&e),
+    };
     let Some(justification) = a.justification.clone() else {
         return err("gate accept needs --justification \"...\"");
     };
@@ -604,6 +609,7 @@ fn accept_cmd(args: &[String]) -> i32 {
         matrix: a.matrix,
         save_baseline: None,
         reuse_base: true,
+        walltime_advisory,
     };
     let Resolved {
         reference,
@@ -639,6 +645,7 @@ fn accept_cmd(args: &[String]) -> i32 {
         buildcost_mode: g.common.backend.as_deref() == Some("buildcost"),
         accepted: entries.clone(),
         headroom_pct: a.headroom,
+        walltime_advisory,
     };
     let mut candidates = Vec::new();
     let mut near_miss = Vec::new();
@@ -1281,6 +1288,8 @@ struct CompareCtx {
     /// `gate accept --headroom PCT`: also collect near-miss metrics within
     /// `PCT` points of failing. `None` for every ordinary `gate` run.
     headroom_pct: Option<f64>,
+    /// `[gate] walltime = "advisory"`: walltime overruns are SOFT.
+    walltime_advisory: bool,
 }
 
 /// A metric that failed its check, collected only when the caller (`gate
@@ -1387,7 +1396,7 @@ fn compare(
                 (_, _, _, Some(true)) => ("ACPT", None),
                 (true, true, None, _) => ("FAIL", None),
                 (true, true, Some(why), _) => ("SOFT", Some(why)),
-                (true, false, _, _) => ("SOFT", None),
+                (true, false, why, _) => ("SOFT", why),
             };
             if verdict == "FAIL" {
                 failures += 1;
@@ -1452,12 +1461,15 @@ fn compare(
             old["walltime"]["median_ns"].as_f64(),
             cur.median_ns,
             counter_limit(wall_limit, cur),
-            true,
+            !ctx.walltime_advisory,
             WALLTIME_NOISE_MARGIN * noise,
             walltime_downgrade(old, cur, wall_limit)
                 .or(build_soft)
                 .or(reused_soft)
-                .or(accepted_counters_soft),
+                .or(accepted_counters_soft)
+                .or(ctx
+                    .walltime_advisory
+                    .then_some("walltime is advisory in soothfast.toml")),
         );
         rel(
             "build_ms",
@@ -1666,6 +1678,7 @@ mod tests {
             buildcost_mode: false,
             accepted: gate_lock::Entries::new(),
             headroom_pct: None,
+            walltime_advisory: false,
         }
     }
 
@@ -2092,6 +2105,31 @@ mod tests {
         let (failures, failing) = gate_failures(&reused(walltime_reference()), &walltime_head());
         assert_eq!(failures, 0);
         assert!(failing.is_empty());
+    }
+
+    #[test]
+    fn advisory_walltime_never_fails() {
+        let ctx = CompareCtx {
+            walltime_advisory: true,
+            ..ctx()
+        };
+        let (failures, failing) = gate_failures_with(&walltime_reference(), &walltime_head(), ctx);
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty(), "a SOFT item must not enter triage");
+    }
+
+    #[test]
+    fn advisory_walltime_still_fails_counters() {
+        let ctx = CompareCtx {
+            walltime_advisory: true,
+            ..ctx()
+        };
+        let mut head = incident_head();
+        head.instructions = Some(400_000);
+        let (failures, failing) =
+            gate_failures_with(&incident_reference("fp-old"), &run_with(head), ctx);
+        assert_eq!(failures, 1, "instructions still gate; walltime is SOFT");
+        assert_eq!(failing, vec!["pkg::bt_base_to_htf_index"]);
     }
 
     #[test]
