@@ -4,6 +4,7 @@
 //! artifact when valgrind is available.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -393,6 +394,14 @@ fn run_each(args: &[String], packages: &[String]) -> i32 {
         }
     }
     worst
+}
+
+fn round_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    match secs {
+        0..60 => format!("{secs}s"),
+        _ => format!("{}m{:02}s", secs / 60, secs % 60),
+    }
 }
 
 /// Build every bench target once per side. After a rebase the merge-base
@@ -948,11 +957,21 @@ fn measure_ref_interleaved(
             let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), dir);
             reuse.measure_side(side, extra, stamp, |args| measure(dir, args))
         };
+        let timed = |n: usize, side: usize, extra: &[&str]| {
+            let start = Instant::now();
+            let run = measure_side(side, extra);
+            let label = ["head", "base"][side];
+            println!(
+                "gate: round {n}/4 ({label}) done in {}",
+                round_duration(start.elapsed())
+            );
+            run
+        };
         let mut rounds = [
-            measure_side(0, &[]),
-            measure_side(1, &[]),
-            measure_side(0, TIMING_ONLY),
-            measure_side(1, TIMING_ONLY),
+            timed(1, 0, &[]),
+            timed(2, 1, &[]),
+            timed(3, 0, TIMING_ONLY),
+            timed(4, 1, TIMING_ONLY),
         ];
         if let Some(reuse) = &item_reuse {
             for (side, round) in rounds.iter_mut().take(2).enumerate() {
@@ -1666,7 +1685,8 @@ fn partial(msg: &str) -> i32 {
 mod tests {
     use super::{
         CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare,
-        identical_pass_args, identical_pass_cache, reuse_hint, save_verdict, walltime_limit,
+        identical_pass_args, identical_pass_cache, reuse_hint, round_duration, save_verdict,
+        walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
@@ -1745,6 +1765,16 @@ mod tests {
         });
         run.build = build;
         run
+    }
+
+    #[test]
+    fn round_durations_read_as_minutes_and_seconds() {
+        assert_eq!(
+            round_duration(std::time::Duration::from_millis(45_900)),
+            "45s"
+        );
+        assert_eq!(round_duration(std::time::Duration::from_secs(161)), "2m41s");
+        assert_eq!(round_duration(std::time::Duration::from_secs(300)), "5m00s");
     }
 
     #[test]
