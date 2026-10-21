@@ -369,7 +369,7 @@ fn check(a: &DocsArgs) -> i32 {
                     Err(e) => return err(&e),
                 };
                 print_kept(kept, pkg);
-                let problems = docs_generated::check(&dir, pkg, &expected);
+                let problems = docs_generated::check(&dir, pkg, &expected, None);
                 if problems.is_empty() && !expected.is_empty() {
                     println!(
                         "ok    generated tests and capture example up to date ({} file(s))",
@@ -483,38 +483,29 @@ fn capture(a: &DocsArgs) -> i32 {
         Ok(s) => s,
         Err(e) => return err(&e),
     };
-    let in_scope = scanned
+    let pages: Vec<(&String, &String, Vec<String>)> = scanned
         .docs
         .iter()
-        .any(|(file, doc, _)| !gentests::capture_ids(file, doc).is_empty());
-    if in_scope {
-        if let Err(e) = current_capture(a, &scanned, &pkg) {
+        .map(|(file, doc, text)| (file, text, gentests::capture_ids(file, doc)))
+        .filter(|(_, _, ids)| !ids.is_empty())
+        .collect();
+    if !pages.is_empty() {
+        let dir = match invoke::pkg_dir(&pkg) {
+            Ok(d) => d,
+            Err(e) => return err(&e.to_string()),
+        };
+        if let Err(e) = current_capture(a, &scanned, &pkg, &dir) {
             return e;
         }
-        if let Err(e) = build_capture(&pkg, a.features.as_deref()) {
+        if let Err(e) = build_capture(&pkg, a.features.as_deref(), &dir) {
             return e;
         }
     }
     let (mut checked, mut stale, mut skipped, mut failures) = (0u32, 0u32, 0u32, 0u32);
-    for (file, doc, text) in &scanned.docs {
-        let ids = gentests::capture_ids(file, doc);
-        if ids.is_empty() {
-            continue;
-        }
+    for (file, text, ids) in pages {
         let mut current = text.clone();
         for (n, id) in ids.iter().enumerate() {
-            let mut cmd = std::process::Command::new("cargo");
-            cmd.args([
-                "run",
-                "-q",
-                "-p",
-                &pkg,
-                "--example",
-                gentests::CAPTURE_EXAMPLE,
-            ]);
-            if let Some(features) = &a.features {
-                cmd.args(["--features", features]);
-            }
+            let mut cmd = capture_cmd("run", &pkg, a.features.as_deref());
             let out = match cmd.args(["--", id]).output() {
                 Ok(o) => o,
                 Err(e) => return err(&format!("cannot run capture block {id}: {e}")),
@@ -585,13 +576,11 @@ fn capture(a: &DocsArgs) -> i32 {
 
 /// Fail unless the capture example on disk is what gen-tests would write now.
 /// Block ids are positions, so a stale example would run another block's code.
-fn current_capture(a: &DocsArgs, scanned: &Scanned, pkg: &str) -> Result<(), i32> {
-    let dir = invoke::pkg_dir(pkg).map_err(|e| err(&e.to_string()))?;
-    let (expected, _) = scanned.generated(a, &dir).map_err(|e| err(&e))?;
-    let problems: Vec<String> = docs_generated::check(&dir, pkg, &expected)
-        .into_iter()
-        .filter(|p| p.starts_with("examples/"))
-        .collect();
+fn current_capture(a: &DocsArgs, scanned: &Scanned, pkg: &str, dir: &Path) -> Result<(), i32> {
+    let (mut expected, _) = scanned.generated(a, dir).map_err(|e| err(&e))?;
+    let capture = Some(gentests::CAPTURE_DIR);
+    expected.retain(|g| gentests::owning_target(&g.path).map(|(t, _)| t) == capture);
+    let problems = docs_generated::check(dir, pkg, &expected, capture);
     if problems.is_empty() {
         return Ok(());
     }
@@ -604,32 +593,23 @@ fn current_capture(a: &DocsArgs, scanned: &Scanned, pkg: &str) -> Result<(), i32
 
 /// Build the package's capture example once, so a compile error is reported
 /// as one failure naming the blocks it is in, not as every block failing.
-fn build_capture(pkg: &str, features: Option<&str>) -> Result<(), i32> {
-    let mut cmd = std::process::Command::new("cargo");
-    cmd.args([
-        "build",
-        "-q",
-        "-p",
-        pkg,
-        "--example",
-        gentests::CAPTURE_EXAMPLE,
-    ]);
-    if let Some(features) = features {
-        cmd.args(["--features", features]);
-    }
-    let out = cmd
+fn build_capture(pkg: &str, features: Option<&str>, dir: &Path) -> Result<(), i32> {
+    let out = capture_cmd("build", pkg, features)
+        .arg("--message-format=json")
         .output()
         .map_err(|e| err(&format!("cannot build the capture example: {e}")))?;
     if out.status.success() {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let diagnostics: Vec<Value> = invoke::cargo_messages(&out.stdout)
+        .filter(|m| m["reason"] == "compiler-message")
+        .map(|m| m["message"].clone())
+        .collect();
     println!(
         "FAIL  {}: the shared capture example does not compile, so no block ran",
         gentests::CAPTURE_DIR
     );
-    let dir = invoke::pkg_dir(pkg).map_err(|e| err(&e.to_string()))?;
-    for block in blocks_named_in(&stderr) {
+    for block in blocks_named_in(&diagnostics) {
         let Ok(text) = std::fs::read_to_string(dir.join(gentests::CAPTURE_DIR).join(&block)) else {
             continue;
         };
@@ -639,18 +619,45 @@ fn build_capture(pkg: &str, features: Option<&str>) -> Result<(), i32> {
             None => {}
         }
     }
-    println!("{stderr}");
+    for rendered in diagnostics.iter().filter_map(|d| d["rendered"].as_str()) {
+        print!("{rendered}");
+    }
+    print!("{}", String::from_utf8_lossy(&out.stderr));
     println!("docs capture: FAILED (capture example does not compile)");
     Err(1)
 }
 
-/// The `block_<id>.rs` files a compiler error output names, in order.
-fn blocks_named_in(stderr: &str) -> Vec<String> {
-    let mut blocks = Vec::new();
-    for word in stderr.split(|c: char| c.is_whitespace() || matches!(c, ':' | '/' | '\\')) {
-        if word.starts_with("block_") && word.ends_with(".rs") && !blocks.iter().any(|b| b == word)
+/// `cargo VERB -q -p PKG --example soothfast_capture [--features F]`, one
+/// spelling for the build and every block's run, so each block runs that build.
+fn capture_cmd(verb: &str, pkg: &str, features: Option<&str>) -> std::process::Command {
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.args([
+        verb,
+        "-q",
+        "-p",
+        pkg,
+        "--example",
+        gentests::CAPTURE_EXAMPLE,
+    ]);
+    if let Some(features) = features {
+        cmd.args(["--features", features]);
+    }
+    cmd
+}
+
+/// The `block_<id>.rs` files compiler diagnostics point into, in order.
+fn blocks_named_in(diagnostics: &[Value]) -> Vec<String> {
+    let mut blocks: Vec<String> = Vec::new();
+    let files = diagnostics
+        .iter()
+        .filter_map(|d| d["spans"].as_array())
+        .flatten()
+        .filter_map(|span| span["file_name"].as_str());
+    for file in files {
+        let name = file.rsplit(['/', '\\']).next().unwrap_or(file);
+        if name.starts_with("block_") && name.ends_with(".rs") && !blocks.iter().any(|b| b == name)
         {
-            blocks.push(word.to_string());
+            blocks.push(name.to_string());
         }
     }
     blocks
@@ -758,11 +765,18 @@ mod tests {
 
     #[test]
     fn compiler_errors_name_each_block_file_once() {
-        let stderr = "error[E0432]: unresolved import\n --> p/examples/soothfast_capture/block_docs_c_1.rs:3:5\n\
-                      error[E0425]: cannot find\n --> examples/soothfast_capture/block_readme_2.rs:4:1\n\
-                      --> p\\examples\\soothfast_capture\\block_docs_c_1.rs:9:1\n";
+        let diagnostics = [
+            serde_json::json!({ "spans": [
+                { "file_name": "p/examples/soothfast_capture/block_docs_c_1.rs" },
+                { "file_name": "src/lib.rs" },
+            ] }),
+            serde_json::json!({ "spans": [
+                { "file_name": "examples/soothfast_capture/block_readme_2.rs" },
+                { "file_name": "p\\examples\\soothfast_capture\\block_docs_c_1.rs" },
+            ] }),
+        ];
         assert_eq!(
-            blocks_named_in(stderr),
+            blocks_named_in(&diagnostics),
             ["block_docs_c_1.rs", "block_readme_2.rs"]
         );
     }

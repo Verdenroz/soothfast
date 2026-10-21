@@ -57,16 +57,17 @@ const VERBATIM: &str =
 /// The one integration-test target the doc tests of a package compile into.
 pub const DOC_TESTS_DIR: &str = "tests/soothfast_docs";
 
-/// Where generated files live, as (directory, file-name prefix), relative to
-/// the package directory. A file there that starts with [`GENERATED_HEADER`]
-/// belongs to gen-tests: it is rewritten when expected and removed when not.
-/// An entry with an empty prefix is a directory gen-tests owns outright; the
-/// prefixed entries are the per-page and per-block layout of earlier releases.
-pub const OWNED: &[(&str, &str)] = &[
-    ("tests", "soothfast_doc_"),
-    (DOC_TESTS_DIR, ""),
-    ("examples", "soothfast_capture_"),
-    (CAPTURE_DIR, ""),
+/// Where generated files live, as (directory, file-name prefix, replaced by),
+/// relative to the package directory. A file there that starts with
+/// [`GENERATED_HEADER`] belongs to gen-tests: it is rewritten when expected
+/// and removed when not. An entry with an empty prefix is a target directory
+/// gen-tests owns outright; a prefixed entry is the per-page or per-block
+/// layout of earlier releases and names the target directory that replaced it.
+pub const OWNED: &[(&str, &str, Option<&str>)] = &[
+    ("tests", "soothfast_doc_", Some(DOC_TESTS_DIR)),
+    (DOC_TESTS_DIR, "", None),
+    ("examples", "soothfast_capture_", Some(CAPTURE_DIR)),
+    (CAPTURE_DIR, "", None),
 ];
 
 /// The page a generated file was generated from, and the line of the block
@@ -150,14 +151,19 @@ fn one_global_allocator(
     }
 }
 
-/// Whether `rel_path` (relative to the package directory) is somewhere
-/// gen-tests writes, per [`OWNED`]. The file's header decides ownership.
-pub fn in_owned_place(rel_path: &str) -> bool {
+/// For `rel_path` (relative to the package directory) in a place gen-tests
+/// writes, per [`OWNED`]: the target directory it belongs to, and whether it is
+/// a leftover of the layout that target replaced. The file's header decides
+/// ownership.
+pub fn owning_target(rel_path: &str) -> Option<(&'static str, bool)> {
     let (dir, name) = rel_path.rsplit_once('/').unwrap_or(("", rel_path));
-    name.ends_with(".rs")
-        && OWNED
-            .iter()
-            .any(|(d, prefix)| *d == dir && name.starts_with(prefix))
+    if !name.ends_with(".rs") {
+        return None;
+    }
+    OWNED
+        .iter()
+        .find(|(d, prefix, _)| *d == dir && name.starts_with(prefix))
+        .map(|(dir, _, replaced_by)| (replaced_by.unwrap_or(dir), replaced_by.is_some()))
 }
 
 /// Module content for one markdown page's doc tests, or None when it has no
@@ -440,12 +446,25 @@ mod tests {
 
     #[test]
     fn owned_places_cover_both_layouts_and_nothing_else() {
-        assert!(in_owned_place("tests/soothfast_doc_readme.rs"));
-        assert!(in_owned_place("tests/soothfast_docs/main.rs"));
-        assert!(in_owned_place("tests/soothfast_docs/doc_readme.rs"));
-        assert!(!in_owned_place("tests/integration.rs"));
-        assert!(!in_owned_place("tests/soothfast_docs/data.json"));
-        assert!(!in_owned_place("src/soothfast_doc_x.rs"));
+        assert_eq!(
+            owning_target("tests/soothfast_doc_readme.rs"),
+            Some((DOC_TESTS_DIR, true))
+        );
+        assert_eq!(
+            owning_target("tests/soothfast_docs/main.rs"),
+            Some((DOC_TESTS_DIR, false))
+        );
+        assert_eq!(
+            owning_target("examples/soothfast_capture_readme_1.rs"),
+            Some((CAPTURE_DIR, true))
+        );
+        assert_eq!(
+            owning_target("examples/soothfast_capture/block_readme_1.rs"),
+            Some((CAPTURE_DIR, false))
+        );
+        assert_eq!(owning_target("tests/integration.rs"), None);
+        assert_eq!(owning_target("tests/soothfast_docs/data.json"), None);
+        assert_eq!(owning_target("src/soothfast_doc_x.rs"), None);
     }
 
     #[test]

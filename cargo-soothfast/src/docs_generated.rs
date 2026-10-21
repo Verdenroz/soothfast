@@ -11,16 +11,20 @@ use std::path::Path;
 
 use soothfast_docs::gentests::{self, Generated};
 
-/// Generated files present under `pkg_dir`: (package-relative path, content).
-fn owned_files(pkg_dir: &Path) -> Vec<(String, String)> {
+/// Generated files under `pkg_dir` as (package-relative path, content); with
+/// `only`, just that target's.
+fn owned_files(pkg_dir: &Path, only: Option<&str>) -> Vec<(String, String)> {
     let mut found = Vec::new();
-    for (dir, _) in gentests::OWNED {
+    for (dir, _, _) in gentests::OWNED {
         let Ok(entries) = std::fs::read_dir(pkg_dir.join(dir)) else {
             continue;
         };
         for entry in entries.flatten() {
             let rel = format!("{dir}/{}", entry.file_name().to_string_lossy());
-            if !gentests::in_owned_place(&rel) {
+            let Some((target, _)) = gentests::owning_target(&rel) else {
+                continue;
+            };
+            if only.is_some_and(|t| t != target) {
                 continue;
             }
             if let Ok(text) = std::fs::read_to_string(entry.path())
@@ -36,7 +40,7 @@ fn owned_files(pkg_dir: &Path) -> Vec<(String, String)> {
 
 /// Pages the package's generated files were generated from, workspace-relative.
 pub fn recorded_pages(pkg_dir: &Path) -> BTreeSet<String> {
-    owned_files(pkg_dir)
+    owned_files(pkg_dir, None)
         .iter()
         .filter_map(|(_, text)| gentests::recorded_source(text).map(|(page, _)| page))
         .map(page_key)
@@ -48,9 +52,9 @@ pub fn page_key(page: &str) -> String {
     page.replace('\\', "/").trim_start_matches("./").to_string()
 }
 
-/// What differs from `expected`, one line per file, each naming the command
-/// that fixes it. Empty when disk matches.
-pub fn check(pkg_dir: &Path, pkg: &str, expected: &[Generated]) -> Vec<String> {
+/// What differs from `expected`, one line per file naming the command that
+/// fixes it; with `only`, just that target's files. Empty when disk matches.
+pub fn check(pkg_dir: &Path, pkg: &str, expected: &[Generated], only: Option<&str>) -> Vec<String> {
     let fix = format!("run `cargo soothfast docs gen-tests -p {pkg}`");
     let mut problems = Vec::new();
     for g in expected {
@@ -60,28 +64,24 @@ pub fn check(pkg_dir: &Path, pkg: &str, expected: &[Generated]) -> Vec<String> {
             Err(_) => problems.push(format!("{}: generated file is missing — {fix}", g.path)),
         }
     }
-    let wanted: BTreeSet<&str> = expected.iter().map(|g| g.path.as_str()).collect();
-    for (path, _) in owned_files(pkg_dir) {
-        if wanted.contains(path.as_str()) {
-            continue;
-        }
-        let why = match legacy_replacement(&path) {
-            Some(new) => format!("replaced by {new}/"),
-            None => "no longer generated".into(),
+    for path in unexpected(pkg_dir, expected, only) {
+        let why = match gentests::owning_target(&path) {
+            Some((target, true)) => format!("replaced by {target}/"),
+            _ => "no longer generated".into(),
         };
         problems.push(format!("{path}: {why} — {fix}"));
     }
     problems
 }
 
-/// Where a file of an earlier release's layout now lives, if it is one.
-fn legacy_replacement(path: &str) -> Option<&'static str> {
-    let (dir, _) = path.rsplit_once('/')?;
-    match dir {
-        "tests" => Some(gentests::DOC_TESTS_DIR),
-        "examples" => Some(gentests::CAPTURE_DIR),
-        _ => None,
-    }
+/// Generated files on disk that `expected` no longer produces.
+fn unexpected(pkg_dir: &Path, expected: &[Generated], only: Option<&str>) -> Vec<String> {
+    let wanted: BTreeSet<&str> = expected.iter().map(|g| g.path.as_str()).collect();
+    owned_files(pkg_dir, only)
+        .into_iter()
+        .map(|(path, _)| path)
+        .filter(|path| !wanted.contains(path.as_str()))
+        .collect()
 }
 
 /// Write the files of `expected` whose bytes differ on disk, and remove every
@@ -99,15 +99,11 @@ pub fn write(pkg_dir: &Path, expected: &[Generated]) -> io::Result<(Vec<String>,
         std::fs::write(&path, &g.content)?;
         written.push(g.path.clone());
     }
-    let wanted: BTreeSet<&str> = expected.iter().map(|g| g.path.as_str()).collect();
-    let mut removed = Vec::new();
-    for (path, _) in owned_files(pkg_dir) {
-        if !wanted.contains(path.as_str()) {
-            std::fs::remove_file(pkg_dir.join(&path))?;
-            removed.push(path);
-        }
+    let removed = unexpected(pkg_dir, expected, None);
+    for path in &removed {
+        std::fs::remove_file(pkg_dir.join(path))?;
     }
-    for (dir, prefix) in gentests::OWNED {
+    for (dir, prefix, _) in gentests::OWNED {
         let dir = pkg_dir.join(dir);
         if prefix.is_empty() && dir.read_dir().is_ok_and(|mut d| d.next().is_none()) {
             std::fs::remove_dir(dir)?;
@@ -167,7 +163,7 @@ mod tests {
     fn a_matching_package_has_no_problems() {
         let pkg = Pkg::new("match");
         write(&pkg.0, &expected()).unwrap();
-        assert!(check(&pkg.0, "p", &expected()).is_empty());
+        assert!(check(&pkg.0, "p", &expected(), None).is_empty());
     }
 
     #[test]
@@ -176,7 +172,7 @@ mod tests {
         write(&pkg.0, &expected()).unwrap();
         let old = generated("tests/soothfast_doc_readme.rs", "");
         pkg.put(&old.path, &old.content);
-        let problems = check(&pkg.0, "p", &expected());
+        let problems = check(&pkg.0, "p", &expected(), None);
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(
             problems[0]
@@ -195,7 +191,7 @@ mod tests {
         );
         let orphan = generated("tests/soothfast_docs/doc_gone.rs", "");
         pkg.put(&orphan.path, &orphan.content);
-        let problems = check(&pkg.0, "p", &expected());
+        let problems = check(&pkg.0, "p", &expected(), None);
         assert_eq!(problems.len(), 2, "{problems:?}");
         assert!(problems[0].contains("doc_readme.rs: generated file is stale"));
         assert!(problems[1].contains("doc_gone.rs: no longer generated"));
@@ -213,7 +209,7 @@ mod tests {
         assert_eq!(removed, ["tests/soothfast_doc_readme.rs"]);
         assert!(pkg.has("tests/soothfast_doc_mine.rs"));
         assert!(pkg.has("tests/integration.rs"));
-        assert!(check(&pkg.0, "p", &expected()).is_empty());
+        assert!(check(&pkg.0, "p", &expected(), None).is_empty());
     }
 
     #[test]
@@ -254,7 +250,7 @@ mod tests {
         let pkg = Pkg::new("legacy-capture");
         let old = generated("examples/soothfast_capture_readme_1.rs", "");
         pkg.put(&old.path, &old.content);
-        let problems = check(&pkg.0, "p", &[]);
+        let problems = check(&pkg.0, "p", &[], None);
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(problems[0].contains("replaced by examples/soothfast_capture/"));
     }
