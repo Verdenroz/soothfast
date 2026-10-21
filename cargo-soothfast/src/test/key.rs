@@ -596,4 +596,32 @@ mod tests {
         repo.write("pkg/golden/out.json", "{}");
         assert_ne!(keyer.rekey(b).unwrap(), kb);
     }
+
+    #[test]
+    fn a_root_allow_list_keeps_unlisted_files_out_of_both_digests() {
+        let repo = TempRepo::new("allow-key");
+        repo.write("src/lib.rs", "pub fn a() {}");
+        repo.git(&["add", "."]);
+        let pkgs = [package("pkg", "", &repo.root)];
+        let mut cfg = TestConfig::default();
+        let list = crate::test::config::AllowList {
+            header: "test.packages.pkg".into(),
+            files: vec!["src/**".into()],
+        };
+        cfg.packages.insert("pkg".into(), list);
+        let digests = || {
+            (
+                package_inputs(&repo.root, &pkgs, &cfg, &pkgs[0]).unwrap(),
+                workspace_inputs(&repo.root, &pkgs, &cfg).unwrap(),
+            )
+        };
+        let before = digests();
+        repo.write("docker-compose.yml", "services: {}");
+        repo.write("monitoring/dash.json", "{}");
+        assert_eq!(digests(), before);
+        repo.write("src/more.rs", "");
+        let after = digests();
+        assert_ne!(after.0, before.0);
+        assert_eq!(after.1, before.1);
+    }
 }

@@ -54,6 +54,36 @@ env    = ["DATABASE_URL"]           # variables whose values change the result
 
 `inputs` wins over `ignore`. Ignore only files no test reads.
 
+### Allow-lists
+
+A package that owns many files no test reads, most often a package at the
+workspace root, can list the files that matter instead of ignoring the rest:
+
+```toml
+[test.packages.mylib]
+files = ["src/**", "tests/**", "benches/**", "examples/**", "build.rs", "docs/**"]
+```
+
+The globs are relative to the package's manifest directory. A file the
+package owns that matches none of them selects nothing and is left out of
+the package's key, so a new file at the workspace root no longer re-runs
+the root package's tests. `inputs` still wins over the list, `ignore` still
+subtracts from it, and the files that select every package (`Cargo.toml`,
+`Cargo.lock`, the toolchain and cargo config) select every package whatever
+it lists, and a package's own `Cargo.toml` always counts for it. A nested
+member's files belong to the member, not to the root's list. A package without a table keeps every file it owns.
+
+List everything the package's tests read from inside its directory:
+fixtures, goldens, data files, and the generated `tests/soothfast_docs/`
+and `examples/soothfast_capture/` targets (`tests/**` and `examples/**`
+cover them). Files pulled in with `include_str!` or `include_bytes!` are in
+the key through the executable even when the list leaves them out. The list
+is about what tests read, not what `cargo package` ships: a test may read a
+file the manifest's `exclude` drops, and that file still needs listing.
+
+A table naming a package the workspace does not have is an error, and so
+is a table with no `files`.
+
 ## The pass cache
 
 After building, each test executable gets a key. A stored pass under
@@ -88,7 +118,10 @@ A test that reads anything else can pass from the cache after that thing
 changed. Declare what you can with `inputs` and `env`; the rest is a known
 limit:
 
-- files outside the package that are not declared;
+- files outside the package that are not declared, including ones a test
+  reaches by a relative path such as `../fixtures/x` or
+  `concat!(env!("CARGO_MANIFEST_DIR"), "/../x")`;
+- files inside the package that its allow-list leaves out;
 - external programs a test spawns, such as `cargo`, `objdump`, `valgrind`,
   `node` or `uv`;
 - shared libraries such as libc, and the toolchain beyond `rustc -vV`;

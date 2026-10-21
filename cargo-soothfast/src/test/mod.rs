@@ -93,6 +93,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let cfg = config::load(&root)?;
     let pkgs = select::packages(&root).map_err(|e| e.to_string())?;
+    cfg.check_packages(pkgs.iter().map(|p| p.name.as_str()))?;
     let total = pkgs.len();
     let selected = select_packages(&args, &root, &pkgs, &cfg)?;
     let mut tally = Tally::default();

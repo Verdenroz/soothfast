@@ -87,7 +87,7 @@ fn matches_any(globs: &[String], file: &str) -> bool {
 /// What a change to one file reaches.
 #[derive(Debug, PartialEq)]
 pub enum Scope<'a> {
-    /// Nothing: `ignore` covers it.
+    /// Nothing: `ignore` covers it, or its package's allow-list leaves it out.
     Ignored,
     /// The named package and its dependents.
     Package(&'a str),
@@ -96,7 +96,8 @@ pub enum Scope<'a> {
 }
 
 /// What a change to `file` reaches. A declared input wins over `ignore`,
-/// and `ignore` wins over a build-wide or unowned file.
+/// `ignore` wins over a build-wide file, and a build-wide file or the
+/// package's own manifest wins over the owning package's allow-list.
 pub fn classify<'a>(pkgs: &'a [Package], cfg: &TestConfig, file: &str) -> Scope<'a> {
     if matches_any(&cfg.inputs, file) {
         return Scope::Workspace;
@@ -107,7 +108,17 @@ pub fn classify<'a>(pkgs: &'a [Package], cfg: &TestConfig, file: &str) -> Scope<
     if GLOBAL_FILES.contains(&file) {
         return Scope::Workspace;
     }
-    owner(pkgs, file).map_or(Scope::Workspace, |p| Scope::Package(&p.name))
+    let Some(pkg) = owner(pkgs, file) else {
+        return Scope::Workspace;
+    };
+    let rel = match pkg.dir.as_str() {
+        "" => file,
+        dir => &file[dir.len() + 1..],
+    };
+    match cfg.packages.get(&pkg.name) {
+        Some(list) if rel != "Cargo.toml" && !matches_any(&list.files, rel) => Scope::Ignored,
+        _ => Scope::Package(&pkg.name),
+    }
 }
 
 /// Select the packages `changed` (root-relative paths) can affect.
@@ -417,5 +428,95 @@ mod tests {
         assert!(has_merge_base(&repo.root, "HEAD").unwrap());
         assert!(!has_merge_base(&repo.root, &first).unwrap());
         assert!(has_merge_base(&repo.root, "nope").is_err());
+    }
+
+    fn allow(cfg: &mut TestConfig, name: &str, files: &[&str]) {
+        let list = crate::test::config::AllowList {
+            header: format!("test.packages.{name}"),
+            files: files.iter().map(|f| f.to_string()).collect(),
+        };
+        cfg.packages.insert(name.into(), list);
+    }
+
+    /// A root package `app`, with `core` nested under it and `tool` depending
+    /// on it.
+    fn rooted() -> Vec<Package> {
+        vec![
+            pkg("app", "", &["core"]),
+            pkg("core", "core", &[]),
+            pkg("tool", "tool", &["app"]),
+        ]
+    }
+
+    #[test]
+    fn a_root_allow_list_keeps_unlisted_root_files_from_selecting() {
+        let mut cfg = TestConfig::default();
+        allow(&mut cfg, "app", &["src/**", "tests/**", "docs/**"]);
+        let pkgs = rooted();
+        assert_eq!(classify(&pkgs, &cfg, "docker-compose.yml"), Scope::Ignored);
+        assert_eq!(
+            classify(&pkgs, &cfg, ".github/workflows/ci.yml"),
+            Scope::Ignored
+        );
+        assert_eq!(
+            classify(&pkgs, &cfg, "docs/guide.md"),
+            Scope::Package("app")
+        );
+        let sel = select(&pkgs, &files(&["NEW_FILE.md", "monitoring/x.yml"]), &cfg);
+        assert!(sel.names.is_empty(), "{:?}", sel.names);
+        let sel = select(&pkgs, &files(&["src/lib.rs"]), &cfg);
+        assert_eq!(names(&sel), ["app", "tool"]);
+    }
+
+    #[test]
+    fn a_nested_members_file_is_the_members_whatever_the_root_lists() {
+        let mut cfg = TestConfig::default();
+        allow(&mut cfg, "app", &["src/**"]);
+        let pkgs = rooted();
+        assert_eq!(
+            classify(&pkgs, &cfg, "core/src/lib.rs"),
+            Scope::Package("core")
+        );
+        assert_eq!(
+            classify(&pkgs, &cfg, "core/README.md"),
+            Scope::Package("core")
+        );
+        let sel = select(&pkgs, &files(&["core/src/lib.rs"]), &cfg);
+        assert_eq!(names(&sel), ["app", "core", "tool"]);
+    }
+
+    #[test]
+    fn inputs_ignore_and_build_wide_files_keep_their_precedence_over_a_list() {
+        let mut cfg = TestConfig {
+            inputs: vec!["fixtures/**".into()],
+            ignore: vec!["src/generated/**".into()],
+            ..TestConfig::default()
+        };
+        allow(&mut cfg, "app", &["src/**"]);
+        let pkgs = rooted();
+        assert_eq!(classify(&pkgs, &cfg, "fixtures/a.json"), Scope::Workspace);
+        assert_eq!(classify(&pkgs, &cfg, "src/generated/x.rs"), Scope::Ignored);
+        for global in ["Cargo.toml", "Cargo.lock", ".cargo/config.toml"] {
+            assert_eq!(classify(&pkgs, &cfg, global), Scope::Workspace, "{global}");
+        }
+    }
+
+    #[test]
+    fn a_nested_members_list_is_relative_to_its_own_dir() {
+        let mut cfg = TestConfig::default();
+        allow(&mut cfg, "core", &["src/**"]);
+        let pkgs = rooted();
+        assert_eq!(
+            classify(&pkgs, &cfg, "core/src/lib.rs"),
+            Scope::Package("core")
+        );
+        assert_eq!(classify(&pkgs, &cfg, "core/notes.txt"), Scope::Ignored);
+        assert_eq!(
+            classify(&pkgs, &cfg, "core/Cargo.toml"),
+            Scope::Package("core")
+        );
+        assert_eq!(classify(&pkgs, &cfg, "core/sub/Cargo.toml"), Scope::Ignored);
+        assert_eq!(classify(&pkgs, &cfg, "src/lib.rs"), Scope::Package("app"));
+        assert_eq!(classify(&pkgs, &cfg, "notes.txt"), Scope::Package("app"));
     }
 }
