@@ -173,6 +173,36 @@ fn every_binary_runs_in_the_builds_invocation_and_its_pass_is_reused() {
     );
 }
 
+/// soothfast testing its own workspace relinks the binary it runs from
+/// during the build, so the runner cargo calls must not be that file.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_runner_survives_its_own_binary_being_replaced() {
+    let fx = Fixture::new("replaced");
+    let cli = fx.root.join("cli-copy");
+    std::fs::copy(env!("CARGO_BIN_EXE_cargo-soothfast"), &cli).unwrap();
+    let child = Command::new(&cli)
+        .args(["soothfast", "test", "--all", "--features", "a/extra"])
+        .current_dir(&fx.root)
+        .env("CARGO_TARGET_DIR", fx.root.join("target"))
+        .env_remove("RUSTDOC")
+        .env_remove("SOOTHFAST_TEST_PLAN")
+        .env_remove("CARGO_BUILD_TARGET")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::fs::remove_file(&cli).unwrap();
+    let out = child.wait_with_output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{text}");
+    assert!(!text.contains("never executed"), "{text}");
+}
+
 #[test]
 fn a_failing_binary_is_named_and_the_rest_still_pass() {
     let fx = Fixture::new("failing");

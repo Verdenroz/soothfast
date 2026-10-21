@@ -22,16 +22,20 @@ pub fn invoked_as(argv0: &str) -> bool {
     Path::new(argv0).file_stem().is_some_and(|s| s == LINK)
 }
 
-/// Link the running executable into `dir` as the wrapper, copying it when
-/// the filesystem refuses a hard link.
-pub fn install(dir: &Path) -> io::Result<PathBuf> {
+/// Link `exe` into `dir` as the wrapper.
+pub fn install(dir: &Path, exe: &Path) -> io::Result<PathBuf> {
     let link = dir.join(format!("{LINK}{}", std::env::consts::EXE_SUFFIX));
-    let exe = std::env::current_exe()?;
-    let _ = std::fs::remove_file(&link);
-    if std::fs::hard_link(&exe, &link).is_err() {
-        std::fs::copy(&exe, &link)?;
-    }
+    link_or_copy(exe, &link)?;
     Ok(link)
+}
+
+/// Hard-link `from` to `to`, copying it when the filesystem refuses a link.
+pub fn link_or_copy(from: &Path, to: &Path) -> io::Result<()> {
+    let _ = std::fs::remove_file(to);
+    if std::fs::hard_link(from, to).is_err() {
+        std::fs::copy(from, to)?;
+    }
+    Ok(())
 }
 
 /// Entry point when invoked as the wrapper.

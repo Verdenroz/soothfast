@@ -10,7 +10,7 @@ pub(crate) mod rustdoc;
 mod select;
 pub(crate) mod shim;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{buildstamp, invoke, runcache};
 use cargo::TestBin;
@@ -100,6 +100,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
         println!("{}", tally.summary(0, total));
         return Ok(0);
     }
+    let run_dir = RunDir::create()?;
     let messages = cargo::build(&selected, &args.cargo_args).map_err(|e| e.to_string())?;
     let built = cargo::collect(&messages, &pkgs);
     let triples = runner::triples(
@@ -125,6 +126,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
     match mode {
         runner::Runner::Shim(chained) => {
             let run = Together {
+                run_dir: &run_dir,
                 selected: &selected,
                 triples: &triples,
                 chained,
@@ -163,8 +165,37 @@ fn run_doc_tests(args: &TestArgs, doc: &[String], tally: &mut Tally) -> Result<(
     Ok(())
 }
 
+/// The run step's scratch directory, holding a copy of this executable taken
+/// before the build: the build can relink the binary this process started
+/// from, as when soothfast tests its own workspace.
+struct RunDir {
+    dir: PathBuf,
+    exe: PathBuf,
+}
+
+impl RunDir {
+    fn create() -> Result<RunDir, String> {
+        let dir = runcache::state_dir(&format!("test-run/{}", std::process::id()))
+            .ok_or("cannot create .soothfast/test-run")?;
+        let exe = dir.join(format!("soothfast-shim{}", std::env::consts::EXE_SUFFIX));
+        let mut current = std::env::current_exe().map_err(|e| e.to_string())?;
+        if cfg!(target_os = "linux") && !current.is_file() {
+            current = PathBuf::from("/proc/self/exe");
+        }
+        rustdoc::link_or_copy(&current, &exe).map_err(|e| e.to_string())?;
+        Ok(RunDir { dir, exe })
+    }
+}
+
+impl Drop for RunDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
 /// What the single run step needs beyond the parsed arguments.
 struct Together<'a> {
+    run_dir: &'a RunDir,
     selected: &'a [String],
     triples: &'a [String],
     chained: Vec<String>,
@@ -198,8 +229,7 @@ fn run_together(
         }
         planned.push((bin, key, cached));
     }
-    let dir = runcache::state_dir(&format!("test-run/{}", std::process::id()))
-        .ok_or("cannot create .soothfast/test-run")?;
+    let dir = run.run_dir.dir.clone();
     let skip_doc = args.no_doc && !cargo::narrows_targets(&args.cargo_args);
     let plan = Plan {
         results: dir.clone(),
@@ -227,7 +257,7 @@ fn run_together(
     let plan_path = dir.join(rustdoc::PLAN_FILE);
     plan.write(&plan_path).map_err(|e| e.to_string())?;
     let wrapper = match skip_doc {
-        true => Some(rustdoc::install(&dir).map_err(|e| e.to_string())?),
+        true => Some(rustdoc::install(&dir, &run.run_dir.exe).map_err(|e| e.to_string())?),
         false => None,
     };
     if !skip_doc && !run.doc.is_empty() {
@@ -240,6 +270,7 @@ fn run_together(
         run_args: &args.run_args,
         triples: run.triples,
         plan: &plan_path,
+        shim: &run.run_dir.exe,
         rustdoc: wrapper.as_deref(),
     })
     .map_err(|e| e.to_string())?;
@@ -255,7 +286,6 @@ fn run_together(
             }
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
     if !outcome.success {
         attribute_cargo_failure(&outcome, tally.failed.len() > failed_before, tally);
     }
