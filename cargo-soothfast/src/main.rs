@@ -129,7 +129,12 @@ fn main() {
 }
 
 fn run() -> i32 {
-    let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut args = std::env::args();
+    let argv0 = args.next().unwrap_or_default();
+    if test::rustdoc::invoked_as(&argv0) {
+        return test::rustdoc::run(&argv0, &args.collect::<Vec<_>>());
+    }
+    let mut argv: Vec<String> = args.collect();
     // Invoked as `cargo soothfast ...` cargo passes "soothfast" as argv[1].
     if argv.first().map(String::as_str) == Some("soothfast") {
         argv.remove(0);
@@ -150,6 +155,7 @@ fn run() -> i32 {
         "report" => report::run(rest),
         "mcp" => mcp::run(rest),
         "test" => test::run(rest),
+        test::shim::SUBCOMMAND => test::shim::run(rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             0

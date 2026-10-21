@@ -5,15 +5,19 @@ mod config;
 #[cfg(test)]
 mod fixture;
 mod key;
+mod runner;
+pub(crate) mod rustdoc;
 mod select;
+pub(crate) mod shim;
 
 use std::path::Path;
 
-use crate::invoke;
+use crate::{buildstamp, invoke, runcache};
 use cargo::TestBin;
 use config::TestConfig;
 use key::{Keyer, Passes};
 use select::Package;
+use shim::{DocSkip, Entry, Plan};
 
 /// What the command line asked for.
 #[derive(Default, Debug, PartialEq)]
@@ -98,23 +102,204 @@ fn drive(args: &[String]) -> Result<i32, String> {
     }
     let messages = cargo::build(&selected, &args.cargo_args).map_err(|e| e.to_string())?;
     let built = cargo::collect(&messages, &pkgs);
-    let mut keyer = Keyer::new(root, pkgs, cfg, args.run_args.clone(), built.siblings)?;
-    run_binaries(&args, &built.tests, &mut keyer, &mut tally)?;
+    let triples = runner::triples(
+        &host_triple()?,
+        &args.cargo_args,
+        std::env::var("CARGO_BUILD_TARGET").ok(),
+    );
+    let cargo_home = runner::cargo_home(|k| std::env::var(k).ok());
+    let mode = runner::detect(
+        &triples,
+        &args.cargo_args,
+        |k| std::env::var(k).ok(),
+        &runner::config_files(&root, cargo_home),
+    );
+    let mut keyer = Keyer::new(
+        root.clone(),
+        pkgs,
+        cfg,
+        args.run_args.clone(),
+        built.siblings,
+    )?;
     let doc = doc_packages(&args, &built.tests);
-    if !doc.is_empty() {
-        println!("test: doc tests for {}", doc.join(", "));
-        tally.doc = doc.len();
-        if !cargo::doc_tests(&doc, &args.cargo_args, &args.run_args).map_err(|e| e.to_string())? {
-            tally.failed.push("doc tests".into());
+    match mode {
+        runner::Runner::Shim(chained) => {
+            let run = Together {
+                selected: &selected,
+                triples: &triples,
+                chained,
+                root: &root,
+                doc: &doc,
+            };
+            run_together(&args, &built.tests, &run, &mut keyer, &mut tally)?;
+        }
+        runner::Runner::Fallback(why) => {
+            println!("test: running each binary through its own cargo test: {why}");
+            run_binaries(&args, &built.tests, &mut keyer, &mut tally)?;
+            run_doc_tests(&args, &doc, &mut tally)?;
         }
     }
     println!("{}", tally.summary(selected.len(), total));
     Ok(i32::from(!tally.failed.is_empty()))
 }
 
-/// Run each test binary a stored pass does not cover. A pass is stored only
-/// if the binary's key is the same after it ran: a test that rewrites its own
-/// inputs would otherwise record a pass for inputs that no longer exist.
+fn host_triple() -> Result<String, String> {
+    let vv = buildstamp::rustc_vv(None).map_err(|e| e.to_string())?;
+    vv.lines()
+        .find_map(|l| l.strip_prefix("host: "))
+        .map(String::from)
+        .ok_or_else(|| "rustc -vV names no host".into())
+}
+
+fn run_doc_tests(args: &TestArgs, doc: &[String], tally: &mut Tally) -> Result<(), String> {
+    if doc.is_empty() {
+        return Ok(());
+    }
+    println!("test: doc tests for {}", doc.join(", "));
+    tally.doc = doc.len();
+    if !cargo::doc_tests(doc, &args.cargo_args, &args.run_args).map_err(|e| e.to_string())? {
+        tally.failed.push("doc tests".into());
+    }
+    Ok(())
+}
+
+/// What the single run step needs beyond the parsed arguments.
+struct Together<'a> {
+    selected: &'a [String],
+    triples: &'a [String],
+    chained: Vec<String>,
+    root: &'a Path,
+    doc: &'a [String],
+}
+
+/// Run every selected binary in one `cargo test` that matches the build, the
+/// shim skipping those with a stored pass. Doc tests run in the same
+/// invocation unless `--no-doc` has the rustdoc wrapper skip them.
+fn run_together(
+    args: &TestArgs,
+    tests: &[TestBin],
+    run: &Together,
+    keyer: &mut Keyer,
+    tally: &mut Tally,
+) -> Result<(), String> {
+    let passes = Passes::open();
+    let mut planned = Vec::new();
+    for bin in tests {
+        let key = keyer.key(bin)?;
+        let cached = !args.no_cache
+            && key
+                .as_deref()
+                .zip(passes.as_ref())
+                .is_some_and(|(k, passes)| passes.has(k));
+        if cached {
+            tally.skipped += 1;
+        } else {
+            tally.ran += 1;
+        }
+        planned.push((bin, key, cached));
+    }
+    let dir = runcache::state_dir(&format!("test-run/{}", std::process::id()))
+        .ok_or("cannot create .soothfast/test-run")?;
+    let skip_doc = args.no_doc && !cargo::narrows_targets(&args.cargo_args);
+    let plan = Plan {
+        results: dir.clone(),
+        runner: run.chained.clone(),
+        entries: planned
+            .iter()
+            .map(|(bin, _, cached)| {
+                let entry = Entry {
+                    label: bin.label(),
+                    cached: *cached,
+                };
+                (bin.exe.clone(), entry)
+            })
+            .collect(),
+        doc_skip: skip_doc.then(|| DocSkip {
+            original: std::env::var("RUSTDOC").ok(),
+            crates: tests
+                .iter()
+                .filter(|b| b.has_doc_tests())
+                .map(|b| b.target.replace('-', "_"))
+                .collect(),
+            root: run.root.to_path_buf(),
+        }),
+    };
+    let plan_path = dir.join(rustdoc::PLAN_FILE);
+    plan.write(&plan_path).map_err(|e| e.to_string())?;
+    let wrapper = match skip_doc {
+        true => Some(rustdoc::install(&dir).map_err(|e| e.to_string())?),
+        false => None,
+    };
+    if !skip_doc && !run.doc.is_empty() {
+        println!("test: doc tests for {}", run.doc.join(", "));
+        tally.doc = run.doc.len();
+    }
+    let outcome = cargo::run_step(&cargo::RunStep {
+        names: run.selected,
+        cargo_args: &args.cargo_args,
+        run_args: &args.run_args,
+        triples: run.triples,
+        plan: &plan_path,
+        rustdoc: wrapper.as_deref(),
+    })
+    .map_err(|e| e.to_string())?;
+    let failed_before = tally.failed.len();
+    for (bin, key, _) in planned.iter().filter(|(_, _, cached)| !cached) {
+        let label = bin.label();
+        match plan.status(&bin.exe) {
+            Some(0) => store_pass(keyer, passes.as_ref(), bin, key.as_deref(), &label)?,
+            Some(_) => tally.failed.push(label),
+            None => {
+                println!("test: {label} did not finish");
+                tally.failed.push(label);
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    if !outcome.success {
+        attribute_cargo_failure(&outcome, tally.failed.len() > failed_before, tally);
+    }
+    Ok(())
+}
+
+/// A pass is stored only if the binary's key is the same after it ran: a
+/// test that rewrites its own inputs would otherwise record a pass for inputs
+/// that no longer exist.
+fn store_pass(
+    keyer: &mut Keyer,
+    passes: Option<&Passes>,
+    bin: &TestBin,
+    key: Option<&str>,
+    label: &str,
+) -> Result<(), String> {
+    let Some(passes) = passes else {
+        return Ok(());
+    };
+    if keyer.rekey(bin)?.as_deref() != key {
+        println!("test: {label} changed its inputs; pass not stored");
+    } else if let Some(key) = key {
+        passes.record(label, key);
+    }
+    Ok(())
+}
+
+/// Name what failed when cargo exited nonzero. A binary's failure is already
+/// counted; anything else is a doc test only when cargo's output says so.
+fn attribute_cargo_failure(outcome: &cargo::RunOutcome, binary_failed: bool, tally: &mut Tally) {
+    if outcome.doc_failed {
+        tally.failed.push("doc tests".into());
+    } else if !binary_failed {
+        let code = outcome.code.map_or("by a signal".into(), |c| c.to_string());
+        println!("test: cargo test exited {code} after every test binary passed:");
+        for line in &outcome.tail {
+            println!("  {line}");
+        }
+        tally.failed.push(format!("cargo test (exit {code})"));
+    }
+}
+
+/// Run each test binary a stored pass does not cover through its own
+/// `cargo test`.
 fn run_binaries(
     args: &TestArgs,
     tests: &[TestBin],
@@ -143,14 +328,7 @@ fn run_binaries(
             tally.failed.push(label);
             continue;
         }
-        let Some(passes) = &passes else {
-            continue;
-        };
-        if keyer.rekey(bin)? != key {
-            println!("test: {label} changed its inputs; pass not stored");
-        } else if let Some(key) = &key {
-            passes.record(&label, key);
-        }
+        store_pass(keyer, passes.as_ref(), bin, key.as_deref(), &label)?;
     }
     Ok(())
 }
@@ -363,5 +541,35 @@ mod tests {
     #[test]
     fn a_flag_missing_its_value_is_an_error() {
         assert!(parse_args(&["--base".to_string()]).is_err());
+    }
+
+    fn outcome(doc_failed: bool) -> cargo::RunOutcome {
+        cargo::RunOutcome {
+            success: false,
+            code: Some(101),
+            doc_failed,
+            tail: vec!["error: could not compile `p`".into()],
+        }
+    }
+
+    #[test]
+    fn a_failure_cargo_names_as_a_doc_test_is_one() {
+        let mut tally = Tally::default();
+        attribute_cargo_failure(&outcome(true), false, &mut tally);
+        assert_eq!(tally.failed, ["doc tests"]);
+    }
+
+    #[test]
+    fn a_nonzero_exit_after_every_binary_passed_is_not_called_a_doc_test() {
+        let mut tally = Tally::default();
+        attribute_cargo_failure(&outcome(false), false, &mut tally);
+        assert_eq!(tally.failed, ["cargo test (exit 101)"]);
+    }
+
+    #[test]
+    fn a_binary_failure_explains_the_exit_by_itself() {
+        let mut tally = Tally::default();
+        attribute_cargo_failure(&outcome(false), true, &mut tally);
+        assert!(tally.failed.is_empty());
     }
 }

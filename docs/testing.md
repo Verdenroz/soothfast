@@ -102,21 +102,46 @@ Python and Node suites, which `cargo soothfast test` does not run.
 
 ## Running
 
-Each remaining binary runs one after another through cargo itself, as
-`cargo test -p PKG --lib` (or `--bin`, `--test`, `--bench NAME`) with your
-cargo flags and the arguments after `--`. The build is already fresh, so
-cargo only runs it, and the test environment (`[env]` config, target
-runners, library paths) is cargo's own. Output streams as it is produced and
-a failing binary does not stop the others.
+Every binary runs in one `cargo test`: the build's own invocation, with the
+same packages and flags, without `--no-run`, and with `--no-fail-fast`. The
+build is already fresh and resolves the same features, so cargo compiles
+nothing and only runs. The test environment (`[env]` config, library paths,
+the working directory, `CARGO_*` variables) is cargo's own, and output
+streams as it is produced.
+
+soothfast sets itself as cargo's target runner for that invocation, so cargo
+hands it each test executable. One with a stored pass is skipped with a
+`test: skip ... (cached pass)` line and never starts. The rest run, and each
+one's exit status is recorded for the summary. A failing binary does not
+stop the others.
 
 A pass is stored only if the test leaves its inputs as it found them. A test
 that rewrites its own package files (regenerating goldens, say) prints that
 it changed its inputs and stores nothing, so the next run executes it again.
+A binary cargo never got to counts as a failure. When cargo exits non-zero,
+the summary names `doc tests` only if cargo's output reports a failed doc
+test. Otherwise, if every binary passed, it reports `cargo test (exit N)`
+and prints the end of cargo's output.
 
-Doc tests cannot be cached, so `cargo test --doc` runs for each selected
-package whose library has doc tests enabled. Pass `--no-doc` to skip them;
-passing a target flag such as `--lib` or `--test NAME` skips them too.
-`--doc` itself is refused, since doc tests always run.
+Doc tests cannot be cached. They run at the end of the same invocation for
+each selected package whose library has doc tests enabled. Pass `--no-doc`
+to skip them: cargo then runs a rustdoc wrapper that skips the selected
+packages' doc tests, so the build and the run keep the same targets and the
+same keys. Any other rustdoc call, such as a test that builds a generated
+crate's doc tests, passes through to the real rustdoc. A target flag such as
+`--lib` or `--test NAME` skips doc tests too. `--doc` itself is refused,
+since doc tests always run.
+
+### A runner you configured
+
+A runner in `CARGO_TARGET_<TRIPLE>_RUNNER` (`valgrind`, `qemu-aarch64`) is
+kept: soothfast runs each uncached binary through it. A runner, or a default
+`build.target`, set in a cargo config file or a `--config` argument cannot be
+chained that way, so each binary instead runs through its own
+`cargo test -p PKG --lib` (or `--bin`, `--test`, `--bench NAME`), followed by
+`cargo test --doc`. The command prints which setting caused it. Per-package
+runs can resolve features apart from the build, so expect them to recompile
+some crates.
 
 The command ends with a summary and exits non-zero if anything failed:
 

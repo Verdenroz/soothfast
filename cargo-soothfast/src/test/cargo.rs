@@ -2,14 +2,15 @@
 //! Runs go through cargo, which owns the test environment (`[env]` config,
 //! target runners, library paths).
 
-use std::collections::BTreeSet;
-use std::io;
-use std::path::PathBuf;
+use std::collections::{BTreeSet, VecDeque};
+use std::io::{self, BufRead, BufReader, IsTerminal};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::select::Package;
+use super::shim;
 use crate::invoke;
 
 /// One executable cargo built.
@@ -101,8 +102,87 @@ pub fn build(names: &[String], cargo_args: &[String]) -> io::Result<Vec<Value>> 
     Ok(messages)
 }
 
+/// The run step's one `cargo test`: the build's invocation without
+/// `--no-run`, the shim as runner for every triple, and every target run
+/// whatever fails first.
+pub struct RunStep<'a> {
+    pub names: &'a [String],
+    pub cargo_args: &'a [String],
+    pub run_args: &'a [String],
+    pub triples: &'a [String],
+    pub plan: &'a Path,
+    /// The rustdoc wrapper, under `--no-doc`.
+    pub rustdoc: Option<&'a Path>,
+}
+
+/// How the run step's cargo exited, and whether its output named a failed
+/// doc test.
+pub struct RunOutcome {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub doc_failed: bool,
+    /// The last lines cargo wrote to stderr.
+    pub tail: Vec<String>,
+}
+
+const TAIL: usize = 20;
+
+pub fn run_step(step: &RunStep) -> io::Result<RunOutcome> {
+    let shim = std::env::current_exe()?;
+    let runner = json!([shim, "soothfast", shim::SUBCOMMAND]).to_string();
+    let mut extra: Vec<String> = step
+        .triples
+        .iter()
+        .flat_map(|t| ["--config".into(), format!("target.\"{t}\".runner={runner}")])
+        .collect();
+    if std::io::stderr().is_terminal() && !step.cargo_args.iter().any(|a| a.starts_with("--color"))
+    {
+        extra.push("--color=always".into());
+    }
+    let mut cmd = cargo_test(
+        &["--no-fail-fast"],
+        step.names,
+        step.cargo_args,
+        &extra,
+        step.run_args,
+    );
+    cmd.env(shim::PLAN_ENV, step.plan);
+    if let Some(rustdoc) = step.rustdoc {
+        cmd.env("RUSTDOC", rustdoc);
+    }
+    let mut child = cmd.stderr(Stdio::piped()).spawn()?;
+    let mut tail = VecDeque::with_capacity(TAIL);
+    let mut doc_failed = false;
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines() {
+            let line = line?;
+            eprintln!("{line}");
+            doc_failed |= names_failed_doc_test(&line);
+            if tail.len() == TAIL {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        }
+    }
+    let status = child.wait()?;
+    Ok(RunOutcome {
+        success: status.success(),
+        code: status.code(),
+        doc_failed,
+        tail: tail.into(),
+    })
+}
+
+/// Cargo's line for a failed doc test: `doctest failed, to rerun pass ...`
+/// on its own, or a `` `-p NAME --doc` `` entry in the no-fail-fast list.
+fn names_failed_doc_test(line: &str) -> bool {
+    line.contains("doctest failed")
+        || (line.trim_start().starts_with('`') && line.contains("--doc`"))
+}
+
 /// Run one already-built target through `cargo test`, output streaming.
-/// Whether it exited successfully.
+/// Whether it exited successfully. The run step falls back to this when a
+/// configured runner cannot be chained through the shim.
 pub fn run_target(bin: &TestBin, cargo_args: &[String], run_args: &[String]) -> io::Result<bool> {
     let names = std::slice::from_ref(&bin.package);
     let mut cmd = cargo_test(&[], names, cargo_args, &bin.target_flags(), run_args);
@@ -193,7 +273,18 @@ fn executable(m: &Value, pkgs: &[Package]) -> Option<TestBin> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
+    #[test]
+    fn cargo_lines_naming_a_failed_doc_test_are_recognized() {
+        assert!(names_failed_doc_test(
+            "error: doctest failed, to rerun pass `-p a --doc`"
+        ));
+        assert!(names_failed_doc_test("    `-p a --doc`"));
+        assert!(!names_failed_doc_test("    `-p a --test it`"));
+        assert!(!names_failed_doc_test(
+            "error: could not compile `a` (lib test)"
+        ));
+    }
 
     fn pkg(name: &str) -> Package {
         Package {
