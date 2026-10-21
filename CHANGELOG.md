@@ -1,13 +1,39 @@
 # Changelog
 
-## Unreleased (draft vs v0.4.1)
+## 0.4.2 - 2026-10-20
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+`docs gen-tests` now compiles a package's doc tests into one test target,
+`tests/soothfast_docs/`, and its `capture-output` blocks into one example,
+`examples/soothfast_capture/`, instead of one binary per page and one per
+block. On a package with 44 tested pages and 113 capture blocks, that
+replaced 113 examples taking 114 GB with one of 1.39 GB. `docs capture` no
+longer erases a feature-gated block's recorded output when the feature is
+off. `cargo soothfast test` now runs every test binary in the build's own
+`cargo` invocation and digests each executable once per run, so a run whose
+tests had all passed no longer hangs re-reading every example in a large
+package. `cargo soothfast --version` prints the CLI's version.
+
+### Upgrade notes
+
+- Run `cargo soothfast docs gen-tests -p PKG` once for each package. It
+  deletes the per-page `tests/soothfast_doc_*.rs` and per-block
+  `examples/soothfast_capture_*.rs` files, and `docs check` fails until you
+  run it.
+- The first `cargo soothfast test` run after upgrading re-runs every binary,
+  since the generated targets changed.
+- A capture block that needs a feature without a `feature=` tag now breaks
+  the whole package's capture when that feature is off, because every block
+  compiles into one example. Tag it with `feature=`.
+- A package's pages share one test crate and its capture blocks share one
+  example crate, so `#[macro_export]` macros, `linkme` registrations and
+  global allocators reach across blocks. gen-tests rejects two blocks that
+  each install a global allocator.
+- Library API change: `soothfast_docs::gentests::capture_examples` is
+  removed. Use `capture_ids` for a page's block ids and `capture_set` for
+  the generated files.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
