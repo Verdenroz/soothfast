@@ -14,7 +14,8 @@ $ cargo soothfast test --no-cache -- --include-ignored  # re-run everything sele
 
 Flags before `--` that soothfast does not own go to `cargo test`: features,
 `--release`, `--profile`, `--target`. Everything after `--` goes to each test
-binary. `--no-doc` skips doc tests.
+binary. `--no-doc` skips doc tests. `--no-run` builds the selected packages'
+test binaries and runs nothing: no doc tests, and no pass is read or stored.
 
 `-p`/`--package` replaces the change-based selection: it tests exactly the
 named packages, and a name that is not a workspace member is an error.

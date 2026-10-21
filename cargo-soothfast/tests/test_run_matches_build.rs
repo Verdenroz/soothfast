@@ -230,3 +230,21 @@ fn a_failing_binary_is_named_and_the_rest_still_pass() {
         "a failure was stored as a pass: {again}"
     );
 }
+
+#[test]
+fn no_run_builds_the_selection_and_runs_nothing() {
+    let fx = Fixture::new("no-run");
+
+    let (ok, out) = fx.test(&["--no-run"]);
+    assert!(ok, "{out}");
+    assert!(
+        summary(&out).contains("3 of 3 packages selected")
+            && summary(&out).contains("binaries built, not run (--no-run)"),
+        "{out}"
+    );
+    assert!(
+        !out.lines().any(|l| l.trim_start().starts_with("Running ")),
+        "{out}"
+    );
+    assert!(!fx.root.join(".soothfast/tests").exists(), "{out}");
+}
