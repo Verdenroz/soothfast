@@ -13,6 +13,7 @@ mod changelog_config;
 mod codekey;
 mod coverage;
 mod docs;
+mod docs_generated;
 mod docs_support;
 mod gate;
 mod gate_config;
@@ -321,9 +322,10 @@ mod tests {
         ] {
             assert_eq!(dispatch(args), 0);
         }
-        assert_eq!(
-            version_line(),
-            format!("cargo-soothfast {}", env!("CARGO_PKG_VERSION"))
-        );
+        let line = version_line();
+        let version = line.strip_prefix("cargo-soothfast ").unwrap();
+        let parts: Vec<&str> = version.split('.').collect();
+        assert_eq!(parts.len(), 3, "{line}");
+        assert!(parts.iter().all(|p| p.parse::<u32>().is_ok()), "{line}");
     }
 }

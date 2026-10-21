@@ -37,8 +37,78 @@ fn indent(code: &str, pad: &str) -> String {
         .join("\n")
 }
 
-/// Test-file content for one markdown doc, or None when it has no testable
-/// blocks (all ignored / non-rust / capture).
+/// One generated file, its path relative to the package directory.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Generated {
+    pub path: String,
+    pub content: String,
+}
+
+/// The one integration-test target the doc tests of a package compile into.
+pub const DOC_TESTS_DIR: &str = "tests/soothfast_docs";
+
+/// Where generated files live, as (directory, file-name prefix), relative to
+/// the package directory. A file there that starts with [`GENERATED_HEADER`]
+/// belongs to gen-tests: it is rewritten when expected and removed when not.
+/// The flat `tests/soothfast_doc_*.rs` entry is the per-page layout of
+/// earlier releases.
+pub const OWNED: &[(&str, &str)] = &[("tests", "soothfast_doc_"), (DOC_TESTS_DIR, "")];
+
+/// Every doc-test file a package needs: one module per page with testable
+/// blocks under [`DOC_TESTS_DIR`], and the `main.rs` that declares them.
+/// Empty when no page has a testable block. An error names two pages whose
+/// paths sanitize to the same module.
+pub fn doc_test_set<'a>(
+    docs: impl IntoIterator<Item = (&'a str, &'a Doc)>,
+) -> Result<Vec<Generated>, String> {
+    let mut pages: Vec<(String, &str, String)> = Vec::new();
+    for (rel_path, doc) in docs {
+        if let Some(content) = test_file(rel_path, doc) {
+            pages.push((
+                format!("doc_{}", sanitized_stem(rel_path)),
+                rel_path,
+                content,
+            ));
+        }
+    }
+    pages.sort_by(|a, b| a.1.cmp(b.1));
+    for (i, (module, path, _)) in pages.iter().enumerate() {
+        if let Some((_, other, _)) = pages[..i].iter().find(|(m, _, _)| m == module) {
+            return Err(format!(
+                "{other} and {path} both generate doc-test module `{module}`; rename one"
+            ));
+        }
+    }
+    if pages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut main = format!("{GENERATED_HEADER}\n#![allow(unused)]\n\n");
+    for (module, _, _) in &pages {
+        main.push_str(&format!("mod {module};\n"));
+    }
+    let mut set = vec![Generated {
+        path: format!("{DOC_TESTS_DIR}/main.rs"),
+        content: main,
+    }];
+    set.extend(pages.into_iter().map(|(module, _, content)| Generated {
+        path: format!("{DOC_TESTS_DIR}/{module}.rs"),
+        content,
+    }));
+    Ok(set)
+}
+
+/// Whether `rel_path` (relative to the package directory) is somewhere
+/// gen-tests writes, per [`OWNED`]. The file's header decides ownership.
+pub fn in_owned_place(rel_path: &str) -> bool {
+    let (dir, name) = rel_path.rsplit_once('/').unwrap_or(("", rel_path));
+    name.ends_with(".rs")
+        && OWNED
+            .iter()
+            .any(|(d, prefix)| *d == dir && name.starts_with(prefix))
+}
+
+/// Module content for one markdown page's doc tests, or None when it has no
+/// testable blocks (all ignored / non-rust / capture).
 pub fn test_file(rel_path: &str, doc: &Doc) -> Option<String> {
     let testable: Vec<&CodeBlock> = doc.blocks.iter().filter(|b| b.is_testable_rust()).collect();
     if testable.is_empty() {
@@ -141,6 +211,61 @@ mod tests {
         assert_eq!(examples.len(), 1);
         assert_eq!(examples[0].0, "soothfast_capture_docs_a_1");
         assert!(examples[0].1.contains("fn main()"));
+    }
+
+    #[test]
+    fn doc_tests_compile_into_one_target_with_a_module_per_page() {
+        let a = markdown::scan("```rust\nlet x = 1;\n```\n").unwrap();
+        let b = markdown::scan("```rust\nlet y = 2;\n```\n").unwrap();
+        let none = markdown::scan("```rust ignore\nnope();\n```\n").unwrap();
+        let set = doc_test_set([
+            ("docs/b.md", &b),
+            ("README.md", &a),
+            ("docs/skip.md", &none),
+        ])
+        .unwrap();
+        let paths: Vec<&str> = set.iter().map(|g| g.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "tests/soothfast_docs/main.rs",
+                "tests/soothfast_docs/doc_readme.rs",
+                "tests/soothfast_docs/doc_docs_b.rs"
+            ]
+        );
+        assert!(set[0].content.starts_with(GENERATED_HEADER));
+        assert!(
+            set[0]
+                .content
+                .ends_with("mod doc_readme;\nmod doc_docs_b;\n")
+        );
+        assert_eq!(set[1].content, test_file("README.md", &a).unwrap());
+    }
+
+    #[test]
+    fn no_testable_page_means_no_doc_test_target() {
+        let none = markdown::scan("```rust ignore\nnope();\n```\n").unwrap();
+        assert!(doc_test_set([("README.md", &none)]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn two_pages_on_one_module_name_are_an_error_naming_both() {
+        let a = markdown::scan("```rust\nlet x = 1;\n```\n").unwrap();
+        let e = doc_test_set([("docs/a-b.md", &a), ("docs/a_b.md", &a)]).unwrap_err();
+        assert!(
+            e.contains("docs/a-b.md") && e.contains("docs/a_b.md"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn owned_places_cover_both_layouts_and_nothing_else() {
+        assert!(in_owned_place("tests/soothfast_doc_readme.rs"));
+        assert!(in_owned_place("tests/soothfast_docs/main.rs"));
+        assert!(in_owned_place("tests/soothfast_docs/doc_readme.rs"));
+        assert!(!in_owned_place("tests/integration.rs"));
+        assert!(!in_owned_place("tests/soothfast_docs/data.json"));
+        assert!(!in_owned_place("src/soothfast_doc_x.rs"));
     }
 
     #[test]

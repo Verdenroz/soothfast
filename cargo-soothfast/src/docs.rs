@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use soothfast_docs::{claims, diff, gentests, lockfile, markdown, reference, surface};
 
-use crate::{docs_support, invoke};
+use crate::{docs_generated, docs_support, invoke};
 
 struct DocsArgs {
     pkg: Option<String>,
@@ -183,6 +183,13 @@ struct Scanned {
     docs: Vec<(String, markdown::Doc, String)>,
 }
 
+impl Scanned {
+    /// The package's doc-test target, built from every page in scope.
+    fn doc_tests(&self) -> Result<Vec<gentests::Generated>, String> {
+        gentests::doc_test_set(self.docs.iter().map(|(file, doc, _)| (file.as_str(), doc)))
+    }
+}
+
 fn scan_all(a: &DocsArgs) -> Result<Scanned, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let mut docs = Vec::new();
@@ -318,22 +325,22 @@ fn check(a: &DocsArgs) -> i32 {
         match invoke::pkg_dir(pkg) {
             Err(e) => return err(&e.to_string()),
             Ok(dir) => {
+                let expected = match scanned.doc_tests() {
+                    Ok(e) => e,
+                    Err(e) => return err(&e),
+                };
+                let problems = docs_generated::check(&dir, pkg, &expected);
+                if problems.is_empty() && !expected.is_empty() {
+                    println!(
+                        "ok    {}: generated tests up to date",
+                        gentests::DOC_TESTS_DIR
+                    );
+                }
+                for problem in &problems {
+                    failures += 1;
+                    println!("FAIL  {problem}");
+                }
                 for (file, doc, _) in &scanned.docs {
-                    let stem = gentests::sanitized_stem(file);
-                    if let Some(expected) = gentests::test_file(file, doc) {
-                        let path = dir.join("tests").join(format!("soothfast_doc_{stem}.rs"));
-                        match std::fs::read_to_string(&path) {
-                            Ok(actual) if actual == expected => {
-                                println!("ok    {file}: generated tests up to date")
-                            }
-                            _ => {
-                                failures += 1;
-                                println!(
-                                    "FAIL  {file}: generated test missing/stale — run `cargo soothfast docs gen-tests -p {pkg}`"
-                                );
-                            }
-                        }
-                    }
                     for (name, expected) in gentests::capture_examples(file, doc) {
                         let path = dir.join("examples").join(format!("{name}.rs"));
                         match std::fs::read_to_string(&path) {
@@ -418,18 +425,22 @@ fn gen_tests(a: &DocsArgs) -> i32 {
         Ok(d) => d,
         Err(e) => return err(&e.to_string()),
     };
-    let mut written = 0;
+    let expected = match scanned.doc_tests() {
+        Ok(e) => e,
+        Err(e) => return err(&e),
+    };
+    let (wrote, removed) = match docs_generated::write(&dir, &expected) {
+        Ok(r) => r,
+        Err(e) => return err(&format!("cannot write generated tests: {e}")),
+    };
+    for path in &wrote {
+        println!("wrote {}", dir.join(path).display());
+    }
+    for path in &removed {
+        println!("removed {}", dir.join(path).display());
+    }
+    let mut written = wrote.len();
     for (file, doc, _) in &scanned.docs {
-        let stem = gentests::sanitized_stem(file);
-        if let Some(content) = gentests::test_file(file, doc) {
-            let path = dir.join("tests").join(format!("soothfast_doc_{stem}.rs"));
-            let _ = std::fs::create_dir_all(path.parent().unwrap());
-            if std::fs::write(&path, content).is_err() {
-                return err(&format!("cannot write {}", path.display()));
-            }
-            println!("wrote {}", path.display());
-            written += 1;
-        }
         for (name, content) in gentests::capture_examples(file, doc) {
             let path = dir.join("examples").join(format!("{name}.rs"));
             let _ = std::fs::create_dir_all(path.parent().unwrap());
