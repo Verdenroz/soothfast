@@ -396,14 +396,6 @@ fn run_each(args: &[String], packages: &[String]) -> i32 {
     worst
 }
 
-fn round_duration(d: Duration) -> String {
-    let secs = d.as_secs();
-    match secs {
-        0..60 => format!("{secs}s"),
-        _ => format!("{}m{:02}s", secs / 60, secs % 60),
-    }
-}
-
 /// Build every bench target once per side. After a rebase the merge-base
 /// side is the expensive one, at release with codegen-units pinned to 1.
 fn prebuild_both_sides(packages: &[String], common: &CommonArgs, args: &[String]) {
@@ -1153,6 +1145,14 @@ fn bench_text_digests(
         head_exe: head,
         base_exe: base,
     })
+}
+
+fn round_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    match secs {
+        0..60 => format!("{secs}s"),
+        _ => format!("{}m{:02}s", secs / 60, secs % 60),
+    }
 }
 
 /// Fold a side's timing-only second round into its full first round. A

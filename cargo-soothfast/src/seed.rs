@@ -111,7 +111,7 @@ fn split_unit(entry: &str) -> Option<(&str, &str)> {
 fn copy_tree(src: &Path, dst: &Path) -> io::Result<u64> {
     let meta = fs::symlink_metadata(src)?;
     if meta.is_symlink() {
-        return Err(io::Error::other(format!("symlink {}", src.display())));
+        return Err(io::Error::other(format!("{} is a symlink", src.display())));
     }
     if meta.is_dir() {
         fs::create_dir_all(dst)?;
