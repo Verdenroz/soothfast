@@ -84,6 +84,15 @@ inputs:
       `required-features` needs them here.
     required: false
     default: ""
+  save-baseline:
+    description: >-
+      Baseline name a passing pull-request gate saves its HEAD measurement
+      under, in `.soothfast/baselines/`. A later job that needs HEAD's
+      numbers (a docs claim check) can then read it instead of measuring
+      again. A failing gate saves nothing, and neither does one whose bench
+      binaries are identical on both sides. Empty saves nothing.
+    required: false
+    default: ""
   changelog-features:
     description: >-
       Features for `report changelog`, which decide what the API surface
@@ -199,6 +208,7 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number }}
         BROKER: ${{ inputs.broker }}
         FEATURES: ${{ inputs.features }}
+        SAVE_BASELINE: ${{ inputs.save-baseline }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
     - name: Upload triage artifacts
       if: steps.gate.outputs.failed == 'true'
