@@ -147,7 +147,8 @@ already passed.</p>
 </code></pre></figure>
 <p>Flags before <code>--</code> that soothfast does not own go to <code>cargo test</code>: features,
 <code>--release</code>, <code>--profile</code>, <code>--target</code>. Everything after <code>--</code> goes to each test
-binary. <code>--no-doc</code> skips doc tests.</p>
+binary. <code>--no-doc</code> skips doc tests. <code>--no-run</code> builds the selected packages'
+test binaries and runs nothing: no doc tests, and no pass is read or stored.</p>
 <p><code>-p</code>/<code>--package</code> replaces the change-based selection: it tests exactly the
 named packages, and a name that is not a workspace member is an error.
 <code>--exclude</code> subtracts from whatever was selected.</p>
