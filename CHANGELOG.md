@@ -10,11 +10,37 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### ✨ Features
+
+- One doc-test target and one capture example per package (#253)
+
 ### 🐛 Fixes
 
 - Digest each test executable once, reading only loaded sections (#252)
 - Run the test shim from a copy taken before the build (#250)
 - Run tests in the build's own cargo invocation (#248)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-docs
+ADDED    soothfast_docs::gentests::CAPTURE_DIR
+ADDED    soothfast_docs::gentests::CAPTURE_DISABLED
+ADDED    soothfast_docs::gentests::CAPTURE_EXAMPLE
+ADDED    soothfast_docs::gentests::CAPTURE_UNKNOWN
+ADDED    soothfast_docs::gentests::DOC_TESTS_DIR
+ADDED    soothfast_docs::gentests::Generated
+ADDED    soothfast_docs::gentests::OWNED
+ADDED    soothfast_docs::gentests::capture_ids
+ADDED    soothfast_docs::gentests::capture_set
+ADDED    soothfast_docs::gentests::doc_test_set
+ADDED    soothfast_docs::gentests::owning_target
+ADDED    soothfast_docs::gentests::recorded_source
+REMOVED  soothfast_docs::gentests::capture_examples
+CHANGED  soothfast_docs::gentests::test_file (body)
+```
 
 
 ## 0.4.1 - 2026-10-20
