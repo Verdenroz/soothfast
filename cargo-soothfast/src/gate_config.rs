@@ -76,17 +76,9 @@ fn set(cfg: &mut GateConfig, key: &str, value: TomlValue) -> Result<(), String> 
         ("codegen-units", TomlValue::Int(n)) => cfg.codegen_units = Some(n.to_string()),
         ("codegen-units", TomlValue::Str(s)) => cfg.codegen_units = Some(s),
         ("features", TomlValue::Str(s)) => cfg.features = Some(s),
-        ("walltime", TomlValue::Str(s)) => {
-            cfg.walltime_advisory = match s.as_str() {
-                "hard" => false,
-                "advisory" => true,
-                other => {
-                    return Err(format!(
-                        "`walltime` under [gate] is \"hard\" or \"advisory\", not {other:?}"
-                    ));
-                }
-            }
-        }
+        ("walltime", TomlValue::Str(s)) if s == "hard" => cfg.walltime_advisory = false,
+        ("walltime", TomlValue::Str(s)) if s == "advisory" => cfg.walltime_advisory = true,
+        ("walltime", _) => return Err("`walltime` under [gate] is \"hard\" or \"advisory\"".into()),
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [gate]")),
     }
     Ok(())
