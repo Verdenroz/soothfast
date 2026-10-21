@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn tables_owned_by_other_engines_are_skipped() {
-        let text = "[site]\nname = \"x\"\n\n[gate]\ncodegen-units = 1\n\n[test]\nignore = [\"docs/**\"]\n\n[changelog]\npackages = [\"a\"]\n\n[[spec]]\npath = \"a\"\n\n[[sdk]]\nspec = \"a\"\n";
+        let text = "[site]\nname = \"x\"\n\n[gate]\ncodegen-units = 1\n\n[test]\nignore = [\"docs/**\"]\n\n[test.packages.\"finance-query\"]\nfiles = [\"src/**\"]\n\n[changelog]\npackages = [\"a\"]\n\n[[spec]]\npath = \"a\"\n\n[[sdk]]\nspec = \"a\"\n";
         let cfg = parse(text).expect("foreign tables must not break the site build");
         assert_eq!(cfg.name, "x");
     }
