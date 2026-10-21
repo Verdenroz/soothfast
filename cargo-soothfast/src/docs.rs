@@ -487,8 +487,13 @@ fn capture(a: &DocsArgs) -> i32 {
         .docs
         .iter()
         .any(|(file, doc, _)| !gentests::capture_ids(file, doc).is_empty());
-    if in_scope && let Err(e) = build_capture(&pkg, a.features.as_deref()) {
-        return e;
+    if in_scope {
+        if let Err(e) = current_capture(a, &scanned, &pkg) {
+            return e;
+        }
+        if let Err(e) = build_capture(&pkg, a.features.as_deref()) {
+            return e;
+        }
     }
     let (mut checked, mut stale, mut skipped, mut failures) = (0u32, 0u32, 0u32, 0u32);
     for (file, doc, text) in &scanned.docs {
@@ -578,6 +583,25 @@ fn capture(a: &DocsArgs) -> i32 {
     }
 }
 
+/// Fail unless the capture example on disk is what gen-tests would write now.
+/// Block ids are positions, so a stale example would run another block's code.
+fn current_capture(a: &DocsArgs, scanned: &Scanned, pkg: &str) -> Result<(), i32> {
+    let dir = invoke::pkg_dir(pkg).map_err(|e| err(&e.to_string()))?;
+    let (expected, _) = scanned.generated(a, &dir).map_err(|e| err(&e))?;
+    let problems: Vec<String> = docs_generated::check(&dir, pkg, &expected)
+        .into_iter()
+        .filter(|p| p.starts_with("examples/"))
+        .collect();
+    if problems.is_empty() {
+        return Ok(());
+    }
+    for problem in &problems {
+        println!("FAIL  {problem}");
+    }
+    println!("docs capture: FAILED (generated capture example is stale, so no block ran)");
+    Err(1)
+}
+
 /// Build the package's capture example once, so a compile error is reported
 /// as one failure naming the blocks it is in, not as every block failing.
 fn build_capture(pkg: &str, features: Option<&str>) -> Result<(), i32> {
@@ -606,14 +630,13 @@ fn build_capture(pkg: &str, features: Option<&str>) -> Result<(), i32> {
     );
     let dir = invoke::pkg_dir(pkg).map_err(|e| err(&e.to_string()))?;
     for block in blocks_named_in(&stderr) {
-        let source = std::fs::read_to_string(dir.join(gentests::CAPTURE_DIR).join(&block))
-            .ok()
-            .and_then(|text| text.lines().nth(1).map(str::to_string));
-        if let Some(source) = source
-            .as_deref()
-            .and_then(|l| l.strip_prefix("// source: "))
-        {
-            println!("      error in {source} ({block})");
+        let Ok(text) = std::fs::read_to_string(dir.join(gentests::CAPTURE_DIR).join(&block)) else {
+            continue;
+        };
+        match gentests::recorded_source(&text) {
+            Some((page, Some(line))) => println!("      error in {page} line {line} ({block})"),
+            Some((page, None)) => println!("      error in {page} ({block})"),
+            None => {}
         }
     }
     println!("{stderr}");
@@ -624,7 +647,7 @@ fn build_capture(pkg: &str, features: Option<&str>) -> Result<(), i32> {
 /// The `block_<id>.rs` files a compiler error output names, in order.
 fn blocks_named_in(stderr: &str) -> Vec<String> {
     let mut blocks = Vec::new();
-    for word in stderr.split(|c: char| c.is_whitespace() || c == ':' || c == '/') {
+    for word in stderr.split(|c: char| c.is_whitespace() || matches!(c, ':' | '/' | '\\')) {
         if word.starts_with("block_") && word.ends_with(".rs") && !blocks.iter().any(|b| b == word)
         {
             blocks.push(word.to_string());
@@ -737,7 +760,7 @@ mod tests {
     fn compiler_errors_name_each_block_file_once() {
         let stderr = "error[E0432]: unresolved import\n --> p/examples/soothfast_capture/block_docs_c_1.rs:3:5\n\
                       error[E0425]: cannot find\n --> examples/soothfast_capture/block_readme_2.rs:4:1\n\
-                      --> p/examples/soothfast_capture/block_docs_c_1.rs:9:1\n";
+                      --> p\\examples\\soothfast_capture\\block_docs_c_1.rs:9:1\n";
         assert_eq!(
             blocks_named_in(stderr),
             ["block_docs_c_1.rs", "block_readme_2.rs"]

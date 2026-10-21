@@ -177,7 +177,7 @@ fn a_scoped_capture_runs_only_its_pages_and_a_disabled_block_keeps_its_output() 
 }
 
 #[test]
-fn a_capture_example_older_than_its_page_fails_naming_gen_tests() {
+fn a_block_added_without_gen_tests_fails_naming_gen_tests() {
     let fx = Fixture::new("unknown");
     both(&fx);
     fx.put(
@@ -187,7 +187,7 @@ fn a_capture_example_older_than_its_page_fails_naming_gen_tests() {
     let (ok, out) = fx.docs(&["capture", "-p", "p", "docs/a.md"]);
     assert!(!ok, "{out}");
     assert!(
-        out.contains("block docs_a_2 is not in the capture example — run `cargo soothfast docs gen-tests -p p`"),
+        out.contains("examples/soothfast_capture/block_docs_a_2.rs: generated file is missing — run `cargo soothfast docs gen-tests -p p`"),
         "{out}"
     );
 }
@@ -219,4 +219,28 @@ fn a_block_that_does_not_compile_is_one_failure_naming_its_page() {
     );
     assert!(!out.contains("exited with"), "{out}");
     assert!(!out.contains("docs/a.md line"), "{out}");
+}
+
+#[test]
+fn a_stale_or_missing_capture_example_fails_before_any_block_runs() {
+    let fx = Fixture::new("stale-capture");
+    both(&fx);
+    fx.put("docs/a.md", &PAGE_A.replace("from a", "edited"));
+    let before = fx.read("docs/a.md");
+    let (ok, out) = fx.docs(&["capture", "-p", "p", "docs/a.md"]);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains("examples/soothfast_capture/block_docs_a_1.rs: generated file is stale — run `cargo soothfast docs gen-tests -p p`"),
+        "{out}"
+    );
+    assert!(!out.contains("checked"), "{out}");
+    assert_eq!(fx.read("docs/a.md"), before);
+
+    let fresh = Fixture::new("missing-capture");
+    let (ok, out) = fresh.docs(&["capture", "-p", "p", "docs/a.md"]);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains("examples/soothfast_capture/main.rs: generated file is missing"),
+        "{out}"
+    );
 }

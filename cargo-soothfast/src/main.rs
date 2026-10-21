@@ -324,6 +324,9 @@ mod tests {
         }
         let line = version_line();
         let version = line.strip_prefix("cargo-soothfast ").unwrap();
+        let version = version
+            .split_once('-')
+            .map_or(version, |(release, _)| release);
         let parts: Vec<&str> = version.split('.').collect();
         assert_eq!(parts.len(), 3, "{line}");
         assert!(parts.iter().all(|p| p.parse::<u32>().is_ok()), "{line}");

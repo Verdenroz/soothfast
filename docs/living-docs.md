@@ -94,6 +94,18 @@ package whenever that feature is off. Capture then builds the example first,
 reports one failure naming each block in the compiler's errors by its page
 and line, and runs nothing. Tag such a block with `feature=`.
 
+The pages of a package share one test crate, and its capture blocks share
+one example crate. Anything crate-global in one block reaches the others: a
+`#[macro_export]` macro is visible to every block, a `linkme` registration
+lands in every block's registry, and two blocks installing a global
+allocator (directly or through `soothfast::bench_main!()`) cannot link.
+gen-tests rejects that last case, naming both blocks.
+
+The generated `main.rs` files keep their `mod` lines and dispatch inside a
+`verbatim!` macro call. rustfmt leaves such a body alone and does not visit
+the modules it declares, so `cargo fmt` cannot change a generated file and
+fail `docs check`.
+
 Every generated file starts with an `@generated` header and records the page
 it came from. gen-tests rewrites only files whose content changed and removes
 generated files nothing produces any more, including the per-page

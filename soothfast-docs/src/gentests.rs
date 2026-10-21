@@ -41,9 +41,18 @@ fn indent(code: &str, pad: &str) -> String {
 /// One generated file, its path relative to the package directory.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Generated {
+    /// Where the file goes, relative to the package directory.
     pub path: String,
+    /// The file's full content, header included.
     pub content: String,
 }
+
+/// Wraps the generated `mod` lines and dispatch of a target's `main.rs`.
+/// rustfmt neither formats a brace-delimited macro body nor follows a `mod`
+/// inside one, so `cargo fmt` cannot make a generated file differ from what
+/// `docs check` regenerates, whatever its version, edition or config.
+const VERBATIM: &str =
+    "macro_rules! verbatim {\n    ($($tokens:tt)*) => {\n        $($tokens)*\n    };\n}\n";
 
 /// The one integration-test target the doc tests of a package compile into.
 pub const DOC_TESTS_DIR: &str = "tests/soothfast_docs";
@@ -60,13 +69,16 @@ pub const OWNED: &[(&str, &str)] = &[
     (CAPTURE_DIR, ""),
 ];
 
-/// The page a generated file was generated from, read from its
-/// `// source: PAGE[ line N]` line.
-pub fn recorded_source(content: &str) -> Option<&str> {
+/// The page a generated file was generated from, and the line of the block
+/// when it is one block's file, read from its `// source: PAGE[ line N]` line.
+pub fn recorded_source(content: &str) -> Option<(&str, Option<usize>)> {
     let source = content.lines().nth(1)?.strip_prefix("// source: ")?;
     match source.rsplit_once(" line ") {
-        Some((page, line)) if line.parse::<usize>().is_ok() => Some(page),
-        _ => Some(source),
+        Some((page, line)) => match line.parse::<usize>() {
+            Ok(line) => Some((page, Some(line))),
+            Err(_) => Some((source, None)),
+        },
+        None => Some((source, None)),
     }
 }
 
@@ -77,6 +89,8 @@ pub fn recorded_source(content: &str) -> Option<&str> {
 pub fn doc_test_set<'a>(
     docs: impl IntoIterator<Item = (&'a str, &'a Doc)>,
 ) -> Result<Vec<Generated>, String> {
+    let docs: Vec<(&str, &Doc)> = docs.into_iter().collect();
+    one_global_allocator(&docs, CodeBlock::is_testable_rust)?;
     let mut pages: Vec<(String, &str, String)> = Vec::new();
     for (rel_path, doc) in docs {
         if let Some(content) = test_file(rel_path, doc) {
@@ -98,10 +112,12 @@ pub fn doc_test_set<'a>(
     if pages.is_empty() {
         return Ok(Vec::new());
     }
-    let mut main = format!("{GENERATED_HEADER}\n#![allow(unused)]\n\n");
-    for (module, _, _) in &pages {
-        main.push_str(&format!("mod {module};\n"));
-    }
+    let mods: String = pages
+        .iter()
+        .map(|(m, _, _)| format!("mod {m};\n"))
+        .collect();
+    let main =
+        format!("{GENERATED_HEADER}\n#![allow(unused)]\n\n{VERBATIM}\nverbatim! {{\n{mods}}}\n");
     let mut set = vec![Generated {
         path: format!("{DOC_TESTS_DIR}/main.rs"),
         content: main,
@@ -111,6 +127,27 @@ pub fn doc_test_set<'a>(
         content,
     }));
     Ok(set)
+}
+
+/// The blocks of one target share a crate, so at most one of them may install
+/// a global allocator, directly or through `soothfast::bench_main!()`.
+fn one_global_allocator(
+    docs: &[(&str, &Doc)],
+    in_target: fn(&CodeBlock) -> bool,
+) -> Result<(), String> {
+    let mut found = docs.iter().flat_map(|(page, doc)| {
+        doc.blocks
+            .iter()
+            .filter(move |b| in_target(b))
+            .filter(|b| b.code.contains("#[global_allocator]") || b.code.contains("bench_main!"))
+            .map(move |b| format!("{page} line {}", b.line))
+    });
+    match (found.next(), found.next()) {
+        (Some(first), Some(second)) => Err(format!(
+            "{first} and {second} both install a global allocator, and the blocks of a package compile into one crate; mark one `ignore` or `no_run` in another package"
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Whether `rel_path` (relative to the package directory) is somewhere
@@ -134,7 +171,7 @@ pub fn test_file(rel_path: &str, doc: &Doc) -> Option<String> {
     for block in testable {
         let body = indent(&block.code, "    ");
         // Blocks that define `fn main` get it as a nested fn, then called.
-        let call_main = if block.code.contains("fn main") {
+        let call_main = if block.code.lines().any(|l| top_level_main(l).is_some()) {
             "\n    main();"
         } else {
             ""
@@ -198,6 +235,8 @@ pub fn capture_ids(rel_path: &str, doc: &Doc) -> Vec<String> {
 pub fn capture_set<'a>(
     docs: impl IntoIterator<Item = (&'a str, &'a Doc)>,
 ) -> Result<Vec<Generated>, String> {
+    let docs: Vec<(&str, &Doc)> = docs.into_iter().collect();
+    one_global_allocator(&docs, CodeBlock::is_capture)?;
     let mut blocks: Vec<(String, &str, Option<String>, String)> = Vec::new();
     let mut stems: Vec<(String, &str)> = Vec::new();
     for (rel_path, doc) in docs {
@@ -246,14 +285,14 @@ fn capture_main(blocks: &[(String, &str, Option<String>, String)]) -> String {
         match cfg {
             Some(pred) => {
                 mods.push_str(&format!("#[cfg({pred})]\nmod block_{id};\n"));
-                arms.push_str(&format!("        #[cfg({pred})]\n        {run}"));
+                arms.push_str(&format!("            #[cfg({pred})]\n            {run}"));
                 arms.push_str(&format!(
-                    "        #[cfg(not({pred}))]\n        \"{id}\" => exit(CAPTURE_DISABLED, &id),\n"
+                    "            #[cfg(not({pred}))]\n            \"{id}\" => exit(CAPTURE_DISABLED, &id),\n"
                 ));
             }
             None => {
                 mods.push_str(&format!("mod block_{id};\n"));
-                arms.push_str(&format!("        {run}"));
+                arms.push_str(&format!("            {run}"));
             }
         }
     }
@@ -262,13 +301,16 @@ fn capture_main(blocks: &[(String, &str, Option<String>, String)]) -> String {
     format!(
         "{GENERATED_HEADER}\n#![allow(dead_code, unused_imports)]\n\n\
          use std::process::{{ExitCode, Termination}};\n\n\
-         {mods}\n\
+         {VERBATIM}\n\
+         verbatim! {{\n{mods}}}\n\n\
          const CAPTURE_UNKNOWN: (u8, &str) = ({unknown}, \"{unknown_msg}\");\n\
          const CAPTURE_DISABLED: (u8, &str) = ({disabled}, \"{disabled_msg}\");\n\n\
          fn main() -> ExitCode {{\n    \
              let id = std::env::args().nth(1).unwrap_or_default();\n    \
-             match id.as_str() {{\n{arms}        \
-                 _ => exit(CAPTURE_UNKNOWN, &id),\n    \
+             verbatim! {{\n        \
+                 match id.as_str() {{\n{arms}            \
+                     _ => exit(CAPTURE_UNKNOWN, &id),\n        \
+                 }}\n    \
              }}\n\
          }}\n\n\
          fn run<T: Termination>(main: fn() -> T) -> ExitCode {{\n    \
@@ -292,8 +334,11 @@ fn capture_module(block: &CodeBlock) -> Result<String, String> {
     };
     for (i, line) in lines.iter().enumerate() {
         let next = lines[i + 1..].iter().find(|l| !l.trim().is_empty());
-        if line.starts_with("#![") {
-            return Err("a capture block cannot use a crate-level attribute (`#![...]`)".into());
+        if line.starts_with("#![") && !is_lint_attribute(line) {
+            return Err(
+                "a capture block cannot use a crate-level attribute (`#![...]`) other than a lint level"
+                    .into(),
+            );
         }
         if line.starts_with("#[macro_use]") && next.is_some_and(|l| l.starts_with("extern crate")) {
             return Err("a capture block cannot use `#[macro_use] extern crate`".into());
@@ -306,10 +351,24 @@ fn capture_module(block: &CodeBlock) -> Result<String, String> {
     Ok(format!("{}\n", out.join("\n")))
 }
 
+/// Whether an inner attribute only sets lint levels, which a module file may
+/// carry as well as a crate root.
+fn is_lint_attribute(line: &str) -> bool {
+    ["allow", "warn", "deny", "forbid", "expect"]
+        .iter()
+        .any(|lint| {
+            line.strip_prefix("#![")
+                .is_some_and(|a| a.starts_with(&format!("{lint}(")))
+        })
+}
+
 /// For a line declaring a top-level `fn main` (or `async fn main`), whether
 /// it is already `pub`. Indented lines and other items are None.
 fn top_level_main(line: &str) -> Option<bool> {
-    let (public, rest) = match line.strip_prefix("pub ") {
+    let restricted = line
+        .strip_prefix("pub(")
+        .and_then(|rest| rest.split_once(") ").map(|(_, rest)| rest));
+    let (public, rest) = match restricted.or_else(|| line.strip_prefix("pub ")) {
         Some(rest) => (true, rest),
         None => (false, line),
     };
@@ -358,7 +417,7 @@ mod tests {
         assert!(
             set[0]
                 .content
-                .ends_with("mod doc_readme;\nmod doc_docs_b;\n")
+                .ends_with("verbatim! {\nmod doc_readme;\nmod doc_docs_b;\n}\n")
         );
         assert_eq!(set[1].content, test_file("README.md", &a).unwrap());
     }
@@ -442,7 +501,10 @@ mod tests {
                 .content
                 .contains("pub fn main() {\n    println!(\"a\");\n}")
         );
-        assert_eq!(recorded_source(&set[1].content), Some("docs/c.md"));
+        assert_eq!(
+            recorded_source(&set[1].content),
+            Some(("docs/c.md", Some(1)))
+        );
     }
 
     #[test]
@@ -457,10 +519,10 @@ mod tests {
         let pred = "all(feature = \"risk\", feature = \"polygon\")";
         assert!(main.contains(&format!("#[cfg({pred})]\nmod block_docs_c_1;")));
         assert!(main.contains(&format!(
-            "#[cfg({pred})]\n        \"docs_c_1\" => run(block_docs_c_1::main),"
+            "#[cfg({pred})]\n            \"docs_c_1\" => run(block_docs_c_1::main),"
         )));
         assert!(main.contains(&format!(
-            "#[cfg(not({pred}))]\n        \"docs_c_1\" => exit(CAPTURE_DISABLED, &id),"
+            "#[cfg(not({pred}))]\n            \"docs_c_1\" => exit(CAPTURE_DISABLED, &id),"
         )));
         assert!(main.contains(
             "const CAPTURE_DISABLED: (u8, &str) = (3, \"soothfast_capture: disabled block\");"
@@ -486,7 +548,7 @@ mod tests {
     #[test]
     fn crate_level_attributes_in_a_capture_block_are_an_error() {
         for code in [
-            "#![allow(dead_code)]\nfn main() {}",
+            "#![feature(test)]\nfn main() {}",
             "#[macro_use]\nextern crate serde;\nfn main() {}",
         ] {
             let doc = markdown::scan(&format!("```rust capture-output\n{code}\n```\n")).unwrap();
@@ -513,12 +575,126 @@ mod tests {
         let h = GENERATED_HEADER;
         assert_eq!(
             recorded_source(&format!("{h}\n// source: README.md\n")),
-            Some("README.md")
+            Some(("README.md", None))
         );
         assert_eq!(
             recorded_source(&format!("{h}\n// source: docs/a line b.md line 41\n")),
-            Some("docs/a line b.md")
+            Some(("docs/a line b.md", Some(41)))
+        );
+        assert_eq!(
+            recorded_source(&format!("{h}\n// source: docs/a line b.md\n")),
+            Some(("docs/a line b.md", None))
         );
         assert_eq!(recorded_source(&format!("{h}\nfn main() {{}}\n")), None);
+    }
+
+    #[test]
+    fn a_lint_level_inner_attribute_is_allowed_in_a_capture_block() {
+        for attr in ["allow(dead_code)", "warn(missing_docs)", "expect(unused)"] {
+            let md = format!("```rust capture-output\n#![{attr}]\nfn main() {{}}\n```\n");
+            let block = &capture(&md)[1].content;
+            assert!(
+                block.contains(&format!("#![{attr}]\npub fn main() {{}}")),
+                "{block}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_restricted_visibility_main_is_the_blocks_own_main() {
+        for vis in ["pub(crate)", "pub(super)"] {
+            let md = format!("```rust capture-output\n{vis} fn main() {{}}\n```\n");
+            let block = &capture(&md)[1].content;
+            assert!(
+                block.ends_with(&format!("\n{vis} fn main() {{}}\n")),
+                "{block}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_top_level_main_is_called_by_a_doc_test() {
+        let md = "```rust\n// fn main is not here\nfn main_loop() {}\nlet s = \"fn main\";\n```\n```rust\nfn main() {}\n```\n";
+        let tests = test_file("docs/m.md", &markdown::scan(md).unwrap()).unwrap();
+        assert_eq!(tests.matches("    main();").count(), 1, "{tests}");
+    }
+
+    #[test]
+    fn two_blocks_installing_a_global_allocator_are_an_error_naming_both() {
+        let a = markdown::scan("```rust no_run\nsoothfast::bench_main!();\n```\n").unwrap();
+        let b =
+            markdown::scan("```rust no_run\n#[global_allocator]\nstatic A: X = X;\n```\n").unwrap();
+        let e = doc_test_set([("docs/a.md", &a), ("docs/b.md", &b)]).unwrap_err();
+        assert!(
+            e.starts_with("docs/a.md line 1 and docs/b.md line 1 both install"),
+            "{e}"
+        );
+        assert!(doc_test_set([("docs/a.md", &a)]).is_ok());
+    }
+
+    /// Writes `set` under a temp dir and asks rustfmt, in every edition,
+    /// whether it would change the target's `main.rs`.
+    fn assert_rustfmt_leaves_alone(name: &str, set: &[Generated], root: &str) {
+        let dir = std::env::temp_dir().join(format!("soothfast-fmt-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for g in set {
+            let path = dir.join(&g.path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, &g.content).unwrap();
+        }
+        for edition in ["2015", "2021", "2024"] {
+            let out = std::process::Command::new("rustfmt")
+                .args(["--check", "--edition", edition])
+                .arg(dir.join(root).join("main.rs"))
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "edition {edition}:\n{}",
+                String::from_utf8_lossy(&out.stdout)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn rustfmt_present() -> bool {
+        std::process::Command::new("rustfmt")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    #[test]
+    fn generated_targets_are_already_rustfmt_clean() {
+        if !rustfmt_present() {
+            return;
+        }
+        let long =
+            "docs/library/an_unusually_long_page_name_for_a_reference_section_of_the_library.md";
+        let mut capture_md = String::new();
+        for n in 0..12 {
+            let tag = if n % 3 == 0 {
+                " feature=risk,polygon,indicators,backtesting"
+            } else {
+                ""
+            };
+            capture_md.push_str(&format!(
+                "```rust capture-output{tag}\nprintln!(\"{n}\");\n```\n"
+            ));
+        }
+        let md = format!("```rust\nlet x = 1;\n```\n{capture_md}");
+        let pages: Vec<(&str, Doc)> = [
+            long,
+            "docs/b.md",
+            "docs/a_10.md",
+            "docs/a_2.md",
+            "README.md",
+        ]
+        .into_iter()
+        .map(|p| (p, markdown::scan(&md).unwrap()))
+        .collect();
+        let docs = || pages.iter().map(|(p, d)| (*p, d));
+        assert_rustfmt_leaves_alone("tests", &doc_test_set(docs()).unwrap(), DOC_TESTS_DIR);
+        assert_rustfmt_leaves_alone("capture", &capture_set(docs()).unwrap(), CAPTURE_DIR);
     }
 }

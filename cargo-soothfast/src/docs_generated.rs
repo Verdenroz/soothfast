@@ -38,7 +38,7 @@ fn owned_files(pkg_dir: &Path) -> Vec<(String, String)> {
 pub fn recorded_pages(pkg_dir: &Path) -> BTreeSet<String> {
     owned_files(pkg_dir)
         .iter()
-        .filter_map(|(_, text)| gentests::recorded_source(text))
+        .filter_map(|(_, text)| gentests::recorded_source(text).map(|(page, _)| page))
         .map(page_key)
         .collect()
 }

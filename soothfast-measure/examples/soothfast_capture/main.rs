@@ -3,16 +3,26 @@
 
 use std::process::{ExitCode, Termination};
 
+macro_rules! verbatim {
+    ($($tokens:tt)*) => {
+        $($tokens)*
+    };
+}
+
+verbatim! {
 mod block_docs_measuring_1;
+}
 
 const CAPTURE_UNKNOWN: (u8, &str) = (2, "soothfast_capture: unknown block");
 const CAPTURE_DISABLED: (u8, &str) = (3, "soothfast_capture: disabled block");
 
 fn main() -> ExitCode {
     let id = std::env::args().nth(1).unwrap_or_default();
-    match id.as_str() {
-        "docs_measuring_1" => run(block_docs_measuring_1::main),
-        _ => exit(CAPTURE_UNKNOWN, &id),
+    verbatim! {
+        match id.as_str() {
+            "docs_measuring_1" => run(block_docs_measuring_1::main),
+            _ => exit(CAPTURE_UNKNOWN, &id),
+        }
     }
 }
 
