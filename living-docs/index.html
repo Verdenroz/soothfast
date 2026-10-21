@@ -173,17 +173,17 @@ taken as-is, and underscores are allowed for readability, as in <code>25_000</co
 <code>docs check</code> evaluates the expression against
 <code>baseline[&quot;items&quot;][item][backend][metric]</code> and fails if the metric is
 missing or the comparison does not hold.</p>
-<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 161 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.56" y2="11" class="chip-scale-fill" style="--fill-len:0.56"/><circle cx="8.56" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.56"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
+<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 221 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.76" y2="11" class="chip-scale-fill" style="--fill-len:0.76"/><circle cx="8.76" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.76"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
 <p>Parsing one claim expression, the exact work <code>docs check</code> does per marker on
 this page, costs under 50µs at the tail.</p>
 <h2 id="fence-tags-on-rust-code-blocks">Fence tags on rust code blocks<a class="anchor" href="#fence-tags-on-rust-code-blocks" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap"><table>
 <thead><tr><th>tag</th><th>effect</th></tr></thead>
 <tbody>
-<tr><td><em>(none)</em></td><td>becomes a real <code>#[test]</code>, generated into <code>tests/soothfast_doc_&lt;file&gt;.rs</code></td></tr>
+<tr><td><em>(none)</em></td><td>becomes a real <code>#[test]</code>, generated into the page's module of <code>tests/soothfast_docs/</code></td></tr>
 <tr><td><code>ignore</code></td><td>excluded entirely: no test, no example, no check</td></tr>
 <tr><td><code>no_run</code></td><td>compiled but never executed (a plain fn, not <code>#[test]</code>)</td></tr>
-<tr><td><code>capture-output</code></td><td>becomes a runnable example. <code>docs capture</code> runs it and splices real stdout into a <code>text soothfast-output</code> fence below it</td></tr>
+<tr><td><code>capture-output</code></td><td>becomes a block of the <code>soothfast_capture</code> example. <code>docs capture</code> runs it and splices real stdout into a <code>text soothfast-output</code> fence below it</td></tr>
 <tr><td><code>feature=NAME</code></td><td>gates the generated test/example behind a cargo feature (comma-separated for a block that needs several to compile, no spaces — it is then gated behind <code>all</code> of them)</td></tr>
 <tr><td><code>mock=NAME</code> / <code>mock=NAME(ARG)</code></td><td>activates a <code>#[soothfast::mock_seam]</code> backend by name (requires an accompanying <code>feature=</code> tag)</td></tr>
 <tr><td><code>covers=path::to::item</code></td><td>attaches a bind/claim's chip to this block instead of rendering it standalone (comma-separated for several items, no spaces)</td></tr>
@@ -194,6 +194,47 @@ fingerprints against <code>soothfast.lock</code>, claims against <code>--baselin
 fresh generation of every test and example in memory, diffed against what is
 on disk. A stale <code>docs gen-tests</code> or <code>docs capture</code> run therefore fails CI
 just like a stale bind or a violated claim.</p>
+<h2 id="generated-files">Generated files<a class="anchor" href="#generated-files" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast docs gen-tests -p PKG</code> compiles a package's blocks into two
+targets, so a page adds a module rather than another binary to link:</p>
+<ul>
+<li><code>tests/soothfast_docs/</code>: one integration test, with a <code>doc_&lt;page&gt;.rs</code> module per page that has a testable block.</li>
+<li><code>examples/soothfast_capture/</code>: one example, with a <code>block_&lt;page&gt;_&lt;n&gt;.rs</code> module per <code>capture-output</code> block. It runs the block its first argument names: <code>cargo run -p PKG --example soothfast_capture -- readme_1</code>.</li>
+</ul>
+<p>A capture block becomes a module, so it cannot use crate-level attributes
+(<code>#![...]</code>, <code>#[macro_use] extern crate</code>), and <code>crate::</code> in it names the
+example's root, not the block. A block that defines its own top-level
+<code>fn main</code> keeps it, whatever it returns. When a block's <code>feature=</code> tag is
+off, the example reports it as disabled, and <code>docs capture</code> skips it and
+keeps the output already recorded.</p>
+<p>Every block of a package compiles into the same example, so one block that
+needs a feature it is not tagged with breaks <code>docs capture</code> for the whole
+package whenever that feature is off. Capture then builds the example first,
+reports one failure naming each block in the compiler's errors by its page
+and line, and runs nothing. Tag such a block with <code>feature=</code>.</p>
+<p>The pages of a package share one test crate, and its capture blocks share
+one example crate. Anything crate-global in one block reaches the others: a
+<code>#[macro_export]</code> macro is visible to every block, a <code>linkme</code> registration
+lands in every block's registry, and two blocks installing a global
+allocator (directly or through <code>soothfast::bench_main!()</code>) cannot link.
+gen-tests rejects that last case, naming both blocks.</p>
+<p>The generated <code>main.rs</code> files keep their <code>mod</code> lines and dispatch inside a
+<code>verbatim!</code> macro call. rustfmt leaves such a body alone and does not visit
+the modules it declares, so <code>cargo fmt</code> cannot change a generated file and
+fail <code>docs check</code>.</p>
+<p>Every generated file starts with an <code>@generated</code> header and records the page
+it came from. gen-tests rewrites only files whose content changed and removes
+generated files nothing produces any more, including the per-page
+<code>tests/soothfast_doc_*.rs</code> and per-block <code>examples/soothfast_capture_*.rs</code>
+files of earlier releases. <code>docs check</code> fails while any of those remain. A
+file without the header is never touched.</p>
+<p>The page paths given to a command assign pages to the package. A run with
+paths also keeps every page the package's generated files already record,
+so <code>docs gen-tests -p PKG docs/one.md</code> regenerates that page without
+dropping the others. A recorded page that was deleted, or has no blocks
+left, is dropped. To move a page to another package, delete its generated
+files and run gen-tests for both. A run without paths covers exactly the
+default scope.</p>
 <h2 id="why-this-page-has-almost-no-ignored-code">Why this page has almost no <code>ignore</code>d code<a class="anchor" href="#why-this-page-has-almost-no-ignored-code" aria-label="Link to this section">#</a></h2>
 <p>Every rust block on this site either runs for real, with <code>capture-output</code>
 producing its output rather than someone typing it, or is at least checked
@@ -218,6 +259,8 @@ or database, and prefer <code>no_run</code> even then if the code is otherwise r
     <li><a class="toc-l2" href="#claims-numbers-checked-against-a-real-run">Claims: numbers checked against a real run</a></li>
   
     <li><a class="toc-l2" href="#fence-tags-on-rust-code-blocks">Fence tags on rust code blocks</a></li>
+  
+    <li><a class="toc-l2" href="#generated-files">Generated files</a></li>
   
     <li><a class="toc-l2" href="#why-this-page-has-almost-no-ignored-code">Why this page has almost no ignored code</a></li>
   

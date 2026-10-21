@@ -160,7 +160,7 @@ compared against a fixed bound.</p>
 </code></pre></figure>
 <p>Parse <code>demo::lcg_checksum.perfcnt.instructions &lt; 25000</code> (units on the
 bound: ns/us/ms/s multiply into ns; bare numbers stay raw).</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">p99</span><span class="ev-detail">p99 161ns &lt;= 50000ns</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_claim_parse`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">142</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">161</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">6</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">170</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">p99</span><span class="ev-detail">p99 221ns &lt;= 50000ns</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_claim_parse`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">212</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">221</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">6</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">170</span></div></div></div>
 <h2 id="soothfast-docs-diff"><code>soothfast_docs::diff</code><a class="anchor" href="#soothfast-docs-diff" aria-label="Link to this section">#</a></h2>
 <h3 id="surfacediff-struct"><code>SurfaceDiff</code> <sup>struct</sup><a class="anchor" href="#surfacediff-struct" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SurfaceDiff</span> { <span class="tok-kw">pub</span> added: <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">String</span>&gt;, <span class="tok-kw">pub</span> removed: <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">String</span>&gt;, <span class="tok-kw">pub</span> changed: <span class="tok-ty">Vec</span>&lt;(<span class="tok-ty">String</span>, <span class="tok-ty">bool</span>)&gt; }
@@ -177,18 +177,83 @@ fingerprint (modules are exempt — their span is the whole file).</p>
 <p>One <code>ADDED</code>/<code>REMOVED</code>/<code>CHANGED</code> line per item, ready for terminals and
 changelog drafts; an empty diff renders as a single "no changes" line.</p>
 <h2 id="soothfast-docs-gentests"><code>soothfast_docs::gentests</code><a class="anchor" href="#soothfast-docs-gentests" aria-label="Link to this section">#</a></h2>
+<h3 id="capture-dir-constant"><code>CAPTURE_DIR</code> <sup>constant</sup><a class="anchor" href="#capture-dir-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">CAPTURE_DIR</span>: &amp;<span class="tok-ty">str</span> = <span class="tok-str">&quot;examples/soothfast_capture&quot;</span>
+</code></pre></figure>
+<p>The one example target every capture block of a package compiles into.</p>
+<h3 id="capture-disabled-constant"><code>CAPTURE_DISABLED</code> <sup>constant</sup><a class="anchor" href="#capture-disabled-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">CAPTURE_DISABLED</span>: (<span class="tok-ty">i32</span>, &amp;<span class="tok-ty">str</span>) = (<span class="tok-num">3</span>, <span class="tok-str">&quot;soothfast_capture: disabled block&quot;</span>)
+</code></pre></figure>
+<p>Exit status of the capture example for a block whose <code>feature=</code> tag is
+not enabled in this build. The stderr line starts with the sentinel.</p>
+<h3 id="capture-example-constant"><code>CAPTURE_EXAMPLE</code> <sup>constant</sup><a class="anchor" href="#capture-example-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">CAPTURE_EXAMPLE</span>: &amp;<span class="tok-ty">str</span> = <span class="tok-str">&quot;soothfast_capture&quot;</span>
+</code></pre></figure>
+<p>Cargo's name for the [<code>CAPTURE_DIR</code>] example.</p>
+<h3 id="capture-unknown-constant"><code>CAPTURE_UNKNOWN</code> <sup>constant</sup><a class="anchor" href="#capture-unknown-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">CAPTURE_UNKNOWN</span>: (<span class="tok-ty">i32</span>, &amp;<span class="tok-ty">str</span>) = (<span class="tok-num">2</span>, <span class="tok-str">&quot;soothfast_capture: unknown block&quot;</span>)
+</code></pre></figure>
+<p>Exit status of the capture example for a block id it does not contain.</p>
+<h3 id="doc-tests-dir-constant"><code>DOC_TESTS_DIR</code> <sup>constant</sup><a class="anchor" href="#doc-tests-dir-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">DOC_TESTS_DIR</span>: &amp;<span class="tok-ty">str</span> = <span class="tok-str">&quot;tests/soothfast_docs&quot;</span>
+</code></pre></figure>
+<p>The one integration-test target the doc tests of a package compile into.</p>
 <h3 id="generated-header-constant"><code>GENERATED_HEADER</code> <sup>constant</sup><a class="anchor" href="#generated-header-constant" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">GENERATED_HEADER</span>: &amp;<span class="tok-ty">str</span> = <span class="tok-str">&quot;// @generated by `cargo soothfast docs gen-tests`&quot;</span>
 </code></pre></figure>
 <p>First line of every generated file; <code>docs check</code> uses it to tell
 generated artifacts from hand-written ones.</p>
-<h3 id="capture-examples-function"><code>capture_examples</code> <sup>function</sup><a class="anchor" href="#capture-examples-function" aria-label="Link to this section">#</a></h3>
-<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">capture_examples</span>(rel_path: &amp;<span class="tok-ty">str</span>, doc: &amp;<span class="tok-ty">Doc</span>) -&gt; <span class="tok-ty">Vec</span>&lt;(<span class="tok-ty">String</span>, <span class="tok-ty">String</span>)&gt;
+<h3 id="generated-struct"><code>Generated</code> <sup>struct</sup><a class="anchor" href="#generated-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Generated</span> { <span class="tok-kw">pub</span> path: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> content: <span class="tok-ty">String</span> }
 </code></pre></figure>
-<p>Example-file contents for the capture blocks of one markdown doc, in
-capture order: (example_name, content).</p>
-<p>A <code>feature=NAME</code> tag gates the real <code>fn main</code> behind that feature
-(<code>feature=A,B</code> behind all of them)</p>
+<p>One generated file, its path relative to the package directory.</p>
+<h3 id="owned-constant"><code>OWNED</code> <sup>constant</sup><a class="anchor" href="#owned-constant" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">OWNED</span>: &amp;[(&amp;<span class="tok-ty">str</span>, &amp;<span class="tok-ty">str</span>, <span class="tok-ty">Option</span>&lt;&amp;<span class="tok-ty">str</span>&gt;)] = &amp;[ (<span class="tok-str">&quot;tests&quot;</span>, <span class="tok-str">&quot;soothfast_doc_&quot;</span>, <span class="tok-ty">Some</span>(<span class="tok-ty">DOC_TESTS_DIR</span>)), (<span class="tok-ty">DOC_TESTS_DIR</span>, <span class="tok-str">&quot;&quot;</span>, <span class="tok-ty">None</span>), (<span class="tok-str">&quot;examples&quot;</span>, <span class="tok-str">&quot;soothfast_capture_&quot;</span>, <span class="tok-ty">Some</span>(<span class="tok-ty">CAPTURE_DIR</span>)), (<span class="tok-ty">CAPTURE_DIR</span>, <span class="tok-str">&quot;&quot;</span>, <span class="tok-ty">None</span>), ]
+</code></pre></figure>
+<p>Where generated files live, as (directory, file-name prefix, replaced by),
+relative to the package directory. A file there that starts with
+[<code>GENERATED_HEADER</code>] belongs to gen-tests: it is rewritten when expected
+and removed when not. An entry with an empty prefix is a target directory
+gen-tests owns outright; a prefixed entry is the per-page or per-block
+layout of earlier releases and names the target directory that replaced it.</p>
+<h3 id="capture-ids-function"><code>capture_ids</code> <sup>function</sup><a class="anchor" href="#capture-ids-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">capture_ids</span>(rel_path: &amp;<span class="tok-ty">str</span>, doc: &amp;<span class="tok-ty">Doc</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Block ids for one page's capture blocks, in capture order: the argument
+the capture example takes to run that block.</p>
+<h3 id="capture-set-function"><code>capture_set</code> <sup>function</sup><a class="anchor" href="#capture-set-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> capture_set&lt;<span class="tok-kw">&#39;a</span>&gt;( docs: <span class="tok-kw">impl</span> <span class="tok-ty">IntoIterator</span>&lt;<span class="tok-ty">Item</span> = (&amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">str</span>, &amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">Doc</span>)&gt;, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Generated</span>&gt;, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Every capture file a package needs: one <code>block_&lt;id&gt;.rs</code> module per capture
+block under [<code>CAPTURE_DIR</code>], and the <code>main.rs</code> that runs the block its first
+argument names. Empty when no page has a capture block.</p>
+<p>A block with a <code>feature=</code> tag (<code>feature=A,B</code> for all of them) compiles in
+only under its features; without them the example exits with
+[<code>CAPTURE_DISABLED</code>], so a capture run can keep the recorded output rather
+than splice in nothing. A block keeps its own top-level <code>fn main</code>, whatever
+it returns or however it is attributed (<code>#[tokio::main]</code>); a block without
+one becomes the body of one. An error names a page whose block uses a
+crate-level attribute, which a module cannot carry, or two pages whose
+paths sanitize to the same block ids.</p>
+<h3 id="doc-test-set-function"><code>doc_test_set</code> <sup>function</sup><a class="anchor" href="#doc-test-set-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> doc_test_set&lt;<span class="tok-kw">&#39;a</span>&gt;( docs: <span class="tok-kw">impl</span> <span class="tok-ty">IntoIterator</span>&lt;<span class="tok-ty">Item</span> = (&amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">str</span>, &amp;<span class="tok-kw">&#39;a</span> <span class="tok-ty">Doc</span>)&gt;, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Generated</span>&gt;, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Every doc-test file a package needs: one module per page with testable
+blocks under [<code>DOC_TESTS_DIR</code>], and the <code>main.rs</code> that declares them.
+Empty when no page has a testable block. An error names two pages whose
+paths sanitize to the same module.</p>
+<h3 id="owning-target-function"><code>owning_target</code> <sup>function</sup><a class="anchor" href="#owning-target-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">owning_target</span>(rel_path: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Option</span>&lt;(&amp;<span class="tok-kw">&#39;static</span> <span class="tok-ty">str</span>, <span class="tok-ty">bool</span>)&gt;
+</code></pre></figure>
+<p>For <code>rel_path</code> (relative to the package directory) in a place gen-tests
+writes, per [<code>OWNED</code>]: the target directory it belongs to, and whether it is
+a leftover of the layout that target replaced. The file's header decides
+ownership.</p>
+<h3 id="recorded-source-function"><code>recorded_source</code> <sup>function</sup><a class="anchor" href="#recorded-source-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">recorded_source</span>(content: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Option</span>&lt;(&amp;<span class="tok-ty">str</span>, <span class="tok-ty">Option</span>&lt;<span class="tok-ty">usize</span>&gt;)&gt;
+</code></pre></figure>
+<p>The page a generated file was generated from, and the line of the block
+when it is one block's file, read from its <code>// source: PAGE[ line N]</code> line.</p>
 <h3 id="sanitized-stem-function"><code>sanitized_stem</code> <sup>function</sup><a class="anchor" href="#sanitized-stem-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">sanitized_stem</span>(rel_path: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">String</span>
 </code></pre></figure>
@@ -196,8 +261,8 @@ capture order: (example_name, content).</p>
 <h3 id="test-file-function"><code>test_file</code> <sup>function</sup><a class="anchor" href="#test-file-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">test_file</span>(rel_path: &amp;<span class="tok-ty">str</span>, doc: &amp;<span class="tok-ty">Doc</span>) -&gt; <span class="tok-ty">Option</span>&lt;<span class="tok-ty">String</span>&gt;
 </code></pre></figure>
-<p>Test-file content for one markdown doc, or None when it has no testable
-blocks (all ignored / non-rust / capture).</p>
+<p>Module content for one markdown page's doc tests, or None when it has no
+testable blocks (all ignored / non-rust / capture).</p>
 <h2 id="soothfast-docs-lockfile"><code>soothfast_docs::lockfile</code><a class="anchor" href="#soothfast-docs-lockfile" aria-label="Link to this section">#</a></h2>
 <h3 id="binds-type-alias"><code>Binds</code> <sup>type_alias</sup><a class="anchor" href="#binds-type-alias" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">type</span> <span class="tok-ty">Binds</span> = <span class="tok-ty">BTreeMap</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;
@@ -271,7 +336,7 @@ plus <code>soothfast:bind</code> / <code>soothfast:claim</code> markers, in docu
 <p>Scan one markdown text. Closing markers (<code>&lt;!-- /soothfast:... --&gt;</code>) are
 structural for readers and ignored here. Errs on an unclosed fence:
 dropping it would silently swallow the block and every later marker.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x0.97 over sizes [512, 2048, 8192] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_markdown_scan`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">218919</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">221453</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4114</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">338400</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x1.00 over sizes [512, 2048, 8192] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_docs::bench_markdown_scan`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">412492</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">427427</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4114</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">338400</span></div></div></div>
 <h3 id="splice-output-function"><code>splice_output</code> <sup>function</sup><a class="anchor" href="#splice-output-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">splice_output</span>( text: &amp;<span class="tok-ty">str</span>, nth_capture: <span class="tok-ty">usize</span>, output: &amp;<span class="tok-ty">str</span>, ) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">Option</span>&lt;<span class="tok-ty">String</span>&gt;, <span class="tok-ty">String</span>&gt;
 </code></pre></figure>
@@ -360,9 +425,31 @@ relative filenames in spans (the directory rustdoc ran in).</p>
   
     <li><a class="toc-l2" href="#soothfast-docs-gentests">soothfast_docs::gentests</a></li>
   
+    <li><a class="toc-l3" href="#capture-dir-constant">CAPTURE_DIR constant</a></li>
+  
+    <li><a class="toc-l3" href="#capture-disabled-constant">CAPTURE_DISABLED constant</a></li>
+  
+    <li><a class="toc-l3" href="#capture-example-constant">CAPTURE_EXAMPLE constant</a></li>
+  
+    <li><a class="toc-l3" href="#capture-unknown-constant">CAPTURE_UNKNOWN constant</a></li>
+  
+    <li><a class="toc-l3" href="#doc-tests-dir-constant">DOC_TESTS_DIR constant</a></li>
+  
     <li><a class="toc-l3" href="#generated-header-constant">GENERATED_HEADER constant</a></li>
   
-    <li><a class="toc-l3" href="#capture-examples-function">capture_examples function</a></li>
+    <li><a class="toc-l3" href="#generated-struct">Generated struct</a></li>
+  
+    <li><a class="toc-l3" href="#owned-constant">OWNED constant</a></li>
+  
+    <li><a class="toc-l3" href="#capture-ids-function">capture_ids function</a></li>
+  
+    <li><a class="toc-l3" href="#capture-set-function">capture_set function</a></li>
+  
+    <li><a class="toc-l3" href="#doc-test-set-function">doc_test_set function</a></li>
+  
+    <li><a class="toc-l3" href="#owning-target-function">owning_target function</a></li>
+  
+    <li><a class="toc-l3" href="#recorded-source-function">recorded_source function</a></li>
   
     <li><a class="toc-l3" href="#sanitized-stem-function">sanitized_stem function</a></li>
   
