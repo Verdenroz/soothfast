@@ -10,6 +10,10 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### ✨ Features
+
+- Per-package file allow-lists for cargo soothfast test (#260)
+
 ### 🔧 Internal
 
 - Pin dtolnay/rust-toolchain to a master commit (#258)
