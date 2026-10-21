@@ -12,6 +12,7 @@
 
 ### 🐛 Fixes
 
+- Digest each test executable once, reading only loaded sections (#252)
 - Run the test shim from a copy taken before the build (#250)
 - Run tests in the build's own cargo invocation (#248)
 
