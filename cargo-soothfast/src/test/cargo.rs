@@ -111,6 +111,8 @@ pub struct RunStep<'a> {
     pub run_args: &'a [String],
     pub triples: &'a [String],
     pub plan: &'a Path,
+    /// The shim cargo calls as runner.
+    pub shim: &'a Path,
     /// The rustdoc wrapper, under `--no-doc`.
     pub rustdoc: Option<&'a Path>,
 }
@@ -128,8 +130,7 @@ pub struct RunOutcome {
 const TAIL: usize = 20;
 
 pub fn run_step(step: &RunStep) -> io::Result<RunOutcome> {
-    let shim = std::env::current_exe()?;
-    let runner = json!([shim, "soothfast", shim::SUBCOMMAND]).to_string();
+    let runner = json!([step.shim, "soothfast", shim::SUBCOMMAND]).to_string();
     let mut extra: Vec<String> = step
         .triples
         .iter()
