@@ -11,8 +11,8 @@ use std::path::Path;
 
 use soothfast_docs::gentests::{self, Generated};
 
-/// Generated files present under `pkg_dir`, as package-relative paths.
-fn owned_files(pkg_dir: &Path) -> Vec<String> {
+/// Generated files present under `pkg_dir`: (package-relative path, content).
+fn owned_files(pkg_dir: &Path) -> Vec<(String, String)> {
     let mut found = Vec::new();
     for (dir, _) in gentests::OWNED {
         let Ok(entries) = std::fs::read_dir(pkg_dir.join(dir)) else {
@@ -20,16 +20,32 @@ fn owned_files(pkg_dir: &Path) -> Vec<String> {
         };
         for entry in entries.flatten() {
             let rel = format!("{dir}/{}", entry.file_name().to_string_lossy());
-            let generated = gentests::in_owned_place(&rel)
-                && std::fs::read_to_string(entry.path())
-                    .is_ok_and(|t| t.starts_with(gentests::GENERATED_HEADER));
-            if generated {
-                found.push(rel);
+            if !gentests::in_owned_place(&rel) {
+                continue;
+            }
+            if let Ok(text) = std::fs::read_to_string(entry.path())
+                && text.starts_with(gentests::GENERATED_HEADER)
+            {
+                found.push((rel, text));
             }
         }
     }
     found.sort();
     found
+}
+
+/// Pages the package's generated files were generated from, workspace-relative.
+pub fn recorded_pages(pkg_dir: &Path) -> BTreeSet<String> {
+    owned_files(pkg_dir)
+        .iter()
+        .filter_map(|(_, text)| gentests::recorded_source(text))
+        .map(page_key)
+        .collect()
+}
+
+/// A workspace-relative page path in the one spelling records and PATHS share.
+pub fn page_key(page: &str) -> String {
+    page.replace('\\', "/").trim_start_matches("./").to_string()
 }
 
 /// What differs from `expected`, one line per file, each naming the command
@@ -45,7 +61,7 @@ pub fn check(pkg_dir: &Path, pkg: &str, expected: &[Generated]) -> Vec<String> {
         }
     }
     let wanted: BTreeSet<&str> = expected.iter().map(|g| g.path.as_str()).collect();
-    for path in owned_files(pkg_dir) {
+    for (path, _) in owned_files(pkg_dir) {
         if wanted.contains(path.as_str()) {
             continue;
         }
@@ -60,16 +76,23 @@ pub fn check(pkg_dir: &Path, pkg: &str, expected: &[Generated]) -> Vec<String> {
 
 /// Where a file of an earlier release's layout now lives, if it is one.
 fn legacy_replacement(path: &str) -> Option<&'static str> {
-    let (dir, name) = path.rsplit_once('/')?;
-    (dir == "tests" && name.starts_with("soothfast_doc_")).then_some(gentests::DOC_TESTS_DIR)
+    let (dir, _) = path.rsplit_once('/')?;
+    match dir {
+        "tests" => Some(gentests::DOC_TESTS_DIR),
+        "examples" => Some(gentests::CAPTURE_DIR),
+        _ => None,
+    }
 }
 
-/// Write `expected` and remove every other generated file. Returns the paths
-/// written and removed.
+/// Write the files of `expected` whose bytes differ on disk, and remove every
+/// other generated file. Returns the paths written and removed.
 pub fn write(pkg_dir: &Path, expected: &[Generated]) -> io::Result<(Vec<String>, Vec<String>)> {
     let mut written = Vec::new();
     for g in expected {
         let path = pkg_dir.join(&g.path);
+        if std::fs::read_to_string(&path).is_ok_and(|t| t == g.content) {
+            continue;
+        }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -78,15 +101,15 @@ pub fn write(pkg_dir: &Path, expected: &[Generated]) -> io::Result<(Vec<String>,
     }
     let wanted: BTreeSet<&str> = expected.iter().map(|g| g.path.as_str()).collect();
     let mut removed = Vec::new();
-    for path in owned_files(pkg_dir) {
+    for (path, _) in owned_files(pkg_dir) {
         if !wanted.contains(path.as_str()) {
             std::fs::remove_file(pkg_dir.join(&path))?;
             removed.push(path);
         }
     }
-    for (dir, _) in gentests::OWNED {
+    for (dir, prefix) in gentests::OWNED {
         let dir = pkg_dir.join(dir);
-        if dir != pkg_dir.join("tests") && dir.read_dir().is_ok_and(|mut d| d.next().is_none()) {
+        if prefix.is_empty() && dir.read_dir().is_ok_and(|mut d| d.next().is_none()) {
             std::fs::remove_dir(dir)?;
         }
     }
@@ -191,6 +214,49 @@ mod tests {
         assert!(pkg.has("tests/soothfast_doc_mine.rs"));
         assert!(pkg.has("tests/integration.rs"));
         assert!(check(&pkg.0, "p", &expected()).is_empty());
+    }
+
+    #[test]
+    fn unchanged_files_are_not_rewritten() {
+        let pkg = Pkg::new("unchanged");
+        write(&pkg.0, &expected()).unwrap();
+        let mut next = expected();
+        next[1].content.push_str("// changed\n");
+        let (written, removed) = write(&pkg.0, &next).unwrap();
+        assert_eq!(written, ["tests/soothfast_docs/doc_readme.rs"]);
+        assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn recorded_pages_come_only_from_generated_files_in_owned_places() {
+        let pkg = Pkg::new("recorded");
+        let h = gentests::GENERATED_HEADER;
+        pkg.put(
+            "tests/soothfast_docs/doc_a.rs",
+            &format!("{h}\n// source: ./docs/a.md\n"),
+        );
+        pkg.put(
+            "examples/soothfast_capture/block_b_1.rs",
+            &format!("{h}\n// source: docs/b.md line 7\n"),
+        );
+        pkg.put(
+            "tests/soothfast_doc_c.rs",
+            &format!("{h}\n// source: docs/c.md\n"),
+        );
+        pkg.put("tests/soothfast_docs/doc_d.rs", "// source: docs/d.md\n");
+        pkg.put("tests/helper.rs", &format!("{h}\n// source: docs/e.md\n"));
+        let pages: Vec<String> = recorded_pages(&pkg.0).into_iter().collect();
+        assert_eq!(pages, ["docs/a.md", "docs/b.md", "docs/c.md"]);
+    }
+
+    #[test]
+    fn a_leftover_per_block_capture_example_fails_and_names_the_new_place() {
+        let pkg = Pkg::new("legacy-capture");
+        let old = generated("examples/soothfast_capture_readme_1.rs", "");
+        pkg.put(&old.path, &old.content);
+        let problems = check(&pkg.0, "p", &[]);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("replaced by examples/soothfast_capture/"));
     }
 
     #[test]

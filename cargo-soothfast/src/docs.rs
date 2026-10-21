@@ -1,6 +1,7 @@
 //! `cargo soothfast docs <check|accept|gen-tests|capture|diff|reference>` —
 //! the docs-engine commands, driving `soothfast-docs`.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -184,9 +185,47 @@ struct Scanned {
 }
 
 impl Scanned {
-    /// The package's doc-test target, built from every page in scope.
-    fn doc_tests(&self) -> Result<Vec<gentests::Generated>, String> {
-        gentests::doc_test_set(self.docs.iter().map(|(file, doc, _)| (file.as_str(), doc)))
+    /// Every file gen-tests generates for the package at `pkg_dir`, and how
+    /// many pages beyond those in scope it covers. PATHS assign pages to a
+    /// package, so a scoped run also keeps each page the package's generated
+    /// files already record; an unscoped run covers exactly the default scope.
+    fn generated(
+        &self,
+        a: &DocsArgs,
+        pkg_dir: &Path,
+    ) -> Result<(Vec<gentests::Generated>, usize), String> {
+        let mut kept = Vec::new();
+        if !a.paths.is_empty() {
+            let in_scope: BTreeSet<String> = self
+                .docs
+                .iter()
+                .map(|(file, _, _)| docs_generated::page_key(file))
+                .collect();
+            for page in docs_generated::recorded_pages(pkg_dir) {
+                let path = self.root.join(&page);
+                if in_scope.contains(&page) || !path.is_file() {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).map_err(|e| format!("{page}: {e}"))?;
+                let doc = markdown::scan(&text).map_err(|e| format!("{page}: {e}"))?;
+                kept.push((page, doc));
+            }
+        }
+        let pages = || {
+            self.docs
+                .iter()
+                .map(|(file, doc, _)| (file.as_str(), doc))
+                .chain(kept.iter().map(|(page, doc)| (page.as_str(), doc)))
+        };
+        let mut files = gentests::doc_test_set(pages())?;
+        files.extend(gentests::capture_set(pages())?);
+        Ok((files, kept.len()))
+    }
+}
+
+fn print_kept(kept: usize, pkg: &str) {
+    if kept > 0 {
+        println!("also kept: {kept} page(s) already generated for {pkg}");
     }
 }
 
@@ -325,34 +364,21 @@ fn check(a: &DocsArgs) -> i32 {
         match invoke::pkg_dir(pkg) {
             Err(e) => return err(&e.to_string()),
             Ok(dir) => {
-                let expected = match scanned.doc_tests() {
-                    Ok(e) => e,
+                let (expected, kept) = match scanned.generated(a, &dir) {
+                    Ok(g) => g,
                     Err(e) => return err(&e),
                 };
+                print_kept(kept, pkg);
                 let problems = docs_generated::check(&dir, pkg, &expected);
                 if problems.is_empty() && !expected.is_empty() {
                     println!(
-                        "ok    {}: generated tests up to date",
-                        gentests::DOC_TESTS_DIR
+                        "ok    generated tests and capture example up to date ({} file(s))",
+                        expected.len()
                     );
                 }
                 for problem in &problems {
                     failures += 1;
                     println!("FAIL  {problem}");
-                }
-                for (file, doc, _) in &scanned.docs {
-                    for (name, expected) in gentests::capture_examples(file, doc) {
-                        let path = dir.join("examples").join(format!("{name}.rs"));
-                        match std::fs::read_to_string(&path) {
-                            Ok(actual) if actual == expected => {}
-                            _ => {
-                                failures += 1;
-                                println!(
-                                    "FAIL  {file}: capture example {name} missing/stale — run `docs gen-tests -p {pkg}`"
-                                );
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -425,13 +451,14 @@ fn gen_tests(a: &DocsArgs) -> i32 {
         Ok(d) => d,
         Err(e) => return err(&e.to_string()),
     };
-    let expected = match scanned.doc_tests() {
-        Ok(e) => e,
+    let (expected, kept) = match scanned.generated(a, &dir) {
+        Ok(g) => g,
         Err(e) => return err(&e),
     };
+    print_kept(kept, &pkg);
     let (wrote, removed) = match docs_generated::write(&dir, &expected) {
         Ok(r) => r,
-        Err(e) => return err(&format!("cannot write generated tests: {e}")),
+        Err(e) => return err(&format!("cannot write generated files: {e}")),
     };
     for path in &wrote {
         println!("wrote {}", dir.join(path).display());
@@ -439,19 +466,12 @@ fn gen_tests(a: &DocsArgs) -> i32 {
     for path in &removed {
         println!("removed {}", dir.join(path).display());
     }
-    let mut written = wrote.len();
-    for (file, doc, _) in &scanned.docs {
-        for (name, content) in gentests::capture_examples(file, doc) {
-            let path = dir.join("examples").join(format!("{name}.rs"));
-            let _ = std::fs::create_dir_all(path.parent().unwrap());
-            if std::fs::write(&path, content).is_err() {
-                return err(&format!("cannot write {}", path.display()));
-            }
-            println!("wrote {}", path.display());
-            written += 1;
-        }
-    }
-    println!("docs gen-tests: {written} file(s)");
+    println!(
+        "docs gen-tests: {} written, {} removed, {} unchanged",
+        wrote.len(),
+        removed.len(),
+        expected.len() - wrote.len()
+    );
     0
 }
 
@@ -463,31 +483,61 @@ fn capture(a: &DocsArgs) -> i32 {
         Ok(s) => s,
         Err(e) => return err(&e),
     };
-    let mut failures = 0u32;
+    let (mut checked, mut stale, mut skipped, mut failures) = (0u32, 0u32, 0u32, 0u32);
     for (file, doc, text) in &scanned.docs {
-        let examples = gentests::capture_examples(file, doc);
-        if examples.is_empty() {
+        let ids = gentests::capture_ids(file, doc);
+        if ids.is_empty() {
             continue;
         }
         let mut current = text.clone();
-        for (n, (name, _)) in examples.iter().enumerate() {
+        for (n, id) in ids.iter().enumerate() {
             let mut cmd = std::process::Command::new("cargo");
-            cmd.args(["run", "-q", "-p", &pkg, "--example", name]);
+            cmd.args([
+                "run",
+                "-q",
+                "-p",
+                &pkg,
+                "--example",
+                gentests::CAPTURE_EXAMPLE,
+            ]);
             if let Some(features) = &a.features {
                 cmd.args(["--features", features]);
             }
-            let out = cmd.stdout(std::process::Stdio::piped()).output();
-            let stdout = match out {
-                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-                Ok(o) => {
-                    failures += 1;
-                    println!("FAIL  {file}: example {name} exited with {}", o.status);
+            let out = match cmd.args(["--", id]).output() {
+                Ok(o) => o,
+                Err(e) => return err(&format!("cannot run capture block {id}: {e}")),
+            };
+            let stdout = match CaptureRun::of(&out) {
+                CaptureRun::Output(stdout) => stdout,
+                CaptureRun::Disabled => {
+                    skipped += 1;
+                    println!("skip  {file}: block {id} (features not enabled)");
                     continue;
                 }
-                Err(e) => return err(&format!("cannot run example {name}: {e}")),
+                CaptureRun::Unknown => {
+                    failures += 1;
+                    println!(
+                        "FAIL  {file}: block {id} is not in the capture example — run `cargo soothfast docs gen-tests -p {pkg}`"
+                    );
+                    continue;
+                }
+                CaptureRun::Failed(stderr) => {
+                    failures += 1;
+                    println!(
+                        "FAIL  {file}: block {id} exited with {}\n{stderr}",
+                        out.status
+                    );
+                    continue;
+                }
             };
+            checked += 1;
             match markdown::splice_output(&current, n, &stdout) {
-                Ok(Some(next)) => current = next,
+                Ok(Some(next)) => {
+                    if next != current {
+                        stale += 1;
+                    }
+                    current = next;
+                }
                 Ok(None) => {
                     failures += 1;
                     println!("FAIL  {file}: capture block {n} not found for splicing");
@@ -495,28 +545,58 @@ fn capture(a: &DocsArgs) -> i32 {
                 Err(e) => return err(&format!("{file}: {e}")),
             }
         }
-        if current != *text {
-            if a.check_only {
-                failures += 1;
-                println!(
-                    "FAIL  {file}: captured output is stale — run `cargo soothfast docs capture -p {pkg}`"
-                );
-            } else {
-                let path = scanned.root.join(file);
-                if std::fs::write(&path, &current).is_err() {
-                    return err(&format!("cannot write {}", path.display()));
-                }
-                println!("spliced fresh output into {file}");
-            }
-        } else {
+        if current == *text {
             println!("ok    {file}: captured output current");
+        } else if a.check_only {
+            failures += 1;
+            println!(
+                "FAIL  {file}: captured output is stale — run `cargo soothfast docs capture -p {pkg}`"
+            );
+        } else {
+            let path = scanned.root.join(file);
+            if std::fs::write(&path, &current).is_err() {
+                return err(&format!("cannot write {}", path.display()));
+            }
+            println!("spliced fresh output into {file}");
         }
     }
+    println!(
+        "docs capture: {checked} checked, {stale} stale, {skipped} skipped (features not enabled)"
+    );
     if failures > 0 {
         println!("docs capture: FAILED ({failures})");
         1
     } else {
         0
+    }
+}
+
+/// How one run of the capture example for a block ended.
+#[derive(Debug, PartialEq)]
+enum CaptureRun {
+    Output(String),
+    /// The block's `feature=` tag is off in this build: keep what is recorded.
+    Disabled,
+    /// The example predates the block: gen-tests is stale.
+    Unknown,
+    Failed(String),
+}
+
+impl CaptureRun {
+    fn of(out: &std::process::Output) -> CaptureRun {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let reported = |(code, sentinel): (i32, &str)| {
+            out.status.code() == Some(code) && stderr.lines().any(|l| l.starts_with(sentinel))
+        };
+        if out.status.success() {
+            CaptureRun::Output(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else if reported(gentests::CAPTURE_DISABLED) {
+            CaptureRun::Disabled
+        } else if reported(gentests::CAPTURE_UNKNOWN) {
+            CaptureRun::Unknown
+        } else {
+            CaptureRun::Failed(stderr.into_owned())
+        }
     }
 }
 
