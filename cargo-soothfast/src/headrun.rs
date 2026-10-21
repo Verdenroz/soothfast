@@ -2,6 +2,7 @@
 //! on this host, and the runs stored for it. Shared by `gate` and `measure`.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -407,19 +408,24 @@ pub fn loaded_section_bytes(exe: &Path) -> Option<Vec<u8>> {
     if !out.status.success() {
         return None;
     }
-    let image = std::fs::read(exe).ok()?;
+    let mut image = std::fs::File::open(exe).ok()?;
+    let len = image.metadata().ok()?.len();
     let listing = String::from_utf8_lossy(&out.stdout);
     let mut buf = Vec::new();
     for section in codekey::section_headers(&listing) {
         if !digestible(section.name, section.flags) {
             continue;
         }
-        let offset = usize::try_from(section.offset).ok()?;
+        if section.offset.checked_add(section.size)? > len {
+            return None;
+        }
         let size = usize::try_from(section.size).ok()?;
-        let bytes = image.get(offset..offset.checked_add(size)?)?;
         buf.extend_from_slice(section.name.as_bytes());
         buf.push(0);
-        buf.extend_from_slice(bytes);
+        let start = buf.len();
+        buf.resize(start.checked_add(size)?, 0);
+        image.seek(SeekFrom::Start(section.offset)).ok()?;
+        image.read_exact(&mut buf[start..]).ok()?;
     }
     (!buf.is_empty()).then_some(buf)
 }
@@ -439,6 +445,7 @@ mod tests {
         reuse_plan, settle, settled_doc,
     };
     use crate::buildstamp::BuildStamp;
+    use crate::codekey;
     use crate::invoke::{AssertionOutcome, CommonArgs, HostEnv, ItemMetrics, Run};
     use crate::runcache::Runs;
     use serde_json::json;
@@ -715,6 +722,30 @@ mod tests {
         let exe = std::env::current_exe().unwrap();
         let a = loaded_section_bytes(&exe).expect("test binary has loadable sections");
         assert_eq!(Some(a), loaded_section_bytes(&exe));
+    }
+
+    #[test]
+    fn ranged_reads_digest_the_same_bytes_as_slicing_the_whole_image() {
+        if !objdump_present() {
+            return;
+        }
+        let exe = std::env::current_exe().unwrap();
+        let out = std::process::Command::new("objdump")
+            .arg("-h")
+            .arg(&exe)
+            .output()
+            .unwrap();
+        let image = std::fs::read(&exe).unwrap();
+        let mut whole = Vec::new();
+        for section in codekey::section_headers(&String::from_utf8_lossy(&out.stdout)) {
+            if digestible(section.name, section.flags) {
+                let start = section.offset as usize;
+                whole.extend_from_slice(section.name.as_bytes());
+                whole.push(0);
+                whole.extend_from_slice(&image[start..start + section.size as usize]);
+            }
+        }
+        assert_eq!(loaded_section_bytes(&exe), Some(whole));
     }
 
     #[test]
