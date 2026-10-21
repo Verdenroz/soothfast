@@ -56,10 +56,10 @@ this page, costs under 50µs at the tail.
 
 | tag | effect |
 |---|---|
-| *(none)* | becomes a real `#[test]`, generated into `tests/soothfast_doc_<file>.rs` |
+| *(none)* | becomes a real `#[test]`, generated into the page's module of `tests/soothfast_docs/` |
 | `ignore` | excluded entirely: no test, no example, no check |
 | `no_run` | compiled but never executed (a plain fn, not `#[test]`) |
-| `capture-output` | becomes a runnable example. `docs capture` runs it and splices real stdout into a `text soothfast-output` fence below it |
+| `capture-output` | becomes a block of the `soothfast_capture` example. `docs capture` runs it and splices real stdout into a `text soothfast-output` fence below it |
 | `feature=NAME` | gates the generated test/example behind a cargo feature (comma-separated for a block that needs several to compile, no spaces — it is then gated behind `all` of them) |
 | `mock=NAME` / `mock=NAME(ARG)` | activates a `#[soothfast::mock_seam]` backend by name (requires an accompanying `feature=` tag) |
 | `covers=path::to::item` | attaches a bind/claim's chip to this block instead of rendering it standalone (comma-separated for several items, no spaces) |
@@ -69,6 +69,39 @@ fingerprints against `soothfast.lock`, claims against `--baseline`, then a
 fresh generation of every test and example in memory, diffed against what is
 on disk. A stale `docs gen-tests` or `docs capture` run therefore fails CI
 just like a stale bind or a violated claim.
+
+## Generated files
+
+`cargo soothfast docs gen-tests -p PKG` compiles a package's blocks into two
+targets, so a page adds a module rather than another binary to link:
+
+- `tests/soothfast_docs/`: one integration test, with a `doc_<page>.rs`
+  module per page that has a testable block.
+- `examples/soothfast_capture/`: one example, with a `block_<page>_<n>.rs`
+  module per `capture-output` block. It runs the block its first argument
+  names: `cargo run -p PKG --example soothfast_capture -- readme_1`.
+
+A capture block becomes a module, so it cannot use crate-level attributes
+(`#![...]`, `#[macro_use] extern crate`), and `crate::` in it names the
+example's root, not the block. A block that defines its own top-level
+`fn main` keeps it, whatever it returns. When a block's `feature=` tag is
+off, the example reports it as disabled, and `docs capture` skips it and
+keeps the output already recorded.
+
+Every generated file starts with an `@generated` header and records the page
+it came from. gen-tests rewrites only files whose content changed and removes
+generated files nothing produces any more, including the per-page
+`tests/soothfast_doc_*.rs` and per-block `examples/soothfast_capture_*.rs`
+files of earlier releases. `docs check` fails while any of those remain. A
+file without the header is never touched.
+
+The page paths given to a command assign pages to the package. A run with
+paths also keeps every page the package's generated files already record,
+so `docs gen-tests -p PKG docs/one.md` regenerates that page without
+dropping the others. A recorded page that was deleted, or has no blocks
+left, is dropped. To move a page to another package, delete its generated
+files and run gen-tests for both. A run without paths covers exactly the
+default scope.
 
 ## Why this page has almost no `ignore`d code
 
