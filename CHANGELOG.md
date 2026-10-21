@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.4.2)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### 🔧 Internal
+
+- Pin dtolnay/rust-toolchain to a master commit (#258)
+
+
 ## 0.4.2 - 2026-10-20
 
 <!-- soothfast:notes -->
