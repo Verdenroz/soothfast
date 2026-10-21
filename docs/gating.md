@@ -25,7 +25,17 @@ second round re-measures only the timing-sensitive backends, and the
 per-metric minimum across a side's rounds is its comparison value. When the
 two sides' bench binaries have byte-identical loaded sections, code and
 data alike, no measurable change is possible and the gate short-circuits to a
-single cheap pass whose assertions still run. This is
+single cheap pass whose assertions still run. The merge-base builds into its
+own target dir, `soothfast-worktree` inside yours, because a workspace member
+compiles to the same artifact names from either checkout. Before that build
+the gate copies in every dependency HEAD already compiled:
+
+```console
+gate: seeded 212 dependency units (1830.4 MiB) from HEAD's target dir in 2.7s
+```
+
+Cargo then finds the merge-base's unchanged dependencies fresh and compiles
+only the workspace members and whatever `Cargo.lock` changed. This is
 what `make gate` runs against `origin/master` for
 every crate in `BENCH_CRATES`, and it is why merge-base gating has no
 baseline file that can go stale in version control.

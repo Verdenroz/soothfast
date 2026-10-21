@@ -410,6 +410,7 @@ fn prebuild_both_sides(packages: &[String], common: &CommonArgs, args: &[String]
         // Warming a build cache decides no verdict. The per-package leg
         // syncs this worktree again and its outcome is what gets reported.
         invoke::sync_harness_versions(wt)?;
+        crate::seed::seed_worktree(wt, &target);
         let _ = invoke::prebuild_benches(packages, common, Some(wt), Some(&target));
         Ok(())
     });
@@ -889,6 +890,9 @@ fn measure_ref_interleaved(
         // otherwise be reported as a regression in the measured project.
         // Pinning must precede the base build the binary comparison does.
         let harness = invoke::sync_harness_versions(wt)?;
+        if let Some(target) = &wt_target {
+            crate::seed::seed_worktree(wt, target);
+        }
         let digests = bench_text_digests(common, wt, wt_target.as_deref());
         // A run measured from byte-identical machine code under the same
         // conditions is that binary's measurement, whatever commit built it.
