@@ -96,8 +96,8 @@ pub enum Scope<'a> {
 }
 
 /// What a change to `file` reaches. A declared input wins over `ignore`,
-/// `ignore` wins over a build-wide file, and a build-wide file wins over
-/// the owning package's allow-list.
+/// `ignore` wins over a build-wide file, and a build-wide file or the
+/// package's own manifest wins over the owning package's allow-list.
 pub fn classify<'a>(pkgs: &'a [Package], cfg: &TestConfig, file: &str) -> Scope<'a> {
     if matches_any(&cfg.inputs, file) {
         return Scope::Workspace;
@@ -116,7 +116,7 @@ pub fn classify<'a>(pkgs: &'a [Package], cfg: &TestConfig, file: &str) -> Scope<
         dir => &file[dir.len() + 1..],
     };
     match cfg.packages.get(&pkg.name) {
-        Some(list) if !matches_any(&list.files, rel) => Scope::Ignored,
+        Some(list) if rel != "Cargo.toml" && !matches_any(&list.files, rel) => Scope::Ignored,
         _ => Scope::Package(&pkg.name),
     }
 }
@@ -511,6 +511,11 @@ mod tests {
             Scope::Package("core")
         );
         assert_eq!(classify(&pkgs, &cfg, "core/notes.txt"), Scope::Ignored);
+        assert_eq!(
+            classify(&pkgs, &cfg, "core/Cargo.toml"),
+            Scope::Package("core")
+        );
+        assert_eq!(classify(&pkgs, &cfg, "core/sub/Cargo.toml"), Scope::Ignored);
         assert_eq!(classify(&pkgs, &cfg, "src/lib.rs"), Scope::Package("app"));
         assert_eq!(classify(&pkgs, &cfg, "notes.txt"), Scope::Package("app"));
     }

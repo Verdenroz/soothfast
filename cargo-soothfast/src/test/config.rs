@@ -53,12 +53,16 @@ pub fn load(dir: &Path) -> Result<TestConfig, String> {
 pub fn parse(text: &str) -> Result<TestConfig, String> {
     let mut cfg = TestConfig::default();
     let mut table = Table::Other;
+    let mut opened: Vec<(usize, String)> = Vec::new();
 
     for (lineno, line) in logical_lines(text) {
         let line = line.as_str();
         if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
             table =
                 open_table(&mut cfg, inner.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
+            if let Table::Package(name) = &table {
+                opened.push((lineno, name.clone()));
+            }
             continue;
         }
         if let Table::Other = table {
@@ -76,10 +80,11 @@ pub fn parse(text: &str) -> Result<TestConfig, String> {
         };
         set.map_err(|e| format!("line {lineno}: {e}"))?;
     }
-    for list in cfg.packages.values() {
+    for (lineno, name) in opened {
+        let list = &cfg.packages[&name];
         if list.files.is_empty() {
             return Err(format!(
-                "[{}] has no `files`, so it would ignore every file of the package; remove the table",
+                "line {lineno}: [{}] has no `files`, so it would ignore every file of the package; remove the table",
                 list.header
             ));
         }
@@ -96,7 +101,10 @@ fn open_table(cfg: &mut TestConfig, header: &str) -> Result<Table, String> {
     };
     let name = rest
         .strip_prefix("packages.")
-        .map(|n| n.trim_matches('"'))
+        .map(|n| match n.strip_prefix('"') {
+            Some(quoted) => quoted.strip_suffix('"').unwrap_or("\""),
+            None => n,
+        })
         .filter(|n| !n.is_empty() && !n.contains(['.', '"']))
         .ok_or_else(|| format!("unknown table [{header}]; expected [test.packages.NAME]"))?;
     if cfg.packages.contains_key(name) {
@@ -116,7 +124,9 @@ fn set_files(
     key: &str,
     value: TomlValue,
 ) -> Result<(), String> {
-    let list = packages.entry(name.to_string()).or_default();
+    let Some(list) = packages.get_mut(name) else {
+        return Err(format!("`{key}` outside a [test.packages.NAME] table"));
+    };
     match (key, value) {
         ("files", TomlValue::StrArray(v)) => list.files = v,
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [{}]", list.header)),
@@ -229,6 +239,18 @@ mod tests {
             (
                 "[test.packages.a.b]\nfiles = [\"x\"]\n",
                 "unknown table [test.packages.a.b]",
+            ),
+            (
+                "[test.packages.\"a]\nfiles = [\"x\"]\n",
+                "unknown table [test.packages.\"a]",
+            ),
+            (
+                "[test.packages.a\"]\nfiles = [\"x\"]\n",
+                "unknown table [test.packages.a\"]",
+            ),
+            (
+                "x = 1\n\n[test.packages.a]\n",
+                "line 3: [test.packages.a] has no `files`",
             ),
         ] {
             let e = parse(text).unwrap_err();

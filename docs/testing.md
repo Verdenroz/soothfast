@@ -70,8 +70,8 @@ the package's key, so a new file at the workspace root no longer re-runs
 the root package's tests. `inputs` still wins over the list, `ignore` still
 subtracts from it, and the files that select every package (`Cargo.toml`,
 `Cargo.lock`, the toolchain and cargo config) select every package whatever
-it lists. A nested member's files belong to the member, not to the root's
-list. A package without a table keeps every file it owns.
+it lists, and a package's own `Cargo.toml` always counts for it. A nested
+member's files belong to the member, not to the root's list. A package without a table keeps every file it owns.
 
 List everything the package's tests read from inside its directory:
 fixtures, goldens, data files, and the generated `tests/soothfast_docs/`
