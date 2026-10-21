@@ -1,13 +1,26 @@
 # Changelog
 
-## Unreleased (draft vs v0.4.2)
+## 0.4.3 - 2026-10-20
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+`cargo soothfast test` can now be told which files a package's tests depend
+on, instead of only which to ignore. A `[test.packages.NAME]` table in
+`soothfast.toml` lists globs relative to the package's directory, and a
+file the package owns that matches none of them neither selects the package
+nor enters its key. A package at the workspace root, which owns every file
+outside its members, no longer re-runs its tests each time a file is added
+at the root. `inputs`, `ignore` and the build-wide files keep their
+precedence, a package's own `Cargo.toml` always counts, and a nested
+member's files stay the member's.
+
+### Upgrade notes
+
+Nothing is required. A package without a `[test.packages.NAME]` table
+behaves as before. When adding one, list everything its tests read from
+inside the package directory, including the generated `tests/soothfast_docs/`
+and `examples/soothfast_capture/` targets; see `docs/testing.md`.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
