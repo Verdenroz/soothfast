@@ -191,3 +191,32 @@ fn a_capture_example_older_than_its_page_fails_naming_gen_tests() {
         "{out}"
     );
 }
+
+#[test]
+fn a_block_that_does_not_compile_is_one_failure_naming_its_page() {
+    let fx = Fixture::new("uncompiled");
+    fx.put(
+        "p/src/lib.rs",
+        "#[cfg(feature = \"extra\")]\npub fn gated() {}\n",
+    );
+    fx.put(
+        "docs/c.md",
+        "# C\n\n```rust capture-output\np::gated();\n```\n",
+    );
+    let (ok, out) = fx.docs(&["gen-tests", "-p", "p", "docs/a.md", "docs/c.md"]);
+    assert!(ok, "{out}");
+    let (ok, out) = fx.docs(&["capture", "-p", "p", "docs/a.md", "docs/c.md"]);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains(
+            "FAIL  examples/soothfast_capture: the shared capture example does not compile"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("error in docs/c.md line 3 (block_docs_c_1.rs)"),
+        "{out}"
+    );
+    assert!(!out.contains("exited with"), "{out}");
+    assert!(!out.contains("docs/a.md line"), "{out}");
+}

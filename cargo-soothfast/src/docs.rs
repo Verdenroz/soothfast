@@ -483,6 +483,13 @@ fn capture(a: &DocsArgs) -> i32 {
         Ok(s) => s,
         Err(e) => return err(&e),
     };
+    let in_scope = scanned
+        .docs
+        .iter()
+        .any(|(file, doc, _)| !gentests::capture_ids(file, doc).is_empty());
+    if in_scope && let Err(e) = build_capture(&pkg, a.features.as_deref()) {
+        return e;
+    }
     let (mut checked, mut stale, mut skipped, mut failures) = (0u32, 0u32, 0u32, 0u32);
     for (file, doc, text) in &scanned.docs {
         let ids = gentests::capture_ids(file, doc);
@@ -569,6 +576,61 @@ fn capture(a: &DocsArgs) -> i32 {
     } else {
         0
     }
+}
+
+/// Build the package's capture example once, so a compile error is reported
+/// as one failure naming the blocks it is in, not as every block failing.
+fn build_capture(pkg: &str, features: Option<&str>) -> Result<(), i32> {
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.args([
+        "build",
+        "-q",
+        "-p",
+        pkg,
+        "--example",
+        gentests::CAPTURE_EXAMPLE,
+    ]);
+    if let Some(features) = features {
+        cmd.args(["--features", features]);
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| err(&format!("cannot build the capture example: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    println!(
+        "FAIL  {}: the shared capture example does not compile, so no block ran",
+        gentests::CAPTURE_DIR
+    );
+    let dir = invoke::pkg_dir(pkg).map_err(|e| err(&e.to_string()))?;
+    for block in blocks_named_in(&stderr) {
+        let source = std::fs::read_to_string(dir.join(gentests::CAPTURE_DIR).join(&block))
+            .ok()
+            .and_then(|text| text.lines().nth(1).map(str::to_string));
+        if let Some(source) = source
+            .as_deref()
+            .and_then(|l| l.strip_prefix("// source: "))
+        {
+            println!("      error in {source} ({block})");
+        }
+    }
+    println!("{stderr}");
+    println!("docs capture: FAILED (capture example does not compile)");
+    Err(1)
+}
+
+/// The `block_<id>.rs` files a compiler error output names, in order.
+fn blocks_named_in(stderr: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    for word in stderr.split(|c: char| c.is_whitespace() || c == ':' || c == '/') {
+        if word.starts_with("block_") && word.ends_with(".rs") && !blocks.iter().any(|b| b == word)
+        {
+            blocks.push(word.to_string());
+        }
+    }
+    blocks
 }
 
 /// How one run of the capture example for a block ended.
@@ -669,7 +731,18 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::head_for_sniff;
+    use super::{blocks_named_in, head_for_sniff};
+
+    #[test]
+    fn compiler_errors_name_each_block_file_once() {
+        let stderr = "error[E0432]: unresolved import\n --> p/examples/soothfast_capture/block_docs_c_1.rs:3:5\n\
+                      error[E0425]: cannot find\n --> examples/soothfast_capture/block_readme_2.rs:4:1\n\
+                      --> p/examples/soothfast_capture/block_docs_c_1.rs:9:1\n";
+        assert_eq!(
+            blocks_named_in(stderr),
+            ["block_docs_c_1.rs", "block_readme_2.rs"]
+        );
+    }
 
     #[test]
     fn head_for_sniff_backs_off_to_char_boundary() {

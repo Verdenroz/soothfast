@@ -88,6 +88,12 @@ example's root, not the block. A block that defines its own top-level
 off, the example reports it as disabled, and `docs capture` skips it and
 keeps the output already recorded.
 
+Every block of a package compiles into the same example, so one block that
+needs a feature it is not tagged with breaks `docs capture` for the whole
+package whenever that feature is off. Capture then builds the example first,
+reports one failure naming each block in the compiler's errors by its page
+and line, and runs nothing. Tag such a block with `feature=`.
+
 Every generated file starts with an `@generated` header and records the page
 it came from. gen-tests rewrites only files whose content changed and removes
 generated files nothing produces any more, including the per-page
