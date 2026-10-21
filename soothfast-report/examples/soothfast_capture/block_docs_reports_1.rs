@@ -3,7 +3,7 @@
 use serde_json::json;
 use soothfast_report::{badges, perf_table};
 
-fn main() {
+pub fn main() {
     let baseline = json!({ "items": { "demo::checksum": {
         "perfcnt": { "instructions": 812 },
         "walltime": { "median_ns": 41.2, "p99_ns": 58.0 },

@@ -13,6 +13,7 @@ mod changelog_config;
 mod codekey;
 mod coverage;
 mod docs;
+mod docs_generated;
 mod docs_support;
 mod gate;
 mod gate_config;
@@ -45,6 +46,7 @@ use invoke::CommonArgs;
 
 const USAGE: &str = "\
 usage: cargo soothfast <command>
+       cargo soothfast --version
 
 commands:
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
@@ -134,7 +136,10 @@ fn run() -> i32 {
     if test::rustdoc::invoked_as(&argv0) {
         return test::rustdoc::run(&argv0, &args.collect::<Vec<_>>());
     }
-    let mut argv: Vec<String> = args.collect();
+    dispatch(args.collect())
+}
+
+fn dispatch(mut argv: Vec<String>) -> i32 {
     // Invoked as `cargo soothfast ...` cargo passes "soothfast" as argv[1].
     if argv.first().map(String::as_str) == Some("soothfast") {
         argv.remove(0);
@@ -158,6 +163,10 @@ fn run() -> i32 {
         test::shim::SUBCOMMAND => test::shim::run(rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
+            0
+        }
+        "version" | "--version" | "-V" => {
+            println!("{}", version_line());
             0
         }
         other => {
@@ -286,7 +295,40 @@ fn cmd_measure(args: &[String]) -> i32 {
     0
 }
 
+fn version_line() -> String {
+    format!("cargo-soothfast {}", env!("CARGO_PKG_VERSION"))
+}
+
 fn arg_err(msg: &str) -> i32 {
     eprintln!("soothfast: {msg}\n{USAGE}");
     2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn version_is_accepted_directly_and_after_cargos_subcommand() {
+        for args in [
+            argv(&["--version"]),
+            argv(&["-V"]),
+            argv(&["version"]),
+            argv(&["soothfast", "--version"]),
+        ] {
+            assert_eq!(dispatch(args), 0);
+        }
+        let line = version_line();
+        let version = line.strip_prefix("cargo-soothfast ").unwrap();
+        let version = version
+            .split_once('-')
+            .map_or(version, |(release, _)| release);
+        let parts: Vec<&str> = version.split('.').collect();
+        assert_eq!(parts.len(), 3, "{line}");
+        assert!(parts.iter().all(|p| p.parse::<u32>().is_ok()), "{line}");
+    }
 }

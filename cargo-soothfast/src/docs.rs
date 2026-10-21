@@ -1,12 +1,13 @@
 //! `cargo soothfast docs <check|accept|gen-tests|capture|diff|reference>` —
 //! the docs-engine commands, driving `soothfast-docs`.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use soothfast_docs::{claims, diff, gentests, lockfile, markdown, reference, surface};
 
-use crate::{docs_support, invoke};
+use crate::{docs_generated, docs_support, invoke};
 
 struct DocsArgs {
     pkg: Option<String>,
@@ -183,6 +184,51 @@ struct Scanned {
     docs: Vec<(String, markdown::Doc, String)>,
 }
 
+impl Scanned {
+    /// Every file gen-tests generates for the package at `pkg_dir`, and how
+    /// many pages beyond those in scope it covers. PATHS assign pages to a
+    /// package, so a scoped run also keeps each page the package's generated
+    /// files already record; an unscoped run covers exactly the default scope.
+    fn generated(
+        &self,
+        a: &DocsArgs,
+        pkg_dir: &Path,
+    ) -> Result<(Vec<gentests::Generated>, usize), String> {
+        let mut kept = Vec::new();
+        if !a.paths.is_empty() {
+            let in_scope: BTreeSet<String> = self
+                .docs
+                .iter()
+                .map(|(file, _, _)| docs_generated::page_key(file))
+                .collect();
+            for page in docs_generated::recorded_pages(pkg_dir) {
+                let path = self.root.join(&page);
+                if in_scope.contains(&page) || !path.is_file() {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).map_err(|e| format!("{page}: {e}"))?;
+                let doc = markdown::scan(&text).map_err(|e| format!("{page}: {e}"))?;
+                kept.push((page, doc));
+            }
+        }
+        let pages = || {
+            self.docs
+                .iter()
+                .map(|(file, doc, _)| (file.as_str(), doc))
+                .chain(kept.iter().map(|(page, doc)| (page.as_str(), doc)))
+        };
+        let mut files = gentests::doc_test_set(pages())?;
+        files.extend(gentests::capture_set(pages())?);
+        Ok((files, kept.len()))
+    }
+}
+
+fn print_kept(kept: usize, pkg: &str) {
+    if kept > 0 {
+        println!("also kept: {kept} page(s) already generated for {pkg}");
+    }
+}
+
 fn scan_all(a: &DocsArgs) -> Result<Scanned, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let mut docs = Vec::new();
@@ -318,34 +364,21 @@ fn check(a: &DocsArgs) -> i32 {
         match invoke::pkg_dir(pkg) {
             Err(e) => return err(&e.to_string()),
             Ok(dir) => {
-                for (file, doc, _) in &scanned.docs {
-                    let stem = gentests::sanitized_stem(file);
-                    if let Some(expected) = gentests::test_file(file, doc) {
-                        let path = dir.join("tests").join(format!("soothfast_doc_{stem}.rs"));
-                        match std::fs::read_to_string(&path) {
-                            Ok(actual) if actual == expected => {
-                                println!("ok    {file}: generated tests up to date")
-                            }
-                            _ => {
-                                failures += 1;
-                                println!(
-                                    "FAIL  {file}: generated test missing/stale — run `cargo soothfast docs gen-tests -p {pkg}`"
-                                );
-                            }
-                        }
-                    }
-                    for (name, expected) in gentests::capture_examples(file, doc) {
-                        let path = dir.join("examples").join(format!("{name}.rs"));
-                        match std::fs::read_to_string(&path) {
-                            Ok(actual) if actual == expected => {}
-                            _ => {
-                                failures += 1;
-                                println!(
-                                    "FAIL  {file}: capture example {name} missing/stale — run `docs gen-tests -p {pkg}`"
-                                );
-                            }
-                        }
-                    }
+                let (expected, kept) = match scanned.generated(a, &dir) {
+                    Ok(g) => g,
+                    Err(e) => return err(&e),
+                };
+                print_kept(kept, pkg);
+                let problems = docs_generated::check(&dir, pkg, &expected, None);
+                if problems.is_empty() && !expected.is_empty() {
+                    println!(
+                        "ok    generated tests and capture example up to date ({} file(s))",
+                        expected.len()
+                    );
+                }
+                for problem in &problems {
+                    failures += 1;
+                    println!("FAIL  {problem}");
                 }
             }
         }
@@ -418,29 +451,27 @@ fn gen_tests(a: &DocsArgs) -> i32 {
         Ok(d) => d,
         Err(e) => return err(&e.to_string()),
     };
-    let mut written = 0;
-    for (file, doc, _) in &scanned.docs {
-        let stem = gentests::sanitized_stem(file);
-        if let Some(content) = gentests::test_file(file, doc) {
-            let path = dir.join("tests").join(format!("soothfast_doc_{stem}.rs"));
-            let _ = std::fs::create_dir_all(path.parent().unwrap());
-            if std::fs::write(&path, content).is_err() {
-                return err(&format!("cannot write {}", path.display()));
-            }
-            println!("wrote {}", path.display());
-            written += 1;
-        }
-        for (name, content) in gentests::capture_examples(file, doc) {
-            let path = dir.join("examples").join(format!("{name}.rs"));
-            let _ = std::fs::create_dir_all(path.parent().unwrap());
-            if std::fs::write(&path, content).is_err() {
-                return err(&format!("cannot write {}", path.display()));
-            }
-            println!("wrote {}", path.display());
-            written += 1;
-        }
+    let (expected, kept) = match scanned.generated(a, &dir) {
+        Ok(g) => g,
+        Err(e) => return err(&e),
+    };
+    print_kept(kept, &pkg);
+    let (wrote, removed) = match docs_generated::write(&dir, &expected) {
+        Ok(r) => r,
+        Err(e) => return err(&format!("cannot write generated files: {e}")),
+    };
+    for path in &wrote {
+        println!("wrote {}", dir.join(path).display());
     }
-    println!("docs gen-tests: {written} file(s)");
+    for path in &removed {
+        println!("removed {}", dir.join(path).display());
+    }
+    println!(
+        "docs gen-tests: {} written, {} removed, {} unchanged",
+        wrote.len(),
+        removed.len(),
+        expected.len() - wrote.len()
+    );
     0
 }
 
@@ -452,31 +483,64 @@ fn capture(a: &DocsArgs) -> i32 {
         Ok(s) => s,
         Err(e) => return err(&e),
     };
-    let mut failures = 0u32;
-    for (file, doc, text) in &scanned.docs {
-        let examples = gentests::capture_examples(file, doc);
-        if examples.is_empty() {
-            continue;
+    let pages: Vec<(&String, &String, Vec<String>)> = scanned
+        .docs
+        .iter()
+        .map(|(file, doc, text)| (file, text, gentests::capture_ids(file, doc)))
+        .filter(|(_, _, ids)| !ids.is_empty())
+        .collect();
+    if !pages.is_empty() {
+        let dir = match invoke::pkg_dir(&pkg) {
+            Ok(d) => d,
+            Err(e) => return err(&e.to_string()),
+        };
+        if let Err(e) = current_capture(a, &scanned, &pkg, &dir) {
+            return e;
         }
+        if let Err(e) = build_capture(&pkg, a.features.as_deref(), &dir) {
+            return e;
+        }
+    }
+    let (mut checked, mut stale, mut skipped, mut failures) = (0u32, 0u32, 0u32, 0u32);
+    for (file, text, ids) in pages {
         let mut current = text.clone();
-        for (n, (name, _)) in examples.iter().enumerate() {
-            let mut cmd = std::process::Command::new("cargo");
-            cmd.args(["run", "-q", "-p", &pkg, "--example", name]);
-            if let Some(features) = &a.features {
-                cmd.args(["--features", features]);
-            }
-            let out = cmd.stdout(std::process::Stdio::piped()).output();
-            let stdout = match out {
-                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-                Ok(o) => {
-                    failures += 1;
-                    println!("FAIL  {file}: example {name} exited with {}", o.status);
+        for (n, id) in ids.iter().enumerate() {
+            let mut cmd = capture_cmd("run", &pkg, a.features.as_deref());
+            let out = match cmd.args(["--", id]).output() {
+                Ok(o) => o,
+                Err(e) => return err(&format!("cannot run capture block {id}: {e}")),
+            };
+            let stdout = match CaptureRun::of(&out) {
+                CaptureRun::Output(stdout) => stdout,
+                CaptureRun::Disabled => {
+                    skipped += 1;
+                    println!("skip  {file}: block {id} (features not enabled)");
                     continue;
                 }
-                Err(e) => return err(&format!("cannot run example {name}: {e}")),
+                CaptureRun::Unknown => {
+                    failures += 1;
+                    println!(
+                        "FAIL  {file}: block {id} is not in the capture example — run `cargo soothfast docs gen-tests -p {pkg}`"
+                    );
+                    continue;
+                }
+                CaptureRun::Failed(stderr) => {
+                    failures += 1;
+                    println!(
+                        "FAIL  {file}: block {id} exited with {}\n{stderr}",
+                        out.status
+                    );
+                    continue;
+                }
             };
+            checked += 1;
             match markdown::splice_output(&current, n, &stdout) {
-                Ok(Some(next)) => current = next,
+                Ok(Some(next)) => {
+                    if next != current {
+                        stale += 1;
+                    }
+                    current = next;
+                }
                 Ok(None) => {
                     failures += 1;
                     println!("FAIL  {file}: capture block {n} not found for splicing");
@@ -484,28 +548,147 @@ fn capture(a: &DocsArgs) -> i32 {
                 Err(e) => return err(&format!("{file}: {e}")),
             }
         }
-        if current != *text {
-            if a.check_only {
-                failures += 1;
-                println!(
-                    "FAIL  {file}: captured output is stale — run `cargo soothfast docs capture -p {pkg}`"
-                );
-            } else {
-                let path = scanned.root.join(file);
-                if std::fs::write(&path, &current).is_err() {
-                    return err(&format!("cannot write {}", path.display()));
-                }
-                println!("spliced fresh output into {file}");
-            }
-        } else {
+        if current == *text {
             println!("ok    {file}: captured output current");
+        } else if a.check_only {
+            failures += 1;
+            println!(
+                "FAIL  {file}: captured output is stale — run `cargo soothfast docs capture -p {pkg}`"
+            );
+        } else {
+            let path = scanned.root.join(file);
+            if std::fs::write(&path, &current).is_err() {
+                return err(&format!("cannot write {}", path.display()));
+            }
+            println!("spliced fresh output into {file}");
         }
     }
+    println!(
+        "docs capture: {checked} checked, {stale} stale, {skipped} skipped (features not enabled)"
+    );
     if failures > 0 {
         println!("docs capture: FAILED ({failures})");
         1
     } else {
         0
+    }
+}
+
+/// Fail unless the capture example on disk is what gen-tests would write now.
+/// Block ids are positions, so a stale example would run another block's code.
+fn current_capture(a: &DocsArgs, scanned: &Scanned, pkg: &str, dir: &Path) -> Result<(), i32> {
+    let (mut expected, _) = scanned.generated(a, dir).map_err(|e| err(&e))?;
+    let capture = Some(gentests::CAPTURE_DIR);
+    expected.retain(|g| gentests::owning_target(&g.path).map(|(t, _)| t) == capture);
+    let problems = docs_generated::check(dir, pkg, &expected, capture);
+    if problems.is_empty() {
+        return Ok(());
+    }
+    for problem in &problems {
+        println!("FAIL  {problem}");
+    }
+    println!("docs capture: FAILED (generated capture example is stale, so no block ran)");
+    Err(1)
+}
+
+/// Build the package's capture example once, so a compile error is reported
+/// as one failure naming the blocks it is in, not as every block failing.
+fn build_capture(pkg: &str, features: Option<&str>, dir: &Path) -> Result<(), i32> {
+    let out = capture_cmd("build", pkg, features)
+        .arg("--message-format=json")
+        .output()
+        .map_err(|e| err(&format!("cannot build the capture example: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let diagnostics: Vec<Value> = invoke::cargo_messages(&out.stdout)
+        .filter(|m| m["reason"] == "compiler-message")
+        .map(|m| m["message"].clone())
+        .collect();
+    println!(
+        "FAIL  {}: the shared capture example does not compile, so no block ran",
+        gentests::CAPTURE_DIR
+    );
+    for block in blocks_named_in(&diagnostics) {
+        let Ok(text) = std::fs::read_to_string(dir.join(gentests::CAPTURE_DIR).join(&block)) else {
+            continue;
+        };
+        match gentests::recorded_source(&text) {
+            Some((page, Some(line))) => println!("      error in {page} line {line} ({block})"),
+            Some((page, None)) => println!("      error in {page} ({block})"),
+            None => {}
+        }
+    }
+    for rendered in diagnostics.iter().filter_map(|d| d["rendered"].as_str()) {
+        print!("{rendered}");
+    }
+    print!("{}", String::from_utf8_lossy(&out.stderr));
+    println!("docs capture: FAILED (capture example does not compile)");
+    Err(1)
+}
+
+/// `cargo VERB -q -p PKG --example soothfast_capture [--features F]`, one
+/// spelling for the build and every block's run, so each block runs that build.
+fn capture_cmd(verb: &str, pkg: &str, features: Option<&str>) -> std::process::Command {
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.args([
+        verb,
+        "-q",
+        "-p",
+        pkg,
+        "--example",
+        gentests::CAPTURE_EXAMPLE,
+    ]);
+    if let Some(features) = features {
+        cmd.args(["--features", features]);
+    }
+    cmd
+}
+
+/// The `block_<id>.rs` files compiler diagnostics point into, in order.
+fn blocks_named_in(diagnostics: &[Value]) -> Vec<String> {
+    let mut blocks: Vec<String> = Vec::new();
+    let files = diagnostics
+        .iter()
+        .filter_map(|d| d["spans"].as_array())
+        .flatten()
+        .filter_map(|span| span["file_name"].as_str());
+    for file in files {
+        let name = file.rsplit(['/', '\\']).next().unwrap_or(file);
+        if name.starts_with("block_") && name.ends_with(".rs") && !blocks.iter().any(|b| b == name)
+        {
+            blocks.push(name.to_string());
+        }
+    }
+    blocks
+}
+
+/// How one run of the capture example for a block ended.
+#[derive(Debug, PartialEq)]
+enum CaptureRun {
+    Output(String),
+    /// The block's `feature=` tag is off in this build: keep what is recorded.
+    Disabled,
+    /// The example predates the block: gen-tests is stale.
+    Unknown,
+    Failed(String),
+}
+
+impl CaptureRun {
+    fn of(out: &std::process::Output) -> CaptureRun {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let reported = |(code, sentinel): (i32, &str)| {
+            out.status.code() == Some(code) && stderr.lines().any(|l| l.starts_with(sentinel))
+        };
+        if out.status.success() {
+            CaptureRun::Output(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else if reported(gentests::CAPTURE_DISABLED) {
+            CaptureRun::Disabled
+        } else if reported(gentests::CAPTURE_UNKNOWN) {
+            CaptureRun::Unknown
+        } else {
+            CaptureRun::Failed(stderr.into_owned())
+        }
     }
 }
 
@@ -578,7 +761,25 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::head_for_sniff;
+    use super::{blocks_named_in, head_for_sniff};
+
+    #[test]
+    fn compiler_errors_name_each_block_file_once() {
+        let diagnostics = [
+            serde_json::json!({ "spans": [
+                { "file_name": "p/examples/soothfast_capture/block_docs_c_1.rs" },
+                { "file_name": "src/lib.rs" },
+            ] }),
+            serde_json::json!({ "spans": [
+                { "file_name": "examples/soothfast_capture/block_readme_2.rs" },
+                { "file_name": "p\\examples\\soothfast_capture\\block_docs_c_1.rs" },
+            ] }),
+        ];
+        assert_eq!(
+            blocks_named_in(&diagnostics),
+            ["block_docs_c_1.rs", "block_readme_2.rs"]
+        );
+    }
 
     #[test]
     fn head_for_sniff_backs_off_to_char_boundary() {

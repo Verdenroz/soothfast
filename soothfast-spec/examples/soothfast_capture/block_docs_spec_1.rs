@@ -12,6 +12,6 @@ pub fn get_item(id: u64) -> String {
     format!("item-{id}")
 }
 
-fn main() {
+pub fn main() {
     println!("{}", get_item(42));
 }

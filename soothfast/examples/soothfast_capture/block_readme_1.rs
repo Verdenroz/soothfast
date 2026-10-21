@@ -13,6 +13,6 @@ pub fn rsi() -> f64 {
     100.0 - 100.0 / (1.0 + gain / loss)
 }
 
-fn main() {
+pub fn main() {
     println!("rsi={:.2}", rsi());
 }
