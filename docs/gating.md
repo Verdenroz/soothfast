@@ -30,6 +30,19 @@ what `make gate` runs against `origin/master` for
 every crate in `BENCH_CRATES`, and it is why merge-base gating has no
 baseline file that can go stale in version control.
 
+The merge-base builds into its own target dir, `soothfast-worktree` inside
+yours, because a workspace member compiles to the same artifact names from
+either checkout. Before that build the gate copies in every dependency HEAD
+already compiled:
+
+```console
+gate: seeded 293 dependency units (1013.9 MiB) from HEAD's target dir in 0.1s
+```
+
+Cargo then finds the merge-base's unchanged dependencies fresh and compiles
+only the workspace members and whatever `Cargo.lock` changed. The copy is a
+reflink on filesystems that support it and a full copy elsewhere.
+
 Before the reference side is measured, its locked `soothfast*` crates are
 pinned to the versions in HEAD's `Cargo.lock`. The harness compiles into
 both bench binaries, so without this a measurement-protocol change riding
@@ -364,7 +377,7 @@ run minus the commit and `--filter`, up to eight per item.
 |---|---|---|
 | `perfcnt.instructions` | +5% | hard |
 | `callgrind.ir` | +5% | hard |
-| `walltime.median_ns` | +10%, or 3x the A/A noise floor when that is higher | hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all. A fail is also downgraded to a SOFT warning when the deterministic evidence contradicts it: unchanged fingerprint, instructions/Ir flat (within 0.5%, or within a fixed 150-instruction floor for small benchmarks), and alloc counts/bytes identical. Identical code doing identical work cannot have gotten slower — that is the clock measuring the machine. In `--against-ref` mode a fail must also reproduce in both interleaved round pairings; one lucky round on either side cannot manufacture it. |
+| `walltime.median_ns` | +10%, or 3x the A/A noise floor when that is higher | hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all. A fail is also downgraded to a SOFT warning when the deterministic evidence contradicts it: unchanged fingerprint, instructions/Ir flat (within 0.5%, or within a fixed 150-instruction floor for small benchmarks), and alloc counts/bytes identical. Identical code doing identical work cannot have gotten slower — that is the clock measuring the machine. In `--against-ref` mode a fail must also reproduce in both interleaved round pairings; one lucky round on either side cannot manufacture it. Soft under `[gate] walltime = "advisory"`. |
 | `alloc.allocs` / `alloc.bytes` | +5% | hard, integer ceiling |
 | `asyncexec.polls` / `asyncexec.wakes` | +5% | hard, integer ceiling. Present only for `async fn` benches. Catches what instruction counts can miss: a future that polls twice as often does the same work per poll. |
 | `buildcost.size_bytes` | +5% | hard |
@@ -376,6 +389,21 @@ for bodies too small to survive the default: a loop costing ~20 instructions
 per element moves 5% when one register spills, and no fixture size changes
 that ratio. Attribute text is part of an item's fingerprint, so the commit
 adding a tolerance also reports the item as changed.
+
+A shared CI runner can be too noisy for any walltime threshold to hold. On
+one, make walltime advisory:
+
+```toml
+[gate]
+walltime = "advisory"
+```
+
+Walltime slower than the reference then prints as `SOFT` with the reason
+`walltime is advisory in soothfast.toml` and never fails the gate. `gate
+accept` records no walltime entry for it. Instructions, Ir, allocations, polls
+and wakes, and size gate exactly as before, and so does a bench's own `p99`
+claim: that is a number the bench declares, not a comparison with the
+reference. The default, `"hard"`, keeps the row above.
 
 ## Build settings
 

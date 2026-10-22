@@ -31,6 +31,7 @@ mod runcache;
 mod sdk;
 mod sdk_build;
 mod sdk_config;
+mod seed;
 mod site;
 mod spec;
 mod spec_config;

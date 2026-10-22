@@ -4,6 +4,7 @@
 //! artifact when valgrind is available.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -131,9 +132,10 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
-    if let Err(e) = gate_config::apply(&mut g.common) {
-        return err(&e);
-    }
+    let walltime_advisory = match gate_config::apply(&mut g.common) {
+        Ok(cfg) => cfg.walltime_advisory,
+        Err(e) => return err(&e),
+    };
 
     let mut regressions = 0u32;
     let mut failing_ids: Vec<String> = Vec::new();
@@ -181,6 +183,7 @@ pub fn run(args: &[String]) -> i32 {
         buildcost_mode,
         accepted,
         headroom_pct: None,
+        walltime_advisory,
     };
     regressions += compare(
         &reference,
@@ -406,6 +409,7 @@ fn prebuild_both_sides(packages: &[String], common: &CommonArgs, args: &[String]
         // Warming a build cache decides no verdict. The per-package leg
         // syncs this worktree again and its outcome is what gets reported.
         invoke::sync_harness_versions(wt)?;
+        crate::seed::seed_worktree(wt, &target);
         let _ = invoke::prebuild_benches(packages, common, Some(wt), Some(&target));
         Ok(())
     });
@@ -586,9 +590,10 @@ fn accept_cmd(args: &[String]) -> i32 {
             other => return err(&format!("unknown gate accept arg {other:?}")),
         }
     }
-    if let Err(e) = gate_config::apply(&mut a.common) {
-        return err(&e);
-    }
+    let walltime_advisory = match gate_config::apply(&mut a.common) {
+        Ok(cfg) => cfg.walltime_advisory,
+        Err(e) => return err(&e),
+    };
     let Some(justification) = a.justification.clone() else {
         return err("gate accept needs --justification \"...\"");
     };
@@ -639,6 +644,7 @@ fn accept_cmd(args: &[String]) -> i32 {
         buildcost_mode: g.common.backend.as_deref() == Some("buildcost"),
         accepted: entries.clone(),
         headroom_pct: a.headroom,
+        walltime_advisory,
     };
     let mut candidates = Vec::new();
     let mut near_miss = Vec::new();
@@ -882,6 +888,9 @@ fn measure_ref_interleaved(
         // otherwise be reported as a regression in the measured project.
         // Pinning must precede the base build the binary comparison does.
         let harness = invoke::sync_harness_versions(wt)?;
+        if let Some(target) = &wt_target {
+            crate::seed::seed_worktree(wt, target);
+        }
         let digests = bench_text_digests(common, wt, wt_target.as_deref());
         // A run measured from byte-identical machine code under the same
         // conditions is that binary's measurement, whatever commit built it.
@@ -937,11 +946,21 @@ fn measure_ref_interleaved(
             let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), dir);
             reuse.measure_side(side, extra, stamp, |args| measure(dir, args))
         };
+        let timed = |n: usize, side: usize, extra: &[&str]| {
+            let start = Instant::now();
+            let run = measure_side(side, extra);
+            let label = ["head", "base"][side];
+            println!(
+                "gate: round {n}/4 ({label}) done in {}",
+                round_duration(start.elapsed())
+            );
+            run
+        };
         let mut rounds = [
-            measure_side(0, &[]),
-            measure_side(1, &[]),
-            measure_side(0, TIMING_ONLY),
-            measure_side(1, TIMING_ONLY),
+            timed(1, 0, &[]),
+            timed(2, 1, &[]),
+            timed(3, 0, TIMING_ONLY),
+            timed(4, 1, TIMING_ONLY),
         ];
         if let Some(reuse) = &item_reuse {
             for (side, round) in rounds.iter_mut().take(2).enumerate() {
@@ -1125,6 +1144,15 @@ fn bench_text_digests(
     })
 }
 
+fn round_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    }
+}
+
 /// Fold a side's timing-only second round into its full first round. A
 /// failed second round costs drift cancellation, not the gate: a merge-base
 /// harness that predates `--skip-gating-counters` rejects the flag.
@@ -1281,6 +1309,8 @@ struct CompareCtx {
     /// `gate accept --headroom PCT`: also collect near-miss metrics within
     /// `PCT` points of failing. `None` for every ordinary `gate` run.
     headroom_pct: Option<f64>,
+    /// `[gate] walltime = "advisory"`: walltime overruns are SOFT.
+    walltime_advisory: bool,
 }
 
 /// A metric that failed its check, collected only when the caller (`gate
@@ -1387,7 +1417,7 @@ fn compare(
                 (_, _, _, Some(true)) => ("ACPT", None),
                 (true, true, None, _) => ("FAIL", None),
                 (true, true, Some(why), _) => ("SOFT", Some(why)),
-                (true, false, _, _) => ("SOFT", None),
+                (true, false, why, _) => ("SOFT", why),
             };
             if verdict == "FAIL" {
                 failures += 1;
@@ -1452,12 +1482,15 @@ fn compare(
             old["walltime"]["median_ns"].as_f64(),
             cur.median_ns,
             counter_limit(wall_limit, cur),
-            true,
+            !ctx.walltime_advisory,
             WALLTIME_NOISE_MARGIN * noise,
             walltime_downgrade(old, cur, wall_limit)
                 .or(build_soft)
                 .or(reused_soft)
-                .or(accepted_counters_soft),
+                .or(accepted_counters_soft)
+                .or(ctx
+                    .walltime_advisory
+                    .then_some("walltime is advisory in soothfast.toml")),
         );
         rel(
             "build_ms",
@@ -1650,7 +1683,8 @@ fn partial(msg: &str) -> i32 {
 mod tests {
     use super::{
         CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare,
-        identical_pass_args, identical_pass_cache, reuse_hint, save_verdict, walltime_limit,
+        identical_pass_args, identical_pass_cache, reuse_hint, round_duration, save_verdict,
+        walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
@@ -1666,6 +1700,7 @@ mod tests {
             buildcost_mode: false,
             accepted: gate_lock::Entries::new(),
             headroom_pct: None,
+            walltime_advisory: false,
         }
     }
 
@@ -1728,6 +1763,16 @@ mod tests {
         });
         run.build = build;
         run
+    }
+
+    #[test]
+    fn round_durations_read_as_minutes_and_seconds() {
+        assert_eq!(
+            round_duration(std::time::Duration::from_millis(45_900)),
+            "45s"
+        );
+        assert_eq!(round_duration(std::time::Duration::from_secs(161)), "2m41s");
+        assert_eq!(round_duration(std::time::Duration::from_secs(300)), "5m00s");
     }
 
     #[test]
@@ -2092,6 +2137,31 @@ mod tests {
         let (failures, failing) = gate_failures(&reused(walltime_reference()), &walltime_head());
         assert_eq!(failures, 0);
         assert!(failing.is_empty());
+    }
+
+    #[test]
+    fn advisory_walltime_never_fails() {
+        let ctx = CompareCtx {
+            walltime_advisory: true,
+            ..ctx()
+        };
+        let (failures, failing) = gate_failures_with(&walltime_reference(), &walltime_head(), ctx);
+        assert_eq!(failures, 0);
+        assert!(failing.is_empty(), "a SOFT item must not enter triage");
+    }
+
+    #[test]
+    fn advisory_walltime_still_fails_counters() {
+        let ctx = CompareCtx {
+            walltime_advisory: true,
+            ..ctx()
+        };
+        let mut head = incident_head();
+        head.instructions = Some(400_000);
+        let (failures, failing) =
+            gate_failures_with(&incident_reference("fp-old"), &run_with(head), ctx);
+        assert_eq!(failures, 1, "instructions still gate; walltime is SOFT");
+        assert_eq!(failing, vec!["pkg::bt_base_to_htf_index"]);
     }
 
     #[test]
