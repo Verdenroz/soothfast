@@ -436,7 +436,10 @@ one, make walltime advisory:</p>
 accept</code> records no walltime entry for it. Instructions, Ir, allocations, polls
 and wakes, and size gate exactly as before, and so does a bench's own <code>p99</code>
 claim: that is a number the bench declares, not a comparison with the
-reference. The default, <code>&quot;hard&quot;</code>, keeps the row above.</p>
+reference. <code>--against-ref</code> then skips the two timing-only rounds and measures
+each side once, head first. A baseline it saves, and a run it stores for later
+gates to reuse, holds one walltime sample per item instead of the minimum of
+two. The default, <code>&quot;hard&quot;</code>, keeps the row above.</p>
 <h2 id="build-settings">Build settings<a class="anchor" href="#build-settings" aria-label="Link to this section">#</a></h2>
 <p>Instruction counts only compare across builds that made the same codegen
 decisions. Rust compilation is not function-local: at the stock
