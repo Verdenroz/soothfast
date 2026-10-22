@@ -785,7 +785,8 @@ fn write_gate_status(failures: u32) {
 /// per-metric minima across each side's rounds form the comparison values.
 /// Interleaving is a timing concern: the deterministic gating counters
 /// (perfcnt/callgrind) don't drift, so the second round of each side skips
-/// them and re-measures only the timing-sensitive backends.
+/// them and re-measures only the timing-sensitive backends. Advisory walltime
+/// can't fail on that second sample, so it skips the second round.
 /// `Ok(None)` when the merge-base has no such bench target: the crate is
 /// newly measured, so there is nothing on that side to compare against.
 /// A merge-base already measured under the same conditions is served from
@@ -1027,19 +1028,14 @@ fn measure_ref_interleaved(
         }
         Ref::Rounds(rounds, timing_rounds, head_settled, base_settled) => {
             let [head1, base1] = *rounds;
-            let [head2, base2] = match timing_rounds {
+            let (base, head) = match timing_rounds {
                 Some(timing) => {
                     let [head2, base2] = *timing;
-                    [Some(head2), Some(base2)]
+                    (combine_rounds(base1?, base2), combine_rounds(head1?, head2))
                 }
-                None => [None, None],
+                None => (base1?, head1?),
             };
-            (
-                combine_rounds(base1?, base2),
-                combine_rounds(head1?, head2),
-                head_settled,
-                base_settled,
-            )
+            (base, head, head_settled, base_settled)
         }
     };
     let (base, head, head_settled, base_settled) = sides;
@@ -1167,13 +1163,11 @@ fn round_duration(d: Duration) -> String {
 
 /// Fold a side's timing-only second round into its full first round. A
 /// failed second round costs drift cancellation, not the gate: a merge-base
-/// harness that predates `--skip-gating-counters` rejects the flag. `None`
-/// is a round that was never run.
-fn combine_rounds(first: Run, second: Option<Result<Run, String>>) -> Run {
+/// harness that predates `--skip-gating-counters` rejects the flag.
+fn combine_rounds(first: Run, second: Result<Run, String>) -> Run {
     match second {
-        None => first,
-        Some(Ok(r)) => combine_min(first, r),
-        Some(Err(e)) => {
+        Ok(r) => combine_min(first, r),
+        Err(e) => {
             eprintln!("WARN: second timing round failed ({e}); using one round for this side");
             first
         }
@@ -2448,23 +2442,8 @@ mod tests {
                 ..ItemMetrics::default()
             },
         );
-        let merged = combine_rounds(full, Some(Err("unknown runner arg".into())));
+        let merged = combine_rounds(full, Err("unknown runner arg".into()));
         assert_eq!(merged.items["pkg::item"].ir, Some(100));
-    }
-
-    #[test]
-    fn a_skipped_second_round_keeps_the_first_round_alone() {
-        let mut full = Run::default();
-        full.items.insert(
-            "pkg::item".into(),
-            ItemMetrics {
-                median_ns: Some(50.0),
-                ..ItemMetrics::default()
-            },
-        );
-        let merged = combine_rounds(full, None);
-        assert_eq!(merged.items["pkg::item"].median_ns, Some(50.0));
-        assert!(merged.items["pkg::item"].wall_rounds.is_empty());
     }
 
     fn mismatched() -> HarnessSync {
