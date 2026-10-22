@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Skip timing-only gate rounds under advisory walltime (#268)
 - Seed the gate's base build, advisory walltime, save-baseline input (#266)
 
 
