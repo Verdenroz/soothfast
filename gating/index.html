@@ -160,6 +160,15 @@ single cheap pass whose assertions still run. This is
 what <code>make gate</code> runs against <code>origin/master</code> for
 every crate in <code>BENCH_CRATES</code>, and it is why merge-base gating has no
 baseline file that can go stale in version control.</p>
+<p>The merge-base builds into its own target dir, <code>soothfast-worktree</code> inside
+yours, because a workspace member compiles to the same artifact names from
+either checkout. Before that build the gate copies in every dependency HEAD
+already compiled:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: seeded 293 dependency units (1013.9 MiB) from HEAD&#39;s target dir in 0.1s
+</code></pre></figure>
+<p>Cargo then finds the merge-base's unchanged dependencies fresh and compiles
+only the workspace members and whatever <code>Cargo.lock</code> changed. The copy is a
+reflink on filesystems that support it and a full copy elsewhere.</p>
 <p>Before the reference side is measured, its locked <code>soothfast*</code> crates are
 pinned to the versions in HEAD's <code>Cargo.lock</code>. The harness compiles into
 both bench binaries, so without this a measurement-protocol change riding
@@ -405,7 +414,7 @@ run minus the commit and <code>--filter</code>, up to eight per item.</p>
 <tbody>
 <tr><td><code>perfcnt.instructions</code></td><td>+5%</td><td>hard</td></tr>
 <tr><td><code>callgrind.ir</code></td><td>+5%</td><td>hard</td></tr>
-<tr><td><code>walltime.median_ns</code></td><td>+10%, or 3x the A/A noise floor when that is higher</td><td>hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all. A fail is also downgraded to a SOFT warning when the deterministic evidence contradicts it: unchanged fingerprint, instructions/Ir flat (within 0.5%, or within a fixed 150-instruction floor for small benchmarks), and alloc counts/bytes identical. Identical code doing identical work cannot have gotten slower — that is the clock measuring the machine. In <code>--against-ref</code> mode a fail must also reproduce in both interleaved round pairings; one lucky round on either side cannot manufacture it.</td></tr>
+<tr><td><code>walltime.median_ns</code></td><td>+10%, or 3x the A/A noise floor when that is higher</td><td>hard. A threshold within ~2 sigma of the run's jitter cannot tell signal from noise, so it scales with the measured floor — noisy runners gate looser instead of not at all. A fail is also downgraded to a SOFT warning when the deterministic evidence contradicts it: unchanged fingerprint, instructions/Ir flat (within 0.5%, or within a fixed 150-instruction floor for small benchmarks), and alloc counts/bytes identical. Identical code doing identical work cannot have gotten slower — that is the clock measuring the machine. In <code>--against-ref</code> mode a fail must also reproduce in both interleaved round pairings; one lucky round on either side cannot manufacture it. Soft under <code>[gate] walltime = &quot;advisory&quot;</code>.</td></tr>
 <tr><td><code>alloc.allocs</code> / <code>alloc.bytes</code></td><td>+5%</td><td>hard, integer ceiling</td></tr>
 <tr><td><code>asyncexec.polls</code> / <code>asyncexec.wakes</code></td><td>+5%</td><td>hard, integer ceiling. Present only for <code>async fn</code> benches. Catches what instruction counts can miss: a future that polls twice as often does the same work per poll.</td></tr>
 <tr><td><code>buildcost.size_bytes</code></td><td>+5%</td><td>hard</td></tr>
@@ -418,6 +427,16 @@ for bodies too small to survive the default: a loop costing ~20 instructions
 per element moves 5% when one register spills, and no fixture size changes
 that ratio. Attribute text is part of an item's fingerprint, so the commit
 adding a tolerance also reports the item as changed.</p>
+<p>A shared CI runner can be too noisy for any walltime threshold to hold. On
+one, make walltime advisory:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[gate]</span>
+<span class="tok-ty">walltime </span>=<span class="tok-str"> &quot;advisory&quot;</span></code></pre></figure>
+<p>Walltime slower than the reference then prints as <code>SOFT</code> with the reason
+<code>walltime is advisory in soothfast.toml</code> and never fails the gate. <code>gate
+accept</code> records no walltime entry for it. Instructions, Ir, allocations, polls
+and wakes, and size gate exactly as before, and so does a bench's own <code>p99</code>
+claim: that is a number the bench declares, not a comparison with the
+reference. The default, <code>&quot;hard&quot;</code>, keeps the row above.</p>
 <h2 id="build-settings">Build settings<a class="anchor" href="#build-settings" aria-label="Link to this section">#</a></h2>
 <p>Instruction counts only compare across builds that made the same codegen
 decisions. Rust compilation is not function-local: at the stock
