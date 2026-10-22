@@ -403,7 +403,10 @@ Walltime slower than the reference then prints as `SOFT` with the reason
 accept` records no walltime entry for it. Instructions, Ir, allocations, polls
 and wakes, and size gate exactly as before, and so does a bench's own `p99`
 claim: that is a number the bench declares, not a comparison with the
-reference. The default, `"hard"`, keeps the row above.
+reference. `--against-ref` then skips the two timing-only rounds and measures
+each side once, head first. A baseline it saves, and a run it stores for later
+gates to reuse, holds one walltime sample per item instead of the minimum of
+two. The default, `"hard"`, keeps the row above.
 
 ## Build settings
 

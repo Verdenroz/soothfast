@@ -145,7 +145,7 @@ pub fn run(args: &[String]) -> i32 {
         current,
         short_circuited,
         harness,
-    } = match resolve(&g) {
+    } = match resolve(&g, walltime_advisory) {
         Ok(Some(resolved)) => resolved,
         // Newly measured crate: nothing at the ref to regress against.
         // Passing is the honest answer; failing would make a crate's
@@ -470,7 +470,7 @@ struct Resolved {
 /// Measure or load both sides of a gate run as a [`Resolved`]. `Ok(None)`
 /// only in `--against-ref` mode: a crate newly measured has nothing at the
 /// ref to compare against.
-fn resolve(g: &GateArgs) -> Result<Option<Resolved>, String> {
+fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, String> {
     if g.common.backend.as_deref() == Some("buildcost") {
         let Some(pkg) = g.common.pkg.clone() else {
             return Err("--backend buildcost requires -p PKG".into());
@@ -504,7 +504,7 @@ fn resolve(g: &GateArgs) -> Result<Option<Resolved>, String> {
         }));
     }
     if let Some(refname) = &g.against_ref {
-        return measure_ref_interleaved(&g.common, refname, g.reuse_base);
+        return measure_ref_interleaved(&g.common, refname, g.reuse_base, walltime_advisory);
     }
     let records = invoke::run_bench(&g.common, &[]).map_err(|e| e.to_string())?;
     let mut current = invoke::collect(&records);
@@ -615,7 +615,7 @@ fn accept_cmd(args: &[String]) -> i32 {
         current,
         harness,
         ..
-    } = match resolve(&g) {
+    } = match resolve(&g, walltime_advisory) {
         Ok(Some(resolved)) => resolved,
         Ok(None) => {
             println!("gate accept: nothing to compare — nothing to accept");
@@ -785,7 +785,8 @@ fn write_gate_status(failures: u32) {
 /// per-metric minima across each side's rounds form the comparison values.
 /// Interleaving is a timing concern: the deterministic gating counters
 /// (perfcnt/callgrind) don't drift, so the second round of each side skips
-/// them and re-measures only the timing-sensitive backends.
+/// them and re-measures only the timing-sensitive backends. Advisory walltime
+/// can't fail on that second sample, so it skips the second round.
 /// `Ok(None)` when the merge-base has no such bench target: the crate is
 /// newly measured, so there is nothing on that side to compare against.
 /// A merge-base already measured under the same conditions is served from
@@ -794,6 +795,7 @@ fn measure_ref_interleaved(
     common: &CommonArgs,
     refname: &str,
     reuse: bool,
+    walltime_advisory: bool,
 ) -> Result<Option<Resolved>, String> {
     const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
     enum Ref {
@@ -801,8 +803,14 @@ fn measure_ref_interleaved(
         IdenticalBinaries(Result<Run, String>),
         /// Reference served by binary identity rather than by commit.
         Cached(Value),
-        /// The four rounds, then what HEAD's and the merge-base's runs may store.
-        Rounds(Box<[Result<Run, String>; 4]>, Settled, Settled),
+        /// The two full rounds, the timing-only pair unless walltime is
+        /// advisory, then what HEAD's and the merge-base's runs may store.
+        Rounds(
+            Box<[Result<Run, String>; 2]>,
+            Option<Box<[Result<Run, String>; 2]>>,
+            Settled,
+            Settled,
+        ),
     }
 
     // Worktree builds go to a persistent sibling of the parent target dir so
@@ -946,24 +954,22 @@ fn measure_ref_interleaved(
             let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), dir);
             reuse.measure_side(side, extra, stamp, |args| measure(dir, args))
         };
+        let total = if walltime_advisory { 2 } else { 4 };
         let timed = |n: usize, side: usize, extra: &[&str]| {
             let start = Instant::now();
             let run = measure_side(side, extra);
             let label = ["head", "base"][side];
             println!(
-                "gate: round {n}/4 ({label}) done in {}",
+                "gate: round {n}/{total} ({label}) done in {}",
                 round_duration(start.elapsed())
             );
             run
         };
-        let mut rounds = [
-            timed(1, 0, &[]),
-            timed(2, 1, &[]),
-            timed(3, 0, TIMING_ONLY),
-            timed(4, 1, TIMING_ONLY),
-        ];
+        let mut rounds = [timed(1, 0, &[]), timed(2, 1, &[])];
+        let timing_rounds = (!walltime_advisory)
+            .then(|| Box::new([timed(3, 0, TIMING_ONLY), timed(4, 1, TIMING_ONLY)]));
         if let Some(reuse) = &item_reuse {
-            for (side, round) in rounds.iter_mut().take(2).enumerate() {
+            for (side, round) in rounds.iter_mut().enumerate() {
                 if let Ok(run) = round {
                     reuse.finish(side, run);
                 }
@@ -982,7 +988,7 @@ fn measure_ref_interleaved(
             _ => (Settled::Refused, Settled::Refused),
         };
         Ok((
-            Ref::Rounds(Box::new(rounds), head_settled, base_settled),
+            Ref::Rounds(Box::new(rounds), timing_rounds, head_settled, base_settled),
             digests,
             harness,
         ))
@@ -1020,14 +1026,16 @@ fn measure_ref_interleaved(
                 harness,
             }));
         }
-        Ref::Rounds(rounds, head_settled, base_settled) => {
-            let [head1, base1, head2, base2] = *rounds;
-            (
-                combine_rounds(base1?, base2),
-                combine_rounds(head1?, head2),
-                head_settled,
-                base_settled,
-            )
+        Ref::Rounds(rounds, timing_rounds, head_settled, base_settled) => {
+            let [head1, base1] = *rounds;
+            let (base, head) = match timing_rounds {
+                Some(timing) => {
+                    let [head2, base2] = *timing;
+                    (combine_rounds(base1?, base2), combine_rounds(head1?, head2))
+                }
+                None => (base1?, head1?),
+            };
+            (base, head, head_settled, base_settled)
         }
     };
     let (base, head, head_settled, base_settled) = sides;
