@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 
-use crate::{rustdoc_inputs, rustdocstore};
+use crate::{benchexe, rustdoc_inputs, rustdocstore, store};
 
 /// Run `f`, printing its wall time to stderr when `SOOTHFAST_TIMINGS` is set.
 pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
@@ -127,7 +127,7 @@ const CANONICAL_CODEGEN_UNITS: &str = "1";
 
 /// Toolchain override for `cargo bench`, `SOOTHFAST_BENCH_TOOLCHAIN`. Unset
 /// by default, so `measure`/`gate` stay pinned to the active toolchain.
-fn bench_toolchain() -> Option<String> {
+pub(crate) fn bench_toolchain() -> Option<String> {
     std::env::var("SOOTHFAST_BENCH_TOOLCHAIN").ok()
 }
 
@@ -135,7 +135,7 @@ fn bench_toolchain() -> Option<String> {
 /// builds under the dev profile, since a registry dump's output doesn't
 /// depend on optimization and dev artifacts never displace measured ones.
 #[derive(Clone, Copy)]
-enum Build {
+pub(crate) enum Build {
     Measure,
     Discover,
 }
@@ -143,7 +143,7 @@ enum Build {
 /// `cargo bench` carrying every input that selects which binary gets built.
 /// Both the measured run and the `--no-run` digest probe go through here, so
 /// they cannot drift into building different binaries.
-fn bench_build_command(
+pub(crate) fn bench_build_command(
     common: &CommonArgs,
     dir: Option<&Path>,
     target_dir: Option<&Path>,
@@ -222,7 +222,7 @@ pub fn build_link_map(
 
 /// The executable cargo's `--message-format=json` output names for the bench
 /// target `target`.
-fn bench_artifact(stdout: &[u8], target: &str) -> Option<PathBuf> {
+pub(crate) fn bench_artifact(stdout: &[u8], target: &str) -> Option<PathBuf> {
     cargo_messages(stdout)
         .filter(|m| m["reason"] == "compiler-artifact")
         .filter(|m| m["target"]["name"] == target)
@@ -264,9 +264,16 @@ fn bench_command(
     target_dir: Option<&Path>,
     build: Build,
 ) -> io::Result<Command> {
-    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-    let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs)?;
-    cmd.arg("--");
+    let fill = matches!(build, Build::Discover);
+    let mut cmd = match benchexe::run_command(common, dir, target_dir, build, fill) {
+        Some(cmd) => cmd,
+        None => {
+            let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+            let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs)?;
+            cmd.arg("--");
+            cmd
+        }
+    };
     if let Some(f) = &common.filter {
         cmd.args(["--filter", f]);
     }
@@ -412,7 +419,20 @@ pub fn prebuild_benches(
     dir: Option<&Path>,
     target_dir: Option<&Path>,
 ) -> io::Result<()> {
-    let names: Vec<&str> = pkgs.iter().map(String::as_str).collect();
+    let names: Vec<&str> = pkgs
+        .iter()
+        .map(String::as_str)
+        .filter(|pkg| {
+            let one = CommonArgs {
+                pkg: Some(pkg.to_string()),
+                ..common.clone()
+            };
+            !benchexe::is_stored(&one, dir, target_dir, Build::Measure)
+        })
+        .collect();
+    if names.is_empty() {
+        return Ok(());
+    }
     bench_build_command(common, dir, target_dir, Build::Measure, &names)?
         .args(["--no-run"])
         .status()?;
@@ -442,25 +462,16 @@ fn shard_ids(
     Some(ids)
 }
 
-/// Path of the compiled bench executable, via `cargo bench --no-run`'s JSON
-/// messages. `None` on any failure: callers fall through to a normal
-/// measured run, which surfaces the real error.
+/// Path of the compiled bench executable, from the binary store or else via
+/// `cargo bench --no-run`'s JSON messages (see `benchexe`). `None` on any
+/// failure: callers fall through to a normal measured run, which surfaces the
+/// real error.
 pub fn bench_executable(
     common: &CommonArgs,
     dir: Option<&Path>,
     target_dir: Option<&Path>,
 ) -> Option<PathBuf> {
-    let target = common.target.as_deref().unwrap_or("soothfast");
-    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-    let mut cmd = bench_build_command(common, dir, target_dir, Build::Measure, &pkgs).ok()?;
-    cmd.args(["--no-run", "--message-format=json"]);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    bench_artifact(&out.stdout, target)
+    benchexe::executable(common, dir, target_dir, Build::Measure)
 }
 
 /// What a bench binary resolves on this host, from the env line a run starts
@@ -1351,14 +1362,8 @@ fn run_teeing_stderr(mut cmd: Command) -> io::Result<Built> {
     })
 }
 
-fn rustdoc_store_key(
-    pkg: &str,
-    dir: Option<&Path>,
-    root: &Path,
-    features: Option<&str>,
-    visibility: Visibility,
-    toolchain: &str,
-) -> Option<String> {
+/// `local_crate_dirs`, resolved once per package and tree.
+pub(crate) fn crate_dirs(pkg: &str, dir: Option<&Path>) -> Option<Vec<PathBuf>> {
     type Dirs = BTreeMap<(String, Option<PathBuf>), Vec<PathBuf>>;
     static DIRS: Mutex<Dirs> = Mutex::new(BTreeMap::new());
     let at = (pkg.to_string(), dir.map(Path::to_path_buf));
@@ -1367,18 +1372,27 @@ fn rustdoc_store_key(
         .unwrap_or_else(PoisonError::into_inner)
         .get(&at)
         .cloned();
-    let crate_dirs = match known {
-        Some(dirs) => dirs,
-        None => {
-            let dirs = local_crate_dirs(pkg, dir).ok()?;
-            DIRS.lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .insert(at, dirs.clone());
-            dirs
-        }
-    };
-    let rustc = rustdocstore::rustc_version(toolchain)?;
-    let env = rustdocstore::build_env();
+    if known.is_some() {
+        return known;
+    }
+    let dirs = local_crate_dirs(pkg, dir).ok()?;
+    DIRS.lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(at, dirs.clone());
+    Some(dirs)
+}
+
+fn rustdoc_store_key(
+    pkg: &str,
+    dir: Option<&Path>,
+    root: &Path,
+    features: Option<&str>,
+    visibility: Visibility,
+    toolchain: &str,
+) -> Option<String> {
+    let crate_dirs = crate_dirs(pkg, dir)?;
+    let rustc = store::rustc_version(Some(toolchain), root)?;
+    let env = store::build_env(&[]);
     let request = rustdocstore::Request {
         pkg,
         features,

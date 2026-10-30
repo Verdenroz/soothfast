@@ -1,4 +1,4 @@
-//! The files and variables a rustdoc build read, taken from the dep-info
+//! The files and variables a build read, taken from the dep-info rustc,
 //! rustdoc and cargo wrote for it and from build script output.
 
 use std::collections::BTreeMap;
@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::invoke;
-use crate::rustdocstore::Inputs;
+use crate::store::Inputs;
 
 /// Everything the build read beyond the files of the package directories:
 /// `dep_info` is what rustdoc wrote for the documented crate, and
@@ -19,6 +19,24 @@ pub fn collect(root: &Path, dep_info: &Path, cargo_stdout: &[u8]) -> Inputs {
     if let Ok(text) = std::fs::read_to_string(dep_info) {
         add_dep_info(&mut inputs, root, &text);
     }
+    walk(&mut inputs, root, cargo_stdout);
+    inputs
+}
+
+/// The same for a build of the executable `exe`, whose own dep-info sits
+/// beside it. `None` when the dep-info of any workspace crate cannot be read,
+/// since the build then read files nobody knows of.
+pub fn collect_build(root: &Path, exe: &Path, cargo_stdout: &[u8]) -> Option<Inputs> {
+    let mut inputs = Inputs::default();
+    let text = std::fs::read_to_string(dep_info_beside(exe)).ok()?;
+    add_dep_info(&mut inputs, root, &text);
+    walk(&mut inputs, root, cargo_stdout).then_some(inputs)
+}
+
+/// Add what each workspace artifact and build script of `cargo_stdout` read.
+/// False when the dep-info of an artifact could not be read.
+fn walk(inputs: &mut Inputs, root: &Path, cargo_stdout: &[u8]) -> bool {
+    let mut read_all = true;
     let mut package_dirs: BTreeMap<String, PathBuf> = BTreeMap::new();
     for msg in invoke::cargo_messages(cargo_stdout) {
         let Some(id) = msg["package_id"].as_str() else {
@@ -34,20 +52,21 @@ pub fn collect(root: &Path, dep_info: &Path, cargo_stdout: &[u8]) -> Inputs {
                     package_dirs.insert(id.to_string(), dir.to_path_buf());
                 }
                 if local {
-                    add_artifact(&mut inputs, root, &msg);
+                    read_all &= add_artifact(inputs, root, &msg);
                 }
             }
             Some("build-script-executed") => {
                 let dir = package_dirs.get(id).filter(|_| local);
-                add_build_script(&mut inputs, root, dir, &msg);
+                add_build_script(inputs, root, dir, &msg);
             }
             _ => {}
         }
     }
-    inputs
+    read_all
 }
 
-fn add_artifact(inputs: &mut Inputs, root: &Path, msg: &Value) {
+/// Whether the artifact's dep-info was read, or it names no file to have one.
+fn add_artifact(inputs: &mut Inputs, root: &Path, msg: &Value) -> bool {
     let is_build_script = msg["target"]["kind"]
         .as_array()
         .is_some_and(|k| k.iter().any(|k| k == "custom-build"));
@@ -55,17 +74,58 @@ fn add_artifact(inputs: &mut Inputs, root: &Path, msg: &Value) {
         inputs.files.insert(relative(root, Path::new(src)));
     }
     let Some(first) = msg["filenames"][0].as_str() else {
-        return;
+        return true;
     };
-    if let Ok(text) = std::fs::read_to_string(dep_info_beside(Path::new(first))) {
-        add_dep_info(inputs, root, &text);
-    }
+    let Some(text) = read_dep_info(Path::new(first)) else {
+        return false;
+    };
+    add_dep_info(inputs, root, &text);
+    true
 }
 
-/// Cargo's `deps/libname-hash.rmeta` has its dep-info at `deps/name-hash.d`.
+/// The dep-info of `artifact`, found beside it or beside the `deps/` file an
+/// uplifted binary links to.
+fn read_dep_info(artifact: &Path) -> Option<String> {
+    let read = |a: &Path| std::fs::read_to_string(dep_info_beside(a)).ok();
+    read(artifact).or_else(|| read(&deps_twin(artifact)?))
+}
+
+/// Cargo links a binary at `target/<profile>/name` to `deps/name-hash`, and a
+/// build script at `build/pkg-hash/build-script-build` to
+/// `build_script_build-hash` beside it. The hashed file is the one the dep-info
+/// is named for.
+#[cfg(unix)]
+fn deps_twin(artifact: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+
+    let parent = artifact.parent()?;
+    let inode = std::fs::metadata(artifact).ok()?.ino();
+    [parent.join("deps"), parent.to_path_buf()]
+        .iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flatten()
+        .flatten()
+        .find(|e| {
+            e.path() != artifact
+                && e.path().extension().is_none()
+                && e.metadata().is_ok_and(|m| m.ino() == inode)
+        })
+        .map(|e| e.path())
+}
+
+#[cfg(not(unix))]
+fn deps_twin(_: &Path) -> Option<PathBuf> {
+    None
+}
+
+/// Cargo's `deps/libname-hash.rmeta` has its dep-info at `deps/name-hash.d`,
+/// and an executable `deps/name-hash` at the same name.
 fn dep_info_beside(artifact: &Path) -> PathBuf {
     let stem = artifact.file_stem().unwrap_or_default().to_string_lossy();
-    let stem = stem.strip_prefix("lib").unwrap_or(&stem);
+    let stem = match artifact.extension() {
+        Some(_) => stem.strip_prefix("lib").unwrap_or(&stem),
+        None => &stem,
+    };
     artifact.with_file_name(format!("{stem}.d"))
 }
 
@@ -168,6 +228,23 @@ mod tests {
         assert_eq!(files, ["../README.md", "docs/a b.md", "src/lib.rs"]);
         let env: Vec<_> = inputs.env.iter().map(String::as_str).collect();
         assert_eq!(env, ["API_BASE"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_binary_linked_out_of_deps_finds_its_dep_info() {
+        let root = temp("twin");
+        let deps = root.join("target/debug/deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        std::fs::write(deps.join("app-1a2b"), "bin").unwrap();
+        std::fs::write(deps.join("app-1a2b.d"), "x: src/main.rs\n").unwrap();
+        std::fs::write(deps.join("other-3c4d"), "bin").unwrap();
+        std::fs::hard_link(deps.join("app-1a2b"), root.join("target/debug/app")).unwrap();
+        let text = read_dep_info(&root.join("target/debug/app")).unwrap();
+        assert_eq!(text, "x: src/main.rs\n");
+        std::fs::write(root.join("target/debug/lone"), "bin").unwrap();
+        assert_eq!(read_dep_info(&root.join("target/debug/lone")), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -157,7 +157,8 @@ installed on is refused.
 | `comment` | `true` | Post the pull request gate comment. `false` posts nothing and records a result per package for `cargo soothfast verdict merge`. |
 | `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved. |
 | `rustdoc-cache` | `false` | Restore and save `.soothfast/rustdoc` for a job that runs `spec` or `docs` commands. A hit skips the nightly rustdoc build; see [Rustdoc cache](#rustdoc-cache). |
-| `cache-suffix` | none | Tells apart the legs of a job matrix that share a job name, so each keeps its own `rustdoc-cache`. |
+| `bin-cache` | `false` | Restore `.soothfast/bins`, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See [Bench executable cache](#bench-executable-cache). |
+| `cache-suffix` | none | Tells apart the legs of a job matrix that share a job name, so each keeps its own `rustdoc-cache` and `bin-cache`. |
 
 Outputs are `version` and `cache-hit`.
 
@@ -200,12 +201,87 @@ A package at the repository root hashes every file git lists outside the
 other packages, so a doc or README edit there misses.
 
 Caches are kept per job, runner OS and architecture, and `cache-suffix`, and
-the store is capped at 1 GiB, dropping the least recently used entries
+the rustdoc store is capped at 1 GiB, dropping the least recently used entries
 first. The action saves through `actions/cache`, which saves a new entry at
 the end of every job that did not hit its exact key, even when nothing was
 added. A composite action has no end-of-job step to compare against, so
 that cost is accepted. Set `SOOTHFAST_TIMINGS=1` to print how long each
 rustdoc build, parse and `cargo bench` took.
+
+## Bench executable cache
+
+A job that gates, or runs `spec check`, builds its bench executable from
+cold: `cargo bench --no-run` for the gate's HEAD side, and a dev-profile
+build for the route listing behind `spec check`. A change that leaves the
+sources alone, a docs-only pull request, yields the same bytes, and the
+build dominates the job. `bin-cache` keeps `.soothfast/bins` between runs;
+a job that finds its executable there builds nothing, and the gate
+runs the stored file directly. It gets the package directory as its working
+directory, as `cargo bench` gives it, and the variables `CARGO_MANIFEST_DIR`
+and `CARGO_PKG_NAME`. Other `CARGO_*` variables and `LD_LIBRARY_PATH` are not
+set. A tree with a configured cargo `runner` (a `runner` key in the
+repository's or `CARGO_HOME`'s config, or a `CARGO_TARGET_*_RUNNER` variable)
+is never served from the store, since the runner is part of what is measured.
+
+The key and the manifest are built as for the [rustdoc cache](#rustdoc-cache),
+over the package, bench target, profile, features, `codegen-units` pin,
+toolchain, `rustc -vV` and the same variable families, with two additions:
+`RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTUP_TOOLCHAIN` and
+`CARGO_INCREMENTAL` join the variables, and the manifest comes from the
+dep-info cargo writes for the bench executable and every workspace
+dependency plus the build scripts' `rerun-if-*` lines. An entry is kept only
+if every dependency's dep-info could be read.
+
+Markdown files are left out of the key's file list, so a docs-only change is
+a hit even for a package at the repository root, where that list is the
+whole repository. A markdown file the build included (`include_str!` on a
+README, say) is in the manifest and counts.
+
+**The checkout path is part of the key**, and so are the target directory
+and `CARGO_HOME`. A binary can carry them: `env!("CARGO_MANIFEST_DIR")`,
+`file!()`, `OUT_DIR` and debug info all write absolute paths into its bytes,
+and the run cache, item cache and link maps all key on those bytes. Two
+checkouts of one tree at different paths gave identical executables only
+while no such path was compiled in. A job that moves its checkout between
+runs misses; CI runners use one path per repository.
+
+Each entry also keeps the digest of its binary and its link map, written
+once the first run has worked them out. A hit reads the digest instead of
+computing it, and puts the map back under `.soothfast/maps` if that was
+pruned. A map found nowhere is made by linking the bench target again, which
+on a cold target directory means a full build, once: the map is then kept in
+the entry for the runs after it.
+
+The store holds one executable per checkout, target directory, package, bench
+target, features and profile: a newer one replaces the older, so a saved
+cache is the binary the branch runs and not its history. The merge-base
+worktree builds elsewhere and so has its own. `cache merge` keeps the newest
+of each group by the time it was made, and pruning by size removes whole
+entries, oldest payload first.
+
+### Cache budget
+
+A saved entry is as large as the executable, tens of MB, and GitHub keeps
+about 10 GB of cache per repository, evicting the least recently used. An
+entry that displaced the measured-run caches would cost more than it saves,
+so the action is conservative:
+
+- `bin-cache` is off by default. Turn it on for the job that builds the bench
+  target through the action (`gate: "true"`, the default).
+- The executables are restored before the gate and saved after it, in a step
+  of their own, only if a listing of the store (names and sizes, not times)
+  differs from the one taken before the gate. A job that hit its executable,
+  such as a docs-only pull request, saves nothing.
+- A job outside the action, such as a `spec check` step in the adopter's own
+  workflow, restores and saves `.soothfast/bins` with `actions/cache` on a
+  key of its choosing. Key it per job and runner like `rustdoc-cache`, and
+  save it with `actions/cache/save` guarded the same way, or only on the
+  default branch.
+
+Not covered, beyond what the rustdoc cache lists: a markdown file a proc
+macro or build script reads without saying so, the linker and C compiler a
+build script invokes, and anything a bench reads at run time besides its
+working directory and `CARGO_MANIFEST_DIR`. The store keeps 512 MiB at most.
 
 ## Labels
 

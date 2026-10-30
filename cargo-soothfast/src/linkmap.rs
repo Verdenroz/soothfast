@@ -12,6 +12,9 @@
 //! extents read from it are kept under `.soothfast/maps/`, named by the
 //! digest of the binary they describe, so they are never read for another.
 
+use std::path::Path;
+
+use crate::binstore;
 use crate::headrun::binary_digest;
 use crate::invoke::{self, CommonArgs};
 use crate::itemreuse::Bin;
@@ -155,11 +158,8 @@ pub fn extents(cmd: &str, common: &CommonArgs, bin: &Bin) -> Vec<Extent> {
 fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     let digest = bin.digest.ok_or("binary unreadable")?;
     let maps = runcache::state_dir("maps").ok_or("no .soothfast directory")?;
-    let stored = maps.join(format!("{digest}.extents"));
-    if let Ok(text) = std::fs::read_to_string(&stored)
-        && let extents = decode(&text)
-        && !extents.is_empty()
-    {
+    let entry = binstore::entry_of(bin.exe);
+    if let Some(extents) = cached(&maps, digest, entry.as_deref()) {
         return Ok(extents);
     }
     // Kept, not removed: cargo answers a repeated map build as fresh without
@@ -172,10 +172,38 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
         return Err("the map build links different code".into());
     }
     let extents = parse(&text.map_err(|e| e.to_string())?).ok_or("unrecognized map format")?;
-    if std::fs::write(&stored, encode(&extents)).is_ok() {
+    let encoded = encode(&extents);
+    if std::fs::write(maps.join(format!("{digest}.extents")), &encoded).is_ok() {
         runcache::prune_oldest(&maps, KEEP);
     }
+    if let Some(entry) = &entry {
+        binstore::write_sidecar(entry, "extents", &encoded);
+    }
     Ok(extents)
+}
+
+/// The extents already worked out for the binary with `digest`, from `maps`
+/// or from the binary store's `entry` for it. One found only in the entry is put back in `maps`.
+fn cached(maps: &Path, digest: &str, entry: Option<&Path>) -> Option<Vec<Extent>> {
+    let stored = maps.join(format!("{digest}.extents"));
+    let text = match std::fs::read_to_string(&stored) {
+        Ok(text) => text,
+        Err(_) => {
+            let text = binstore::read_sidecar(entry?, "extents")?;
+            if std::fs::write(&stored, &text).is_ok() {
+                runcache::prune_oldest(maps, KEEP);
+            }
+            text
+        }
+    };
+    let extents = decode(&text);
+    if extents.is_empty() {
+        return None;
+    }
+    if let Some(entry) = entry {
+        binstore::write_sidecar(entry, "extents", &text);
+    }
+    Some(extents)
 }
 
 #[cfg(test)]
@@ -279,5 +307,24 @@ Linker script and memory map
     fn extents_round_trip_through_their_stored_form() {
         let extents = vec![at(0x2e0, 0x1c), at(0xcf18, 7)];
         assert_eq!(decode(&encode(&extents)), extents);
+    }
+
+    #[test]
+    fn a_stored_binary_restores_its_extents_into_an_empty_maps_directory() {
+        let root = std::env::temp_dir().join(format!("soothfast-linkmap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (maps, bins) = (root.join("maps"), root.join("bins"));
+        std::fs::create_dir_all(&maps).unwrap();
+        std::fs::create_dir_all(&bins).unwrap();
+        let entry = bins.join("k-d.bin");
+        std::fs::write(&entry, "binary").unwrap();
+        assert_eq!(cached(&maps, "abc", Some(&entry)), None);
+
+        let extents = vec![at(0x2e0, 0x1c), at(0xcf18, 7)];
+        binstore::write_sidecar(&entry, "extents", &encode(&extents));
+        assert_eq!(cached(&maps, "abc", Some(&entry)), Some(extents.clone()));
+        assert!(maps.join("abc.extents").exists());
+        assert_eq!(cached(&maps, "abc", None), Some(extents));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

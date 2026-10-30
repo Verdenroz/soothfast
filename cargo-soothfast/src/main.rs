@@ -8,6 +8,8 @@
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod agreement;
+mod benchexe;
+mod binstore;
 mod buildcost;
 mod buildstamp;
 mod cache;
@@ -54,6 +56,7 @@ mod spec_gate;
 mod spec_gen;
 mod spec_html;
 mod spec_probe;
+mod store;
 mod test;
 mod trend;
 mod verdict;
