@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::init::ci::Ci;
-use crate::init::ecosystem::{Project, Suite};
+use crate::init::ecosystem::{Project, Suite, slug};
 use crate::init::{self, RustPlan};
 use crate::invoke;
 use crate::test::project::{
-    Pins, TEST_ALL_LABEL, Verdict, changed_since, has_pass, suites_for, target_for, toolchain_for,
+    Pins, TEST_ALL_LABEL, Verdict, changed_since, covered, suites_for, target_for, toolchain_for,
     touches, write_result,
 };
 
@@ -49,7 +49,6 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
             "--results" => out.results = Some(PathBuf::from(value)),
             "--java" => out.pins.java = Some(value),
             "--node" => out.pins.node = Some(value),
-            "--runner" => out.pins.runner = Some(value),
             other => return Err(format!("unknown plan arg {other:?}")),
         }
     }
@@ -102,7 +101,12 @@ struct Candidate<'a> {
     reached: bool,
 }
 
-fn build(root: &Path, base: Option<&str>, labels: Vec<String>, pins: Pins) -> Result<Plan, String> {
+fn build(
+    root: &Path,
+    base: Option<&str>,
+    labels: Vec<String>,
+    mut pins: Pins,
+) -> Result<Plan, String> {
     let rust = root
         .join("Cargo.toml")
         .is_file()
@@ -127,10 +131,14 @@ fn build(root: &Path, base: Option<&str>, labels: Vec<String>, pins: Pins) -> Re
         Some(base) => changed_since(root, Some(base)).map_err(|e| e.to_string())?,
         None => None,
     };
+    let ci = init::ci(root)?;
+    if pins.java.is_some() || pins.node.is_some() {
+        pins.runner = Some(ci.runs_on_json());
+    }
     let mut plan = Plan {
         rust,
         projects,
-        ci: init::ci(root)?,
+        ci,
         docs,
         suites,
         labels,
@@ -138,6 +146,7 @@ fn build(root: &Path, base: Option<&str>, labels: Vec<String>, pins: Pins) -> Re
         pins,
         reused: BTreeSet::new(),
     };
+    plan.check_names()?;
     plan.reused = plan.stored_passes(root)?;
     Ok(plan)
 }
@@ -181,6 +190,9 @@ impl Plan {
     /// reaches it. `test-all` reaches every project.
     fn candidates(&self) -> Vec<Candidate<'_>> {
         let mut out = Vec::new();
+        if !self.ci.runs_test() {
+            return out;
+        }
         for (project, name) in self.projects.iter().zip(names(&self.projects)) {
             if project.test.cmd.is_some() {
                 let reached = self.test_all()
@@ -209,21 +221,38 @@ impl Plan {
         out
     }
 
+    /// Each job and artifact is named after its test, so two cannot share
+    /// a name.
+    fn check_names(&self) -> Result<(), String> {
+        let mut seen = BTreeSet::new();
+        for (project, name) in self.projects.iter().zip(names(&self.projects)) {
+            let suites = self.suites.iter().filter(|s| s.project == project.dir);
+            let suites = suites.map(|s| format!("{name}-{}", slug(&s.label)));
+            let own = project.test.cmd.is_some().then(|| name.clone());
+            for test in own.into_iter().chain(suites) {
+                if !seen.insert(test.clone()) {
+                    return Err(format!(
+                        "two tests are named {test:?}; rename a project or a suite label"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The names of reached tests that a stored pass covers. `test-all`
     /// ignores the store.
     fn stored_passes(&self, root: &Path) -> Result<BTreeSet<String>, String> {
-        let mut reused = BTreeSet::new();
         if self.test_all() {
-            return Ok(reused);
+            return Ok(BTreeSet::new());
         }
+        let mut tests = Vec::new();
         for c in self.candidates().into_iter().filter(|c| c.reached) {
             let target = target_for(c.project, c.suite)?;
             let toolchain = toolchain_for(c.project.ecosystem, &self.pins);
-            if has_pass(root, &target, &toolchain).map_err(|e| e.to_string())? {
-                reused.insert(c.name);
-            }
+            tests.push((c.name, target, toolchain));
         }
-        Ok(reused)
+        covered(root, &tests).map_err(|e| e.to_string())
     }
 
     /// One entry per reached test with no stored pass: the only tests a job
@@ -328,16 +357,6 @@ fn names(projects: &[Project]) -> Vec<String> {
             }
         })
         .collect()
-}
-
-/// `label` as a run of letters and digits joined by `-`, for a job or
-/// artifact name.
-fn slug(label: &str) -> String {
-    label
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
 }
 
 fn err(msg: &str) -> i32 {
@@ -525,21 +544,41 @@ mod tests {
     #[test]
     fn plan_flags_are_parsed() {
         let argv = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let a = parse_args(&argv(&[
-            "--github",
-            "--labels",
-            "a,b",
-            "--java",
-            "21",
-            "--runner",
-            "Linux X64",
-        ]))
-        .unwrap();
+        let a = parse_args(&argv(&["--github", "--labels", "a,b", "--java", "21"])).unwrap();
         assert!(a.github);
         assert_eq!(a.labels, ["a", "b"]);
         assert_eq!(a.pins.java.as_deref(), Some("21"));
         assert!(parse_args(&argv(&["--base"])).is_err());
         assert!(parse_args(&argv(&["--nope", "x"])).is_err());
+    }
+
+    #[test]
+    fn ci_false_drops_the_project_tests_too() {
+        let mut p = plan(None, vec![testable(Ecosystem::Node, "web", &[])]);
+        assert_eq!(test_names(&p), ["node"]);
+        p.ci = Ci::parse("[test]\nci = false\n").unwrap();
+        assert!(test_names(&p).is_empty());
+        assert!(p.settled().is_empty());
+        assert!(p.outputs().contains("test_projects=false\n"));
+    }
+
+    #[test]
+    fn two_tests_with_one_name_are_rejected() {
+        let mut p = plan(
+            None,
+            vec![
+                testable(Ecosystem::Node, "a", &[]),
+                testable(Ecosystem::Node, "a-b", &[]),
+            ],
+        );
+        assert!(p.check_names().is_ok());
+        p.suites = vec![Suite {
+            label: "b".into(),
+            project: "a".into(),
+            cmd: "c".into(),
+        }];
+        let err = p.check_names().unwrap_err();
+        assert!(err.contains("two tests are named"), "{err}");
     }
 
     #[test]

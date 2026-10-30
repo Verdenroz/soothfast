@@ -2,7 +2,7 @@
 //! not part of the cargo workspace, when a change reaches it and no stored
 //! pass covers the same files, command and toolchain.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -10,10 +10,10 @@ use std::time::Instant;
 
 use serde_json::json;
 
-use super::key::Passes;
+use super::key::{Passes, file_ids};
 use super::select;
 use crate::init::ecosystem::{Ecosystem, Project, Suite, normalize_dir};
-use crate::runcache::{hashed, hex_fnv};
+use crate::runcache::hashed;
 use crate::{glob, init, invoke};
 
 /// The label a writer applies to ignore selection and stored passes.
@@ -140,14 +140,15 @@ fn drive(args: Args) -> Result<i32, String> {
         .toolchain
         .clone()
         .unwrap_or_else(|| toolchain(target.ecosystem));
-    let key = cache_key(&root, &target, &toolchain).map_err(|e| e.to_string())?;
-    let passes = open_passes(&root);
-    if !args.no_cache && passes.has(&key) {
+    let files = Files::read(&root).map_err(|e| e.to_string())?;
+    let key = cache_key(&files, &target, &toolchain);
+    let passes = Passes::open();
+    if !args.no_cache && passes.as_ref().is_some_and(|p| p.has(&key)) {
         eprintln!("test: {} reused a stored pass", target.dir);
         return finish(Verdict::Reused, Vec::new());
     }
     let (verdict, output) = execute_with_retries(&root, &target);
-    if verdict == Verdict::Pass {
+    if let (Verdict::Pass, Some(passes)) = (verdict, &passes) {
         passes.record(&target.dir, &key);
     }
     finish(verdict, output)
@@ -236,34 +237,42 @@ fn reaches(root: &Path, base: Option<&str>, target: &Target) -> io::Result<bool>
         .is_none_or(|changed| touches(&target.dir, &target.watch, &changed)))
 }
 
-/// The key a pass is stored under: the content of every tracked file in the
-/// project or matched by its watch globs, the command, and the toolchain.
-fn cache_key(root: &Path, target: &Target, toolchain: &str) -> io::Result<String> {
-    let listing = invoke::git_in(root, &["-c", "core.quotepath=false", "ls-files"])?;
-    let mut parts: Vec<String> = listing
-        .lines()
-        .filter(|f| within(&target.dir, f) || target.watch.iter().any(|g| glob::matches(g, f)))
-        .map(|f| {
-            let digest = std::fs::read(root.join(f)).map_or("gone".into(), |b| hex_fnv(&b));
-            format!("{f}\u{0}{digest}")
-        })
+/// Every file of the repository by blob id, tracked or not: read once and
+/// shared by the keys of all the projects.
+pub struct Files(BTreeMap<String, String>);
+
+impl Files {
+    pub fn read(root: &Path) -> io::Result<Files> {
+        file_ids(root, ".", &|_| true).map(Files)
+    }
+}
+
+/// The key a pass is stored under: the content of every file in the project
+/// or matched by its watch globs, the command, and the toolchain.
+fn cache_key(files: &Files, target: &Target, toolchain: &str) -> String {
+    let mut parts: Vec<String> = files
+        .0
+        .iter()
+        .filter(|(f, _)| within(&target.dir, f) || target.watch.iter().any(|g| glob::matches(g, f)))
+        .map(|(f, id)| format!("{f}\u{0}{id}"))
         .collect();
-    parts.sort();
     parts.push(target.cmd.clone());
     parts.push(toolchain.to_string());
-    Ok(hashed(&parts))
+    hashed(&parts)
 }
 
-/// Whether a pass is stored for `target` under `toolchain`.
-pub fn has_pass(root: &Path, target: &Target, toolchain: &str) -> io::Result<bool> {
-    let key = cache_key(root, target, toolchain)?;
-    Ok(open_passes(root).has(&key))
-}
-
-fn open_passes(root: &Path) -> Passes {
-    let dir = root.join(".soothfast").join("tests");
-    let _ = std::fs::create_dir_all(&dir);
-    Passes::at(dir)
+/// The names among `tests` (name, target, toolchain) that a stored pass
+/// covers.
+pub fn covered(root: &Path, tests: &[(String, Target, String)]) -> io::Result<BTreeSet<String>> {
+    let Some(passes) = Passes::open() else {
+        return Ok(BTreeSet::new());
+    };
+    let files = Files::read(root)?;
+    Ok(tests
+        .iter()
+        .filter(|(_, target, toolchain)| passes.has(&cache_key(&files, target, toolchain)))
+        .map(|(name, ..)| name.clone())
+        .collect())
 }
 
 /// The toolchain `eco` runs on: named by `pins` when the runner is known,
@@ -343,7 +352,7 @@ fn execute_with_retries(root: &Path, target: &Target) -> (Verdict, Vec<String>) 
 /// tail. A command that cannot start fails with the reason as its output.
 fn execute(dir: &Path, cmd: &str) -> (bool, Vec<String>) {
     let spawned = Command::new("sh")
-        .args(["-c", &format!("({cmd}) 2>&1")])
+        .args(["-c", &format!("exec 2>&1\n{cmd}")])
         .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -354,7 +363,11 @@ fn execute(dir: &Path, cmd: &str) -> (bool, Vec<String>) {
     };
     let mut tail = VecDeque::new();
     if let Some(stdout) = child.stdout.take() {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        let mut out = BufReader::new(stdout);
+        let mut raw = Vec::new();
+        while matches!(out.read_until(b'\n', &mut raw), Ok(n) if n > 0) {
+            let line = String::from_utf8_lossy(&raw).trim_end().to_string();
+            raw.clear();
             println!("{line}");
             if tail.len() == TAIL {
                 tail.pop_front();
@@ -455,7 +468,7 @@ mod tests {
         repo.write("other/b.js", "1");
         repo.git(&["add", "."]);
         let web = target_at("web", &[], "npm test");
-        let key = |t: &Target, tc: &str| cache_key(&repo.root, t, tc).unwrap();
+        let key = |t: &Target, tc: &str| cache_key(&Files::read(&repo.root).unwrap(), t, tc);
         let first = key(&web, "node v22");
         assert_eq!(first, key(&web, "node v22"));
         assert_ne!(first, key(&web, "node v24"));
@@ -468,6 +481,24 @@ mod tests {
         let before = key(&watched, "node v22");
         repo.write("other/b.js", "3");
         assert_ne!(before, key(&watched, "node v22"));
+    }
+
+    #[test]
+    fn untracked_and_dirty_files_move_the_key() {
+        let repo = TempRepo::new("proj-dirty");
+        repo.write("web/a.js", "1");
+        repo.git(&["add", "."]);
+        repo.commit();
+        let web = target_at("web", &[], "npm test");
+        let key = || cache_key(&Files::read(&repo.root).unwrap(), &web, "t");
+        let clean = key();
+        repo.write("web/new.js", "x");
+        let untracked = key();
+        assert_ne!(clean, untracked);
+        repo.git(&["add", "."]);
+        assert_eq!(untracked, key());
+        repo.write("web/a.js", "2");
+        assert_ne!(untracked, key());
     }
 
     #[test]
@@ -501,6 +532,12 @@ mod tests {
         let (verdict, output) = execute(&dir, "echo one; echo two >&2; exit 3");
         assert!(!verdict);
         assert_eq!(output, ["one", "two"]);
+        let (verdict, output) = execute(&dir, "echo ok # trailing comment");
+        assert!(verdict);
+        assert_eq!(output, ["ok"]);
+        let (verdict, output) = execute(&dir, "printf 'a\\377b\\nc\\n'");
+        assert!(verdict);
+        assert_eq!(output, ["a\u{fffd}b", "c"]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

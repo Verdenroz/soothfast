@@ -21,7 +21,7 @@ const KEEP: usize = 32;
 
 /// `.soothfast/<name>`, created on demand.
 pub fn state_dir(name: &str) -> Option<PathBuf> {
-    let d = invoke::workspace_root().ok()?.join(".soothfast").join(name);
+    let d = invoke::project_root().join(".soothfast").join(name);
     std::fs::create_dir_all(&d).ok()?;
     Some(d)
 }
