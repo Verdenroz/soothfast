@@ -102,6 +102,11 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   (`diff.rs`), renders API reference fragments (`reference.rs`), and persists
   `soothfast.lock` (bind/claim fingerprints so accepted prose doesn't silently
   drift, `lockfile.rs`).
+- **`soothfast-lang`** — the language engine: tree-sitter symbol discovery
+  for Java, Kotlin, Python, JavaScript, TypeScript and TSX (`scan.rs` walks
+  the parse tree, `classify.rs` holds each grammar's node kinds), and
+  `fingerprint.rs`, which hashes a symbol's span the way `soothfast-docs`
+  hashes rustdoc items: ordinary comments out, doc comments in, FNV-1a.
 - **`soothfast-spec`** — the spec engine, working in both directions over the
   same four dialects (`SpecKind`: OpenAPI, AsyncAPI, GraphQL, MCP tools).
   *Generation* (for surfaces you serve): `schema/` turns rustdoc JSON into
@@ -336,7 +341,7 @@ claim being enforced, not a bug in the check.
   gates instead — `spec gen --check` fails on a stale committed spec and
   `spec gate` fails on a consumer-breaking change vs the merge-base
   (`--allow-breaking` releases one deliberately).
-- `release.yml` — on `v*` tag push, runs checks + gate, then publishes all 10
+- `release.yml` — on `v*` tag push, runs checks + gate, then publishes all 11
   workspace crates to crates.io in dependency order.
 
 ### soothfast-bot
