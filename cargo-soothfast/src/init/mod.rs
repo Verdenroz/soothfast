@@ -9,6 +9,10 @@ use serde_json::Value;
 
 use crate::{invoke, workspace};
 
+mod ecosystem;
+
+use ecosystem::{Bench, Ecosystem, Settings};
+
 const WORKFLOW: &str = include_str!("workflow.yml.tmpl");
 const GATE_JOB: &str = include_str!("gate_job.yml.tmpl");
 const DOCS_JOB: &str = include_str!("docs_job.yml.tmpl");
@@ -67,6 +71,8 @@ enum Kind {
     Seed,
     /// One line the file must contain.
     Line,
+    /// The `[init]` table, replaced when its settings change.
+    Section,
 }
 
 #[derive(Debug)]
@@ -94,6 +100,10 @@ impl Scaffold {
             Kind::Whole => State::Differs,
             Kind::Line if text.lines().any(|l| l.trim() == self.content) => State::Current,
             Kind::Line => State::Differs,
+            Kind::Section if Settings::parse(&text) == Settings::parse(&self.content) => {
+                State::Current
+            }
+            Kind::Section => State::Differs,
         }
     }
 
@@ -112,13 +122,47 @@ impl Scaffold {
                 text.push('\n');
                 std::fs::write(path, text)
             }
+            Kind::Section => {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let mut text = without_section(&text, "init");
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(&self.content);
+                std::fs::write(path, text)
+            }
             Kind::Whole | Kind::Seed => std::fs::write(path, &self.content),
         }
     }
 }
 
+/// `text` without the `[name]` table, trimmed to end in one newline.
+fn without_section(text: &str, name: &str) -> String {
+    let header = format!("[{name}]");
+    let mut skipping = false;
+    let mut kept = String::new();
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            skipping = trimmed == header;
+        }
+        if !skipping {
+            kept.push_str(line);
+        }
+    }
+    let kept = kept.trim_end();
+    if kept.is_empty() {
+        String::new()
+    } else {
+        format!("{kept}\n")
+    }
+}
+
 /// What the scaffold is derived from.
 struct Workspace {
+    ecosystem: Ecosystem,
+    /// How a non-Rust repo's own harness runs.
+    bench: Option<Bench>,
     default_branch: String,
     /// Packages with a `soothfast` bench target, in name order.
     benched: Vec<String>,
@@ -134,6 +178,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut bot = false;
     let mut labels = false;
     let mut bench: Vec<String> = Vec::new();
+    let mut flags = Settings::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -145,15 +190,26 @@ pub fn run(args: &[String]) -> i32 {
                 Some(p) => bench.push(p.clone()),
                 None => return err("-p needs a package to add a bench target to"),
             },
+            "--ecosystem" => match it.next().map(|e| Ecosystem::parse(e)) {
+                Some(Ok(e)) => flags.ecosystem = Some(e),
+                Some(Err(e)) => return err(&e),
+                None => return err("--ecosystem needs rust, gradle, maven, python or node"),
+            },
+            "--bench-cmd" | "--bench-out" | "--from" => {
+                let Some(value) = it.next().cloned() else {
+                    return err(&format!("{a} needs a value"));
+                };
+                match a.as_str() {
+                    "--bench-cmd" => flags.bench_cmd = Some(value),
+                    "--bench-out" => flags.bench_out = Some(value),
+                    _ => flags.from = Some(value),
+                }
+            }
             other => return err(&format!("unknown init arg {other:?}")),
         }
     }
-    let root = match invoke::workspace_root() {
-        Ok(r) => r,
-        Err(e) => return err(&format!("not in a cargo workspace: {e}")),
-    };
-    let ws = match detect(&root, &bench, check, bot) {
-        Ok(ws) => ws,
+    let (root, ws) = match target(flags, &bench, check, bot) {
+        Ok(t) => t,
         Err(e) => return err(&e),
     };
     let files = scaffold(&ws);
@@ -179,6 +235,40 @@ fn create_labels() -> i32 {
     0
 }
 
+/// The project root and what its scaffold derives from: flags over the
+/// `[init]` table over what the root looks like.
+fn target(
+    flags: Settings,
+    bench: &[String],
+    check: bool,
+    bot: bool,
+) -> Result<(PathBuf, Workspace), String> {
+    let root = invoke::project_root();
+    let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
+    let settings = flags.over(Settings::parse(&text).map_err(|e| format!("soothfast.toml: {e}"))?);
+    let ecosystem = settings.ecosystem(&root)?;
+    if ecosystem == Ecosystem::Rust {
+        let root =
+            invoke::workspace_root().map_err(|e| format!("not in a cargo workspace: {e}"))?;
+        let ws = detect(&root, bench, check, bot)?;
+        return Ok((root, ws));
+    }
+    if !bench.is_empty() {
+        return Err("-p adds a bench target to a cargo package".into());
+    }
+    let existing = std::fs::read_to_string(root.join(WORKFLOW_PATH)).unwrap_or_default();
+    let ws = Workspace {
+        ecosystem,
+        bench: Some(settings.bench(ecosystem)?),
+        default_branch: default_branch(&root, &existing),
+        benched: Vec::new(),
+        docs_package: None,
+        action: action_ref(&existing),
+        bot,
+    };
+    Ok((root, ws))
+}
+
 /// What the scaffold derives from, after giving each of `bench` a bench
 /// target unless only checking.
 fn detect(root: &Path, bench: &[String], check: bool, bot: bool) -> Result<Workspace, String> {
@@ -192,6 +282,8 @@ fn detect(root: &Path, bench: &[String], check: bool, bot: bool) -> Result<Works
     }
     let existing = std::fs::read_to_string(root.join(WORKFLOW_PATH)).unwrap_or_default();
     Ok(Workspace {
+        ecosystem: Ecosystem::Rust,
+        bench: None,
         default_branch: default_branch(root, &existing),
         benched: benched(&meta),
         docs_package: has_markers(root).then(|| docs_package(&meta)).flatten(),
@@ -236,12 +328,7 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
 }
 
 fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
-    vec![
-        Scaffold {
-            path: WORKFLOW_PATH.into(),
-            kind: Kind::Whole,
-            content: workflow(ws),
-        },
+    let mut files = vec![
         Scaffold {
             path: "soothfast.toml".into(),
             kind: Kind::Seed,
@@ -252,7 +339,25 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
             kind: Kind::Line,
             content: ".soothfast/".into(),
         },
-    ]
+    ];
+    if ws.bench.is_none() {
+        files.insert(
+            0,
+            Scaffold {
+                path: WORKFLOW_PATH.into(),
+                kind: Kind::Whole,
+                content: workflow(ws),
+            },
+        );
+    }
+    if let Some(bench) = &ws.bench {
+        files.push(Scaffold {
+            path: "soothfast.toml".into(),
+            kind: Kind::Section,
+            content: ecosystem::section(ws.ecosystem, bench),
+        });
+    }
+    files
 }
 
 fn workflow(ws: &Workspace) -> String {
@@ -425,6 +530,8 @@ mod tests {
 
     fn ws(benched: &[&str], docs: Option<&str>) -> Workspace {
         Workspace {
+            ecosystem: Ecosystem::Rust,
+            bench: None,
             default_branch: "master".into(),
             benched: benched.iter().map(|s| s.to_string()).collect(),
             docs_package: docs.map(String::from),
@@ -564,6 +671,45 @@ mod tests {
         assert_eq!(report(&root, &files, true, false), 1);
         assert!(!root.join(WORKFLOW_PATH).exists());
         assert_eq!(report(&root, &files, false, false), 0);
+        assert_eq!(report(&root, &files, true, false), 0);
+    }
+
+    fn python_ws() -> Workspace {
+        Workspace {
+            ecosystem: Ecosystem::Python,
+            bench: Settings::default().bench(Ecosystem::Python).ok(),
+            ..ws(&[], None)
+        }
+    }
+
+    #[test]
+    fn the_init_table_makes_a_flagless_check_clean() {
+        let root = scratch("table");
+        let files = scaffold(&python_ws());
+        assert_eq!(report(&root, &files, true, false), 1);
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        let from_file = Settings::parse(&text).unwrap();
+        let bench = from_file.bench(Ecosystem::Python).unwrap();
+        assert_eq!(Some(bench), python_ws().bench);
+        assert_eq!(report(&root, &files, true, false), 0);
+    }
+
+    #[test]
+    fn a_changed_bench_rewrites_the_table_and_keeps_the_rest() {
+        let root = scratch("rewrite");
+        std::fs::write(
+            root.join("soothfast.toml"),
+            "[gate]\nwalltime = \"hard\"\n\n[init]\nfrom = \"pyperf\"\n\n[site]\nname = \"x\"\n",
+        )
+        .unwrap();
+        let files = scaffold(&python_ws());
+        assert_eq!(report(&root, &files, true, false), 1);
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert!(text.contains("walltime = \"hard\"") && text.contains("name = \"x\""));
+        assert_eq!(text.matches("[init]").count(), 1);
+        assert!(!text.contains("pyperf"));
         assert_eq!(report(&root, &files, true, false), 0);
     }
 
