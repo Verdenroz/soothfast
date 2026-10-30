@@ -72,7 +72,9 @@ which holds for roughly normal timings only, and there is no p99.
 ## Baselines
 
 `--save-baseline NAME` merges the run into `.soothfast/baselines/NAME.json`,
-replacing the items that share its prefix and leaving every other item alone.
+replacing the items an earlier import marked with the same prefix and leaving
+every other item alone, including Rust items and other prefixes. A full
+`measure --save-baseline` keeps imported items too.
 `--out FILE` writes the same JSON to a file instead. Exactly one of the two
 is required.
 
@@ -84,12 +86,14 @@ $ cargo soothfast gate --import FORMAT FILE [--prefix P] --reference-import FORM
 ```
 
 The imported run is the current side. The reference is either a saved
-baseline, restricted to items with the same prefix, or a second imported
+baseline, restricted to items imported under the same prefix, or a second imported
 file, for a reference you keep as raw harness output. The comparison is the
 one `gate` always runs: walltime medians gate at +10%, an item in the
 reference but not in the run is `GONE` and fails (`--allow-gone` accepts
 it), and `soothfast-gate.lock` accepts apply. `--ratchet`, `--against-ref`,
-`--deps` and `--save-baseline` are not available with `--import`.
+`--deps`, `--save-baseline`, `--shard` and `-p` are not available with
+`--import`, and `--baseline` cannot be combined with `--reference-import`.
+`--filter` gates the items whose name contains it.
 
 ## Noise
 
