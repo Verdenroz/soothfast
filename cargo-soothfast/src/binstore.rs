@@ -8,7 +8,9 @@
 //! directory (through `OUT_DIR`). Both are part of the key, so a tree built at
 //! another path misses.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use std::time::SystemTime;
 
 use crate::runcache;
@@ -74,6 +76,8 @@ pub fn load(dir: &Path, key: &str, root: &Path) -> Option<PathBuf> {
 /// Keep the executable cargo wrote at `exe` for a build that started at
 /// `started`, unless the tree was edited meanwhile: `key` must still be the
 /// key the tree computes (`key_now`), and no input may be newer than the build.
+/// The entry replaces any other of its `group`. Returns the entry it made.
+#[allow(clippy::too_many_arguments)]
 pub fn store(
     dir: &Path,
     key: &str,
@@ -82,12 +86,47 @@ pub fn store(
     inputs: &Inputs,
     started: SystemTime,
     exe: &Path,
-) {
-    if key_now.as_deref() != Some(key) {
-        return;
+    group: &str,
+) -> Option<PathBuf> {
+    if key_now.as_deref() != Some(key) || load(dir, key, root).is_some() {
+        return None;
     }
-    if store::insert(dir, key, root, inputs, started, exe, "bin").is_some() {
-        store::prune(dir, MAX_BYTES);
+    let entry = store::insert(dir, key, root, inputs, started, exe, "bin")?;
+    store::write_atomic(&dir.join(format!("{key}.group")), group.as_bytes());
+    STORED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push((exe.to_path_buf(), entry.clone()));
+    keep_newest(dir);
+    store::prune(dir, MAX_BYTES);
+    Some(entry)
+}
+
+/// Remove every executable but the newest of its group, with the files kept
+/// beside it. A cache holds the binary a branch's lineage runs, not its history.
+fn keep_newest(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut bins: Vec<_> = entries
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "bin"))
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let (key, _) = name.split_once('-')?;
+            let group = std::fs::read_to_string(dir.join(format!("{key}.group"))).ok()?;
+            Some((group, e.metadata().ok()?.modified().ok()?, e.path()))
+        })
+        .collect();
+    bins.sort_by_key(|(_, t, _)| std::cmp::Reverse(*t));
+    let mut seen = BTreeSet::new();
+    for (group, _, entry) in bins {
+        if !seen.insert(group) {
+            for ext in ["digest", "extents"] {
+                let _ = std::fs::remove_file(sidecar(&entry, ext));
+            }
+            let _ = std::fs::remove_file(entry);
+        }
     }
 }
 
@@ -95,6 +134,61 @@ pub fn store(
 /// directory.
 pub fn holds(exe: &Path) -> bool {
     dir().is_some_and(|d| exe.starts_with(d))
+}
+
+/// Executables this process stored, with the entry made from each.
+static STORED: Mutex<Vec<(PathBuf, PathBuf)>> = Mutex::new(Vec::new());
+
+/// The entry holding the bytes of `exe`: itself when it lies in the store,
+/// else the entry a store of it made in this process.
+pub fn entry_of(exe: &Path) -> Option<PathBuf> {
+    if holds(exe) {
+        return Some(exe.to_path_buf());
+    }
+    let stored = STORED.lock().unwrap_or_else(PoisonError::into_inner);
+    stored
+        .iter()
+        .find(|(e, _)| e == exe)
+        .map(|(_, s)| s.clone())
+}
+
+/// What was worked out from the bytes of `exe` and kept with its entry.
+pub fn attached(exe: &Path, ext: &str) -> Option<String> {
+    read_sidecar(&entry_of(exe)?, ext)
+}
+
+/// Keep `body`, worked out from the bytes of `exe`, with its entry if it has
+/// one and nothing is kept yet.
+pub fn attach(exe: &Path, ext: &str, body: &str) {
+    if let Some(entry) = entry_of(exe) {
+        write_sidecar(&entry, ext, body);
+    }
+}
+
+/// Entries are written once and never replaced under the same name, so a file
+/// kept beside one stays true of it. Its size, written first, catches a file
+/// left by an entry that has since been removed and made again.
+fn sidecar(entry: &Path, ext: &str) -> PathBuf {
+    let mut name = entry.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{ext}"));
+    entry.with_file_name(name)
+}
+
+pub fn read_sidecar(entry: &Path, ext: &str) -> Option<String> {
+    let text = std::fs::read_to_string(sidecar(entry, ext)).ok()?;
+    let (len, body) = text.split_once('\n')?;
+    let size = std::fs::metadata(entry).ok()?.len();
+    (len.parse() == Ok(size)).then(|| body.to_string())
+}
+
+pub fn write_sidecar(entry: &Path, ext: &str, body: &str) {
+    let path = sidecar(entry, ext);
+    if path.exists() {
+        return;
+    }
+    if let Ok(meta) = std::fs::metadata(entry) {
+        store::write_atomic(&path, format!("{}\n{body}", meta.len()).as_bytes());
+    }
 }
 
 #[cfg(test)]
@@ -220,7 +314,16 @@ mod tests {
 
         let read = inputs(&["docs/guide.md"]);
         let future = SystemTime::now() + Duration::from_secs(3600);
-        store(&dir, "k", Some("k".into()), &repo.0, &read, future, &exe);
+        store(
+            &dir,
+            "k",
+            Some("k".into()),
+            &repo.0,
+            &read,
+            future,
+            &exe,
+            "g",
+        );
         let hit = store::lookup(&dir, "k", &repo.0, "bin").unwrap();
         assert_eq!(std::fs::read(&hit).unwrap(), bytes);
         let mode = std::fs::metadata(&hit).unwrap().permissions().mode();
@@ -238,15 +341,74 @@ mod tests {
         let future = SystemTime::now() + Duration::from_secs(3600);
         let read = inputs(&[]);
         let dir = repo.store_dir();
-        store(
-            &dir,
-            "k",
-            Some("other".into()),
-            &repo.0,
-            &read,
-            future,
-            &exe,
+        let wrong = Some("other".into());
+        assert_eq!(
+            store(&dir, "k", wrong, &repo.0, &read, future, &exe, "g"),
+            None
         );
         assert_eq!(load(&dir, "k", &repo.0), None);
+    }
+
+    fn put(repo: &Repo, dir: &Path, key: &str, group: &str, bytes: &[u8]) -> PathBuf {
+        let exe = repo.0.join(format!("bench-{key}"));
+        std::fs::write(&exe, bytes).unwrap();
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        let entry = store(
+            dir,
+            key,
+            Some(key.into()),
+            &repo.0,
+            &inputs(&[]),
+            future,
+            &exe,
+            group,
+        );
+        entry.unwrap()
+    }
+
+    #[test]
+    fn what_is_kept_beside_an_entry_reads_back_only_for_that_entry() {
+        let repo = Repo::new("bin-sidecar");
+        let dir = repo.store_dir();
+        let entry = put(&repo, &dir, "k", "g", b"twelve bytes");
+        assert_eq!(read_sidecar(&entry, "digest"), None);
+        write_sidecar(&entry, "digest", "abc");
+        assert_eq!(read_sidecar(&entry, "digest"), Some("abc".to_string()));
+        write_sidecar(&entry, "digest", "other");
+        assert_eq!(read_sidecar(&entry, "digest"), Some("abc".to_string()));
+
+        std::fs::write(&entry, "longer than twelve bytes").unwrap();
+        assert_eq!(read_sidecar(&entry, "digest"), None);
+    }
+
+    #[test]
+    fn a_stored_executable_carries_its_digest_to_a_later_process() {
+        let repo = Repo::new("bin-attach");
+        let dir = repo.store_dir();
+        let entry = put(&repo, &dir, "k", "g", b"bytes");
+        let built = repo.0.join("bench-k");
+        attach(&built, "digest", "d1");
+        assert_eq!(read_sidecar(&entry, "digest"), Some("d1".to_string()));
+        assert_eq!(attached(&built, "digest"), Some("d1".to_string()));
+        assert_eq!(attached(&repo.0.join("elsewhere"), "digest"), None);
+    }
+
+    #[test]
+    fn only_the_newest_executable_of_a_group_is_kept() {
+        let repo = Repo::new("bin-group");
+        let dir = repo.store_dir();
+        let old = put(&repo, &dir, "a", "pkg", b"old");
+        write_sidecar(&old, "extents", "x");
+        let other = put(&repo, &dir, "b", "other", b"other");
+        let past = SystemTime::now() - Duration::from_secs(60);
+        for entry in [&old, &other] {
+            let file = std::fs::File::options().write(true).open(entry).unwrap();
+            file.set_modified(past).unwrap();
+        }
+        let new = put(&repo, &dir, "c", "pkg", b"new");
+        assert!(!old.exists());
+        assert!(!sidecar(&old, "extents").exists());
+        assert!(new.exists());
+        assert!(other.exists());
     }
 }

@@ -160,8 +160,16 @@ impl Plan {
                 &inputs,
                 started,
                 exe,
+                &self.group(),
             );
         }
+    }
+
+    /// What one stored executable stands for: a package's bench target built
+    /// under one profile.
+    fn group(&self) -> String {
+        let profile = if self.id.discover { "dev" } else { "bench" };
+        format!("{}\u{1}{}\u{1}{profile}", self.id.pkg, self.id.target)
     }
 }
 

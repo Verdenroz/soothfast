@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::agreement::{self, Agreement, Tolerance};
+use crate::binstore;
 use crate::buildstamp::{self, BuildStamp};
 use crate::codekey;
 use crate::gate;
@@ -23,7 +24,7 @@ pub fn probe<'a>(
     stamp: &'a BuildStamp,
 ) -> (Option<String>, Runs<'a>, Option<PathBuf>) {
     let exe = invoke::bench_executable(common, None, None);
-    let digest = exe.as_deref().and_then(binary_digest);
+    let digest = invoke::timed("binary digest", || exe.as_deref().and_then(binary_digest));
     let runs = Runs::new(stamp, common, resolved_env(cmd, common, exe.as_deref()));
     (digest, runs, exe)
 }
@@ -217,7 +218,12 @@ fn head_cache_id(digest: Option<&str>) -> Option<(String, String)> {
 
 /// Digest of a bench binary's loaded sections.
 pub fn binary_digest(exe: &Path) -> Option<String> {
-    loaded_section_bytes(exe).map(|b| runcache::hex_fnv(&b))
+    if let Some(digest) = binstore::attached(exe, "digest") {
+        return Some(digest);
+    }
+    let digest = loaded_section_bytes(exe).map(|b| runcache::hex_fnv(&b))?;
+    binstore::attach(exe, "digest", &digest);
+    Some(digest)
 }
 
 /// What HEAD's bench binary resolves on this host, asked of the binary itself.

@@ -325,7 +325,7 @@ fn temp_for(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
     let tmp = temp_for(path);
     std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, path).is_ok()
 }
