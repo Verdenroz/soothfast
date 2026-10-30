@@ -312,4 +312,66 @@ mod tests {
         assert!(first.is_some());
         assert_eq!(first, second);
     }
+
+    #[test]
+    fn the_startup_helpers_of_the_running_test_binary_all_hash() {
+        let exe = std::env::current_exe().unwrap();
+        let nm = command_text("nm", &["-S", "--defined-only"], &exe).unwrap();
+        let helpers = [
+            "_start",
+            "_init",
+            "_fini",
+            "deregister_tm_clones",
+            "register_tm_clones",
+            "__do_global_dtors_aux",
+            "frame_dummy",
+        ];
+        let wanted: BTreeSet<String> = nm
+            .lines()
+            .filter_map(|l| l.split_whitespace().nth(3))
+            .filter(|n| helpers.contains(n))
+            .map(String::from)
+            .collect();
+        let binary = Binary::open(&exe, &wanted, &[]).unwrap();
+        let unhashed: Vec<&String> = wanted
+            .iter()
+            .filter(|n| !binary.hashes.contains_key(*n))
+            .collect();
+        assert!(unhashed.is_empty(), "unhashed: {unhashed:?}");
+    }
+
+    #[test]
+    fn every_function_of_a_tiny_c_binary_hashes_under_each_linker() {
+        let dir = std::env::temp_dir().join(format!("codekey-c-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("t.c");
+        std::fs::write(&src, "int main(void){return 0;}\n").unwrap();
+        for linker in ["bfd", "lld", "mold"] {
+            let bin = dir.join(linker);
+            let built = Command::new("cc")
+                .args(["-pie", "-O1", &format!("-fuse-ld={linker}"), "-o"])
+                .arg(&bin)
+                .arg(&src)
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !built {
+                continue;
+            }
+            let nm = command_text("nm", &["-S", "--defined-only"], &bin).unwrap();
+            let wanted: BTreeSet<String> = nm
+                .lines()
+                .filter_map(|l| match l.split_whitespace().collect::<Vec<_>>()[..] {
+                    [_, _, "T" | "t", name] => Some(name.to_string()),
+                    _ => None,
+                })
+                .collect();
+            let binary = Binary::open(&bin, &wanted, &[]).unwrap();
+            let unhashed: Vec<&String> = wanted
+                .iter()
+                .filter(|n| !binary.hashes.contains_key(*n))
+                .collect();
+            assert!(unhashed.is_empty(), "{linker} unhashed: {unhashed:?}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
