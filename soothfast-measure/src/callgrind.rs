@@ -1,12 +1,34 @@
 //! Callgrind backend: fully deterministic Ir counts for PMU-less
-//! environments (default-seccomp containers, CI VMs). The runner re-executes
-//! itself under valgrind with `--callgrind-exec <id> --iters K`; per-iteration
-//! Ir = (run at 2K − run at K) / K, which cancels startup + setup exactly —
-//! no client requests, no toggle-collect fragility. K > 1 so the window
-//! averages: see the constant below for why a single iteration is not enough.
+//! environments (default-seccomp containers, CI VMs).
+//!
+//! One valgrind process runs per item, as `--callgrind-exec <id>
+//! --callgrind-window`, with instrumentation on from the start. A dump
+//! request writes the counters out and zeroes them, so each phase lands in
+//! its own dump file: startup and setup, one warm-up iteration, a handshake
+//! with this side, then a window of K iterations. Per-iteration Ir is the
+//! window's summary / K. The process tells this side when the warm-up dump is
+//! written, this side picks K from its Ir (see [`window_for`]) and sends it
+//! back, so heavy items measure few iterations and cheap ones many. Setup
+//! runs once under valgrind, which fixture-heavy items need. The request is
+//! the target's magic instruction sequence (see `clientreq`).
+//!
+//! Where the sequence is unavailable, or with `SOOTHFAST_CALLGRIND_TWO_PROCESS=1`,
+//! the runner executes twice, at `--iters K_MAX` and `--iters 2 * K_MAX`, and
+//! per-iteration Ir is the difference / K_MAX, which cancels startup and
+//! setup. The two methods count differently (teardown, the requests), so
+//! [`Method`] belongs in every cache key, and each measurement carries the K
+//! it averaged over.
+//!
+//! The executed function set is the union of the dumps for setup, the
+//! warm-up, the window and teardown; the handshake dump holds only the
+//! protocol's own I/O.
 
-use std::path::PathBuf;
-use std::process::Command;
+use crate::clientreq;
+#[cfg(target_os = "linux")]
+use crate::ctl;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -183,21 +205,10 @@ fn out_file(tag: &str) -> PathBuf {
     ))
 }
 
-/// Run this bench binary under callgrind executing `id` for `iters`
-/// iterations; return total Ir and the out-file text. `mangled` keeps the
-/// symbol-table spelling of function names instead of demangling them.
-/// `size` runs a sweep item at that input size instead of its largest.
-fn run_ir(
-    id: &str,
-    size: Option<usize>,
-    iters: u64,
-    tag: &str,
-    mangled: bool,
-) -> Result<(u64, String), String> {
+fn valgrind_cmd(out: &Path, mangled: bool) -> Result<Command, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let out = out_file(tag);
-    let status = Command::new("valgrind")
-        .env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
+    let mut cmd = Command::new("valgrind");
+    cmd.env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
         .args([
             "--tool=callgrind",
             "--compress-strings=no",
@@ -205,15 +216,28 @@ fn run_ir(
             &format!("--demangle={}", if mangled { "no" } else { "yes" }),
             &format!("--callgrind-out-file={}", out.display()),
         ])
-        .arg(&exe)
+        .arg(&exe);
+    Ok(cmd)
+}
+
+/// Run this bench binary under callgrind executing `id` for `iters`
+/// iterations; return the text of every dump it wrote, in order. `mangled`
+/// keeps the symbol-table spelling of function names instead of demangling
+/// them. `size` runs a sweep item at that input size instead of its largest.
+fn run_valgrind(
+    id: &str,
+    size: Option<usize>,
+    iters: u64,
+    tag: &str,
+    mangled: bool,
+) -> Result<Vec<String>, String> {
+    let out = out_file(tag);
+    let status = valgrind_cmd(&out, mangled)?
         .args(["--callgrind-exec", id, "--iters", &iters.to_string()])
-        .args(
-            size.map(|n| ["--size".to_string(), n.to_string()])
-                .into_iter()
-                .flatten(),
-        )
+        .args(size_args(size))
         .output()
         .map_err(|e| format!("failed to spawn valgrind: {e}"))?;
+    let dumps = take_dumps(&out);
     if !status.status.success() {
         return Err(format!(
             "valgrind failed ({}): {}",
@@ -221,50 +245,229 @@ fn run_ir(
             String::from_utf8_lossy(&status.stderr)
         ));
     }
-    let text = std::fs::read_to_string(&out).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&out);
-    let summary = text
-        .lines()
+    dumps
+}
+
+fn size_args(size: Option<usize>) -> impl Iterator<Item = String> {
+    size.map(|n| ["--size".to_string(), n.to_string()])
+        .into_iter()
+        .flatten()
+}
+
+/// Run `id` in one valgrind process with `--callgrind-window`. The process
+/// dumps after setup and after a warm-up iteration, then tells this side so
+/// over a control channel (see `ctl`) and waits for the number of iterations
+/// to measure, which this side picks from the warm-up's dump. Returns every
+/// dump and that number.
+#[cfg(target_os = "linux")]
+fn run_window(id: &str, size: Option<usize>, tag: &str) -> Result<(Vec<String>, u64), String> {
+    let out = out_file(tag);
+    let control = ctl::Control::new().map_err(|e| e.to_string())?;
+    let mut cmd = valgrind_cmd(&out, true)?;
+    cmd.args(["--callgrind-exec", id, "--callgrind-window"])
+        .args(size_args(size))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    control.attach(&mut cmd);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to spawn valgrind: {e}"))?;
+    let mut parent = control.into_parent();
+    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        return Err("valgrind pipes were not opened".into());
+    };
+    // A bench that prints much must not fill a pipe while this side waits.
+    let printed = std::thread::spawn(move || std::io::copy(&mut stdout, &mut std::io::sink()));
+    let errors = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stderr.read_to_string(&mut text);
+        text
+    });
+    let chosen = parent
+        .warmed()
+        .map_err(|e| format!("no warm-up report from the bench process: {e}"))
+        .and_then(|()| {
+            std::fs::read_to_string(format!("{}.2", out.display())).map_err(|e| e.to_string())
+        })
+        .and_then(|warmup| summary_ir(&warmup))
+        .map(window_for)
+        .and_then(|k| parent.send_window(k).map(|()| k).map_err(|e| e.to_string()));
+    if chosen.is_err() {
+        let _ = child.kill();
+    }
+    let status = child.wait().map_err(|e| e.to_string())?;
+    let _ = printed.join();
+    let stderr = errors.join().unwrap_or_default();
+    let dumps = take_dumps(&out);
+    let window = chosen.map_err(|e| format!("{e}: {stderr}"))?;
+    if !status.success() {
+        return Err(format!("valgrind failed ({status}): {stderr}"));
+    }
+    Ok((dumps?, window))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run_window(_id: &str, _size: Option<usize>, _tag: &str) -> Result<(Vec<String>, u64), String> {
+    Err("the window method needs linux".into())
+}
+
+/// Bench process side of [`run_window`]: report the warm-up dumped and read
+/// how many iterations to measure.
+#[cfg(target_os = "linux")]
+pub fn negotiate_window() -> Result<u64, String> {
+    ctl::Child::from_env()?
+        .warmed()
+        .map_err(|e| format!("lost the callgrind control channel: {e}"))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn negotiate_window() -> Result<u64, String> {
+    Err("the window method needs linux".into())
+}
+
+/// Read and delete the dump files callgrind wrote for `out`, in dump order:
+/// `out.1`, `out.2`, ... for each requested dump, then `out` for the exit dump.
+fn take_dumps(out: &Path) -> Result<Vec<String>, String> {
+    let name = out.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let dir = out.parent().unwrap_or(out);
+    let mut parts: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .filter_map(|entry| {
+            let file = entry.file_name();
+            let rest = file.to_str()?.strip_prefix(name)?;
+            let part = match rest.strip_prefix('.') {
+                Some(n) => n.parse().ok()?,
+                None if rest.is_empty() => u64::MAX,
+                None => return None,
+            };
+            Some((part, entry.path()))
+        })
+        .collect();
+    parts.sort();
+    let dumps: Vec<String> = parts
+        .into_iter()
+        .map(|(_, path)| {
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string());
+            let _ = std::fs::remove_file(&path);
+            text
+        })
+        .collect::<Result<_, _>>()?;
+    if dumps.is_empty() {
+        return Err("callgrind wrote no dump".into());
+    }
+    Ok(dumps)
+}
+
+/// Total Ir of one dump file, from its summary line.
+fn summary_ir(text: &str) -> Result<u64, String> {
+    text.lines()
         .rev()
         .find_map(|l| l.strip_prefix("summary: "))
-        .ok_or("no summary line in callgrind output")?;
-    let ir: u64 = summary
+        .ok_or("no summary line in callgrind output")?
         .split_whitespace()
         .next()
         .and_then(|v| v.parse().ok())
-        .ok_or("unparseable summary line")?;
-    Ok((ir, text))
+        .ok_or_else(|| "unparseable summary line".into())
 }
 
-/// Iterations in the low run; the high run does twice this.
+/// The most iterations a measurement averages over; the two-process method
+/// runs this many and twice this many.
 ///
-/// K must exceed 1. `gate` compares two builds run from different working
-/// directories — the reference side lives in a worktree whose path is ~60
-/// characters longer — and that difference in environment size alone shifts
-/// heap layout, hence the instruction count of allocator work inside the
-/// measured region. Measured directly: the same binary run from a 42- and a
-/// 115-character path differs by 0.08%. At K=1 the subtraction reports one
-/// iteration, so that offset lands at full weight; averaging over K spreads it
-/// to 1/K. Valgrind process startup dominates each run, so raising K costs far
-/// less than it looks like it does.
-const K: u64 = 10;
+/// More than one matters for cheap items. `gate` compares two builds run from
+/// different working directories — the reference side lives in a worktree
+/// whose path is ~60 characters longer — and that difference in environment
+/// size alone shifts heap layout, hence the instruction count of allocator
+/// work inside the measured region. Measured directly: the same binary run
+/// from a 42- and a 115-character path differs by 0.08%. At one iteration
+/// that offset lands at full weight; averaging over K spreads it to 1/K.
+const K_MAX: u64 = 10;
+
+/// Instructions one measured window aims to cover. A window carries a fixed
+/// offset of about 150 Ir (a bench reads 149 Ir higher at one iteration than
+/// at ten), so a window this size keeps the offset under 0.01% and two sides
+/// that choose different K differ by less than that.
+const WINDOW_IR: u64 = 2_000_000;
+
+/// Iterations to measure after a warm-up iteration of `warmup_ir`: as many as
+/// fit [`WINDOW_IR`], at most [`K_MAX`]. Powers of two keep an item's K the
+/// same across the small changes between a head and its base.
+fn window_for(warmup_ir: u64) -> u64 {
+    let fit = (WINDOW_IR / warmup_ir.max(1)).max(1);
+    (1 << fit.ilog2()).min(K_MAX)
+}
 
 /// One item's callgrind result: per-iteration Ir, and every function the
-/// longer run executed as sorted, deduplicated `(object, mangled symbol)`.
+/// process executed as sorted, deduplicated `(object, mangled symbol)`.
 pub struct Measurement {
     /// Instructions per iteration.
     pub ir: u64,
+    /// Iterations `ir` averages over.
+    pub window: u64,
     /// Executed `(object, mangled symbol)` pairs.
     pub functions: Vec<(String, String)>,
 }
 
+/// How per-iteration Ir is taken from valgrind runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    /// One process; a dump request brackets a window of iterations.
+    OneProcess,
+    /// Two processes, at K_MAX and 2 * K_MAX iterations.
+    TwoProcess,
+}
+
+impl Method {
+    /// The method this binary measures with.
+    pub fn current() -> Method {
+        let forced = std::env::var_os("SOOTHFAST_CALLGRIND_TWO_PROCESS").is_some_and(|v| v == "1");
+        if cfg!(target_os = "linux") && clientreq::SUPPORTED && !forced {
+            Method::OneProcess
+        } else {
+            Method::TwoProcess
+        }
+    }
+
+    /// The spelling cache keys and the env line carry.
+    pub fn name(self) -> &'static str {
+        match self {
+            Method::OneProcess => "one-process",
+            Method::TwoProcess => "two-process",
+        }
+    }
+}
+
 /// Per-iteration Ir for one item.
 pub fn measure(id: &str, size: Option<usize>) -> Result<Measurement, String> {
-    let (low, _) = run_ir(id, size, K, "k1", true)?;
-    let (high, text) = run_ir(id, size, 2 * K, "k2", true)?;
+    match Method::current() {
+        Method::OneProcess => measure_window(id, size),
+        Method::TwoProcess => measure_difference(id, size),
+    }
+}
+
+fn measure_window(id: &str, size: Option<usize>) -> Result<Measurement, String> {
+    let (dumps, window) = run_window(id, size, "window")?;
+    let [setup, warmup, _handshake, measured, exit] = dumps.as_slice() else {
+        return Err(format!("expected 5 callgrind dumps, found {}", dumps.len()));
+    };
     Ok(Measurement {
-        ir: high.saturating_sub(low) / K,
-        functions: executed(&text),
+        ir: summary_ir(measured)? / window,
+        window,
+        functions: executed([setup, warmup, measured, exit]),
+    })
+}
+
+fn measure_difference(id: &str, size: Option<usize>) -> Result<Measurement, String> {
+    let low = run_valgrind(id, size, K_MAX, "k1", true)?;
+    let high = run_valgrind(id, size, 2 * K_MAX, "k2", true)?;
+    let (Some(low_total), Some(high_total)) = (low.first(), high.first()) else {
+        return Err("callgrind wrote no dump".into());
+    };
+    Ok(Measurement {
+        ir: summary_ir(high_total)?.saturating_sub(summary_ir(low_total)?) / K_MAX,
+        window: K_MAX,
+        functions: executed(&high),
     })
 }
 
@@ -337,9 +540,12 @@ fn function_costs(text: &str) -> impl Iterator<Item = (&str, &str, u64)> {
     })
 }
 
-fn executed(text: &str) -> Vec<(String, String)> {
-    let set: std::collections::BTreeSet<(&str, &str)> =
-        function_costs(text).map(|(ob, f, _)| (ob, f)).collect();
+fn executed<'a>(dumps: impl IntoIterator<Item = &'a String>) -> Vec<(String, String)> {
+    let set: std::collections::BTreeSet<(&str, &str)> = dumps
+        .into_iter()
+        .flat_map(|text| function_costs(text))
+        .map(|(ob, f, _)| (ob, f))
+        .collect();
     set.into_iter()
         .map(|(ob, f)| (ob.to_string(), f.to_string()))
         .collect()
@@ -347,9 +553,11 @@ fn executed(text: &str) -> Vec<(String, String)> {
 
 /// Human triage report: top self-cost functions for one item's workload.
 pub fn annotate(id: &str) -> Result<String, String> {
-    let (total, text) = run_ir(id, None, 1, "annotate", false)?;
+    let dumps = run_valgrind(id, None, 1, "annotate", false)?;
+    let text = dumps.first().ok_or("callgrind wrote no dump")?;
+    let total = summary_ir(text)?;
     let mut costs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-    for (_, name, cost) in function_costs(&text) {
+    for (_, name, cost) in function_costs(text) {
         *costs.entry(name.to_string()).or_default() += cost;
     }
     let mut ranked: Vec<(String, u64)> = costs.into_iter().collect();
@@ -365,7 +573,9 @@ pub fn annotate(id: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{executed, function_costs, out_file};
+    use std::path::PathBuf;
+
+    use super::{executed, function_costs, out_file, summary_ir, take_dumps, window_for};
 
     const OUT: &str = "\
 events: Ir
@@ -415,6 +625,61 @@ summary: 1052
                 "_ZN5bench4hot17h0123456789abcdefE".into(),
             ),
         ];
-        assert_eq!(executed(OUT), want);
+        assert_eq!(executed(&[OUT.to_string()]), want);
+    }
+
+    #[test]
+    fn dumps_read_in_request_order_then_the_exit_dump() {
+        let out = out_file("dumps");
+        let at = |suffix: &str| PathBuf::from(format!("{}{suffix}", out.display()));
+        std::fs::write(at(".2"), "second").unwrap();
+        std::fs::write(at(""), "exit").unwrap();
+        std::fs::write(at(".10"), "tenth").unwrap();
+        std::fs::write(at(".1"), "first").unwrap();
+        assert_eq!(
+            take_dumps(&out).unwrap(),
+            ["first", "second", "tenth", "exit"]
+        );
+        assert!(!at(".1").exists() && !at("").exists());
+    }
+
+    #[test]
+    fn no_dump_at_all_is_an_error() {
+        assert!(take_dumps(&out_file("none")).is_err());
+    }
+
+    #[test]
+    fn a_dump_summary_is_its_total_ir() {
+        assert_eq!(summary_ir(OUT), Ok(1052));
+        assert!(summary_ir("events: Ir\n").is_err());
+    }
+
+    #[test]
+    fn executed_functions_span_every_dump() {
+        let setup = "ob=/work/bench\nfn=setup\n1 10\n".to_string();
+        let window = "ob=/work/bench\nfn=hot\n1 10\n".to_string();
+        let names: Vec<_> = executed(&[setup, window])
+            .into_iter()
+            .map(|(_, f)| f)
+            .collect();
+        assert_eq!(names, ["hot", "setup"]);
+    }
+
+    #[test]
+    fn the_window_shrinks_to_one_iteration_as_items_get_heavier() {
+        let got: Vec<u64> = [
+            585, 125_000, 130_000, 600_000, 1_100_000, 2_000_000, 91_000_000,
+        ]
+        .map(window_for)
+        .into();
+        assert_eq!(got, [10, 10, 8, 2, 1, 1, 1]);
+    }
+
+    #[test]
+    fn the_window_is_a_power_of_two_or_the_cap() {
+        for ir in (1..60).map(|n| n * 400_000) {
+            let k = window_for(ir);
+            assert!(k.is_power_of_two() || k == 10, "{ir} -> {k}");
+        }
     }
 }
