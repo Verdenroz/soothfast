@@ -38,7 +38,7 @@ impl Format {
         }
     }
 
-    fn default_prefix(self) -> &'static str {
+    pub fn default_prefix(self) -> &'static str {
         match self {
             Format::Jmh => "jmh",
             Format::Pyperf => "pyperf",
@@ -116,6 +116,15 @@ pub fn parse(format: Format, text: &str, prefix: Option<&str>) -> Result<Run, St
     Ok(run)
 }
 
+/// Read and parse a result file named by its `--from` format, returning the
+/// run with the id prefix it used.
+pub fn read(format: &str, file: &str, prefix: Option<&str>) -> Result<(Run, String), String> {
+    let format = Format::parse(format)?;
+    let text = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
+    let run = parse(format, &text, prefix)?;
+    Ok((run, prefix.unwrap_or(format.default_prefix()).to_string()))
+}
+
 /// The run in the baseline file shape.
 pub fn to_doc(run: &Run) -> Value {
     json!({ "version": 1, "items": invoke::run_to_items_value(run), "assertions": [] })
@@ -151,13 +160,10 @@ pub fn run(args: &[String]) -> i32 {
     if save.is_some() == out.is_some() {
         return fail("import needs exactly one of --save-baseline NAME or --out FILE");
     }
-    let outcome = Format::parse(&format).and_then(|format| {
-        let text = std::fs::read_to_string(&file).map_err(|e| format!("{file}: {e}"))?;
-        let run = parse(format, &text, prefix.as_deref())?;
+    let outcome = read(&format, &file, prefix.as_deref()).and_then(|(run, prefix)| {
         let written = match (&save, &out) {
             (Some(name), _) => {
-                let prefix = prefix.as_deref().unwrap_or(format.default_prefix());
-                let scope = invoke::SaveScope::Imported(prefix.to_string());
+                let scope = invoke::SaveScope::Imported(prefix);
                 invoke::save_baseline_in(&invoke::project_root(), name, &run, scope)
                     .map_err(|e| e.to_string())?
             }
