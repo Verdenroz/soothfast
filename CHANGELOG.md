@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Init Gradle, Maven, Python and Node repos (#281)
 - Bind docs to Java, Kotlin, Python, JS and TS symbols (#280)
 - Import JMH, pyperf, pytest-benchmark and vitest results (#279)
 - Tree-sitter symbols for Java, Kotlin, Python, JS, TS (#277)
