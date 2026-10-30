@@ -29,6 +29,7 @@
 
 ### 🐛 Fixes
 
+- Pin the seed test to the workspace's locked deps (#313)
 - Polish the verdict comment and cache docs rustdoc (#308)
 - Keep jump-table proofs across tail calls and end pointers (#307)
 - Method binds, multi-package docs, doc scope, import noise (#287)
