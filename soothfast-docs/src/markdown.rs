@@ -406,6 +406,16 @@ not rust
     }
 
     #[test]
+    fn scan_keeps_a_file_symbol_bind_target_whole() {
+        let doc =
+            scan("<!-- soothfast:bind web/my-app/util.test.tsx#Foo.Companion.bar -->\n").unwrap();
+        assert_eq!(
+            doc.binds[0].item,
+            "web/my-app/util.test.tsx#Foo.Companion.bar"
+        );
+    }
+
+    #[test]
     fn splice_missing_capture_block_is_none() {
         assert!(splice_output("prose only\n", 0, "hi").unwrap().is_none());
     }
