@@ -16,8 +16,10 @@ mod cache;
 mod changelog_config;
 mod codekey;
 mod coverage;
+mod coverage_lang;
 mod docs;
 mod docs_binds;
+mod docs_config;
 mod docs_generated;
 mod docs_support;
 mod gate;
@@ -34,6 +36,7 @@ mod jumptable;
 mod linkmap;
 mod mcp;
 mod plan;
+mod project_surface;
 mod report;
 mod runcache;
 mod rustdoc_inputs;
@@ -56,6 +59,7 @@ mod spec_probe;
 mod store;
 mod test;
 mod trend;
+mod verdict;
 mod workspace;
 
 use invoke::CommonArgs;
@@ -124,6 +128,11 @@ commands:
            fatal, and the command still exits 3, not 0, if any were)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
+  verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE
+           [--seconds S] [--out FILE]
+  verdict  merge DIR --out FILE [--accepted] [--expect NAME:KIND]..
+           (one job's result, then the pull request's single comment;
+           exits 1 on a regression or error)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--skip-claims] [--features F] [PATHS...]
   docs     capture -p PKG [--check] [PATHS...]
   docs     diff -p PKG --against-ref REF [--features F]
@@ -134,6 +143,8 @@ commands:
   docs     gh-deploy [--baseline NAME] [--branch NAME] [--remote NAME] [--message MSG]
            (build + publish to a gh-pages-style branch, replaces `mkdocs gh-deploy`)
   coverage measure|docs -p PKG [--min PCT] [--features F]
+  coverage docs --dir D --lang L [--min PCT]   (Kotlin, Java, Python, TS/JS symbols; reads
+           [[project]] dir/ecosystem from soothfast.toml when no -p or --dir is given)
   spec     gen -p PKG [--features F] [--check]
   spec     gate -p PKG [--base REF] [--allow-breaking]
   spec     check -p PKG [--features F] [--target NAME]
@@ -151,7 +162,7 @@ commands:
            the SDK surface is the linked generate-mode spec surface)
   sdk      publish -p PKG [--only LANG] [--dry-run]   (refuses stale output;
            python publishes via `uv build` + `uv publish`)
-  report   render -p PKG [--out DIR] [--baseline NAME] [--features F]
+  report   render -p PKG [--out DIR] [--baseline NAME] [--features F] [--dir D --lang L]
   report   changelog -p PKG [-p PKG ...] [--against-ref REF] [--features F]
            [--bot-author NAME]
            (no --against-ref: first release, lists the surface it ships)
@@ -203,6 +214,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "import" => import::run(rest),
         "gate" => gate::run(rest),
         "trend" => trend::run(rest),
+        "verdict" => verdict::run(rest),
         "docs" => docs::run(rest),
         "coverage" => coverage::run(rest),
         "spec" => spec::run(rest),

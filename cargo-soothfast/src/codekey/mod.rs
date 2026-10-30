@@ -312,4 +312,60 @@ mod tests {
         assert!(first.is_some());
         assert_eq!(first, second);
     }
+
+    /// Every function of `bin`: sized ones by name, the crt helpers `nm`
+    /// lists without a size by their `at:` label.
+    fn functions(bin: &Path) -> BTreeSet<String> {
+        let nm = command_text("nm", &["-S", "--defined-only"], bin).unwrap();
+        nm.lines()
+            .filter_map(|l| match l.split_whitespace().collect::<Vec<_>>()[..] {
+                [_, _, "T" | "t", name] => Some(strip_llvm(name).into_owned()),
+                [_, "T" | "t", name] if !name.ends_with("etext") => {
+                    Some(format!("{LABELED}{name}"))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-codekey-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn every_function_of_a_tiny_c_binary_hashes_under_each_linker() {
+        let dir = scratch("c");
+        let src = dir.join("t.c");
+        std::fs::write(&src, "int main(void){return 0;}\n").unwrap();
+        let mut built = 0;
+        let mut unhashed = Vec::new();
+        for linker in ["bfd", "lld", "mold"] {
+            let bin = dir.join(linker);
+            let linked = Command::new("cc")
+                .args(["-pie", "-O1", &format!("-fuse-ld={linker}"), "-o"])
+                .arg(&bin)
+                .arg(&src)
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !linked {
+                continue;
+            }
+            built += 1;
+            let wanted = functions(&bin);
+            let binary = Binary::open(&bin, &wanted, &[]);
+            unhashed.extend(
+                wanted
+                    .into_iter()
+                    .filter(|n| !binary.as_ref().is_some_and(|b| b.hashes.contains_key(n)))
+                    .map(|n| format!("{linker}: {n}")),
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(built > 0, "no linker built a binary");
+        assert!(unhashed.is_empty(), "unhashed: {unhashed:?}");
+    }
 }

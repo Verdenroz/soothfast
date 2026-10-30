@@ -37,6 +37,9 @@ pub const METRICS: &[(&[&str; 2], &str, f64, bool)] = &[
 
 struct Series {
     id: String,
+    /// Imported from another language's harness: always drawn as its own
+    /// line, and kept out of the Rust fleet's band and median.
+    imported: bool,
     values: Vec<Option<f64>>,
     /// How far the last point sits from the first, in percent. Transient
     /// spikes stay in the band; a line is for drift that stuck.
@@ -85,8 +88,12 @@ pub fn render(
             .last()
             .map(|v| (v - 100.0).abs())
             .unwrap_or(0.0);
+        let imported = points
+            .iter()
+            .any(|p| p["items"][&id]["imported"].is_string());
         series.push(Series {
             id,
+            imported,
             values,
             end_drift,
         });
@@ -99,7 +106,11 @@ pub fn render(
     if fleet_relative {
         let fleet_median: Vec<Option<f64>> = (0..n_points)
             .map(|i| {
-                let mut at: Vec<f64> = series.iter().filter_map(|s| s.values[i]).collect();
+                let mut at: Vec<f64> = series
+                    .iter()
+                    .filter(|s| !s.imported)
+                    .filter_map(|s| s.values[i])
+                    .collect();
                 if at.is_empty() {
                     return None;
                 }
@@ -130,7 +141,11 @@ pub fn render(
     };
     let mut band: Vec<(f64, f64, f64)> = Vec::new();
     for i in 0..n_points {
-        let mut at: Vec<f64> = series.iter().filter_map(|s| s.values[i]).collect();
+        let mut at: Vec<f64> = series
+            .iter()
+            .filter(|s| !s.imported)
+            .filter_map(|s| s.values[i])
+            .collect();
         if at.is_empty() {
             continue;
         }
@@ -142,13 +157,19 @@ pub fn render(
         band.push((p10, p50, p90));
     }
 
-    let mut movers: Vec<&Series> = series
+    let mut drifted: Vec<&Series> = series
         .iter()
-        .filter(|s| s.end_drift >= threshold_pct)
+        .filter(|s| !s.imported && s.end_drift >= threshold_pct)
         .collect();
-    movers.sort_by(|a, b| b.end_drift.total_cmp(&a.end_drift));
-    let total_movers = movers.len();
-    movers.truncate(COLORS.len());
+    drifted.sort_by(|a, b| b.end_drift.total_cmp(&a.end_drift));
+    let total_movers = drifted.len();
+    drifted.truncate(COLORS.len());
+    let shown = drifted.len();
+    let imported: Vec<&Series> = series.iter().filter(|s| s.imported).collect();
+    let n_imported = imported.len();
+    let imported_shown = n_imported.min(COLORS.len() - shown);
+    let mut movers = drifted;
+    movers.extend(imported.into_iter().take(imported_shown));
 
     let (lo, hi) = movers
         .iter()
@@ -174,31 +195,33 @@ pub fn render(
         },
     );
 
-    let upper: Vec<String> = band
-        .iter()
-        .enumerate()
-        .map(|(i, (_, _, p90))| format!("{:.1},{:.1}", x(i as f64), y(*p90)))
-        .collect();
-    let lower: Vec<String> = band
-        .iter()
-        .enumerate()
-        .rev()
-        .map(|(i, (p10, _, _))| format!("{:.1},{:.1}", x(i as f64), y(*p10)))
-        .collect();
-    svg.push_str(&format!(
-        "<polygon points=\"{} {}\" fill=\"{BAND}\" fill-opacity=\"0.18\"/>\n",
-        upper.join(" "),
-        lower.join(" "),
-    ));
-    let median: Vec<String> = band
-        .iter()
-        .enumerate()
-        .map(|(i, (_, p50, _))| format!("{:.1},{:.1}", x(i as f64), y(*p50)))
-        .collect();
-    svg.push_str(&format!(
+    if !band.is_empty() {
+        let upper: Vec<String> = band
+            .iter()
+            .enumerate()
+            .map(|(i, (_, _, p90))| format!("{:.1},{:.1}", x(i as f64), y(*p90)))
+            .collect();
+        let lower: Vec<String> = band
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, (p10, _, _))| format!("{:.1},{:.1}", x(i as f64), y(*p10)))
+            .collect();
+        svg.push_str(&format!(
+            "<polygon points=\"{} {}\" fill=\"{BAND}\" fill-opacity=\"0.18\"/>\n",
+            upper.join(" "),
+            lower.join(" "),
+        ));
+        let median: Vec<String> = band
+            .iter()
+            .enumerate()
+            .map(|(i, (_, p50, _))| format!("{:.1},{:.1}", x(i as f64), y(*p50)))
+            .collect();
+        svg.push_str(&format!(
         "<polyline points=\"{}\" fill=\"none\" stroke=\"{BAND}\" stroke-width=\"1.5\" stroke-opacity=\"0.8\"/>\n",
         median.join(" "),
     ));
+    }
 
     // Labels sit in the right gutter, ordered by where each line ends so
     // neighbors never overlap.
@@ -268,20 +291,26 @@ pub fn render(
         ay = H - PAD_B + 14.0,
     ));
 
-    let n_items = series.len();
-    let footer = if total_movers == 0 {
+    let n_items = series.len() - n_imported;
+    let footer = if n_items == 0 {
+        format!("{imported_shown} of {n_imported} imported items drawn as lines")
+    } else if total_movers == 0 {
         format!(
             "all {n_items} items ended within \u{b1}{threshold_pct:.0}% of their first point; band spans p10-p90"
         )
-    } else if total_movers > movers.len() {
+    } else if total_movers > shown {
         format!(
-            "{total_movers} of {n_items} items ended \u{2265}{threshold_pct:.0}% from start; {} largest shown, the rest stay in the p10-p90 band",
-            movers.len(),
+            "{total_movers} of {n_items} items ended \u{2265}{threshold_pct:.0}% from start; {shown} largest shown, the rest stay in the p10-p90 band",
         )
     } else {
         format!(
             "{total_movers} of {n_items} items ended \u{2265}{threshold_pct:.0}% from start; band spans p10-p90"
         )
+    };
+    let footer = if n_items > 0 && n_imported > 0 {
+        format!("{footer}; {imported_shown} of {n_imported} imported items drawn")
+    } else {
+        footer
     };
     svg.push_str(&format!(
         "<text x=\"{PAD_L}\" y=\"{fy}\" fill=\"{INK}\" font-size=\"10\">{footer}</text>\n",
@@ -359,6 +388,51 @@ mod tests {
         .unwrap();
         assert!(svg.contains("9 of 9 items ended"), "{svg}");
         assert!(svg.contains("6 largest shown"), "{svg}");
+    }
+
+    #[test]
+    fn an_imported_item_is_a_line_even_when_flat_and_stays_out_of_the_band() {
+        let at = |rust: u64| {
+            let mut p = point(&[("demo::f", rust), ("jmh::A.b", 500)]);
+            p["items"]["jmh::A.b"]["imported"] = json!("jmh");
+            p
+        };
+        let svg = super::render(
+            &[at(100), at(100)],
+            &["perfcnt", "instructions"],
+            "instructions",
+            2.0,
+            false,
+        )
+        .unwrap();
+        assert!(svg.contains("A.b +0.0%"), "{svg}");
+        assert!(svg.contains("all 1 items ended"), "{svg}");
+    }
+
+    #[test]
+    fn rust_movers_keep_their_colours_when_imported_lines_crowd_the_palette() {
+        let at = |scale: u64| {
+            let mut items = vec![("demo::f".to_string(), 100 * scale)];
+            for n in 0..8 {
+                items.push((format!("jmh::B.{n}"), 500));
+            }
+            let refs: Vec<(&str, u64)> = items.iter().map(|(i, v)| (i.as_str(), *v)).collect();
+            let mut p = point(&refs);
+            for n in 0..8 {
+                p["items"][format!("jmh::B.{n}")]["imported"] = json!("jmh");
+            }
+            p
+        };
+        let svg = super::render(
+            &[at(1), at(2)],
+            &["perfcnt", "instructions"],
+            "instructions",
+            2.0,
+            false,
+        )
+        .unwrap();
+        assert!(svg.contains("f +100.0%"), "{svg}");
+        assert!(svg.contains("5 of 8 imported items drawn"), "{svg}");
     }
 
     #[test]

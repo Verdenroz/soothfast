@@ -21,7 +21,7 @@ pub(crate) const KEEP: usize = 32;
 
 /// `.soothfast/<name>`, created on demand.
 pub fn state_dir(name: &str) -> Option<PathBuf> {
-    let d = invoke::workspace_root().ok()?.join(".soothfast").join(name);
+    let d = invoke::project_root().join(".soothfast").join(name);
     std::fs::create_dir_all(&d).ok()?;
     Some(d)
 }
@@ -95,12 +95,19 @@ impl<'a> Runs<'a> {
 /// which it synthesizes the same on different host models, so it keys on that
 /// guest and the glibc and valgrind that shape its instruction stream. Every
 /// other backend reads the host itself, so it keys on the model name.
+/// Callgrind counts also depend on how the harness takes them, so the method
+/// is part of the key and a count is never reused across methods.
 pub fn host(env: &HostEnv) -> String {
     match (env.gating_backend.as_str(), &env.guest) {
         ("callgrind", Some(g)) => format!(
-            "guest {} glibc {} {} {}",
-            g.cpu, g.glibc, g.libc, g.valgrind
+            "guest {} glibc {} {} {} method {}",
+            g.cpu,
+            g.glibc,
+            g.libc,
+            g.valgrind,
+            env.method()
         ),
+        ("callgrind", None) => format!("{} method {}", cpu_model(), env.method()),
         _ => cpu_model(),
     }
 }
@@ -115,6 +122,9 @@ pub fn measured_on(env: &HostEnv) -> Value {
         on["guest_glibc"] = serde_json::json!(g.glibc);
         on["guest_libc"] = serde_json::json!(g.libc);
         on["valgrind"] = serde_json::json!(g.valgrind);
+    }
+    if env.gating_backend == "callgrind" {
+        on["callgrind_method"] = serde_json::json!(env.method());
     }
     on
 }
@@ -247,6 +257,7 @@ mod tests {
         HostEnv {
             gating_backend: backend.into(),
             guest: None,
+            callgrind_method: None,
             item_reuse: true,
         }
     }
@@ -255,6 +266,7 @@ mod tests {
         HostEnv {
             gating_backend: "callgrind".into(),
             item_reuse: true,
+            callgrind_method: Some("one-process".into()),
             guest: Some(invoke::Guest {
                 cpu: "0123456789abcdef".into(),
                 glibc: "2.39".into(),
@@ -365,7 +377,7 @@ mod tests {
     fn callgrind_keys_on_its_guest_not_the_host_model() {
         assert_eq!(
             host(&callgrind_guest()),
-            "guest 0123456789abcdef glibc 2.39 fedcba9876543210 valgrind-3.22.0"
+            "guest 0123456789abcdef glibc 2.39 fedcba9876543210 valgrind-3.22.0 method one-process"
         );
     }
 
@@ -390,7 +402,26 @@ mod tests {
         let mut perf = callgrind_guest();
         perf.gating_backend = "perfcnt".into();
         assert_eq!(host(&perf), cpu_model());
-        assert_eq!(host(&env("callgrind")), cpu_model());
+        assert_eq!(
+            host(&env("callgrind")),
+            format!("{} method two-process", cpu_model())
+        );
+    }
+
+    #[test]
+    fn a_count_is_never_keyed_the_same_across_callgrind_methods() {
+        let one = callgrind_guest();
+        let mut two = callgrind_guest();
+        two.callgrind_method = Some("two-process".into());
+        let mut unnamed = callgrind_guest();
+        unnamed.callgrind_method = None;
+        let key = |env: &HostEnv| key("aaa", &stamp(), &args(), env);
+        assert_ne!(key(&one), key(&two));
+        assert_eq!(key(&two), key(&unnamed));
+        assert_ne!(
+            Runs::new(&stamp(), &args(), Some(one)).item_scope(),
+            Runs::new(&stamp(), &args(), Some(two)).item_scope()
+        );
     }
 
     #[test]
@@ -407,6 +438,7 @@ mod tests {
         assert_eq!(got["measured_on"]["guest_glibc"], "2.39");
         assert_eq!(got["measured_on"]["guest_libc"], "fedcba9876543210");
         assert_eq!(got["measured_on"]["valgrind"], "valgrind-3.22.0");
+        assert_eq!(got["measured_on"]["callgrind_method"], "one-process");
         if let Some(d) = dir() {
             let key = key(
                 "test-runcache-measured-on",

@@ -549,6 +549,7 @@ mod tests {
         let env = HostEnv {
             gating_backend: "perfcnt".into(),
             guest: None,
+            callgrind_method: None,
             item_reuse: true,
         };
         let runs = Runs::new(&stamp, &common, Some(env));

@@ -51,9 +51,17 @@ The `[test]` section of `soothfast.toml` tunes this:
 ignore = ["docs/**", "*.md"]        # changes here select nothing
 inputs = ["fixtures/shared/**"]     # files tests read from outside a package
 env    = ["DATABASE_URL"]           # variables whose values change the result
+retries = 2                         # reruns of a failed test binary
 ```
 
 `inputs` wins over `ignore`. Ignore only files no test reads.
+
+`retries` (default 0) reruns each failed test binary alone, through its own
+`cargo test -p PKG --lib` (or `--bin`, `--test`, `--bench NAME`), up to that
+many times. A binary that passes a rerun is flaky: the summary lists it on a
+`test: FLAKY:` line, the command exits 0 for it, and no pass is stored, so the
+next run executes it again. Doc tests are not rerun. `--result FILE` writes
+the outcome as JSON, with the verdict `flaky` when any binary was.
 
 ### Allow-lists
 
@@ -225,3 +233,91 @@ nothing. The cache key follows the one used for measured runs in
 [Gating](gating.md): a branch restores its own earlier passes, then the
 default branch's. The cache saves even when a test failed, since only passes
 are stored: the next run re-runs the failures and skips what already passed.
+
+## Other languages
+
+A Gradle, Maven, Python or Node project that [`init`](importing.md) wires up
+as a `[[project]]` can carry its own test command. The Rust workspace keeps
+its per-package selection above; these keys select and cache a whole
+project.
+
+```toml
+[[project]]
+dir = "client"
+ecosystem = "gradle"
+bench_cmd = "./gradlew jmh -Pout={out}"
+test_cmd = "./gradlew check"
+watch = ["gradle/libs.versions.toml"]
+retries = 2
+
+[[project]]
+dir = "api"
+ecosystem = "python"
+test_cmd = "uv run pytest"
+retry_cmd = "uv run pytest --lf"
+retries = 1
+
+[[test.suite]]
+label = "soothfast:e2e"
+project = "api"
+cmd = "uv run pytest -m e2e"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `test_cmd` | Run in the project's directory through `sh -c`. Without it the project has no tests to run. |
+| `watch` | Globs relative to the repository root. A change to a matching file runs the project's tests as well as a change under `dir`. |
+| `retries` | Reruns after a failure. Default 0. |
+| `retry_cmd` | The command for a rerun. Defaults to `test_cmd`. |
+| `gate` | `false` for a project that only runs tests: no benchmark is configured or gated. Without it the project keeps its ecosystem's default benchmark, or `init` asks for one. |
+
+A `[[test.suite]]` runs `cmd` in the directory of `project`, which must be a
+`[[project]]`, only on a pull request whose `label` a writer applied. It
+inherits the project's `retries` and reruns with its own `cmd`. An unknown
+key in either table is an error.
+
+```console
+$ cargo soothfast test --project client            # vs the default branch's merge-base
+$ cargo soothfast test --project client --all      # skip the selection, keep the cache
+$ cargo soothfast test --project api --suite soothfast:e2e
+```
+
+`--project DIR` runs only when the diff against the merge-base (`--base`
+works as above) touches a file under `DIR` or one `watch` matches; it prints
+that the project is untouched otherwise. A base with no merge-base runs it.
+`--no-cache` runs it even with a stored pass. `--result FILE` writes the
+outcome as JSON: `name` (`--name`, else the directory), `project`, `kind`
+(`test`), `verdict`, `output` (the last 40 lines) and `wall_s`.
+
+The verdict is `pass`, `reused`, `flaky`, `failed` or `skipped`. A pass is
+stored under `.soothfast/tests`, keyed by the content of every file
+under `DIR` and every file `watch` matches, tracked, modified or untracked, the command, and the toolchain
+(`java -version`, `python --version` or `node --version`; `--toolchain TEXT`
+names it instead). The same key later is `reused` and runs nothing. A
+failure reruns up to `retries` times; a pass on a rerun is `flaky`, exits 0
+and stores nothing, so the next run executes the tests again.
+
+In the reusable workflow, the plan job restores `.soothfast/tests`, works
+out which tests the pull request reaches, and looks each one's key up. Only
+a test with no stored pass becomes an entry of the `test-projects` matrix, so
+a change that touches no tests, or only tests a pass covers, starts no test
+job and installs no toolchain. The plan job writes a result file for each
+test it settled that way (`skipped` or `reused`) and uploads them together as
+the `soothfast-result-test-settled` artifact. The matrix jobs need only the
+plan job and run beside the gate jobs, which do not wait for them. Each
+uploads `soothfast-result-test-<name>` and, on a pass, its stored pass, and a
+`test-cache` job merges those passes into the cache for the next run. The
+verdict job expects a `test-<name>` result for every test the plan covers,
+settled or run, and `test-rust` for the Rust workspace.
+
+The plan job has no toolchain installed, so the key names it by the
+workflow's `java` and `node` inputs and the runner labels the test jobs use (Python is keyed as `uv`)
+instead of a probe of the installed binary. A patch release that a runner
+picks up under the same input does not invalidate a pass.
+
+The `soothfast:test-all` label, applied by a writer, selects every project
+and the Rust workspace and ignores stored passes for that run. The plan job
+reads the pull request's current labels from the API, so a re-run sees a
+label added since the last run, but applying one starts no run by itself.
+`[test] ci = false` drops the project tests along with the Rust test job.
+The cache keeps the newest 2048 passes.

@@ -21,16 +21,25 @@ pub fn classify(item: &str) -> Target<'_> {
     }
 }
 
-/// Current fingerprint of a bind target. `surf` is the rustdoc surface, which
-/// exists whenever the scanned docs bind at least one Rust item.
-pub fn resolve(root: &Path, surf: Option<&Surface>, item: &str) -> Result<String, String> {
+/// Current fingerprint of a bind target. `surfaces` pairs each `-p` package
+/// with its rustdoc surface; it is empty unless the scanned docs bind a Rust item.
+pub fn resolve(root: &Path, surfaces: &[(String, Surface)], item: &str) -> Result<String, String> {
     match classify(item) {
         Target::File { path, symbol } => file_fingerprint(root, path, symbol),
-        Target::Rust(item) => surf
-            .and_then(|s| s.items.get(item))
-            .map(|info| format!("{:016x}", info.fingerprint))
-            .ok_or_else(|| "item not found in crate".into()),
+        Target::Rust(item) => rust_fingerprint(surfaces, item),
     }
+}
+
+/// A Rust bind resolves against the package its first path segment names.
+fn rust_fingerprint(surfaces: &[(String, Surface)], item: &str) -> Result<String, String> {
+    let krate = item.split("::").next().unwrap_or(item).replace('-', "_");
+    let (_, surf) = surfaces
+        .iter()
+        .find(|(pkg, _)| pkg.replace('-', "_") == krate)
+        .ok_or_else(|| format!("crate `{krate}` is not among the -p packages; add `-p {krate}`"))?;
+    surf.lookup(item)
+        .map(|info| format!("{:016x}", info.fingerprint))
+        .ok_or_else(|| "item not found in crate".into())
 }
 
 /// Fingerprint of `symbol` in `root/path`, or the reason it cannot be had.
@@ -50,7 +59,53 @@ pub fn file_fingerprint(root: &Path, path: &str, symbol: &str) -> Result<String,
 mod tests {
     use std::path::PathBuf;
 
+    use soothfast_docs::surface::ItemInfo;
+
     use super::*;
+
+    fn surface_with(path: &str) -> Surface {
+        let mut surface = Surface::default();
+        surface.items.insert(
+            path.to_string(),
+            ItemInfo {
+                kind: "function".into(),
+                fingerprint: 0xabc,
+                signature: String::new(),
+                has_docs: false,
+            },
+        );
+        surface
+    }
+
+    #[test]
+    fn rust_bind_resolves_against_the_package_its_first_segment_names() {
+        let surfaces = [
+            ("alpha-core".to_string(), surface_with("alpha_core::f")),
+            ("beta".to_string(), surface_with("beta::g")),
+        ];
+        let root = Path::new(".");
+        assert_eq!(
+            resolve(root, &surfaces, "alpha_core::f").unwrap(),
+            "0000000000000abc"
+        );
+        assert_eq!(
+            resolve(root, &surfaces, "beta::g").unwrap(),
+            "0000000000000abc"
+        );
+        assert_eq!(
+            resolve(root, &surfaces, "beta::f").unwrap_err(),
+            "item not found in crate"
+        );
+    }
+
+    #[test]
+    fn rust_bind_to_a_crate_outside_the_packages_says_to_add_it() {
+        let surfaces = [("beta".to_string(), surface_with("beta::g"))];
+        assert_eq!(
+            resolve(Path::new("."), &surfaces, "gamma::g").unwrap_err(),
+            "crate `gamma` is not among the -p packages; add `-p gamma`"
+        );
+    }
 
     fn fixture(name: &str, files: &[(&str, &str)]) -> PathBuf {
         let dir =
