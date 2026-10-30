@@ -3,6 +3,7 @@ use serde_json::json;
 use super::*;
 
 const JMH: &str = include_str!("../../tests/fixtures/import/jmh.json");
+const JMH_REAL: &str = include_str!("../../tests/fixtures/import/jmh-real.json");
 
 fn imported(format: Format, text: &str) -> Run {
     parse(format, text, None).unwrap()
@@ -24,6 +25,30 @@ fn jmh_ids_carry_sorted_params() {
             "jmh::com.acme.codec.ParseBench.parse[mode=avgt,encoding=utf8,size=1000]",
             "jmh::com.acme.codec.ParseBench.parse[mode=avgt,encoding=utf8,size=10]",
         ]
+    );
+}
+
+#[test]
+fn real_jmh_output_imports_every_mode() {
+    let run = imported(Format::Jmh, JMH_REAL);
+    let ids: Vec<&str> = run.items.keys().map(String::as_str).collect();
+    assert_eq!(
+        ids,
+        [
+            "jmh::bench.SumBench.both[mode=sample,n=1000]",
+            "jmh::bench.SumBench.both[mode=sample,n=10]",
+            "jmh::bench.SumBench.both[mode=thrpt,n=1000]",
+            "jmh::bench.SumBench.both[mode=thrpt,n=10]",
+            "jmh::bench.SumBench.sum[mode=avgt,n=1000]",
+            "jmh::bench.SumBench.sum[mode=avgt,n=10]",
+        ]
+    );
+    let sampled = &run.items["jmh::bench.SumBench.both[mode=sample,n=10]"];
+    assert!(sampled.median_ns.is_some() && sampled.p99_ns.is_some());
+    assert!(
+        run.items
+            .values()
+            .all(|m| m.median_ns.is_some_and(|v| v > 0.0))
     );
 }
 
