@@ -137,6 +137,14 @@ inputs:
       item.
     required: false
     default: ""
+  comment:
+    description: >-
+      Post the pull request gate comment. Set "false" when a caller folds
+      the gate into a comment of its own; the gate then records its result
+      under `$RUNNER_TEMP/soothfast-results` for `cargo soothfast verdict
+      merge`.
+    required: false
+    default: "true"
   cache:
     description: >-
       Restore and save the measured runs, items and link maps
@@ -268,6 +276,7 @@ runs:
         FEATURES: ${{ inputs.features }}
         SAVE_BASELINE: ${{ inputs.save-baseline }}
         SHARD: ${{ inputs.shard }}
+        COMMENT: ${{ inputs.comment }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
     - name: Upload triage artifacts
       if: steps.gate.outputs.failed == 'true'
