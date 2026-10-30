@@ -34,6 +34,8 @@
 
 ### ⚡ Performance
 
+- Reuse built bench executables across runs (#294)
+- Store rustdoc JSON by its inputs (#291)
 - Measure callgrind items in one process (#292)
 - Reuse items per side, say why one missed (#271)
 
