@@ -50,7 +50,7 @@ pub fn parse(expr: &str) -> Result<Claim, String> {
         ));
     }
     // `op` borrows from `expr`, so the left side is the text before it.
-    let lhs = expr[..op.as_ptr() as usize - expr.as_ptr() as usize].trim();
+    let lhs = expr[..op.as_ptr() as usize - expr.as_ptr() as usize].trim_end();
     let op = match *op {
         "<" => Op::Lt,
         "<=" => Op::Le,
@@ -60,8 +60,11 @@ pub fn parse(expr: &str) -> Result<Claim, String> {
     };
 
     // Backend and metric never hold a dot; an imported item id may.
-    let parts: Vec<&str> = lhs.rsplitn(3, '.').collect();
-    let [metric, backend, item] = parts.as_slice() else {
+    let Some((item, backend, metric)) = lhs
+        .rsplit_once('.')
+        .and_then(|(rest, metric)| Some((rest.rsplit_once('.')?, metric)))
+        .map(|((item, backend), metric)| (item.trim_start(), backend, metric))
+    else {
         return Err(format!(
             "left side must be item.backend.metric, got {lhs:?}"
         ));
