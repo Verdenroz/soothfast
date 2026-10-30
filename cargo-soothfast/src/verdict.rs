@@ -59,6 +59,17 @@ struct Record {
     tail: String,
     reuse: Option<Reuse>,
     seconds: u64,
+    flaky: bool,
+}
+
+/// The test runner's verdict words, which are not the gate's.
+fn test_verdict(word: &str) -> Option<(Verdict, bool)> {
+    match word {
+        "reused" | "skipped" => Some((Verdict::Pass, false)),
+        "flaky" => Some((Verdict::Pass, true)),
+        "failed" => Some((Verdict::Errored, false)),
+        _ => None,
+    }
 }
 
 impl Record {
@@ -73,9 +84,14 @@ impl Record {
         if let Some(r) = self.reuse {
             v["reuse"] = json!({"covered": r.covered, "total": r.total, "measuring": r.measuring});
         }
+        if self.flaky {
+            v["flaky"] = json!(true);
+        }
         v
     }
 
+    /// Reads a gate record, or a test record: `output` for `tail`, `wall_s`
+    /// for `seconds`, and the test runner's verdict words.
     fn from_json(v: &Value) -> Option<Record> {
         let reuse = v.get("reuse").and_then(|r| {
             Some(Reuse {
@@ -84,13 +100,26 @@ impl Record {
                 measuring: r.get("measuring")?.as_u64()?,
             })
         });
+        let word = v.get("verdict")?.as_str()?;
+        let (verdict, flaky) = match Verdict::parse(word) {
+            Some(verdict) => (verdict, v["flaky"].as_bool().unwrap_or(false)),
+            None => test_verdict(word)?,
+        };
+        let tail = match v.get("tail") {
+            Some(t) => t.as_str()?.to_string(),
+            None => tail(v.get("output")?.as_str()?),
+        };
+        let seconds = v.get("seconds").or(v.get("wall_s"))?;
         Some(Record {
             name: v.get("name")?.as_str()?.to_string(),
             kind: v.get("kind")?.as_str()?.to_string(),
-            verdict: Verdict::parse(v.get("verdict")?.as_str()?)?,
-            tail: v.get("tail")?.as_str()?.to_string(),
+            verdict,
+            tail,
             reuse,
-            seconds: v.get("seconds")?.as_u64()?,
+            seconds: seconds
+                .as_u64()
+                .or_else(|| seconds.as_f64().map(|s| s.round() as u64))?,
+            flaky,
         })
     }
 
@@ -114,6 +143,7 @@ impl Record {
             (a, b) => a.or(b),
         };
         self.seconds = self.seconds.max(other.seconds);
+        self.flaky |= other.flaky;
     }
 }
 
@@ -175,6 +205,7 @@ fn record(args: &[String]) -> Result<i32, String> {
         tail: tail(&output),
         reuse: parse_reuse(&output),
         seconds,
+        flaky: false,
     };
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -245,6 +276,7 @@ fn merge(args: &[String]) -> Result<i32, String> {
                 tail: "the job recorded no result".into(),
                 reuse: None,
                 seconds: 0,
+                flaky: false,
             });
         }
     }
@@ -314,9 +346,10 @@ fn render(records: &[Record], accepted: bool) -> String {
     }
     for r in records {
         out.push_str(&format!(
-            "\n### {}\n{} | {} | {}s",
+            "\n### {}\n{}{} | {} | {}s",
             r.name,
             r.verdict.name(),
+            if r.flaky { " (flaky)" } else { "" },
             r.kind,
             r.seconds
         ));
@@ -345,6 +378,7 @@ mod tests {
             tail: tail.into(),
             reuse: None,
             seconds: 10,
+            flaky: false,
         }
     }
 
@@ -378,6 +412,29 @@ mod tests {
         let out = "building\ngate: items a stored measurement covers: head 14/16, base 16/16, measuring 2 (2 code changed)\n";
         assert_eq!(parse_reuse(out), reuse(30, 32, 2));
         assert_eq!(parse_reuse("no reuse here"), None);
+    }
+
+    #[test]
+    fn test_records_read_with_their_own_field_names_and_words() {
+        let read = |verdict: &str| {
+            Record::from_json(&json!({
+                "name": "test-api", "kind": "test", "verdict": verdict,
+                "output": "ran", "wall_s": 12.4,
+            }))
+        };
+        let pass = read("pass").unwrap();
+        assert_eq!(
+            (pass.verdict, pass.tail.as_str(), pass.seconds),
+            (Verdict::Pass, "ran", 12)
+        );
+        for word in ["reused", "skipped"] {
+            assert_eq!(read(word).unwrap().verdict, Verdict::Pass);
+        }
+        let flaky = read("flaky").unwrap();
+        assert!(flaky.flaky && flaky.verdict == Verdict::Pass);
+        assert!(render(&[flaky], false).contains("pass (flaky) | test | 12s"));
+        assert_eq!(read("failed").unwrap().verdict, Verdict::Errored);
+        assert_eq!(read("exploded"), None);
     }
 
     #[test]
