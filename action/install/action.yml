@@ -82,9 +82,12 @@ runs:
         REV: ${{ steps.resolve.outputs.rev }}
         ROOT: ${{ steps.resolve.outputs.root }}
       run: cargo install --locked --git https://github.com/Verdenroz/soothfast --rev "$REV" --root "$ROOT" cargo-soothfast
-    - name: Put it on PATH
+    - name: Link it where cargo finds subcommands
       if: steps.resolve.outputs.released != 'true'
       shell: bash
       env:
-        ROOT: ${{ steps.resolve.outputs.root }}
-      run: echo "$ROOT/bin" >> "$GITHUB_PATH"
+        BIN: ${{ steps.resolve.outputs.bin }}
+      run: |
+        dir="${CARGO_HOME:-$HOME/.cargo}/bin"
+        mkdir -p "$dir"
+        ln -sf "$BIN" "$dir/cargo-soothfast"

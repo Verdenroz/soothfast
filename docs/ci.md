@@ -206,7 +206,8 @@ Every job:
   the network and a C compiler and linker (`cc`) to build a Rust project.
   `cargo-soothfast` itself is installed from crates.io when the workflow's
   ref is a published release, else built from the ref into
-  `$RUNNER_TOOL_CACHE/soothfast-cli/<commit>` and cached by commit. The first
+  `$RUNNER_TOOL_CACHE/soothfast-cli/<commit>`, cached by commit and linked
+  into `$CARGO_HOME/bin`. The first
   build of a ref takes several minutes.
 
 Jobs that run the composite action (the cargo gate and the labels job):
