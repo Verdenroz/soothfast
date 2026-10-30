@@ -1,0 +1,18 @@
+{
+  "entries": {
+    "buildcost::cargo-soothfast::default": {
+      "base_fingerprint": "",
+      "head_fingerprint": "",
+      "justifications": [
+        {
+          "accepted_unix": 1793325364,
+          "text": "tree-sitter and five grammars (Java, Kotlin, Python, JS, TS/TSX) for non-Rust bind markers; one binary serves every language"
+        }
+      ],
+      "metrics": {
+        "size_bytes": 14175992.0
+      }
+    }
+  },
+  "version": 1
+}
