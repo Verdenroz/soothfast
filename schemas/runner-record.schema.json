@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://verdenroz.github.io/soothfast/schemas/runner-record.schema.json",
+  "$id": "https://raw.githubusercontent.com/Verdenroz/soothfast/master/schemas/runner-record.schema.json",
   "title": "soothfast runner record",
   "description": "One line of a bench binary's `--json` output, which `measure` and `gate` collect. The stream is JSON Lines on stdout: a line not starting with `{` is ignored, but a line starting with `{` that is not valid JSON fails the run. Readers ignore a record whose `type` they do not know and ignore unknown keys in every record, so only the keys listed under `required` below are needed. Discovery runs (`--list --json`, `--list-routes --json`) emit `item` and `route` records the same way.",
   "type": "object",

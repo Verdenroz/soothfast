@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://verdenroz.github.io/soothfast/schemas/baseline.schema.json",
+  "$id": "https://raw.githubusercontent.com/Verdenroz/soothfast/master/schemas/baseline.schema.json",
   "title": "soothfast baseline",
   "description": "A saved measurement run, stored as .soothfast/baselines/NAME.json. `gate`, `docs check`, `report` and `trend` read it. Readers ignore unknown keys at every level and treat a missing key as absent, so every key is optional; a baseline without `items` simply measures nothing.",
   "type": "object",

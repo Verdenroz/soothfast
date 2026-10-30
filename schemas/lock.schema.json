@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://verdenroz.github.io/soothfast/schemas/lock.schema.json",
+  "$id": "https://raw.githubusercontent.com/Verdenroz/soothfast/master/schemas/lock.schema.json",
   "title": "soothfast.lock",
   "description": "Committed fingerprints of every bound item, at the workspace root. `docs check` reports a bind stale when its current fingerprint differs from the locked one; `docs accept` re-locks. Readers ignore unknown keys and default every missing key, so no key is required; a missing file reads as an empty map.",
   "type": "object",
