@@ -1,0 +1,307 @@
+name: soothfast-run
+
+# The one workflow a repo calls. `cargo soothfast plan` reads the repo's
+# soothfast.toml and says which jobs run; `cargo soothfast init` writes the
+# caller.
+on:
+  workflow_call:
+    inputs:
+      bot:
+        description: "Land regenerated files and act on labels as soothfast-bot"
+        required: false
+        type: boolean
+        default: false
+      runs_on:
+        description: "JSON runner labels for the plan job; the soothfast.toml [ci] table decides the rest"
+        required: false
+        type: string
+        default: '"ubuntu-latest"'
+      java:
+        description: "Java version for Gradle and Maven projects"
+        required: false
+        type: string
+        default: "21"
+      node:
+        description: "Node version for Node projects"
+        required: false
+        type: string
+        default: "22"
+
+permissions: {}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      projects: ${{ steps.plan.outputs.projects }}
+      rust: ${{ steps.plan.outputs.rust }}
+      test: ${{ steps.plan.outputs.test }}
+      runs_on: ${{ steps.plan.outputs.runs_on }}
+      packages: ${{ steps.plan.outputs.packages }}
+      docs: ${{ steps.plan.outputs.docs }}
+      docs_package: ${{ steps.plan.outputs.docs_package }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      # The action scripts at this workflow's own commit, whoever calls it.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ github.job_workflow_sha }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      # A repo that locks soothfast installs the CLI it builds against; any
+      # other repo installs the release this workflow belongs to.
+      - name: Pick the CLI version
+        id: version
+        run: |
+          if grep -qx 'name = "soothfast"' Cargo.lock 2>/dev/null; then
+            echo "version=" >> "$GITHUB_OUTPUT"
+          else
+            version=$(sed -n 's/^version = "\(.*\)"/\1/p' .soothfast-action/Cargo.toml | head -n 1)
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: ./.soothfast-action
+        with:
+          version: ${{ steps.version.outputs.version }}
+          gate: "false"
+          changelog: "false"
+      - name: Plan
+        id: plan
+        run: cargo soothfast plan --github >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.test == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ github.job_workflow_sha }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.soothfast-action
+        with:
+          version: ${{ needs.plan.outputs.version }}
+          gate: "false"
+          changelog: "false"
+      - run: cargo soothfast test
+
+  gate-rust:
+    name: Gate
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.packages != ''
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    environment: soothfast-bot
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ github.job_workflow_sha }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.soothfast-action
+        with:
+          version: ${{ needs.plan.outputs.version }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: ${{ inputs.bot && 'true' || 'false' }}
+
+  gate:
+    name: Gate (${{ matrix.name }})
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.outputs.projects == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ github.job_workflow_sha }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+          persist-credentials: false
+      - if: matrix.ecosystem == 'gradle' || matrix.ecosystem == 'maven'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java }}
+      - if: matrix.ecosystem == 'node'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ inputs.node }}
+      - if: matrix.ecosystem == 'python'
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.soothfast-action
+        with:
+          version: ${{ needs.plan.outputs.version }}
+          gate: "false"
+          changelog: "false"
+      # Both sides run on this runner. Walltime gates; set `walltime = "advisory"`
+      # under [gate] in soothfast.toml if the runner is too noisy to trust.
+      - name: Gate against the merge base
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          ECOSYSTEM: ${{ matrix.ecosystem }}
+          DIR: ${{ matrix.dir }}
+          BENCH_CMD: ${{ matrix.bench_cmd }}
+          OUT: ${{ matrix.bench_out }}
+          FROM: ${{ matrix.from }}
+          WALLTIME: ${{ matrix.walltime }}
+          PREFIX: ${{ matrix.prefix }}
+          RESULT: ${{ runner.temp }}/soothfast-result.txt
+        run: |
+          bench() { (cd "$1" && { [ "$ECOSYSTEM" != node ] || npm ci; } && eval "${BENCH_CMD//\{out\}/$OUT}"); }
+          base="$RUNNER_TEMP/base"
+          git worktree add "$base" "$(git merge-base HEAD "origin/$BASE_REF")"
+          [ "$DIR" = . ] || base="$base/$DIR"
+          bench .
+          if ! bench "$base" || [ ! -f "$base/$OUT" ]; then
+            echo "merge-base has no benchmark results; nothing to compare" | tee "$RESULT"
+            echo "::notice::merge-base has no benchmark results; nothing to compare"
+            exit 0
+          fi
+          cargo soothfast gate --import "$FROM" "$OUT" --reference-import "$FROM" "$base/$OUT" \
+            ${PREFIX:+--prefix "$PREFIX"} ${WALLTIME:+--walltime "$WALLTIME"} | tee "$RESULT"
+      - name: Upload the gate output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-result-${{ matrix.name }}
+          path: ${{ runner.temp }}/soothfast-result.txt
+          if-no-files-found: ignore
+
+  docs:
+    name: Docs check
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.docs == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ github.job_workflow_sha }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+          persist-credentials: false
+      - if: needs.plan.outputs.docs_package != ''
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly
+      - if: needs.plan.outputs.docs_package != ''
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.soothfast-action
+        with:
+          version: ${{ needs.plan.outputs.version }}
+          gate: "false"
+          changelog: "false"
+      - name: Check the docs
+        env:
+          DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
+        run: cargo soothfast docs check ${DOCS_PACKAGE:+-p "$DOCS_PACKAGE"}
+
+  labels:
+    name: Labels
+    needs: plan
+    if: inputs.bot && github.event_name != 'pull_request'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    environment: soothfast-bot
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ github.job_workflow_sha }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+          persist-credentials: false
+      - uses: ./.soothfast-action
+        with:
+          version: ${{ needs.plan.outputs.version }}
+          gate: "false"
+          changelog: "false"
+          labels: "true"
