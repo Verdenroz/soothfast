@@ -1,4 +1,4 @@
-//! The files and variables a rustdoc build read, taken from the dep-info
+//! The files and variables a build read, taken from the dep-info rustc,
 //! rustdoc and cargo wrote for it and from build script output.
 
 use std::collections::BTreeMap;
@@ -19,6 +19,24 @@ pub fn collect(root: &Path, dep_info: &Path, cargo_stdout: &[u8]) -> Inputs {
     if let Ok(text) = std::fs::read_to_string(dep_info) {
         add_dep_info(&mut inputs, root, &text);
     }
+    walk(&mut inputs, root, cargo_stdout);
+    inputs
+}
+
+/// The same for a build of the executable `exe`, whose own dep-info sits
+/// beside it. `None` when the dep-info of any workspace crate cannot be read,
+/// since the build then read files nobody knows of.
+pub fn collect_build(root: &Path, exe: &Path, cargo_stdout: &[u8]) -> Option<Inputs> {
+    let mut inputs = Inputs::default();
+    let text = std::fs::read_to_string(dep_info_beside(exe)).ok()?;
+    add_dep_info(&mut inputs, root, &text);
+    walk(&mut inputs, root, cargo_stdout).then_some(inputs)
+}
+
+/// Add what each workspace artifact and build script of `cargo_stdout` read.
+/// Whether every artifact's dep-info could be read.
+fn walk(inputs: &mut Inputs, root: &Path, cargo_stdout: &[u8]) -> bool {
+    let mut read_all = true;
     let mut package_dirs: BTreeMap<String, PathBuf> = BTreeMap::new();
     for msg in invoke::cargo_messages(cargo_stdout) {
         let Some(id) = msg["package_id"].as_str() else {
@@ -34,20 +52,21 @@ pub fn collect(root: &Path, dep_info: &Path, cargo_stdout: &[u8]) -> Inputs {
                     package_dirs.insert(id.to_string(), dir.to_path_buf());
                 }
                 if local {
-                    add_artifact(&mut inputs, root, &msg);
+                    read_all &= add_artifact(inputs, root, &msg);
                 }
             }
             Some("build-script-executed") => {
                 let dir = package_dirs.get(id).filter(|_| local);
-                add_build_script(&mut inputs, root, dir, &msg);
+                add_build_script(inputs, root, dir, &msg);
             }
             _ => {}
         }
     }
-    inputs
+    read_all
 }
 
-fn add_artifact(inputs: &mut Inputs, root: &Path, msg: &Value) {
+/// Whether the artifact's dep-info was read, or it names no file to have one.
+fn add_artifact(inputs: &mut Inputs, root: &Path, msg: &Value) -> bool {
     let is_build_script = msg["target"]["kind"]
         .as_array()
         .is_some_and(|k| k.iter().any(|k| k == "custom-build"));
@@ -55,17 +74,23 @@ fn add_artifact(inputs: &mut Inputs, root: &Path, msg: &Value) {
         inputs.files.insert(relative(root, Path::new(src)));
     }
     let Some(first) = msg["filenames"][0].as_str() else {
-        return;
+        return true;
     };
-    if let Ok(text) = std::fs::read_to_string(dep_info_beside(Path::new(first))) {
-        add_dep_info(inputs, root, &text);
-    }
+    let Ok(text) = std::fs::read_to_string(dep_info_beside(Path::new(first))) else {
+        return false;
+    };
+    add_dep_info(inputs, root, &text);
+    true
 }
 
-/// Cargo's `deps/libname-hash.rmeta` has its dep-info at `deps/name-hash.d`.
+/// Cargo's `deps/libname-hash.rmeta` has its dep-info at `deps/name-hash.d`,
+/// and an executable `deps/name-hash` at the same name.
 fn dep_info_beside(artifact: &Path) -> PathBuf {
     let stem = artifact.file_stem().unwrap_or_default().to_string_lossy();
-    let stem = stem.strip_prefix("lib").unwrap_or(&stem);
+    let stem = match artifact.extension() {
+        Some(_) => stem.strip_prefix("lib").unwrap_or(&stem),
+        None => &stem,
+    };
     artifact.with_file_name(format!("{stem}.d"))
 }
 

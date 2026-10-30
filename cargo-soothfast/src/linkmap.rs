@@ -12,6 +12,7 @@
 //! extents read from it are kept under `.soothfast/maps/`, named by the
 //! digest of the binary they describe, so they are never read for another.
 
+use crate::binstore;
 use crate::headrun::binary_digest;
 use crate::invoke::{self, CommonArgs};
 use crate::itemreuse::Bin;
@@ -161,6 +162,9 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
         && !extents.is_empty()
     {
         return Ok(extents);
+    }
+    if binstore::holds(bin.exe) {
+        return Err("a stored binary has no build to link again".into());
     }
     // Kept, not removed: cargo answers a repeated map build as fresh without
     // relinking, so the map from the first link is the only one there is.

@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use crate::{itemcache, linkmap, runcache, rustdocstore, store};
+use crate::{binstore, itemcache, linkmap, runcache, rustdocstore, store};
 
 pub fn run(args: &[String]) -> i32 {
     let [sub, flag, from] = args else {
@@ -27,11 +27,15 @@ pub fn run(args: &[String]) -> i32 {
         copy_missing(&from.join("rustdoc"), &dir);
         store::prune(&dir, rustdocstore::MAX_BYTES);
     }
+    if let Some(dir) = runcache::state_dir("bins") {
+        copy_missing(&from.join("bins"), &dir);
+        store::prune(&dir, binstore::MAX_BYTES);
+    }
     0
 }
 
-/// Copy each file of `from` that `into` does not have. Runs, link maps and
-/// rustdoc JSON are named by what they were made from, so a name that exists
+/// Copy each file of `from` that `into` does not have. Runs, link maps,
+/// bench executables and rustdoc JSON are named by what they were made from, so a name that exists
 /// is the same file.
 fn copy_missing(from: &Path, into: &Path) {
     let Ok(files) = std::fs::read_dir(from) else {
