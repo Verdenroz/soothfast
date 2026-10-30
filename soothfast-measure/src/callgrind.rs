@@ -20,11 +20,13 @@
 //! it averaged over.
 //!
 //! The executed function set is the union of the dumps for setup, the
-//! warm-up, the window and teardown; the handshake dump holds only this
+//! warm-up, the window and teardown; the handshake dump holds only the
 //! protocol's own I/O.
 
 use crate::clientreq;
-use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(target_os = "linux")]
+use crate::ctl;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -241,73 +243,72 @@ fn run_valgrind(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<Vec<St
 
 /// Run `id` in one valgrind process with `--callgrind-window`. The process
 /// dumps after setup and after a warm-up iteration, then tells this side so
-/// and waits for the number of iterations to measure, which this side picks
-/// from the warm-up's dump. Returns every dump and that number.
+/// over a control channel (see `ctl`) and waits for the number of iterations
+/// to measure, which this side picks from the warm-up's dump. Returns every
+/// dump and that number.
+#[cfg(target_os = "linux")]
 fn run_window(id: &str, tag: &str) -> Result<(Vec<String>, u64), String> {
     let out = out_file(tag);
-    let mut child = valgrind_cmd(&out, true)?
-        .args(["--callgrind-exec", id, "--callgrind-window"])
-        .stdin(Stdio::piped())
+    let control = ctl::Control::new().map_err(|e| e.to_string())?;
+    let mut cmd = valgrind_cmd(&out, true)?;
+    cmd.args(["--callgrind-exec", id, "--callgrind-window"])
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    control.attach(&mut cmd);
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to spawn valgrind: {e}"))?;
-    let (Some(mut stdin), Some(stdout), Some(mut stderr)) =
-        (child.stdin.take(), child.stdout.take(), child.stderr.take())
-    else {
+    let mut parent = control.into_parent();
+    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
         return Err("valgrind pipes were not opened".into());
     };
+    // A bench that prints much must not fill a pipe while this side waits.
+    let printed = std::thread::spawn(move || std::io::copy(&mut stdout, &mut std::io::sink()));
     let errors = std::thread::spawn(move || {
         let mut text = String::new();
         let _ = stderr.read_to_string(&mut text);
         text
     });
-    let mut window = None;
-    let mut failure = None;
-    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-        if window.is_none() && line == WARM {
-            let chosen = std::fs::read_to_string(format!("{}.2", out.display()))
-                .map_err(|e| e.to_string())
-                .and_then(|warmup| summary_ir(&warmup))
-                .map(window_for);
-            match chosen {
-                Ok(k) => {
-                    window = Some(k);
-                    let _ = writeln!(stdin, "{k}");
-                }
-                Err(e) => {
-                    failure = Some(e);
-                    let _ = child.kill();
-                    break;
-                }
-            }
-        }
+    let chosen = parent
+        .warmed()
+        .map_err(|e| format!("no warm-up report from the bench process: {e}"))
+        .and_then(|()| {
+            std::fs::read_to_string(format!("{}.2", out.display())).map_err(|e| e.to_string())
+        })
+        .and_then(|warmup| summary_ir(&warmup))
+        .map(window_for)
+        .and_then(|k| parent.send_window(k).map(|()| k).map_err(|e| e.to_string()));
+    if chosen.is_err() {
+        let _ = child.kill();
     }
-    drop(stdin);
     let status = child.wait().map_err(|e| e.to_string())?;
+    let _ = printed.join();
     let stderr = errors.join().unwrap_or_default();
     let dumps = take_dumps(&out);
-    if let Some(e) = failure {
-        return Err(e);
-    }
     if !status.success() {
         return Err(format!("valgrind failed ({status}): {stderr}"));
     }
-    let k = window.ok_or("valgrind exited before the warm-up iteration finished")?;
-    Ok((dumps?, k))
+    Ok((dumps?, chosen?))
 }
 
-/// Child side of [`run_window`]: announce the warm-up dump and read how many
-/// iterations to measure.
+#[cfg(not(target_os = "linux"))]
+fn run_window(_id: &str, _tag: &str) -> Result<(Vec<String>, u64), String> {
+    Err("the window method needs linux".into())
+}
+
+/// Bench process side of [`run_window`]: report the warm-up dumped and read
+/// how many iterations to measure.
+#[cfg(target_os = "linux")]
 pub fn negotiate_window() -> Result<u64, String> {
-    println!("{WARM}");
-    let mut line = String::new();
-    std::io::stdin()
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-    line.trim()
-        .parse()
-        .map_err(|_| format!("no window size from the parent: {line:?}"))
+    ctl::Child::from_env()?
+        .warmed()
+        .map_err(|e| format!("lost the callgrind control channel: {e}"))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn negotiate_window() -> Result<u64, String> {
+    Err("the window method needs linux".into())
 }
 
 /// Read and delete the dump files callgrind wrote for `out`, in dump order:
@@ -370,9 +371,6 @@ const K_MAX: u64 = 10;
 /// that choose different K differ by less than that.
 const WINDOW_IR: u64 = 2_000_000;
 
-/// Marks the end of the warm-up on the child's stdout.
-const WARM: &str = "soothfast-warm";
-
 /// Iterations to measure after a warm-up iteration of `warmup_ir`: as many as
 /// fit [`WINDOW_IR`], at most [`K_MAX`]. Powers of two keep an item's K the
 /// same across the small changes between a head and its base.
@@ -405,7 +403,7 @@ impl Method {
     /// The method this binary measures with.
     pub fn current() -> Method {
         let forced = std::env::var_os("SOOTHFAST_CALLGRIND_TWO_PROCESS").is_some_and(|v| v == "1");
-        if clientreq::SUPPORTED && !forced {
+        if cfg!(target_os = "linux") && clientreq::SUPPORTED && !forced {
             Method::OneProcess
         } else {
             Method::TwoProcess
