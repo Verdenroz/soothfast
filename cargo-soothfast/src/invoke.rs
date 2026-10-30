@@ -1237,12 +1237,23 @@ pub fn rustdoc_json_in(
         tracked = false;
         built = build(None)?;
     }
-    if !built.status.success() {
-        return Err(io::Error::other(format!(
+    let failed = |built: &Built| {
+        io::Error::other(format!(
             "cargo +{toolchain} rustdoc failed with {} \
              (is the {toolchain} toolchain installed?)",
             built.status
-        )));
+        ))
+    };
+    if !built.status.success() {
+        return Err(failed(&built));
+    }
+    // With `--emit=dep-info` rustdoc writes nothing else, so the JSON comes
+    // from a second run without it.
+    if tracked {
+        let plain = build(None)?;
+        if !plain.status.success() {
+            return Err(failed(&plain));
+        }
     }
     let text = std::fs::read_to_string(&json_path)
         .map_err(|e| io::Error::other(format!("cannot read {}: {e}", json_path.display())))?;
