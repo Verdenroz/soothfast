@@ -36,7 +36,6 @@ jobs:
     permissions:
       contents: read
     outputs:
-      version: ${{ steps.version.outputs.version }}
       matrix: ${{ steps.plan.outputs.matrix }}
       projects: ${{ steps.plan.outputs.projects }}
       rust: ${{ steps.plan.outputs.rust }}
@@ -63,22 +62,10 @@ jobs:
             action.yml
             Cargo.toml
           persist-credentials: false
-      # A repo that locks soothfast installs the CLI it builds against; any
-      # other repo installs the release this workflow belongs to.
-      - name: Pick the CLI version
-        id: version
-        run: |
-          if grep -qx 'name = "soothfast"' Cargo.lock 2>/dev/null; then
-            echo "version=" >> "$GITHUB_OUTPUT"
-          else
-            version=$(sed -n 's/^version = "\(.*\)"/\1/p' .soothfast-action/Cargo.toml | head -n 1)
-            echo "version=$version" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: ./.soothfast-action
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
         with:
-          version: ${{ steps.version.outputs.version }}
-          gate: "false"
-          changelog: "false"
+          sha: ${{ github.job_workflow_sha }}
       - name: Plan
         id: plan
         run: cargo soothfast plan --github >> "$GITHUB_OUTPUT"
@@ -105,16 +92,16 @@ jobs:
           sparse-checkout: |
             action
             action.yml
+            Cargo.toml
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: ./.soothfast-action
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
         with:
-          version: ${{ needs.plan.outputs.version }}
-          gate: "false"
-          changelog: "false"
+          sha: ${{ github.job_workflow_sha }}
       - run: cargo soothfast test
 
   gate-rust:
@@ -143,14 +130,19 @@ jobs:
           sparse-checkout: |
             action
             action.yml
+            Cargo.toml
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
+        with:
+          sha: ${{ github.job_workflow_sha }}
       - uses: ./.soothfast-action
         with:
-          version: ${{ needs.plan.outputs.version }}
+          binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
           changelog: ${{ inputs.bot && 'true' || 'false' }}
 
@@ -183,6 +175,7 @@ jobs:
           sparse-checkout: |
             action
             action.yml
+            Cargo.toml
           persist-credentials: false
       - if: matrix.ecosystem == 'gradle' || matrix.ecosystem == 'maven'
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
@@ -195,11 +188,10 @@ jobs:
           node-version: ${{ inputs.node }}
       - if: matrix.ecosystem == 'python'
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-      - uses: ./.soothfast-action
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
         with:
-          version: ${{ needs.plan.outputs.version }}
-          gate: "false"
-          changelog: "false"
+          sha: ${{ github.job_workflow_sha }}
       # Both sides run on this runner. Walltime gates; set `walltime = "advisory"`
       # under [gate] in soothfast.toml if the runner is too noisy to trust.
       - name: Gate against the merge base
@@ -257,6 +249,7 @@ jobs:
           sparse-checkout: |
             action
             action.yml
+            Cargo.toml
           persist-credentials: false
       - if: needs.plan.outputs.docs_package != ''
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -264,11 +257,10 @@ jobs:
           toolchain: nightly
       - if: needs.plan.outputs.docs_package != ''
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: ./.soothfast-action
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
         with:
-          version: ${{ needs.plan.outputs.version }}
-          gate: "false"
-          changelog: "false"
+          sha: ${{ github.job_workflow_sha }}
       - name: Check the docs
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
@@ -298,10 +290,15 @@ jobs:
           sparse-checkout: |
             action
             action.yml
+            Cargo.toml
           persist-credentials: false
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
+        with:
+          sha: ${{ github.job_workflow_sha }}
       - uses: ./.soothfast-action
         with:
-          version: ${{ needs.plan.outputs.version }}
+          binary: ${{ steps.soothfast.outputs.bin }}
           gate: "false"
           changelog: "false"
           labels: "true"

@@ -1,0 +1,56 @@
+name: install-cargo-soothfast
+description: >-
+  Install cargo-soothfast for the reusable run workflow: the crates.io release
+  named by the caller's Cargo.lock, else by the workflow's own workspace
+  version, else a build of the workflow's own commit. Expects the workflow's
+  repository checked out at `.soothfast-action`.
+inputs:
+  sha:
+    description: Commit of the workflow's repository to build when no release matches.
+    required: true
+outputs:
+  bin:
+    description: Path of the installed cargo-soothfast.
+    value: ${{ steps.resolve.outputs.bin }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve cargo-soothfast
+      id: resolve
+      shell: bash
+      run: |
+        version=$(grep -A1 '^name = "soothfast"$' "$GITHUB_WORKSPACE/Cargo.lock" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -n 1)
+        if [ -z "$version" ]; then
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$GITHUB_WORKSPACE/.soothfast-action/Cargo.toml" | head -n 1)
+        fi
+        if curl -fsS -A soothfast-ci -o /dev/null "https://crates.io/api/v1/crates/cargo-soothfast/$version"; then
+          released=true
+        else
+          released=false
+        fi
+        {
+          echo "version=$version"
+          echo "released=$released"
+          echo "bin=${CARGO_HOME:-$HOME/.cargo}/bin/cargo-soothfast"
+        } >> "$GITHUB_OUTPUT"
+    - name: Install the release
+      if: steps.resolve.outputs.released == 'true'
+      uses: ./.soothfast-action
+      with:
+        version: ${{ steps.resolve.outputs.version }}
+        gate: "false"
+        changelog: "false"
+    - name: Restore the build of this commit
+      if: steps.resolve.outputs.released != 'true'
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.resolve.outputs.bin }}
+        key: cargo-soothfast-git-${{ runner.os }}-${{ runner.arch }}-${{ inputs.sha }}
+    - name: Build this commit
+      if: steps.resolve.outputs.released != 'true' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+      run: cargo install --locked --git https://github.com/Verdenroz/soothfast --rev "$SHA" cargo-soothfast
