@@ -108,19 +108,13 @@ fn a_written_lockfile_conforms_to_its_schema() {
 }
 
 #[test]
-fn runner_samples_conform_to_the_record_schema() {
-    let records: Vec<Value> = ["runner-captured.jsonl", "runner-hand.jsonl"]
-        .iter()
-        .flat_map(|f| {
-            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("src/schema_samples")
-                .join(f);
-            std::fs::read_to_string(path)
-                .unwrap()
-                .lines()
-                .map(|l| serde_json::from_str(l).unwrap())
-                .collect::<Vec<Value>>()
-        })
+fn runner_records_conform_to_the_record_schema() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/schema_samples/runner-records.jsonl");
+    let records: Vec<Value> = std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
         .collect();
     assert_all_conform("runner-record.schema.json", &records);
 }
