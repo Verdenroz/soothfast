@@ -3,11 +3,36 @@
 ## Unreleased (draft vs v0.4.4)
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+soothfast now sets up and gates repositories that are not only Rust.
+`cargo soothfast init` finds Gradle, Maven, Python and Node projects next to
+a cargo workspace, records them as `[[project]]` tables, and writes a short
+caller for a reusable workflow that plans, tests, gates and checks docs for
+every project and posts one verdict comment and one required check per pull
+request. Docs bind to Java, Kotlin, Python, JavaScript and TypeScript
+symbols, and JMH, pyperf, pytest-benchmark and vitest results gate next to
+Rust benches. Gates also do much less repeated work: per-item reuse now
+holds across small code changes, sweep items are stored, callgrind measures
+each item in one process with a window sized to it, and rustdoc JSON and
+built bench executables can be kept between runs.
+
+### Upgrade notes
+
+- The first gate after upgrading compares against a merge-base measured the
+  old way. Callgrind now counts in one process, so that gate reports
+  `HARNESS MISMATCH` and is marked inconclusive rather than compared. The
+  next gate compares normally.
+- Stored runs and items are keyed on the callgrind method, so the first run
+  after upgrading measures every item in full once.
+- Under callgrind, a `complexity` claim is fitted on instruction counts per
+  size instead of walltime medians. A verdict near its bound may flip once.
+- `init --check` reports the generated workflows as out of date until you
+  rerun `init`. Moving to the reusable workflow is opt-in: rerun `init`
+  with `--force` to replace an existing generated workflow.
+- `soothfast.toml` rejects unknown keys in `[[project]]` and `[docs]`.
+- The composite action's new `bin-cache` and `rustdoc-cache` inputs default
+  to off. `docs/ci.md` lists what a self-hosted runner has to provide.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
