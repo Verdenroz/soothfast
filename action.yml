@@ -119,6 +119,16 @@ inputs:
     description: Space-separated pathspecs `regen-run` may change.
     required: false
     default: ""
+  labels:
+    description: >-
+      On default-branch pushes and schedules, act on the soothfast labels of
+      open pull requests as soothfast-bot: `soothfast:merge` queues
+      auto-merge behind the required checks, `do-not-merge` cancels it, and
+      `soothfast:update` brings a pull request that fell behind up to date.
+      A pull request gate labelled `soothfast:perf-accepted` reports its
+      regressions without failing, whatever this is set to.
+    required: false
+    default: "false"
   shard:
     description: >-
       `I/N` to gate only the items shard I of N owns, for a job matrix that
@@ -209,6 +219,7 @@ runs:
         REGEN: ${{ inputs.changelog == 'true' || inputs.spec != '' || inputs.regen-run != '' }}
         PACKAGES: ${{ inputs.packages }}
         RUSTDOC_TOOLCHAIN: ${{ inputs.rustdoc-toolchain }}
+        LABELS: ${{ inputs.labels }}
         CACHE: ${{ inputs.cache }}
         SHARD: ${{ inputs.shard }}
         GH_TOKEN: ${{ inputs.token }}
@@ -297,6 +308,22 @@ runs:
           .soothfast/items
           .soothfast/maps
         key: ${{ steps.save-key.outputs.key }}
+
+    - name: Mint a soothfast-bot token for labels
+      if: steps.prepare.outputs.sweep == 'true' && inputs.bot-token == ''
+      id: sweep-bot
+      shell: bash
+      env:
+        BROKER: ${{ inputs.broker }}
+      run: "$GITHUB_ACTION_PATH/action/bot-token.sh"
+    - name: Act on pull request labels
+      if: steps.prepare.outputs.sweep == 'true'
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.bot-token || steps.sweep-bot.outputs.token }}
+        DEFAULT_BRANCH: ${{ steps.prepare.outputs.default_branch }}
+        REVOKE: ${{ inputs.bot-token == '' }}
+      run: "$GITHUB_ACTION_PATH/action/sweep.sh"
 
     - name: Regenerate derived files
       if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true'

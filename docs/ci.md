@@ -152,10 +152,32 @@ installed on is refused.
 | `bot-token` | none | Bring your own soothfast-bot installation token; skips the broker. |
 | `bot-slug` | `soothfast-bot` | App slug `bot-token` belongs to, for the commit author. |
 | `broker` | built in | Token broker URL. |
+| `labels` | `false` | On default-branch pushes and schedules, act on pull request labels as soothfast-bot (see [Labels](#labels)). |
 | `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
 | `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded. |
 
 Outputs are `version` and `cache-hit`.
+
+## Labels
+
+With `labels: "true"` on a job that runs on default-branch pushes and on a
+schedule, soothfast-bot sweeps the open pull requests:
+
+| Label | Effect |
+|---|---|
+| `soothfast:merge` | Queue auto-merge (squash) behind the required checks. Refused when the default branch requires no status check, since the merge would happen at once. |
+| `soothfast:update` | Merge the default branch into a pull request that fell behind. |
+| `do-not-merge` | Cancel a queued auto-merge and leave the pull request alone. |
+
+A pull request gate labelled `soothfast:perf-accepted` reports its
+regressions in the comment and passes; label the pull request, then re-run
+the failed gate. The label waives regressions only, never a gate that
+errored. A label counts only when the person who last applied it can write
+to the repository, so neither a fork nor the Triage role can merge a pull
+request or waive its regression through soothfast-bot. `do-not-merge` counts
+from anyone, since it only holds a merge back. The sweep runs on events the
+broker mints tokens for, so no `pull_request` run gets a write token. `cargo soothfast init --bot --labels` writes the job and
+creates the labels.
 
 ## Bringing your own token
 

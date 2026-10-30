@@ -1,6 +1,7 @@
 
   gate:
     name: Gate
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     environment: soothfast-bot
     permissions:

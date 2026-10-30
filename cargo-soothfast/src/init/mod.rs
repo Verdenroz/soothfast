@@ -12,6 +12,30 @@ use crate::{invoke, workspace};
 const WORKFLOW: &str = include_str!("workflow.yml.tmpl");
 const GATE_JOB: &str = include_str!("gate_job.yml.tmpl");
 const DOCS_JOB: &str = include_str!("docs_job.yml.tmpl");
+const LABELS_JOB: &str = include_str!("labels_job.yml.tmpl");
+
+/// The labels soothfast acts on, with their colour and description.
+const LABELS: &[(&str, &str, &str)] = &[
+    (
+        "soothfast:merge",
+        "0e8a16",
+        "Merge once the required checks pass",
+    ),
+    (
+        "soothfast:update",
+        "1d76db",
+        "Keep this branch up to date with the default branch",
+    ),
+    (
+        "soothfast:perf-accepted",
+        "fbca04",
+        "The gate's regressions are intended",
+    ),
+    ("do-not-merge", "b60205", "Cancel any queued merge"),
+];
+
+/// How often the labels job sweeps when nothing has pushed.
+const SCHEDULE: &str = "  schedule:\n    - cron: \"*/30 * * * *\"\n";
 
 const WORKFLOW_PATH: &str = ".github/workflows/soothfast.yml";
 
@@ -108,6 +132,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut check = false;
     let mut force = false;
     let mut bot = false;
+    let mut labels = false;
     let mut bench: Vec<String> = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -115,6 +140,7 @@ pub fn run(args: &[String]) -> i32 {
             "--check" => check = true,
             "--force" => force = true,
             "--bot" => bot = true,
+            "--labels" => labels = true,
             "-p" | "--package" => match it.next() {
                 Some(p) => bench.push(p.clone()),
                 None => return err("-p needs a package to add a bench target to"),
@@ -131,7 +157,26 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     let files = scaffold(&ws);
-    report(&root, &files, check, force)
+    let rc = report(&root, &files, check, force);
+    if labels && !check && rc == 0 {
+        return create_labels();
+    }
+    rc
+}
+
+/// Create or refresh the labels on the repository `gh` resolves here.
+fn create_labels() -> i32 {
+    for (name, color, description) in LABELS {
+        let status = Command::new("gh")
+            .args(["label", "create", name, "--force", "--color", color])
+            .args(["--description", description])
+            .status();
+        match status {
+            Ok(s) if s.success() => println!("label    {name}"),
+            _ => return err(&format!("could not create label {name} (is gh signed in?)")),
+        }
+    }
+    0
 }
 
 /// What the scaffold derives from, after giving each of `bench` a bench
@@ -211,7 +256,9 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
 }
 
 fn workflow(ws: &Workspace) -> String {
-    let mut text = WORKFLOW.replace("@@default_branch@@", &ws.default_branch);
+    let mut text = WORKFLOW
+        .replace("@@default_branch@@", &ws.default_branch)
+        .replace("@@schedule@@", if ws.bot { SCHEDULE } else { "" });
     if !ws.benched.is_empty() {
         text.push_str(
             &GATE_JOB
@@ -221,6 +268,9 @@ fn workflow(ws: &Workspace) -> String {
     }
     if let Some(pkg) = &ws.docs_package {
         text.push_str(&DOCS_JOB.replace("@@docs_package@@", pkg));
+    }
+    if ws.bot {
+        text.push_str(LABELS_JOB);
     }
     text.replace("@@action@@", &ws.action)
 }
@@ -441,11 +491,15 @@ mod tests {
     }
 
     #[test]
-    fn the_bot_turns_the_changelog_on() {
+    fn the_bot_adds_a_schedule_and_the_labels_job() {
+        let plain = workflow(&ws(&[], None));
+        assert!(!plain.contains("schedule:") && !plain.contains("labels: \"true\""));
         let bot = workflow(&Workspace {
             bot: true,
             ..ws(&["a"], None)
         });
+        assert!(bot.contains("  schedule:\n    - cron:"));
+        assert!(bot.contains("\n  labels:\n"));
         assert!(bot.contains("changelog: \"true\""));
         assert!(!bot.contains("@@"));
     }
