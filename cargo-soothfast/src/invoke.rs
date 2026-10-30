@@ -264,8 +264,9 @@ fn bench_command(
     target_dir: Option<&Path>,
     build: Build,
 ) -> io::Result<Command> {
-    let mut cmd = match benchexe::served(common, dir, target_dir, build) {
-        Some(stored) => stored.command(),
+    let fill = matches!(build, Build::Discover);
+    let mut cmd = match benchexe::run_command(common, dir, target_dir, build, fill) {
+        Some(cmd) => cmd,
         None => {
             let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
             let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs)?;
@@ -347,9 +348,6 @@ fn run_records(
     };
     args.extend(owned.iter().flat_map(|id| ["--id", id.as_str()]));
     let target = common.target.as_deref().unwrap_or("soothfast");
-    if let Build::Discover = build {
-        benchexe::executable(common, dir, target_dir, build);
-    }
     let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -429,7 +427,7 @@ pub fn prebuild_benches(
                 pkg: Some(pkg.to_string()),
                 ..common.clone()
             };
-            benchexe::lookup(&one, dir, target_dir, Build::Measure).is_none()
+            !benchexe::is_stored(&one, dir, target_dir, Build::Measure)
         })
         .collect();
     if names.is_empty() {
@@ -1365,7 +1363,7 @@ fn rustdoc_store_key(
 ) -> Option<String> {
     let crate_dirs = crate_dirs(pkg, dir)?;
     let rustc = store::rustc_version(Some(toolchain), root)?;
-    let env = store::build_env();
+    let env = store::build_env(&[]);
     let request = rustdocstore::Request {
         pkg,
         features,

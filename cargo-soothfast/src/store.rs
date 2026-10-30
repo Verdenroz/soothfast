@@ -33,15 +33,7 @@ const ENV_PREFIXES: [&str; 4] = [
 ];
 
 /// Single variables that change what rustc and rustdoc compile.
-const ENV_NAMES: [&str; 7] = [
-    "RUSTFLAGS",
-    "RUSTDOCFLAGS",
-    "RUSTC",
-    "RUSTC_WRAPPER",
-    "RUSTC_WORKSPACE_WRAPPER",
-    "RUSTUP_TOOLCHAIN",
-    "CARGO_INCREMENTAL",
-];
+const ENV_NAMES: [&str; 2] = ["RUSTFLAGS", "RUSTDOCFLAGS"];
 
 /// Members of those families that only say where or how fast to build.
 const ENV_IGNORED: [&str; 3] = [
@@ -179,18 +171,24 @@ pub fn rustc_version(toolchain: Option<&str>, dir: &Path) -> Option<String> {
     version
 }
 
-/// The set variables that change what rustc and rustdoc compile.
-pub fn build_env() -> Vec<(String, String)> {
+/// The set variables that change what rustc and rustdoc compile, and those
+/// of `extra` the caller also depends on.
+pub fn build_env(extra: &[&str]) -> Vec<(String, String)> {
     select_env(
         std::env::vars_os()
             .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))),
+        extra,
     )
 }
 
-fn select_env(vars: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
+fn select_env(
+    vars: impl Iterator<Item = (String, String)>,
+    extra: &[&str],
+) -> Vec<(String, String)> {
     let mut picked: Vec<_> = vars
         .filter(|(name, _)| {
             ENV_NAMES.contains(&name.as_str())
+                || extra.contains(&name.as_str())
                 || (ENV_PREFIXES.iter().any(|p| name.starts_with(p))
                     && !ENV_IGNORED.contains(&name.as_str()))
         })
@@ -288,7 +286,7 @@ pub fn lookup(dir: &Path, key: &str, root: &Path, ext: &str) -> Option<PathBuf> 
     let manifest = std::fs::read_to_string(dir.join(format!("{key}.manifest"))).ok()?;
     let inputs = Inputs::from_json(&serde_json::from_str(&manifest).ok()?)?;
     let path = entry_path(dir, key, &inputs.digest(root)?, ext);
-    let file = File::options().write(true).open(&path).ok()?;
+    let file = File::open(&path).ok()?;
     let _ = file.set_modified(SystemTime::now());
     Some(path)
 }
@@ -335,26 +333,52 @@ pub fn copy_atomic(from: &Path, to: &Path) -> bool {
     std::fs::copy(from, &tmp).is_ok() && std::fs::rename(&tmp, to).is_ok()
 }
 
+/// The entry a file of the store belongs to: the key it is named for.
+fn entry_of(name: &str) -> &str {
+    name.split(['-', '.']).next().unwrap_or(name)
+}
+
 /// Remove the least recently used entries of `dir` beyond `max_bytes`,
-/// always keeping the newest. Files being written (`*.tmp`) are left alone.
+/// always keeping the newest. An entry is every file named for one key, and
+/// its age is that of its newest payload, so a manifest or a file kept beside
+/// the payload never outlives it. Files being written (`*.tmp`) are left alone.
 pub fn prune(dir: &Path, max_bytes: u64) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(listing) = std::fs::read_dir(dir) else {
         return;
     };
-    let mut files: Vec<_> = entries
-        .flatten()
-        .filter(|e| e.path().extension().is_none_or(|x| x != "tmp"))
-        .filter_map(|e| {
-            let meta = e.metadata().ok()?;
-            Some((meta.modified().ok()?, meta.len(), e.path()))
-        })
-        .collect();
-    files.sort_by_key(|(t, _, _)| std::cmp::Reverse(*t));
+    type Entry = (Option<SystemTime>, SystemTime, u64, Vec<PathBuf>);
+    let mut entries: std::collections::BTreeMap<String, Entry> = Default::default();
+    for e in listing.flatten() {
+        let path = e.path();
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Ok(meta) = e.metadata() else { continue };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if path.extension().is_some_and(|x| x == "tmp") {
+            continue;
+        }
+        let entry =
+            entries
+                .entry(entry_of(&name).to_string())
+                .or_insert((None, modified, 0, Vec::new()));
+        let payload = name.ends_with(".bin") || name.ends_with(".json");
+        if payload {
+            entry.0 = entry.0.max(Some(modified));
+        }
+        entry.1 = entry.1.max(modified);
+        entry.2 += meta.len();
+        entry.3.push(path);
+    }
+    let mut entries: Vec<_> = entries.into_values().collect();
+    entries.sort_by_key(|(payload, any, _, _)| std::cmp::Reverse(payload.unwrap_or(*any)));
     let mut kept = 0;
-    for (i, (_, len, path)) in files.into_iter().enumerate() {
+    for (i, (_, _, len, files)) in entries.into_iter().enumerate() {
         kept += len;
         if i > 0 && kept > max_bytes {
-            let _ = std::fs::remove_file(path);
+            for file in files {
+                let _ = std::fs::remove_file(file);
+            }
         }
     }
 }
@@ -520,7 +544,10 @@ mod tests {
             ("CARGO_BUILD_JOBS", "4"),
             ("HOME", "/home/x"),
         ];
-        let picked = select_env(vars.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+        let picked = select_env(
+            vars.iter().map(|(k, v)| (k.to_string(), v.to_string())),
+            &["RUSTC_WRAPPER", "CARGO_INCREMENTAL"],
+        );
         let names: Vec<_> = picked.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             names,
@@ -638,6 +665,35 @@ mod tests {
             .filter(|e| e.path().extension().is_some_and(|x| x == "tmp"))
             .count();
         assert_eq!(temps, 0);
+    }
+
+    #[test]
+    fn pruning_removes_an_entry_whole_by_the_age_of_its_payload() {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-prune-entry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = SystemTime::now();
+        for (name, age) in [
+            ("a.manifest", 1),
+            ("a-1.bin", 50),
+            ("a-1.bin.digest", 1),
+            ("b.manifest", 2),
+            ("b-1.bin", 10),
+        ] {
+            let path = dir.join(name);
+            std::fs::write(&path, [0u8; 10]).unwrap();
+            let file = File::options().write(true).open(&path).unwrap();
+            file.set_modified(now - Duration::from_secs(age)).unwrap();
+        }
+        prune(&dir, 20);
+        let mut left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["b-1.bin", "b.manifest"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

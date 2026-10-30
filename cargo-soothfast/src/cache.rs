@@ -29,6 +29,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     if let Some(dir) = runcache::state_dir("bins") {
         copy_missing(&from.join("bins"), &dir);
+        binstore::keep_newest(&dir);
         store::prune(&dir, binstore::MAX_BYTES);
     }
     0

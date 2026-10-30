@@ -90,17 +90,26 @@ fn read_dep_info(artifact: &Path) -> Option<String> {
     read(artifact).or_else(|| read(&deps_twin(artifact)?))
 }
 
-/// Cargo links a binary at `target/<profile>/name` to `deps/name-hash`, which
-/// is the file the dep-info is named for.
+/// Cargo links a binary at `target/<profile>/name` to `deps/name-hash`, and a
+/// build script at `build/pkg-hash/build-script-build` to
+/// `build_script_build-hash` beside it. The hashed file is the one the dep-info
+/// is named for.
 #[cfg(unix)]
 fn deps_twin(artifact: &Path) -> Option<PathBuf> {
     use std::os::unix::fs::MetadataExt;
 
+    let parent = artifact.parent()?;
     let inode = std::fs::metadata(artifact).ok()?.ino();
-    std::fs::read_dir(artifact.parent()?.join("deps"))
-        .ok()?
+    [parent.join("deps"), parent.to_path_buf()]
+        .iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
         .flatten()
-        .find(|e| e.path().extension().is_none() && e.metadata().is_ok_and(|m| m.ino() == inode))
+        .flatten()
+        .find(|e| {
+            e.path() != artifact
+                && e.path().extension().is_none()
+                && e.metadata().is_ok_and(|m| m.ino() == inode)
+        })
         .map(|e| e.path())
 }
 

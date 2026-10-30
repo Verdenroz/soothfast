@@ -8,16 +8,24 @@
 //! directory (through `OUT_DIR`). Both are part of the key, so a tree built at
 //! another path misses.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::runcache;
 use crate::store::{self, Inputs};
 
 /// Bytes kept before the least recently used entries are dropped.
 pub(crate) const MAX_BYTES: u64 = 1 << 29;
+
+/// Variables a bench build depends on beyond the ones every compile does.
+pub const ENV_NAMES: [&str; 5] = [
+    "RUSTC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUSTUP_TOOLCHAIN",
+    "CARGO_INCREMENTAL",
+];
 
 /// One bench build, as far as the key is concerned.
 pub struct Request<'a> {
@@ -76,7 +84,7 @@ pub fn load(dir: &Path, key: &str, root: &Path) -> Option<PathBuf> {
 /// Keep the executable cargo wrote at `exe` for a build that started at
 /// `started`, unless the tree was edited meanwhile: `key` must still be the
 /// key the tree computes (`key_now`), and no input may be newer than the build.
-/// The entry replaces any other of its `group`. Returns the entry it made.
+/// The entry replaces any older one of its `group`. Returns the entry it made.
 #[allow(clippy::too_many_arguments)]
 pub fn store(
     dir: &Path,
@@ -92,36 +100,53 @@ pub fn store(
         return None;
     }
     let entry = store::insert(dir, key, root, inputs, started, exe, "bin")?;
-    store::write_atomic(&dir.join(format!("{key}.group")), group.as_bytes());
-    STORED
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .push((exe.to_path_buf(), entry.clone()));
+    let born = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    store::write_atomic(
+        &dir.join(format!("{key}.group")),
+        format!("{born}\n{group}").as_bytes(),
+    );
+    store::write_atomic(&link(exe), entry.as_os_str().as_encoded_bytes());
     keep_newest(dir);
     store::prune(dir, MAX_BYTES);
     Some(entry)
 }
 
 /// Remove every executable but the newest of its group, with the files kept
-/// beside it. A cache holds the binary a branch's lineage runs, not its history.
-fn keep_newest(dir: &Path) {
+/// beside it. A cache holds the binary a branch's lineage runs, not its
+/// history. Age is the time the entry was made, which a merge keeps.
+pub fn keep_newest(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    let mut bins: Vec<_> = entries
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "bin"))
-        .filter_map(|e| {
-            let name = e.file_name().into_string().ok()?;
-            let (key, _) = name.split_once('-')?;
-            let group = std::fs::read_to_string(dir.join(format!("{key}.group"))).ok()?;
-            Some((group, e.metadata().ok()?.modified().ok()?, e.path()))
-        })
-        .collect();
-    bins.sort_by_key(|(_, t, _)| std::cmp::Reverse(*t));
-    let mut seen = BTreeSet::new();
-    for (group, _, entry) in bins {
-        if !seen.insert(group) {
+    let mut groups: BTreeMap<String, Vec<(u128, PathBuf)>> = BTreeMap::new();
+    for e in entries.flatten() {
+        let Ok(name) = e.file_name().into_string() else {
+            continue;
+        };
+        let Some((key, _)) = name.split_once('-') else {
+            continue;
+        };
+        if e.path().extension().is_none_or(|x| x != "bin") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(dir.join(format!("{key}.group"))) else {
+            continue;
+        };
+        let Some((born, group)) = text.split_once('\n') else {
+            continue;
+        };
+        let Ok(born) = born.parse() else { continue };
+        groups
+            .entry(group.to_string())
+            .or_default()
+            .push((born, e.path()));
+    }
+    for mut entries in groups.into_values() {
+        entries.sort_by_key(|(born, _)| std::cmp::Reverse(*born));
+        for (_, entry) in entries.into_iter().skip(1) {
             for ext in ["digest", "extents"] {
                 let _ = std::fs::remove_file(sidecar(&entry, ext));
             }
@@ -136,20 +161,22 @@ pub fn holds(exe: &Path) -> bool {
     dir().is_some_and(|d| exe.starts_with(d))
 }
 
-/// Executables this process stored, with the entry made from each.
-static STORED: Mutex<Vec<(PathBuf, PathBuf)>> = Mutex::new(Vec::new());
+/// The file beside a built executable that names the entry made from it.
+fn link(exe: &Path) -> PathBuf {
+    let mut name = exe.file_name().unwrap_or_default().to_os_string();
+    name.push(".soothfast-entry");
+    exe.with_file_name(name)
+}
 
 /// The entry holding the bytes of `exe`: itself when it lies in the store,
-/// else the entry a store of it made in this process.
+/// else the entry made from it, if that is still the same size.
 pub fn entry_of(exe: &Path) -> Option<PathBuf> {
     if holds(exe) {
         return Some(exe.to_path_buf());
     }
-    let stored = STORED.lock().unwrap_or_else(PoisonError::into_inner);
-    stored
-        .iter()
-        .find(|(e, _)| e == exe)
-        .map(|(_, s)| s.clone())
+    let entry = PathBuf::from(std::fs::read_to_string(link(exe)).ok()?);
+    let same = std::fs::metadata(&entry).ok()?.len() == std::fs::metadata(exe).ok()?.len();
+    same.then_some(entry)
 }
 
 /// What was worked out from the bytes of `exe` and kept with its entry.

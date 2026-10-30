@@ -215,8 +215,12 @@ build for the route listing behind `spec check`. A change that leaves the
 sources alone, a docs-only pull request, yields the same bytes, and the
 build dominates the job. `bin-cache` keeps `.soothfast/bins` between runs;
 a job that finds its executable there builds nothing, and the gate
-runs the stored file directly, from the package directory with
-`CARGO_MANIFEST_DIR` set as `cargo bench` would.
+runs the stored file directly. It gets the package directory as its working
+directory, as `cargo bench` gives it, and the variables `CARGO_MANIFEST_DIR`
+and `CARGO_PKG_NAME`. Other `CARGO_*` variables and `LD_LIBRARY_PATH` are not
+set. A tree with a configured cargo `runner` (a `runner` key in the
+repository's or `CARGO_HOME`'s config, or a `CARGO_TARGET_*_RUNNER` variable)
+is never served from the store, since the runner is part of what is measured.
 
 The key and the manifest are built as for the [rustdoc cache](#rustdoc-cache),
 over the package, bench target, profile, features, `codegen-units` pin,
@@ -243,13 +247,16 @@ runs misses; CI runners use one path per repository.
 Each entry also keeps the digest of its binary and its link map, written
 once the first run has worked them out. A hit reads the digest instead of
 computing it, and puts the map back under `.soothfast/maps` if that was
-pruned. A stored binary has no build to link again, so a map found nowhere
-means none: unnamed constants then hash as whole sections, which finds fewer
-reusable items but never a wrong one.
+pruned. A map found nowhere is made by linking the bench target again, which
+on a cold target directory means a full build, once: the map is then kept in
+the entry for the runs after it.
 
-The store holds one executable per package, bench target and profile: a
-new one replaces the old, so a saved cache is the binary the branch runs and
-not its history.
+The store holds one executable per checkout, target directory, package, bench
+target, features and profile: a newer one replaces the older, so a saved
+cache is the binary the branch runs and not its history. The merge-base
+worktree builds elsewhere and so has its own. `cache merge` keeps the newest
+of each group by the time it was made, and pruning by size removes whole
+entries, oldest payload first.
 
 ### Cache budget
 
