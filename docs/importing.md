@@ -37,7 +37,7 @@ renamed:
 |--------|------|
 | JMH | `benchmark[mode=M,k=v,...]`: the mode first, then its params sorted by key, so one benchmark run in several modes keeps one id per mode |
 | pyperf | the benchmark's `metadata.name`, else the file's (`timeit` for `pyperf timeit`) |
-| pytest-benchmark | `fullname` |
+| pytest-benchmark | `fullname`, its file path made relative to the project root so a checkout's directory name never enters an id |
 | vitest | `<group full name> > <benchmark name>`, the group name being file-relative as vitest prints it |
 
 Two benchmarks that map to one id are an error.
@@ -196,6 +196,9 @@ labels = ["self-hosted", "linux"]
 
 [test]
 ci = false
+
+[docs]
+package = ["my-core"]
 ```
 
 A project may also set `prefix` (the item-name prefix of the imported
@@ -204,13 +207,19 @@ results). Its `walltime` is `"hard"` unless set to `"advisory"`; init writes
 the cargo workspace. `[runner] labels` is a list of runner labels (no table
 means `ubuntu-latest`), and `ci = false` under `[test]` drops the cargo
 `test` job (the other `[test]` keys are unchanged). Init writes them only for
-`--runner-labels A,B` and `--no-test`.
+`--runner-labels A,B` and `--no-test`. `[docs] package` (a name or a list)
+names the packages `docs check` reads; without it, init picks the workspace
+packages the markdown binds (`crate::path`) name, else the root package, and
+writes what it chose.
 
 A repo with only a cargo workspace keeps the workflow init has always
 written. Once it has other projects, `[runner]` labels or `ci = false` under
 `[test]`, the workflow is a caller: triggers, permissions and one job that uses
-`.github/workflows/run.yml` from this repository at the pinned release. It
-passes no secrets: the bot authenticates by OIDC and comments use the job's
+`.github/workflows/run.yml` from this repository at the pinned release. The
+pin is written twice, as the `uses:` ref and as the `soothfast_ref` input,
+because a called workflow cannot read its own ref; the workflow stops when
+the input is empty, and `init --check` reports a caller where they disagree.
+It passes no secrets: the bot authenticates by OIDC and comments use the job's
 own token. `--pin REF` writes the `uses:` at another commit, tag or branch,
 so an unreleased commit can be tried; a bare commit pin is kept by later
 runs. The reusable workflow installs the crates.io release named by the
@@ -222,6 +231,17 @@ markdown carries `<!-- soothfast:` markers. The plan job runs on the labels
 the caller passes as `runs_on` (written when `[runner]` sets them); every
 other job runs on the labels `[runner]` names. `init --check` compares the whole set,
 so a flagless check after a flagged init is clean.
+
+Init warns about any other workflow in `.github/workflows` that calls
+soothfast, since its jobs run twice next to the generated ones. A plain init
+that would only add a second Rust workflow next to one of those writes
+nothing unless `--force` is given.
+
+The docs job waits for the cargo gate, which saves the head measurement as the
+`soothfast-baseline` artifact, and checks claims against it. When the gate saved
+none (it failed, was skipped, or the bench binaries match the base), the check
+reports "claims not evaluated: no measurement" as a notice and still checks
+binds and examples.
 
 Each project's gate checks out the full history, runs the harness on the
 merge base in a `git worktree` and on HEAD, then runs `gate --import` with
