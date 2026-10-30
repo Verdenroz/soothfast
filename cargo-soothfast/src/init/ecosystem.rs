@@ -143,13 +143,24 @@ pub struct Suite {
 }
 
 /// The projects a `soothfast.toml` saves, by directory: each `[[project]]`
-/// table (keys this release does not know are ignored), and the tables earlier releases wrote (`[[init.project]]`, and
-/// `[init]` as the project at `.`).
+/// table, and the tables earlier releases wrote (`[[init.project]]`, and
+/// `[init]` as the project at `.`). A key this release does not know is an error.
 pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
+    read_projects(text, false)
+}
+
+/// [`parse_projects`] for a reader that wants only some keys: keys this
+/// release does not know inside `[[project]]` are ignored.
+pub fn parse_projects_tolerant(text: &str) -> Result<Vec<Entry>, String> {
+    read_projects(text, true)
+}
+
+fn read_projects(text: &str, tolerant: bool) -> Result<Vec<Entry>, String> {
     let mut entries: Vec<Entry> = Vec::new();
     let mut dir: Option<String> = None;
     let mut cfg: Option<Settings> = None;
     let mut legacy = false;
+    let mut table = String::new();
     let mut finish = |dir: Option<String>, cfg: Option<Settings>| -> Result<(), String> {
         if let Some(settings) = cfg {
             let dir = dir.ok_or("[[init.project]] needs a `dir`")?;
@@ -161,6 +172,7 @@ pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
         if let Some(name) = table_name(&line) {
             finish(dir.take(), cfg.take())?;
             legacy = name == "init";
+            table = name.to_string();
             match name {
                 "init" => (dir, cfg) = (Some(".".into()), Some(Settings::default())),
                 PROJECT_TABLE | LEGACY_PROJECT_TABLE => cfg = Some(Settings::default()),
@@ -189,7 +201,7 @@ pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
             "test_cmd",
             "retry_cmd",
         ];
-        if !legacy && !known.contains(&key) {
+        if tolerant && !legacy && !known.contains(&key) {
             continue;
         }
         let value = parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
@@ -235,7 +247,7 @@ pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
             ("prefix", _) => settings.prefix = Some(value),
             ("test_cmd", _) => settings.test_cmd = Some(value),
             ("retry_cmd", _) => settings.retry_cmd = Some(value),
-            (k, _) => return Err(format!("line {lineno}: unknown `{k}` under [init]")),
+            (k, _) => return Err(format!("line {lineno}: unknown `{k}` under [{table}]")),
         }
     }
     finish(dir, cfg)?;
@@ -677,6 +689,18 @@ mod tests {
         assert_eq!(entries[0].dir, ".");
         assert_eq!(entries[0].settings.ecosystem, Some(Ecosystem::Node));
         assert!(parse_projects("[init]\ndir = \"x\"\n").is_err());
+    }
+
+    #[test]
+    fn an_unknown_project_key_is_an_error() {
+        let err = parse_projects("[[project]]\ndir = \"x\"\nnope = \"y\"\n").unwrap_err();
+        assert!(err.contains("unknown `nope` under [[project]]"), "{err}");
+    }
+
+    #[test]
+    fn the_tolerant_reader_ignores_unknown_project_keys() {
+        let entries = parse_projects_tolerant("[[project]]\ndir = \"x\"\nnope = \"y\"\n").unwrap();
+        assert_eq!(entries[0].dir, "x");
     }
 
     #[test]

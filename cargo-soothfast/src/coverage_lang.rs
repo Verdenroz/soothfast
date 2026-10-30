@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use soothfast_lang::{Lang, public_symbols};
 
-use crate::init::ecosystem::{Ecosystem, parse_projects};
+use crate::init::ecosystem::{Ecosystem, parse_projects_tolerant};
 
 /// Directories that hold dependencies, build output or tests rather than the
 /// documented surface.
@@ -107,7 +107,7 @@ pub fn manifest_targets(root: &Path) -> Result<Vec<Target>, String> {
         Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
     };
     let mut targets = Vec::new();
-    for project in parse_projects(&text)? {
+    for project in parse_projects_tolerant(&text)? {
         let Some(ecosystem) = project.settings.ecosystem.filter(|e| *e != Ecosystem::Rust) else {
             continue;
         };
