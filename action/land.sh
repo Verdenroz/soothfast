@@ -8,6 +8,7 @@
 set -euo pipefail
 
 : "${TOKEN:?}" "${APP_SLUG:?}" "${BRANCH:?}" "${TITLE:?}" "${PATHS:?}"
+command -v gh >/dev/null || { echo "::error::gh must be installed on the runner to land files; see docs/ci.md, Self-hosted runners"; exit 1; }
 export GH_TOKEN="$TOKEN"
 trap 'gh api -X DELETE /installation/token >/dev/null || true' EXIT
 

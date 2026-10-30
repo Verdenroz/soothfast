@@ -224,6 +224,53 @@ fn prune(root: &Path, keep: usize) {
     runcache::drop_oldest(files, keep);
 }
 
+/// Fold the item files under `from` into `into`, both an `items` directory.
+/// An item present in both keeps the entries of both, `from`'s first. Entries
+/// are keyed on the code they executed, so the union serves any binary that
+/// one of them matches.
+pub fn merge(from: &Path, into: &Path) {
+    let Ok(scopes) = std::fs::read_dir(from) else {
+        return;
+    };
+    for scope in scopes.flatten() {
+        let Ok(files) = std::fs::read_dir(scope.path()) else {
+            continue;
+        };
+        let dest_dir = into.join(scope.file_name());
+        if std::fs::create_dir_all(&dest_dir).is_err() {
+            continue;
+        }
+        for file in files.flatten() {
+            let dest = dest_dir.join(file.file_name());
+            let Some(ours) = read_doc(&file.path()) else {
+                continue;
+            };
+            let merged = match read_doc(&dest) {
+                Some(theirs) if theirs["id"] == ours["id"] => union(ours, &theirs),
+                _ => ours,
+            };
+            let _ = std::fs::write(dest, merged.to_string());
+        }
+    }
+    prune(into, KEEP);
+}
+
+fn read_doc(path: &Path) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+fn union(mut first: Value, second: &Value) -> Value {
+    let mut entries = first["entries"].as_array().cloned().unwrap_or_default();
+    for entry in second["entries"].as_array().into_iter().flatten() {
+        if !entries.iter().any(|e| e["code_key"] == entry["code_key"]) {
+            entries.push(entry.clone());
+        }
+    }
+    entries.truncate(PER_ITEM);
+    first["entries"] = Value::Array(entries);
+    first
+}
+
 /// Entries loaded for a set of items, to be matched against binaries.
 pub struct Stored(BTreeMap<String, Vec<Entry>>);
 
@@ -368,6 +415,38 @@ mod tests {
     }
 
     #[test]
+    fn an_item_stored_under_another_callgrind_method_is_never_found() {
+        use crate::buildstamp::BuildStamp;
+        use crate::invoke::{CommonArgs, HostEnv};
+        use crate::runcache::Runs;
+
+        let stamp = BuildStamp {
+            rustc: "1.88.0".into(),
+            codegen_units: "1".into(),
+            profiles: "a".into(),
+            rustflags: "b".into(),
+        };
+        let common = CommonArgs::default();
+        let scope = |method: &str| {
+            let env = HostEnv {
+                gating_backend: "callgrind".into(),
+                guest: None,
+                callgrind_method: Some(method.into()),
+                item_reuse: true,
+            };
+            Runs::new(&stamp, &common, Some(env)).item_scope().unwrap()
+        };
+        let root =
+            std::env::temp_dir().join(format!("soothfast-method-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let two = Items::at(root.join(scope("two-process")));
+        two.store("p::a", entry("k1", 100));
+        let one = Items::at(root.join(scope("one-process")));
+        assert!(one.load(&ids()).0["p::a"].is_empty());
+        assert_eq!(two.load(&ids()).0["p::a"].len(), 1);
+    }
+
+    #[test]
     fn an_entry_round_trips_with_its_metrics_and_assertions() {
         let items = scratch("round-trip");
         items.store("p::a", entry("k1", 100));
@@ -460,6 +539,37 @@ mod tests {
     fn an_item_with_nothing_stored_loads_empty() {
         let items = scratch("empty");
         assert!(items.load(&ids()).0["p::a"].is_empty());
+    }
+
+    #[test]
+    fn items_saved_by_one_push_are_found_by_the_next() {
+        let branch = scratch("merge-branch");
+        let base = scratch("merge-base");
+        branch.store("p::a", entry("pushed", 1));
+        branch.store("p::a", entry("shared", 2));
+        base.store("p::a", entry("shared", 3));
+        base.store("p::a", entry("master", 4));
+        branch.store("p::b", entry("only-branch", 5));
+        merge(branch.dir.parent().unwrap(), base.dir.parent().unwrap());
+        let both = [ids()[0].clone(), "p::b".to_string()];
+        let stored = base.load(&both);
+        let keys =
+            |id: &str| -> Vec<String> { stored.0[id].iter().map(|e| e.code_key.clone()).collect() };
+        assert_eq!(keys("p::a"), ["shared", "pushed", "master"]);
+        assert_eq!(stored.0["p::a"][0].metrics.ir, Some(2));
+        assert_eq!(keys("p::b"), ["only-branch"]);
+    }
+
+    #[test]
+    fn a_merged_item_keeps_a_bounded_number_of_entries() {
+        let branch = scratch("merge-bounded-branch");
+        let base = scratch("merge-bounded-base");
+        for i in 0..PER_ITEM {
+            branch.store("p::a", entry(&format!("b{i}"), i as u64));
+            base.store("p::a", entry(&format!("m{i}"), i as u64));
+        }
+        merge(branch.dir.parent().unwrap(), base.dir.parent().unwrap());
+        assert_eq!(base.load(&ids()).0["p::a"].len(), PER_ITEM);
     }
 
     #[test]

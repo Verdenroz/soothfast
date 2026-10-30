@@ -101,6 +101,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
@@ -117,13 +118,29 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - id: soothfast
         uses: ./.soothfast-action/action/install
+      # The checkout has no default-branch ref for the CLI to diff against,
+      # so the change is named by the commit the event started from.
       - name: Test
         shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          PULL_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
           date +%s >"$RUNNER_TEMP/soothfast-start"
+          base=""
+          if [ "$EVENT" = pull_request ]; then
+            base="$PULL_BASE"
+          elif [ "$PUSH_BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            base="$PUSH_BEFORE"
+          fi
+          args=(--all)
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            args=(--base "$base")
+          fi
           rc=0
-          cargo soothfast test 2>&1 | tee "$RUNNER_TEMP/soothfast-result.txt" || rc=$?
+          cargo soothfast test "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/soothfast-result.txt" || rc=$?
           echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
           exit "$rc"
       # A job that stopped before the test command ran left the exit at 3.
@@ -277,9 +294,13 @@ jobs:
           date +%s >"$RUNNER_TEMP/soothfast-start"
           {
             bench() { (cd "$1" && { [ "$ECOSYSTEM" != node ] || npm ci; } && eval "${BENCH_CMD//\{out\}/$OUT}"); }
-            base="$RUNNER_TEMP/base"
-            git worktree add "$base" "$(git merge-base HEAD "origin/$BASE_REF")"
-            [ "$DIR" = . ] || base="$base/$DIR"
+            # Unique per run, so a worktree an earlier run left registered on a
+            # persistent runner never collides.
+            tree="$RUNNER_TEMP/soothfast-base-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+            git worktree add "$tree" "$(git merge-base HEAD "origin/$BASE_REF")"
+            trap 'git worktree remove --force "$tree" >/dev/null 2>&1 || true' EXIT
+            base="$tree"
+            [ "$DIR" = . ] || base="$tree/$DIR"
             bench .
             if ! bench "$base" || [ ! -f "$base/$OUT" ]; then
               echo "merge-base has no benchmark results; nothing to compare"
@@ -363,19 +384,22 @@ jobs:
         shell: bash
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
+          RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
           date +%s >"$RUNNER_TEMP/soothfast-start"
           args=()
           for package in $DOCS_PACKAGE; do args+=(-p "$package"); done
+          : > "$RESULT"
           if [ -f .soothfast/baselines/head.json ]; then
             args+=(--baseline head)
           else
-            echo "::notice::claims not evaluated: no measurement"
+            echo "::warning::claims not evaluated: no measurement"
+            echo "claims not evaluated: no measurement" >> "$RESULT"
             args+=(--skip-claims)
           fi
           rc=0
-          cargo soothfast docs check "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/soothfast-result.txt" || rc=$?
+          cargo soothfast docs check "${args[@]}" 2>&1 | tee -a "$RUNNER_TEMP/soothfast-result.txt" || rc=$?
           echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
           exit "$rc"
       - name: Record the verdict

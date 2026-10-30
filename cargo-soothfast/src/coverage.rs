@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::coverage_lang::{self, Target};
 use crate::invoke::{self, CommonArgs};
 
 pub fn run(args: &[String]) -> i32 {
@@ -14,7 +15,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("docs") => docs(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast coverage measure|docs -p PKG [-p PKG ...] [--min PCT] [--badge FILE]"
+                "soothfast: usage: cargo soothfast coverage measure|docs -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]"
             );
             2
         }
@@ -98,10 +99,14 @@ fn docs(args: &[String]) -> i32 {
     let mut min: Option<u32> = None;
     let mut badges: Vec<String> = Vec::new();
     let mut features: Option<String> = None;
+    let mut dirs: Vec<String> = Vec::new();
+    let mut lang: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "-p" | "--package" => pkgs.extend(it.next().cloned()),
+            "--dir" => dirs.extend(it.next().cloned()),
+            "--lang" => lang = it.next().cloned(),
             "--min" => min = it.next().and_then(|v| v.parse().ok()),
             "--badge" => badges.extend(it.next().cloned()),
             "--features" => features = it.next().cloned(),
@@ -111,12 +116,34 @@ fn docs(args: &[String]) -> i32 {
             }
         }
     }
-    if pkgs.is_empty() {
-        eprintln!("soothfast: coverage docs requires -p PKG");
-        return 2;
-    }
+    let targets = match lang_targets(&pkgs, &dirs, lang.as_deref()) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
     let mut total = 0u32;
     let mut missing = 0u32;
+    for target in &targets {
+        let entries = match coverage_lang::entries(target) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("soothfast: {e}");
+                return 1;
+            }
+        };
+        for entry in &entries {
+            let mark = if entry.documented {
+                "documented  "
+            } else {
+                missing += 1;
+                "UNDOCUMENTED"
+            };
+            println!("{mark} {} ({})", entry.id, entry.kind);
+        }
+        total += entries.len() as u32;
+    }
     for pkg in &pkgs {
         let surf = match load_surface(pkg, features.as_deref()) {
             Ok(s) => s,
@@ -154,6 +181,26 @@ fn docs(args: &[String]) -> i32 {
         return 1;
     }
     0
+}
+
+/// Source trees to cover besides the `-p` crates: `--dir`/`--lang`, else the
+/// manifest's non-Rust projects when no crate was named.
+fn lang_targets(
+    pkgs: &[String],
+    dirs: &[String],
+    lang: Option<&str>,
+) -> Result<Vec<Target>, String> {
+    if dirs.is_empty() && lang.is_none() {
+        if !pkgs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let targets = coverage_lang::targets(Path::new("."), dirs, lang)?;
+        if targets.is_empty() {
+            return Err("coverage docs requires -p PKG, --dir D --lang L, or [[project]] entries in soothfast.toml".into());
+        }
+        return Ok(targets);
+    }
+    coverage_lang::targets(Path::new("."), dirs, lang)
 }
 
 fn load_surface(

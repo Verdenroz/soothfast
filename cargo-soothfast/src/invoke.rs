@@ -454,6 +454,9 @@ pub struct HostEnv {
     pub gating_backend: String,
     /// Set only when callgrind gates and the harness can see its guest.
     pub guest: Option<Guest>,
+    /// How callgrind's per-iteration Ir is taken, when callgrind gates. A
+    /// harness that does not name it only has the two-process method.
+    pub callgrind_method: Option<String>,
     /// Whether the harness takes `--id` and reports `executed` records.
     pub item_reuse: bool,
 }
@@ -469,6 +472,11 @@ pub struct Guest {
 }
 
 impl HostEnv {
+    /// The method callgrind's counts come from.
+    pub fn method(&self) -> &str {
+        self.callgrind_method.as_deref().unwrap_or("two-process")
+    }
+
     fn from_line(v: &Value) -> Option<Self> {
         let field = |k: &str| v[k].as_str().map(String::from);
         let guest = match (
@@ -488,6 +496,7 @@ impl HostEnv {
         Some(HostEnv {
             gating_backend: field("gating_backend")?,
             guest,
+            callgrind_method: field("callgrind_method"),
             item_reuse: v["item_reuse"].as_bool().unwrap_or(false),
         })
     }
@@ -554,6 +563,8 @@ pub struct ItemMetrics {
     pub cycles: Option<u64>,
     pub cache_refs: Option<u64>,
     pub ir: Option<u64>,
+    /// Iterations `ir` averages over, when the harness says.
+    pub window: Option<u64>,
     pub allocs: Option<u64>,
     pub bytes: Option<u64>,
     pub polls: Option<u64>,
@@ -673,7 +684,10 @@ pub fn collect(records: &[Value]) -> Run {
                         item.cycles = m["cycles"].as_u64();
                         item.cache_refs = m["cache_refs"].as_u64();
                     }
-                    Some("callgrind") => item.ir = m["ir"].as_u64(),
+                    Some("callgrind") => {
+                        item.ir = m["ir"].as_u64();
+                        item.window = m["window"].as_u64();
+                    }
                     Some("alloc") => {
                         item.allocs = m["allocs"].as_u64();
                         item.bytes = m["bytes"].as_u64();
@@ -722,6 +736,9 @@ pub fn run_to_items_value(run: &Run) -> Value {
         }
         if let Some(ir) = m.ir {
             entry["callgrind"] = json!({ "ir": ir });
+            if let Some(window) = m.window {
+                entry["callgrind"]["window"] = json!(window);
+            }
         }
         if let (Some(a), Some(b)) = (m.allocs, m.bytes) {
             entry["alloc"] = json!({ "allocs": a, "bytes": b });
@@ -768,6 +785,7 @@ pub fn run_from_items_value(items: &Value) -> Run {
                 cycles: v["perfcnt"]["cycles"].as_u64(),
                 cache_refs: v["perfcnt"]["cache_refs"].as_u64(),
                 ir: v["callgrind"]["ir"].as_u64(),
+                window: v["callgrind"]["window"].as_u64(),
                 allocs: v["alloc"]["allocs"].as_u64(),
                 bytes: v["alloc"]["bytes"].as_u64(),
                 polls: v["asyncexec"]["polls"].as_u64(),
@@ -1364,9 +1382,7 @@ pub fn with_merge_base_worktree<T>(
         .to_str()
         .ok_or_else(|| "worktree path is not UTF-8".to_string())?;
 
-    // A worktree whose directory was deleted stays registered, and `add`
-    // refuses the path until the registration is pruned.
-    let _ = git(&["worktree", "prune"]);
+    forget_missing_worktree(&wt);
     discard_worktrees_except(&dir, &sha);
 
     if is_worktree_root(&wt) {
@@ -1429,8 +1445,27 @@ fn discard_worktrees_except(dir: &Path, keep: &str) {
             let _ = git(&["worktree", "remove", "--force", path]);
         }
         let _ = std::fs::remove_dir_all(entry.path());
+        forget_missing_worktree(&entry.path());
     }
-    let _ = git(&["worktree", "prune"]);
+}
+
+/// Drop the registration of `wt` when its directory is gone. A deleted
+/// worktree stays registered and `add` refuses the path. Never `git worktree
+/// prune`: that drops every other worktree whose directory this process
+/// cannot see, such as one on an unmounted drive or outside a container.
+pub fn forget_missing_worktree(wt: &Path) {
+    if let Ok(root) = workspace_root() {
+        forget_missing_worktree_in(&root, wt);
+    }
+}
+
+fn forget_missing_worktree_in(repo: &Path, wt: &Path) {
+    if wt.exists() {
+        return;
+    }
+    if let Some(path) = wt.to_str() {
+        let _ = git_in(repo, &["worktree", "remove", "--force", "--force", path]);
+    }
 }
 
 /// One `[[package]]` entry from a Cargo.lock.
@@ -1506,35 +1541,52 @@ pub fn tree_is_clean() -> bool {
 /// Whether the reference side ended up embedding HEAD's measurement harness.
 /// A reference built against another harness measures a different protocol,
 /// so the outcome travels with the run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HarnessSync {
-    /// Every soothfast-family crate on the reference side is at HEAD's version.
-    Matched,
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HarnessSync {
     /// Crates cargo would not move, each spelled `name 0.2.0 -> 0.3.1`.
-    Mismatched(Vec<String>),
+    unpinned: Vec<String>,
+    /// The callgrind methods of the reference and of HEAD, when they differ
+    /// or the reference's is unknown.
+    method: Option<(String, String)>,
 }
 
 impl HarnessSync {
     /// Rebuild an outcome from the crate labels a stored run kept.
-    pub fn from_unpinned(labels: Vec<String>) -> Self {
-        if labels.is_empty() {
-            Self::Matched
-        } else {
-            Self::Mismatched(labels)
+    pub fn from_unpinned(unpinned: Vec<String>) -> Self {
+        HarnessSync {
+            unpinned,
+            method: None,
         }
     }
 
     /// The crates left at a version of their own, empty when the pin held.
     pub fn unpinned(&self) -> &[String] {
-        match self {
-            Self::Matched => &[],
-            Self::Mismatched(labels) => labels,
+        &self.unpinned
+    }
+
+    /// This outcome with the callgrind methods of the two sides.
+    pub fn with_method(self, base: &str, head: &str) -> Self {
+        HarnessSync {
+            method: Some((base.into(), head.into())),
+            ..self
         }
+    }
+
+    /// The stored form of [`HarnessSync::with_method`]: `[base, head]`.
+    pub fn method(&self) -> Option<[&str; 2]> {
+        self.method.as_ref().map(|(b, h)| [b.as_str(), h.as_str()])
+    }
+
+    /// The method difference, spelled for a reader, when there is one.
+    pub fn method_note(&self) -> Option<String> {
+        self.method().map(|[base, head]| {
+            format!("base measured with callgrind method {base}, head with {head}")
+        })
     }
 
     /// Whether the two sides embed different measurement harnesses.
     pub fn is_mismatched(&self) -> bool {
-        matches!(self, Self::Mismatched(_))
+        !self.unpinned.is_empty() || self.method.is_some()
     }
 }
 
@@ -1557,17 +1609,17 @@ pub fn sync_harness_versions(wt: &Path) -> Result<HarnessSync, String> {
         .map_err(|e| e.to_string())?
         .join("Cargo.lock");
     let Ok(head) = std::fs::read_to_string(&head_path) else {
-        return Ok(HarnessSync::Matched);
+        return Ok(HarnessSync::default());
     };
     // One crate per pass, re-reading the lock: pinning the facade drags its
     // family along, and already-moved entries must not be warned about.
     for _ in 0..16 {
         let Ok(base) = std::fs::read_to_string(wt.join("Cargo.lock")) else {
-            return Ok(HarnessSync::Matched);
+            return Ok(HarnessSync::default());
         };
         let mismatches = harness_mismatches(&head, &base);
         let Some((name, from, to)) = mismatches.first().cloned() else {
-            return Ok(HarnessSync::Matched);
+            return Ok(HarnessSync::default());
         };
         println!(
             "gate: pinning {name} {from} -> {to} in the merge-base worktree (harness must match HEAD)"
@@ -1845,9 +1897,40 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, Shard, harness_mismatches,
-        run_from_items_value, run_to_items_value, saved_items,
+        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, Shard,
+        forget_missing_worktree_in, git_in, harness_mismatches, run_from_items_value,
+        run_to_items_value, saved_items,
     };
+
+    #[test]
+    fn only_our_missing_worktree_is_forgotten() {
+        let root = std::env::temp_dir().join(format!("soothfast-forget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        let (ours, foreign) = (root.join("ours"), root.join("foreign"));
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| git_in(&repo, args).unwrap();
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ]);
+        for wt in [&ours, &foreign] {
+            git(&["worktree", "add", "-q", "--detach", wt.to_str().unwrap()]);
+            std::fs::remove_dir_all(wt).unwrap();
+        }
+        forget_missing_worktree_in(&repo, &ours);
+        let listing = git(&["worktree", "list", "--porcelain"]);
+        assert!(!listing.contains("ours"), "{listing}");
+        assert!(listing.contains("foreign"), "{listing}");
+    }
 
     #[test]
     fn a_shard_parses_from_one_and_rejects_out_of_range() {
@@ -1934,11 +2017,34 @@ mod tests {
     }
 
     #[test]
+    fn a_harness_without_a_named_method_measures_two_process() {
+        let line = serde_json::json!({ "type": "env", "gating_backend": "callgrind" });
+        assert_eq!(
+            HostEnv::from_line(&line)
+                .map(|e| e.method().to_string())
+                .as_deref(),
+            Some("two-process")
+        );
+    }
+
+    #[test]
+    fn a_method_difference_mismatches_the_harness_without_a_pin() {
+        let sync = super::HarnessSync::default().with_method("two-process", "one-process");
+        assert!(sync.is_mismatched());
+        assert!(sync.unpinned().is_empty());
+        assert_eq!(
+            sync.method_note().as_deref(),
+            Some("base measured with callgrind method two-process, head with one-process")
+        );
+    }
+
+    #[test]
     fn an_env_line_reads_its_guest_only_when_complete() {
         let full = serde_json::json!({
             "type": "env", "gating_backend": "callgrind",
             "guest_cpu": "0123456789abcdef", "guest_glibc": "2.39",
             "guest_libc": "fedcba9876543210", "valgrind": "valgrind-3.22.0",
+            "callgrind_method": "one-process",
         });
         assert_eq!(
             HostEnv::from_line(&full),
@@ -1950,6 +2056,7 @@ mod tests {
                     libc: "fedcba9876543210".into(),
                     valgrind: "valgrind-3.22.0".into(),
                 }),
+                callgrind_method: Some("one-process".into()),
                 item_reuse: false,
             })
         );
@@ -1979,6 +2086,7 @@ mod tests {
                 cycles: Some(600),
                 cache_refs: Some(10),
                 ir: Some(700),
+                window: Some(10),
                 allocs: Some(2),
                 bytes: Some(64),
                 polls: Some(3),

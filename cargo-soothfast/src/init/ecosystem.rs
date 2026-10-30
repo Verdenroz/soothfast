@@ -2,6 +2,7 @@
 //! `soothfast.toml` that `cargo soothfast plan` reads and `init --check`
 //! compares against.
 
+use soothfast_lang::Lang;
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
 use crate::import::Format;
@@ -36,6 +37,18 @@ impl Ecosystem {
             Ecosystem::Maven => "maven",
             Ecosystem::Python => "python",
             Ecosystem::Node => "node",
+        }
+    }
+
+    /// The source languages of this ecosystem's trees. Rust has none here:
+    /// its surface comes from rustdoc.
+    pub fn langs(self) -> Vec<Lang> {
+        match self {
+            Ecosystem::Rust => Vec::new(),
+            Ecosystem::Gradle => vec![Lang::Kotlin, Lang::Java],
+            Ecosystem::Maven => vec![Lang::Java],
+            Ecosystem::Python => vec![Lang::Python],
+            Ecosystem::Node => vec![Lang::JavaScript, Lang::TypeScript, Lang::Tsx],
         }
     }
 
@@ -103,12 +116,13 @@ pub struct Project {
 }
 
 /// The projects a `soothfast.toml` saves, by directory: each `[[project]]`
-/// table, and the tables earlier releases wrote (`[[init.project]]`, and
+/// table (keys this release does not know are ignored), and the tables earlier releases wrote (`[[init.project]]`, and
 /// `[init]` as the project at `.`).
 pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
     let mut entries: Vec<Entry> = Vec::new();
     let mut dir: Option<String> = None;
     let mut cfg: Option<Settings> = None;
+    let mut legacy = false;
     let mut finish = |dir: Option<String>, cfg: Option<Settings>| -> Result<(), String> {
         if let Some(settings) = cfg {
             let dir = dir.ok_or("[[init.project]] needs a `dir`")?;
@@ -119,6 +133,7 @@ pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
     for (lineno, line) in logical_lines(text) {
         if let Some(name) = table_name(&line) {
             finish(dir.take(), cfg.take())?;
+            legacy = name == "init";
             match name {
                 "init" => (dir, cfg) = (Some(".".into()), Some(Settings::default())),
                 PROJECT_TABLE | LEGACY_PROJECT_TABLE => cfg = Some(Settings::default()),
@@ -132,6 +147,18 @@ pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
         let Some((key, value)) = line.split_once('=') else {
             return Err(format!("line {lineno}: expected `key = value`"));
         };
+        let known = [
+            "dir",
+            "ecosystem",
+            "bench_cmd",
+            "bench_out",
+            "from",
+            "walltime",
+            "prefix",
+        ];
+        if !legacy && !known.contains(&key.trim()) {
+            continue;
+        }
         let TomlValue::Str(value) =
             parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?
         else {

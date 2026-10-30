@@ -17,6 +17,13 @@ pub(super) struct Section {
     pub(super) tls: bool,
 }
 
+impl Section {
+    /// Whether `addr` falls inside this section. An empty one contains nothing.
+    pub(super) fn contains(&self, addr: u64) -> bool {
+        addr >= self.vma && addr - self.vma < self.size
+    }
+}
+
 pub(super) struct Symbol {
     pub(super) addr: u64,
     pub(super) size: u64,
@@ -145,9 +152,7 @@ pub(super) fn parse_markers(listing: &str, sections: &[Section]) -> HashMap<u64,
                 _ => return None,
             };
             let addr = u64::from_str_radix(addr, 16).ok()?;
-            let in_data = sections
-                .iter()
-                .any(|s| !s.code && addr >= s.vma && addr - s.vma < s.size);
+            let in_data = sections.iter().any(|s| !s.code && s.contains(addr));
             if !in_data {
                 return None;
             }

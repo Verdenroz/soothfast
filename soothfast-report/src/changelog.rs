@@ -296,7 +296,7 @@ fn perf_section(inputs: &DraftInputs) -> String {
     let mut out = String::new();
     match inputs.old_baseline {
         None => {
-            out.push_str(&crate::perf_table::markdown(inputs.new_baseline));
+            out.push_str(&crate::perf_table::markdown_at(inputs.new_baseline, 4));
         }
         Some(old) => {
             let t = &inputs.thresholds;
