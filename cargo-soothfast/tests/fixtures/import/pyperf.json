@@ -1,0 +1,43 @@
+{
+    "version": "1.0",
+    "metadata": {
+        "cpu_count": 8,
+        "python_version": "3.12.4 (64-bit)",
+        "unit": "second"
+    },
+    "benchmarks": [
+        {
+            "metadata": {
+                "name": "json_loads",
+                "loops": 1024,
+                "inner_loops": 1
+            },
+            "runs": [
+                {
+                    "metadata": { "calibrate_loops": 1024 },
+                    "warmups": [[1024, 0.0011]]
+                },
+                {
+                    "warmups": [[1024, 0.0011]],
+                    "values": [1.0e-6, 1.2e-6, 1.1e-6]
+                },
+                {
+                    "warmups": [[1024, 0.0011]],
+                    "values": [1.3e-6, 1.05e-6, 1.15e-6]
+                }
+            ]
+        },
+        {
+            "metadata": {
+                "name": "json_dumps",
+                "loops": 512
+            },
+            "runs": [
+                {
+                    "warmups": [[512, 0.001]],
+                    "values": [2.0e-6, 2.2e-6, 1.8e-6]
+                }
+            ]
+        }
+    ]
+}

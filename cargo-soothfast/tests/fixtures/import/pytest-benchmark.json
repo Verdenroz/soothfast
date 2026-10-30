@@ -1,0 +1,60 @@
+{
+    "machine_info": { "node": "ci", "python_version": "3.12.4" },
+    "commit_info": { "id": "0123456789abcdef", "dirty": false },
+    "benchmarks": [
+        {
+            "group": null,
+            "name": "test_encode",
+            "fullname": "tests/test_codec.py::test_encode",
+            "params": null,
+            "stats": {
+                "min": 0.00023,
+                "max": 0.00031,
+                "mean": 0.00025,
+                "stddev": 0.00002,
+                "rounds": 3200,
+                "median": 0.00025,
+                "iqr": 0.00002,
+                "iterations": 1,
+                "ops": 4000.0
+            }
+        },
+        {
+            "group": null,
+            "name": "test_decode[large]",
+            "fullname": "tests/test_codec.py::test_decode[large]",
+            "params": { "size": "large" },
+            "stats": {
+                "min": 0.0039,
+                "max": 0.0051,
+                "mean": 0.0043,
+                "stddev": 0.0003,
+                "rounds": 210,
+                "median": 0.0042,
+                "iqr": 0.0003,
+                "iterations": 1,
+                "ops": 232.6
+            }
+        },
+        {
+            "group": "hash",
+            "name": "test_digest",
+            "fullname": "tests/test_hash.py::test_digest",
+            "params": null,
+            "stats": {
+                "min": 0.001,
+                "max": 0.0013,
+                "mean": 0.00115,
+                "stddev": 0.00014,
+                "rounds": 4,
+                "median": 0.00115,
+                "iqr": 0.0002,
+                "iterations": 1,
+                "ops": 869.6,
+                "data": [0.001, 0.0011, 0.0012, 0.0013]
+            }
+        }
+    ],
+    "datetime": "2026-10-01T12:00:00.000000+00:00",
+    "version": "5.1.0"
+}

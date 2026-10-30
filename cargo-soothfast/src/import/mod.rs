@@ -7,8 +7,11 @@
 //! calls the benchmark, so an id is stable as long as the benchmark is.
 
 mod jmh;
+mod pyperf;
+mod pytest;
 #[cfg(test)]
 mod tests;
+mod vitest;
 
 use std::path::PathBuf;
 
@@ -19,12 +22,18 @@ use crate::invoke::{self, ItemMetrics, Run};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Format {
     Jmh,
+    Pyperf,
+    Pytest,
+    Vitest,
 }
 
 impl Format {
     pub fn parse(name: &str) -> Result<Format, String> {
         match name {
             "jmh" => Ok(Format::Jmh),
+            "pyperf" => Ok(Format::Pyperf),
+            "pytest-benchmark" => Ok(Format::Pytest),
+            "vitest" => Ok(Format::Vitest),
             other => Err(format!("unknown import format {other:?}")),
         }
     }
@@ -32,6 +41,9 @@ impl Format {
     fn default_prefix(self) -> &'static str {
         match self {
             Format::Jmh => "jmh",
+            Format::Pyperf => "pyperf",
+            Format::Pytest => "pytest",
+            Format::Vitest => "vitest",
         }
     }
 }
@@ -77,6 +89,9 @@ fn median(sorted: &[f64]) -> f64 {
 pub fn parse(format: Format, text: &str, prefix: Option<&str>) -> Result<Run, String> {
     let timings = match format {
         Format::Jmh => jmh::parse(text)?,
+        Format::Pyperf => pyperf::parse(text)?,
+        Format::Pytest => pytest::parse(text)?,
+        Format::Vitest => vitest::parse(text)?,
     };
     if timings.is_empty() {
         return Err("no benchmarks in the input".into());
