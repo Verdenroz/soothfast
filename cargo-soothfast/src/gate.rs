@@ -1037,6 +1037,20 @@ fn measure_ref_interleaved(
             crate::seed::seed_worktree(wt, target);
         }
         let digests = bench_text_digests(common, wt, wt_target.as_deref());
+        // Callgrind counts differ by method, and a path dependency on the
+        // harness is not pinned, so the sides can disagree.
+        let harness =
+            match (runs.env(), &digests) {
+                (Some(head), Some(d)) if head.gating_backend == "callgrind" => {
+                    match invoke::host_env(&d.base_exe, common.backend.as_deref()) {
+                        Ok(base) if base.method() != head.method() => harness.with_unpinned(
+                            format!("callgrind method {} -> {}", base.method(), head.method()),
+                        ),
+                        _ => harness,
+                    }
+                }
+                _ => harness,
+            };
         // A run measured from byte-identical machine code under the same
         // conditions is that binary's measurement, whatever commit built it.
         let by_binary = match (reuse, &digests) {

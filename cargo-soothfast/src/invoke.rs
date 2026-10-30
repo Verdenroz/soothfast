@@ -454,6 +454,9 @@ pub struct HostEnv {
     pub gating_backend: String,
     /// Set only when callgrind gates and the harness can see its guest.
     pub guest: Option<Guest>,
+    /// How callgrind's per-iteration Ir is taken, when callgrind gates. A
+    /// harness that does not name it only has the two-process method.
+    pub callgrind_method: Option<String>,
     /// Whether the harness takes `--id` and reports `executed` records.
     pub item_reuse: bool,
 }
@@ -469,6 +472,11 @@ pub struct Guest {
 }
 
 impl HostEnv {
+    /// The method callgrind's counts come from.
+    pub fn method(&self) -> &str {
+        self.callgrind_method.as_deref().unwrap_or("two-process")
+    }
+
     fn from_line(v: &Value) -> Option<Self> {
         let field = |k: &str| v[k].as_str().map(String::from);
         let guest = match (
@@ -488,6 +496,7 @@ impl HostEnv {
         Some(HostEnv {
             gating_backend: field("gating_backend")?,
             guest,
+            callgrind_method: field("callgrind_method"),
             item_reuse: v["item_reuse"].as_bool().unwrap_or(false),
         })
     }
@@ -1532,6 +1541,14 @@ impl HarnessSync {
         }
     }
 
+    /// This outcome with one more crate or setting the reference side does
+    /// not share with HEAD.
+    pub fn with_unpinned(self, label: String) -> Self {
+        let mut labels = self.unpinned().to_vec();
+        labels.push(label);
+        Self::Mismatched(labels)
+    }
+
     /// Whether the two sides embed different measurement harnesses.
     pub fn is_mismatched(&self) -> bool {
         matches!(self, Self::Mismatched(_))
@@ -1934,11 +1951,33 @@ mod tests {
     }
 
     #[test]
+    fn a_harness_without_a_named_method_measures_two_process() {
+        let line = serde_json::json!({ "type": "env", "gating_backend": "callgrind" });
+        assert_eq!(
+            HostEnv::from_line(&line)
+                .map(|e| e.method().to_string())
+                .as_deref(),
+            Some("two-process")
+        );
+    }
+
+    #[test]
+    fn an_extra_unpinned_label_makes_the_harness_mismatched() {
+        let sync = super::HarnessSync::Matched
+            .with_unpinned("callgrind method two-process -> one-process".into());
+        assert_eq!(
+            sync.unpinned(),
+            ["callgrind method two-process -> one-process"]
+        );
+    }
+
+    #[test]
     fn an_env_line_reads_its_guest_only_when_complete() {
         let full = serde_json::json!({
             "type": "env", "gating_backend": "callgrind",
             "guest_cpu": "0123456789abcdef", "guest_glibc": "2.39",
             "guest_libc": "fedcba9876543210", "valgrind": "valgrind-3.22.0",
+            "callgrind_method": "one-process",
         });
         assert_eq!(
             HostEnv::from_line(&full),
@@ -1950,6 +1989,7 @@ mod tests {
                     libc: "fedcba9876543210".into(),
                     valgrind: "valgrind-3.22.0".into(),
                 }),
+                callgrind_method: Some("one-process".into()),
                 item_reuse: false,
             })
         );
