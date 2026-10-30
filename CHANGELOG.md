@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Import JMH, pyperf, pytest-benchmark and vitest results (#279)
 - Tree-sitter symbols for Java, Kotlin, Python, JS, TS (#277)
 - Act on soothfast labels as the bot (#274)
 - Add cargo soothfast init (#273)
