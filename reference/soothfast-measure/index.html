@@ -179,10 +179,14 @@ backend — counts, not times, so min is exact).</p>
 guest (not the host's, which valgrind replaces with a synthesized one), the
 glibc the guest loads, and the valgrind counting it.</p>
 <h3 id="measurement-struct"><code>Measurement</code> <sup>struct</sup><a class="anchor" href="#measurement-struct" aria-label="Link to this section">#</a></h3>
-<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Measurement</span> { <span class="tok-kw">pub</span> ir: <span class="tok-ty">u64</span>, <span class="tok-kw">pub</span> functions: <span class="tok-ty">Vec</span>&lt;(<span class="tok-ty">String</span>, <span class="tok-ty">String</span>)&gt; }
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Measurement</span> { <span class="tok-kw">pub</span> ir: <span class="tok-ty">u64</span>, <span class="tok-kw">pub</span> window: <span class="tok-ty">u64</span>, <span class="tok-kw">pub</span> functions: <span class="tok-ty">Vec</span>&lt;(<span class="tok-ty">String</span>, <span class="tok-ty">String</span>)&gt; }
 </code></pre></figure>
 <p>One item's callgrind result: per-iteration Ir, and every function the
-longer run executed as sorted, deduplicated <code>(object, mangled symbol)</code>.</p>
+process executed as sorted, deduplicated <code>(object, mangled symbol)</code>.</p>
+<h3 id="method-enum"><code>Method</code> <sup>enum</sup><a class="anchor" href="#method-enum" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">enum</span> <span class="tok-ty">Method</span> { <span class="tok-ty">OneProcess</span>, <span class="tok-ty">TwoProcess</span> }
+</code></pre></figure>
+<p>How per-iteration Ir is taken from valgrind runs.</p>
 <h3 id="annotate-function"><code>annotate</code> <sup>function</sup><a class="anchor" href="#annotate-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">annotate</span>(id: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">String</span>, <span class="tok-ty">String</span>&gt;
 </code></pre></figure>
@@ -201,6 +205,11 @@ longer run executed as sorted, deduplicated <code>(object, mangled symbol)</code
 </code></pre></figure>
 <p>Per-iteration Ir for many <code>(item, size)</code> jobs, measured concurrently (Ir
 counts are timing-independent). Results come back in input order.</p>
+<h3 id="negotiate-window-function"><code>negotiate_window</code> <sup>function</sup><a class="anchor" href="#negotiate-window-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">negotiate_window</span>() -&gt; <span class="tok-ty">Result</span>&lt;<span class="tok-ty">u64</span>, <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Bench process side of [<code>run_window</code>]: report the warm-up dumped and read
+how many iterations to measure.</p>
 <h3 id="print-guest-view-function"><code>print_guest_view</code> <sup>function</sup><a class="anchor" href="#print-guest-view-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">print_guest_view</span>()
 </code></pre></figure>
@@ -238,7 +247,7 @@ enough: an AVX-512-compiled glibc loader SIGILLs before main().</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">summarize</span>(values: &amp;<span class="tok-kw">mut</span> [<span class="tok-ty">f64</span>]) -&gt; <span class="tok-ty">Summary</span>
 </code></pre></figure>
 <p>Summarize a non-empty sample set. Sorts in place.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">alloc</span><span class="ev-detail">allocs 4 &lt;= 8</span></div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n log n); growth drift x1.00 over sizes [1024, 4096, 16384] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_measure::bench_summarize`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">471778</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">480276</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">524288</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">alloc</span><span class="ev-detail">allocs 4 &lt;= 8</span></div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n log n); growth drift x1.33 over sizes [1024, 4096, 16384] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_measure::bench_summarize`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">639293</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">673998</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">4</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">524288</span></div></div></div>
 <h2 id="soothfast-measure-sweep"><code>soothfast_measure::sweep</code><a class="anchor" href="#soothfast-measure-sweep" aria-label="Link to this section">#</a></h2>
 <h3 id="drift-limit-constant"><code>DRIFT_LIMIT</code> <sup>constant</sup><a class="anchor" href="#drift-limit-constant" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">DRIFT_LIMIT</span>: <span class="tok-ty">f64</span> = <span class="tok-num">2.5</span>
@@ -259,7 +268,7 @@ the claimed class, and whether it stayed within [<code>DRIFT_LIMIT</code>].</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">evaluate</span>(class: &amp;<span class="tok-ty">str</span>, sizes: &amp;[<span class="tok-ty">usize</span>], values: &amp;[<span class="tok-ty">f64</span>]) -&gt; <span class="tok-ty">SweepOutcome</span>
 </code></pre></figure>
 <p>Evaluate measured values (one per size, same order) against a claim.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">alloc</span><span class="ev-detail">allocs 0 &lt;= 0</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_measure::bench_sweep_evaluate`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">11</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">12</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">0</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">0</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">alloc</span><span class="ev-detail">allocs 0 &lt;= 0</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_measure::bench_sweep_evaluate`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">25</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">26</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">0</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">0</span></div></div></div>
 <h2 id="soothfast-measure-walltime"><code>soothfast_measure::walltime</code><a class="anchor" href="#soothfast-measure-walltime" aria-label="Link to this section">#</a></h2>
 <h3 id="default-samples-constant"><code>DEFAULT_SAMPLES</code> <sup>constant</sup><a class="anchor" href="#default-samples-constant" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">const</span> <span class="tok-ty">DEFAULT_SAMPLES</span>: <span class="tok-ty">u32</span> = <span class="tok-num">31</span>
@@ -316,6 +325,8 @@ are meaningful; gates inside it are coin flips.</p>
   
     <li><a class="toc-l3" href="#measurement-struct">Measurement struct</a></li>
   
+    <li><a class="toc-l3" href="#method-enum">Method enum</a></li>
+  
     <li><a class="toc-l3" href="#annotate-function">annotate function</a></li>
   
     <li><a class="toc-l3" href="#guest-function">guest function</a></li>
@@ -323,6 +334,8 @@ are meaningful; gates inside it are coin flips.</p>
     <li><a class="toc-l3" href="#measure-function-2">measure function</a></li>
   
     <li><a class="toc-l3" href="#measure-all-function">measure_all function</a></li>
+  
+    <li><a class="toc-l3" href="#negotiate-window-function">negotiate_window function</a></li>
   
     <li><a class="toc-l3" href="#print-guest-view-function">print_guest_view function</a></li>
   

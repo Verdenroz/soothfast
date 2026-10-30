@@ -173,7 +173,7 @@ per item and backend, then any <code>assertion</code> records:</p>
 </code></pre></figure>
 <p>What each record does:</p>
 <ul>
-<li><code>result</code> carries one backend's metrics for one item id. The backend picks which <code>metrics</code> keys are read: <code>walltime</code> (<code>median_ns</code>, <code>mad_ns</code>, <code>p99_ns</code>), <code>perfcnt</code> (<code>instructions</code>, <code>cycles</code>, <code>cache_refs</code>), <code>callgrind</code> (<code>ir</code>), <code>alloc</code> (<code>allocs</code>, <code>bytes</code>), <code>asyncexec</code> (<code>polls</code>, <code>wakes</code>). Counts must be JSON integers.</li>
+<li><code>result</code> carries one backend's metrics for one item id. The backend picks which <code>metrics</code> keys are read: <code>walltime</code> (<code>median_ns</code>, <code>mad_ns</code>, <code>p99_ns</code>), <code>perfcnt</code> (<code>instructions</code>, <code>cycles</code>, <code>cache_refs</code>), <code>callgrind</code> (<code>ir</code>, and <code>window</code>, the iterations it averages over), <code>alloc</code> (<code>allocs</code>, <code>bytes</code>), <code>asyncexec</code> (<code>polls</code>, <code>wakes</code>). Counts must be JSON integers.</li>
 <li><code>env.gating_backend</code> names the backend <code>gate</code> compares. Emit a <code>result</code> for it on every item.</li>
 <li><code>assertion</code> records with <code>&quot;ok&quot;:false</code> fail the run; this is how checked claims (<code>alloc</code>, <code>p99</code>, <code>complexity</code>) report.</li>
 <li><code>fingerprint</code> is compared across builds to detect a changed benchmark. Any stable string per item works; the Rust runner writes 16 hex digits.</li>
