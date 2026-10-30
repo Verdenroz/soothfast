@@ -55,6 +55,7 @@ accepted() {
 }
 if [ "$regressed" = true ] && [ "$errored" = false ] && accepted; then
   echo "::notice::regressions accepted by the soothfast:perf-accepted label"
+  # shellcheck disable=SC2016 # literal backticks, nothing to expand
   echo 'Regressions accepted by the `soothfast:perf-accepted` label.' >>"${out_dir}/comment.md"
   regressed=false
 fi
