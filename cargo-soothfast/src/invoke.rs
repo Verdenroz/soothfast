@@ -6,9 +6,23 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use serde_json::{Value, json};
+
+/// Run `f`, printing its wall time to stderr when `SOOTHFAST_TIMINGS` is set.
+pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
+    if std::env::var_os("SOOTHFAST_TIMINGS").is_none() {
+        return f();
+    }
+    let start = Instant::now();
+    let out = f();
+    eprintln!(
+        "soothfast-timing: {label} {:.1}s",
+        start.elapsed().as_secs_f64()
+    );
+    out
+}
 
 /// Flags shared by `measure` and `gate`.
 #[derive(Default, Clone)]
@@ -328,7 +342,7 @@ fn run_records(
     let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    let out = cmd.output()?;
+    let out = timed("cargo bench (build and run)", || cmd.output())?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let reason = stderr
@@ -1328,7 +1342,7 @@ pub fn rustdoc_json_in(
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
-    let status = cmd.status()?;
+    let status = timed(&format!("cargo rustdoc {pkg}"), || cmd.status())?;
     if !status.success() {
         return Err(io::Error::other(format!(
             "cargo +{toolchain} rustdoc failed with {status} \
@@ -1337,7 +1351,9 @@ pub fn rustdoc_json_in(
     }
     let text = std::fs::read_to_string(&json_path)
         .map_err(|e| io::Error::other(format!("cannot read {}: {e}", json_path.display())))?;
-    let doc: Value = serde_json::from_str(&text)?;
+    let doc: Value = timed(&format!("parse rustdoc json {pkg}"), || {
+        serde_json::from_str(&text)
+    })?;
     warn_on_format_version(&doc);
     // Best-effort: a failed cache write only costs a future redundant
     // rebuild, not correctness, so it must not fail the extraction itself.
