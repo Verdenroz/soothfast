@@ -311,7 +311,7 @@ pub fn run(args: &[String]) -> i32 {
     if harness_waiver(&harness, g.allow_harness_change, regressions) {
         println!(
             "gate: {regressions} regression(s) allowed by --allow-harness-change ({})",
-            harness.unpinned().join(", ")
+            harness_reasons(&harness)
         );
         regressions = 0;
     }
@@ -462,13 +462,23 @@ fn reuse_hint(reference: &Value, backend: Option<&str>, regressions: u32) -> Opt
 /// reference built against another harness measures another protocol, so
 /// its numbers are not this change's in either direction.
 fn harness_note(harness: &invoke::HarnessSync) {
-    if harness.is_mismatched() {
+    if !harness.unpinned().is_empty() {
         println!(
             "gate: HARNESS MISMATCH — the merge-base could not be pinned to HEAD's soothfast ({}); \
              deltas below may be the harness, not this change",
             harness.unpinned().join(", ")
         );
     }
+    if let Some(method) = harness.method_note() {
+        println!("gate: HARNESS MISMATCH — {method}; comparison is not conclusive");
+    }
+}
+
+/// The reasons a harness mismatch has, for one line.
+fn harness_reasons(harness: &invoke::HarnessSync) -> String {
+    let mut reasons = harness.unpinned().to_vec();
+    reasons.extend(harness.method_note());
+    reasons.join(", ")
 }
 
 /// What the verdict line adds about the mismatch. The PR comment carries
@@ -477,15 +487,15 @@ fn harness_verdict(harness: &invoke::HarnessSync, regressed: bool) -> String {
     if !harness.is_mismatched() {
         return String::new();
     }
-    let unpinned = harness.unpinned().join(", ");
+    let reasons = harness_reasons(harness);
     if regressed {
         format!(
-            " — measured against a different harness ({unpinned}); \
+            " — measured against a different harness ({reasons}); \
              pass --allow-harness-change if the harness bump explains it"
         )
     } else {
         format!(
-            " — but measured against a different harness ({unpinned}), \
+            " — but measured against a different harness ({reasons}), \
              so the comparison is not conclusive"
         )
     }
@@ -508,18 +518,20 @@ fn triage_harness_note(dir: &std::path::Path, harness: &invoke::HarnessSync) {
         return;
     }
     let _ = std::fs::create_dir_all(dir);
-    let unpinned: String = harness
+    let reasons: String = harness
         .unpinned()
         .iter()
-        .map(|u| format!("  {u}\n"))
+        .cloned()
+        .chain(harness.method_note())
+        .map(|r| format!("  {r}\n"))
         .collect();
     let _ = std::fs::write(
         &path,
         format!(
             "harness mismatch\n\n\
-             The merge-base worktree could not be pinned to HEAD's soothfast versions, so the\n\
-             reference bench embeds a different measurement harness:\n\n\
-             {unpinned}\n\
+             The reference bench does not measure the way HEAD's does (a soothfast version the\n\
+             merge-base could not be pinned to, or the callgrind method):\n\n\
+             {reasons}\n\
              Deltas in this run may be that harness change rather than the measured code.\n"
         ),
     );
@@ -658,7 +670,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
             reference,
             current,
             short_circuited: false,
-            harness: invoke::HarnessSync::Matched,
+            harness: invoke::HarnessSync::default(),
         }));
     }
     if let Some(refname) = &g.against_ref {
@@ -682,7 +694,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
         reference: baseline,
         current,
         short_circuited: false,
-        harness: invoke::HarnessSync::Matched,
+        harness: invoke::HarnessSync::default(),
     }))
 }
 
@@ -1046,7 +1058,7 @@ fn measure_ref_interleaved(
         if let Some(pkg) = &pkg
             && !workspace::has_bench_target(pkg, &target, Some(wt)).map_err(|e| e.to_string())?
         {
-            return Ok((Ref::NoBenchTarget, None, invoke::HarnessSync::Matched));
+            return Ok((Ref::NoBenchTarget, None, invoke::HarnessSync::default()));
         }
         // A local .cargo/config.toml (untracked, e.g. a linker pin) wouldn't
         // otherwise reach the worktree and would read as a false mismatch.
@@ -1060,6 +1072,19 @@ fn measure_ref_interleaved(
             crate::seed::seed_worktree(wt, target);
         }
         let digests = bench_text_digests(common, wt, wt_target.as_deref());
+        // Callgrind counts differ by method, and a path dependency on the
+        // harness is not pinned, so the sides can disagree.
+        let head_cg = runs.env().filter(|e| e.gating_backend == "callgrind");
+        let base_env = head_cg
+            .zip(digests.as_ref())
+            .filter(|(_, d)| d.head != d.base)
+            .map(|(_, d)| invoke::host_env(&d.base_exe, common.backend.as_deref()));
+        let harness = match head_cg
+            .and_then(|head| base_method_differs(head, digests.is_some(), base_env.as_ref()))
+        {
+            Some(base) => harness.with_method(&base, head_cg.map_or("", |h| h.method())),
+            None => harness,
+        };
         // A run measured from byte-identical machine code under the same
         // conditions is that binary's measurement, whatever commit built it.
         let by_binary = match (reuse, &digests) {
@@ -1096,16 +1121,23 @@ fn measure_ref_interleaved(
         if !reuse {
             println!("gate: per-item reuse off (--no-reuse-base); measuring in full");
         }
-        let item_reuse = digests.as_ref().filter(|_| reuse).and_then(|d| {
-            let head = Bin::head(&d.head_exe, Some(&d.head));
-            let base = Bin {
-                exe: &d.base_exe,
-                digest: Some(&d.base),
-                dir: Some(wt),
-                target_dir: wt_target.as_deref(),
-            };
-            Reuse::plan("gate", common, &runs, &[head, base], recording())
-        });
+        // A merge-base that counts another way would put its numbers in the
+        // store under HEAD's method, so it neither reuses nor records.
+        let same_method = harness.method().is_none();
+        let item_reuse = digests
+            .as_ref()
+            .filter(|_| reuse && same_method)
+            .and_then(|d| {
+                let head = Bin::head(&d.head_exe, Some(&d.head));
+                let base = Bin {
+                    exe: &d.base_exe,
+                    digest: Some(&d.base),
+                    dir: Some(wt),
+                    target_dir: wt_target.as_deref(),
+                    env: base_env.as_ref().and_then(|e| e.as_ref().ok()),
+                };
+                Reuse::plan("gate", common, &runs, &[head, base], recording())
+            });
         let measure_side = |side: usize, extra: &[&str]| -> Result<Run, String> {
             let dir = (side == 1).then_some(wt);
             let Some(reuse) = &item_reuse else {
@@ -1204,7 +1236,9 @@ fn measure_ref_interleaved(
         reference["items"][id.as_str()]["reused_from"] = serde_json::json!("item cache");
     }
     mark_harness(&mut reference, &harness);
-    if let Some(stored) = settled_doc(reference.clone(), &base_settled) {
+    if let Some(stored) =
+        settled_doc(reference.clone(), &base_settled).filter(|_| harness.method().is_none())
+    {
         if base_known {
             runs.store(&base_sha, &stored);
         }
@@ -1231,9 +1265,15 @@ fn measure_ref_interleaved(
 /// it rather than reading as a clean comparison.
 const HARNESS_KEY: &str = "harness_unpinned";
 
+/// Where it remembers the callgrind methods of the two sides, `[base, head]`.
+const HARNESS_METHOD_KEY: &str = "harness_method";
+
 fn mark_harness(doc: &mut Value, harness: &invoke::HarnessSync) {
-    if harness.is_mismatched() {
+    if !harness.unpinned().is_empty() {
         doc[HARNESS_KEY] = serde_json::json!(harness.unpinned());
+    }
+    if let Some(method) = harness.method() {
+        doc[HARNESS_METHOD_KEY] = serde_json::json!(method);
     }
 }
 
@@ -1246,7 +1286,14 @@ fn harness_of(doc: &Value) -> invoke::HarnessSync {
                 .collect()
         })
         .unwrap_or_default();
-    invoke::HarnessSync::from_unpinned(labels)
+    let sync = invoke::HarnessSync::from_unpinned(labels);
+    match (
+        doc[HARNESS_METHOD_KEY][0].as_str(),
+        doc[HARNESS_METHOD_KEY][1].as_str(),
+    ) {
+        (Some(base), Some(head)) => sync.with_method(base, head),
+        _ => sync,
+    }
 }
 
 /// Whether this gate runs to record HEAD as a reference (`SOOTHFAST_RECORD=1`,
@@ -1276,6 +1323,24 @@ fn identical_pass_cache(stored: Option<&Value>, pass: Option<&Run>, record: bool
     stored
         .cloned()
         .or_else(|| pass.filter(|_| record).map(ref_doc))
+}
+
+/// The callgrind method the merge-base counts with, when it is not HEAD's.
+/// `unknown` when it cannot be told: a comparison nobody could check is
+/// inconclusive, not matched. `base` is `None` for identical binaries.
+fn base_method_differs(
+    head: &invoke::HostEnv,
+    have_digests: bool,
+    base: Option<&Result<invoke::HostEnv, String>>,
+) -> Option<String> {
+    if !have_digests {
+        return Some("unknown".into());
+    }
+    match base? {
+        Ok(base) if base.gating_backend != "callgrind" => None,
+        Ok(base) => (base.method() != head.method()).then(|| base.method().to_string()),
+        Err(_) => Some("unknown".into()),
+    }
 }
 
 /// The head and merge-base bench binaries, with digests of their machine code.
@@ -1558,6 +1623,12 @@ fn compare(
         if !old_fp.is_empty() && old_fp != cur.fingerprint {
             fingerprints_changed = true;
             println!("NOTE  {id}: code changed since reference");
+        }
+
+        if let (Some(was), Some(now)) = (old["callgrind"]["window"].as_u64(), cur.window)
+            && was != now
+        {
+            println!("NOTE  {id}: callgrind ir averaged over {was} iterations, now {now}");
         }
 
         // Hard-gated relative metrics. A `downgrade` reason turns a hard
@@ -2652,7 +2723,7 @@ mod tests {
     }
 
     fn mismatched() -> HarnessSync {
-        HarnessSync::Mismatched(vec!["soothfast 0.2.0 -> 0.3.1".into()])
+        HarnessSync::from_unpinned(vec!["soothfast 0.2.0 -> 0.3.1".into()])
     }
 
     #[test]
@@ -2668,7 +2739,7 @@ mod tests {
         assert!(text.contains("different harness"));
         assert!(text.contains("soothfast 0.2.0 -> 0.3.1"));
         assert!(!text.contains("--allow-harness-change"));
-        assert!(super::harness_verdict(&HarnessSync::Matched, false).is_empty());
+        assert!(super::harness_verdict(&HarnessSync::default(), false).is_empty());
     }
 
     #[test]
@@ -2676,7 +2747,7 @@ mod tests {
         assert!(super::harness_waiver(&mismatched(), true, 1));
         assert!(!super::harness_waiver(&mismatched(), false, 1));
         // A pinned reference means a regression is the code's, flag or not.
-        assert!(!super::harness_waiver(&HarnessSync::Matched, true, 1));
+        assert!(!super::harness_waiver(&HarnessSync::default(), true, 1));
         // Nothing regressed, so there is nothing to waive.
         assert!(!super::harness_waiver(&mismatched(), true, 0));
     }
@@ -2687,13 +2758,13 @@ mod tests {
         super::mark_harness(&mut doc, &mismatched());
         assert_eq!(super::harness_of(&doc), mismatched());
         let clean = json!({ "version": 1, "items": {} });
-        assert_eq!(super::harness_of(&clean), HarnessSync::Matched);
+        assert_eq!(super::harness_of(&clean), HarnessSync::default());
     }
 
     #[test]
     fn a_stored_reference_is_only_marked_when_the_pin_missed() {
         let mut doc = json!({ "version": 1, "items": {} });
-        super::mark_harness(&mut doc, &HarnessSync::Matched);
+        super::mark_harness(&mut doc, &HarnessSync::default());
         assert_eq!(doc, json!({ "version": 1, "items": {} }));
     }
 
@@ -2704,7 +2775,7 @@ mod tests {
         super::triage_harness_note(&dir, &mismatched());
         let note = std::fs::read_to_string(dir.join("harness-mismatch.txt")).unwrap();
         assert!(note.contains("soothfast 0.2.0 -> 0.3.1"));
-        super::triage_harness_note(&dir, &HarnessSync::Matched);
+        super::triage_harness_note(&dir, &HarnessSync::default());
         assert!(!dir.join("harness-mismatch.txt").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2867,5 +2938,41 @@ mod tests {
     fn advisory_walltime_lets_an_imported_regression_through() {
         let advisory = "[gate]\nwalltime = \"advisory\"\n";
         assert_eq!(imported_gate("advisory", 0.0013, advisory, false), 0);
+    }
+
+    fn callgrind_env(method: Option<&str>) -> invoke::HostEnv {
+        invoke::HostEnv {
+            gating_backend: "callgrind".into(),
+            guest: None,
+            callgrind_method: method.map(String::from),
+            item_reuse: true,
+        }
+    }
+
+    #[test]
+    fn a_merge_base_that_counts_another_way_or_cannot_say_is_a_mismatch() {
+        let head = callgrind_env(Some("one-process"));
+        let differs = |have, base| super::base_method_differs(&head, have, base);
+        let two = Ok(callgrind_env(None));
+        let one = Ok(callgrind_env(Some("one-process")));
+        assert_eq!(differs(true, Some(&two)).as_deref(), Some("two-process"));
+        assert_eq!(differs(true, Some(&one)), None);
+        assert_eq!(differs(true, None), None);
+        assert_eq!(differs(false, None).as_deref(), Some("unknown"));
+        assert_eq!(
+            differs(true, Some(&Err("no".into()))).as_deref(),
+            Some("unknown")
+        );
+    }
+
+    #[test]
+    fn a_merge_base_that_does_not_gate_on_callgrind_is_not_a_method_mismatch() {
+        let head = callgrind_env(Some("one-process"));
+        let mut walltime = callgrind_env(None);
+        walltime.gating_backend = "walltime".into();
+        assert_eq!(
+            super::base_method_differs(&head, true, Some(&Ok(walltime))),
+            None
+        );
     }
 }
