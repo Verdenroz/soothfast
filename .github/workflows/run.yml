@@ -6,6 +6,10 @@ name: soothfast-run
 on:
   workflow_call:
     inputs:
+      soothfast_ref:
+        description: "Commit, tag or branch of this repository the caller pins; the caller writes it"
+        required: true
+        type: string
       bot:
         description: "Land regenerated files and act on labels as soothfast-bot"
         required: false
@@ -48,6 +52,15 @@ jobs:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
+      # An empty ref would check out the default branch, which may predate this workflow.
+      - name: Require the soothfast ref
+        env:
+          SOOTHFAST_REF: ${{ inputs.soothfast_ref }}
+        run: |
+          if [ -z "$SOOTHFAST_REF" ]; then
+            echo "::error::soothfast_ref is empty; run cargo soothfast init to rewrite the caller"
+            exit 1
+          fi
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
@@ -55,7 +68,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ inputs.soothfast_ref }}
           path: .soothfast-action
           sparse-checkout: |
             action
@@ -65,7 +78,7 @@ jobs:
       - id: soothfast
         uses: ./.soothfast-action/action/install
         with:
-          sha: ${{ github.job_workflow_sha }}
+          sha: ${{ inputs.soothfast_ref }}
       - name: Plan
         id: plan
         run: cargo soothfast plan --github >> "$GITHUB_OUTPUT"
@@ -87,7 +100,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ inputs.soothfast_ref }}
           path: .soothfast-action
           sparse-checkout: |
             action
@@ -101,7 +114,7 @@ jobs:
       - id: soothfast
         uses: ./.soothfast-action/action/install
         with:
-          sha: ${{ github.job_workflow_sha }}
+          sha: ${{ inputs.soothfast_ref }}
       - run: cargo soothfast test
 
   gate-rust:
@@ -125,7 +138,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ inputs.soothfast_ref }}
           path: .soothfast-action
           sparse-checkout: |
             action
@@ -139,7 +152,7 @@ jobs:
       - id: soothfast
         uses: ./.soothfast-action/action/install
         with:
-          sha: ${{ github.job_workflow_sha }}
+          sha: ${{ inputs.soothfast_ref }}
       - uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
@@ -170,7 +183,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ inputs.soothfast_ref }}
           path: .soothfast-action
           sparse-checkout: |
             action
@@ -191,7 +204,7 @@ jobs:
       - id: soothfast
         uses: ./.soothfast-action/action/install
         with:
-          sha: ${{ github.job_workflow_sha }}
+          sha: ${{ inputs.soothfast_ref }}
       # Both sides run on this runner. Walltime gates; set `walltime = "advisory"`
       # under [gate] in soothfast.toml if the runner is too noisy to trust.
       - name: Gate against the merge base
@@ -244,7 +257,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ inputs.soothfast_ref }}
           path: .soothfast-action
           sparse-checkout: |
             action
@@ -260,7 +273,7 @@ jobs:
       - id: soothfast
         uses: ./.soothfast-action/action/install
         with:
-          sha: ${{ github.job_workflow_sha }}
+          sha: ${{ inputs.soothfast_ref }}
       - name: Check the docs
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
@@ -285,7 +298,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ inputs.soothfast_ref }}
           path: .soothfast-action
           sparse-checkout: |
             action
@@ -295,7 +308,7 @@ jobs:
       - id: soothfast
         uses: ./.soothfast-action/action/install
         with:
-          sha: ${{ github.job_workflow_sha }}
+          sha: ${{ inputs.soothfast_ref }}
       - uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}

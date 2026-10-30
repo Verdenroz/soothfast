@@ -664,7 +664,10 @@ fn cargo_jobs(ws: &Workspace) -> String {
 /// The one job of a repo with other-language projects: the reusable
 /// workflow plans and runs everything from `soothfast.toml`.
 fn caller_job(ws: &Workspace) -> String {
+    let pin = ws.action.split_once('@').map_or("", |(_, r)| r);
+    let pin = pin.split(" #").next().unwrap_or(pin);
     let inputs = [
+        ("soothfast_ref", Some(format!("\"{pin}\""))),
         ("bot", ws.bot.then(|| "true".to_string())),
         (
             "runs_on",
@@ -1164,7 +1167,29 @@ mod tests {
         assert!(!text.contains("secrets"));
         assert_eq!(text.matches("\n  soothfast:\n").count(), 1);
         assert_eq!(text.matches("    uses: ").count(), 1);
-        assert!(!text.contains("@@") && !text.contains("\n    with:"));
+        assert!(!text.contains("@@"));
+        assert!(text.contains(&format!("    with:\n      soothfast_ref: \"{sha}\"\n")));
+        let stale = text.replace(
+            &format!("soothfast_ref: \"{sha}\""),
+            "soothfast_ref: \"old\"",
+        );
+        let root = scratch("ref");
+        report(
+            &root,
+            &[Scaffold {
+                path: WORKFLOW_PATH.into(),
+                kind: Kind::Whole,
+                content: text.clone(),
+            }],
+            false,
+            false,
+        );
+        let moved = [Scaffold {
+            path: WORKFLOW_PATH.into(),
+            kind: Kind::Whole,
+            content: stale,
+        }];
+        assert_eq!(report(&root, &moved, true, false), 1);
         assert!(text.contains("branches: [master]"));
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             assert!(!line.starts_with('\t'), "tab indent: {line}");
@@ -1179,7 +1204,9 @@ mod tests {
             ..mixed_ws(false, vec![project(Ecosystem::Node, ".")])
         };
         let text = workflow(&w);
-        assert!(text.contains("    with:\n      bot: true\n      node: \"20\"\n"));
+        assert!(
+            text.contains("      soothfast_ref: \"v0\"\n      bot: true\n      node: \"20\"\n")
+        );
         assert!(text.contains("  schedule:\n    - cron:"));
         assert!(!text.contains("labels:") && !text.contains("java:"));
         assert_eq!(pinned(&text, "node").as_deref(), Some("20"));
