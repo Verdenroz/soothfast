@@ -1,60 +1,57 @@
 {
-    "machine_info": { "node": "ci", "python_version": "3.12.4" },
-    "commit_info": { "id": "0123456789abcdef", "dirty": false },
-    "benchmarks": [
-        {
-            "group": null,
-            "name": "test_encode",
-            "fullname": "tests/test_codec.py::test_encode",
-            "params": null,
-            "stats": {
-                "min": 0.00023,
-                "max": 0.00031,
-                "mean": 0.00025,
-                "stddev": 0.00002,
-                "rounds": 3200,
-                "median": 0.00025,
-                "iqr": 0.00002,
-                "iterations": 1,
-                "ops": 4000.0
-            }
-        },
-        {
-            "group": null,
-            "name": "test_decode[large]",
-            "fullname": "tests/test_codec.py::test_decode[large]",
-            "params": { "size": "large" },
-            "stats": {
-                "min": 0.0039,
-                "max": 0.0051,
-                "mean": 0.0043,
-                "stddev": 0.0003,
-                "rounds": 210,
-                "median": 0.0042,
-                "iqr": 0.0003,
-                "iterations": 1,
-                "ops": 232.6
-            }
-        },
-        {
-            "group": "hash",
-            "name": "test_digest",
-            "fullname": "tests/test_hash.py::test_digest",
-            "params": null,
-            "stats": {
-                "min": 0.001,
-                "max": 0.0013,
-                "mean": 0.00115,
-                "stddev": 0.00014,
-                "rounds": 4,
-                "median": 0.00115,
-                "iqr": 0.0002,
-                "iterations": 1,
-                "ops": 869.6,
-                "data": [0.001, 0.0011, 0.0012, 0.0013]
-            }
-        }
-    ],
-    "datetime": "2026-10-01T12:00:00.000000+00:00",
-    "version": "5.1.0"
+  "machine_info": {
+    "node": "ci",
+    "python_version": "3.13.7",
+    "system": "Linux"
+  },
+  "benchmarks": [
+    {
+      "group": null,
+      "name": "test_sum",
+      "fullname": "test_b.py::test_sum",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "precision": null,
+        "confidence": null,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.000006122001650510356,
+        "max": 0.0004086230001121294,
+        "mean": 0.000007319617363082159,
+        "stddev": 0.0000016219112755701423,
+        "rounds": 7,
+        "median": 0.000006902999302837998,
+        "iqr": 7.019989425316453E-7,
+        "q1": 0.000006733000191161409,
+        "q3": 0.000007434999133693054,
+        "iqr_outliers": 11492,
+        "stddev_outliers": 11193,
+        "outliers": "11193;11492",
+        "ld15iqr": 0.000006122001650510356,
+        "hd15iqr": 0.000008495997462887317,
+        "ops": 136619.16332453175,
+        "total": 0.9766053074345109,
+        "data": [
+          0.000006903002940816805,
+          0.000006472000677604228,
+          0.000006212001608218998,
+          0.000006251997547224164,
+          0.000006150999979581684,
+          0.000006141999620012939,
+          0.000006152000423753634
+        ],
+        "iterations": 1
+      }
+    }
+  ],
+  "datetime": "2026-10-30T01:07:53.859776+00:00",
+  "version": "5.3.0"
 }

@@ -6,8 +6,8 @@ use super::Timing;
 
 /// Parse a pytest-benchmark result, ids named by `fullname`.
 ///
-/// With `--benchmark-save-data` the raw `stats.data` seconds are the samples.
-/// Without it only summary stats exist, so the median is `stats.median` and
+/// When present, the raw `stats.data` seconds are the samples.
+/// Without them only summary stats exist, so the median is `stats.median` and
 /// the MAD is approximated as `stats.stddev * 0.6745`, which holds for
 /// roughly normal timings only. There is no p99 then.
 pub fn parse(text: &str) -> Result<Vec<Timing>, String> {

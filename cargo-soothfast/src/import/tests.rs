@@ -124,16 +124,20 @@ const PYTEST: &str = include_str!("../../tests/fixtures/import/pytest-benchmark.
 const VITEST: &str = include_str!("../../tests/fixtures/import/vitest.json");
 
 #[test]
-fn pyperf_values_are_seconds_pooled_across_runs() {
+fn pyperf_takes_the_name_from_the_file_and_skips_calibration_runs() {
     let run = imported(Format::Pyperf, PYPERF);
-    assert_eq!(
-        run.items.keys().collect::<Vec<_>>(),
-        ["pyperf::json_dumps", "pyperf::json_loads"]
-    );
-    let loads = &run.items["pyperf::json_loads"];
-    assert_close(loads.median_ns, 1125.0);
-    assert_close(loads.mad_ns, 75.0);
-    assert_close(loads.p99_ns, 1300.0);
+    assert_eq!(run.items.keys().collect::<Vec<_>>(), ["pyperf::timeit"]);
+    let timeit = &run.items["pyperf::timeit"];
+    assert_close(timeit.median_ns, 6552.200347842429);
+    assert_close(timeit.mad_ns, 208.77935791308028);
+    assert_close(timeit.p99_ns, 7641.469421448832);
+}
+
+#[test]
+fn a_pyperf_benchmark_name_wins_over_the_file_name() {
+    let text = PYPERF.replace("\"runs\"", "\"metadata\": { \"name\": \"own\" }, \"runs\"");
+    let run = imported(Format::Pyperf, &text);
+    assert_eq!(run.items.keys().collect::<Vec<_>>(), ["pyperf::own"]);
 }
 
 #[test]
@@ -144,58 +148,53 @@ fn a_pyperf_unit_other_than_seconds_is_rejected() {
 }
 
 #[test]
-fn pytest_benchmark_ids_are_fullnames() {
+fn pytest_benchmark_ids_are_fullnames_with_statistics_from_data() {
     let run = imported(Format::Pytest, PYTEST);
     assert_eq!(
         run.items.keys().collect::<Vec<_>>(),
-        [
-            "pytest::tests/test_codec.py::test_decode[large]",
-            "pytest::tests/test_codec.py::test_encode",
-            "pytest::tests/test_hash.py::test_digest",
-        ]
+        ["pytest::test_b.py::test_sum"]
     );
+    let sum = &run.items["pytest::test_b.py::test_sum"];
+    assert_close(sum.median_ns, 6212.001608218998);
+    assert_close(sum.mad_ns, 61.00162863731384);
+    assert_close(sum.p99_ns, 6903.002940816805);
 }
 
 #[test]
 fn pytest_benchmark_without_data_approximates_mad_from_stddev() {
-    let run = imported(Format::Pytest, PYTEST);
-    let encode = &run.items["pytest::tests/test_codec.py::test_encode"];
-    assert_close(encode.median_ns, 250_000.0);
-    assert_close(encode.mad_ns, 13_490.0);
-    assert!(encode.p99_ns.is_none());
+    let text = PYTEST.replace("\"data\"", "\"unrelated\"");
+    let sum = &imported(Format::Pytest, &text).items["pytest::test_b.py::test_sum"];
+    assert_close(sum.median_ns, 6902.999302837998);
+    assert_close(sum.mad_ns, 0.0000016219112755701423 * 1e9 * 0.6745);
+    assert!(sum.p99_ns.is_none());
 }
 
 #[test]
-fn pytest_benchmark_saved_data_gives_exact_statistics() {
-    let run = imported(Format::Pytest, PYTEST);
-    let digest = &run.items["pytest::tests/test_hash.py::test_digest"];
-    assert_close(digest.median_ns, 1_150_000.0);
-    assert_close(digest.mad_ns, 100_000.0);
-    assert_close(digest.p99_ns, 1_300_000.0);
-}
-
-#[test]
-fn vitest_ids_follow_the_printed_hierarchy_and_convert_milliseconds() {
+fn vitest_ids_extend_the_file_relative_group_name_and_convert_milliseconds() {
     let run = imported(Format::Vitest, VITEST);
     assert_eq!(
         run.items.keys().collect::<Vec<_>>(),
         [
-            "vitest::bench/parse.bench.ts > parse > json",
-            "vitest::bench/sort.bench.ts > sort > bubble",
-            "vitest::bench/sort.bench.ts > sort > quick",
+            "vitest::src/sum.bench.ts > sum > loop",
+            "vitest::src/sum.bench.ts > sum > reduce",
         ]
     );
-    let quick = &run.items["vitest::bench/sort.bench.ts > sort > quick"];
-    assert_close(quick.median_ns, 12_000.0);
-    assert_close(quick.mad_ns, 400.0);
-    assert_close(quick.p99_ns, 20_000.0);
+    let looped = &run.items["vitest::src/sum.bench.ts > sum > loop"];
+    assert_close(looped.median_ns, 301.0000000358559);
+    assert_close(looped.mad_ns, 556.1627924340066);
+    assert_close(looped.p99_ns, 550.9999999731008);
 }
 
 #[test]
-fn vitest_without_mad_approximates_it_from_sd() {
-    let run = imported(Format::Vitest, VITEST);
-    let json = &run.items["vitest::bench/parse.bench.ts > parse > json"];
-    assert_close(json.mad_ns, 6745.0);
+fn vitest_samples_give_exact_statistics() {
+    let text = json!({ "files": [{ "groups": [{
+        "fullName": "a.bench.ts > g",
+        "benchmarks": [{ "name": "n", "samples": [1.0, 2.0, 4.0], "median": 99.0, "sd": 99.0 }]
+    }]}]});
+    let run = parse(Format::Vitest, &text.to_string(), None).unwrap();
+    let n = &run.items["vitest::a.bench.ts > g > n"];
+    assert_close(n.median_ns, 2e6);
+    assert_close(n.mad_ns, 1e6);
 }
 
 #[test]
