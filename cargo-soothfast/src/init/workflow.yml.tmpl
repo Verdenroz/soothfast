@@ -1,0 +1,36 @@
+name: soothfast
+
+# Written by `cargo soothfast init`; `cargo soothfast init --check` reports drift.
+on:
+  pull_request:
+  push:
+    branches: [@@default_branch@@]
+permissions:
+  contents: read
+
+# Only a pull request's newer push supersedes a run; a push run records the
+# reference the next pull request reuses and must finish.
+concurrency:
+  group: soothfast-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: @@action@@
+        with:
+          gate: "false"
+          changelog: "false"
+      - run: cargo soothfast test

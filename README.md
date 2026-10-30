@@ -139,7 +139,13 @@ Numbers in prose become gated facts.
 
 ## In CI
 
-One step. On pull requests it gates every package with a soothfast bench
+`cargo soothfast init` writes the workflow for you: a test job, a gate job
+for each package with a soothfast bench target (`-p PKG` adds one), and a
+docs check when your markdown carries markers. `cargo soothfast init --check`
+fails when the workflow differs from what `init` would write now, for
+example after a package gains a bench target.
+
+By hand, it is one step. On pull requests it gates every package with a soothfast bench
 target against the base branch and comments the result. On pushes to the
 default branch it regenerates `CHANGELOG.md` and lands it as a pull request
 authored by soothfast-bot that merges itself once your checks pass.

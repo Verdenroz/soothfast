@@ -20,6 +20,7 @@ mod gate_config;
 mod gate_lock;
 mod glob;
 mod headrun;
+mod init;
 mod invoke;
 mod itemcache;
 mod itemreuse;
@@ -50,6 +51,11 @@ usage: cargo soothfast <command>
        cargo soothfast --version
 
 commands:
+  init     [-p PKG]... [--check] [--force] [--bot]
+           (writes the soothfast CI workflow, soothfast.toml and .gitignore
+           entry; -p gives PKG a soothfast bench target; --check reports
+           drift and writes nothing; --bot lands regenerated files as
+           soothfast-bot)
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]
@@ -152,6 +158,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
     let rest = &argv[1..];
     match cmd.as_str() {
         "measure" => cmd_measure(rest),
+        "init" => init::run(rest),
         "gate" => gate::run(rest),
         "trend" => trend::run(rest),
         "docs" => docs::run(rest),
