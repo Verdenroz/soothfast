@@ -184,35 +184,17 @@ docs-only push records no run until a later push changes the binary. The
 action installs the CLI version in your `Cargo.lock`, so bumping the action
 alone does not change this.
 
-The action does not cache `.soothfast/runs/` itself, nor the per-item store
-and link maps that [per-item reuse](#per-item-reuse) reads. Put a cache step
-before it in the same job, on pull requests and on the default-branch push
-alike: the cache saves in its post step, after the action has recorded, and the push
-job is what writes the runs pull requests read.
+The action caches `.soothfast/runs/`, the per-item store, and the link maps
+that [per-item reuse](#per-item-reuse) reads. A default-branch push saves
+them under its own commit, and a pull request restores exactly the entry its
+merge-base saved. When that push has not finished, it restores its own newest
+entry, then the default branch's newest. A fallback still serves every item
+whose code is unchanged, since items are keyed by the code they ran, not by
+commit.
 
-```yaml
-- uses: actions/cache@v4
-  with:
-    path: |
-      .soothfast/runs
-      .soothfast/items
-      .soothfast/maps
-    key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}
-    restore-keys: |
-      soothfast-runs-${{ github.ref_name }}-
-      soothfast-runs-${{ github.event.repository.default_branch }}-
-- uses: Verdenroz/soothfast@<tag-or-sha>
-```
-
-Items and maps are cached with the runs because the default-branch push
-stores the entries a pull request reuses, and a job that restores none of
-them measures every item.
-
-The key has to be unique per commit, with the prefix in `restore-keys`. An
-exact key that never changes is never rewritten once saved, so the cache
-would keep the first commit's runs and every later commit would miss. The
-second prefix is what lets a pull request, whose `ref_name` is its own merge
-ref, restore the default branch's runs.
+Set `cache: "false"` to manage the cache yourself. Keep the key unique per
+commit with a prefix in `restore-keys`: an exact key is never rewritten once
+saved, so every later commit would miss.
 
 ## Per-item reuse
 
@@ -385,6 +367,31 @@ gate: per-item reuse disabled for this invocation: bench harness does not take -
 
 Entries live under `.soothfast/items/`, keyed by the same conditions as a
 run minus the commit and `--filter`, up to eight per item.
+
+## Sharding
+
+`gate --shard I/N` gates only the items shard I of N owns. A hash of the
+item id picks the shard, so each item belongs to exactly one, and an item
+deleted from the registry is still reported GONE by its shard. Run the
+shards as a job matrix to split a measurement too large for one runner:
+
+```yaml
+strategy:
+  matrix:
+    shard: [1, 2, 3, 4]
+steps:
+  - uses: Verdenroz/soothfast@<tag-or-sha>
+    with:
+      shard: ${{ matrix.shard }}/4
+```
+
+Each shard posts its own comment and fails on its own items. On the default
+branch only shard 1 records a reference: it measures every item and saves
+under the key pull requests restore, and each shard compares its own items
+against that run. On a pull request each shard saves what it measured under
+its own key, for a rerun.
+`--shard` and `--save-baseline` cannot be combined, since a baseline must
+hold every item.
 
 ## Thresholds
 

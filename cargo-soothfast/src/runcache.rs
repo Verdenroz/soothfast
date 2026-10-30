@@ -13,7 +13,7 @@ use std::time::SystemTime;
 use serde_json::Value;
 
 use crate::buildstamp::BuildStamp;
-use crate::invoke::{self, CommonArgs, HostEnv};
+use crate::invoke::{self, CommonArgs, HostEnv, Shard};
 
 /// Runs kept before the oldest are dropped. A gate leaves two live entries
 /// per branch, so this holds many branches at a bounded size.
@@ -60,6 +60,16 @@ impl<'a> Runs<'a> {
     pub fn load(&self, id: &str, measured_from: &str) -> Option<Value> {
         let env = self.env.as_ref()?;
         load(&key(id, self.stamp, self.common, env), measured_from)
+    }
+
+    /// [`Runs::load`] for the reference side of a gate. A shard also takes the
+    /// run of every item there, since compare reads only the items it owns.
+    pub fn load_reference(&self, id: &str, measured_from: &str) -> Option<Value> {
+        self.load(id, measured_from).or_else(|| {
+            let env = self.env.as_ref()?;
+            let whole = key_with(id, self.stamp, self.common, env, None);
+            self.common.shard.and_then(|_| load(&whole, measured_from))
+        })
     }
 
     /// The key every per-item entry of this invocation lives under: the
@@ -119,9 +129,22 @@ pub fn measured_on(env: &HostEnv) -> Value {
 /// callgrind, or the reverse; the `--backend` argument stays too, since it
 /// decides which non-gating backends ran alongside.
 fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> String {
+    key_with(id, stamp, common, env, common.shard)
+}
+
+fn key_with(
+    id: &str,
+    stamp: &BuildStamp,
+    common: &CommonArgs,
+    env: &HostEnv,
+    shard: Option<Shard>,
+) -> String {
     let mut parts = vec![id.to_string()];
     parts.extend(conditions(stamp, common, env));
     parts.push(common.filter.clone().unwrap_or_default());
+    if let Some(shard) = shard {
+        parts.push(format!("shard {shard}"));
+    }
     hashed(&parts)
 }
 

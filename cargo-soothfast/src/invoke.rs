@@ -1,11 +1,11 @@
 //! Subprocess plumbing: run the user's soothfast bench binary via `cargo bench`,
 //! parse its JSONL, and read/write baseline files.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 use serde_json::{Value, json};
@@ -26,6 +26,39 @@ pub struct CommonArgs {
     /// `--no-item-cache`: measure every item even where a stored measurement
     /// of the same executed code exists.
     pub no_item_cache: bool,
+    /// `--shard I/N`: measure and gate only the items this shard owns.
+    pub shard: Option<Shard>,
+}
+
+/// One of `count` disjoint item sets, numbered from 1. An item belongs to the
+/// shard its id hashes to, so an item that left the registry still has one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shard {
+    pub index: u64,
+    pub count: u64,
+}
+
+impl Shard {
+    pub fn parse(s: &str) -> Result<Shard, String> {
+        let bad = || format!("--shard wants I/N with 1 <= I <= N, got {s:?}");
+        let (i, n) = s.split_once('/').ok_or_else(bad)?;
+        let index: u64 = i.parse().map_err(|_| bad())?;
+        let count: u64 = n.parse().map_err(|_| bad())?;
+        if index == 0 || index > count {
+            return Err(bad());
+        }
+        Ok(Shard { index, count })
+    }
+
+    pub fn owns(&self, id: &str) -> bool {
+        soothfast_registry::fnv1a(id.as_bytes()) % self.count == self.index - 1
+    }
+}
+
+impl std::fmt::Display for Shard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.index, self.count)
+    }
 }
 
 impl CommonArgs {
@@ -276,6 +309,21 @@ fn run_records(
 ) -> io::Result<Vec<Value>> {
     let mut args = vec!["--json"];
     args.extend_from_slice(extra);
+    let owned = match common.shard {
+        Some(shard) if matches!(build, Build::Measure) && !extra.contains(&"--id") => {
+            let Some(owned) = shard_ids(common, shard, dir, target_dir) else {
+                return Err(io::Error::other(format!(
+                    "--shard {shard}: the bench binary lists no item (check --filter and the registry)"
+                )));
+            };
+            if owned.is_empty() {
+                return Ok(Vec::new());
+            }
+            owned
+        }
+        _ => Vec::new(),
+    };
+    args.extend(owned.iter().flat_map(|id| ["--id", id.as_str()]));
     let target = common.target.as_deref().unwrap_or("soothfast");
     let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
     cmd.stdout(Stdio::piped());
@@ -353,6 +401,29 @@ pub fn prebuild_benches(
         .args(["--no-run"])
         .status()?;
     Ok(())
+}
+
+/// The ids of the bench binary's items that `shard` owns, listed once per
+/// binary. `None` when it lists no item at all, a setup error for every shard.
+fn shard_ids(
+    common: &CommonArgs,
+    shard: Shard,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+) -> Option<Vec<String>> {
+    static LISTED: OnceLock<Mutex<HashMap<PathBuf, Vec<String>>>> = OnceLock::new();
+    let exe = bench_executable(common, dir, target_dir)?;
+    let mut memo = LISTED.get_or_init(Default::default).lock().ok()?;
+    if let Some(ids) = memo.get(&exe) {
+        return Some(ids.clone());
+    }
+    let listed = list_items(&exe, common.filter.as_deref())?;
+    if listed.is_empty() {
+        return None;
+    }
+    let ids: Vec<String> = listed.into_keys().filter(|id| shard.owns(id)).collect();
+    memo.insert(exe, ids.clone());
+    Some(ids)
 }
 
 /// Path of the compiled bench executable, via `cargo bench --no-run`'s JSON
@@ -1726,9 +1797,26 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, harness_mismatches,
+        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, Shard, harness_mismatches,
         run_from_items_value, run_to_items_value, saved_items,
     };
+
+    #[test]
+    fn a_shard_parses_from_one_and_rejects_out_of_range() {
+        assert_eq!(Shard::parse("2/4"), Ok(Shard { index: 2, count: 4 }));
+        for bad in ["0/4", "5/4", "1", "a/b", "1/0"] {
+            assert!(Shard::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn every_item_belongs_to_exactly_one_shard() {
+        let shards: Vec<Shard> = (1..=4).map(|index| Shard { index, count: 4 }).collect();
+        for n in 0..200 {
+            let id = format!("pkg::item_{n}");
+            assert_eq!(shards.iter().filter(|s| s.owns(&id)).count(), 1, "{id}");
+        }
+    }
 
     #[test]
     fn a_saved_item_says_which_metrics_it_reused() {
