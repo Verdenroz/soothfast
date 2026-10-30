@@ -3,6 +3,7 @@ use crate::{Lang, Symbol, fingerprint, symbols};
 mod ecma;
 mod java;
 mod kotlin;
+mod public;
 mod python;
 
 fn syms(lang: Lang, source: &str) -> Vec<Symbol> {

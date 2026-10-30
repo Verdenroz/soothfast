@@ -96,7 +96,7 @@ impl Default for SiteConfig {
 /// Tables belonging to the other consumers of the shared `soothfast.toml`.
 /// Rejecting these would make a spec- or SDK-configured repo unable to build
 /// its site at all.
-const FOREIGN_TABLES: [&str; 5] = ["spec", "sdk", "gate", "test", "changelog"];
+const FOREIGN_TABLES: [&str; 6] = ["spec", "sdk", "gate", "test", "changelog", "docs"];
 
 fn is_foreign(table: &[String]) -> bool {
     table
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn tables_owned_by_other_engines_are_skipped() {
-        let text = "[site]\nname = \"x\"\n\n[gate]\ncodegen-units = 1\n\n[test]\nignore = [\"docs/**\"]\n\n[test.packages.\"finance-query\"]\nfiles = [\"src/**\"]\n\n[changelog]\npackages = [\"a\"]\n\n[[spec]]\npath = \"a\"\n\n[[sdk]]\nspec = \"a\"\n";
+        let text = "[site]\nname = \"x\"\n\n[gate]\ncodegen-units = 1\n\n[test]\nignore = [\"docs/**\"]\n\n[test.packages.\"finance-query\"]\nfiles = [\"src/**\"]\n\n[changelog]\npackages = [\"a\"]\n\n[docs]\npaths = [\"a\"]\n\n[[spec]]\npath = \"a\"\n\n[[sdk]]\nspec = \"a\"\n";
         let cfg = parse(text).expect("foreign tables must not break the site build");
         assert_eq!(cfg.name, "x");
     }

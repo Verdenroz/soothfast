@@ -59,6 +59,23 @@ fn walltime_limit(noise_pct: f64) -> f64 {
     WALLTIME_THRESHOLD_PCT.max(noise_pct * WALLTIME_NOISE_MARGIN)
 }
 
+/// Relative walltime dispersion of an imported item, the larger of its two
+/// sides, in percent. A harness result carries no A/A run, so its own spread
+/// stands in for the noise floor. Zero for a natively measured item.
+fn imported_noise_pct(old: &Value, cur: &ItemMetrics) -> f64 {
+    if cur.imported.is_none() {
+        return 0.0;
+    }
+    let spread = |mad: Option<f64>, median: Option<f64>| match (mad, median) {
+        (Some(mad), Some(median)) if median > 0.0 => mad / median * 100.0,
+        _ => 0.0,
+    };
+    spread(cur.mad_ns, cur.median_ns).max(spread(
+        old["walltime"]["mad_ns"].as_f64(),
+        old["walltime"]["median_ns"].as_f64(),
+    ))
+}
+
 /// A bench whose loop body is only a few instructions wide cannot survive a
 /// tight relative threshold across a refactor: one spilled register is
 /// already several percent. `tolerance` widens its own gate.
@@ -1623,6 +1640,13 @@ fn compare(
             HEADROOM_COUNTER_FLOOR_PCT,
             build_soft,
         );
+        let item_noise = noise.max(imported_noise_pct(old, cur));
+        let wall_limit = walltime_limit(item_noise);
+        if item_noise > noise && wall_limit > WALLTIME_THRESHOLD_PCT {
+            println!(
+                "NOTE  {label}{id}: noise floor {item_noise:.2}% raised the walltime threshold to +{wall_limit:.1}%"
+            );
+        }
         let walltime_delta = match (old["walltime"]["median_ns"].as_f64(), cur.median_ns) {
             (Some(o), Some(n)) if o > 0.0 => Some((n - o) / o * 100.0),
             _ => None,
@@ -1636,7 +1660,7 @@ fn compare(
             cur.median_ns,
             counter_limit(wall_limit, cur),
             !ctx.walltime_advisory,
-            WALLTIME_NOISE_MARGIN * noise,
+            WALLTIME_NOISE_MARGIN * item_noise,
             walltime_downgrade(old, cur, wall_limit)
                 .or(build_soft)
                 .or(reused_soft)
@@ -2686,7 +2710,12 @@ mod tests {
     }
 
     fn pyperf(seconds: f64) -> String {
-        let runs = json!([{ "values": [seconds, seconds, seconds] }]);
+        pyperf_spread(seconds, 0.0)
+    }
+
+    fn pyperf_spread(seconds: f64, spread: f64) -> String {
+        let (lo, hi) = (seconds * (1.0 - spread), seconds * (1.0 + spread));
+        let runs = json!([{ "values": [lo, seconds, hi] }]);
         json!({ "benchmarks": [{ "metadata": { "name": "b" }, "runs": runs }] }).to_string()
     }
 
@@ -2790,6 +2819,37 @@ mod tests {
     #[test]
     fn an_imported_run_30_percent_slower_fails() {
         assert_eq!(imported_gate("slow", 0.0013, "", false), 1);
+    }
+
+    fn spread_gate(name: &str, spread: f64, current: f64) -> i32 {
+        imported_gate_with(name, current, "", false, |g| {
+            let paths = [&g.import.current, &g.import.reference];
+            for (path, seconds) in paths.into_iter().zip([current, 0.001]) {
+                let path = &path.as_ref().unwrap().1;
+                std::fs::write(path, pyperf_spread(seconds, spread)).unwrap();
+            }
+        })
+    }
+
+    #[test]
+    fn imports_with_4_percent_dispersion_pass_at_9_percent() {
+        assert_eq!(spread_gate("noisy-9", 0.04, 0.00109), 0);
+    }
+
+    #[test]
+    fn dispersion_widens_the_walltime_limit_past_the_fixed_10_percent() {
+        assert_eq!(spread_gate("noisy-11", 0.04, 0.00111), 0);
+        assert_eq!(spread_gate("quiet-11", 0.0001, 0.00111), 1);
+    }
+
+    #[test]
+    fn imports_with_4_percent_dispersion_still_fail_at_30_percent() {
+        assert_eq!(spread_gate("noisy-30", 0.04, 0.0013), 1);
+    }
+
+    #[test]
+    fn imports_with_near_zero_dispersion_still_fail_at_30_percent() {
+        assert_eq!(spread_gate("quiet-30", 0.0001, 0.0013), 1);
     }
 
     #[test]

@@ -46,19 +46,27 @@ impl Evidence {
                 };
             }
         };
-        let short = parsed
-            .item
-            .rsplit("::")
-            .next()
-            .unwrap_or(&parsed.item)
-            .to_string();
+        let short_name = |item: &str| item.rsplit("::").next().unwrap_or(item).to_string();
+        let short = match &parsed.minus {
+            Some(m) => format!("{} − {}", short_name(&parsed.item), short_name(&m.item)),
+            None => short_name(&parsed.item),
+        };
         let op = match parsed.op {
             claims::Op::Lt => "<",
             claims::Op::Le => "≤",
             claims::Op::Gt => ">",
             claims::Op::Ge => "≥",
         };
-        let metric = metric_phrase(&parsed.backend, &parsed.metric);
+        let mut metric = metric_phrase(&parsed.backend, &parsed.metric);
+        if let (Some(m), Ok((first, Some(second)))) =
+            (&parsed.minus, claims::values(&parsed, &self.baseline))
+        {
+            metric = format!(
+                "{metric} ({} − {})",
+                fmt_metric(&parsed.metric, first),
+                fmt_metric(&m.metric, second)
+            );
+        }
         let bound = fmt_metric(&parsed.metric, parsed.bound);
         match claims::evaluate(&parsed, &self.baseline) {
             Ok((true, actual)) => ClaimEval {
@@ -158,7 +166,7 @@ impl Evidence {
     /// match the code right now? "Fingerprint" is our implementation detail,
     /// not theirs — CI keeps this row honest regardless of what it's called.
     fn bind_state(&self, item: &str) -> (&'static str, &'static str, &'static str) {
-        if self.binds.contains_key(item) {
+        if item.split_whitespace().all(|t| self.binds.contains_key(t)) {
             ("bind", "⌖", "verified current")
         } else {
             ("warn", "⌖", "not yet verified")
@@ -167,7 +175,8 @@ impl Evidence {
 
     fn bind_chip(&self, item: &str) -> String {
         let (state, mark, detail) = self.bind_state(item);
-        let short = item.rsplit("::").next().unwrap_or(item);
+        let first = item.split_whitespace().next().unwrap_or(item);
+        let short = first.rsplit("::").next().unwrap_or(first);
         let segments = [
             ("chip-item", short),
             ("chip-sep", "·"),
@@ -179,7 +188,8 @@ impl Evidence {
     /// Richer form of a bind, attached to the code block it covers.
     fn bind_row(&self, item: &str) -> String {
         let (state, mark, detail) = self.bind_state(item);
-        let short = item.rsplit("::").next().unwrap_or(item);
+        let first = item.split_whitespace().next().unwrap_or(item);
+        let short = first.rsplit("::").next().unwrap_or(first);
         format!(
             "<div class=\"ev-row ev-row-{state}\" data-soothfast-bind title=\"{}\">\
 <span class=\"ev-mark\">{mark}</span><span class=\"ev-item\">{}</span>\
@@ -242,9 +252,13 @@ impl SitePlugin for Evidence {
         let mut ledger_rows: BTreeMap<usize, Vec<String>> = BTreeMap::new();
 
         for cm in &doc.claims {
-            let covering = claims::parse(&cm.expr)
-                .ok()
-                .and_then(|p| covers_index.get(p.item.as_str()).copied());
+            let covering = claims::parse(&cm.expr).ok().and_then(|p| {
+                let second = p.minus.as_ref().map(|m| m.item.as_str());
+                [Some(p.item.as_str()), second]
+                    .into_iter()
+                    .flatten()
+                    .find_map(|item| covers_index.get(item).copied())
+            });
             match covering {
                 Some(n) => ledger_rows
                     .entry(n)
@@ -532,6 +546,23 @@ mod tests {
             src: "t.md",
             route: "t/",
         }
+    }
+
+    #[test]
+    fn a_difference_claim_shows_both_items_both_values_and_the_delta() {
+        let baseline = serde_json::json!({ "items": {
+            "a::f": { "walltime": { "median_ns": 5000.0 } },
+            "b::g": { "walltime": { "median_ns": 4000.0 } },
+        } });
+        let ev = Evidence::new(baseline, lockfile::Binds::new());
+        let chip = ev.claim_chip("a::f.walltime.median_ns - b::g.walltime.median_ns < 2us");
+        assert!(chip.contains("f − g"), "{chip}");
+        assert!(chip.contains("5.0 µs − 4.0 µs"), "{chip}");
+        assert!(
+            chip.contains("1.0 µs (limit") || chip.contains("1.0 µs<"),
+            "{chip}"
+        );
+        assert!(chip.contains("chip-pass"), "{chip}");
     }
 
     #[test]
