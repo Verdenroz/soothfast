@@ -102,8 +102,8 @@ impl Settings {
         let mut cfg = Settings::default();
         let mut in_init = false;
         for (lineno, line) in logical_lines(text) {
-            if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-                in_init = inner.trim() == "init";
+            if let Some(name) = table_name(&line) {
+                in_init = name == "init";
                 continue;
             }
             if !in_init {
@@ -176,6 +176,12 @@ impl Settings {
     }
 }
 
+/// The name in a `[name]` table header, ignoring padding and a trailing comment.
+pub fn table_name(line: &str) -> Option<&str> {
+    let line = line.split('#').next()?.trim();
+    Some(line.strip_prefix('[')?.strip_suffix(']')?.trim())
+}
+
 /// The `[init]` table that makes a later `init` render `bench` again.
 pub fn section(eco: Ecosystem, bench: &Bench) -> String {
     let quote = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
@@ -191,6 +197,13 @@ pub fn section(eco: Ecosystem, bench: &Bench) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn table_names_ignore_padding_and_comments() {
+        assert_eq!(table_name("[ init ] # managed"), Some("init"));
+        assert_eq!(table_name("  [gate]"), Some("gate"));
+        assert_eq!(table_name("walltime = \"hard\""), None);
+    }
 
     fn dir(tag: &str, files: &[&str]) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("soothfast-eco-{}-{tag}", std::process::id()));

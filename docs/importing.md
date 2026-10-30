@@ -111,10 +111,12 @@ pull requests, plus a docs check when tracked markdown carries
 
 The gate job checks out the full history, runs the harness on the merge base
 in a `git worktree` and on HEAD, then runs `gate --import` with the merge
-base's file as `--reference-import`. Nothing is stored, and a push to the
-default branch does nothing extra. The seeded `soothfast.toml` keeps
-`[gate] walltime = "advisory"`; set it to `"hard"` once the runner is quiet
-enough to trust.
+base's file as `--reference-import`. When the merge base cannot run the
+harness or writes no result file, the gate notes that and passes. Nothing is
+stored, and a push to the default branch does nothing extra. An imported gate
+measures walltime only, so the seeded `soothfast.toml` sets
+`[gate] walltime = "hard"`; set it to `"advisory"` if the runner is too noisy
+to trust.
 
 | Ecosystem | Command | Format | Setup |
 |-----------|---------|--------|-------|

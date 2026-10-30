@@ -56,6 +56,13 @@ const SOOTHFAST_TOML: &str = "\
 walltime = \"advisory\"
 ";
 
+const IMPORT_TOML: &str = "\
+# Imported gates measure walltime only, both sides on the same runner.
+# Set it to \"advisory\" if the runner is too noisy to trust.
+[gate]
+walltime = \"hard\"
+";
+
 const BENCH_STUB: &str = "\
 use @@crate@@ as _;
 
@@ -144,13 +151,11 @@ impl Scaffold {
 
 /// `text` without the `[name]` table, trimmed to end in one newline.
 fn without_section(text: &str, name: &str) -> String {
-    let header = format!("[{name}]");
     let mut skipping = false;
     let mut kept = String::new();
     for line in text.split_inclusive('\n') {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            skipping = trimmed == header;
+        if line.trim_start().starts_with('[') {
+            skipping = ecosystem::table_name(line) == Some(name);
         }
         if !skipping {
             kept.push_str(line);
@@ -348,7 +353,10 @@ fn detect(root: &Path, bench: &[String], check: bool, bot: bool) -> Result<Works
 fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
     let mut drift = 0;
     for f in files {
-        let path = f.path.display();
+        let path = match f.kind {
+            Kind::Section => format!("{} [init]", f.path.display()),
+            _ => f.path.display().to_string(),
+        };
         match (f.state(root), check) {
             (State::Current, _) => println!("ok       {path}"),
             (state, true) => {
@@ -382,7 +390,12 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
         Scaffold {
             path: "soothfast.toml".into(),
             kind: Kind::Seed,
-            content: SOOTHFAST_TOML.into(),
+            content: if ws.bench.is_some() {
+                IMPORT_TOML
+            } else {
+                SOOTHFAST_TOML
+            }
+            .into(),
         },
         Scaffold {
             path: ".gitignore".into(),
@@ -809,6 +822,22 @@ mod tests {
         assert_eq!(text.matches("[init]").count(), 1);
         assert!(!text.contains("pyperf"));
         assert_eq!(report(&root, &files, true, false), 0);
+    }
+
+    #[test]
+    fn a_padded_commented_init_header_is_replaced_in_place() {
+        let root = scratch("padded");
+        std::fs::write(
+            root.join("soothfast.toml"),
+            "[ init ] # managed\nfrom = \"pyperf\"\n\n[site]\nname = \"x\"\n",
+        )
+        .unwrap();
+        let files = scaffold(&python_ws());
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert_eq!(text.matches("[init]").count(), 1);
+        assert!(!text.contains("[ init ]") && !text.contains("pyperf"));
+        assert!(Settings::parse(&text).is_ok());
     }
 
     fn eco_ws(eco: Ecosystem, docs: bool) -> Workspace {
