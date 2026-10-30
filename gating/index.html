@@ -272,42 +272,40 @@ earlier skip the counters on that pass and store nothing, so there a
 docs-only push records no run until a later push changes the binary. The
 action installs the CLI version in your <code>Cargo.lock</code>, so bumping the action
 alone does not change this.</p>
-<p>The action does not cache <code>.soothfast/runs/</code> itself, nor the per-item store
-and link maps that <a href="#per-item-reuse">per-item reuse</a> reads. Put a cache step
-before it in the same job, on pull requests and on the default-branch push
-alike: the cache saves in its post step, after the action has recorded, and the push
-job is what writes the runs pull requests read.</p>
-<figure class="code"><figcaption class="code-bar"><span class="code-lang">yaml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>- uses: actions/cache@v4
-  with:
-    path: |
-      .soothfast/runs
-      .soothfast/items
-      .soothfast/maps
-    key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}
-    restore-keys: |
-      soothfast-runs-${{ github.ref_name }}-
-      soothfast-runs-${{ github.event.repository.default_branch }}-
-- uses: Verdenroz/soothfast@&lt;tag-or-sha&gt;
-</code></pre></figure>
-<p>Items and maps are cached with the runs because the default-branch push
-stores the entries a pull request reuses, and a job that restores none of
-them measures every item.</p>
-<p>The key has to be unique per commit, with the prefix in <code>restore-keys</code>. An
-exact key that never changes is never rewritten once saved, so the cache
-would keep the first commit's runs and every later commit would miss. The
-second prefix is what lets a pull request, whose <code>ref_name</code> is its own merge
-ref, restore the default branch's runs.</p>
+<p>The action caches <code>.soothfast/runs/</code>, the per-item store, and the link maps
+that <a href="#per-item-reuse">per-item reuse</a> reads. A default-branch push saves
+them under its own commit, and a pull request restores exactly the entry its
+merge-base saved. When that push has not finished, it restores its own newest
+entry, then the default branch's newest. A fallback still serves every item
+whose code is unchanged, since items are keyed by the code they ran, not by
+commit.</p>
+<p>Set <code>cache: &quot;false&quot;</code> to manage the cache yourself. Keep the key unique per
+commit with a prefix in <code>restore-keys</code>: an exact key is never rewritten once
+saved, so every later commit would miss.</p>
 <h2 id="per-item-reuse">Per-item reuse<a class="anchor" href="#per-item-reuse" aria-label="Link to this section">#</a></h2>
 <p>The run cache reuses a whole run. Under <code>callgrind</code>, the gate and <code>measure</code>
 can also reuse a single item, keyed on the machine code the item executed
 rather than on the commit. Callgrind already lists every function a run
 executes; the runner reports that set, and the CLI hashes those functions in
-each bench binary. An item whose executed code hashes the same on both sides
-of a gate is not measured: its stored metrics and assertion verdicts are
-placed on both sides, so its delta is zero, and only the remaining items run
-(<code>--id</code> on the runner).</p>
-<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: 14/16 items run identical code on both sides, measuring 2
+each bench binary. A side whose executed code a stored entry covers does not
+measure that item: the entry's metrics and assertion verdicts are placed on
+that side, and only the remaining items run (<code>--id</code> on the runner). An item
+whose code is unchanged reuses one entry on both sides, so its delta is zero.
+A changed item reuses whatever each side measured before, such as HEAD's run
+from an earlier push to the same pull request. Its walltime then comes from
+another run, so it is reported but never fails the gate; the counters still
+gate it.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: items a stored measurement covers: head 14/16, base 16/16, measuring 2 (2 code changed)
 </code></pre></figure>
+<p>The reasons in parentheses say why the rest missed: <code>code changed</code>, <code>claims
+changed</code> (the item's fingerprint), <code>unhashable here</code> (a function that cannot
+be resolved), <code>never stored</code> (nothing in this cache scope, often a cache that
+was not restored) and <code>binary unreadable</code>.</p>
+<p>To see why an item's code changed between the two sides of a gate, set
+<code>SOOTHFAST_EXPLAIN=pkg::item</code> (or <code>all</code>) on the gate. For each such item it
+lists the functions of its newest stored entry that hash differently in
+HEAD's and the merge-base's binaries, and the thread-local image when that
+differs.</p>
 <p>The whole-run keys above are tried first. Per-item reuse applies on the full
 measurement path and when <code>measure</code> finds no run stored for its binary. It
 is a miss, never a guess, whenever anything cannot be resolved. An entry is
@@ -408,6 +406,26 @@ turns it off for that invocation, the way the run cache is turned off:</p>
 </code></pre></figure>
 <p>Entries live under <code>.soothfast/items/</code>, keyed by the same conditions as a
 run minus the commit and <code>--filter</code>, up to eight per item.</p>
+<h2 id="sharding">Sharding<a class="anchor" href="#sharding" aria-label="Link to this section">#</a></h2>
+<p><code>gate --shard I/N</code> gates only the items shard I of N owns. A hash of the
+item id picks the shard, so each item belongs to exactly one, and an item
+deleted from the registry is still reported GONE by its shard. Run the
+shards as a job matrix to split a measurement too large for one runner:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">yaml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>strategy:
+  matrix:
+    shard: [1, 2, 3, 4]
+steps:
+  - uses: Verdenroz/soothfast@&lt;tag-or-sha&gt;
+    with:
+      shard: ${{ matrix.shard }}/4
+</code></pre></figure>
+<p>Each shard posts its own comment and fails on its own items. On the default
+branch only shard 1 records a reference: it measures every item and saves
+under the key pull requests restore, and each shard compares its own items
+against that run. On a pull request each shard saves what it measured under
+its own key, for a rerun.
+<code>--shard</code> and <code>--save-baseline</code> cannot be combined, since a baseline must
+hold every item.</p>
 <h2 id="thresholds">Thresholds<a class="anchor" href="#thresholds" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap"><table>
 <thead><tr><th>metric</th><th>threshold</th><th>notes</th></tr></thead>
@@ -640,6 +658,8 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l3" href="#the-commit-key-path">The commit-key path</a></li>
   
     <li><a class="toc-l3" href="#reused-items-and-switches">Reused items and switches</a></li>
+  
+    <li><a class="toc-l2" href="#sharding">Sharding</a></li>
   
     <li><a class="toc-l2" href="#thresholds">Thresholds</a></li>
   

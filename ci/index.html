@@ -264,9 +264,32 @@ installed on is refused.</p>
 <tr><td><code>bot-token</code></td><td>none</td><td>Bring your own soothfast-bot installation token; skips the broker.</td></tr>
 <tr><td><code>bot-slug</code></td><td><code>soothfast-bot</code></td><td>App slug <code>bot-token</code> belongs to, for the commit author.</td></tr>
 <tr><td><code>broker</code></td><td>built in</td><td>Token broker URL.</td></tr>
+<tr><td><code>labels</code></td><td><code>false</code></td><td>On default-branch pushes and schedules, act on pull request labels as soothfast-bot (see <a href="#labels">Labels</a>).</td></tr>
+<tr><td><code>shard</code></td><td>none</td><td><code>I/N</code> to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own.</td></tr>
+<tr><td><code>cache</code></td><td><code>true</code></td><td>Restore and save <code>.soothfast/runs</code>, <code>items</code> and <code>maps</code>, keyed so a pull request restores what its merge-base recorded.</td></tr>
 </tbody>
 </table></div>
 <p>Outputs are <code>version</code> and <code>cache-hit</code>.</p>
+<h2 id="labels">Labels<a class="anchor" href="#labels" aria-label="Link to this section">#</a></h2>
+<p>With <code>labels: &quot;true&quot;</code> on a job that runs on default-branch pushes and on a
+schedule, soothfast-bot sweeps the open pull requests:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Label</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>soothfast:merge</code></td><td>Queue auto-merge (squash) behind the required checks. Refused when the default branch requires no status check, since the merge would happen at once.</td></tr>
+<tr><td><code>soothfast:update</code></td><td>Merge the default branch into a pull request that fell behind.</td></tr>
+<tr><td><code>do-not-merge</code></td><td>Cancel a queued auto-merge and leave the pull request alone.</td></tr>
+</tbody>
+</table></div>
+<p>A pull request gate labelled <code>soothfast:perf-accepted</code> reports its
+regressions in the comment and passes; label the pull request, then re-run
+the failed gate. The label waives regressions only, never a gate that
+errored. A label counts only when the person who last applied it can write
+to the repository, so neither a fork nor the Triage role can merge a pull
+request or waive its regression through soothfast-bot. <code>do-not-merge</code> counts
+from anyone, since it only holds a merge back. The sweep runs on events the
+broker mints tokens for, so no <code>pull_request</code> run gets a write token. <code>cargo soothfast init --bot --labels</code> writes the job and
+creates the labels.</p>
 <h2 id="bringing-your-own-token">Bringing your own token<a class="anchor" href="#bringing-your-own-token" aria-label="Link to this section">#</a></h2>
 <p>If you would rather not depend on the broker, install your own GitHub App
 with Contents write, Pull requests write, and Metadata read, mint an
@@ -312,6 +335,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l2" href="#why-the-environment">Why the environment</a></li>
   
     <li><a class="toc-l2" href="#inputs">Inputs</a></li>
+  
+    <li><a class="toc-l2" href="#labels">Labels</a></li>
   
     <li><a class="toc-l2" href="#bringing-your-own-token">Bringing your own token</a></li>
   
