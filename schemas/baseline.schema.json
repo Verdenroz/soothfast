@@ -83,6 +83,10 @@
           "description": "Path of the public item the benchmark covers, from `covers = ...`; empty when unset.",
           "type": "string"
         },
+        "imported": {
+          "description": "Import prefix the item came from, written by `cargo soothfast import`. Absent for measured items.",
+          "type": "string"
+        },
         "tolerance_pct": {
           "description": "Per-item gate threshold override, in percent.",
           "type": "number"

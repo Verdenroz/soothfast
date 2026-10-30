@@ -78,7 +78,8 @@ write one directly instead of providing a bench binary:
 - `items` maps an item id to its fingerprint, `covers` path and one object per
   backend: `walltime`, `perfcnt`, `callgrind`, `alloc`, `asyncexec`,
   `buildcost`. Writers always emit every key the schema lists for a backend;
-  do the same.
+  do the same. `imported` names the import prefix an item came from and is
+  absent on measured items.
 - `assertions` holds the verdicts of checked claims; `build` holds the
   compiler stamp that makes instruction counts comparable. Without `build`,
   `gate` reports the reference as predating build stamps.
