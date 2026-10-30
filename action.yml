@@ -119,6 +119,22 @@ inputs:
     description: Space-separated pathspecs `regen-run` may change.
     required: false
     default: ""
+  shard:
+    description: >-
+      `I/N` to gate only the items shard I of N owns, for a job matrix that
+      splits a large measurement. Each leg still builds both sides; only the
+      measuring is split. Each shard posts its own comment. Empty gates every
+      item.
+    required: false
+    default: ""
+  cache:
+    description: >-
+      Restore and save the measured runs, items and link maps
+      (`.soothfast/runs`, `items`, `maps`). A pull request restores the
+      entry its merge-base's push recorded, so the gate measures only the
+      items whose code changed. Set "false" to manage that cache yourself.
+    required: false
+    default: "true"
 
 outputs:
   version:
@@ -193,8 +209,39 @@ runs:
         REGEN: ${{ inputs.changelog == 'true' || inputs.spec != '' || inputs.regen-run != '' }}
         PACKAGES: ${{ inputs.packages }}
         RUSTDOC_TOOLCHAIN: ${{ inputs.rustdoc-toolchain }}
+        CACHE: ${{ inputs.cache }}
+        SHARD: ${{ inputs.shard }}
         GH_TOKEN: ${{ inputs.token }}
       run: "$GITHUB_ACTION_PATH/action/prepare.sh"
+    - name: Name the runs cache
+      if: steps.prepare.outputs.cache_runs == 'true'
+      id: save-key
+      shell: bash
+      env:
+        PULL: ${{ github.event_name == 'pull_request' }}
+        REF_NAME: ${{ github.ref_name }}
+        SHARD: ${{ inputs.shard }}
+      run: |
+        key="soothfast-runs-${REF_NAME}-${GITHUB_SHA}"
+        if [ "$PULL" = true ] && [ -n "$SHARD" ]; then
+          key="${key}-shard-${SHARD%/*}-of-${SHARD#*/}"
+        fi
+        echo "key=$key" >>"$GITHUB_OUTPUT"
+    # The default-branch push saves under its own sha, which is the exact key
+    # a later pull request asks for as its merge-base.
+    - name: Restore measured runs
+      if: steps.prepare.outputs.cache_runs == 'true'
+      id: runs
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          .soothfast/runs
+          .soothfast/items
+          .soothfast/maps
+        key: soothfast-runs-${{ steps.prepare.outputs.default_branch }}-${{ steps.prepare.outputs.reference }}
+        restore-keys: |
+          soothfast-runs-${{ github.ref_name }}-
+          soothfast-runs-${{ steps.prepare.outputs.default_branch }}-
 
     - name: Gate against the base branch
       if: github.event_name == 'pull_request' && inputs.gate == 'true'
@@ -209,6 +256,7 @@ runs:
         BROKER: ${{ inputs.broker }}
         FEATURES: ${{ inputs.features }}
         SAVE_BASELINE: ${{ inputs.save-baseline }}
+        SHARD: ${{ inputs.shard }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
     - name: Upload triage artifacts
       if: steps.gate.outputs.failed == 'true'
@@ -225,13 +273,30 @@ runs:
         exit 1
 
     - name: Record a reference run
-      if: github.event_name == 'push' && steps.prepare.outputs.on_default_branch == 'true' && inputs.gate == 'true'
+      if: >-
+        github.event_name == 'push' && steps.prepare.outputs.on_default_branch == 'true' && inputs.gate == 'true'
+        && steps.prepare.outputs.records == 'true'
       shell: bash
       env:
         CLI: ${{ steps.resolve.outputs.bin }}
         PACKAGES: ${{ steps.prepare.outputs.packages }}
         FEATURES: ${{ inputs.features }}
       run: "$GITHUB_ACTION_PATH/action/record.sh"
+    # A push saves under the plain key a pull request asks for; only the leg
+    # that recorded has anything to save. A pull request's shards each save
+    # their own items, for a rerun of the same shard.
+    - name: Save measured runs
+      if: >-
+        always() && steps.prepare.outputs.cache_runs == 'true'
+        && (github.event_name == 'pull_request' || steps.prepare.outputs.records == 'true')
+        && steps.runs.outputs.cache-matched-key != steps.save-key.outputs.key
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          .soothfast/runs
+          .soothfast/items
+          .soothfast/maps
+        key: ${{ steps.save-key.outputs.key }}
 
     - name: Regenerate derived files
       if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true'

@@ -94,7 +94,13 @@ impl Reuse {
         } else {
             let listed: Vec<BTreeMap<String, String>> = bins
                 .iter()
-                .map(|bin| invoke::list_items(bin.exe, common.filter.as_deref()))
+                .map(|bin| {
+                    let mut l = invoke::list_items(bin.exe, common.filter.as_deref())?;
+                    if let Some(shard) = common.shard {
+                        l.retain(|id, _| shard.owns(id));
+                    }
+                    Some(l)
+                })
                 .collect::<Option<_>>()?;
             let (hits, misses) = items.reusable(&listed, &sides);
             let todo: Vec<Vec<String>> = listed

@@ -124,6 +124,11 @@ pub fn run(args: &[String]) -> i32 {
                 Some(n) => g.save_baseline = Some(n.clone()),
                 None => return err("--save-baseline needs a name"),
             },
+            "--shard" => match it.next().map(|s| invoke::Shard::parse(s)) {
+                Some(Ok(shard)) => g.common.shard = Some(shard),
+                Some(Err(e)) => return err(&e),
+                None => return err("--shard needs I/N"),
+            },
             "--no-reuse-base" => g.reuse_base = false,
             "--deps" => g.deps = true,
             "--allow-gone" => g.allow_gone = true,
@@ -136,6 +141,12 @@ pub fn run(args: &[String]) -> i32 {
         Ok(cfg) => cfg.walltime_advisory,
         Err(e) => return err(&e),
     };
+    if let Some(shard) = g.common.shard {
+        if g.save_baseline.is_some() {
+            return err("--save-baseline needs every item; a --shard run measures some");
+        }
+        println!("gate: shard {shard}: gating the items it owns");
+    }
 
     let mut regressions = 0u32;
     let mut failing_ids: Vec<String> = Vec::new();
@@ -162,8 +173,15 @@ pub fn run(args: &[String]) -> i32 {
     };
     // A gate that measured nothing must never pass: a typo'd --filter, an
     // empty registry, or lost records would otherwise be permanently green.
-    if current.items.is_empty() {
-        return err("measured 0 items — check --filter / registry setup; refusing to gate");
+    // A shard that owns nothing now still fails on any item it owned that is gone.
+    match g.common.shard {
+        Some(shard) if current.items.is_empty() && g.common.filter.is_none() => {
+            println!("gate: shard {shard} owns no item now; checking none it owned is gone");
+        }
+        _ if current.items.is_empty() => {
+            return err("measured 0 items — check --filter / registry setup; refusing to gate");
+        }
+        _ => {}
     }
     if let Some(b) = &current.gating_backend {
         println!("gate: gating backend = {b}");
@@ -179,6 +197,7 @@ pub fn run(args: &[String]) -> i32 {
         deps_mode: g.deps,
         allow_gone: g.allow_gone,
         filter: g.common.filter.clone(),
+        shard: g.common.shard,
         pkg: g.common.pkg.clone(),
         buildcost_mode,
         accepted,
@@ -640,6 +659,7 @@ fn accept_cmd(args: &[String]) -> i32 {
         deps_mode: false,
         allow_gone: false,
         filter: g.common.filter.clone(),
+        shard: g.common.shard,
         pkg: g.common.pkg.clone(),
         buildcost_mode: g.common.backend.as_deref() == Some("buildcost"),
         accepted: entries.clone(),
@@ -853,7 +873,7 @@ fn measure_ref_interleaved(
 
     if reuse
         && base_known
-        && let Some(doc) = runs.load(&base_sha, &base_sha)
+        && let Some(doc) = runs.load_reference(&base_sha, &base_sha)
     {
         println!("gate: reusing the measured merge-base {base_sha}");
         let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
@@ -903,7 +923,7 @@ fn measure_ref_interleaved(
         // A run measured from byte-identical machine code under the same
         // conditions is that binary's measurement, whatever commit built it.
         let by_binary = match (reuse, &digests) {
-            (true, Some(d)) => runs.load(&d.base, &base_sha),
+            (true, Some(d)) => runs.load_reference(&d.base, &base_sha),
             _ => None,
         };
 
@@ -1309,6 +1329,8 @@ struct CompareCtx {
     deps_mode: bool,
     allow_gone: bool,
     filter: Option<String>,
+    /// Items other shards own are out of scope, not GONE.
+    shard: Option<invoke::Shard>,
     /// Package being gated (`-p`, raw name); baseline entries from other
     /// packages are out of scope, not GONE.
     pkg: Option<String>,
@@ -1601,7 +1623,8 @@ fn compare(
             // Out-of-scope disappearances are expected: a --filter run only
             // measures matching ids, bench runs never see buildcost items,
             // and `-p PKG` never sees other packages' baseline entries.
-            let filtered_out = ctx.filter.as_deref().is_some_and(|f| !id.contains(f));
+            let filtered_out = ctx.filter.as_deref().is_some_and(|f| !id.contains(f))
+                || ctx.shard.is_some_and(|s| !s.owns(id));
             let out_of_mode = id.starts_with("buildcost::") != ctx.buildcost_mode;
             // Bench ids start with the normalized package; buildcost ids
             // embed the raw one (`buildcost::PKG::combo`).
@@ -1706,6 +1729,7 @@ mod tests {
             deps_mode: false,
             allow_gone: false,
             filter: None,
+            shard: None,
             pkg: None,
             buildcost_mode: false,
             accepted: gate_lock::Entries::new(),
@@ -2147,6 +2171,23 @@ mod tests {
         let (failures, failing) = gate_failures(&reused(walltime_reference()), &walltime_head());
         assert_eq!(failures, 0);
         assert!(failing.is_empty());
+    }
+
+    #[test]
+    fn a_vanished_item_fails_only_in_the_shard_that_owns_it() {
+        let gone =
+            json!({ "version": 1, "items": { "pkg::gone": {}, "pkg::bt_base_to_htf_index": {} } });
+        let head = run_with(ItemMetrics::default());
+        let failures: u32 = (1..=3)
+            .map(|index| {
+                let ctx = CompareCtx {
+                    shard: Some(crate::invoke::Shard { index, count: 3 }),
+                    ..ctx()
+                };
+                gate_failures_with(&gone, &head, ctx).0
+            })
+            .sum();
+        assert_eq!(failures, 1);
     }
 
     #[test]

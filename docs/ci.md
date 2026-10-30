@@ -152,6 +152,8 @@ installed on is refused.
 | `bot-token` | none | Bring your own soothfast-bot installation token; skips the broker. |
 | `bot-slug` | `soothfast-bot` | App slug `bot-token` belongs to, for the commit author. |
 | `broker` | built in | Token broker URL. |
+| `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
+| `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded. |
 
 Outputs are `version` and `cache-hit`.
 

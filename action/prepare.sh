@@ -3,14 +3,24 @@
 # check, the package list, full history for merge-base and tag lookups, the
 # callgrind fallback, and the rustdoc toolchain when anything regenerates.
 # A default-branch push with the gate on records a reference run.
-# Inputs: GATE REGEN (true|false) PACKAGES RUSTDOC_TOOLCHAIN GH_TOKEN.
-# Outputs: on_default_branch, packages.
+# Inputs: GATE REGEN CACHE (true|false) SHARD PACKAGES RUSTDOC_TOOLCHAIN
+# GH_TOKEN.
+# Outputs: on_default_branch, default_branch, packages, records (this leg
+# records the reference), reference (the commit whose recorded runs the gate
+# compares against) and cache_runs.
 set -euo pipefail
 
 default=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)
 on_default=false
 [ "${GITHUB_REF:-}" = "refs/heads/${default}" ] && on_default=true
 echo "on_default_branch=$on_default" >>"$GITHUB_OUTPUT"
+echo "default_branch=$default" >>"$GITHUB_OUTPUT"
+# Shard 1 of a matrix records every item for all of them.
+records=false
+if [ -z "${SHARD:-}" ] || [ "${SHARD%%/*}" = 1 ]; then
+  records=true
+fi
+echo "records=$records" >>"$GITHUB_OUTPUT"
 
 gating=false
 [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ "$GATE" = true ] && gating=true
@@ -38,7 +48,16 @@ if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
 fi
 if [ "$gating" = true ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
   git fetch --quiet origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+  reference=$(git merge-base HEAD "origin/${GITHUB_BASE_REF}")
+elif [ "$recording" = true ] && git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
+  reference=$(git rev-parse 'HEAD^')
 fi
+cache_runs=false
+if [ "${CACHE:-false}" = true ] && [ -n "${reference:-}" ]; then
+  cache_runs=true
+fi
+echo "reference=${reference:-}" >>"$GITHUB_OUTPUT"
+echo "cache_runs=$cache_runs" >>"$GITHUB_OUTPUT"
 
 if [ "$(uname -s)" = Linux ] && ! command -v valgrind >/dev/null && command -v apt-get >/dev/null; then
   sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
