@@ -347,6 +347,19 @@ pub fn run(args: &[String]) -> i32 {
     for note in &notes {
         println!("{note}");
     }
+    let callers = other_callers(&root);
+    for caller in &callers {
+        println!(
+            "warn     {caller} calls soothfast; its jobs run twice until it or {WORKFLOW_PATH} is removed"
+        );
+    }
+    let duplicate_only = ws.projects.is_empty() && ws.ci.is_default();
+    if !callers.is_empty() && duplicate_only && !force && !root.join(WORKFLOW_PATH).exists() {
+        println!(
+            "init: nothing written, since {WORKFLOW_PATH} would only duplicate the jobs above; --force writes it"
+        );
+        return 0;
+    }
     let files = scaffold(&ws);
     let rc = report(&root, &files, check, force);
     if check || rc != 0 {
@@ -357,6 +370,35 @@ pub fn run(args: &[String]) -> i32 {
         return create_labels();
     }
     0
+}
+
+/// The workflow files besides the one init writes that call soothfast, as
+/// repo-relative paths.
+fn other_callers(root: &Path) -> Vec<String> {
+    let dir = root.join(".github/workflows");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let calls = |text: &str| {
+        text.lines().any(|l| {
+            let uses = l.trim().trim_start_matches("- ").strip_prefix("uses:");
+            let target = uses.map(str::trim);
+            target.is_some_and(|t| {
+                t.strip_prefix("Verdenroz/soothfast")
+                    .is_some_and(|rest| rest.starts_with(['@', '/']))
+            })
+        })
+    };
+    let mut found: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml"))
+        .filter(|p| p.file_name() != Path::new(WORKFLOW_PATH).file_name())
+        .filter(|p| std::fs::read_to_string(p).is_ok_and(|t| calls(&t)))
+        .filter_map(|p| Some(format!(".github/workflows/{}", p.file_name()?.to_str()?)))
+        .collect();
+    found.sort();
+    found
 }
 
 /// What to do after `init` before the first pull request gates anything.
@@ -1383,6 +1425,32 @@ mod tests {
         assert!(text.contains("ignore = [\"docs/**\"]") && text.contains("ci = false"));
         assert!(text.contains("name = \"x\""));
         assert_eq!(report(&root, &files, true, false), 0);
+    }
+
+    #[test]
+    fn other_workflows_that_call_soothfast_are_found() {
+        let root = scratch("callers");
+        let dir = root.join(".github/workflows");
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+        write(
+            "ci.yml",
+            "    steps:\n      - uses: Verdenroz/soothfast@abc # v1\n",
+        );
+        write(
+            "reuse.yaml",
+            "    uses: Verdenroz/soothfast/.github/workflows/run.yml@abc\n",
+        );
+        write("soothfast.yml", "    uses: Verdenroz/soothfast@abc\n");
+        write(
+            "other.yml",
+            "      - uses: actions/checkout@abc\n# Verdenroz/soothfast@x\n",
+        );
+        assert_eq!(
+            other_callers(&root),
+            [".github/workflows/ci.yml", ".github/workflows/reuse.yaml"]
+        );
+        assert!(other_callers(&scratch("none")).is_empty());
     }
 
     #[test]
