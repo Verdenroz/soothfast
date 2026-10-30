@@ -54,6 +54,7 @@ mod spec_html;
 mod spec_probe;
 mod test;
 mod trend;
+mod verdict;
 mod workspace;
 
 use invoke::CommonArgs;
@@ -122,6 +123,11 @@ commands:
            fatal, and the command still exits 3, not 0, if any were)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
+  verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE
+           [--seconds S] [--out FILE]
+  verdict  merge DIR --out FILE [--accepted] [--expect NAME:KIND]..
+           (one job's result, then the pull request's single comment;
+           exits 1 on a regression or error)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--skip-claims] [--features F] [PATHS...]
   docs     capture -p PKG [--check] [PATHS...]
   docs     diff -p PKG --against-ref REF [--features F]
@@ -203,6 +209,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "import" => import::run(rest),
         "gate" => gate::run(rest),
         "trend" => trend::run(rest),
+        "verdict" => verdict::run(rest),
         "docs" => docs::run(rest),
         "coverage" => coverage::run(rest),
         "spec" => spec::run(rest),
