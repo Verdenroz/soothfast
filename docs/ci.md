@@ -191,9 +191,46 @@ then unnecessary.
 
 ## Self-hosted runners
 
-The scripts use `gh`, `jq`, `curl`, `git`, and `cargo`. On Linux the step
-installs `valgrind` with `apt-get` when it is missing, for the callgrind
-fallback on machines without performance counters.
+A runner that only has `git`, `bash`, `curl`, `docker` and the runner agent
+can run the reusable `run.yml` workflow (see [importing](importing.md)) if it
+provides the following.
+
+Every job:
+
+- `git`, `curl`, `bash`, `sed`, `awk` and `grep`. The install step fails
+  naming `git` or `curl` when either is missing.
+- Network access to github.com, crates.io, and the services the pinned
+  actions download from (the Java, Node and `uv` setup actions fetch their
+  toolchains).
+- `cargo` is set up for you with `dtolnay/rust-toolchain` (stable) when it is
+  not on `PATH`, because `cargo soothfast` is a cargo subcommand. That needs
+  the network and a C compiler and linker (`cc`) to build a Rust project.
+  `cargo-soothfast` itself is installed from crates.io when the workflow's
+  ref is a published release, else built from the ref into
+  `$RUNNER_TOOL_CACHE/soothfast-cli/<commit>`, cached by commit and linked
+  into `$CARGO_HOME/bin`. The first
+  build of a ref takes several minutes.
+
+Jobs that run the composite action (the cargo gate and the labels job):
+
+- `gh` and `jq`. The step fails naming the tool when one is missing.
+- `valgrind`, for the callgrind fallback on machines without hardware
+  performance counters. The step installs it with `apt-get` when it runs as
+  root or passwordless `sudo` is available, and otherwise warns and carries on.
+  A runner with performance counters does not need it.
+- `rustup`, for a nightly or pinned rustdoc toolchain. `dtolnay/rust-toolchain`
+  installs it when it is missing.
+
+Per-project gate jobs:
+
+- Java for Gradle and Maven projects, Node for Node projects and `uv` for
+  Python projects come from `actions/setup-java`, `actions/setup-node` and
+  `astral-sh/setup-uv`, so the runner needs nothing preinstalled. A Gradle
+  project's own `./gradlew` downloads Gradle, and Python itself comes from
+  `uv`.
+
+`step-security/harden-runner` is the first step of every job; it targets
+hosted runners and its network audit may not apply on yours.
 
 ## One verdict
 
