@@ -17,7 +17,7 @@ use crate::invoke::{self, CommonArgs, HostEnv, Shard};
 
 /// Runs kept before the oldest are dropped. A gate leaves two live entries
 /// per branch, so this holds many branches at a bounded size.
-const KEEP: usize = 32;
+pub(crate) const KEEP: usize = 32;
 
 /// `.soothfast/<name>`, created on demand.
 pub fn state_dir(name: &str) -> Option<PathBuf> {

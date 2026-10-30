@@ -10,6 +10,7 @@
 mod agreement;
 mod buildcost;
 mod buildstamp;
+mod cache;
 mod changelog_config;
 mod codekey;
 mod coverage;
@@ -73,6 +74,10 @@ commands:
            acts on pull request labels as soothfast-bot; --labels creates
            soothfast:merge, soothfast:update, soothfast:perf-accepted and
            do-not-merge with gh)
+  cache    merge --from DIR
+           (folds a restored .soothfast cache layout in DIR into this
+           project's: items keep the entries of both, runs and link maps are
+           copied when absent)
   plan     [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
@@ -189,6 +194,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "measure" => cmd_measure(rest),
         "init" => init::run(rest),
         "plan" => plan::run(rest),
+        "cache" => cache::run(rest),
         "import" => import::run(rest),
         "gate" => gate::run(rest),
         "trend" => trend::run(rest),
