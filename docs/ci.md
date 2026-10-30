@@ -170,9 +170,9 @@ An entry is named for a hash of the package, features, visibility, the
 `rustc -vV` of the rustdoc toolchain, the rustdoc format version, the
 `RUSTFLAGS` and `RUSTDOCFLAGS` family of variables, `Cargo.lock`, the root
 manifest and cargo config, and every file git lists in the package and its
-path dependencies. Uncommitted edits count. The merge-base checkout hashes
-the same way, so JSON a default-branch push saved is the base side of a
-pull request's `docs diff`.
+path dependencies, apart from `.github`. Uncommitted edits count. The
+merge-base checkout hashes the same way, so JSON a default-branch push
+saved is the base side of a pull request's `docs diff`.
 
 The key does not cover what a build script reads beyond those variables,
 or cargo configuration outside the repository such as

@@ -92,7 +92,7 @@ pub fn key(root: &Path, crate_dirs: &[PathBuf], req: &Request) -> Option<String>
             let nested = rels
                 .iter()
                 .any(|other| other != rel && other.starts_with(rel) && file.starts_with(other));
-            if !nested && !file.starts_with(".soothfast") {
+            if !nested && !file.starts_with(".soothfast") && !file.starts_with(".github") {
                 files.insert(file);
             }
         }
@@ -345,6 +345,7 @@ mod tests {
         assert_ne!(before, key(&repo.0, &dirs, &req).unwrap());
         let edited = key(&repo.0, &dirs, &req).unwrap();
         repo.write(".soothfast/rustdoc/entry.json", "{}");
+        repo.write(".github/workflows/ci.yml", "on: push\n");
         assert_eq!(edited, key(&repo.0, &dirs, &req).unwrap());
         let moved = [repo.0.join("dep"), repo.0.clone()];
         assert_eq!(
