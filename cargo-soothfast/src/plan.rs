@@ -2,7 +2,7 @@
 //! read from `soothfast.toml` and the cargo workspace at the root.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -10,40 +10,68 @@ use crate::init::ci::Ci;
 use crate::init::ecosystem::{Project, Suite};
 use crate::init::{self, RustPlan};
 use crate::invoke;
-use crate::test::project::{TEST_ALL_LABEL, changed_since, suites_for, touches};
+use crate::test::project::{
+    Pins, TEST_ALL_LABEL, Verdict, changed_since, has_pass, suites_for, target_for, toolchain_for,
+    touches, write_result,
+};
 
-pub fn run(args: &[String]) -> i32 {
-    let mut github = false;
-    let mut base = None;
-    let mut labels = Vec::new();
+/// What the command line asked for beyond `--github`.
+#[derive(Default)]
+struct Args {
+    github: bool,
+    base: Option<String>,
+    labels: Vec<String>,
+    results: Option<PathBuf>,
+    pins: Pins,
+}
+
+fn parse_args(args: &[String]) -> Result<Args, String> {
+    let mut out = Args::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
+        if a == "--github" {
+            out.github = true;
+            continue;
+        }
+        let value = it
+            .next()
+            .ok_or_else(|| format!("{a} needs a value"))?
+            .clone();
         match a.as_str() {
-            "--github" => github = true,
-            "--base" | "--labels" => {
-                let Some(value) = it.next() else {
-                    return err(&format!("{a} needs a value"));
-                };
-                match a.as_str() {
-                    "--base" => base = Some(value.clone()),
-                    _ => {
-                        labels = value
-                            .split(',')
-                            .filter(|l| !l.is_empty())
-                            .map(String::from)
-                            .collect()
-                    }
-                }
+            "--base" => out.base = Some(value),
+            "--labels" => {
+                out.labels = value
+                    .split(',')
+                    .filter(|l| !l.is_empty())
+                    .map(String::from)
+                    .collect()
             }
-            other => return err(&format!("unknown plan arg {other:?}")),
+            "--results" => out.results = Some(PathBuf::from(value)),
+            "--java" => out.pins.java = Some(value),
+            "--node" => out.pins.node = Some(value),
+            "--runner" => out.pins.runner = Some(value),
+            other => return Err(format!("unknown plan arg {other:?}")),
         }
     }
+    Ok(out)
+}
+
+pub fn run(args: &[String]) -> i32 {
+    let args = match parse_args(args) {
+        Ok(args) => args,
+        Err(e) => return err(&e),
+    };
     let root = invoke::project_root();
-    let plan = match build(&root, base.as_deref(), labels) {
+    let plan = match build(&root, args.base.as_deref(), args.labels, args.pins) {
         Ok(plan) => plan,
         Err(e) => return err(&e),
     };
-    if github {
+    if let Some(dir) = &args.results
+        && let Err(e) = plan.write_settled(dir)
+    {
+        return err(&e);
+    }
+    if args.github {
         print!("{}", plan.outputs());
     } else {
         println!("{}", plan.matrix(true));
@@ -61,9 +89,20 @@ struct Plan {
     labels: Vec<String>,
     /// The files the change touches; none selects every project.
     changed: Option<BTreeSet<String>>,
+    pins: Pins,
+    /// Names of the tests a stored pass already covers.
+    reused: BTreeSet<String>,
 }
 
-fn build(root: &Path, base: Option<&str>, labels: Vec<String>) -> Result<Plan, String> {
+/// One project's tests, or one suite's, and whether the change reaches them.
+struct Candidate<'a> {
+    name: String,
+    project: &'a Project,
+    suite: Option<&'a Suite>,
+    reached: bool,
+}
+
+fn build(root: &Path, base: Option<&str>, labels: Vec<String>, pins: Pins) -> Result<Plan, String> {
     let rust = root
         .join("Cargo.toml")
         .is_file()
@@ -88,7 +127,7 @@ fn build(root: &Path, base: Option<&str>, labels: Vec<String>) -> Result<Plan, S
         Some(base) => changed_since(root, Some(base)).map_err(|e| e.to_string())?,
         None => None,
     };
-    Ok(Plan {
+    let mut plan = Plan {
         rust,
         projects,
         ci: init::ci(root)?,
@@ -96,7 +135,11 @@ fn build(root: &Path, base: Option<&str>, labels: Vec<String>) -> Result<Plan, S
         suites,
         labels,
         changed,
-    })
+        pins,
+        reused: BTreeSet::new(),
+    };
+    plan.reused = plan.stored_passes(root)?;
+    Ok(plan)
 }
 
 impl Plan {
@@ -134,37 +177,102 @@ impl Plan {
         self.labels.iter().any(|l| l == TEST_ALL_LABEL)
     }
 
-    /// One entry per project with a `test_cmd` that the change reaches, and
-    /// one per suite whose label a writer applied. `test-all` takes every
-    /// project.
-    fn test_matrix(&self) -> Value {
-        let mut include = Vec::new();
-        let named = self.projects.iter().zip(names(&self.projects));
-        for (project, name) in named {
-            let entry = |name: &str, dir: &str, suite: &str| {
-                json!({
-                    "name": name,
-                    "ecosystem": project.ecosystem.name(),
-                    "dir": dir,
-                    "suite": suite,
-                })
-            };
-            let reached = self.test_all()
-                || self
-                    .changed
-                    .as_ref()
-                    .is_none_or(|c| touches(&project.dir, &project.test.watch, c));
-            if project.test.cmd.is_some() && reached {
-                include.push(entry(&name, &project.dir, ""));
+    /// The project tests and labelled suites, each with whether the change
+    /// reaches it. `test-all` reaches every project.
+    fn candidates(&self) -> Vec<Candidate<'_>> {
+        let mut out = Vec::new();
+        for (project, name) in self.projects.iter().zip(names(&self.projects)) {
+            if project.test.cmd.is_some() {
+                let reached = self.test_all()
+                    || self
+                        .changed
+                        .as_ref()
+                        .is_none_or(|c| touches(&project.dir, &project.test.watch, c));
+                out.push(Candidate {
+                    name: name.clone(),
+                    project,
+                    suite: None,
+                    reached,
+                });
             }
             for suite in suites_for(&self.suites, &self.labels) {
                 if suite.project == project.dir {
-                    let slug = format!("{name}-{}", slug(&suite.label));
-                    include.push(entry(&slug, &project.dir, &suite.label));
+                    out.push(Candidate {
+                        name: format!("{name}-{}", slug(&suite.label)),
+                        project,
+                        suite: Some(suite),
+                        reached: true,
+                    });
                 }
             }
         }
+        out
+    }
+
+    /// The names of reached tests that a stored pass covers. `test-all`
+    /// ignores the store.
+    fn stored_passes(&self, root: &Path) -> Result<BTreeSet<String>, String> {
+        let mut reused = BTreeSet::new();
+        if self.test_all() {
+            return Ok(reused);
+        }
+        for c in self.candidates().into_iter().filter(|c| c.reached) {
+            let target = target_for(c.project, c.suite)?;
+            let toolchain = toolchain_for(c.project.ecosystem, &self.pins);
+            if has_pass(root, &target, &toolchain).map_err(|e| e.to_string())? {
+                reused.insert(c.name);
+            }
+        }
+        Ok(reused)
+    }
+
+    /// One entry per reached test with no stored pass: the only tests a job
+    /// has to run.
+    fn test_matrix(&self) -> Value {
+        let include: Vec<Value> = self
+            .candidates()
+            .into_iter()
+            .filter(|c| c.reached && !self.reused.contains(&c.name))
+            .map(|c| {
+                json!({
+                    "name": c.name,
+                    "ecosystem": c.project.ecosystem.name(),
+                    "dir": c.project.dir,
+                    "suite": c.suite.map(|s| s.label.as_str()).unwrap_or_default(),
+                    "toolchain": toolchain_for(c.project.ecosystem, &self.pins),
+                })
+            })
+            .collect();
         json!({ "include": include })
+    }
+
+    /// The tests that need no job, and why.
+    fn settled(&self) -> Vec<(String, String, Verdict)> {
+        self.candidates()
+            .into_iter()
+            .filter_map(|c| {
+                let verdict = match (c.reached, self.reused.contains(&c.name)) {
+                    (false, _) => Verdict::Skipped,
+                    (true, true) => Verdict::Reused,
+                    (true, false) => return None,
+                };
+                Some((c.name, c.project.dir.clone(), verdict))
+            })
+            .collect()
+    }
+
+    /// A result file in `dir` for each test that needs no job.
+    fn write_settled(&self, dir: &Path) -> Result<(), String> {
+        let settled = self.settled();
+        if settled.is_empty() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        for (name, project, verdict) in settled {
+            let path = dir.join(format!("{name}.json"));
+            write_result(&path, &name, &project, verdict, &[], 0.0)?;
+        }
+        Ok(())
     }
 
     /// `key=value` lines for `$GITHUB_OUTPUT`. The matrix holds only the
@@ -269,6 +377,11 @@ mod tests {
             suites: Vec::new(),
             labels: Vec::new(),
             changed: None,
+            pins: Pins {
+                runner: Some("Linux X64".into()),
+                ..Pins::default()
+            },
+            reused: BTreeSet::new(),
         }
     }
 
@@ -370,6 +483,63 @@ mod tests {
         assert!(out.contains("projects=false\n"), "{out}");
         assert!(p.matrix(false)["include"].as_array().unwrap().is_empty());
         assert_eq!(test_names(&p), ["python"]);
+    }
+
+    #[test]
+    fn a_reused_or_untouched_test_needs_no_job() {
+        let mut p = plan(
+            None,
+            vec![
+                testable(Ecosystem::Gradle, "client", &[]),
+                testable(Ecosystem::Node, "web", &[]),
+            ],
+        );
+        p.changed = Some(["client/A.java".to_string()].into());
+        let matrix = p.test_matrix();
+        assert_eq!(matrix["include"][0]["toolchain"], "gradle  Linux X64");
+        assert_eq!(test_names(&p), ["gradle"]);
+        p.reused.insert("gradle".into());
+        assert!(test_names(&p).is_empty());
+        let settled = p.settled();
+        let verdicts: Vec<_> = settled.iter().map(|(n, _, v)| (n.as_str(), *v)).collect();
+        assert_eq!(
+            verdicts,
+            [("gradle", Verdict::Reused), ("node", Verdict::Skipped)]
+        );
+        assert!(p.outputs().contains("test_projects=false\n"));
+    }
+
+    #[test]
+    fn settled_results_are_written_one_file_each() {
+        let mut p = plan(None, vec![testable(Ecosystem::Node, "web", &[])]);
+        p.changed = Some(BTreeSet::new());
+        let dir = std::env::temp_dir().join(format!("soothfast-settled-{}", std::process::id()));
+        p.write_settled(&dir).unwrap();
+        let doc: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("node.json")).unwrap()).unwrap();
+        assert_eq!(doc["verdict"], "skipped");
+        assert_eq!(doc["kind"], "test");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn plan_flags_are_parsed() {
+        let argv = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let a = parse_args(&argv(&[
+            "--github",
+            "--labels",
+            "a,b",
+            "--java",
+            "21",
+            "--runner",
+            "Linux X64",
+        ]))
+        .unwrap();
+        assert!(a.github);
+        assert_eq!(a.labels, ["a", "b"]);
+        assert_eq!(a.pins.java.as_deref(), Some("21"));
+        assert!(parse_args(&argv(&["--base"])).is_err());
+        assert!(parse_args(&argv(&["--nope", "x"])).is_err());
     }
 
     #[test]

@@ -12,7 +12,7 @@ use serde_json::json;
 
 use super::key::Passes;
 use super::select;
-use crate::init::ecosystem::{Ecosystem, Suite, normalize_dir};
+use crate::init::ecosystem::{Ecosystem, Project, Suite, normalize_dir};
 use crate::runcache::{hashed, hex_fnv};
 use crate::{glob, init, invoke};
 
@@ -29,7 +29,6 @@ struct Args {
     base: Option<String>,
     all: bool,
     no_cache: bool,
-    decide: bool,
     toolchain: Option<String>,
     result: Option<PathBuf>,
     name: Option<String>,
@@ -59,7 +58,6 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
             "--name" => out.name = Some(value()?),
             "--all" => out.all = true,
             "--no-cache" => out.no_cache = true,
-            "--decide" => out.decide = true,
             other => return Err(format!("unknown flag {other:?} with --project")),
         }
     }
@@ -78,7 +76,7 @@ pub enum Verdict {
 }
 
 impl Verdict {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Verdict::Pass => "pass",
             Verdict::Reused => "reused",
@@ -90,7 +88,7 @@ impl Verdict {
 }
 
 /// What a run executes.
-struct Target {
+pub struct Target {
     ecosystem: Ecosystem,
     dir: String,
     cmd: String,
@@ -99,11 +97,13 @@ struct Target {
     retry_cmd: Option<String>,
 }
 
-/// What a run left behind, for the result.
-struct Report {
-    verdict: Verdict,
-    output: Vec<String>,
-    wall_s: f64,
+/// The toolchain versions a workflow installs, which name the toolchain in a
+/// key without probing a binary that may not be installed yet.
+#[derive(Default, Debug, PartialEq)]
+pub struct Pins {
+    pub java: Option<String>,
+    pub node: Option<String>,
+    pub runner: Option<String>,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -121,14 +121,10 @@ fn drive(args: Args) -> Result<i32, String> {
     let target = target(&root, &args)?;
     let started = Instant::now();
     let finish = |verdict: Verdict, output: Vec<String>| -> Result<i32, String> {
-        let report = Report {
-            verdict,
-            output,
-            wall_s: started.elapsed().as_secs_f64(),
-        };
-        write_result(&args, &report)?;
-        if args.decide && matches!(verdict, Verdict::Skipped | Verdict::Reused) {
-            println!("run=false");
+        if let Some(path) = &args.result {
+            let name = args.name.as_deref().unwrap_or(&args.project);
+            let wall_s = started.elapsed().as_secs_f64();
+            write_result(path, name, &args.project, verdict, &output, wall_s)?;
         }
         Ok(i32::from(verdict == Verdict::Failed))
     };
@@ -150,10 +146,6 @@ fn drive(args: Args) -> Result<i32, String> {
         eprintln!("test: {} reused a stored pass", target.dir);
         return finish(Verdict::Reused, Vec::new());
     }
-    if args.decide {
-        println!("run=true");
-        return Ok(0);
-    }
     let (verdict, output) = execute_with_retries(&root, &target);
     if verdict == Verdict::Pass {
         passes.record(&target.dir, &key);
@@ -167,28 +159,37 @@ fn target(root: &Path, args: &Args) -> Result<Target, String> {
         .into_iter()
         .find(|p| p.dir == dir)
         .ok_or_else(|| format!("no [[project]] at {dir} in soothfast.toml"))?;
-    let (cmd, retry_cmd) = match &args.suite {
+    let suite = match &args.suite {
+        None => None,
+        Some(label) => Some(
+            init::suites(root)?
+                .into_iter()
+                .find(|s| &s.label == label && s.project == dir)
+                .ok_or_else(|| format!("no [[test.suite]] labelled {label:?} for {dir}"))?,
+        ),
+    };
+    target_for(&project, suite.as_ref())
+}
+
+/// What `project`'s tests run, or `suite`'s command in the project's
+/// directory. A suite reruns its own command, not the project's `retry_cmd`.
+pub fn target_for(project: &Project, suite: Option<&Suite>) -> Result<Target, String> {
+    let (cmd, retry_cmd) = match suite {
         None => (
             project
                 .test
                 .cmd
                 .clone()
-                .ok_or_else(|| format!("{dir} has no test_cmd"))?,
+                .ok_or_else(|| format!("{} has no test_cmd", project.dir))?,
             project.test.retry_cmd.clone(),
         ),
-        Some(label) => {
-            let suite = init::suites(root)?
-                .into_iter()
-                .find(|s| &s.label == label && s.project == dir)
-                .ok_or_else(|| format!("no [[test.suite]] labelled {label:?} for {dir}"))?;
-            (suite.cmd, None)
-        }
+        Some(suite) => (suite.cmd.clone(), None),
     };
     Ok(Target {
         ecosystem: project.ecosystem,
-        dir,
+        dir: project.dir.clone(),
         cmd,
-        watch: project.test.watch,
+        watch: project.test.watch.clone(),
         retries: project.test.retries,
         retry_cmd,
     })
@@ -253,10 +254,31 @@ fn cache_key(root: &Path, target: &Target, toolchain: &str) -> io::Result<String
     Ok(hashed(&parts))
 }
 
+/// Whether a pass is stored for `target` under `toolchain`.
+pub fn has_pass(root: &Path, target: &Target, toolchain: &str) -> io::Result<bool> {
+    let key = cache_key(root, target, toolchain)?;
+    Ok(open_passes(root).has(&key))
+}
+
 fn open_passes(root: &Path) -> Passes {
     let dir = root.join(".soothfast").join("tests");
     let _ = std::fs::create_dir_all(&dir);
     Passes::at(dir)
+}
+
+/// The toolchain `eco` runs on: named by `pins` when the runner is known,
+/// else whatever is installed.
+pub fn toolchain_for(eco: Ecosystem, pins: &Pins) -> String {
+    let Some(runner) = &pins.runner else {
+        return toolchain(eco);
+    };
+    let version = match eco {
+        Ecosystem::Node => pins.node.as_deref(),
+        Ecosystem::Python => Some("uv"),
+        Ecosystem::Rust => None,
+        Ecosystem::Gradle | Ecosystem::Maven => pins.java.as_deref(),
+    };
+    format!("{} {} {runner}", eco.name(), version.unwrap_or_default())
 }
 
 /// What `eco`'s toolchain reports as its version, empty when it is absent.
@@ -344,17 +366,22 @@ fn execute(dir: &Path, cmd: &str) -> (bool, Vec<String>) {
     (passed, tail.into())
 }
 
-fn write_result(args: &Args, report: &Report) -> Result<(), String> {
-    let Some(path) = &args.result else {
-        return Ok(());
-    };
+/// Write the result document of one project's tests.
+pub fn write_result(
+    path: &Path,
+    name: &str,
+    project: &str,
+    verdict: Verdict,
+    output: &[String],
+    wall_s: f64,
+) -> Result<(), String> {
     let doc = json!({
-        "name": args.name.clone().unwrap_or_else(|| args.project.clone()),
-        "project": args.project,
+        "name": name,
+        "project": project,
         "kind": "test",
-        "verdict": report.verdict.name(),
-        "output": report.output.join("\n"),
-        "wall_s": report.wall_s,
+        "verdict": verdict.name(),
+        "output": output.join("\n"),
+        "wall_s": wall_s,
     });
     std::fs::write(path, format!("{doc}\n")).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -493,17 +520,8 @@ mod tests {
 
     #[test]
     fn flags_are_parsed_and_unknown_ones_rejected() {
-        let a = parse_args(&[
-            "--project=web".into(),
-            "--decide".into(),
-            "--base".into(),
-            "b".into(),
-        ])
-        .unwrap();
-        assert_eq!(
-            (a.project.as_str(), a.decide, a.base.as_deref()),
-            ("web", true, Some("b"))
-        );
+        let a = parse_args(&["--project=web".into(), "--base".into(), "b".into()]).unwrap();
+        assert_eq!((a.project.as_str(), a.base.as_deref()), ("web", Some("b")));
         assert!(parse_args(&["--project".into(), "web".into(), "--nope".into()]).is_err());
         assert!(parse_args(&["--all".into()]).is_err());
     }
