@@ -12,6 +12,8 @@
 
 ### ✨ Features
 
+- Hybrid-repo binds, claims, reports and doc coverage (#289)
+- Store sweep items under callgrind (#295)
 - Init Gradle, Maven, Python and Node repos (#281)
 - Bind docs to Java, Kotlin, Python, JS and TS symbols (#280)
 - Import JMH, pyperf, pytest-benchmark and vitest results (#279)
@@ -22,8 +24,14 @@
 - Skip timing-only gate rounds under advisory walltime (#268)
 - Seed the gate's base build, advisory walltime, save-baseline input (#266)
 
+### 🐛 Fixes
+
+- Method binds, multi-package docs, doc scope, import noise (#287)
+- Hash code that names a section boundary (#293)
+
 ### ⚡ Performance
 
+- Measure callgrind items in one process (#292)
 - Reuse items per side, say why one missed (#271)
 
 ### 📝 Documentation
@@ -35,19 +43,48 @@
 ### 🔍 API surface
 
 ```
+# soothfast-registry
+CHANGED  soothfast_registry::Bencher (body)
+CHANGED  soothfast_registry::Bencher::iter (body)
+CHANGED  soothfast_registry::Bencher::iter_async (body)
+
 # soothfast-measure
+ADDED    soothfast_measure::callgrind::Method
+ADDED    soothfast_measure::callgrind::negotiate_window
+CHANGED  soothfast_measure::callgrind::Measurement (signature)
+CHANGED  soothfast_measure::callgrind::annotate (body)
+CHANGED  soothfast_measure::callgrind::measure (signature)
+CHANGED  soothfast_measure::callgrind::measure_all (signature)
 CHANGED  soothfast_measure::main (body)
 CHANGED  soothfast_measure::runner::main (body)
 
 # soothfast-docs
+ADDED    soothfast_docs::claims::Operand
+ADDED    soothfast_docs::claims::values
+CHANGED  soothfast_docs::claims::Claim (signature)
+CHANGED  soothfast_docs::claims::evaluate (body)
 CHANGED  soothfast_docs::claims::parse (body)
+CHANGED  soothfast_docs::surface::Surface (signature)
+CHANGED  soothfast_docs::surface::from_rustdoc (body)
+
+# soothfast-report
+ADDED    soothfast_report::llms::ProjectEntry
+ADDED    soothfast_report::llms::ProjectSurface
+ADDED    soothfast_report::llms::render_projects
+ADDED    soothfast_report::perf_table::markdown_at
+CHANGED  soothfast_report::llms::render (body)
+CHANGED  soothfast_report::perf_table::Row (signature)
+CHANGED  soothfast_report::perf_table::html (body)
+CHANGED  soothfast_report::perf_table::markdown (body)
+CHANGED  soothfast_report::perf_table::rows (body)
+CHANGED  soothfast_report::trend_chart::render (body)
 ```
 
 ### 📊 Gate movement
 
 | item | metric | was | now | delta |
 |---|---|---:|---:|---:|
-| `soothfast_docs::bench_claim_parse` | allocs | 6.0 | 5.0 | -16.7% |
+| `soothfast_docs::bench_claim_parse` | allocs | 6.0 | 3.0 | -50.0% |
 
 
 ## 0.4.4 - 2026-10-21

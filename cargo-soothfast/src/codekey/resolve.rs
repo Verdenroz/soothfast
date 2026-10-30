@@ -71,10 +71,24 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// The section holding `addr`, else the one empty section that starts
+    /// exactly there (`__TMC_END__` lands on `.tm_clone_table`).
     fn section_at(&self, addr: u64) -> Option<usize> {
         let after = self.sections.partition_point(|s| s.vma <= addr);
-        let i = self.sections[..after].iter().rposition(|s| s.size > 0)?;
-        (addr - self.sections[i].vma < self.sections[i].size).then_some(i)
+        let before = &self.sections[..after];
+        if let Some(i) = before.iter().rposition(|s| s.size > 0)
+            && before[i].contains(addr)
+        {
+            return Some(i);
+        }
+        let mut empty = before
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.size == 0 && s.vma == addr);
+        match (empty.next(), empty.next()) {
+            (Some((i, _)), None) => Some(i),
+            _ => None,
+        }
     }
 
     pub(super) fn symbol_at(&self, addr: u64) -> Option<usize> {
@@ -517,6 +531,46 @@ Idx Name          Size      VMA               LMA               File off  Algn
         assert_ne!(hash(&stops, 0x2009, 1), hash(&stops, 0x2009, 2));
         let none = fixture(HashMap::new());
         assert_ne!(hash(&none, 0x2018, 1), hash(&none, 0x2018, 2));
+    }
+
+    const LAZY_SECTIONS: &str = "\
+Idx Name          Size      VMA               LMA               File off  Algn
+ 18 .text         00359bd2  000000000191c2c0  000000000191c2c0  0191b2c0  2**6
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+ 28 .got          00001128  0000000001c8be58  0000000001c8be58  01c89e58  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+ 29 .got.plt      00000238  0000000001c8cf80  0000000001c8cf80  01c8af80  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+ 30 .relro_padding 00000e48  0000000001c8d1b8  0000000001c8d1b8  01c8b1b8  2**0
+                  ALLOC
+ 31 .tm_clone_table 00000000  0000000001c8e1b8  0000000001c8e1b8  01c8b1b8  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+ 32 .data         0000bd98  0000000001c8e1c0  0000000001c8e1c0  01c8b1c0  2**5
+                  CONTENTS, ALLOC, LOAD, DATA
+";
+    const LAZY_DEREGISTER: &str = "\
+000000000191c2f0 <deregister_tm_clones>:
+ 191c2f0:\tlea    0x371ec1(%rip),%rdi        # 1c8e1b8 <__TMC_END__>
+ 191c2f7:\tlea    0x371eba(%rip),%rax        # 1c8e1b8 <__TMC_END__>
+ 191c2fe:\tcmp    %rdi,%rax
+ 191c301:\tje     191c318 <deregister_tm_clones+0x28>
+ 191c317:\tret
+";
+
+    #[test]
+    fn an_address_on_an_empty_sections_vma_resolves_to_that_section() {
+        let hash = |dis: &str| {
+            let fixture = Fixture::default()
+                .sections(LAZY_SECTIONS)
+                .wanted(&["at:deregister_tm_clones"]);
+            let image = vec![0; 0x1c8b1c0];
+            fixture
+                .hashes(&image, dis)
+                .get("at:deregister_tm_clones")
+                .copied()
+        };
+        assert!(hash(LAZY_DEREGISTER).is_some());
+        assert_eq!(hash(&LAZY_DEREGISTER.replace("1c8e1b8", "1c8e1b9")), None);
     }
 
     #[test]

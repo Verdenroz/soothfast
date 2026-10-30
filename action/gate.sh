@@ -5,8 +5,10 @@
 # upload still happen first. Output is untrusted (the PR's own binaries wrote
 # it) and the comment is authored by a write-access identity, so nothing in
 # it may escape the code fence.
+# COMMENT=false posts nothing and records one verdict result per package under
+# $RUNNER_TEMP/soothfast-results, for a caller that folds them into one comment.
 # Inputs: CLI PACKAGES BASE_REF GH_TOKEN GITHUB_REPOSITORY PR_NUMBER, BROKER, FEATURES,
-# SAVE_BASELINE and SHARD (I/N, one comment per shard) (optional).
+# SAVE_BASELINE, SHARD (I/N, one comment per shard) and COMMENT (optional).
 # Output: failed (true|false).
 set -euo pipefail
 
@@ -32,7 +34,12 @@ mkdir -p "$out_dir"
   for pkg in "${pkgs[@]}"; do
     out="${out_dir}/${pkg}.txt"
     rc=0
+    SECONDS=0
     "$CLI" gate -p "$pkg" --against-ref "origin/${BASE_REF}" "${features[@]}" "${save[@]}" "${shard[@]}" 2>&1 | tee "$out" >&2 || rc=$?
+    if [ "${COMMENT:-true}" = false ]; then
+      "$CLI" verdict record --name "$pkg" --kind rust --exit "$rc" --output "$out" \
+        --seconds "$SECONDS" --out "${RUNNER_TEMP}/soothfast-results/${pkg}.json"
+    fi
     case "$rc" in
     0) ;;
     1) regressed=true ;;
@@ -48,16 +55,7 @@ mkdir -p "$out_dir"
 
 # shellcheck source=action/labels.sh
 source "$(dirname "$0")/labels.sh"
-# The label waives regressions only; a gate that errored has nothing to accept.
-accepted() {
-  if ! command -v gh >/dev/null; then
-    echo "::warning::gh is not installed, so the soothfast:perf-accepted label was not checked"
-    return 1
-  fi
-  [ "$(gh pr view "$PR_NUMBER" --json labels --jq 'any(.labels[]; .name == "soothfast:perf-accepted")')" = true ] &&
-    labelled_by_writer "$PR_NUMBER" soothfast:perf-accepted
-}
-if [ "$regressed" = true ] && [ "$errored" = false ] && accepted; then
+if [ "$regressed" = true ] && [ "$errored" = false ] && perf_accepted "$PR_NUMBER"; then
   echo "::notice::regressions accepted by the soothfast:perf-accepted label"
   # shellcheck disable=SC2016 # literal backticks, nothing to expand
   echo 'Regressions accepted by the `soothfast:perf-accepted` label.' >>"${out_dir}/comment.md"
@@ -68,7 +66,9 @@ if [ "$regressed" = true ] || [ "$errored" = true ]; then
   failed=true
 fi
 
-MARKER="$marker" BODY_FILE="${out_dir}/comment.md" "$(dirname "$0")/comment.sh" ||
-  echo "::warning::could not comment on the pull request (read-only token on a fork?)"
+if [ "${COMMENT:-true}" != false ]; then
+  MARKER="$marker" BODY_FILE="${out_dir}/comment.md" "$(dirname "$0")/comment.sh" ||
+    echo "::warning::could not comment on the pull request (read-only token on a fork?)"
+fi
 
 echo "failed=$failed" >>"$GITHUB_OUTPUT"

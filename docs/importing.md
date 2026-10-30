@@ -98,8 +98,12 @@ it), and `soothfast-gate.lock` accepts apply. `--ratchet`, `--against-ref`,
 ## Noise
 
 Walltime from a different machine or a different run is noisy, and an
-imported run carries no A/A noise floor to scale the threshold by. Two things
-help:
+imported run carries no A/A noise floor. The gate derives one per item from
+the data instead: the larger of the two sides' relative dispersion
+(`mad_ns / median_ns`). The walltime limit is then the larger of +10% and
+three times that, as in a native run, and an item whose limit was raised
+prints a `NOTE` with the floor it used. An item with tight samples keeps the
+fixed +10%. Two more things help:
 
 - Gate against a long-lived baseline such as the last release, saved from the
   same kind of machine, rather than against a file from whichever runner

@@ -19,6 +19,8 @@ pub struct TestConfig {
     pub env: Vec<String>,
     /// `ci = false` drops the test job of the reusable workflow.
     pub ci: Option<bool>,
+    /// Reruns of a failed test binary before it counts as failed.
+    pub retries: u32,
     /// Allow-lists by package name, from `[test.packages.NAME]` tables.
     pub packages: BTreeMap<String, AllowList>,
 }
@@ -163,6 +165,9 @@ fn set(cfg: &mut TestConfig, key: &str, value: TomlValue) -> Result<(), String> 
         ("inputs", TomlValue::StrArray(v)) => cfg.inputs = v,
         ("env", TomlValue::StrArray(v)) => cfg.env = v,
         ("ci", TomlValue::Bool(b)) => cfg.ci = Some(b),
+        ("retries", TomlValue::Int(n)) => {
+            cfg.retries = u32::try_from(n).map_err(|_| "`retries` under [test] is not negative")?
+        }
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [test]")),
     }
     Ok(())
@@ -179,6 +184,20 @@ mod tests {
         assert_eq!(cfg.ignore, ["docs/**", "*.md"]);
         assert_eq!(cfg.inputs, ["assets/**"]);
         assert_eq!(cfg.env, ["HOME"]);
+    }
+
+    #[test]
+    fn suite_tables_belong_to_the_project_reader() {
+        let text = "[[test.suite]]\nlabel = \"x\"\ncmd = \"y\"\n\n[test]\nci = false\n";
+        assert_eq!(parse(text).unwrap().ci, Some(false));
+    }
+
+    #[test]
+    fn reads_the_retries() {
+        assert_eq!(parse("[test]\nretries = 2\n").unwrap().retries, 2);
+        assert_eq!(parse("[test]\nci = false\n").unwrap().retries, 0);
+        assert!(parse("[test]\nretries = -1\n").is_err());
+        assert!(parse("[test]\nretries = \"2\"\n").is_err());
     }
 
     #[test]

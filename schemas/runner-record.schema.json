@@ -18,7 +18,8 @@
         "guest_cpu": { "description": "Callgrind only: digest of the CPU the guest sees. The four `guest_*`/`valgrind` keys count only when all are present.", "type": "string" },
         "guest_glibc": { "description": "Callgrind only: glibc version.", "type": "string" },
         "guest_libc": { "description": "Callgrind only: digest of the loaded libc file.", "type": "string" },
-        "valgrind": { "description": "Callgrind only: valgrind version.", "type": "string" }
+        "valgrind": { "description": "Callgrind only: valgrind version.", "type": "string" },
+        "callgrind_method": { "description": "Callgrind only: how `ir` is taken (`one-process` or `two-process`). Counts from different methods are never compared. Absent reads as `two-process`.", "type": "string" }
       }
     },
     {
@@ -67,7 +68,8 @@
             "instructions": { "description": "perfcnt: retired instructions.", "type": "integer" },
             "cycles": { "description": "perfcnt: CPU cycles.", "type": "integer" },
             "cache_refs": { "description": "perfcnt: cache references.", "type": "integer" },
-            "ir": { "description": "callgrind: instructions executed.", "type": "integer" },
+            "ir": { "description": "callgrind: instructions executed per iteration.", "type": "integer" },
+            "window": { "description": "callgrind: iterations `ir` averages over. Read only to explain a difference between two sides.", "type": "integer" },
             "allocs": { "description": "alloc: allocation count.", "type": "integer" },
             "bytes": { "description": "alloc: bytes allocated.", "type": "integer" },
             "polls": { "description": "asyncexec: future polls.", "type": "integer" },

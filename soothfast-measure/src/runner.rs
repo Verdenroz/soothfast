@@ -7,8 +7,10 @@
 
 use soothfast_registry::{Bencher, MeasuredItem, fixture_items, measured_items, route_items};
 
+use std::cell::Cell;
+
 use crate::json::esc;
-use crate::{alloc, asyncexec, callgrind, sweep, walltime};
+use crate::{alloc, asyncexec, callgrind, clientreq, sweep, walltime};
 
 #[derive(PartialEq, Clone, Copy)]
 enum Backend {
@@ -31,6 +33,8 @@ struct Args {
     callgrind_exec: Option<String>,
     triage: Option<String>,
     iters: u64,
+    callgrind_window: bool,
+    size: Option<usize>,
     skip_gating_counters: bool,
     env: bool,
     guest_view: bool,
@@ -52,6 +56,8 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
         callgrind_exec: None,
         triage: None,
         iters: 1,
+        callgrind_window: false,
+        size: None,
         skip_gating_counters: false,
         env: false,
         guest_view: false,
@@ -97,6 +103,11 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
             "--iters" => match it.next().and_then(|s| s.parse().ok()) {
                 Some(n) if n > 0 => args.iters = n,
                 _ => die("--iters needs a positive integer"),
+            },
+            "--callgrind-window" => args.callgrind_window = true,
+            "--size" => match it.next().and_then(|s| s.parse().ok()) {
+                Some(n) => args.size = Some(n),
+                None => die("--size needs an input size"),
             },
             "--skip-gating-counters" => args.skip_gating_counters = true,
             "--guest-view" => args.guest_view = true,
@@ -191,6 +202,8 @@ struct Env {
     gating: &'static str,
     /// What callgrind's counts depend on, when callgrind gates.
     guest: Option<callgrind::Guest>,
+    /// How callgrind's counts are taken, when callgrind gates.
+    method: Option<callgrind::Method>,
 }
 
 /// Explicit choices fail hard when unavailable; auto/all degrade gracefully
@@ -248,6 +261,7 @@ fn resolve_env(
         use_alloc,
         gating,
         guest: if use_cg { guest_probe() } else { None },
+        method: use_cg.then(callgrind::Method::current),
     }
 }
 
@@ -264,8 +278,11 @@ fn env_line(env: &Env, json: bool) -> String {
                     esc(&g.valgrind)
                 )
             });
+            let method = env.method.map_or(String::new(), |m| {
+                format!(",\"callgrind_method\":\"{}\"", m.name())
+            });
             format!(
-                "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\",\"item_reuse\":true{guest}}}",
+                "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\",\"item_reuse\":true{guest}{method}}}",
                 perf.is_ok(),
                 esc(perf.as_ref().err().map(String::as_str).unwrap_or("ok")),
             )
@@ -289,8 +306,30 @@ pub fn main() {
     // Hidden mode: execute one item's body under valgrind (see callgrind.rs).
     if let Some(id) = &args.callgrind_exec {
         let item = find_item(id);
-        let mut collector = |body: &mut dyn FnMut()| body();
-        (item.runner)(&mut Bencher::__new(args.iters, &mut collector));
+        let window = args.callgrind_window;
+        let iters = Cell::new(1);
+        let mut collector = |body: &mut dyn FnMut()| {
+            if !window {
+                return body();
+            }
+            clientreq::dump_stats();
+            body();
+            clientreq::dump_stats();
+            iters.set(callgrind::negotiate_window().unwrap_or_else(|e| die(&e)));
+            clientreq::dump_stats();
+            body();
+            clientreq::dump_stats();
+        };
+        let mut bencher = if window {
+            Bencher::__counted(&iters, &mut collector)
+        } else {
+            Bencher::__new(args.iters, &mut collector)
+        };
+        match (args.size, item.sized_runner) {
+            (Some(n), Some(sized)) => sized(&mut bencher, n),
+            (Some(_), None) => die(&format!("{id} has no size sweep")),
+            (None, _) => (item.runner)(&mut bencher),
+        }
         return;
     }
     if let Some(id) = &args.triage {
@@ -402,9 +441,8 @@ pub fn main() {
     // Only Ir collection is safe to parallelize: it counts instructions, not
     // time, so concurrent valgrind children cannot disturb each other's
     // numbers. Everything else below stays serial.
-    let cg_runs: Vec<Result<callgrind::Measurement, String>> = if use_cg {
-        let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
-        callgrind::measure_all(&ids)
+    let cg_runs: Vec<Result<CallgrindItem, String>> = if use_cg {
+        callgrind_items(&entries)
     } else {
         Vec::new()
     };
@@ -450,15 +488,20 @@ pub fn main() {
         }
         if use_cg {
             match &cg_runs[idx] {
-                Ok(callgrind::Measurement { ir, functions }) => {
+                Ok(CallgrindItem {
+                    ir,
+                    window,
+                    functions,
+                    ..
+                }) => {
                     emit_result(
                         e,
                         "callgrind",
-                        &callgrind_metrics(*ir),
+                        &callgrind_metrics(*ir, *window),
                         &format!("callgrind ir={ir}"),
                         args.json,
                     );
-                    if args.json && item.sized_runner.is_none() {
+                    if args.json {
                         println!("{}", executed_json(&e.id, functions));
                     }
                     // Standing in for perfcnt (no PMU access)
@@ -501,7 +544,11 @@ pub fn main() {
             );
         }
 
-        evaluate_assertions(e, wall.as_ref(), allocs.as_ref(), use_perf, &args);
+        let sweep = match cg_runs.get(idx) {
+            Some(Ok(CallgrindItem { sweep, .. })) => sweep.as_deref(),
+            _ => None,
+        };
+        evaluate_assertions(e, wall.as_ref(), allocs.as_ref(), use_perf, sweep, &args);
     }
 }
 
@@ -529,8 +576,8 @@ fn perfcnt_metrics(instructions: u64, cycles: u64, cache_refs: u64) -> String {
     format!("\"instructions\":{instructions},\"cycles\":{cycles},\"cache_refs\":{cache_refs}")
 }
 
-fn callgrind_metrics(ir: u64) -> String {
-    format!("\"ir\":{ir}")
+fn callgrind_metrics(ir: u64, window: u64) -> String {
+    format!("\"ir\":{ir},\"window\":{window}")
 }
 
 fn alloc_metrics(allocs: u64, bytes: u64) -> String {
@@ -637,6 +684,7 @@ fn evaluate_assertions(
     wall: Option<&walltime::WallMeasurement>,
     allocs: Option<&alloc::AllocMeasurement>,
     use_perf: bool,
+    sweep: Option<&[f64]>,
     args: &Args,
 ) {
     let item = e.item;
@@ -673,11 +721,14 @@ fn evaluate_assertions(
     }
     if let (Some(class), Some(sized)) = (a.complexity, item.sized_runner) {
         // Sweep on the most deterministic available metric.
-        let values: Vec<f64> = item
-            .sizes
-            .iter()
-            .map(|&n| sweep_value(sized, n, use_perf, args.samples))
-            .collect();
+        let values: Vec<f64> = match sweep {
+            Some(ir) => ir.to_vec(),
+            None => item
+                .sizes
+                .iter()
+                .map(|&n| sweep_value(sized, n, use_perf, args.samples))
+                .collect(),
+        };
         let outcome = sweep::evaluate(class, item.sizes, &values);
         let sizes_str = format!("{:?}", item.sizes);
         if args.json {
@@ -698,6 +749,66 @@ fn evaluate_assertions(
             args.json,
         );
     }
+}
+
+/// One item's callgrind result. A sweep item carries the Ir at each of its
+/// sizes, and its functions are the union over all of them.
+struct CallgrindItem {
+    ir: u64,
+    window: u64,
+    functions: Vec<(String, String)>,
+    sweep: Option<Vec<f64>>,
+}
+
+/// Measure every entry under callgrind. An item with a complexity claim runs
+/// once per size, so the claim is fitted on exact Ir and the executed set
+/// covers every size the sweep exercises; its own Ir is the largest size's.
+fn callgrind_items(entries: &[Entry]) -> Vec<Result<CallgrindItem, String>> {
+    let swept = |e: &Entry| e.item.assertions.complexity.is_some() && e.item.sized_runner.is_some();
+    let jobs: Vec<(&str, Option<usize>)> = entries
+        .iter()
+        .flat_map(|e| {
+            let sizes: Vec<Option<usize>> = if swept(e) {
+                e.item.sizes.iter().map(|&n| Some(n)).collect()
+            } else {
+                vec![None]
+            };
+            sizes.into_iter().map(|n| (e.id.as_str(), n))
+        })
+        .collect();
+    let mut runs = callgrind::measure_all(&jobs).into_iter();
+    entries
+        .iter()
+        .map(|e| {
+            if !swept(e) {
+                let m = runs.next().ok_or("no callgrind result for an item")??;
+                return Ok(CallgrindItem {
+                    ir: m.ir,
+                    window: m.window,
+                    functions: m.functions,
+                    sweep: None,
+                });
+            }
+            let measured: Vec<callgrind::Measurement> = runs
+                .by_ref()
+                .take(e.item.sizes.len())
+                .collect::<Result<_, _>>()?;
+            let largest = e.item.sizes.iter().enumerate().max_by_key(|&(_, n)| n);
+            let (ir, window) =
+                largest.map_or((0, 0), |(i, _)| (measured[i].ir, measured[i].window));
+            let sweep = measured.iter().map(|m| m.ir as f64).collect();
+            let mut functions: Vec<(String, String)> =
+                measured.into_iter().flat_map(|m| m.functions).collect();
+            functions.sort();
+            functions.dedup();
+            Ok(CallgrindItem {
+                ir,
+                window,
+                functions,
+                sweep: Some(sweep),
+            })
+        })
+        .collect()
 }
 
 #[cfg(target_os = "linux")]
@@ -867,6 +978,14 @@ mod tests {
     }
 
     #[test]
+    fn size_flag_parses() {
+        let argv = ["--callgrind-exec", "p::f", "--size", "4096"].map(String::from);
+        let args = parse_args_from(argv.into_iter());
+        assert_eq!(args.size, Some(4096));
+        assert_eq!(parse_args_from(std::iter::empty()).size, None);
+    }
+
+    #[test]
     fn auto_prefers_perfcnt_when_available() {
         assert_eq!(resolve_backends(Backend::Auto, true, true), (true, false));
     }
@@ -961,13 +1080,14 @@ mod tests {
 
     #[test]
     fn every_record_type_matches_the_published_samples() {
-        let env = |guest| Env {
+        let env = |guest: Option<callgrind::Guest>| Env {
             perf: Ok(()),
             use_perf: true,
             use_cg: false,
             use_wall: true,
             use_alloc: true,
             gating: "perfcnt",
+            method: guest.is_some().then_some(callgrind::Method::OneProcess),
             guest,
         };
         let result = |tolerance, backend, metrics: String| {
@@ -1003,7 +1123,7 @@ mod tests {
                 walltime_metrics(10.5, 0.5, 10.0, 12.0, 11.5),
             ),
             result(None, "perfcnt", perfcnt_metrics(100, 50, 5)),
-            result(None, "callgrind", callgrind_metrics(123_456)),
+            result(None, "callgrind", callgrind_metrics(123_456, 10)),
             result(None, "alloc", alloc_metrics(2, 64)),
             result(None, "asyncexec", asyncexec_metrics(9, 8)),
             // Written by the CLI's buildcost backend, never by the runner; readers accept it here.

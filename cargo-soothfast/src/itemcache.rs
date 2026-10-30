@@ -415,6 +415,38 @@ mod tests {
     }
 
     #[test]
+    fn an_item_stored_under_another_callgrind_method_is_never_found() {
+        use crate::buildstamp::BuildStamp;
+        use crate::invoke::{CommonArgs, HostEnv};
+        use crate::runcache::Runs;
+
+        let stamp = BuildStamp {
+            rustc: "1.88.0".into(),
+            codegen_units: "1".into(),
+            profiles: "a".into(),
+            rustflags: "b".into(),
+        };
+        let common = CommonArgs::default();
+        let scope = |method: &str| {
+            let env = HostEnv {
+                gating_backend: "callgrind".into(),
+                guest: None,
+                callgrind_method: Some(method.into()),
+                item_reuse: true,
+            };
+            Runs::new(&stamp, &common, Some(env)).item_scope().unwrap()
+        };
+        let root =
+            std::env::temp_dir().join(format!("soothfast-method-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let two = Items::at(root.join(scope("two-process")));
+        two.store("p::a", entry("k1", 100));
+        let one = Items::at(root.join(scope("one-process")));
+        assert!(one.load(&ids()).0["p::a"].is_empty());
+        assert_eq!(two.load(&ids()).0["p::a"].len(), 1);
+    }
+
+    #[test]
     fn an_entry_round_trips_with_its_metrics_and_assertions() {
         let items = scratch("round-trip");
         items.store("p::a", entry("k1", 100));

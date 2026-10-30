@@ -32,6 +32,10 @@ pub struct ItemInfo {
 #[derive(Debug, Default)]
 pub struct Surface {
     pub items: BTreeMap<String, ItemInfo>,
+    /// Pub methods and associated consts of inherent impls, keyed
+    /// `type_path::name`. Kept apart from `items` so coverage, the API
+    /// reference and the API diff keep counting top-level items only.
+    pub members: BTreeMap<String, ItemInfo>,
 }
 
 /// One distinct item, grouped by (kind, fingerprint) to collapse the extra
@@ -45,6 +49,11 @@ pub struct ItemGroup<'a> {
 }
 
 impl Surface {
+    /// An item or an inherent member by full path, for bind resolution.
+    pub fn lookup(&self, path: &str) -> Option<&ItemInfo> {
+        self.items.get(path).or_else(|| self.members.get(path))
+    }
+
     /// Every item in this surface, deduplicated across `pub use` aliases.
     pub fn grouped(&self) -> Vec<ItemGroup<'_>> {
         let mut groups: HashMap<(&str, u64), Vec<&String>> = HashMap::new();
@@ -138,7 +147,72 @@ pub fn from_rustdoc(doc: &Value, source_root: &Path) -> Surface {
     }
 
     alias_reexports(index, paths, &mut surface);
+    index_members(index, paths, source_root, &mut file_cache, &mut surface);
     surface
+}
+
+/// Register the pub methods and associated consts of inherent impls under
+/// `Type::name`, for the type's canonical path and every re-export alias of it.
+fn index_members(
+    index: &serde_json::Map<String, Value>,
+    paths: &serde_json::Map<String, Value>,
+    source_root: &Path,
+    file_cache: &mut HashMap<String, Vec<String>>,
+    surface: &mut Surface,
+) {
+    for item in index.values() {
+        let imp = &item["inner"]["impl"];
+        if !imp.is_object() || imp["trait"].is_object() {
+            continue;
+        }
+        let Some(type_id) = imp["for"]["resolved_path"]["id"].as_u64() else {
+            continue;
+        };
+        let Some(type_path) = item_path(paths, &type_id.to_string()) else {
+            continue;
+        };
+        let Some(owner) = surface.items.get(&type_path) else {
+            continue;
+        };
+        let spellings: Vec<String> = surface
+            .items
+            .iter()
+            .filter(|(_, info)| info.kind == owner.kind && info.fingerprint == owner.fingerprint)
+            .map(|(path, _)| path.clone())
+            .collect();
+
+        let members = imp["items"].as_array().into_iter().flatten();
+        for member in members.filter_map(|id| index.get(&id.as_u64()?.to_string())) {
+            if member["visibility"] != "public" {
+                continue;
+            }
+            let (kind, name) = match (
+                member["inner"]["function"].is_object(),
+                member["inner"]["assoc_const"].is_object(),
+                member["name"].as_str(),
+            ) {
+                (true, _, Some(name)) => ("function", name),
+                (_, true, Some(name)) => ("constant", name),
+                _ => continue,
+            };
+            let (fingerprint, signature) =
+                span_fingerprint(&member["span"], kind, source_root, file_cache)
+                    .unwrap_or((0, String::new()));
+            let info = ItemInfo {
+                kind: kind.to_string(),
+                fingerprint,
+                signature,
+                has_docs: member["docs"]
+                    .as_str()
+                    .is_some_and(|d| !d.trim().is_empty()),
+            };
+            for spelling in &spellings {
+                surface
+                    .members
+                    .insert(format!("{spelling}::{name}"), info.clone());
+            }
+        }
+    }
 }
 
 /// Register every `pub use inner::item;` re-export under an additional key:
@@ -458,6 +532,101 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn impl_doc() -> Value {
+        let span =
+            |line: u64| json!({ "filename": "src/lib.rs", "begin": [line, 0], "end": [line, 0] });
+        json!({
+            "index": {
+                "1": { "visibility": "public", "inner": { "module": { "items": [2, 20] } } },
+                "2": {
+                    "name": "Rewriter",
+                    "visibility": "public",
+                    "inner": { "struct": {} },
+                    "span": span(1),
+                },
+                "3": {
+                    "visibility": "default",
+                    "inner": { "impl": {
+                        "trait": null,
+                        "for": { "resolved_path": { "id": 2 } },
+                        "items": [4, 5, 6],
+                    } },
+                },
+                "4": {
+                    "name": "rewrite",
+                    "visibility": "public",
+                    "inner": { "function": {} },
+                    "span": span(2),
+                },
+                "5": {
+                    "name": "hidden",
+                    "visibility": "default",
+                    "inner": { "function": {} },
+                    "span": span(3),
+                },
+                "6": {
+                    "name": "LIMIT",
+                    "visibility": "public",
+                    "inner": { "assoc_const": {} },
+                    "span": span(4),
+                },
+                "8": {
+                    "visibility": "default",
+                    "inner": { "impl": {
+                        "trait": { "path": "Default" },
+                        "for": { "resolved_path": { "id": 2 } },
+                        "items": [7],
+                    } },
+                },
+                "7": {
+                    "name": "default",
+                    "visibility": "public",
+                    "inner": { "function": {} },
+                    "span": span(5),
+                },
+                "20": {
+                    "visibility": "public",
+                    "inner": { "use": { "name": "Rewriter", "id": 2, "is_glob": false } },
+                },
+            },
+            "paths": {
+                "1": { "path": ["rw"], "kind": "module" },
+                "2": { "path": ["rw", "engine", "Rewriter"], "kind": "struct" },
+            },
+        })
+    }
+
+    #[test]
+    fn inherent_pub_members_resolve_under_the_type_path() {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-surface-impl-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("src/lib.rs"),
+            "pub struct Rewriter;\n    pub fn rewrite() {}\n    fn hidden() {}\n    pub const LIMIT: u8 = 1;\n    fn default() {}\n",
+        )
+        .unwrap();
+
+        let surface = from_rustdoc(&impl_doc(), &dir);
+
+        let method = surface.lookup("rw::engine::Rewriter::rewrite").unwrap();
+        assert_eq!(method.kind, "function");
+        assert_ne!(method.fingerprint, 0);
+        assert_eq!(
+            surface.lookup("rw::engine::Rewriter::LIMIT").unwrap().kind,
+            "constant"
+        );
+        assert!(surface.lookup("rw::engine::Rewriter::hidden").is_none());
+        assert!(surface.lookup("rw::engine::Rewriter::default").is_none());
+        assert!(surface.items.keys().all(|k| !k.ends_with("::rewrite")));
+        assert_eq!(
+            surface.lookup("rw::Rewriter::rewrite").unwrap().fingerprint,
+            method.fingerprint
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn item(kind: &str, fingerprint: u64) -> ItemInfo {
         ItemInfo {
             kind: kind.to_string(),
@@ -470,6 +639,7 @@ mod tests {
     fn surface_of(items: Vec<(&str, ItemInfo)>) -> Surface {
         Surface {
             items: items.into_iter().map(|(p, i)| (p.to_string(), i)).collect(),
+            ..Surface::default()
         }
     }
 
