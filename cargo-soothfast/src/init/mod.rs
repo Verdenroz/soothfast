@@ -87,15 +87,17 @@ enum Kind {
     Line,
     /// The `[[project]]` tables, replaced when their settings change.
     Section,
-    /// The `[ci]` table, replaced when its settings change.
-    Ci,
+    /// The `[runner]` table, replaced when its labels change.
+    Runner,
+    /// The `ci` key of the `[test]` table, set in place.
+    TestCi,
 }
 
 impl Kind {
     /// The tables a rewrite replaces.
     fn tables(&self) -> &'static [&'static str] {
         match self {
-            Kind::Ci => &["ci"],
+            Kind::Runner => &["runner"],
             _ => &[
                 "init",
                 ecosystem::PROJECT_TABLE,
@@ -134,8 +136,9 @@ impl Scaffold {
                 State::Current
             }
             Kind::Section => State::Differs,
-            Kind::Ci if Ci::parse(&text) == Ci::parse(&self.content) => State::Current,
-            Kind::Ci => State::Differs,
+            Kind::Runner if labels(&text) == labels(&self.content) => State::Current,
+            Kind::TestCi if test_ci(&text) == test_ci(&self.content) => State::Current,
+            Kind::Runner | Kind::TestCi => State::Differs,
         }
     }
 
@@ -167,7 +170,11 @@ impl Scaffold {
                 text.push('\n');
                 std::fs::write(path, text)
             }
-            Kind::Section | Kind::Ci => {
+            Kind::TestCi => {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                std::fs::write(path, with_test_ci_off(&text))
+            }
+            Kind::Section | Kind::Runner => {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
                 let mut text = without_tables(&text, self.kind.tables());
                 if !text.is_empty() {
@@ -179,6 +186,43 @@ impl Scaffold {
             Kind::Whole | Kind::Seed => std::fs::write(path, &self.content),
         }
     }
+}
+
+fn labels(text: &str) -> Result<Option<Vec<String>>, String> {
+    Ci::parse(text).map(|ci| ci.labels)
+}
+
+fn test_ci(text: &str) -> Result<bool, String> {
+    Ci::parse(text).map(|ci| ci.runs_test())
+}
+
+/// `text` with `ci = false` in its `[test]` table, which is added when absent.
+fn with_test_ci_off(text: &str) -> String {
+    let mut out = String::new();
+    let mut in_test = false;
+    let mut found = false;
+    for line in text.split_inclusive('\n') {
+        if line.trim_start().starts_with('[') {
+            in_test = ecosystem::table_name(line) == Some("test");
+            found |= in_test;
+            out.push_str(line);
+            if in_test {
+                out.push_str("ci = false\n");
+            }
+        } else if !(in_test && line.split_once('=').is_some_and(|(k, _)| k.trim() == "ci")) {
+            out.push_str(line);
+        }
+    }
+    if !found {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("[test]\nci = false\n");
+    }
+    out
 }
 
 /// `text` without the `names` tables, trimmed to end in one newline.
@@ -219,12 +263,14 @@ struct Workspace {
     node: String,
 }
 
-/// The toolchain versions init's flags pin, over the ones an existing
+/// The toolchain versions and soothfast ref init's flags pin, over the ones an existing
 /// workflow already carries.
 #[derive(Default)]
-struct Toolchains {
+struct Pins {
     java: Option<String>,
     node: Option<String>,
+    /// The soothfast ref the workflow uses, over this release's tag.
+    action: Option<String>,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -236,7 +282,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut flags = Settings::default();
     let mut dir: Option<String> = None;
     let mut ci = Ci::default();
-    let mut tools = Toolchains::default();
+    let mut tools = Pins::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -253,15 +299,24 @@ pub fn run(args: &[String]) -> i32 {
                 Some(Err(e)) => return err(&e),
                 None => return err("--ecosystem needs rust, gradle, maven, python or node"),
             },
-            "--runs-on" => match it.next() {
-                Some(labels) => ci.runs_on = Some(labels.split(',').map(String::from).collect()),
-                None => return err("--runs-on needs comma-separated runner labels"),
+            "--runner-labels" => match it.next() {
+                Some(labels) => ci.labels = Some(labels.split(',').map(String::from).collect()),
+                None => return err("--runner-labels needs comma-separated runner labels"),
             },
             "--no-test" => ci.test = Some(false),
             "--dir" => match it.next().map(|d| normalize_dir(d)) {
                 Some(Ok(d)) => dir = Some(d),
                 Some(Err(e)) => return err(&e),
                 None => return err("--dir needs a directory"),
+            },
+            "--pin" => match it.next() {
+                Some(r)
+                    if r.chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c)) =>
+                {
+                    tools.action = Some(r.clone())
+                }
+                _ => return err("--pin needs a commit, tag or branch of soothfast"),
             },
             "--java" | "--node" => {
                 let Some(version) = it.next().cloned() else {
@@ -334,7 +389,7 @@ fn target(
     flags: Settings,
     dir: Option<String>,
     ci: Ci,
-    tools: Toolchains,
+    tools: Pins,
     bench: &[String],
     check: bool,
     bot: bool,
@@ -382,7 +437,7 @@ fn target(
         default_branch: default_branch(&root, &existing),
         benched,
         docs_package,
-        action: action_ref(&existing),
+        action: action_ref(&existing, tools.action.as_deref()),
         bot,
         java: tools
             .java
@@ -406,14 +461,20 @@ fn plan(
     flags: Settings,
     dir: Option<String>,
 ) -> Result<(Vec<Project>, Vec<String>), String> {
-    let mut settings: BTreeMap<String, Settings> = detect::projects(root)
+    let detected = detect::projects(root);
+    let idle: BTreeSet<String> = detected
+        .iter()
+        .filter(|f| !f.harness)
+        .map(|f| f.dir.clone())
+        .collect();
+    let mut settings: BTreeMap<String, Settings> = detected
         .into_iter()
-        .map(|(dir, ecosystem)| {
+        .map(|f| {
             let found = Settings {
-                ecosystem: Some(ecosystem),
+                ecosystem: Some(f.ecosystem),
                 ..Settings::default()
             };
-            (dir, found)
+            (f.dir, found)
         })
         .collect();
     let mut chosen: BTreeSet<String> = BTreeSet::new();
@@ -438,6 +499,14 @@ fn plan(
         let Some(ecosystem) = found.ecosystem else {
             return Err(format!("no project detected in {dir}; pass --ecosystem"));
         };
+        if idle.contains(&dir) && !chosen.contains(&dir) {
+            notes.push(format!(
+                "skipped  {dir} ({}): no benchmark harness found; add --dir {dir} \
+                 --bench-cmd CMD --bench-out PATH",
+                ecosystem.name()
+            ));
+            continue;
+        }
         match found.bench(ecosystem) {
             Ok(bench) => {
                 notes.push(format!("project  {dir} ({})", ecosystem.name()));
@@ -445,7 +514,7 @@ fn plan(
                     ecosystem,
                     dir,
                     bench,
-                    walltime: found.walltime,
+                    walltime: found.walltime.or(Some("hard".into())),
                     prefix: found.prefix,
                 });
             }
@@ -480,7 +549,8 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
     for f in files {
         let path = match f.kind {
             Kind::Section => format!("{} [[project]]", f.path.display()),
-            Kind::Ci => format!("{} [ci]", f.path.display()),
+            Kind::Runner => format!("{} [runner]", f.path.display()),
+            Kind::TestCi => format!("{} [test] ci", f.path.display()),
             _ => f.path.display().to_string(),
         };
         let state = match f.state(root) {
@@ -543,11 +613,18 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
             content: ecosystem::section(&ws.projects),
         });
     }
-    if !ws.ci.is_default() {
+    if ws.ci.labels.is_some() {
         files.push(Scaffold {
             path: "soothfast.toml".into(),
-            kind: Kind::Ci,
-            content: ws.ci.section(),
+            kind: Kind::Runner,
+            content: ws.ci.runner_section(),
+        });
+    }
+    if !ws.ci.runs_test() {
+        files.push(Scaffold {
+            path: "soothfast.toml".into(),
+            kind: Kind::TestCi,
+            content: "[test]\nci = false\n".into(),
         });
     }
     files
@@ -592,7 +669,7 @@ fn caller_job(ws: &Workspace) -> String {
         (
             "runs_on",
             ws.ci
-                .runs_on
+                .labels
                 .as_ref()
                 .map(|_| format!("'{}'", ws.ci.runs_on_json())),
         ),
@@ -693,9 +770,13 @@ fn pushed_branch(workflow: &str) -> Option<String> {
     (!inner.is_empty()).then(|| inner.to_string())
 }
 
-/// This release of the action: the workflow's existing pin of it, else the
-/// commit its tag names on the remote, else the tag.
-fn action_ref(existing: &str) -> String {
+/// The `--pin` ref, else the workflow's existing pin of this release or of a
+/// bare commit, else the commit this release's tag names on the remote, else
+/// the tag.
+fn action_ref(existing: &str, pin: Option<&str>) -> String {
+    if let Some(pin) = pin {
+        return format!("Verdenroz/soothfast@{pin}");
+    }
     let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
     let pinned = existing.lines().find_map(|l| {
         let pin = l
@@ -704,7 +785,10 @@ fn action_ref(existing: &str) -> String {
             .strip_prefix("uses: ")?
             .trim();
         let pin = pin.replacen("/.github/workflows/run.yml", "", 1);
-        (pin.starts_with("Verdenroz/soothfast@") && pin.ends_with(&format!(" # {tag}")))
+        let commit = pin
+            .strip_prefix("Verdenroz/soothfast@")
+            .is_some_and(|r| r.len() == 40 && r.chars().all(|c| c.is_ascii_hexdigit()));
+        (pin.starts_with("Verdenroz/soothfast@") && (pin.ends_with(&format!(" # {tag}")) || commit))
             .then_some(pin)
     });
     if let Some(pin) = pinned {
@@ -771,7 +855,7 @@ fn add_bench(meta: &Value, pkg: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The `[ci]` table of the repo at `root`.
+/// The runner labels and `[test] ci` setting of the repo at `root`.
 pub fn ci(root: &Path) -> Result<Ci, String> {
     let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
     Ci::parse(&text).map_err(|e| format!("soothfast.toml: {e}"))
@@ -809,7 +893,7 @@ pub fn manifest(root: &Path) -> Result<Vec<Project>, String> {
                 ecosystem,
                 dir,
                 bench,
-                walltime: settings.walltime,
+                walltime: settings.walltime.or(Some("hard".into())),
                 prefix: settings.prefix,
             })
         })
@@ -882,7 +966,18 @@ mod tests {
         let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
         let pin = format!("Verdenroz/soothfast@{} # {tag}", "c".repeat(40));
         let existing = format!("    steps:\n      - uses: {pin}\n");
-        assert_eq!(action_ref(&existing), pin);
+        assert_eq!(action_ref(&existing, None), pin);
+    }
+
+    #[test]
+    fn a_pin_overrides_and_a_bare_commit_pin_is_kept() {
+        assert_eq!(action_ref("", Some("abc123")), "Verdenroz/soothfast@abc123");
+        let sha = "e".repeat(40);
+        let existing = format!("    uses: Verdenroz/soothfast/.github/workflows/run.yml@{sha}\n");
+        assert_eq!(
+            action_ref(&existing, None),
+            format!("Verdenroz/soothfast@{sha}")
+        );
     }
 
     #[test]
@@ -1066,7 +1161,7 @@ mod tests {
         let reusable =
             format!("uses: Verdenroz/soothfast/.github/workflows/run.yml@{sha} # v1.2.3");
         assert!(text.contains(&reusable), "{text}");
-        assert!(text.contains("    secrets: inherit\n"));
+        assert!(!text.contains("secrets"));
         assert_eq!(text.matches("\n  soothfast:\n").count(), 1);
         assert_eq!(text.matches("    uses: ").count(), 1);
         assert!(!text.contains("@@") && !text.contains("\n    with:"));
@@ -1111,7 +1206,7 @@ mod tests {
             action: action.clone(),
             ..mixed_ws(false, vec![project(Ecosystem::Python, ".")])
         };
-        assert_eq!(action_ref(&workflow(&w)), action);
+        assert_eq!(action_ref(&workflow(&w), None), action);
     }
 
     #[test]
@@ -1160,11 +1255,22 @@ mod tests {
         git(&["init", "-q"]);
         std::fs::create_dir_all(root.join("client")).unwrap();
         std::fs::write(root.join("client/settings.gradle.kts"), "").unwrap();
-        std::fs::write(root.join("package.json"), "").unwrap();
+        let bench = r#"{"scripts":{"bench":"vitest bench"},"devDependencies":{"vitest":"1"}}"#;
+        std::fs::write(root.join("package.json"), bench).unwrap();
+        std::fs::create_dir_all(root.join("tools")).unwrap();
+        std::fs::write(
+            root.join("tools/pyproject.toml"),
+            "[project]\nname = \"tools\"\n",
+        )
+        .unwrap();
         git(&["add", "-A"]);
         let (projects, notes) = plan(&root, Vec::new(), Settings::default(), None).unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].dir, ".");
+        assert_eq!(projects[0].walltime.as_deref(), Some("hard"));
+        assert!(notes.iter().any(|n| {
+            n.starts_with("skipped  tools (python): no benchmark harness found; add --dir tools")
+        }));
         assert!(
             notes
                 .iter()
@@ -1217,7 +1323,7 @@ mod tests {
     #[test]
     fn a_ci_table_moves_a_rust_only_repo_to_the_reusable_workflow() {
         let w = Workspace {
-            ci: Ci::parse("[ci]\nruns_on = [\"self-hosted\", \"linux\"]\n").unwrap(),
+            ci: Ci::parse("[runner]\nlabels = [\"self-hosted\", \"linux\"]\n").unwrap(),
             ..ws(&["a"], None)
         };
         let text = workflow(&w);
@@ -1227,16 +1333,16 @@ mod tests {
     }
 
     #[test]
-    fn the_ci_table_is_saved_and_a_flagless_check_is_clean() {
+    fn the_runner_and_test_settings_are_saved_and_a_flagless_check_is_clean() {
         let root = scratch("ci");
         std::fs::write(
             root.join("soothfast.toml"),
-            "[ci]\ntest = true\n\n[site]\nname = \"x\"\n",
+            "[test]\nignore = [\"docs/**\"]\nci = true\n\n[site]\nname = \"x\"\n",
         )
         .unwrap();
         let w = Workspace {
             ci: Ci {
-                runs_on: Some(vec!["corvid".into()]),
+                labels: Some(vec!["corvid".into()]),
                 test: Some(false),
             },
             ..ws(&["a"], None)
@@ -1245,8 +1351,10 @@ mod tests {
         assert_eq!(report(&root, &files, true, false), 1);
         assert_eq!(report(&root, &files, false, false), 0);
         let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
-        assert_eq!(text.matches("[ci]").count(), 1);
-        assert!(text.contains("name = \"x\"") && text.contains("test = false"));
+        assert_eq!(text.matches("[runner]").count(), 1);
+        assert_eq!(text.matches("ci = ").count(), 1);
+        assert!(text.contains("ignore = [\"docs/**\"]") && text.contains("ci = false"));
+        assert!(text.contains("name = \"x\""));
         assert_eq!(report(&root, &files, true, false), 0);
     }
 

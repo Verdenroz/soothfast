@@ -17,6 +17,8 @@ pub struct TestConfig {
     pub inputs: Vec<String>,
     /// Environment variables whose values a pass cache key includes.
     pub env: Vec<String>,
+    /// `ci = false` drops the test job of the reusable workflow.
+    pub ci: Option<bool>,
     /// Allow-lists by package name, from `[test.packages.NAME]` tables.
     pub packages: BTreeMap<String, AllowList>,
 }
@@ -160,6 +162,7 @@ fn set(cfg: &mut TestConfig, key: &str, value: TomlValue) -> Result<(), String> 
         ("ignore", TomlValue::StrArray(v)) => cfg.ignore = v,
         ("inputs", TomlValue::StrArray(v)) => cfg.inputs = v,
         ("env", TomlValue::StrArray(v)) => cfg.env = v,
+        ("ci", TomlValue::Bool(b)) => cfg.ci = Some(b),
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [test]")),
     }
     Ok(())
@@ -176,6 +179,12 @@ mod tests {
         assert_eq!(cfg.ignore, ["docs/**", "*.md"]);
         assert_eq!(cfg.inputs, ["assets/**"]);
         assert_eq!(cfg.env, ["HOME"]);
+    }
+
+    #[test]
+    fn reads_the_ci_switch() {
+        assert_eq!(parse("[test]\nci = false\n").unwrap().ci, Some(false));
+        assert!(parse("[test]\nci = \"no\"\n").is_err());
     }
 
     #[test]

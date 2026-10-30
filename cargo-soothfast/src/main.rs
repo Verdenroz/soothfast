@@ -60,15 +60,15 @@ usage: cargo soothfast <command>
 
 commands:
   init     [-p PKG]... [--check] [--force] [--bot] [--labels] [--dir D]
-           [--runs-on LABELS] [--no-test]
+           [--runner-labels A,B] [--no-test] [--pin REF]
            [--ecosystem rust|gradle|maven|python|node] [--bench-cmd CMD]
            [--bench-out PATH] [--from FORMAT]
            (writes the soothfast CI workflow, soothfast.toml and .gitignore
            entry; --dir D makes the other-language flags apply to the
            project in D, which a repo with several ecosystems saves as
-           [[project]] tables; --runs-on A,B and
-           --no-test save a [ci] table: the runner labels and whether the
-           cargo test job runs; -p gives PKG a soothfast bench target; --check reports
+           [[project]] tables; --runner-labels A,B saves
+           [runner] labels, --no-test saves [test] ci = false, and --pin REF
+           makes the workflow use that soothfast commit; -p gives PKG a soothfast bench target; --check reports
            drift and writes nothing; --bot lands regenerated files and
            acts on pull request labels as soothfast-bot; --labels creates
            soothfast:merge, soothfast:update, soothfast:perf-accepted and

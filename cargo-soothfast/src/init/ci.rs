@@ -1,5 +1,5 @@
-//! The `[ci]` table of `soothfast.toml`: where the reusable workflow runs
-//! and whether it runs the repo's tests.
+//! Where the reusable workflow runs and whether it runs the repo's tests:
+//! `[runner] labels` and `[test] ci` in `soothfast.toml`.
 
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
@@ -8,39 +8,51 @@ use super::ecosystem::table_name;
 /// Each field is set or left to its default.
 #[derive(Default, Debug, PartialEq, Clone)]
 pub struct Ci {
-    pub runs_on: Option<Vec<String>>,
+    pub labels: Option<Vec<String>>,
     pub test: Option<bool>,
 }
 
 impl Ci {
+    /// The `[runner]` table and the `ci` key of `[test]`; other tables and
+    /// the rest of `[test]` belong to other readers.
     pub fn parse(text: &str) -> Result<Ci, String> {
         let mut ci = Ci::default();
-        let mut in_ci = false;
+        let mut table = "";
         for (lineno, line) in logical_lines(text) {
             if let Some(name) = table_name(&line) {
-                in_ci = name == "ci";
-                continue;
-            }
-            if !in_ci {
+                table = match name {
+                    "runner" => "runner",
+                    "test" => "test",
+                    _ => "",
+                };
                 continue;
             }
             let Some((key, value)) = line.split_once('=') else {
+                if table.is_empty() {
+                    continue;
+                }
                 return Err(format!("line {lineno}: expected `key = value`"));
             };
-            let value = parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
-            match (key.trim(), value) {
-                ("runs_on", TomlValue::Str(label)) => ci.runs_on = Some(vec![label]),
-                ("runs_on", TomlValue::StrArray(labels)) if !labels.is_empty() => {
-                    ci.runs_on = Some(labels)
+            let key = key.trim();
+            match (table, key) {
+                ("runner", "labels") => match parse_value(value.trim()) {
+                    Ok(TomlValue::StrArray(labels)) if !labels.is_empty() => {
+                        ci.labels = Some(labels)
+                    }
+                    _ => {
+                        return Err(format!(
+                            "line {lineno}: `labels` under [runner] is a non-empty list of strings"
+                        ));
+                    }
+                },
+                ("runner", k) => {
+                    return Err(format!("line {lineno}: unknown `{k}` under [runner]"));
                 }
-                ("runs_on", _) => {
-                    return Err(format!(
-                        "line {lineno}: `runs_on` is a label or a non-empty list of labels"
-                    ));
-                }
-                ("test", TomlValue::Bool(test)) => ci.test = Some(test),
-                ("test", _) => return Err(format!("line {lineno}: `test` is true or false")),
-                (k, _) => return Err(format!("line {lineno}: unknown `{k}` under [ci]")),
+                ("test", "ci") => match parse_value(value.trim()) {
+                    Ok(TomlValue::Bool(test)) => ci.test = Some(test),
+                    _ => return Err(format!("line {lineno}: `ci` under [test] is true or false")),
+                },
+                _ => {}
             }
         }
         Ok(ci)
@@ -49,13 +61,14 @@ impl Ci {
     /// These settings, with `base` filling what they leave unset.
     pub fn over(self, base: Ci) -> Ci {
         Ci {
-            runs_on: self.runs_on.or(base.runs_on),
+            labels: self.labels.or(base.labels),
             test: self.test.or(base.test),
         }
     }
 
+    /// Whether the settings leave the workflow at its defaults.
     pub fn is_default(&self) -> bool {
-        *self == Ci::default()
+        self.labels.is_none() && self.runs_test()
     }
 
     pub fn runs_test(&self) -> bool {
@@ -65,7 +78,7 @@ impl Ci {
     /// The labels as a JSON string or array, for `fromJSON` in a `runs-on`.
     pub fn runs_on_json(&self) -> String {
         let labels = self
-            .runs_on
+            .labels
             .clone()
             .unwrap_or_else(|| vec!["ubuntu-latest".into()]);
         match labels.as_slice() {
@@ -74,16 +87,10 @@ impl Ci {
         }
     }
 
-    /// The `[ci]` table, with only the fields that are set.
-    pub fn section(&self) -> String {
-        let mut text = String::from("[ci]\n");
-        if let Some(labels) = &self.runs_on {
-            text.push_str(&format!("runs_on = {}\n", serde_json::json!(labels)));
-        }
-        if let Some(test) = self.test {
-            text.push_str(&format!("test = {test}\n"));
-        }
-        text
+    /// The `[runner]` table.
+    pub fn runner_section(&self) -> String {
+        let labels = self.labels.clone().unwrap_or_default();
+        format!("[runner]\nlabels = {}\n", serde_json::json!(labels))
     }
 }
 
@@ -92,36 +99,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_label_or_a_list_names_the_runners() {
-        let one = Ci::parse("[ci]\nruns_on = \"self-hosted\"\n").unwrap();
+    fn the_labels_become_a_json_runs_on() {
+        let one = Ci::parse("[runner]\nlabels = [\"self-hosted\"]\n").unwrap();
         assert_eq!(one.runs_on_json(), "\"self-hosted\"");
-        let many = Ci::parse("[ci]\nruns_on = [\"self-hosted\", \"linux\"]\n").unwrap();
+        let many = Ci::parse("[runner]\nlabels = [\"self-hosted\", \"linux\"]\n").unwrap();
         assert_eq!(many.runs_on_json(), "[\"self-hosted\",\"linux\"]");
         assert_eq!(Ci::default().runs_on_json(), "\"ubuntu-latest\"");
     }
 
     #[test]
-    fn tests_run_unless_switched_off() {
+    fn tests_run_unless_the_test_table_turns_ci_off() {
         assert!(Ci::default().runs_test());
-        assert!(!Ci::parse("[ci]\ntest = false\n").unwrap().runs_test());
+        let off = "[test]\nignore = [\"docs/**\"]\nci = false\n";
+        assert!(!Ci::parse(off).unwrap().runs_test());
+        assert!(
+            Ci::parse("[test]\nignore = [\"docs/**\"]\n")
+                .unwrap()
+                .is_default()
+        );
     }
 
     #[test]
-    fn the_section_round_trips_and_skips_other_tables() {
+    fn the_runner_section_round_trips_and_other_tables_are_skipped() {
         let ci = Ci {
-            runs_on: Some(vec!["a".into(), "b".into()]),
-            test: Some(false),
+            labels: Some(vec!["a".into(), "b".into()]),
+            test: None,
         };
-        let text = format!("[gate]\nwalltime = \"hard\"\n\n{}", ci.section());
+        let text = format!("[gate]\nwalltime = \"hard\"\n\n{}", ci.runner_section());
         assert_eq!(Ci::parse(&text), Ok(ci));
         assert_eq!(Ci::parse("[gate]\nx = 1\n"), Ok(Ci::default()));
     }
 
     #[test]
-    fn a_bad_ci_table_is_an_error() {
-        assert!(Ci::parse("[ci]\nruns_on = []\n").is_err());
-        assert!(Ci::parse("[ci]\ntest = \"no\"\n").is_err());
-        assert!(Ci::parse("[ci]\nnope = 1\n").is_err());
+    fn a_bad_table_is_an_error() {
+        assert!(Ci::parse("[runner]\nlabels = []\n").is_err());
+        assert!(Ci::parse("[runner]\nlabels = \"x\"\n").is_err());
+        assert!(Ci::parse("[runner]\nnope = 1\n").is_err());
+        assert!(Ci::parse("[test]\nci = \"no\"\n").is_err());
     }
 
     #[test]
@@ -131,11 +145,11 @@ mod tests {
             ..Ci::default()
         };
         let table = Ci {
-            runs_on: Some(vec!["x".into()]),
+            labels: Some(vec!["x".into()]),
             test: Some(true),
         };
         let merged = flags.over(table);
         assert_eq!(merged.test, Some(false));
-        assert_eq!(merged.runs_on, Some(vec!["x".into()]));
+        assert_eq!(merged.labels, Some(vec!["x".into()]));
     }
 }

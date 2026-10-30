@@ -206,7 +206,8 @@ mod tests {
     #[test]
     fn the_ci_table_picks_the_runners_and_drops_the_test_job() {
         let mut p = plan(Some(&["a"]), vec![]);
-        p.ci = Ci::parse("[ci]\nruns_on = [\"self-hosted\", \"linux\"]\ntest = false\n").unwrap();
+        p.ci = Ci::parse("[runner]\nlabels = [\"self-hosted\", \"linux\"]\n\n[test]\nci = false\n")
+            .unwrap();
         let out = p.outputs();
         assert!(out.contains("rust=true\ntest=false\n"), "{out}");
         assert!(
