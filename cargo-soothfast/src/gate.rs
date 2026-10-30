@@ -2669,9 +2669,6 @@ mod tests {
         json!({ "benchmarks": [{ "metadata": { "name": "b" }, "runs": runs }] }).to_string()
     }
 
-    /// Gate `current` seconds per op against a reference of 1ms in a fresh
-    /// project root holding `config`; `baseline` gates against the stored
-    /// baseline of that run instead of a reference file.
     fn imported_gate(name: &str, current: f64, config: &str, baseline: bool) -> i32 {
         let root = std::env::temp_dir().join(format!("soothfast-gate-import-{name}"));
         let _ = std::fs::remove_dir_all(&root);
