@@ -144,7 +144,7 @@ fn err(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::init::ecosystem::{Bench, Ecosystem};
+    use crate::init::ecosystem::{Bench, Ecosystem, Tests};
 
     fn project(ecosystem: Ecosystem, dir: &str) -> Project {
         Project {
@@ -157,6 +157,7 @@ mod tests {
             },
             walltime: None,
             prefix: None,
+            test: Tests::default(),
         }
     }
 

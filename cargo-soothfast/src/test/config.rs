@@ -182,6 +182,12 @@ mod tests {
     }
 
     #[test]
+    fn suite_tables_belong_to_the_project_reader() {
+        let text = "[[test.suite]]\nlabel = \"x\"\ncmd = \"y\"\n\n[test]\nci = false\n";
+        assert_eq!(parse(text).unwrap().ci, Some(false));
+    }
+
+    #[test]
     fn reads_the_ci_switch() {
         assert_eq!(parse("[test]\nci = false\n").unwrap().ci, Some(false));
         assert!(parse("[test]\nci = \"no\"\n").is_err());

@@ -16,7 +16,7 @@ mod detect;
 pub mod ecosystem;
 
 use ci::Ci;
-use ecosystem::{Ecosystem, Entry, Project, Settings, normalize_dir, parse_projects};
+use ecosystem::{Ecosystem, Entry, Project, Settings, Tests, normalize_dir, parse_projects};
 
 const WORKFLOW: &str = include_str!("workflow.yml.tmpl");
 const TEST_JOB: &str = include_str!("test_job.yml.tmpl");
@@ -514,6 +514,7 @@ fn plan(
                     ecosystem,
                     dir,
                     bench,
+                    test: found.tests(),
                     walltime: found.walltime.or(Some("hard".into())),
                     prefix: found.prefix,
                 });
@@ -893,6 +894,7 @@ pub fn manifest(root: &Path) -> Result<Vec<Project>, String> {
                 ecosystem,
                 dir,
                 bench,
+                test: settings.tests(),
                 walltime: settings.walltime.or(Some("hard".into())),
                 prefix: settings.prefix,
             })
@@ -1081,6 +1083,7 @@ mod tests {
             bench: settings.bench(eco).unwrap(),
             walltime: None,
             prefix: None,
+            test: Tests::default(),
         }
     }
 
