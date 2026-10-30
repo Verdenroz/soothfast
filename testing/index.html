@@ -179,8 +179,15 @@ owns every file no nested member owns, so with a root package a change to
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[test]</span>
 <span class="tok-ty">ignore </span>=<span class="tok-str"> [&quot;docs/**&quot;, &quot;*.md&quot;]        # changes here select nothing</span>
 <span class="tok-ty">inputs </span>=<span class="tok-str"> [&quot;fixtures/shared/**&quot;]     # files tests read from outside a package</span>
-<span class="tok-ty">env    </span>=<span class="tok-str"> [&quot;DATABASE_URL&quot;]           # variables whose values change the result</span></code></pre></figure>
+<span class="tok-ty">env    </span>=<span class="tok-str"> [&quot;DATABASE_URL&quot;]           # variables whose values change the result</span>
+<span class="tok-ty">retries </span>=<span class="tok-num"> 2                         # reruns of a failed test binary</span></code></pre></figure>
 <p><code>inputs</code> wins over <code>ignore</code>. Ignore only files no test reads.</p>
+<p><code>retries</code> (default 0) reruns each failed test binary alone, through its own
+<code>cargo test -p PKG --lib</code> (or <code>--bin</code>, <code>--test</code>, <code>--bench NAME</code>), up to that
+many times. A binary that passes a rerun is flaky: the summary lists it on a
+<code>test: FLAKY:</code> line, the command exits 0 for it, and no pass is stored, so the
+next run executes it again. Doc tests are not rerun. <code>--result FILE</code> writes
+the outcome as JSON, with the verdict <code>flaky</code> when any binary was.</p>
 <h3 id="allow-lists">Allow-lists<a class="anchor" href="#allow-lists" aria-label="Link to this section">#</a></h3>
 <p>A package that owns many files no test reads, most often a package at the
 workspace root, can list the files that matter instead of ignoring the rest:</p>
@@ -311,6 +318,83 @@ nothing. The cache key follows the one used for measured runs in
 <a href="../gating/">Gating</a>: a branch restores its own earlier passes, then the
 default branch's. The cache saves even when a test failed, since only passes
 are stored: the next run re-runs the failures and skips what already passed.</p>
+<h2 id="other-languages">Other languages<a class="anchor" href="#other-languages" aria-label="Link to this section">#</a></h2>
+<p>A Gradle, Maven, Python or Node project that <a href="../importing/"><code>init</code></a> wires up
+as a <code>[[project]]</code> can carry its own test command. The Rust workspace keeps
+its per-package selection above; these keys select and cache a whole
+project.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[[project]]</span>
+<span class="tok-ty">dir </span>=<span class="tok-str"> &quot;client&quot;</span>
+<span class="tok-ty">ecosystem </span>=<span class="tok-str"> &quot;gradle&quot;</span>
+<span class="tok-ty">bench_cmd </span>=<span class="tok-str"> &quot;./gradlew jmh -Pout={out}&quot;</span>
+<span class="tok-ty">test_cmd </span>=<span class="tok-str"> &quot;./gradlew check&quot;</span>
+<span class="tok-ty">watch </span>=<span class="tok-str"> [&quot;gradle/libs.versions.toml&quot;]</span>
+<span class="tok-ty">retries </span>=<span class="tok-num"> 2</span>
+
+<span class="tok-kw">[[project]]</span>
+<span class="tok-ty">dir </span>=<span class="tok-str"> &quot;api&quot;</span>
+<span class="tok-ty">ecosystem </span>=<span class="tok-str"> &quot;python&quot;</span>
+<span class="tok-ty">test_cmd </span>=<span class="tok-str"> &quot;uv run pytest&quot;</span>
+<span class="tok-ty">retry_cmd </span>=<span class="tok-str"> &quot;uv run pytest --lf&quot;</span>
+<span class="tok-ty">retries </span>=<span class="tok-num"> 1</span>
+
+<span class="tok-kw">[[test.suite]]</span>
+<span class="tok-ty">label </span>=<span class="tok-str"> &quot;soothfast:e2e&quot;</span>
+<span class="tok-ty">project </span>=<span class="tok-str"> &quot;api&quot;</span>
+<span class="tok-ty">cmd </span>=<span class="tok-str"> &quot;uv run pytest -m e2e&quot;</span></code></pre></figure>
+<div class="tablewrap"><table>
+<thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>test_cmd</code></td><td>Run in the project's directory through <code>sh -c</code>. Without it the project has no tests to run.</td></tr>
+<tr><td><code>watch</code></td><td>Globs relative to the repository root. A change to a matching file runs the project's tests as well as a change under <code>dir</code>.</td></tr>
+<tr><td><code>retries</code></td><td>Reruns after a failure. Default 0.</td></tr>
+<tr><td><code>retry_cmd</code></td><td>The command for a rerun. Defaults to <code>test_cmd</code>.</td></tr>
+<tr><td><code>gate</code></td><td><code>false</code> for a project that only runs tests: no benchmark is configured or gated. Without it the project keeps its ecosystem's default benchmark, or <code>init</code> asks for one.</td></tr>
+</tbody>
+</table></div>
+<p>A <code>[[test.suite]]</code> runs <code>cmd</code> in the directory of <code>project</code>, which must be a
+<code>[[project]]</code>, only on a pull request whose <code>label</code> a writer applied. It
+inherits the project's <code>retries</code> and reruns with its own <code>cmd</code>. An unknown
+key in either table is an error.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast test --project client            # vs the default branch&#39;s merge-base
+<span class="tok-kw">$ </span>cargo soothfast test --project client --all      # skip the selection, keep the cache
+<span class="tok-kw">$ </span>cargo soothfast test --project api --suite soothfast:e2e
+</code></pre></figure>
+<p><code>--project DIR</code> runs only when the diff against the merge-base (<code>--base</code>
+works as above) touches a file under <code>DIR</code> or one <code>watch</code> matches; it prints
+that the project is untouched otherwise. A base with no merge-base runs it.
+<code>--no-cache</code> runs it even with a stored pass. <code>--result FILE</code> writes the
+outcome as JSON: <code>name</code> (<code>--name</code>, else the directory), <code>project</code>, <code>kind</code>
+(<code>test</code>), <code>verdict</code>, <code>output</code> (the last 40 lines) and <code>wall_s</code>.</p>
+<p>The verdict is <code>pass</code>, <code>reused</code>, <code>flaky</code>, <code>failed</code> or <code>skipped</code>. A pass is
+stored under <code>.soothfast/tests</code>, keyed by the content of every file
+under <code>DIR</code> and every file <code>watch</code> matches, tracked, modified or untracked, the command, and the toolchain
+(<code>java -version</code>, <code>python --version</code> or <code>node --version</code>; <code>--toolchain TEXT</code>
+names it instead). The same key later is <code>reused</code> and runs nothing. A
+failure reruns up to <code>retries</code> times; a pass on a rerun is <code>flaky</code>, exits 0
+and stores nothing, so the next run executes the tests again.</p>
+<p>In the reusable workflow, the plan job restores <code>.soothfast/tests</code>, works
+out which tests the pull request reaches, and looks each one's key up. Only
+a test with no stored pass becomes an entry of the <code>test-projects</code> matrix, so
+a change that touches no tests, or only tests a pass covers, starts no test
+job and installs no toolchain. The plan job writes a result file for each
+test it settled that way (<code>skipped</code> or <code>reused</code>) and uploads them together as
+the <code>soothfast-result-test-settled</code> artifact. The matrix jobs need only the
+plan job and run beside the gate jobs, which do not wait for them. Each
+uploads <code>soothfast-result-test-&lt;name&gt;</code> and, on a pass, its stored pass, and a
+<code>test-cache</code> job merges those passes into the cache for the next run. The
+verdict job expects a <code>test-&lt;name&gt;</code> result for every test the plan covers,
+settled or run, and <code>test-rust</code> for the Rust workspace.</p>
+<p>The plan job has no toolchain installed, so the key names it by the
+workflow's <code>java</code> and <code>node</code> inputs and the runner labels the test jobs use (Python is keyed as <code>uv</code>)
+instead of a probe of the installed binary. A patch release that a runner
+picks up under the same input does not invalidate a pass.</p>
+<p>The <code>soothfast:test-all</code> label, applied by a writer, selects every project
+and the Rust workspace and ignores stored passes for that run. The plan job
+reads the pull request's current labels from the API, so a re-run sees a
+label added since the last run, but applying one starts no run by itself.
+<code>[test] ci = false</code> drops the project tests along with the Rust test job.
+The cache keeps the newest 2048 passes.</p>
 
 <div class="doc-foot">
   <span>built with <b>cargo soothfast docs build</b></span>
@@ -336,6 +420,8 @@ are stored: the next run re-runs the failures and skips what already passed.</p>
     <li><a class="toc-l3" href="#a-runner-you-configured">A runner you configured</a></li>
   
     <li><a class="toc-l2" href="#in-ci">In CI</a></li>
+  
+    <li><a class="toc-l2" href="#other-languages">Other languages</a></li>
   
   </ul>
 

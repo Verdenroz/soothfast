@@ -270,7 +270,8 @@ installed on is refused.</p>
 <tr><td><code>broker</code></td><td>built in</td><td>Token broker URL.</td></tr>
 <tr><td><code>labels</code></td><td><code>false</code></td><td>On default-branch pushes and schedules, act on pull request labels as soothfast-bot (see <a href="#labels">Labels</a>).</td></tr>
 <tr><td><code>shard</code></td><td>none</td><td><code>I/N</code> to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own.</td></tr>
-<tr><td><code>cache</code></td><td><code>true</code></td><td>Restore and save <code>.soothfast/runs</code>, <code>items</code> and <code>maps</code>, keyed so a pull request restores what its merge-base recorded.</td></tr>
+<tr><td><code>comment</code></td><td><code>true</code></td><td>Post the pull request gate comment. <code>false</code> posts nothing and records a result per package for <code>cargo soothfast verdict merge</code>.</td></tr>
+<tr><td><code>cache</code></td><td><code>true</code></td><td>Restore and save <code>.soothfast/runs</code>, <code>items</code> and <code>maps</code>, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved.</td></tr>
 </tbody>
 </table></div>
 <p>Outputs are <code>version</code> and <code>cache-hit</code>.</p>
@@ -302,9 +303,45 @@ installation token in an earlier step (for example with
 slug as <code>bot-slug</code>. The <code>id-token: write</code> permission and the environment are
 then unnecessary.</p>
 <h2 id="self-hosted-runners">Self-hosted runners<a class="anchor" href="#self-hosted-runners" aria-label="Link to this section">#</a></h2>
-<p>The scripts use <code>gh</code>, <code>jq</code>, <code>curl</code>, <code>git</code>, and <code>cargo</code>. On Linux the step
-installs <code>valgrind</code> with <code>apt-get</code> when it is missing, for the callgrind
-fallback on machines without performance counters.</p>
+<p>A runner that only has <code>git</code>, <code>bash</code>, <code>curl</code>, <code>docker</code> and the runner agent
+can run the reusable <code>run.yml</code> workflow (see <a href="../importing/">importing</a>) if it
+provides the following.</p>
+<p>Every job:</p>
+<ul>
+<li><code>git</code>, <code>curl</code>, <code>bash</code>, <code>sed</code>, <code>awk</code> and <code>grep</code>. The install step fails naming <code>git</code> or <code>curl</code> when either is missing.</li>
+<li>Network access to github.com, crates.io, and the services the pinned actions download from (the Java, Node and <code>uv</code> setup actions fetch their toolchains).</li>
+<li><code>cargo</code> is set up for you with <code>dtolnay/rust-toolchain</code> (stable) when it is not on <code>PATH</code>, because <code>cargo soothfast</code> is a cargo subcommand. That needs the network and a C compiler and linker (<code>cc</code>) to build a Rust project. <code>cargo-soothfast</code> itself is installed from crates.io when the workflow's ref is a published release, else built from the ref into <code>$RUNNER_TOOL_CACHE/soothfast-cli/&lt;commit&gt;</code>, cached by commit and linked into <code>$CARGO_HOME/bin</code>. The first build of a ref takes several minutes.</li>
+</ul>
+<p>Jobs that run the composite action (the cargo gate and the labels job). A
+plain pull request gate needs <code>cargo</code> and one of <code>jq</code> or <code>gh</code> (to read the
+default branch). The rest is needed only by the step that uses it, and each
+fails naming the tool:</p>
+<ul>
+<li><code>gh</code>, to comment with the job token, to act on labels and to land regenerated files. Without it the gate still runs and only skips the <code>soothfast:perf-accepted</code> check, with a warning.</li>
+<li><code>jq</code>, to comment or mint a token as soothfast-bot, and to find the bench packages when none are named.</li>
+<li><code>valgrind</code>, for the callgrind fallback on machines without hardware performance counters. The step installs it with <code>apt-get</code> when it runs as root or passwordless <code>sudo</code> is available, and otherwise warns and carries on. A runner with performance counters does not need it.</li>
+<li><code>rustup</code>, for a nightly or pinned rustdoc toolchain. <code>dtolnay/rust-toolchain</code> installs it when it is missing.</li>
+</ul>
+<p>Per-project gate jobs:</p>
+<ul>
+<li>Java for Gradle and Maven projects, Node for Node projects and <code>uv</code> for Python projects come from <code>actions/setup-java</code>, <code>actions/setup-node</code> and <code>astral-sh/setup-uv</code>, so the runner needs nothing preinstalled. A Gradle project's own <code>./gradlew</code> downloads Gradle, and Python itself comes from <code>uv</code>.</li>
+</ul>
+<p><code>step-security/harden-runner</code> is the first step of every job; it targets
+hosted runners and its network audit may not apply on yours.</p>
+<h2 id="one-verdict">One verdict<a class="anchor" href="#one-verdict" aria-label="Link to this section">#</a></h2>
+<p>The reusable <code>run.yml</code> workflow gives a pull request one soothfast comment and
+one check, however many projects or shards it gates. Every gate job, the test
+job and the docs check records a <code>result.json</code> (project, kind, verdict, the last forty
+lines of output, reuse counts, seconds) and uploads it as
+<code>soothfast-result-&lt;name&gt;</code>. The <code>verdict</code> job downloads them all, runs
+<code>cargo soothfast verdict merge</code>, and posts one comment marked
+<code>&lt;!-- soothfast-verdict --&gt;</code> with a section per project, regressed and
+errored first. Shards of one project fold into one section.</p>
+<p>Branch protection needs only the <code>verdict</code> check, named <code>&lt;caller job id&gt; /
+verdict</code>. The caller <code>cargo soothfast init</code> writes names its job <code>soothfast</code>,
+so a repo set up with init requires <code>soothfast / verdict</code>. The check fails when any project
+regressed or errored, or recorded no result; a <code>soothfast:perf-accepted</code> label
+applied by a writer waives regressions, never errors or docs drift.</p>
 <h2 id="the-gate-on-its-own">The gate on its own<a class="anchor" href="#the-gate-on-its-own" aria-label="Link to this section">#</a></h2>
 <p>The gate, with its comment and triage upload, is also a reusable workflow for
 callers that want it as a separate job or a matrix over packages:</p>
@@ -345,6 +382,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l2" href="#bringing-your-own-token">Bringing your own token</a></li>
   
     <li><a class="toc-l2" href="#self-hosted-runners">Self-hosted runners</a></li>
+  
+    <li><a class="toc-l2" href="#one-verdict">One verdict</a></li>
   
     <li><a class="toc-l2" href="#the-gate-on-its-own">The gate on its own</a></li>
   

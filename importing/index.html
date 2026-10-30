@@ -173,7 +173,7 @@ renamed:</p>
 <tbody>
 <tr><td>JMH</td><td><code>benchmark[mode=M,k=v,...]</code>: the mode first, then its params sorted by key, so one benchmark run in several modes keeps one id per mode</td></tr>
 <tr><td>pyperf</td><td>the benchmark's <code>metadata.name</code>, else the file's (<code>timeit</code> for <code>pyperf timeit</code>)</td></tr>
-<tr><td>pytest-benchmark</td><td><code>fullname</code></td></tr>
+<tr><td>pytest-benchmark</td><td><code>fullname</code>, its file path made relative to the project root so a checkout's directory name never enters an id</td></tr>
 <tr><td>vitest</td><td><code>&lt;group full name&gt; &gt; &lt;benchmark name&gt;</code>, the group name being file-relative as vitest prints it</td></tr>
 </tbody>
 </table></div>
@@ -235,21 +235,39 @@ fixed +10%. Two more things help:</p>
 <li>Set <code>[gate] walltime = &quot;advisory&quot;</code> in <code>soothfast.toml</code> where the numbers cannot be trusted to a single run. An overrun prints as <code>SOFT</code> and the gate passes.</li>
 </ul>
 <h2 id="other-languages">Other languages<a class="anchor" href="#other-languages" aria-label="Link to this section">#</a></h2>
-<p><code>cargo soothfast init</code> detects the repo from the first build file it finds at
-the project root: <code>Cargo.toml</code>, then <code>build.gradle.kts</code> or <code>build.gradle</code>,
-then <code>pom.xml</code>, then <code>pyproject.toml</code> or <code>setup.py</code>, then <code>package.json</code>.
-<code>--ecosystem rust|gradle|maven|python|node</code> overrides the detection. For
-anything but Rust it writes a workflow that gates the repo's own harness on
-pull requests, plus a docs check when tracked markdown carries
-<code>&lt;!-- soothfast:</code> markers.</p>
-<p>The gate job checks out the full history, runs the harness on the merge base
-in a <code>git worktree</code> and on HEAD, then runs <code>gate --import</code> with the merge
-base's file as <code>--reference-import</code>. When the merge base cannot run the
-harness or writes no result file, the gate notes that and passes. Nothing is
-stored, and a push to the default branch does nothing extra. An imported gate
-measures walltime only, so the seeded <code>soothfast.toml</code> sets
-<code>[gate] walltime = &quot;hard&quot;</code>; set it to <code>&quot;advisory&quot;</code> if the runner is too noisy
-to trust.</p>
+<p><code>cargo soothfast init</code> wires up repos that mix ecosystems: a cargo workspace
+at the root plus any number of Gradle, Maven, Python and Node projects below
+it. The root is Rust when it has a <code>Cargo.toml</code>. The other projects come from
+tracked files (<code>git ls-files</code>), at any depth:</p>
+<ul>
+<li>A directory with <code>settings.gradle(.kts)</code> is a Gradle project, and the <code>build.gradle(.kts)</code> files below it belong to it. Without a settings file, the top-most <code>build.gradle(.kts)</code> directory is the project.</li>
+<li><code>pom.xml</code>, <code>package.json</code>: the top-most directories only.</li>
+<li><code>pyproject.toml</code>, <code>setup.py</code>: each directory, except those under another Python directory.</li>
+<li>Nothing under <code>target/</code>, <code>build/</code>, <code>dist/</code>, <code>node_modules/</code>, <code>.venv/</code>, <code>vendor/</code> or <code>.soothfast/</code> counts.</li>
+</ul>
+<p>Init reports every project it finds. A detected project is gated only when
+its own manifests name the harness its default command runs, and a benchmark
+command is known:</p>
+<ul>
+<li>Python: <code>pyproject.toml</code> or <code>setup.py</code> names <code>pytest-benchmark</code> or <code>pyperf</code>.</li>
+<li>Node: a <code>package.json</code> names <code>vitest</code>, and either a script is <code>bench</code> (or runs <code>vitest bench</code>) or a <code>*.bench.*</code> file is tracked under the directory.</li>
+<li>Gradle: a Gradle file names <code>kotlinx.benchmark</code>, <code>jmh</code> or <code>me.champeau.jmh</code>. Gradle also has no default command.</li>
+<li>Maven: a <code>pom.xml</code> names <code>jmh</code>.</li>
+</ul>
+<p>A root <code>package.json</code> that only holds tooling is therefore listed as
+skipped, not turned into a gate that cannot run. A skipped project prints the
+flags that add it:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">bash</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>cargo soothfast init --dir client \
+  --bench-cmd &#39;./gradlew jmh -Pout={out}&#39; --bench-out build/jmh.json
+</code></pre></figure>
+<p><code>--dir D</code> selects or creates the project in <code>D</code> and always gates it, and
+<code>--ecosystem</code>,
+<code>--bench-cmd</code>, <code>--bench-out</code> and <code>--from</code> apply to it. That is also how a
+directory with no build file, such as Python tests with no <code>pyproject.toml</code>,
+joins the set (<code>--ecosystem python --dir plugin/hooks --bench-cmd ...
+--bench-out ...</code>). Without <code>--dir</code> those flags describe the project at the
+root. <code>--ecosystem rust</code> is the cargo workspace at the root and takes no
+<code>--dir</code>.</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Ecosystem</th><th>Command</th><th>Format</th><th>Setup</th></tr></thead>
 <tbody>
@@ -259,16 +277,89 @@ to trust.</p>
 <tr><td><code>node</code></td><td><code>npx vitest bench --run --outputJson {out}</code></td><td><code>vitest</code></td><td><code>setup-node</code>, <code>npm ci</code></td></tr>
 </tbody>
 </table></div>
-<p><code>--bench-cmd CMD</code>, <code>--bench-out PATH</code> and <code>--from FORMAT</code> replace the command,
-the result file (default <code>soothfast-bench.json</code>, relative to the checkout the
-command runs in) and the format. <code>{out}</code> in the command stands for the result
-file. <code>--java</code> (default <code>21</code>) and <code>--node</code> (default <code>22</code>) pick the toolchain
-version.</p>
-<p>The choice is saved in an <code>[init]</code> table of <code>soothfast.toml</code>
-(<code>ecosystem</code>, <code>bench_cmd</code>, <code>bench_out</code>, <code>from</code>), so <code>init --check</code> without
-flags renders the same workflow; the toolchain versions are read back from
-the workflow. The workflow installs the CLI with the action's <code>version</code>
-input, since there is no <code>Cargo.lock</code> to read it from.</p>
+<p>The command runs in the project's directory. <code>{out}</code> stands for the result
+file (default <code>soothfast-bench.json</code>, relative to that directory). <code>--java</code>
+(default <code>21</code>) and <code>--node</code> (default <code>22</code>) pick the toolchain versions.</p>
+<h3 id="what-init-writes">What init writes<a class="anchor" href="#what-init-writes" aria-label="Link to this section">#</a></h3>
+<p>The projects are saved as <code>[[project]]</code> tables of <code>soothfast.toml</code>, which is
+the source of truth for what runs. Earlier releases saved a single <code>[init]</code>
+table or <code>[[init.project]]</code> tables; both are read as projects and rewritten
+as <code>[[project]]</code> the next time init writes.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[gate]</span>
+<span class="tok-ty">walltime </span>=<span class="tok-str"> &quot;hard&quot;</span>
+
+<span class="tok-kw">[[project]]</span>
+<span class="tok-ty">dir </span>=<span class="tok-str"> &quot;client&quot;</span>
+<span class="tok-ty">ecosystem </span>=<span class="tok-str"> &quot;gradle&quot;</span>
+<span class="tok-ty">bench_cmd </span>=<span class="tok-str"> &quot;./gradlew jmh -Pout={out}&quot;</span>
+<span class="tok-ty">bench_out </span>=<span class="tok-str"> &quot;build/jmh.json&quot;</span>
+<span class="tok-ty">from </span>=<span class="tok-str"> &quot;jmh&quot;</span>
+
+<span class="tok-kw">[[project]]</span>
+<span class="tok-ty">dir </span>=<span class="tok-str"> &quot;plugin/plugins/x/hooks&quot;</span>
+<span class="tok-ty">ecosystem </span>=<span class="tok-str"> &quot;python&quot;</span>
+<span class="tok-ty">bench_cmd </span>=<span class="tok-str"> &quot;uv run pytest --benchmark-json {out}&quot;</span>
+<span class="tok-ty">bench_out </span>=<span class="tok-str"> &quot;bench.json&quot;</span>
+<span class="tok-ty">from </span>=<span class="tok-str"> &quot;pytest-benchmark&quot;</span>
+<span class="tok-ty">prefix </span>=<span class="tok-str"> &quot;hooks&quot;</span>
+<span class="tok-ty">walltime </span>=<span class="tok-str"> &quot;advisory&quot;</span>
+
+<span class="tok-kw">[runner]</span>
+<span class="tok-ty">labels </span>=<span class="tok-str"> [&quot;self-hosted&quot;, &quot;linux&quot;]</span>
+
+<span class="tok-kw">[test]</span>
+<span class="tok-ty">ci </span>=<span class="tok-kw"> false</span>
+
+<span class="tok-kw">[docs]</span>
+<span class="tok-ty">package </span>=<span class="tok-str"> [&quot;my-core&quot;]</span></code></pre></figure>
+<p>A project may also set <code>prefix</code> (the item-name prefix of the imported
+results). Its <code>walltime</code> is <code>&quot;hard&quot;</code> unless set to <code>&quot;advisory&quot;</code>; init writes
+<code>walltime = &quot;hard&quot;</code> into each new project, and <code>[gate] walltime</code> governs only
+the cargo workspace. <code>[runner] labels</code> is a list of runner labels (no table
+means <code>ubuntu-latest</code>), and <code>ci = false</code> under <code>[test]</code> drops the cargo
+<code>test</code> job (the other <code>[test]</code> keys are unchanged). Init writes them only for
+<code>--runner-labels A,B</code> and <code>--no-test</code>. <code>[docs] package</code> (a name or a list)
+names the packages <code>docs check</code> reads; without it, init picks the workspace
+packages the markdown binds (<code>crate::path</code>) name, else the root package, and
+writes what it chose.</p>
+<p>A repo with only a cargo workspace keeps the workflow init has always
+written. Once it has other projects, <code>[runner]</code> labels or <code>ci = false</code> under
+<code>[test]</code>, the workflow is a caller: triggers, permissions and one job that uses
+<code>.github/workflows/run.yml</code> from this repository at the pinned release. The
+pin is written twice, as the <code>uses:</code> ref and as the <code>soothfast_ref</code> input,
+because a called workflow cannot read its own ref; the workflow stops when
+the input is empty, and <code>init --check</code> reports a caller where they disagree.
+It passes no secrets: the bot authenticates by OIDC and comments use the job's
+own token. <code>--pin REF</code> writes the <code>uses:</code> at another commit, tag or branch,
+so an unreleased commit can be tried; a bare commit pin is kept by later
+runs. The reusable workflow installs the <code>cargo-soothfast</code> that matches the
+ref it was called at: the crates.io release when that ref is the commit of a
+published release tag, otherwise a build of the ref itself, cached by commit. It runs <code>cargo soothfast plan --github</code>
+to read <code>soothfast.toml</code>, then runs a test job, a gate for the cargo
+workspace, one gate job per other project and a docs check when tracked
+markdown carries <code>&lt;!-- soothfast:</code> markers. The plan job runs on the labels
+the caller passes as <code>runs_on</code> (written when <code>[runner]</code> sets them); every
+other job runs on the labels <code>[runner]</code> names. <code>init --check</code> compares the whole set,
+so a flagless check after a flagged init is clean.</p>
+<p>Init warns about any other workflow in <code>.github/workflows</code> that calls
+soothfast, since its jobs run twice next to the generated ones. A plain init
+that would only add a second Rust workflow next to one of those writes
+nothing unless <code>--force</code> is given.</p>
+<p>The docs job waits for the cargo gate, which saves the head measurement as the
+<code>soothfast-baseline</code> artifact, and checks claims against it. A pull request
+that leaves the bench binaries unchanged saves none, so the job falls back to
+the default branch's measurement, which each default-branch push caches as
+<code>soothfast-baseline-&lt;sha&gt;</code> (the base commit's, else the nearest). Only when
+neither exists does the check report "claims not evaluated: no measurement" as
+a notice, still checking binds and examples.</p>
+<p>Each project's gate checks out the full history, runs the harness on the
+merge base in a <code>git worktree</code> and on HEAD, then runs <code>gate --import</code> with
+the merge base's file as <code>--reference-import</code>. When the merge base cannot run
+the harness or writes no result file, the gate notes that and passes. Nothing
+is stored. An imported gate measures walltime only, so each project gates
+hard; set its <code>walltime = &quot;advisory&quot;</code> if the runner is too noisy to trust.
+Each gate uploads its output as the <code>soothfast-result-&lt;project&gt;</code>
+artifact.</p>
 <p><code>docs check</code> and <code>docs accept</code> need no cargo project for <code>path#Symbol</code> binds
 (see <a href="../living-docs/">living docs</a>).</p>
 
@@ -296,6 +387,8 @@ input, since there is no <code>Cargo.lock</code> to read it from.</p>
     <li><a class="toc-l2" href="#noise">Noise</a></li>
   
     <li><a class="toc-l2" href="#other-languages">Other languages</a></li>
+  
+    <li><a class="toc-l3" href="#what-init-writes">What init writes</a></li>
   
   </ul>
 
