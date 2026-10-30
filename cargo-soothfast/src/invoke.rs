@@ -815,11 +815,27 @@ fn locate_workspace_root() -> io::Result<PathBuf> {
         .to_path_buf())
 }
 
-fn baseline_path(name: &str) -> io::Result<PathBuf> {
-    Ok(workspace_root()?
-        .join(".soothfast")
+/// The cargo workspace root, else the git toplevel, else the current
+/// directory: the root for commands that run outside a cargo project.
+pub fn project_root() -> PathBuf {
+    workspace_root()
+        .ok()
+        .or_else(|| {
+            let out = Command::new("git")
+                .args(["rev-parse", "--show-toplevel"])
+                .output()
+                .ok()?;
+            out.status
+                .success()
+                .then(|| PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
+        })
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn baseline_path(root: &Path, name: &str) -> PathBuf {
+    root.join(".soothfast")
         .join("baselines")
-        .join(format!("{name}.json")))
+        .join(format!("{name}.json"))
 }
 
 /// What a measurement run covered, deciding which stale baseline entries a
@@ -834,6 +850,8 @@ pub enum SaveScope {
     BenchFiltered,
     /// Buildcost run of one package (`None`: replace every buildcost entry).
     Buildcost(Option<String>),
+    /// Import of the items whose id starts `<prefix>::`.
+    Imported(String),
 }
 
 impl SaveScope {
@@ -857,8 +875,19 @@ pub fn id_pkg(id: &str) -> &str {
 
 /// Persist a run as a named baseline.
 pub fn save_baseline(name: &str, run: &Run, scope: SaveScope) -> io::Result<PathBuf> {
+    save_baseline_in(&workspace_root()?, name, run, scope)
+}
+
+/// Persist a run as a named baseline under `root`.
+pub fn save_baseline_in(
+    root: &Path,
+    name: &str,
+    run: &Run,
+    scope: SaveScope,
+) -> io::Result<PathBuf> {
     let new_items = saved_items(run);
-    let mut doc = load_baseline(name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+    let mut doc =
+        load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -884,6 +913,7 @@ pub fn save_baseline(name: &str, run: &Run, scope: SaveScope) -> io::Result<Path
                     .is_none_or(|rest| rest.split("::").next() != Some(pkg.as_str()))
             }),
             SaveScope::Buildcost(None) => map.retain(|k, _| !k.starts_with("buildcost::")),
+            SaveScope::Imported(prefix) => map.retain(|k, _| id_pkg(k) != prefix),
             SaveScope::BenchFiltered => {}
         }
         for (k, v) in new_map {
@@ -912,27 +942,24 @@ pub fn save_baseline(name: &str, run: &Run, scope: SaveScope) -> io::Result<Path
     }
     doc["assertions"] = Value::Array(assertions);
 
-    let path = baseline_path(name)?;
+    let path = baseline_path(root, name);
     std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
     std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
-    prune_absorbed_accepts(run);
+    prune_absorbed_accepts(root, run);
     Ok(path)
 }
 
 /// Drop `soothfast-gate.lock` entries a fresh baseline has absorbed. Best
 /// effort: a baseline save must never fail because of the lock file.
-fn prune_absorbed_accepts(run: &Run) {
-    let Ok(root) = workspace_root() else {
-        return;
-    };
-    let Ok(entries) = crate::gate_lock::read(&root) else {
+fn prune_absorbed_accepts(root: &Path, run: &Run) {
+    let Ok(entries) = crate::gate_lock::read(root) else {
         return;
     };
     let (pruned, removed) = crate::gate_lock::prune_absorbed(&entries, run);
     if removed.is_empty() {
         return;
     }
-    if crate::gate_lock::write(&root, &pruned).is_ok() {
+    if crate::gate_lock::write(root, &pruned).is_ok() {
         for id in removed {
             println!("soothfast-gate.lock: {id} absorbed into the new baseline, entry removed");
         }
@@ -941,7 +968,12 @@ fn prune_absorbed_accepts(run: &Run) {
 
 /// Load a named baseline, if present.
 pub fn load_baseline(name: &str) -> io::Result<Option<Value>> {
-    let path = baseline_path(name)?;
+    load_baseline_in(&workspace_root()?, name)
+}
+
+/// Load a named baseline under `root`, if present.
+pub fn load_baseline_in(root: &Path, name: &str) -> io::Result<Option<Value>> {
+    let path = baseline_path(root, name);
     if !path.exists() {
         return Ok(None);
     }

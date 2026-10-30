@@ -4,12 +4,8 @@ use super::*;
 
 const JMH: &str = include_str!("../../tests/fixtures/import/jmh.json");
 
-fn imported(format: Format, text: &str) -> Vec<Bench> {
+fn imported(format: Format, text: &str) -> Run {
     parse(format, text, None).unwrap()
-}
-
-fn metrics<'a>(benches: &'a [Bench], id: &str) -> &'a ItemMetrics {
-    &benches.iter().find(|b| b.id == id).unwrap().metrics
 }
 
 fn assert_close(actual: Option<f64>, expected: f64) {
@@ -19,49 +15,40 @@ fn assert_close(actual: Option<f64>, expected: f64) {
 
 #[test]
 fn jmh_ids_carry_sorted_params() {
-    let ids: Vec<String> = imported(Format::Jmh, JMH)
-        .into_iter()
-        .map(|b| b.id)
-        .collect();
+    let run = imported(Format::Jmh, JMH);
+    let ids: Vec<&str> = run.items.keys().map(String::as_str).collect();
     assert_eq!(
         ids,
         [
+            "jmh::com.acme.codec.HashBench.digest",
             "jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=1000]",
             "jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=10]",
-            "jmh::com.acme.codec.HashBench.digest",
         ]
     );
 }
 
 #[test]
 fn a_prefix_replaces_the_format_name() {
-    let benches = parse(Format::Jmh, JMH, Some("java")).unwrap();
-    assert!(benches.iter().all(|b| b.id.starts_with("java::")));
+    let run = parse(Format::Jmh, JMH, Some("java")).unwrap();
+    assert!(run.items.keys().all(|id| id.starts_with("java::")));
 }
 
 #[test]
 fn jmh_time_units_become_nanoseconds_with_sample_statistics() {
-    let benches = imported(Format::Jmh, JMH);
-    let us = metrics(
-        &benches,
-        "jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=1000]",
-    );
+    let run = imported(Format::Jmh, JMH);
+    let us = &run.items["jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=1000]"];
     assert_close(us.median_ns, 1255.0);
     assert_close(us.mad_ns, 30.0);
     assert_close(us.p99_ns, 1320.0);
-    let ns = metrics(
-        &benches,
-        "jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=10]",
-    );
+    let ns = &run.items["jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=10]"];
     assert_close(ns.median_ns, 140.5);
     assert_close(ns.mad_ns, 3.0);
-    assert_eq!(benches[0].samples, 10);
 }
 
 #[test]
 fn jmh_throughput_is_inverted_to_time_per_op() {
-    let benches = imported(Format::Jmh, JMH);
-    let digest = metrics(&benches, "jmh::com.acme.codec.HashBench.digest");
+    let run = imported(Format::Jmh, JMH);
+    let digest = &run.items["jmh::com.acme.codec.HashBench.digest"];
     assert_close(digest.median_ns, 500.0);
     assert_close(digest.mad_ns, 11.9);
 }
@@ -88,9 +75,8 @@ fn a_score_without_raw_data_is_a_single_sample() {
         "benchmark": "b",
         "primaryMetric": { "score": 3.0, "scoreUnit": "ms/op" }
     }]);
-    let benches = parse(Format::Jmh, &text.to_string(), None).unwrap();
-    assert_close(benches[0].metrics.median_ns, 3e6);
-    assert_eq!(benches[0].samples, 1);
+    let run = parse(Format::Jmh, &text.to_string(), None).unwrap();
+    assert_close(run.items["jmh::b"].median_ns, 3e6);
 }
 
 #[test]
@@ -106,25 +92,26 @@ fn the_doc_has_the_baseline_shape() {
     assert_eq!(doc["version"], 1);
     assert_eq!(doc["assertions"], json!([]));
     let wall = &doc["items"]["jmh::com.acme.codec.HashBench.digest"]["walltime"];
-    assert_eq!(wall["samples"], 4);
     assert!(wall["median_ns"].is_f64() && wall["mad_ns"].is_f64() && wall["p99_ns"].is_f64());
-    assert!(wall["rounds"].is_null());
 }
 
 #[test]
 fn saving_replaces_the_prefix_and_keeps_other_items() {
     let root = std::env::temp_dir().join(format!("soothfast-import-{}", std::process::id()));
-    let existing = baseline_file(&root, "base");
-    std::fs::create_dir_all(existing.parent().unwrap()).unwrap();
-    let before = json!({ "version": 1, "assertions": [], "items": {
-        "jmh::stale": { "walltime": { "median_ns": 1.0 } },
-        "pkg::kept": { "walltime": { "median_ns": 2.0 } },
-    }});
-    std::fs::write(&existing, before.to_string()).unwrap();
-
-    let doc = to_doc(&imported(Format::Jmh, JMH));
-    save_baseline(&root, "base", "jmh", &doc).unwrap();
-    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&existing).unwrap()).unwrap();
+    let scope = || invoke::SaveScope::Imported("jmh".into());
+    let mut earlier = Run::default();
+    for id in ["jmh::stale", "pkg::kept"] {
+        earlier.items.insert(
+            id.into(),
+            ItemMetrics {
+                median_ns: Some(1.0),
+                ..ItemMetrics::default()
+            },
+        );
+    }
+    invoke::save_baseline_in(&root, "base", &earlier, invoke::SaveScope::BenchFiltered).unwrap();
+    invoke::save_baseline_in(&root, "base", &imported(Format::Jmh, JMH), scope()).unwrap();
+    let saved = invoke::load_baseline_in(&root, "base").unwrap().unwrap();
     std::fs::remove_dir_all(&root).unwrap();
 
     assert!(saved["items"]["jmh::stale"].is_null());
