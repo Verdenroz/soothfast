@@ -313,10 +313,24 @@ mod tests {
         assert_eq!(first, second);
     }
 
+    /// Every function of `bin`: sized ones by name, the crt helpers `nm`
+    /// lists without a size by their `at:` label.
+    fn functions(bin: &Path) -> BTreeSet<String> {
+        let nm = command_text("nm", &["-S", "--defined-only"], bin).unwrap();
+        nm.lines()
+            .filter_map(|l| match l.split_whitespace().collect::<Vec<_>>()[..] {
+                [_, _, "T" | "t", name] => Some(strip_llvm(name).into_owned()),
+                [_, "T" | "t", name] if !name.ends_with("etext") => {
+                    Some(format!("{LABELED}{name}"))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn the_startup_helpers_of_the_running_test_binary_all_hash() {
         let exe = std::env::current_exe().unwrap();
-        let nm = command_text("nm", &["-S", "--defined-only"], &exe).unwrap();
         let helpers = [
             "_start",
             "_init",
@@ -326,12 +340,11 @@ mod tests {
             "__do_global_dtors_aux",
             "frame_dummy",
         ];
-        let wanted: BTreeSet<String> = nm
-            .lines()
-            .filter_map(|l| l.split_whitespace().nth(3))
-            .filter(|n| helpers.contains(n))
-            .map(String::from)
+        let wanted: BTreeSet<String> = functions(&exe)
+            .into_iter()
+            .filter(|n| helpers.contains(&n.trim_start_matches(LABELED)))
             .collect();
+        assert!(wanted.iter().any(|n| n.starts_with(LABELED)));
         let binary = Binary::open(&exe, &wanted, &[]).unwrap();
         let unhashed: Vec<&String> = wanted
             .iter()
@@ -357,14 +370,7 @@ mod tests {
             if !built {
                 continue;
             }
-            let nm = command_text("nm", &["-S", "--defined-only"], &bin).unwrap();
-            let wanted: BTreeSet<String> = nm
-                .lines()
-                .filter_map(|l| match l.split_whitespace().collect::<Vec<_>>()[..] {
-                    [_, _, "T" | "t", name] => Some(name.to_string()),
-                    _ => None,
-                })
-                .collect();
+            let wanted = functions(&bin);
             let binary = Binary::open(&bin, &wanted, &[]).unwrap();
             let unhashed: Vec<&String> = wanted
                 .iter()

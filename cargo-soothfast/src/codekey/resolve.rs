@@ -524,40 +524,46 @@ Idx Name          Size      VMA               LMA               File off  Algn
         assert_ne!(hash(&none, 0x2018, 1), hash(&none, 0x2018, 2));
     }
 
-    #[test]
-    fn a_linker_boundary_symbol_names_an_address_outside_every_section() {
-        let sections = "\
+    const LAZY_SECTIONS: &str = "\
 Idx Name          Size      VMA               LMA               File off  Algn
-  0 .text         00000100  0000000000001000  0000000000001000  00001000  2**4
+ 18 .text         00359bd2  000000000191c2c0  000000000191c2c0  0191b2c0  2**6
                   CONTENTS, ALLOC, LOAD, READONLY, CODE
-  1 .got.plt      00000018  0000000000002000  0000000000002000  00002000  2**3
+ 28 .got          00001128  0000000001c8be58  0000000001c8be58  01c89e58  2**3
                   CONTENTS, ALLOC, LOAD, DATA
-  2 .tm_clone_table 00000000  0000000000002018  0000000000002018  00002018  2**3
+ 29 .got.plt      00000238  0000000001c8cf80  0000000001c8cf80  01c8af80  2**3
                   CONTENTS, ALLOC, LOAD, DATA
-  3 .data         00000008  0000000000002020  0000000000002020  00002020  2**3
+ 30 .relro_padding 00000e48  0000000001c8d1b8  0000000001c8d1b8  01c8b1b8  2**0
+                  ALLOC
+ 31 .tm_clone_table 00000000  0000000001c8e1b8  0000000001c8e1b8  01c8b1b8  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+ 32 .data         0000bd98  0000000001c8e1c0  0000000001c8e1c0  01c8b1c0  2**5
                   CONTENTS, ALLOC, LOAD, DATA
 ";
-        let dis = |end: &str| {
-            format!(
-                "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # 2018 <{end}>\n    1007:\tret\n"
-            )
-        };
-        let at = |listing: &str, name: &str| {
-            let markers = parse_markers(listing, &loaded(sections));
+    const LAZY_DEREGISTER: &str = "\
+000000000191c2f0 <deregister_tm_clones>:
+ 191c2f0:\tlea    0x371ec1(%rip),%rdi        # 1c8e1b8 <__TMC_END__>
+ 191c2f7:\tlea    0x371eba(%rip),%rax        # 1c8e1b8 <__TMC_END__>
+ 191c2fe:\tcmp    %rdi,%rax
+ 191c301:\tje     191c318 <deregister_tm_clones+0x28>
+ 191c317:\tret
+";
+
+    #[test]
+    fn a_boundary_symbol_names_the_end_of_a_section_before_an_empty_one() {
+        let hash = |nm: &str| {
             let fixture = Fixture::default()
-                .sections(sections)
-                .symbols(FN_SYMBOLS)
-                .wanted(&[BAR])
-                .markers(markers);
-            bar(&fixture.hashes(&image(7, 1), &dis(name)))
+                .sections(LAZY_SECTIONS)
+                .markers(parse_markers(nm, &loaded(LAZY_SECTIONS)))
+                .wanted(&["at:deregister_tm_clones"]);
+            fixture
+                .hashes(&[], LAZY_DEREGISTER)
+                .get("at:deregister_tm_clones")
+                .copied()
         };
-        let named = "0000000000002018 D __TMC_END__\n";
-        assert!(at(named, "__TMC_END__").is_some());
-        assert_ne!(
-            at(named, "__TMC_END__"),
-            at("0000000000002018 B _end\n", "_end")
-        );
-        assert_eq!(at("", "nothing"), None);
+        let named = hash("0000000001c8e1b8 d __TMC_END__\n0000000001c8e1b8 d __TMC_LIST__\n");
+        assert!(named.is_some());
+        assert_ne!(named, hash("0000000001c8e1b8 d __TMC_ELSE__\n"));
+        assert_eq!(hash(""), None);
     }
 
     #[test]
