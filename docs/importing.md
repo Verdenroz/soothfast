@@ -35,7 +35,7 @@ renamed:
 
 | Format | Name |
 |--------|------|
-| JMH | `benchmark`, followed by `[k=v,...]` of its params sorted by key when it has any |
+| JMH | `benchmark[mode=M,k=v,...]`: the mode first, then its params sorted by key, so one benchmark run in several modes keeps one id per mode |
 | pyperf | the benchmark's `metadata.name`, else the file's (`timeit` for `pyperf timeit`) |
 | pytest-benchmark | `fullname` |
 | vitest | `<group full name> > <benchmark name>`, the group name being file-relative as vitest prints it |
@@ -50,7 +50,7 @@ computed from them; the MAD is unscaled, as in measured runs.
 
 | Format | Samples | Unit |
 |--------|---------|------|
-| JMH | `rawData` of every fork, else the single `score` | `scoreUnit`: `ns/op`, `us/op`, `ms/op`, `s/op` |
+| JMH | `rawData` of every fork, else `scorePercentiles` | `scoreUnit`: `ns/op`, `us/op`, `ms/op`, `s/op` |
 | pyperf | `values` of every run; calibration runs have none | seconds |
 | pytest-benchmark | `stats.data` | seconds |
 | vitest | `samples` | milliseconds |
@@ -58,6 +58,11 @@ computed from them; the MAD is unscaled, as in measured runs.
 JMH throughput modes (`ops/ns`, `ops/us`, `ops/ms`, `ops/s`) are inverted
 sample by sample into time per operation, so a slower run still reads as a
 larger number. A throughput score of zero is rejected.
+
+Sample-mode results carry a histogram instead of `rawData`. The median comes
+from `scorePercentiles["50.0"]` (its absence is an error naming the
+benchmark) and `p99_ns` from `99.0` for time units. Throughput units get no
+`p99_ns`, since their 99th percentile is the fastest time.
 
 An unknown unit is an error that names it, not a guess. When a format has no
 samples (pytest-benchmark without `data`, vitest without `samples`), the
@@ -67,7 +72,9 @@ which holds for roughly normal timings only, and there is no p99.
 ## Baselines
 
 `--save-baseline NAME` merges the run into `.soothfast/baselines/NAME.json`,
-replacing the items that share its prefix and leaving every other item alone.
+replacing the items an earlier import marked with the same prefix and leaving
+every other item alone, including Rust items and other prefixes. A full
+`measure --save-baseline` keeps imported items too.
 `--out FILE` writes the same JSON to a file instead. Exactly one of the two
 is required.
 
@@ -79,12 +86,14 @@ $ cargo soothfast gate --import FORMAT FILE [--prefix P] --reference-import FORM
 ```
 
 The imported run is the current side. The reference is either a saved
-baseline, restricted to items with the same prefix, or a second imported
+baseline, restricted to items imported under the same prefix, or a second imported
 file, for a reference you keep as raw harness output. The comparison is the
 one `gate` always runs: walltime medians gate at +10%, an item in the
 reference but not in the run is `GONE` and fails (`--allow-gone` accepts
 it), and `soothfast-gate.lock` accepts apply. `--ratchet`, `--against-ref`,
-`--deps` and `--save-baseline` are not available with `--import`.
+`--deps`, `--save-baseline`, `--shard` and `-p` are not available with
+`--import`, and `--baseline` cannot be combined with `--reference-import`.
+`--filter` gates the items whose name contains it.
 
 ## Noise
 

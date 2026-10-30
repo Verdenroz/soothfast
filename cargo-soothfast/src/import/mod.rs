@@ -107,6 +107,7 @@ pub fn parse(format: Format, text: &str, prefix: Option<&str>) -> Result<Run, St
             median_ns: Some(t.median_ns),
             mad_ns: Some(t.mad_ns),
             p99_ns: t.p99_ns,
+            imported: Some(prefix.to_string()),
             ..ItemMetrics::default()
         };
         if run.items.insert(id.clone(), metrics).is_some() {
