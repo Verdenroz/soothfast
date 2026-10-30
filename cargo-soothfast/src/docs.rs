@@ -820,8 +820,9 @@ mod tests {
 
     const PY: &str = "def parse(s):\n    return s.strip()\n";
 
-    fn project_without_cargo() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("soothfast-nocargo-{}", std::process::id()));
+    fn project_without_cargo(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-nocargo-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(dir.join("src/util.py"), PY).unwrap();
@@ -835,7 +836,7 @@ mod tests {
 
     #[test]
     fn file_binds_check_and_accept_without_a_cargo_workspace() {
-        let dir = project_without_cargo();
+        let dir = project_without_cargo("roundtrip");
         let a = DocsArgs::default();
         let run =
             |f: fn(&DocsArgs, &super::Scanned) -> i32| f(&a, &scan_at(&a, dir.clone()).unwrap());
@@ -854,7 +855,7 @@ mod tests {
 
     #[test]
     fn accept_refuses_a_bind_whose_symbol_is_gone() {
-        let dir = project_without_cargo();
+        let dir = project_without_cargo("gone");
         std::fs::write(dir.join("src/util.py"), "x = 1\n").unwrap();
         let a = DocsArgs::default();
         assert_eq!(accept_scanned(&a, &scan_at(&a, dir).unwrap()), 2);
@@ -862,7 +863,7 @@ mod tests {
 
     #[test]
     fn a_file_only_repo_needs_no_rust_surface() {
-        let dir = project_without_cargo();
+        let dir = project_without_cargo("surface");
         let a = DocsArgs::default();
         let scanned = scan_at(&a, dir).unwrap();
         assert!(super::surface_for_binds(&a, &scanned).unwrap().is_none());
