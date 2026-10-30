@@ -328,56 +328,44 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn the_startup_helpers_of_the_running_test_binary_all_hash() {
-        let exe = std::env::current_exe().unwrap();
-        let helpers = [
-            "_start",
-            "_init",
-            "_fini",
-            "deregister_tm_clones",
-            "register_tm_clones",
-            "__do_global_dtors_aux",
-            "frame_dummy",
-        ];
-        let wanted: BTreeSet<String> = functions(&exe)
-            .into_iter()
-            .filter(|n| helpers.contains(&n.trim_start_matches(LABELED)))
-            .collect();
-        assert!(wanted.iter().any(|n| n.starts_with(LABELED)));
-        let binary = Binary::open(&exe, &wanted, &[]).unwrap();
-        let unhashed: Vec<&String> = wanted
-            .iter()
-            .filter(|n| !binary.hashes.contains_key(*n))
-            .collect();
-        assert!(unhashed.is_empty(), "unhashed: {unhashed:?}");
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-codekey-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]
     fn every_function_of_a_tiny_c_binary_hashes_under_each_linker() {
-        let dir = std::env::temp_dir().join(format!("codekey-c-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch("c");
         let src = dir.join("t.c");
         std::fs::write(&src, "int main(void){return 0;}\n").unwrap();
+        let mut built = 0;
+        let mut unhashed = Vec::new();
         for linker in ["bfd", "lld", "mold"] {
             let bin = dir.join(linker);
-            let built = Command::new("cc")
+            let linked = Command::new("cc")
                 .args(["-pie", "-O1", &format!("-fuse-ld={linker}"), "-o"])
                 .arg(&bin)
                 .arg(&src)
                 .output()
                 .is_ok_and(|o| o.status.success());
-            if !built {
+            if !linked {
                 continue;
             }
+            built += 1;
             let wanted = functions(&bin);
-            let binary = Binary::open(&bin, &wanted, &[]).unwrap();
-            let unhashed: Vec<&String> = wanted
-                .iter()
-                .filter(|n| !binary.hashes.contains_key(*n))
-                .collect();
-            assert!(unhashed.is_empty(), "{linker} unhashed: {unhashed:?}");
+            let binary = Binary::open(&bin, &wanted, &[]);
+            unhashed.extend(
+                wanted
+                    .into_iter()
+                    .filter(|n| !binary.as_ref().is_some_and(|b| b.hashes.contains_key(n)))
+                    .map(|n| format!("{linker}: {n}")),
+            );
         }
         std::fs::remove_dir_all(&dir).unwrap();
+        assert!(built > 0, "no linker built a binary");
+        assert!(unhashed.is_empty(), "unhashed: {unhashed:?}");
     }
 }

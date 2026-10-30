@@ -17,6 +17,13 @@ pub(super) struct Section {
     pub(super) tls: bool,
 }
 
+impl Section {
+    /// Whether `addr` falls inside this section. An empty one contains nothing.
+    pub(super) fn contains(&self, addr: u64) -> bool {
+        addr >= self.vma && addr - self.vma < self.size
+    }
+}
+
 pub(super) struct Symbol {
     pub(super) addr: u64,
     pub(super) size: u64,
@@ -133,10 +140,6 @@ pub(super) enum Marker {
 /// it is a real element address, so it resolves as data. A `__stop_SEC`
 /// with no section `SEC` ending at it is none either.
 ///
-/// A symbol at an address inside no section is one too (`edge:NAME`): the
-/// linker's `__TMC_END__`, `_edata` and `_end` sit at the end of a section or
-/// on a zero sized one, and name a boundary with nothing to read.
-///
 /// A sized symbol at the same address is resolved first and wins.
 pub(super) fn parse_markers(listing: &str, sections: &[Section]) -> HashMap<u64, Marker> {
     let mut named: Vec<(u64, String)> = listing
@@ -149,17 +152,12 @@ pub(super) fn parse_markers(listing: &str, sections: &[Section]) -> HashMap<u64,
                 _ => return None,
             };
             let addr = u64::from_str_radix(addr, 16).ok()?;
-            let within = |s: &&Section| addr >= s.vma && addr - s.vma < s.size;
-            let outside = !sections.iter().any(|s| within(&s));
-            let in_data = sections.iter().filter(within).any(|s| !s.code);
-            if !in_data && !outside {
+            let in_data = sections.iter().any(|s| !s.code && s.contains(addr));
+            if !in_data {
                 return None;
             }
             if name.starts_with("__stop_") {
                 return Some((addr, format!("bound:{name}")));
-            }
-            if outside {
-                return Some((addr, format!("edge:{name}")));
             }
             (name.starts_with("_R") || name.starts_with("_ZN"))
                 .then(|| (addr, format!("zst:{}", strip_llvm(name))))
