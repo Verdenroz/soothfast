@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# The pull request's labels whose last applier can write to the repository.
-# Inputs: PR_NUMBER LABELS (comma-separated labels on the pull request),
-# GH_TOKEN, GITHUB_REPOSITORY.
+# The pull request's current labels whose last applier can write to the
+# repository. Read from the API, since a re-run reuses the event's labels.
+# Inputs: PR_NUMBER, GH_TOKEN, GITHUB_REPOSITORY.
 # Output: labels (comma-separated).
 set -euo pipefail
 
 # shellcheck source=action/labels.sh
 source "$(dirname "$0")/labels.sh"
+mapfile -t labels < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" --jq '.[].name')
 applied=()
-IFS=, read -ra labels <<<"${LABELS:-}"
 for label in "${labels[@]}"; do
-  if [ -n "$label" ] && labelled_by_writer "$PR_NUMBER" "$label"; then
+  if labelled_by_writer "$PR_NUMBER" "$label"; then
     applied+=("$label")
   fi
 done
