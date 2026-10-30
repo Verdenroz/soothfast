@@ -14,7 +14,13 @@ mod ecosystem;
 use ecosystem::{Bench, Ecosystem, Settings};
 
 const WORKFLOW: &str = include_str!("workflow.yml.tmpl");
+const TEST_JOB: &str = include_str!("test_job.yml.tmpl");
 const GATE_JOB: &str = include_str!("gate_job.yml.tmpl");
+const GATE_IMPORT_JOB: &str = include_str!("gate_import_job.yml.tmpl");
+const DOCS_IMPORT_JOB: &str = include_str!("docs_import_job.yml.tmpl");
+const SETUP_JAVA: &str = include_str!("setup_java.yml.tmpl");
+const SETUP_PYTHON: &str = include_str!("setup_python.yml.tmpl");
+const SETUP_NODE: &str = include_str!("setup_node.yml.tmpl");
 const DOCS_JOB: &str = include_str!("docs_job.yml.tmpl");
 const LABELS_JOB: &str = include_str!("labels_job.yml.tmpl");
 
@@ -170,6 +176,18 @@ struct Workspace {
     docs_package: Option<String>,
     action: String,
     bot: bool,
+    /// Whether a non-Rust repo's markdown carries markers for `docs check`.
+    docs: bool,
+    java: String,
+    node: String,
+}
+
+/// The toolchain versions init's flags pin, over the ones an existing
+/// workflow already carries.
+#[derive(Default)]
+struct Toolchains {
+    java: Option<String>,
+    node: Option<String>,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -179,6 +197,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut labels = false;
     let mut bench: Vec<String> = Vec::new();
     let mut flags = Settings::default();
+    let mut tools = Toolchains::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -195,6 +214,15 @@ pub fn run(args: &[String]) -> i32 {
                 Some(Err(e)) => return err(&e),
                 None => return err("--ecosystem needs rust, gradle, maven, python or node"),
             },
+            "--java" | "--node" => {
+                let Some(version) = it.next().cloned() else {
+                    return err(&format!("{a} needs a version"));
+                };
+                match a.as_str() {
+                    "--java" => tools.java = Some(version),
+                    _ => tools.node = Some(version),
+                }
+            }
             "--bench-cmd" | "--bench-out" | "--from" => {
                 let Some(value) = it.next().cloned() else {
                     return err(&format!("{a} needs a value"));
@@ -208,7 +236,7 @@ pub fn run(args: &[String]) -> i32 {
             other => return err(&format!("unknown init arg {other:?}")),
         }
     }
-    let (root, ws) = match target(flags, &bench, check, bot) {
+    let (root, ws) = match target(flags, tools, &bench, check, bot) {
         Ok(t) => t,
         Err(e) => return err(&e),
     };
@@ -239,6 +267,7 @@ fn create_labels() -> i32 {
 /// `[init]` table over what the root looks like.
 fn target(
     flags: Settings,
+    tools: Toolchains,
     bench: &[String],
     check: bool,
     bot: bool,
@@ -265,6 +294,15 @@ fn target(
         docs_package: None,
         action: action_ref(&existing),
         bot,
+        docs: has_markers(&root),
+        java: tools
+            .java
+            .or_else(|| pinned(&existing, "java-version"))
+            .unwrap_or("21".into()),
+        node: tools
+            .node
+            .or_else(|| pinned(&existing, "node-version"))
+            .unwrap_or("22".into()),
     };
     Ok((root, ws))
 }
@@ -289,6 +327,9 @@ fn detect(root: &Path, bench: &[String], check: bool, bot: bool) -> Result<Works
         docs_package: has_markers(root).then(|| docs_package(&meta)).flatten(),
         action: action_ref(&existing),
         bot,
+        docs: false,
+        java: String::new(),
+        node: String::new(),
     })
 }
 
@@ -340,16 +381,14 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
             content: ".soothfast/".into(),
         },
     ];
-    if ws.bench.is_none() {
-        files.insert(
-            0,
-            Scaffold {
-                path: WORKFLOW_PATH.into(),
-                kind: Kind::Whole,
-                content: workflow(ws),
-            },
-        );
-    }
+    files.insert(
+        0,
+        Scaffold {
+            path: WORKFLOW_PATH.into(),
+            kind: Kind::Whole,
+            content: workflow(ws),
+        },
+    );
     if let Some(bench) = &ws.bench {
         files.push(Scaffold {
             path: "soothfast.toml".into(),
@@ -364,6 +403,18 @@ fn workflow(ws: &Workspace) -> String {
     let mut text = WORKFLOW
         .replace("@@default_branch@@", &ws.default_branch)
         .replace("@@schedule@@", if ws.bot { SCHEDULE } else { "" });
+    match &ws.bench {
+        None => text.push_str(&cargo_jobs(ws)),
+        Some(bench) => text.push_str(&import_jobs(ws, bench)),
+    }
+    if ws.bot {
+        text.push_str(&LABELS_JOB.replace("@@version_input@@", &version_input(ws)));
+    }
+    text.replace("@@action@@", &ws.action)
+}
+
+fn cargo_jobs(ws: &Workspace) -> String {
+    let mut text = TEST_JOB.to_string();
     if !ws.benched.is_empty() {
         text.push_str(
             &GATE_JOB
@@ -374,10 +425,45 @@ fn workflow(ws: &Workspace) -> String {
     if let Some(pkg) = &ws.docs_package {
         text.push_str(&DOCS_JOB.replace("@@docs_package@@", pkg));
     }
-    if ws.bot {
-        text.push_str(LABELS_JOB);
+    text
+}
+
+/// The gate runs the repo's own harness on the merge base and on HEAD, so
+/// no baseline is stored.
+fn import_jobs(ws: &Workspace, bench: &Bench) -> String {
+    let (setup, prepare) = match ws.ecosystem {
+        Ecosystem::Python => (SETUP_PYTHON.to_string(), ""),
+        Ecosystem::Node => (SETUP_NODE.replace("@@node@@", &ws.node), "npm ci && "),
+        _ => (SETUP_JAVA.replace("@@java@@", &ws.java), ""),
+    };
+    let command = format!("{prepare}{}", bench.cmd.replace("{out}", &bench.out));
+    let mut text = GATE_IMPORT_JOB
+        .replace("@@setup@@", &setup)
+        .replace("@@from@@", &bench.from)
+        .replace("@@out@@", &bench.out)
+        .replace("@@bench@@", &command);
+    if ws.docs {
+        text.push_str(DOCS_IMPORT_JOB);
     }
-    text.replace("@@action@@", &ws.action)
+    text.replace("@@version@@", env!("CARGO_PKG_VERSION"))
+}
+
+/// The action input that installs this CLI, for a repo with no Cargo.lock
+/// to read it from.
+fn version_input(ws: &Workspace) -> String {
+    match ws.bench {
+        Some(_) => format!("          version: \"{}\"\n", env!("CARGO_PKG_VERSION")),
+        None => String::new(),
+    }
+}
+
+/// The value of `key: "..."` in a workflow init wrote.
+fn pinned(workflow: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}: \"");
+    workflow.lines().find_map(|l| {
+        let rest = l.trim().strip_prefix(&prefix)?;
+        Some(rest.strip_suffix('"')?.to_string())
+    })
 }
 
 /// Members with a `soothfast` bench target.
@@ -537,6 +623,9 @@ mod tests {
             docs_package: docs.map(String::from),
             action: "Verdenroz/soothfast@v0".into(),
             bot: false,
+            docs: false,
+            java: "21".into(),
+            node: "22".into(),
         }
     }
 
@@ -711,6 +800,112 @@ mod tests {
         assert_eq!(text.matches("[init]").count(), 1);
         assert!(!text.contains("pyperf"));
         assert_eq!(report(&root, &files, true, false), 0);
+    }
+
+    fn eco_ws(eco: Ecosystem, docs: bool) -> Workspace {
+        let settings = Settings {
+            bench_cmd: Some("./gradlew jmh -Pout={out}".into()),
+            ..Settings::default()
+        };
+        Workspace {
+            ecosystem: eco,
+            bench: Some(settings.bench(eco).unwrap()),
+            docs,
+            ..ws(&[], None)
+        }
+    }
+
+    fn assert_clean_yaml(text: &str) {
+        assert!(!text.contains("@@"), "{text}");
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            assert!(!line.starts_with('\t'), "tab indent: {line}");
+        }
+        assert_eq!(text.matches("\n  gate:\n").count(), 1);
+        assert!(text.contains(&format!("version: \"{}\"", env!("CARGO_PKG_VERSION"))));
+        assert!(!text.contains("rust-toolchain") && !text.contains("cargo soothfast test"));
+    }
+
+    #[test]
+    fn each_ecosystem_renders_its_setup_and_bench_command() {
+        let java = "actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad";
+        let uv = "astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7";
+        let node = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020";
+        let cases = [
+            (
+                Ecosystem::Gradle,
+                java,
+                "java-version: \"21\"",
+                "./gradlew jmh -Pout=soothfast-bench.json",
+            ),
+            (
+                Ecosystem::Maven,
+                java,
+                "temurin",
+                "java -jar target/benchmarks.jar -rf json -rff soothfast-bench.json",
+            ),
+            (
+                Ecosystem::Python,
+                uv,
+                "setup-uv",
+                "uv run pytest --benchmark-only --benchmark-json soothfast-bench.json",
+            ),
+            (
+                Ecosystem::Node,
+                node,
+                "node-version: \"22\"",
+                "npm ci && npx vitest bench --run --outputJson soothfast-bench.json",
+            ),
+        ];
+        for (eco, pin, setup, cmd) in cases {
+            let mut w = eco_ws(eco, false);
+            if eco != Ecosystem::Gradle {
+                w.bench = Settings::default().bench(eco).ok();
+            }
+            let text = workflow(&w);
+            assert_clean_yaml(&text);
+            assert!(text.contains(pin) && text.contains(setup), "{eco:?}");
+            assert!(text.contains(cmd), "{eco:?}: {text}");
+            assert!(text.contains("--import "), "{eco:?}");
+            assert!(!text.contains("\n  docs:\n"));
+        }
+    }
+
+    #[test]
+    fn the_gate_compares_the_merge_base_run_to_head() {
+        let text = workflow(&eco_ws(Ecosystem::Gradle, false));
+        assert!(text.contains("git merge-base HEAD \"origin/$BASE_REF\""));
+        assert!(text.contains("fetch-depth: 0"));
+        assert!(text.contains(
+            "gate --import jmh soothfast-bench.json --reference-import jmh \"$RUNNER_TEMP/base/soothfast-bench.json\""
+        ));
+    }
+
+    #[test]
+    fn markers_add_a_docs_check_without_a_package() {
+        let text = workflow(&eco_ws(Ecosystem::Python, true));
+        assert_eq!(text.matches("\n  docs:\n").count(), 1);
+        assert!(text.contains("run: cargo soothfast docs check\n"));
+        assert!(!text.contains("docs check -p"));
+        assert!(!text.contains("@@"));
+    }
+
+    #[test]
+    fn the_bot_labels_job_installs_the_cli_by_version() {
+        let bot = |w: Workspace| workflow(&Workspace { bot: true, ..w });
+        let text = bot(eco_ws(Ecosystem::Node, false));
+        assert!(text.contains("\n  labels:\n"));
+        assert_eq!(text.matches("          version: \"").count(), 2);
+        assert!(!text.contains("@@"));
+        assert_eq!(bot(ws(&[], None)).matches("          version: ").count(), 0);
+    }
+
+    #[test]
+    fn the_toolchain_versions_survive_a_flagless_check() {
+        let mut w = eco_ws(Ecosystem::Node, false);
+        w.node = "20".into();
+        let text = workflow(&w);
+        assert_eq!(pinned(&text, "node-version").as_deref(), Some("20"));
+        assert_eq!(pinned(&text, "java-version"), None);
     }
 
     #[test]

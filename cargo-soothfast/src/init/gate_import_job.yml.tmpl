@@ -1,0 +1,31 @@
+
+  gate:
+    name: Gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+@@setup@@      - uses: @@action@@
+        with:
+          version: "@@version@@"
+          gate: "false"
+          changelog: "false"
+      # Both sides run on this runner. Walltime is advisory until it is quiet
+      # enough to trust: set `walltime = "hard"` under [gate] in soothfast.toml.
+      - name: Gate against the merge base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          bench() { (cd "$1" && @@bench@@); }
+          git worktree add "$RUNNER_TEMP/base" "$(git merge-base HEAD "origin/$BASE_REF")"
+          bench "$RUNNER_TEMP/base"
+          bench .
+          cargo soothfast gate --import @@from@@ @@out@@ --reference-import @@from@@ "$RUNNER_TEMP/base/@@out@@"
