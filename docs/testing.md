@@ -265,10 +265,11 @@ cmd = "uv run pytest -m e2e"
 
 | Key | Meaning |
 | --- | --- |
-| `test_cmd` | Run in the project's directory through `sh -c`. Without it the project has no tests to run. With no `bench_cmd`, `bench_out` or `from`, the project is test-only and no gate runs for it. |
+| `test_cmd` | Run in the project's directory through `sh -c`. Without it the project has no tests to run. |
 | `watch` | Globs relative to the repository root. A change to a matching file runs the project's tests as well as a change under `dir`. |
 | `retries` | Reruns after a failure. Default 0. |
 | `retry_cmd` | The command for a rerun. Defaults to `test_cmd`. |
+| `gate` | `false` for a project that only runs tests: no benchmark is configured or gated. Without it the project keeps its ecosystem's default benchmark, or `init` asks for one. |
 
 A `[[test.suite]]` runs `cmd` in the directory of `project`, which must be a
 `[[project]]`, only on a pull request whose `label` a writer applied. It
@@ -289,8 +290,8 @@ outcome as JSON: `name` (`--name`, else the directory), `project`, `kind`
 (`test`), `verdict`, `output` (the last 40 lines) and `wall_s`.
 
 The verdict is `pass`, `reused`, `flaky`, `failed` or `skipped`. A pass is
-stored under `.soothfast/tests`, keyed by the content of every tracked file
-under `DIR` and every file `watch` matches, the command, and the toolchain
+stored under `.soothfast/tests`, keyed by the content of every file
+under `DIR` and every file `watch` matches, tracked, modified or untracked, the command, and the toolchain
 (`java -version`, `python --version` or `node --version`; `--toolchain TEXT`
 names it instead). The same key later is `reused` and runs nothing. A
 failure reruns up to `retries` times; a pass on a rerun is `flaky`, exits 0
@@ -308,11 +309,13 @@ uploads `soothfast-result-test-<name>` and, on a pass, its stored pass, and a
 `test-cache` job merges those passes into the cache for the next run.
 
 The plan job has no toolchain installed, so the key names it by the
-workflow's `java` and `node` inputs and the runner (Python is keyed as `uv`)
+workflow's `java` and `node` inputs and the runner labels the test jobs use (Python is keyed as `uv`)
 instead of a probe of the installed binary. A patch release that a runner
 picks up under the same input does not invalidate a pass.
 
 The `soothfast:test-all` label, applied by a writer, selects every project
-and the Rust workspace and ignores stored passes for that run. Labels are
-read when the workflow starts, so applying one takes a new push or a
-re-run.
+and the Rust workspace and ignores stored passes for that run. The plan job
+reads the pull request's current labels from the API, so a re-run sees a
+label added since the last run, but applying one starts no run by itself.
+`[test] ci = false` drops the project tests along with the Rust test job.
+The cache keeps the newest 2048 passes.
