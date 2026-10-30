@@ -43,20 +43,34 @@ fn timing(entry: &Value) -> Result<Timing, String> {
         .flat_map(|fork| fork.as_array().into_iter().flatten())
         .filter_map(Value::as_f64)
         .collect();
-    let scores = if raw.is_empty() {
-        vec![
-            primary["score"]
-                .as_f64()
-                .ok_or_else(|| format!("{name}: no score"))?,
-        ]
-    } else {
-        raw
-    };
-    let samples = scores
+    let to_ns = |s: f64| ns_per_op(unit, s).map_err(|e| format!("{name}: {e}"));
+    if raw.is_empty() {
+        return percentile_timing(name.clone(), primary, to_ns);
+    }
+    let samples = raw
         .into_iter()
-        .map(|s| ns_per_op(unit, s).map_err(|e| format!("{name}: {e}")))
+        .map(to_ns)
         .collect::<Result<Vec<f64>, String>>()?;
     Timing::from_samples(name, samples)
+}
+
+/// Sample-time mode writes a histogram instead of `rawData`; its
+/// `scorePercentiles` still give the median and the 99th percentile.
+fn percentile_timing(
+    name: String,
+    primary: &Value,
+    to_ns: impl Fn(f64) -> Result<f64, String>,
+) -> Result<Timing, String> {
+    let pct = |key: &str| primary["scorePercentiles"][key].as_f64();
+    let median = pct("50.0")
+        .or_else(|| primary["score"].as_f64())
+        .ok_or_else(|| format!("{name}: no score"))?;
+    Ok(Timing {
+        median_ns: to_ns(median)?,
+        mad_ns: 0.0,
+        p99_ns: pct("99.0").map(&to_ns).transpose()?,
+        name,
+    })
 }
 
 /// A score in `unit` as nanoseconds per op. Throughput units are inverted.

@@ -54,6 +54,25 @@ fn jmh_throughput_is_inverted_to_time_per_op() {
 }
 
 #[test]
+fn jmh_sample_mode_reads_its_percentiles() {
+    let text = json!([{
+        "benchmark": "com.acme.Lat.read",
+        "mode": "sample",
+        "primaryMetric": {
+            "score": 52.0,
+            "scoreUnit": "us/op",
+            "scorePercentiles": { "50.0": 48.0, "99.0": 90.0 },
+            "rawDataHistogram": [[[[48.0, 10]]]]
+        }
+    }])
+    .to_string();
+    let run = imported(Format::Jmh, &text);
+    let read = &run.items["jmh::com.acme.Lat.read"];
+    assert_close(read.median_ns, 48_000.0);
+    assert_close(read.p99_ns, 90_000.0);
+}
+
+#[test]
 fn an_unknown_unit_is_rejected_by_name() {
     let text = JMH.replace("\"us/op\"", "\"fortnights/op\"");
     let err = parse(Format::Jmh, &text, None).err().unwrap();
