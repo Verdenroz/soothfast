@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Tree-sitter symbols for Java, Kotlin, Python, JS, TS (#277)
 - Act on soothfast labels as the bot (#274)
 - Add cargo soothfast init (#273)
 - Cache gate runs and add gate --shard I/N (#272)
@@ -21,6 +22,20 @@
 ### ⚡ Performance
 
 - Reuse items per side, say why one missed (#271)
+
+### 📝 Documentation
+
+- JSON Schemas for runner records, baselines, lockfile (#278)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-measure
+CHANGED  soothfast_measure::main (body)
+CHANGED  soothfast_measure::runner::main (body)
+```
 
 
 ## 0.4.4 - 2026-10-21
