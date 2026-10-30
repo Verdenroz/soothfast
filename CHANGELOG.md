@@ -31,6 +31,7 @@
 
 ### ⚡ Performance
 
+- Measure callgrind items in one process (#292)
 - Reuse items per side, say why one missed (#271)
 
 ### 📝 Documentation
@@ -42,7 +43,15 @@
 ### 🔍 API surface
 
 ```
+# soothfast-registry
+CHANGED  soothfast_registry::Bencher (body)
+CHANGED  soothfast_registry::Bencher::iter (body)
+CHANGED  soothfast_registry::Bencher::iter_async (body)
+
 # soothfast-measure
+ADDED    soothfast_measure::callgrind::Method
+ADDED    soothfast_measure::callgrind::negotiate_window
+CHANGED  soothfast_measure::callgrind::Measurement (signature)
 CHANGED  soothfast_measure::callgrind::annotate (body)
 CHANGED  soothfast_measure::callgrind::measure (signature)
 CHANGED  soothfast_measure::callgrind::measure_all (signature)
