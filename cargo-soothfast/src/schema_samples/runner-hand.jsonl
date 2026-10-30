@@ -1,0 +1,6 @@
+{"type":"env","perfcnt":false,"perfcnt_detail":"perf_event_open: permission denied","gating_backend":"callgrind","item_reuse":true,"guest_cpu":"0123456789abcdef","guest_glibc":"2.39","guest_libc":"fedcba9876543210","valgrind":"valgrind-3.22.0"}
+{"type":"result","id":"app::decode","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","tolerance_pct":7.5,"backend":"callgrind","metrics":{"ir":123456}}
+{"type":"executed","id":"app::decode","functions":[["/usr/bin/app","_ZN3app6decode17h0123456789abcdefE"]]}
+{"type":"result","id":"buildcost::app::default","group":"buildcost","fingerprint":"","covers":"","backend":"buildcost","metrics":{"build_ms":900,"size_bytes":4096}}
+{"type":"route","id":"app::create","spec":"openapi.yaml","operation":"createItem","method":"POST","path":"/items","request":"NewItem","response":"Item","status":201,"params":"Query","path_params":"Path","summary":"Create an item"}
+{"type":"route","id":"app::get","spec":"openapi.yaml","operation":"getItem","method":"GET","path":"/items/{id}","request":null,"response":null,"status":null,"params":null,"path_params":null,"summary":null}

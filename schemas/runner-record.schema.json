@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://verdenroz.github.io/soothfast/schemas/runner-record.schema.json",
+  "title": "soothfast runner record",
+  "description": "One line of a bench binary's `--json` output, which `measure` and `gate` collect. The stream is JSON Lines on stdout: a line not starting with `{` is ignored, but a line starting with `{` that is not valid JSON fails the run. Readers ignore a record whose `type` they do not know and ignore unknown keys in every record, so only the keys listed under `required` below are needed. Discovery runs (`--list --json`, `--list-routes --json`) emit `item` and `route` records the same way.",
+  "type": "object",
+  "oneOf": [
+    {
+      "description": "First line of a run: what this host can measure and which backend gates.",
+      "type": "object",
+      "required": ["type", "gating_backend"],
+      "properties": {
+        "type": { "const": "env" },
+        "perfcnt": { "description": "Whether hardware performance counters are usable.", "type": "boolean" },
+        "perfcnt_detail": { "description": "`ok`, or why counters are unavailable.", "type": "string" },
+        "gating_backend": { "description": "Backend whose numbers gate: `perfcnt`, `callgrind`, `alloc` or `walltime`.", "type": "string" },
+        "item_reuse": { "description": "Whether the binary supports per-item reuse of stored measurements. Absent reads as false.", "type": "boolean" },
+        "guest_cpu": { "description": "Callgrind only: digest of the CPU the guest sees. The four `guest_*`/`valgrind` keys count only when all are present.", "type": "string" },
+        "guest_glibc": { "description": "Callgrind only: glibc version.", "type": "string" },
+        "guest_libc": { "description": "Callgrind only: digest of the loaded libc file.", "type": "string" },
+        "valgrind": { "description": "Callgrind only: valgrind version.", "type": "string" }
+      }
+    },
+    {
+      "description": "A registered measured item, from `--list --json`.",
+      "type": "object",
+      "required": ["type", "id", "fingerprint"],
+      "properties": {
+        "type": { "const": "item" },
+        "id": { "description": "Item id, `package::module::function`.", "type": "string" },
+        "group": { "description": "Group named by `group = ...`; ignored by readers.", "type": "string" },
+        "fingerprint": { "description": "Hex FNV-1a fingerprint of the item's token stream, as a string.", "type": "string" },
+        "covers": { "description": "Public item the benchmark covers; empty when unset.", "type": "string" }
+      }
+    },
+    {
+      "description": "Walltime noise floor measured before the items run.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "calibration" },
+        "backend": { "description": "Backend calibrated; `walltime`. Ignored by readers.", "type": "string" },
+        "noise_pct": { "description": "A/A noise floor in percent.", "type": "number" }
+      }
+    },
+    {
+      "description": "One backend's measurement of one item. An item has one `result` per backend. A tool that measures differently emits the same shape with the backend that matches its metrics.",
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "result" },
+        "id": { "description": "Item id. A record without it is skipped.", "type": "string" },
+        "group": { "description": "Item group; ignored by readers.", "type": "string" },
+        "fingerprint": { "description": "Hex fingerprint of the item; empty when unknown.", "type": "string" },
+        "covers": { "description": "Public item the benchmark covers; empty when unset.", "type": "string" },
+        "tolerance_pct": { "description": "Per-item gate threshold override in percent.", "type": "number" },
+        "backend": { "description": "`walltime`, `perfcnt`, `callgrind`, `alloc`, `asyncexec` or `buildcost`. Any other value is ignored.", "type": "string" },
+        "metrics": {
+          "description": "Metrics of that backend. Counts are non-negative JSON integers; a float such as 3.0 does not read as one. Each backend reads only its own keys.",
+          "type": "object",
+          "properties": {
+            "median_ns": { "description": "walltime: median iteration time in nanoseconds.", "type": "number" },
+            "mad_ns": { "description": "walltime: median absolute deviation in nanoseconds.", "type": "number" },
+            "min_ns": { "description": "walltime: fastest sample in nanoseconds; ignored by readers.", "type": "number" },
+            "max_ns": { "description": "walltime: slowest sample in nanoseconds; ignored by readers.", "type": "number" },
+            "p99_ns": { "description": "walltime: 99th percentile in nanoseconds.", "type": "number" },
+            "instructions": { "description": "perfcnt: retired instructions.", "type": "integer" },
+            "cycles": { "description": "perfcnt: CPU cycles.", "type": "integer" },
+            "cache_refs": { "description": "perfcnt: cache references.", "type": "integer" },
+            "ir": { "description": "callgrind: instructions executed.", "type": "integer" },
+            "allocs": { "description": "alloc: allocation count.", "type": "integer" },
+            "bytes": { "description": "alloc: bytes allocated.", "type": "integer" },
+            "polls": { "description": "asyncexec: future polls.", "type": "integer" },
+            "wakes": { "description": "asyncexec: waker wake calls.", "type": "integer" },
+            "build_ms": { "description": "buildcost: build time in milliseconds. Readers accept it here; the runner itself never emits it.", "type": "integer" },
+            "size_bytes": { "description": "buildcost: artifact size in bytes. Readers accept it here; the runner itself never emits it.", "type": "integer" }
+          }
+        }
+      }
+    },
+    {
+      "description": "Functions an item executed, as `[object, symbol]` pairs. Read only when the env record's `gating_backend` is `callgrind`; used to decide whether a stored measurement still applies.",
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "executed" },
+        "id": { "description": "Item id. A record without it is skipped.", "type": "string" },
+        "functions": {
+          "description": "Executed functions. An element that is not a pair of strings is skipped.",
+          "type": "array",
+          "items": {
+            "description": "`[object file, mangled symbol]`.",
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "description": "Verdict of one checked claim on an item. Any failing assertion fails the run.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "assertion" },
+        "id": { "description": "Item id; empty when absent.", "type": "string" },
+        "kind": { "description": "Claim checked: `alloc`, `p99` or `complexity`.", "type": "string" },
+        "ok": { "description": "Whether the claim held; absent reads as false.", "type": "boolean" },
+        "detail": { "description": "Human-readable measured-versus-claimed text.", "type": "string" }
+      }
+    },
+    {
+      "description": "Raw data behind a `complexity` claim. Emitted by the runner for diagnostics; readers ignore it.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "sweep" },
+        "id": { "description": "Item id.", "type": "string" },
+        "claimed": { "description": "Claimed complexity class, for example `n log n`.", "type": "string" },
+        "sizes": { "description": "Input sizes swept.", "type": "array", "items": { "type": "integer" } },
+        "values": { "description": "Measured value per size.", "type": "array", "items": { "type": "number" } },
+        "drift": { "description": "Growth drift against the claimed class.", "type": "number" },
+        "ok": { "description": "Whether the drift is within the limit.", "type": "boolean" }
+      }
+    },
+    {
+      "description": "A `#[route]` registration, from `--list-routes --json`. Every key except `type` defaults to empty or absent when missing.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "route" },
+        "id": { "description": "Handler id.", "type": "string" },
+        "spec": { "description": "Spec file, relative to the package.", "type": "string" },
+        "operation": { "description": "Operation id or name in the spec.", "type": "string" },
+        "method": { "description": "HTTP method or protocol verb.", "type": "string" },
+        "path": { "description": "Route path or channel.", "type": "string" },
+        "request": { "description": "Request type override, or null.", "type": ["string", "null"] },
+        "response": { "description": "Response type override, or null.", "type": ["string", "null"] },
+        "status": { "description": "Response status override, or null.", "type": ["integer", "null"] },
+        "params": { "description": "Query parameter type override, or null.", "type": ["string", "null"] },
+        "path_params": { "description": "Path parameter type override, or null.", "type": ["string", "null"] },
+        "summary": { "description": "Operation summary, or null.", "type": ["string", "null"] }
+      }
+    }
+  ]
+}

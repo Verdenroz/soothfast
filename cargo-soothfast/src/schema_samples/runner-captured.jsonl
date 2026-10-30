@@ -1,0 +1,15 @@
+{"type":"env","perfcnt":true,"perfcnt_detail":"ok","gating_backend":"perfcnt","item_reuse":true}
+{"type":"calibration","backend":"walltime","noise_pct":0.9733}
+{"type":"result","id":"soothfast_registry::bench_fnv1a","group":"self","fingerprint":"22e12f82b2b2f2c5","covers":"soothfast_registry::fnv1a","backend":"walltime","metrics":{"median_ns":61359.3125,"mad_ns":121.46875,"min_ns":61207.78125,"max_ns":62411.65625,"p99_ns":62411.65625}}
+{"type":"result","id":"soothfast_registry::bench_fnv1a","group":"self","fingerprint":"22e12f82b2b2f2c5","covers":"soothfast_registry::fnv1a","backend":"perfcnt","metrics":{"instructions":1966210,"cycles":299732,"cache_refs":1022}}
+{"type":"result","id":"soothfast_registry::bench_fnv1a","group":"self","fingerprint":"22e12f82b2b2f2c5","covers":"soothfast_registry::fnv1a","backend":"alloc","metrics":{"allocs":0,"bytes":0}}
+{"type":"assertion","id":"soothfast_registry::bench_fnv1a","kind":"alloc","ok":true,"detail":"allocs 0 <= 0"}
+{"type":"sweep","id":"soothfast_registry::bench_fnv1a","claimed":"n","sizes":[1024,8192,65536],"values":[30850,245890,1966210],"drift":0.996,"ok":true}
+{"type":"assertion","id":"soothfast_registry::bench_fnv1a","kind":"complexity","ok":true,"detail":"claimed O(n); growth drift x1.00 over sizes [1024, 8192, 65536] (limit x2.5)"}
+{"type":"result","id":"soothfast_registry::bench_yield_chain","group":"self","fingerprint":"b0f8d089ba9a2fe1","covers":"soothfast_registry::block_on_counting","backend":"walltime","metrics":{"median_ns":425.23866597186037,"mad_ns":1.0388223032829842,"min_ns":424.1998436685774,"max_ns":427.03465346534654,"p99_ns":427.03465346534654}}
+{"type":"result","id":"soothfast_registry::bench_yield_chain","group":"self","fingerprint":"b0f8d089ba9a2fe1","covers":"soothfast_registry::block_on_counting","backend":"perfcnt","metrics":{"instructions":4631,"cycles":2104,"cache_refs":0}}
+{"type":"result","id":"soothfast_registry::bench_yield_chain","group":"self","fingerprint":"b0f8d089ba9a2fe1","covers":"soothfast_registry::block_on_counting","backend":"alloc","metrics":{"allocs":1,"bytes":24}}
+{"type":"result","id":"soothfast_registry::bench_yield_chain","group":"self","fingerprint":"b0f8d089ba9a2fe1","covers":"soothfast_registry::block_on_counting","backend":"asyncexec","metrics":{"polls":9,"wakes":8}}
+{"type":"assertion","id":"soothfast_registry::bench_yield_chain","kind":"alloc","ok":true,"detail":"allocs 1 <= 1"}
+{"type":"item","id":"soothfast_registry::bench_fnv1a","group":"self","fingerprint":"22e12f82b2b2f2c5","covers":"soothfast_registry::fnv1a"}
+{"type":"item","id":"soothfast_registry::bench_yield_chain","group":"self","fingerprint":"b0f8d089ba9a2fe1","covers":"soothfast_registry::block_on_counting"}

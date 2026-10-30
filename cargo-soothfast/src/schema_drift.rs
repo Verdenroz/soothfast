@@ -7,7 +7,11 @@ use crate::invoke::{AssertionOutcome, ItemMetrics, Reused, Run, SaveScope};
 use crate::schema_check;
 
 fn assert_conforms(file: &str, instance: &Value) {
-    let report = schema_check::check(&schema_check::load(file), instance);
+    assert_all_conform(file, std::slice::from_ref(instance));
+}
+
+fn assert_all_conform(file: &str, instances: &[Value]) {
+    let report = schema_check::check_many(&schema_check::load(file), instances);
     assert!(report.errors.is_empty(), "{file}: {:#?}", report.errors);
     assert!(
         report.unused().is_empty(),
@@ -101,4 +105,22 @@ fn a_written_lockfile_conforms_to_its_schema() {
     let text = std::fs::read_to_string(dir.join(soothfast_docs::lockfile::LOCKFILE)).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
     assert_conforms("lock.schema.json", &serde_json::from_str(&text).unwrap());
+}
+
+#[test]
+fn runner_samples_conform_to_the_record_schema() {
+    let records: Vec<Value> = ["runner-captured.jsonl", "runner-hand.jsonl"]
+        .iter()
+        .flat_map(|f| {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/schema_samples")
+                .join(f);
+            std::fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect::<Vec<Value>>()
+        })
+        .collect();
+    assert_all_conform("runner-record.schema.json", &records);
 }

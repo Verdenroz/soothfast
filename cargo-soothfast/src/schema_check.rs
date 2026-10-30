@@ -73,9 +73,16 @@ fn walk(node: &Value) {
 }
 
 pub fn check(root: &Value, instance: &Value) -> Report {
+    check_many(root, std::slice::from_ref(instance))
+}
+
+/// Validate every instance; coverage is the union across all of them.
+pub fn check_many(root: &Value, instances: &[Value]) -> Report {
     assert_supported(root);
     let mut report = Report::default();
-    visit(root, root, instance, "$", "$", &mut report);
+    for instance in instances {
+        visit(root, root, instance, "$", "$", &mut report);
+    }
     report
 }
 
