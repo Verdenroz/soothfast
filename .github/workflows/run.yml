@@ -77,8 +77,6 @@ jobs:
           persist-credentials: false
       - id: soothfast
         uses: ./.soothfast-action/action/install
-        with:
-          sha: ${{ inputs.soothfast_ref }}
       - name: Plan
         id: plan
         run: cargo soothfast plan --github >> "$GITHUB_OUTPUT"
@@ -113,8 +111,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - id: soothfast
         uses: ./.soothfast-action/action/install
-        with:
-          sha: ${{ inputs.soothfast_ref }}
       - run: cargo soothfast test
 
   gate-rust:
@@ -151,8 +147,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - id: soothfast
         uses: ./.soothfast-action/action/install
-        with:
-          sha: ${{ inputs.soothfast_ref }}
       - uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
@@ -213,8 +207,6 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - id: soothfast
         uses: ./.soothfast-action/action/install
-        with:
-          sha: ${{ inputs.soothfast_ref }}
       # Both sides run on this runner. Walltime gates; set `walltime = "advisory"`
       # under [gate] in soothfast.toml if the runner is too noisy to trust.
       - name: Gate against the merge base
@@ -282,8 +274,6 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - id: soothfast
         uses: ./.soothfast-action/action/install
-        with:
-          sha: ${{ inputs.soothfast_ref }}
       - name: Download the head measurement
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -332,8 +322,6 @@ jobs:
           persist-credentials: false
       - id: soothfast
         uses: ./.soothfast-action/action/install
-        with:
-          sha: ${{ inputs.soothfast_ref }}
       - uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}

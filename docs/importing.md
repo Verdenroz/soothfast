@@ -222,9 +222,9 @@ the input is empty, and `init --check` reports a caller where they disagree.
 It passes no secrets: the bot authenticates by OIDC and comments use the job's
 own token. `--pin REF` writes the `uses:` at another commit, tag or branch,
 so an unreleased commit can be tried; a bare commit pin is kept by later
-runs. The reusable workflow installs the crates.io release named by the
-caller's `Cargo.lock` (else by its own version) and, when that version is not
-published, builds `cargo-soothfast` from its own commit. It runs `cargo soothfast plan --github`
+runs. The reusable workflow installs the `cargo-soothfast` that matches the
+ref it was called at: the crates.io release when that ref is the commit of a
+published release tag, otherwise a build of the ref itself, cached by commit. It runs `cargo soothfast plan --github`
 to read `soothfast.toml`, then runs a test job, a gate for the cargo
 workspace, one gate job per other project and a docs check when tracked
 markdown carries `<!-- soothfast:` markers. The plan job runs on the labels
