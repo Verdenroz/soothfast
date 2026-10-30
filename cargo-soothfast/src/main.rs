@@ -15,6 +15,7 @@ mod codekey;
 mod coverage;
 mod docs;
 mod docs_binds;
+mod docs_config;
 mod docs_generated;
 mod docs_support;
 mod gate;
