@@ -306,9 +306,9 @@ jobs:
 
   verdict:
     name: verdict
-    needs: [plan, gate-rust, gate, docs]
+    needs: [plan, test, gate-rust, gate, docs]
     if: always() && github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
     environment: soothfast-bot
     permissions:
       contents: read
@@ -338,7 +338,10 @@ jobs:
         uses: ./.soothfast-action/action/install
         with:
           sha: ${{ github.job_workflow_sha }}
+      # A pattern that matches nothing is not an error here: EXPECT turns a
+      # missing result into an errored section.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
         with:
           pattern: soothfast-result-*
           path: ${{ runner.temp }}/soothfast-results

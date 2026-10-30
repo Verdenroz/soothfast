@@ -206,7 +206,9 @@ lines of output, reuse counts, seconds) and uploads it as
 `<!-- soothfast-verdict -->` with a section per project, regressed and
 errored first. Shards of one project fold into one section.
 
-Branch protection needs only `soothfast / verdict`. It fails when any project
+Branch protection needs only the `verdict` check, named `<caller job id> /
+verdict`. The caller `cargo soothfast init` writes names its job `soothfast`,
+so a repo set up with init requires `soothfast / verdict`. The check fails when any project
 regressed or errored, or recorded no result; a `soothfast:perf-accepted` label
 applied by a writer waives regressions, never errors or docs drift.
 
