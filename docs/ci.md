@@ -154,6 +154,7 @@ installed on is refused.
 | `broker` | built in | Token broker URL. |
 | `labels` | `false` | On default-branch pushes and schedules, act on pull request labels as soothfast-bot (see [Labels](#labels)). |
 | `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
+| `comment` | `true` | Post the pull request gate comment. `false` posts nothing and records a result per package for `cargo soothfast verdict merge`. |
 | `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded. |
 
 Outputs are `version` and `cache-hit`.
@@ -193,6 +194,21 @@ then unnecessary.
 The scripts use `gh`, `jq`, `curl`, `git`, and `cargo`. On Linux the step
 installs `valgrind` with `apt-get` when it is missing, for the callgrind
 fallback on machines without performance counters.
+
+## One verdict
+
+The reusable `run.yml` workflow gives a pull request one soothfast comment and
+one check, however many projects or shards it gates. Every gate job and the
+docs check records a `result.json` (project, kind, verdict, the last forty
+lines of output, reuse counts, seconds) and uploads it as
+`soothfast-result-<name>`. The `verdict` job downloads them all, runs
+`cargo soothfast verdict merge`, and posts one comment marked
+`<!-- soothfast-verdict -->` with a section per project, regressed and
+errored first. Shards of one project fold into one section.
+
+Branch protection needs only `soothfast / verdict`. It fails when any project
+regressed or errored, or recorded no result; a `soothfast:perf-accepted` label
+applied by a writer waives regressions, never errors or docs drift.
 
 ## The gate on its own
 
