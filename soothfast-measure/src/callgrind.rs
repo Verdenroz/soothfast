@@ -281,7 +281,7 @@ fn summary_ir(text: &str) -> Result<u64, String> {
         .ok_or_else(|| "unparseable summary line".into())
 }
 
-/// Iterations in the low run; the high run does twice this.
+/// Iterations in the measured window; the two-process method runs K and 2K.
 ///
 /// K must exceed 1. `gate` compares two builds run from different working
 /// directories — the reference side lives in a worktree whose path is ~60
@@ -295,7 +295,7 @@ fn summary_ir(text: &str) -> Result<u64, String> {
 const K: u64 = 10;
 
 /// One item's callgrind result: per-iteration Ir, and every function the
-/// longer run executed as sorted, deduplicated `(object, mangled symbol)`.
+/// process executed as sorted, deduplicated `(object, mangled symbol)`.
 pub struct Measurement {
     /// Instructions per iteration.
     pub ir: u64,
