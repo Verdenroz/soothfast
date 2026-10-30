@@ -17,14 +17,17 @@
           version: "@@version@@"
           gate: "false"
           changelog: "false"
-      # Both sides run on this runner. Walltime is advisory until it is quiet
-      # enough to trust: set `walltime = "hard"` under [gate] in soothfast.toml.
+      # Both sides run on this runner. Walltime gates; set `walltime = "advisory"`
+      # under [gate] in soothfast.toml if the runner is too noisy to trust.
       - name: Gate against the merge base
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           bench() { (cd "$1" && @@bench@@); }
           git worktree add "$RUNNER_TEMP/base" "$(git merge-base HEAD "origin/$BASE_REF")"
-          bench "$RUNNER_TEMP/base"
           bench .
+          if ! bench "$RUNNER_TEMP/base" || [ ! -f "$RUNNER_TEMP/base/@@out@@" ]; then
+            echo "::notice::merge-base has no benchmark results; nothing to compare"
+            exit 0
+          fi
           cargo soothfast gate --import @@from@@ @@out@@ --reference-import @@from@@ "$RUNNER_TEMP/base/@@out@@"
