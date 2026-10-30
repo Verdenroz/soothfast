@@ -72,9 +72,11 @@ unchanged and still read the measurement baseline.
 ## Claims: numbers checked against a real run
 
 A claim marker looks like
-`<!-- soothfast:claim item.backend.metric <op> value[unit] -->`. It takes
-exactly three dot-separated tokens before the operator (`item` uses `::`
-internally, never `.`), one of `< <= > >=`, and a bound with an optional
+`<!-- soothfast:claim item.backend.metric <op> value[unit] -->`. The last
+two dot-separated parts before the operator are the backend and metric, and
+everything ahead of them is the item, so an imported id with dots or spaces
+(`pytest::t.py::test_parse`, `vitest::src/a.bench.ts > sum > loop`) works
+as written. Then comes one of `< <= > >=`, and a bound with an optional
 unit (`ns` ×1, `us`/`µs` ×1e3, `ms` ×1e6, `s` ×1e9). Unitless numbers are
 taken as-is, and underscores are allowed for readability, as in `25_000`.
 `docs check` evaluates the expression against

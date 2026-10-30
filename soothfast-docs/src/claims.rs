@@ -36,12 +36,21 @@ pub struct Claim {
 /// Parse `demo::lcg_checksum.perfcnt.instructions < 25000` (units on the
 /// bound: ns/us/ms/s multiply into ns; bare numbers stay raw).
 pub fn parse(expr: &str) -> Result<Claim, String> {
+    // Imported item ids may hold spaces (`file > group > name`), so the
+    // operator and bound are the last two tokens and the rest is the item.
     let tokens: Vec<&str> = expr.split_whitespace().collect();
-    let [lhs, op, rhs] = tokens.as_slice() else {
+    let [lhs @ .., op, rhs] = tokens.as_slice() else {
         return Err(format!(
             "claim must be `item.backend.metric <op> value`, got {expr:?}"
         ));
     };
+    if lhs.is_empty() {
+        return Err(format!(
+            "claim must be `item.backend.metric <op> value`, got {expr:?}"
+        ));
+    }
+    // `op` borrows from `expr`, so the left side is the text before it.
+    let lhs = expr[..op.as_ptr() as usize - expr.as_ptr() as usize].trim();
     let op = match *op {
         "<" => Op::Lt,
         "<=" => Op::Le,
@@ -50,13 +59,13 @@ pub fn parse(expr: &str) -> Result<Claim, String> {
         other => return Err(format!("unsupported operator {other:?}")),
     };
 
-    // Item ids contain `::` but never `.` — split lhs on dots.
-    let parts: Vec<&str> = lhs.split('.').collect();
-    if parts.len() != 3 {
+    // Backend and metric never hold a dot; an imported item id may.
+    let parts: Vec<&str> = lhs.rsplitn(3, '.').collect();
+    let [metric, backend, item] = parts.as_slice() else {
         return Err(format!(
             "left side must be item.backend.metric, got {lhs:?}"
         ));
-    }
+    };
 
     let unit_at = rhs
         .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '_')
@@ -76,9 +85,9 @@ pub fn parse(expr: &str) -> Result<Claim, String> {
     };
 
     Ok(Claim {
-        item: parts[0].to_string(),
-        backend: parts[1].to_string(),
-        metric: parts[2].to_string(),
+        item: item.to_string(),
+        backend: backend.to_string(),
+        metric: metric.to_string(),
         op,
         bound: value * factor,
     })
@@ -117,6 +126,21 @@ mod tests {
         assert_eq!(c.bound, 1e6);
         assert!(matches!(c.op, Op::Lt));
         assert_eq!(parse("a::b.alloc.allocs <= 2").unwrap().bound, 2.0);
+    }
+
+    #[test]
+    fn imported_ids_may_hold_dots_and_spaces() {
+        let c = parse("pytest::t.py::test_parse.walltime.median_ns < 1us").unwrap();
+        assert_eq!(c.item, "pytest::t.py::test_parse");
+        assert_eq!(
+            (c.backend.as_str(), c.metric.as_str()),
+            ("walltime", "median_ns")
+        );
+        let v = parse("vitest::src/a.bench.ts > sum > loop.walltime.p99_ns <= 5ms").unwrap();
+        assert_eq!(v.item, "vitest::src/a.bench.ts > sum > loop");
+        assert_eq!(v.metric, "p99_ns");
+        assert!(parse("walltime.median_ns < 1").is_err());
+        assert!(parse("< 1").is_err());
     }
 
     #[test]
