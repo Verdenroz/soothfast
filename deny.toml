@@ -21,6 +21,12 @@ wildcards = "deny"
 allow-wildcard-paths = true
 # Explicitly banned crates go here, e.g. { crate = "openssl", reason = "..." }.
 deny = []
+# tree-sitter's build script pulls serde_json -> indexmap, whose hashbrown and
+# foldhash are newer than the copies the YAML stack links; build-time only.
+skip = [
+    { crate = "hashbrown@0.17.1", reason = "tree-sitter build-dependency via indexmap" },
+    { crate = "foldhash@0.2.0", reason = "tree-sitter build-dependency via serde_json" },
+]
 
 [licenses]
 # Allow-list of licenses acceptable for dependencies of this MIT-licensed project.
