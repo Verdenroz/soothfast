@@ -413,3 +413,65 @@ fn unwind_resume_does_not_unwind_into_another_pad() {
     ];
     assert_eq!(prove_in(&lines).len(), 1);
 }
+
+#[test]
+fn a_conditional_tail_call_to_another_function_leaves_the_function() {
+    let tail = "jne    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other>";
+    assert_eq!(prove_in(&[LEA, tail, LOAD, ADD, JMP, RET]).len(), 1);
+}
+
+#[test]
+fn a_conditional_branch_into_the_middle_of_another_symbol_is_no_exit() {
+    let inside = "jne    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other+0x10>";
+    assert!(prove_in(&[LEA, inside, LOAD, ADD, JMP, RET]).is_empty());
+}
+
+#[test]
+fn a_conditional_branch_to_a_cold_part_is_no_exit() {
+    let cold = "jne    2000 <sqlite3VdbeExec.cold>";
+    assert!(prove_in(&[LEA, cold, LOAD, ADD, JMP, RET]).is_empty());
+    assert!(prove_in(&[LEA, "jne    2000", LOAD, ADD, JMP, RET]).is_empty());
+}
+
+#[test]
+fn a_tail_call_through_a_pointer_in_memory_leaves_the_function() {
+    let vtable = "jmp    *0x17(%rax)";
+    assert_eq!(prove_in(&[LEA, LOAD, ADD, JMP, vtable, RET]).len(), 1);
+    assert_eq!(
+        prove_in(&[LEA, LOAD, ADD, JMP, "jmp    *(%rdx)", RET]).len(),
+        1
+    );
+    let indexed = "jmp    *0x0(,%rax,8)";
+    assert!(prove_in(&[LEA, LOAD, ADD, JMP, indexed, RET]).is_empty());
+}
+
+fn exit_through_rdx(first: &str) -> Vec<Proof> {
+    prove_in(&[
+        LEA,
+        first,
+        "je     1018 <f+0x18>",
+        LOAD,
+        ADD,
+        JMP,
+        "jmp    *%rdx",
+    ])
+}
+
+#[test]
+fn a_tail_call_through_a_register_needs_a_pointer_loaded_on_every_path() {
+    let load = "mov    0x18(%rdx),%rdx";
+    assert_eq!(exit_through_rdx(load).len(), 1);
+    assert!(exit_through_rdx("mov    %rbx,%rdx").is_empty());
+    assert!(exit_through_rdx("mov    0x0(,%rax,8),%rdx").is_empty());
+    assert!(exit_through_rdx("add    0x18(%rdx),%rdx").is_empty());
+    let skipped = [
+        LEA,
+        "je     1018 <f+0x18>",
+        load,
+        LOAD,
+        ADD,
+        JMP,
+        "jmp    *%rdx",
+    ];
+    assert!(prove_in(&skipped).is_empty());
+}

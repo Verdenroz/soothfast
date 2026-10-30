@@ -208,6 +208,45 @@ fn through_slot(ins: &Ins) -> bool {
         && ins.operands[0].ends_with("(%rip)")
 }
 
+/// `jmp *d(%rA)` or `jmp *(%rA)`: a tail call through a pointer in memory,
+/// with no index register, which a table jump always has. Like the exits
+/// below it assumes the pointer is another function's entry, so control never
+/// comes back into this function except through a call.
+fn loads_pointer(ins: &Ins) -> bool {
+    ins.operands.len() == 1
+        && ins.operands[0]
+            .strip_prefix('*')
+            .is_some_and(unindexed_memory)
+}
+
+/// `jmp *%rA`, whose register `exits_through_loaded_pointers` must show holds
+/// such a pointer.
+fn through_loaded_register(ins: &Ins) -> bool {
+    ins.operands.len() == 1
+        && ins.operands[0]
+            .strip_prefix('*')
+            .is_some_and(|o| family(o).is_some())
+}
+
+fn unindexed_memory(operand: &str) -> bool {
+    !operand.starts_with('%')
+        && !operand.starts_with('$')
+        && operand.ends_with(')')
+        && !operand.contains(',')
+}
+
+/// A conditional branch out of the function to the entry of another one, a
+/// tail call. A `.cold` part is not: it jumps back into this function.
+fn tail_target(ins: &Ins) -> bool {
+    let named = ins
+        .operands
+        .first()
+        .and_then(|o| o.split_once('<'))
+        .and_then(|(_, rest)| rest.rsplit_once('>'))
+        .map(|(name, _)| name);
+    named.is_some_and(|name| !name.contains('+') && !name.contains(".cold"))
+}
+
 fn direct_target(ins: &Ins) -> Option<u64> {
     is_jump(ins.mnemonic)
         .then(|| u64::from_str_radix(ins.operands.first()?.split_whitespace().next()?, 16).ok())
@@ -302,6 +341,9 @@ pub fn prove(instrs: &[(u64, String)], span: (u64, u64), decode: &Decoder) -> Pr
         let Some(graph) = Graph::build(&parsed, &at, span, &active, &targets) else {
             return Proven::default();
         };
+        if !graph.exits_through_loaded_pointers(&parsed) {
+            return Proven::default();
+        }
         let before = active.len();
         active.retain(|c| graph.reads_table(&parsed, c, &leas));
         if active.len() == before {
@@ -424,6 +466,9 @@ struct Graph {
     /// padding: landing pads the unwinder enters.
     orphans: Vec<usize>,
     has_call: bool,
+    /// `jmp *%rA` instructions that are no table jump: tail calls, provided
+    /// `exits_through_loaded_pointers` shows `%rA` holds a pointer from memory.
+    pointer_exits: Vec<usize>,
 }
 
 impl Graph {
@@ -441,6 +486,7 @@ impl Graph {
         let mut succ = vec![Vec::new(); n];
         let mut leader = vec![false; n];
         leader[0] = true;
+        let mut pointer_exits = Vec::new();
         for (i, (_, ins)) in parsed.iter().enumerate() {
             let next = (i + 1 < n).then_some(i + 1);
             if ins.mnemonic == "(bad)" {
@@ -457,17 +503,21 @@ impl Graph {
                         leader[to] = true;
                         succ[i].push(to);
                     }
-                    Some(_) if unconditional => {}
+                    Some(_) if unconditional || tail_target(ins) => {}
                     Some(_) => return None,
                     None if unconditional && through_slot(ins) => {}
-                    None if unconditional => {
-                        let table = active.iter().find(|c| c.jmp == i)?.table;
-                        for t in targets.get(&table)? {
-                            let to = *at.get(t)?;
-                            leader[to] = true;
-                            succ[i].push(to);
+                    None if unconditional => match active.iter().find(|c| c.jmp == i) {
+                        Some(c) => {
+                            for t in targets.get(&c.table)? {
+                                let to = *at.get(t)?;
+                                leader[to] = true;
+                                succ[i].push(to);
+                            }
                         }
-                    }
+                        None if loads_pointer(ins) => {}
+                        None if through_loaded_register(ins) => pointer_exits.push(i),
+                        None => return None,
+                    },
                     None => return None,
                 }
                 if !unconditional {
@@ -488,6 +538,27 @@ impl Graph {
             leader,
             orphans,
             has_call,
+            pointer_exits,
+        })
+    }
+
+    /// Whether every register-indirect exit jumps through a register whose
+    /// last definition, on every path, is a load of a pointer from memory.
+    fn exits_through_loaded_pointers(&self, parsed: &[(u64, Ins)]) -> bool {
+        self.pointer_exits.iter().all(|&at| {
+            let Some(reg) = parsed[at].1.operands[0].strip_prefix('*').and_then(family) else {
+                return false;
+            };
+            let good: Vec<bool> = parsed
+                .iter()
+                .map(|(_, ins)| {
+                    ins.mnemonic.starts_with("mov")
+                        && ins.operands.len() == 2
+                        && unindexed_memory(ins.operands[0])
+                        && family(ins.operands[1]).as_deref() == Some(&reg)
+                })
+                .collect();
+            self.always_defined(parsed, &reg, &good, at)
         })
     }
 
