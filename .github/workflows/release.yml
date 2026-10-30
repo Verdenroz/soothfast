@@ -136,7 +136,7 @@ jobs:
       - name: Package each crate in dependency order
         run: |
           for crate in soothfast-macros soothfast-registry soothfast-measure \
-                       soothfast-docs soothfast-spec soothfast-sdk soothfast-report \
+                       soothfast-docs soothfast-lang soothfast-spec soothfast-sdk soothfast-report \
                        soothfast-site soothfast cargo-soothfast; do
             echo "::group::cargo package -p $crate"
             cargo package --no-verify --list -p "$crate"
@@ -183,7 +183,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           for crate in soothfast-macros soothfast-registry soothfast-measure \
-                       soothfast-docs soothfast-spec soothfast-sdk soothfast-report \
+                       soothfast-docs soothfast-lang soothfast-spec soothfast-sdk soothfast-report \
                        soothfast-site soothfast cargo-soothfast; do
             echo "::group::cargo publish -p $crate"
             cargo publish -p "$crate"
