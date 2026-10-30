@@ -253,9 +253,12 @@ An item whose claims failed is never stored, so a failure is measured again
 rather than replayed. A binary not linked position-independent is never
 reused: its code can name data by absolute address, which is not resolved.
 
-Items with `sizes(...)` are never reused: a sweep can reach code the
-default-size run never executed. Only `callgrind` is reused: `perfcnt` and
-`walltime` hosts behave as before.
+An item with `sizes(...)` and a `complexity` claim runs under callgrind once
+per size, since a sweep can reach code the largest size never executes. The
+claim is fitted on those exact Ir counts, and the item is stored with the
+union of the functions every size executed. Only `callgrind` is reused:
+`perfcnt` and `walltime` hosts behave as before, and still fit the claim on
+instructions and wall time respectively.
 
 ### Where data begins and ends
 

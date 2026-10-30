@@ -186,7 +186,14 @@ fn out_file(tag: &str) -> PathBuf {
 /// Run this bench binary under callgrind executing `id` for `iters`
 /// iterations; return total Ir and the out-file text. `mangled` keeps the
 /// symbol-table spelling of function names instead of demangling them.
-fn run_ir(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<(u64, String), String> {
+/// `size` runs a sweep item at that input size instead of its largest.
+fn run_ir(
+    id: &str,
+    size: Option<usize>,
+    iters: u64,
+    tag: &str,
+    mangled: bool,
+) -> Result<(u64, String), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let out = out_file(tag);
     let status = Command::new("valgrind")
@@ -200,6 +207,11 @@ fn run_ir(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<(u64, String
         ])
         .arg(&exe)
         .args(["--callgrind-exec", id, "--iters", &iters.to_string()])
+        .args(
+            size.map(|n| ["--size".to_string(), n.to_string()])
+                .into_iter()
+                .flatten(),
+        )
         .output()
         .map_err(|e| format!("failed to spawn valgrind: {e}"))?;
     if !status.status.success() {
@@ -247,9 +259,9 @@ pub struct Measurement {
 }
 
 /// Per-iteration Ir for one item.
-pub fn measure(id: &str) -> Result<Measurement, String> {
-    let (low, _) = run_ir(id, K, "k1", true)?;
-    let (high, text) = run_ir(id, 2 * K, "k2", true)?;
+pub fn measure(id: &str, size: Option<usize>) -> Result<Measurement, String> {
+    let (low, _) = run_ir(id, size, K, "k1", true)?;
+    let (high, text) = run_ir(id, size, 2 * K, "k2", true)?;
     Ok(Measurement {
         ir: high.saturating_sub(low) / K,
         functions: executed(&text),
@@ -260,24 +272,26 @@ pub fn measure(id: &str) -> Result<Measurement, String> {
 // so the pool is capped rather than sized to the machine.
 const MAX_PARALLEL: usize = 4;
 
-/// Per-iteration Ir for many items, measured concurrently (Ir counts are
-/// timing-independent). Results come back in input order.
-pub fn measure_all(ids: &[&str]) -> Vec<Result<Measurement, String>> {
+/// Per-iteration Ir for many `(item, size)` jobs, measured concurrently (Ir
+/// counts are timing-independent). Results come back in input order.
+pub fn measure_all(jobs: &[(&str, Option<usize>)]) -> Vec<Result<Measurement, String>> {
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
         .min(MAX_PARALLEL)
-        .min(ids.len());
+        .min(jobs.len());
     let next = AtomicUsize::new(0);
     let slots: Vec<Mutex<Option<Result<Measurement, String>>>> =
-        ids.iter().map(|_| Mutex::new(None)).collect();
+        jobs.iter().map(|_| Mutex::new(None)).collect();
     std::thread::scope(|s| {
         for _ in 0..workers {
             s.spawn(|| {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(id) = ids.get(i) else { break };
-                    *slots[i].lock().unwrap() = Some(measure(id));
+                    let Some(&(id, size)) = jobs.get(i) else {
+                        break;
+                    };
+                    *slots[i].lock().unwrap() = Some(measure(id, size));
                 }
             });
         }
@@ -333,7 +347,7 @@ fn executed(text: &str) -> Vec<(String, String)> {
 
 /// Human triage report: top self-cost functions for one item's workload.
 pub fn annotate(id: &str) -> Result<String, String> {
-    let (total, text) = run_ir(id, 1, "annotate", false)?;
+    let (total, text) = run_ir(id, None, 1, "annotate", false)?;
     let mut costs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for (_, name, cost) in function_costs(&text) {
         *costs.entry(name.to_string()).or_default() += cost;
