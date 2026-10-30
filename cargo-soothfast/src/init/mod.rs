@@ -286,6 +286,10 @@ pub fn run(args: &[String]) -> i32 {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--help" | "-h" => {
+                println!("{}", init_usage());
+                return 0;
+            }
             "--check" => check = true,
             "--force" => force = true,
             "--bot" => bot = true,
@@ -399,6 +403,16 @@ fn other_callers(root: &Path) -> Vec<String> {
         .collect();
     found.sort();
     found
+}
+
+/// The `init` entry of the CLI usage text.
+fn init_usage() -> String {
+    let lines = crate::USAGE
+        .lines()
+        .skip_while(|l| !l.starts_with("  init "));
+    let rest = lines.skip(1).take_while(|l| l.starts_with("    "));
+    let first = crate::USAGE.lines().find(|l| l.starts_with("  init "));
+    first.into_iter().chain(rest).collect::<Vec<_>>().join("\n")
 }
 
 /// What to do after `init` before the first pull request gates anything.
@@ -1451,6 +1465,13 @@ mod tests {
             [".github/workflows/ci.yml", ".github/workflows/reuse.yaml"]
         );
         assert!(other_callers(&scratch("none")).is_empty());
+    }
+
+    #[test]
+    fn the_init_usage_lists_init_alone() {
+        let usage = init_usage();
+        assert!(usage.starts_with("  init ") && usage.contains("--dir D"));
+        assert!(usage.contains("--runner-labels") && !usage.contains("import "));
     }
 
     #[test]
