@@ -30,6 +30,7 @@ mod itemreuse;
 mod jumptable;
 mod linkmap;
 mod mcp;
+mod plan;
 mod report;
 mod runcache;
 #[cfg(test)]
@@ -58,15 +59,24 @@ usage: cargo soothfast <command>
        cargo soothfast --version
 
 commands:
-  init     [-p PKG]... [--check] [--force] [--bot] [--labels]
+  init     [-p PKG]... [--check] [--force] [--bot] [--labels] [--dir D]
+           [--runs-on LABELS] [--no-test]
            [--ecosystem rust|gradle|maven|python|node] [--bench-cmd CMD]
            [--bench-out PATH] [--from FORMAT]
            (writes the soothfast CI workflow, soothfast.toml and .gitignore
-           entry; -p gives PKG a soothfast bench target; --check reports
+           entry; --dir D makes the other-language flags apply to the
+           project in D, which a repo with several ecosystems saves as
+           [[project]] tables; --runs-on A,B and
+           --no-test save a [ci] table: the runner labels and whether the
+           cargo test job runs; -p gives PKG a soothfast bench target; --check reports
            drift and writes nothing; --bot lands regenerated files and
            acts on pull request labels as soothfast-bot; --labels creates
            soothfast:merge, soothfast:update, soothfast:perf-accepted and
            do-not-merge with gh)
+  plan     [--github]
+           (prints the jobs the reusable workflow runs, read from the
+           [[project]] tables of soothfast.toml and the cargo workspace;
+           --github prints $GITHUB_OUTPUT lines)
   import   --from jmh|pyperf|pytest-benchmark|vitest FILE [--prefix P]
            (--save-baseline NAME | --out FILE)
            (turns another harness's benchmark results into walltime items
@@ -89,7 +99,7 @@ commands:
            pinned to HEAD's soothfast, where the delta may be the harness)
            (--codegen-units pins both sides' partitioning; default 1)
            (--no-reuse-base re-measures the reference instead of reusing it)
-  gate     --import FORMAT FILE [--prefix P] [--allow-gone]
+  gate     --import FORMAT FILE [--prefix P] [--walltime hard|advisory] [--allow-gone]
            (--baseline NAME | --reference-import FORMAT FILE)
            (gates an imported run without building or measuring, so it works
            outside a cargo workspace; walltime is the only metric)
@@ -178,6 +188,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
     match cmd.as_str() {
         "measure" => cmd_measure(rest),
         "init" => init::run(rest),
+        "plan" => plan::run(rest),
         "import" => import::run(rest),
         "gate" => gate::run(rest),
         "trend" => trend::run(rest),

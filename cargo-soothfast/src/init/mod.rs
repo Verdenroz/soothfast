@@ -1,7 +1,9 @@
-//! `cargo soothfast init`: wire a cargo workspace into soothfast. The CI
-//! workflow is derived from the workspace, so `init --check` fails once the
-//! repo gains a bench target or docs markers the workflow does not run.
+//! `cargo soothfast init`: wire a repo into soothfast. The CI workflow is
+//! derived from the cargo workspace at the root and the other-language
+//! projects below it, so `init --check` fails once the repo gains a bench
+//! target, a project or docs markers the workflow does not run.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -9,18 +11,17 @@ use serde_json::Value;
 
 use crate::{invoke, workspace};
 
-mod ecosystem;
+pub mod ci;
+mod detect;
+pub mod ecosystem;
 
-use ecosystem::{Bench, Ecosystem, Settings};
+use ci::Ci;
+use ecosystem::{Ecosystem, Entry, Project, Settings, normalize_dir, parse_projects};
 
 const WORKFLOW: &str = include_str!("workflow.yml.tmpl");
 const TEST_JOB: &str = include_str!("test_job.yml.tmpl");
 const GATE_JOB: &str = include_str!("gate_job.yml.tmpl");
-const GATE_IMPORT_JOB: &str = include_str!("gate_import_job.yml.tmpl");
-const DOCS_IMPORT_JOB: &str = include_str!("docs_import_job.yml.tmpl");
-const SETUP_JAVA: &str = include_str!("setup_java.yml.tmpl");
-const SETUP_PYTHON: &str = include_str!("setup_python.yml.tmpl");
-const SETUP_NODE: &str = include_str!("setup_node.yml.tmpl");
+const CALLER_JOB: &str = include_str!("caller_job.yml.tmpl");
 const DOCS_JOB: &str = include_str!("docs_job.yml.tmpl");
 const LABELS_JOB: &str = include_str!("labels_job.yml.tmpl");
 
@@ -84,8 +85,24 @@ enum Kind {
     Seed,
     /// One line the file must contain.
     Line,
-    /// The `[init]` table, replaced when its settings change.
+    /// The `[[project]]` tables, replaced when their settings change.
     Section,
+    /// The `[ci]` table, replaced when its settings change.
+    Ci,
+}
+
+impl Kind {
+    /// The tables a rewrite replaces.
+    fn tables(&self) -> &'static [&'static str] {
+        match self {
+            Kind::Ci => &["ci"],
+            _ => &[
+                "init",
+                ecosystem::PROJECT_TABLE,
+                ecosystem::LEGACY_PROJECT_TABLE,
+            ],
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -113,11 +130,26 @@ impl Scaffold {
             Kind::Whole => State::Differs,
             Kind::Line if text.lines().any(|l| l.trim() == self.content) => State::Current,
             Kind::Line => State::Differs,
-            Kind::Section if Settings::parse(&text) == Settings::parse(&self.content) => {
+            Kind::Section if parse_projects(&text) == parse_projects(&self.content) => {
                 State::Current
             }
             Kind::Section => State::Differs,
+            Kind::Ci if Ci::parse(&text) == Ci::parse(&self.content) => State::Current,
+            Kind::Ci => State::Differs,
         }
+    }
+
+    /// Whether the file still saves projects as an `[init]` or
+    /// `[[init.project]]` table.
+    fn holds_legacy(&self, root: &Path) -> bool {
+        let text = std::fs::read_to_string(root.join(&self.path)).unwrap_or_default();
+        self.kind == Kind::Section
+            && text.lines().any(|l| {
+                matches!(
+                    ecosystem::table_name(l),
+                    Some("init" | ecosystem::LEGACY_PROJECT_TABLE)
+                )
+            })
     }
 
     fn write(&self, root: &Path) -> std::io::Result<()> {
@@ -135,9 +167,9 @@ impl Scaffold {
                 text.push('\n');
                 std::fs::write(path, text)
             }
-            Kind::Section => {
+            Kind::Section | Kind::Ci => {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
-                let mut text = without_section(&text, "init");
+                let mut text = without_tables(&text, self.kind.tables());
                 if !text.is_empty() {
                     text.push('\n');
                 }
@@ -149,13 +181,13 @@ impl Scaffold {
     }
 }
 
-/// `text` without the `[name]` table, trimmed to end in one newline.
-fn without_section(text: &str, name: &str) -> String {
+/// `text` without the `names` tables, trimmed to end in one newline.
+fn without_tables(text: &str, names: &[&str]) -> String {
     let mut skipping = false;
     let mut kept = String::new();
     for line in text.split_inclusive('\n') {
         if line.trim_start().starts_with('[') {
-            skipping = ecosystem::table_name(line) == Some(name);
+            skipping = ecosystem::table_name(line).is_some_and(|name| names.contains(&name));
         }
         if !skipping {
             kept.push_str(line);
@@ -171,18 +203,18 @@ fn without_section(text: &str, name: &str) -> String {
 
 /// What the scaffold is derived from.
 struct Workspace {
-    ecosystem: Ecosystem,
-    /// How a non-Rust repo's own harness runs.
-    bench: Option<Bench>,
+    /// Whether the root is a cargo workspace.
+    rust: bool,
+    /// The non-Rust projects, in directory order.
+    projects: Vec<Project>,
     default_branch: String,
+    ci: Ci,
     /// Packages with a `soothfast` bench target, in name order.
     benched: Vec<String>,
     /// The package `docs check` reads, when any markdown carries markers.
     docs_package: Option<String>,
     action: String,
     bot: bool,
-    /// Whether a non-Rust repo's markdown carries markers for `docs check`.
-    docs: bool,
     java: String,
     node: String,
 }
@@ -202,6 +234,8 @@ pub fn run(args: &[String]) -> i32 {
     let mut labels = false;
     let mut bench: Vec<String> = Vec::new();
     let mut flags = Settings::default();
+    let mut dir: Option<String> = None;
+    let mut ci = Ci::default();
     let mut tools = Toolchains::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -218,6 +252,16 @@ pub fn run(args: &[String]) -> i32 {
                 Some(Ok(e)) => flags.ecosystem = Some(e),
                 Some(Err(e)) => return err(&e),
                 None => return err("--ecosystem needs rust, gradle, maven, python or node"),
+            },
+            "--runs-on" => match it.next() {
+                Some(labels) => ci.runs_on = Some(labels.split(',').map(String::from).collect()),
+                None => return err("--runs-on needs comma-separated runner labels"),
+            },
+            "--no-test" => ci.test = Some(false),
+            "--dir" => match it.next().map(|d| normalize_dir(d)) {
+                Some(Ok(d)) => dir = Some(d),
+                Some(Err(e)) => return err(&e),
+                None => return err("--dir needs a directory"),
             },
             "--java" | "--node" => {
                 let Some(version) = it.next().cloned() else {
@@ -241,16 +285,19 @@ pub fn run(args: &[String]) -> i32 {
             other => return err(&format!("unknown init arg {other:?}")),
         }
     }
-    let (root, ws) = match target(flags, tools, &bench, check, bot) {
+    let (root, ws, notes) = match target(flags, dir, ci, tools, &bench, check, bot) {
         Ok(t) => t,
         Err(e) => return err(&e),
     };
+    for note in &notes {
+        println!("{note}");
+    }
     let files = scaffold(&ws);
     let rc = report(&root, &files, check, force);
     if check || rc != 0 {
         return rc;
     }
-    println!("init: done. Next: {}", next_step(ws.ecosystem));
+    println!("init: done. Next: {}", next_step(ws.rust));
     if labels {
         return create_labels();
     }
@@ -258,10 +305,11 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 /// What to do after `init` before the first pull request gates anything.
-fn next_step(ecosystem: Ecosystem) -> &'static str {
-    match ecosystem {
-        Ecosystem::Rust => "annotate code with #[soothfast::bench] and push.",
-        _ => "check that the bench command writes its result file, then push.",
+fn next_step(rust: bool) -> &'static str {
+    if rust {
+        "annotate code with #[soothfast::bench] and push."
+    } else {
+        "check that the bench command writes its result file, then push."
     }
 }
 
@@ -280,84 +328,166 @@ fn create_labels() -> i32 {
     0
 }
 
-/// The project root and what its scaffold derives from: flags over the
-/// `[init]` table over what the root looks like.
+/// The project root, what its scaffold derives from, and a line per
+/// project found.
 fn target(
     flags: Settings,
+    dir: Option<String>,
+    ci: Ci,
     tools: Toolchains,
     bench: &[String],
     check: bool,
     bot: bool,
-) -> Result<(PathBuf, Workspace), String> {
+) -> Result<(PathBuf, Workspace, Vec<String>), String> {
     let root = invoke::project_root();
     let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
-    let settings = flags.over(Settings::parse(&text).map_err(|e| format!("soothfast.toml: {e}"))?);
-    let ecosystem = settings.ecosystem(&root)?;
-    if ecosystem == Ecosystem::Rust {
-        let root =
-            invoke::workspace_root().map_err(|e| format!("not in a cargo workspace: {e}"))?;
-        let ws = detect(&root, bench, check, bot)?;
-        return Ok((root, ws));
+    let stored = parse_projects(&text).map_err(|e| format!("soothfast.toml: {e}"))?;
+    let ci = ci.over(Ci::parse(&text).map_err(|e| format!("soothfast.toml: {e}"))?);
+    let root_is_rust = flags.ecosystem == Some(Ecosystem::Rust);
+    if root_is_rust && dir.is_some() {
+        return Err("--ecosystem rust is the cargo workspace at the root; drop --dir".into());
     }
-    if !bench.is_empty() {
+    let flags = if root_is_rust {
+        Settings::default()
+    } else {
+        flags
+    };
+    let rust = root_is_rust || root.join("Cargo.toml").is_file();
+    let (projects, notes) = plan(&root, stored, flags, dir)?;
+    if !rust && projects.is_empty() {
+        return Err(if notes.is_empty() {
+            "no Cargo.toml, build.gradle(.kts), pom.xml, pyproject.toml, setup.py or \
+             package.json found; pass --ecosystem"
+                .into()
+        } else {
+            notes.join("\n")
+        });
+    }
+    let markers = has_markers(&root);
+    let (benched, docs_package) = if rust {
+        invoke::workspace_root().map_err(|e| format!("not in a cargo workspace: {e}"))?;
+        let meta = rust_meta(&root, bench, check)?;
+        let docs = markers.then(|| docs_package(&meta)).flatten();
+        (benched(&meta), docs)
+    } else if bench.is_empty() {
+        (Vec::new(), None)
+    } else {
         return Err("-p adds a bench target to a cargo package".into());
-    }
+    };
     let existing = std::fs::read_to_string(root.join(WORKFLOW_PATH)).unwrap_or_default();
     let ws = Workspace {
-        ecosystem,
-        bench: Some(settings.bench(ecosystem)?),
+        rust,
+        projects,
+        ci,
         default_branch: default_branch(&root, &existing),
-        benched: Vec::new(),
-        docs_package: None,
+        benched,
+        docs_package,
         action: action_ref(&existing),
         bot,
-        docs: has_markers(&root),
         java: tools
             .java
-            .or_else(|| pinned(&existing, "java-version"))
+            .or_else(|| pinned(&existing, "java"))
             .unwrap_or("21".into()),
         node: tools
             .node
-            .or_else(|| pinned(&existing, "node-version"))
+            .or_else(|| pinned(&existing, "node"))
             .unwrap_or("22".into()),
     };
-    Ok((root, ws))
+    Ok((root, ws, notes))
 }
 
-/// What the scaffold derives from, after giving each of `bench` a bench
-/// target unless only checking.
-fn detect(root: &Path, bench: &[String], check: bool, bot: bool) -> Result<Workspace, String> {
-    let load = || workspace::metadata(Some(root), true).map_err(|e| e.to_string());
-    let mut meta = load()?;
-    if !check && !bench.is_empty() {
-        for pkg in bench {
-            add_bench(&meta, pkg)?;
-        }
-        meta = load()?;
+/// The non-Rust projects to gate, and a line per project found: saved
+/// settings over what the tracked files show, and the flags over both. A
+/// project found only by detection is skipped when it has no benchmark
+/// command.
+fn plan(
+    root: &Path,
+    stored: Vec<Entry>,
+    flags: Settings,
+    dir: Option<String>,
+) -> Result<(Vec<Project>, Vec<String>), String> {
+    let mut settings: BTreeMap<String, Settings> = detect::projects(root)
+        .into_iter()
+        .map(|(dir, ecosystem)| {
+            let found = Settings {
+                ecosystem: Some(ecosystem),
+                ..Settings::default()
+            };
+            (dir, found)
+        })
+        .collect();
+    let mut chosen: BTreeSet<String> = BTreeSet::new();
+    for Entry {
+        dir,
+        settings: saved,
+    } in stored
+    {
+        let found = settings.remove(&dir).unwrap_or_default();
+        settings.insert(dir.clone(), saved.over(found));
+        chosen.insert(dir);
     }
-    let existing = std::fs::read_to_string(root.join(WORKFLOW_PATH)).unwrap_or_default();
-    Ok(Workspace {
-        ecosystem: Ecosystem::Rust,
-        bench: None,
-        default_branch: default_branch(root, &existing),
-        benched: benched(&meta),
-        docs_package: has_markers(root).then(|| docs_package(&meta)).flatten(),
-        action: action_ref(&existing),
-        bot,
-        docs: false,
-        java: String::new(),
-        node: String::new(),
-    })
+    if flags != Settings::default() || dir.is_some() {
+        let dir = dir.unwrap_or_else(|| ".".into());
+        let current = settings.remove(&dir).unwrap_or_default();
+        settings.insert(dir.clone(), flags.over(current));
+        chosen.insert(dir);
+    }
+    let mut projects = Vec::new();
+    let mut notes = Vec::new();
+    for (dir, found) in settings {
+        let Some(ecosystem) = found.ecosystem else {
+            return Err(format!("no project detected in {dir}; pass --ecosystem"));
+        };
+        match found.bench(ecosystem) {
+            Ok(bench) => {
+                notes.push(format!("project  {dir} ({})", ecosystem.name()));
+                projects.push(Project {
+                    ecosystem,
+                    dir,
+                    bench,
+                    walltime: found.walltime,
+                    prefix: found.prefix,
+                });
+            }
+            Err(e) if chosen.contains(&dir) => return Err(format!("{dir}: {e}")),
+            Err(_) => notes.push(format!(
+                "skipped  {dir} ({}): no benchmark command; add --dir {dir} \
+                 --bench-cmd CMD --bench-out PATH",
+                ecosystem.name()
+            )),
+        }
+    }
+    Ok((projects, notes))
+}
+
+/// The cargo metadata of the workspace at `root`, after giving each of
+/// `bench` a bench target unless only checking.
+fn rust_meta(root: &Path, bench: &[String], check: bool) -> Result<Value, String> {
+    let load = || workspace::metadata(Some(root), true).map_err(|e| e.to_string());
+    let meta = load()?;
+    if check || bench.is_empty() {
+        return Ok(meta);
+    }
+    for pkg in bench {
+        add_bench(&meta, pkg)?;
+    }
+    load()
 }
 
 fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
     let mut drift = 0;
+    let writing = !check && files.iter().any(|f| f.state(root) != State::Current);
     for f in files {
         let path = match f.kind {
-            Kind::Section => format!("{} [init]", f.path.display()),
+            Kind::Section => format!("{} [[project]]", f.path.display()),
+            Kind::Ci => format!("{} [ci]", f.path.display()),
             _ => f.path.display().to_string(),
         };
-        match (f.state(root), check) {
+        let state = match f.state(root) {
+            State::Current if writing && f.holds_legacy(root) => State::Differs,
+            state => state,
+        };
+        match (state, check) {
             (State::Current, _) => println!("ok       {path}"),
             (state, true) => {
                 drift += 1;
@@ -390,12 +520,7 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
         Scaffold {
             path: "soothfast.toml".into(),
             kind: Kind::Seed,
-            content: if ws.bench.is_some() {
-                IMPORT_TOML
-            } else {
-                SOOTHFAST_TOML
-            }
-            .into(),
+            content: if ws.rust { SOOTHFAST_TOML } else { IMPORT_TOML }.into(),
         },
         Scaffold {
             path: ".gitignore".into(),
@@ -411,11 +536,18 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
             content: workflow(ws),
         },
     );
-    if let Some(bench) = &ws.bench {
+    if !ws.projects.is_empty() {
         files.push(Scaffold {
             path: "soothfast.toml".into(),
             kind: Kind::Section,
-            content: ecosystem::section(ws.ecosystem, bench),
+            content: ecosystem::section(&ws.projects),
+        });
+    }
+    if !ws.ci.is_default() {
+        files.push(Scaffold {
+            path: "soothfast.toml".into(),
+            kind: Kind::Ci,
+            content: ws.ci.section(),
         });
     }
     files
@@ -425,14 +557,16 @@ fn workflow(ws: &Workspace) -> String {
     let mut text = WORKFLOW
         .replace("@@default_branch@@", &ws.default_branch)
         .replace("@@schedule@@", if ws.bot { SCHEDULE } else { "" });
-    match &ws.bench {
-        None => text.push_str(&cargo_jobs(ws)),
-        Some(bench) => text.push_str(&import_jobs(ws, bench)),
+    if ws.projects.is_empty() && ws.ci.is_default() {
+        text.push_str(&cargo_jobs(ws));
+        if ws.bot {
+            text.push_str(LABELS_JOB);
+        }
+        text.replace("@@action@@", &ws.action)
+    } else {
+        text.push_str(&caller_job(ws));
+        text
     }
-    if ws.bot {
-        text.push_str(&LABELS_JOB.replace("@@version_input@@", &version_input(ws)));
-    }
-    text.replace("@@action@@", &ws.action)
 }
 
 fn cargo_jobs(ws: &Workspace) -> String {
@@ -450,33 +584,39 @@ fn cargo_jobs(ws: &Workspace) -> String {
     text
 }
 
-/// The gate runs the repo's own harness on the merge base and on HEAD, so
-/// no baseline is stored.
-fn import_jobs(ws: &Workspace, bench: &Bench) -> String {
-    let (setup, prepare) = match ws.ecosystem {
-        Ecosystem::Python => (SETUP_PYTHON.to_string(), ""),
-        Ecosystem::Node => (SETUP_NODE.replace("@@node@@", &ws.node), "npm ci && "),
-        _ => (SETUP_JAVA.replace("@@java@@", &ws.java), ""),
-    };
-    let command = format!("{prepare}{}", bench.cmd.replace("{out}", &bench.out));
-    let mut text = GATE_IMPORT_JOB
-        .replace("@@setup@@", &setup)
-        .replace("@@from@@", &bench.from)
-        .replace("@@out@@", &bench.out)
-        .replace("@@bench@@", &command);
-    if ws.docs {
-        text.push_str(DOCS_IMPORT_JOB);
+/// The one job of a repo with other-language projects: the reusable
+/// workflow plans and runs everything from `soothfast.toml`.
+fn caller_job(ws: &Workspace) -> String {
+    let inputs = [
+        ("bot", ws.bot.then(|| "true".to_string())),
+        (
+            "runs_on",
+            ws.ci
+                .runs_on
+                .as_ref()
+                .map(|_| format!("'{}'", ws.ci.runs_on_json())),
+        ),
+        (
+            "java",
+            (ws.java != "21").then(|| format!("\"{}\"", ws.java)),
+        ),
+        (
+            "node",
+            (ws.node != "22").then(|| format!("\"{}\"", ws.node)),
+        ),
+    ];
+    let with: String = inputs
+        .iter()
+        .filter_map(|(key, value)| Some(format!("      {key}: {}\n", value.as_ref()?)))
+        .collect();
+    let mut text = CALLER_JOB.replace(
+        "@@action@@",
+        &ws.action.replacen('@', "/.github/workflows/run.yml@", 1),
+    );
+    if !with.is_empty() {
+        text.push_str(&format!("    with:\n{with}"));
     }
-    text.replace("@@version@@", env!("CARGO_PKG_VERSION"))
-}
-
-/// The action input that installs this CLI, for a repo with no Cargo.lock
-/// to read it from.
-fn version_input(ws: &Workspace) -> String {
-    match ws.bench {
-        Some(_) => format!("          version: \"{}\"\n", env!("CARGO_PKG_VERSION")),
-        None => String::new(),
-    }
+    text
 }
 
 /// The value of `key: "..."` in a workflow init wrote.
@@ -518,7 +658,7 @@ fn packages(meta: &Value) -> impl Iterator<Item = &Value> {
 }
 
 /// Whether any tracked markdown carries a soothfast marker for `docs check`.
-fn has_markers(root: &Path) -> bool {
+pub fn has_markers(root: &Path) -> bool {
     invoke::git_in(root, &["grep", "-l", "--", "<!-- soothfast:", "*.md"])
         .is_ok_and(|s| !s.is_empty())
 }
@@ -558,9 +698,14 @@ fn pushed_branch(workflow: &str) -> Option<String> {
 fn action_ref(existing: &str) -> String {
     let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
     let pinned = existing.lines().find_map(|l| {
-        let pin = l.trim().strip_prefix("- uses: ")?.trim();
+        let pin = l
+            .trim()
+            .trim_start_matches("- ")
+            .strip_prefix("uses: ")?
+            .trim();
+        let pin = pin.replacen("/.github/workflows/run.yml", "", 1);
         (pin.starts_with("Verdenroz/soothfast@") && pin.ends_with(&format!(" # {tag}")))
-            .then(|| pin.to_string())
+            .then_some(pin)
     });
     if let Some(pin) = pinned {
         return pin;
@@ -626,6 +771,51 @@ fn add_bench(meta: &Value, pkg: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The `[ci]` table of the repo at `root`.
+pub fn ci(root: &Path) -> Result<Ci, String> {
+    let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
+    Ci::parse(&text).map_err(|e| format!("soothfast.toml: {e}"))
+}
+
+/// The packages and docs package `plan` reads from a cargo workspace.
+pub struct RustPlan {
+    pub packages: Vec<String>,
+    pub docs_package: Option<String>,
+}
+
+pub fn rust_plan(root: &Path) -> Result<RustPlan, String> {
+    let meta = workspace::metadata(Some(root), true).map_err(|e| e.to_string())?;
+    Ok(RustPlan {
+        packages: benched(&meta),
+        docs_package: has_markers(root).then(|| docs_package(&meta)).flatten(),
+    })
+}
+
+/// The non-Rust projects `soothfast.toml` saves, with their benchmark
+/// settings resolved.
+pub fn manifest(root: &Path) -> Result<Vec<Project>, String> {
+    let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
+    let entries = parse_projects(&text).map_err(|e| format!("soothfast.toml: {e}"))?;
+    entries
+        .into_iter()
+        .map(|Entry { dir, settings }| {
+            let ecosystem = settings
+                .ecosystem
+                .ok_or_else(|| format!("{dir}: a project needs an ecosystem"))?;
+            let bench = settings
+                .bench(ecosystem)
+                .map_err(|e| format!("{dir}: {e}"))?;
+            Ok(Project {
+                ecosystem,
+                dir,
+                bench,
+                walltime: settings.walltime,
+                prefix: settings.prefix,
+            })
+        })
+        .collect()
+}
+
 fn err(msg: &str) -> i32 {
     eprintln!("init: {msg}");
     2
@@ -638,14 +828,14 @@ mod tests {
 
     fn ws(benched: &[&str], docs: Option<&str>) -> Workspace {
         Workspace {
-            ecosystem: Ecosystem::Rust,
-            bench: None,
+            rust: true,
+            projects: Vec::new(),
+            ci: Ci::default(),
             default_branch: "master".into(),
             benched: benched.iter().map(|s| s.to_string()).collect(),
             docs_package: docs.map(String::from),
             action: "Verdenroz/soothfast@v0".into(),
             bot: false,
-            docs: false,
             java: "21".into(),
             node: "22".into(),
         }
@@ -785,10 +975,24 @@ mod tests {
         assert_eq!(report(&root, &files, true, false), 0);
     }
 
+    fn project(eco: Ecosystem, dir: &str) -> Project {
+        let settings = Settings {
+            bench_cmd: (eco == Ecosystem::Gradle).then(|| "./gradlew jmh -Pout={out}".into()),
+            ..Settings::default()
+        };
+        Project {
+            ecosystem: eco,
+            dir: dir.into(),
+            bench: settings.bench(eco).unwrap(),
+            walltime: None,
+            prefix: None,
+        }
+    }
+
     fn python_ws() -> Workspace {
         Workspace {
-            ecosystem: Ecosystem::Python,
-            bench: Settings::default().bench(Ecosystem::Python).ok(),
+            rust: false,
+            projects: vec![project(Ecosystem::Python, ".")],
             ..ws(&[], None)
         }
     }
@@ -800,9 +1004,12 @@ mod tests {
         assert_eq!(report(&root, &files, true, false), 1);
         assert_eq!(report(&root, &files, false, false), 0);
         let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
-        let from_file = Settings::parse(&text).unwrap();
-        let bench = from_file.bench(Ecosystem::Python).unwrap();
-        assert_eq!(Some(bench), python_ws().bench);
+        let entry = parse_projects(&text).unwrap().remove(0);
+        let bench = entry.settings.bench(Ecosystem::Python).unwrap();
+        assert_eq!(
+            (entry.dir.as_str(), bench),
+            (".", python_ws().projects.remove(0).bench)
+        );
         assert_eq!(report(&root, &files, true, false), 0);
     }
 
@@ -819,7 +1026,7 @@ mod tests {
         assert_eq!(report(&root, &files, false, false), 0);
         let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
         assert!(text.contains("walltime = \"hard\"") && text.contains("name = \"x\""));
-        assert_eq!(text.matches("[init]").count(), 1);
+        assert_eq!(text.matches("[[project]]").count(), 1);
         assert!(!text.contains("pyperf"));
         assert_eq!(report(&root, &files, true, false), 0);
     }
@@ -835,115 +1042,212 @@ mod tests {
         let files = scaffold(&python_ws());
         assert_eq!(report(&root, &files, false, false), 0);
         let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
-        assert_eq!(text.matches("[init]").count(), 1);
+        assert_eq!(text.matches("[[project]]").count(), 1);
         assert!(!text.contains("[ init ]") && !text.contains("pyperf"));
-        assert!(Settings::parse(&text).is_ok());
+        assert!(parse_projects(&text).is_ok());
     }
 
-    fn eco_ws(eco: Ecosystem, docs: bool) -> Workspace {
-        let settings = Settings {
-            bench_cmd: Some("./gradlew jmh -Pout={out}".into()),
-            ..Settings::default()
-        };
+    fn mixed_ws(rust: bool, projects: Vec<Project>) -> Workspace {
         Workspace {
-            ecosystem: eco,
-            bench: Some(settings.bench(eco).unwrap()),
-            docs,
-            ..ws(&[], None)
+            rust,
+            projects,
+            ..ws(&["a"], None)
         }
     }
 
-    fn assert_clean_yaml(text: &str) {
-        assert!(!text.contains("@@"), "{text}");
+    #[test]
+    fn projects_render_one_caller_job_of_the_reusable_workflow() {
+        let sha = "c".repeat(40);
+        let w = Workspace {
+            action: format!("Verdenroz/soothfast@{sha} # v1.2.3"),
+            ..mixed_ws(true, vec![project(Ecosystem::Gradle, "client")])
+        };
+        let text = workflow(&w);
+        let reusable =
+            format!("uses: Verdenroz/soothfast/.github/workflows/run.yml@{sha} # v1.2.3");
+        assert!(text.contains(&reusable), "{text}");
+        assert!(text.contains("    secrets: inherit\n"));
+        assert_eq!(text.matches("\n  soothfast:\n").count(), 1);
+        assert_eq!(text.matches("    uses: ").count(), 1);
+        assert!(!text.contains("@@") && !text.contains("\n    with:"));
+        assert!(text.contains("branches: [master]"));
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             assert!(!line.starts_with('\t'), "tab indent: {line}");
         }
-        assert_eq!(text.matches("\n  gate:\n").count(), 1);
-        assert!(text.contains(&format!("version: \"{}\"", env!("CARGO_PKG_VERSION"))));
-        assert!(!text.contains("rust-toolchain") && !text.contains("cargo soothfast test"));
     }
 
     #[test]
-    fn each_ecosystem_renders_its_setup_and_bench_command() {
-        let java = "actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad";
-        let uv = "astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7";
-        let node = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020";
-        let cases = [
-            (
-                Ecosystem::Gradle,
-                java,
-                "java-version: \"21\"",
-                "./gradlew jmh -Pout=soothfast-bench.json",
-            ),
-            (
-                Ecosystem::Maven,
-                java,
-                "temurin",
-                "java -jar target/benchmarks.jar -rf json -rff soothfast-bench.json",
-            ),
-            (
-                Ecosystem::Python,
-                uv,
-                "setup-uv",
-                "uv run pytest --benchmark-only --benchmark-json soothfast-bench.json",
-            ),
-            (
-                Ecosystem::Node,
-                node,
-                "node-version: \"22\"",
-                "npm ci && npx vitest bench --run --outputJson soothfast-bench.json",
-            ),
-        ];
-        for (eco, pin, setup, cmd) in cases {
-            let mut w = eco_ws(eco, false);
-            if eco != Ecosystem::Gradle {
-                w.bench = Settings::default().bench(eco).ok();
-            }
-            let text = workflow(&w);
-            assert_clean_yaml(&text);
-            assert!(text.contains(pin) && text.contains(setup), "{eco:?}");
-            assert!(text.contains(cmd), "{eco:?}: {text}");
-            assert!(text.contains("--import "), "{eco:?}");
-            assert!(!text.contains("\n  docs:\n"));
-        }
+    fn the_caller_passes_the_bot_and_toolchain_inputs_that_differ_from_the_defaults() {
+        let w = Workspace {
+            bot: true,
+            node: "20".into(),
+            ..mixed_ws(false, vec![project(Ecosystem::Node, ".")])
+        };
+        let text = workflow(&w);
+        assert!(text.contains("    with:\n      bot: true\n      node: \"20\"\n"));
+        assert!(text.contains("  schedule:\n    - cron:"));
+        assert!(!text.contains("labels:") && !text.contains("java:"));
+        assert_eq!(pinned(&text, "node").as_deref(), Some("20"));
+        assert_eq!(pinned(&text, "java"), None);
     }
 
     #[test]
-    fn the_gate_compares_the_merge_base_run_to_head() {
-        let text = workflow(&eco_ws(Ecosystem::Gradle, false));
-        assert!(text.contains("git merge-base HEAD \"origin/$BASE_REF\""));
-        assert!(text.contains("fetch-depth: 0"));
-        assert!(text.contains(
-            "gate --import jmh soothfast-bench.json --reference-import jmh \"$RUNNER_TEMP/base/soothfast-bench.json\""
-        ));
+    fn a_rust_only_repo_keeps_its_own_jobs() {
+        let text = workflow(&ws(&["a"], Some("a")));
+        assert!(!text.contains("run.yml") && !text.contains("secrets: inherit"));
+        assert!(text.contains("\n  test:\n") && text.contains("\n  gate:\n"));
+        let bot = workflow(&Workspace {
+            bot: true,
+            ..ws(&[], None)
+        });
+        assert!(bot.contains("\n  labels:\n") && !bot.contains("version:"));
     }
 
     #[test]
-    fn markers_add_a_docs_check_without_a_package() {
-        let text = workflow(&eco_ws(Ecosystem::Python, true));
-        assert_eq!(text.matches("\n  docs:\n").count(), 1);
-        assert!(text.contains("run: cargo soothfast docs check\n"));
-        assert!(!text.contains("docs check -p"));
-        assert!(!text.contains("@@"));
+    fn the_caller_pin_survives_a_flagless_check() {
+        let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
+        let action = format!("Verdenroz/soothfast@{} # {tag}", "d".repeat(40));
+        let w = Workspace {
+            action: action.clone(),
+            ..mixed_ws(false, vec![project(Ecosystem::Python, ".")])
+        };
+        assert_eq!(action_ref(&workflow(&w)), action);
     }
 
     #[test]
-    fn the_bot_labels_job_installs_the_cli_by_version() {
-        let bot = |w: Workspace| workflow(&Workspace { bot: true, ..w });
-        let text = bot(eco_ws(Ecosystem::Node, false));
-        assert!(text.contains("\n  labels:\n"));
-        assert_eq!(text.matches("          version: \"").count(), 2);
-        assert!(!text.contains("@@"));
-        assert_eq!(bot(ws(&[], None)).matches("          version: ").count(), 0);
+    fn the_manifest_holds_every_project_and_a_flagless_check_is_clean() {
+        let root = scratch("mixed");
+        let w = mixed_ws(
+            true,
+            vec![
+                project(Ecosystem::Python, "plugin/x"),
+                project(Ecosystem::Gradle, "client"),
+            ],
+        );
+        let files = scaffold(&w);
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert_eq!(text.matches("[[project]]").count(), 2);
+        assert!(text.contains("walltime = \"advisory\""));
+        assert_eq!(report(&root, &files, true, false), 0);
+    }
+
+    #[test]
+    fn a_legacy_init_table_is_current_but_rewritten_when_init_writes() {
+        let root = scratch("legacy");
+        let files = scaffold(&python_ws());
+        report(&root, &files, false, false);
+        let legacy = Settings::default().bench(Ecosystem::Python).unwrap();
+        std::fs::write(
+            root.join("soothfast.toml"),
+            format!(
+                "[init]\necosystem = \"python\"\nbench_cmd = \"{}\"\nbench_out = \"{}\"\nfrom = \"{}\"\n",
+                legacy.cmd, legacy.out, legacy.from
+            ),
+        )
+        .unwrap();
+        assert_eq!(report(&root, &files, true, false), 0);
+        std::fs::remove_file(root.join(".gitignore")).unwrap();
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert!(text.contains("[[project]]") && !text.contains("[init]"));
+    }
+
+    #[test]
+    fn a_saved_project_is_kept_over_detection_and_flags_win() {
+        let root = scratch("plan");
+        let git = |args: &[&str]| invoke::git_in(&root, args).unwrap();
+        git(&["init", "-q"]);
+        std::fs::create_dir_all(root.join("client")).unwrap();
+        std::fs::write(root.join("client/settings.gradle.kts"), "").unwrap();
+        std::fs::write(root.join("package.json"), "").unwrap();
+        git(&["add", "-A"]);
+        let (projects, notes) = plan(&root, Vec::new(), Settings::default(), None).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].dir, ".");
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.starts_with("skipped  client (gradle)"))
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("--dir client --bench-cmd CMD"))
+        );
+
+        let flags = Settings {
+            bench_cmd: Some("./gradlew jmh -Pout={out}".into()),
+            ..Settings::default()
+        };
+        let (projects, _) = plan(&root, Vec::new(), flags, Some("client".into())).unwrap();
+        let dirs: Vec<_> = projects.iter().map(|p| p.dir.as_str()).collect();
+        assert_eq!(dirs, [".", "client"]);
+        assert_eq!(projects[1].bench.cmd, "./gradlew jmh -Pout={out}");
+
+        let by_flag = Settings {
+            ecosystem: Some(Ecosystem::Python),
+            ..Settings::default()
+        };
+        let (projects, _) = plan(&root, Vec::new(), by_flag, Some("plugin/hooks".into())).unwrap();
+        assert!(
+            projects
+                .iter()
+                .any(|p| p.dir == "plugin/hooks" && p.ecosystem == Ecosystem::Python)
+        );
+
+        let none = plan(
+            &root,
+            Vec::new(),
+            Settings::default(),
+            Some("nowhere".into()),
+        );
+        assert!(none.unwrap_err().contains("nowhere"));
     }
 
     #[test]
     fn the_toolchain_versions_survive_a_flagless_check() {
-        let mut w = eco_ws(Ecosystem::Node, false);
+        let mut w = mixed_ws(false, vec![project(Ecosystem::Node, ".")]);
         w.node = "20".into();
         let text = workflow(&w);
-        assert_eq!(pinned(&text, "node-version").as_deref(), Some("20"));
-        assert_eq!(pinned(&text, "java-version"), None);
+        assert_eq!(pinned(&text, "node").as_deref(), Some("20"));
+        assert_eq!(pinned(&text, "java"), None);
+    }
+
+    #[test]
+    fn a_ci_table_moves_a_rust_only_repo_to_the_reusable_workflow() {
+        let w = Workspace {
+            ci: Ci::parse("[ci]\nruns_on = [\"self-hosted\", \"linux\"]\n").unwrap(),
+            ..ws(&["a"], None)
+        };
+        let text = workflow(&w);
+        assert!(text.contains("run.yml@"), "{text}");
+        assert!(text.contains("      runs_on: '[\"self-hosted\",\"linux\"]'\n"));
+        assert!(!text.contains("\n  test:\n") && !text.contains("@@"));
+    }
+
+    #[test]
+    fn the_ci_table_is_saved_and_a_flagless_check_is_clean() {
+        let root = scratch("ci");
+        std::fs::write(
+            root.join("soothfast.toml"),
+            "[ci]\ntest = true\n\n[site]\nname = \"x\"\n",
+        )
+        .unwrap();
+        let w = Workspace {
+            ci: Ci {
+                runs_on: Some(vec!["corvid".into()]),
+                test: Some(false),
+            },
+            ..ws(&["a"], None)
+        };
+        let files = scaffold(&w);
+        assert_eq!(report(&root, &files, true, false), 1);
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert_eq!(text.matches("[ci]").count(), 1);
+        assert!(text.contains("name = \"x\"") && text.contains("test = false"));
+        assert_eq!(report(&root, &files, true, false), 0);
     }
 
     #[test]
