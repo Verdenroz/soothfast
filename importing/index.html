@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Importing · soothfast</title>
+<link rel="icon" href="../_soothfast/favicon.svg">
+<link rel="stylesheet" href="../_soothfast/tokens.css">
+<link rel="stylesheet" href="../_soothfast/site.css">
+<script>
+// Apply the stored theme before first paint to avoid a flash.
+try { var t = localStorage.getItem("soothfast-theme");
+      if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body data-base="../">
+<header class="topbar">
+  <div class="topbar-in">
+    <button class="nav-toggle" id="navtoggle" aria-label="Toggle navigation menu" aria-expanded="false" aria-controls="sidenav" type="button">
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <a class="brand" href="../">
+      <span class="brand-mark"><svg viewBox="0 0 22 22" fill="none" aria-hidden="true" width="22" height="22">
+  <path d="M2 16 L11 3 L20 16 Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M6.5 16 V13.5 M9.5 16 V12 M12.5 16 V13.5 M15.5 16 V12" stroke="currentColor" stroke-width="1.3"/>
+</svg>
+</span>
+      <span class="brand-name">soothfast</span>
+      <span class="brand-ver">v0.4.4</span>
+    </a>
+    
+    <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="search" id="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11 L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input id="searchbox" type="search" placeholder="Search docs" aria-label="Search docs" autocomplete="off">
+      <kbd>Ctrl K</kbd>
+      <div class="search-results" id="searchresults" hidden></div>
+    </div>
+    
+    
+    <a class="repo-link" href="https://github.com/Verdenroz/soothfast" aria-label="Repository">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 .6a7.4 7.4 0 0 0-2.34 14.43c.37.07.5-.16.5-.36v-1.26c-2.06.45-2.5-.99-2.5-.99-.33-.85-.82-1.08-.82-1.08-.67-.46.05-.45.05-.45.74.05 1.13.77 1.13.77.66 1.13 1.73.8 2.15.61.07-.48.26-.8.47-.99-1.64-.19-3.37-.82-3.37-3.66 0-.8.29-1.47.76-1.98-.08-.19-.33-.94.07-1.96 0 0 .62-.2 2.03.76a7.06 7.06 0 0 1 3.7 0c1.4-.96 2.02-.76 2.02-.76.4 1.02.15 1.77.07 1.96.47.51.76 1.17.76 1.98 0 2.85-1.73 3.47-3.38 3.65.27.23.5.68.5 1.37v2.03c0 .2.13.43.51.36A7.4 7.4 0 0 0 8 .6Z"/>
+      </svg>
+    </a>
+    
+    <button class="theme-toggle" id="themetoggle" aria-label="Toggle color theme" type="button">
+      <svg class="ic-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <svg class="ic-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 9.5A6 6 0 0 1 6.5 2.5 6 6 0 1 0 13.5 9.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  <div class="ruler" aria-hidden="true"></div>
+</header>
+
+<div class="shell">
+<div class="nav-backdrop" id="navbackdrop" hidden></div>
+<nav class="sidenav" id="sidenav" aria-label="Documentation">
+
+  <div class="nav-group">
+    <span class="label">Guide</span>
+    <ul>
+    
+      <li><a href="../">soothfast</a></li>
+    
+      <li><a href="../measuring/">Measuring</a></li>
+    
+      <li><a href="../gating/">Gating</a></li>
+    
+      <li><a class="active" aria-current="page" href="../importing/">Importing</a></li>
+    
+      <li><a href="../testing/">Testing</a></li>
+    
+      <li><a href="../ci/">CI</a></li>
+    
+      <li><a href="../living-docs/">Living docs</a></li>
+    
+      <li><a href="../spec/">Specs</a></li>
+    
+      <li><a href="../sdk/">SDKs</a></li>
+    
+      <li><a href="../reports/">Reports</a></li>
+    
+      <li><a href="../interchange/">Interchange formats</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">API reference</span>
+    <ul>
+    
+      <li><a href="../reference/soothfast/">soothfast API reference</a></li>
+    
+      <li><a href="../reference/soothfast-macros/">soothfast-macros API reference</a></li>
+    
+      <li><a href="../reference/soothfast-registry/">soothfast-registry API reference</a></li>
+    
+      <li><a href="../reference/soothfast-measure/">soothfast-measure API reference</a></li>
+    
+      <li><a href="../reference/soothfast-docs/">soothfast-docs API reference</a></li>
+    
+      <li><a href="../reference/soothfast-spec/">soothfast-spec API reference</a></li>
+    
+      <li><a href="../reference/soothfast-sdk/">soothfast-sdk API reference</a></li>
+    
+      <li><a href="../reference/soothfast-site/">soothfast-site API reference</a></li>
+    
+      <li><a href="../reference/soothfast-report/">soothfast-report API reference</a></li>
+    
+    </ul>
+  </div>
+
+  <div class="nav-group">
+    <span class="label">Performance</span>
+    <ul>
+    
+      <li><a href="../perf/summary/">Performance summary</a></li>
+    
+      <li><a href="../coverage/">Coverage</a></li>
+    
+    </ul>
+  </div>
+
+</nav>
+
+<main class="doc">
+<h1 id="importing">Importing<a class="anchor" href="#importing" aria-label="Link to this section">#</a></h1>
+<p>soothfast measures Rust natively. For a project in another language, keep the
+harness it already has and import its results: <code>cargo soothfast import</code>
+turns a result file into a soothfast run, and <code>gate</code> compares an imported run
+against a baseline or another imported run. Gating, baselines and thresholds
+are the same ones Rust benchmarks get, with walltime as the only metric.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast import --from jmh results.json --save-baseline base
+<span class="tok-kw">$ </span>cargo soothfast gate --import jmh new-results.json --baseline base
+</code></pre></figure>
+<p>Neither command builds or measures anything, so both work outside a cargo
+workspace. The project root is the workspace root if there is one, else the
+git toplevel, else the current directory; baselines live in
+<code>.soothfast/baselines/</code> under it and <code>soothfast.toml</code> is read from it.</p>
+<h2 id="formats">Formats<a class="anchor" href="#formats" aria-label="Link to this section">#</a></h2>
+<div class="tablewrap"><table>
+<thead><tr><th><code>--from</code></th><th>Harness</th><th>Produced by</th></tr></thead>
+<tbody>
+<tr><td><code>jmh</code></td><td>JMH</td><td><code>-rf json</code></td></tr>
+<tr><td><code>pyperf</code></td><td>pyperf</td><td><code>--output FILE</code> (also <code>pyperf timeit</code>)</td></tr>
+<tr><td><code>pytest-benchmark</code></td><td>pytest-benchmark</td><td><code>--benchmark-json FILE</code></td></tr>
+<tr><td><code>vitest</code></td><td>vitest bench</td><td><code>vitest bench --outputJson FILE</code></td></tr>
+</tbody>
+</table></div>
+<h2 id="item-ids">Item ids<a class="anchor" href="#item-ids" aria-label="Link to this section">#</a></h2>
+<p>Every benchmark becomes an item <code>&lt;prefix&gt;::&lt;name&gt;</code>. The prefix defaults to
+<code>jmh</code>, <code>pyperf</code>, <code>pytest</code> or <code>vitest</code>; <code>--prefix P</code> replaces it, which keeps
+two suites of one format apart in a single baseline. The name is what the
+harness calls the benchmark, so an id is stable until the benchmark is
+renamed:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Format</th><th>Name</th></tr></thead>
+<tbody>
+<tr><td>JMH</td><td><code>benchmark[mode=M,k=v,...]</code>: the mode first, then its params sorted by key, so one benchmark run in several modes keeps one id per mode</td></tr>
+<tr><td>pyperf</td><td>the benchmark's <code>metadata.name</code>, else the file's (<code>timeit</code> for <code>pyperf timeit</code>)</td></tr>
+<tr><td>pytest-benchmark</td><td><code>fullname</code></td></tr>
+<tr><td>vitest</td><td><code>&lt;group full name&gt; &gt; &lt;benchmark name&gt;</code>, the group name being file-relative as vitest prints it</td></tr>
+</tbody>
+</table></div>
+<p>Two benchmarks that map to one id are an error.</p>
+<h2 id="metrics-and-units">Metrics and units<a class="anchor" href="#metrics-and-units" aria-label="Link to this section">#</a></h2>
+<p>Only walltime is imported, stored as <code>median_ns</code>, <code>mad_ns</code> and <code>p99_ns</code> in
+nanoseconds per operation. Where the harness keeps its samples, all three are
+computed from them; the MAD is unscaled, as in measured runs.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Format</th><th>Samples</th><th>Unit</th></tr></thead>
+<tbody>
+<tr><td>JMH</td><td><code>rawData</code> of every fork, else <code>scorePercentiles</code></td><td><code>scoreUnit</code>: <code>ns/op</code>, <code>us/op</code>, <code>ms/op</code>, <code>s/op</code></td></tr>
+<tr><td>pyperf</td><td><code>values</code> of every run; calibration runs have none</td><td>seconds</td></tr>
+<tr><td>pytest-benchmark</td><td><code>stats.data</code></td><td>seconds</td></tr>
+<tr><td>vitest</td><td><code>samples</code></td><td>milliseconds</td></tr>
+</tbody>
+</table></div>
+<p>JMH throughput modes (<code>ops/ns</code>, <code>ops/us</code>, <code>ops/ms</code>, <code>ops/s</code>) are inverted
+sample by sample into time per operation, so a slower run still reads as a
+larger number. A throughput score of zero is rejected.</p>
+<p>Sample-mode results carry a histogram instead of <code>rawData</code>. The median comes
+from <code>scorePercentiles[&quot;50.0&quot;]</code> (its absence is an error naming the
+benchmark) and <code>p99_ns</code> from <code>99.0</code> for time units. Throughput units get no
+<code>p99_ns</code>, since their 99th percentile is the fastest time.</p>
+<p>An unknown unit is an error that names it, not a guess. When a format has no
+samples (pytest-benchmark without <code>data</code>, vitest without <code>samples</code>), the
+median is the reported one, the MAD is approximated as <code>stddev * 0.6745</code>,
+which holds for roughly normal timings only, and there is no p99.</p>
+<h2 id="baselines">Baselines<a class="anchor" href="#baselines" aria-label="Link to this section">#</a></h2>
+<p><code>--save-baseline NAME</code> merges the run into <code>.soothfast/baselines/NAME.json</code>,
+replacing the items an earlier import marked with the same prefix and leaving
+every other item alone, including Rust items and other prefixes. A full
+<code>measure --save-baseline</code> keeps imported items too.
+<code>--out FILE</code> writes the same JSON to a file instead. Exactly one of the two
+is required.</p>
+<h2 id="gating">Gating<a class="anchor" href="#gating" aria-label="Link to this section">#</a></h2>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast gate --import FORMAT FILE [--prefix P] --baseline NAME
+<span class="tok-kw">$ </span>cargo soothfast gate --import FORMAT FILE [--prefix P] --reference-import FORMAT FILE
+</code></pre></figure>
+<p>The imported run is the current side. The reference is either a saved
+baseline, restricted to items imported under the same prefix, or a second imported
+file, for a reference you keep as raw harness output. The comparison is the
+one <code>gate</code> always runs: walltime medians gate at +10%, an item in the
+reference but not in the run is <code>GONE</code> and fails (<code>--allow-gone</code> accepts
+it), and <code>soothfast-gate.lock</code> accepts apply. <code>--ratchet</code>, <code>--against-ref</code>,
+<code>--deps</code>, <code>--save-baseline</code>, <code>--shard</code> and <code>-p</code> are not available with
+<code>--import</code>, and <code>--baseline</code> cannot be combined with <code>--reference-import</code>.
+<code>--filter</code> gates the items whose name contains it.</p>
+<h2 id="noise">Noise<a class="anchor" href="#noise" aria-label="Link to this section">#</a></h2>
+<p>Walltime from a different machine or a different run is noisy, and an
+imported run carries no A/A noise floor to scale the threshold by. Two things
+help:</p>
+<ul>
+<li>Gate against a long-lived baseline such as the last release, saved from the same kind of machine, rather than against a file from whichever runner happened to produce the last result. That is what a ratchet is for.</li>
+<li>Set <code>[gate] walltime = &quot;advisory&quot;</code> in <code>soothfast.toml</code> where the numbers cannot be trusted to a single run. An overrun prints as <code>SOFT</code> and the gate passes.</li>
+</ul>
+
+<div class="doc-foot">
+  <span>built with <b>cargo soothfast docs build</b></span>
+  <a href="https://github.com/Verdenroz/soothfast">source</a>
+</div>
+
+</main>
+<aside class="rail" aria-label="Page tools">
+
+  <span class="label">On this page</span>
+  <ul class="toc-list" id="toc">
+  
+    <li><a class="toc-l2" href="#formats">Formats</a></li>
+  
+    <li><a class="toc-l2" href="#item-ids">Item ids</a></li>
+  
+    <li><a class="toc-l2" href="#metrics-and-units">Metrics and units</a></li>
+  
+    <li><a class="toc-l2" href="#baselines">Baselines</a></li>
+  
+    <li><a class="toc-l2" href="#gating">Gating</a></li>
+  
+    <li><a class="toc-l2" href="#noise">Noise</a></li>
+  
+  </ul>
+
+</aside>
+
+</div>
+<script src="../_soothfast/site.js" defer></script>
+</body>
+</html>
