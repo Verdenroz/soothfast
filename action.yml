@@ -86,8 +86,8 @@ inputs:
     default: ""
   save-baseline:
     description: >-
-      Baseline name a passing pull-request gate saves its HEAD measurement
-      under, in `.soothfast/baselines/`. A later job that needs HEAD's
+      Baseline name a passing pull-request gate, or the reference run of a
+      default-branch push, saves its HEAD measurement under, in `.soothfast/baselines/`. A later job that needs HEAD's
       numbers (a docs claim check) can then read it instead of measuring
       again. A failing gate saves nothing, and neither does one whose bench
       binaries are identical on both sides. Empty saves nothing.
@@ -292,6 +292,7 @@ runs:
         CLI: ${{ steps.resolve.outputs.bin }}
         PACKAGES: ${{ steps.prepare.outputs.packages }}
         FEATURES: ${{ inputs.features }}
+        SAVE_BASELINE: ${{ inputs.save-baseline }}
       run: "$GITHUB_ACTION_PATH/action/record.sh"
     # A push saves under the plain key a pull request asks for; only the leg
     # that recorded has anything to save. A pull request's shards each save

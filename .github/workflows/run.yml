@@ -162,6 +162,14 @@ jobs:
           name: soothfast-baseline
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
+      # A pull request that leaves the bench binaries unchanged saves none,
+      # so the docs job falls back to the default branch's measurement.
+      - name: Keep the default-branch measurement
+        if: github.event_name == 'push' && hashFiles('.soothfast/baselines/head.json') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/baselines/head.json
+          key: soothfast-baseline-${{ github.sha }}
 
   gate:
     name: Gate (${{ matrix.name }})
@@ -280,6 +288,13 @@ jobs:
         with:
           name: soothfast-baseline
           path: .soothfast/baselines
+      - name: Restore the default-branch measurement
+        if: hashFiles('.soothfast/baselines/head.json') == ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/baselines/head.json
+          key: soothfast-baseline-${{ github.event.pull_request.base.sha || github.sha }}
+          restore-keys: soothfast-baseline-
       - name: Check the docs
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
