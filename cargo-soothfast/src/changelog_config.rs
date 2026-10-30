@@ -21,6 +21,9 @@ pub struct ChangelogConfig {
     /// Author whose commits are left out of the draft, for a repo that
     /// renamed the bot's `bot-slug`.
     pub bot_author: Option<String>,
+    /// Include the public symbols of non-Rust projects in the API surface
+    /// section.
+    pub api_surface: bool,
 }
 
 enum Table {
@@ -87,6 +90,7 @@ fn set(cfg: &mut ChangelogConfig, key: &str, value: TomlValue) -> Result<(), Str
         ("features", TomlValue::Str(s)) => cfg.features = Some(s),
         ("packages", TomlValue::StrArray(v)) => cfg.packages = v,
         ("bot-author", TomlValue::Str(s)) => cfg.bot_author = Some(s),
+        ("api_surface", TomlValue::Bool(b)) => cfg.api_surface = b,
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [changelog]")),
     }
     Ok(())
@@ -154,6 +158,17 @@ mod tests {
     #[test]
     fn a_mistyped_packages_is_an_error() {
         assert!(parse("[changelog]\npackages = \"core\"\n").is_err());
+    }
+
+    #[test]
+    fn api_surface_is_off_unless_turned_on() {
+        assert!(!parse("[changelog]\n").unwrap().api_surface);
+        assert!(
+            parse("[changelog]\napi_surface = true\n")
+                .unwrap()
+                .api_surface
+        );
+        assert!(parse("[changelog]\napi_surface = \"yes\"\n").is_err());
     }
 
     #[test]

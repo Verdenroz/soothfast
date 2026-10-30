@@ -199,17 +199,7 @@ fn lang_targets(
             Ok(targets)
         }
         ([], None) => Ok(Vec::new()),
-        (_, None) | ([], Some(_)) => Err("--dir and --lang go together".into()),
-        (dirs, Some(word)) => {
-            let langs = coverage_lang::langs_for(word)?;
-            Ok(dirs
-                .iter()
-                .map(|dir| Target {
-                    dir: dir.into(),
-                    langs: langs.clone(),
-                })
-                .collect())
-        }
+        _ => coverage_lang::targets(Path::new("."), dirs, lang),
     }
 }
 

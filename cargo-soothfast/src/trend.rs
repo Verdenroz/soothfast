@@ -123,7 +123,8 @@ fn append(args: &[String]) -> i32 {
 
 /// A trend point built from a saved baseline instead of a fresh measurement.
 /// Buildcost pseudo-items and other packages' entries are dropped so the
-/// point holds exactly what `trend append -p PKG` would have measured.
+/// point holds exactly what `trend append -p PKG` would have measured;
+/// imported items belong to no package and always stay.
 fn point_from_baseline(
     doc: &Value,
     pkg: Option<&str>,
@@ -136,9 +137,15 @@ fn point_from_baseline(
         .unwrap_or_default()
         .into_iter()
         .filter(|(id, _)| !id.starts_with("buildcost::"))
-        .filter(|(id, _)| pkg.is_none_or(|p| invoke::id_pkg(id) == p.replace('-', "_").as_str()))
+        .filter(|(id, item)| {
+            item["imported"].is_string()
+                || pkg.is_none_or(|p| invoke::id_pkg(id) == p.replace('-', "_").as_str())
+        })
         .collect();
-    if items.is_empty() {
+    if items
+        .values()
+        .all(|item| pkg.is_some() && item["imported"].is_string())
+    {
         return Err(format!(
             "no bench items{} — measure into it first",
             pkg.map(|p| format!(" for package {p:?}"))
@@ -238,6 +245,7 @@ mod tests {
                     "alloc": { "allocs": 2, "bytes": 128 }
                 },
                 "other_pkg::thing": { "walltime": { "median_ns": 9.0 } },
+                "jmh::A.b": { "imported": "jmh", "walltime": { "median_ns": 5.0 } },
                 "buildcost::finance-query::default": {
                     "buildcost": { "build_ms": 12000, "size_bytes": 4096 }
                 }
@@ -263,15 +271,22 @@ mod tests {
         // packages, no buildcost pseudo-items.
         let p = point_from_baseline(&baseline(), Some("finance-query"), "c", 0).unwrap();
         let items = p["items"].as_object().unwrap();
-        assert_eq!(items.len(), 1);
+        assert_eq!(items.len(), 2);
         assert!(items.contains_key("finance_query::indicators::sma"));
+        assert!(!items.contains_key("other_pkg::thing"));
+    }
+
+    #[test]
+    fn imported_items_stay_under_a_package_scope() {
+        let p = point_from_baseline(&baseline(), Some("finance-query"), "c", 0).unwrap();
+        assert_eq!(p["items"]["jmh::A.b"]["imported"], "jmh");
     }
 
     #[test]
     fn no_package_keeps_every_bench_item_but_never_buildcost() {
         let p = point_from_baseline(&baseline(), None, "c", 0).unwrap();
         let items = p["items"].as_object().unwrap();
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 3);
         assert!(!items.contains_key("buildcost::finance-query::default"));
     }
 

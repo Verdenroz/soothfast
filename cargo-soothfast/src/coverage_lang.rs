@@ -23,6 +23,9 @@ const SKIPPED_DIRS: [&str; 8] = [
 /// A source directory and the languages whose files it contributes.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Target {
+    /// The directory as written in the manifest or on the command line,
+    /// relative to the repository root.
+    pub label: String,
     pub dir: PathBuf,
     pub langs: Vec<Lang>,
 }
@@ -49,6 +52,26 @@ pub fn langs_for(word: &str) -> Result<Vec<Lang>, String> {
         other => Err(format!(
             "unknown --lang {other:?} (java, kotlin, python, javascript, typescript, gradle, maven, node)"
         )),
+    }
+}
+
+/// The trees to cover: `--dir` (repeatable) with `--lang`, else the
+/// manifest's projects.
+pub fn targets(root: &Path, dirs: &[String], lang: Option<&str>) -> Result<Vec<Target>, String> {
+    match (dirs, lang) {
+        ([], None) => manifest_targets(root),
+        (dirs @ [_, ..], Some(word)) => {
+            let langs = langs_for(word)?;
+            Ok(dirs
+                .iter()
+                .map(|dir| Target {
+                    label: dir.clone(),
+                    dir: root.join(dir),
+                    langs: langs.clone(),
+                })
+                .collect())
+        }
+        _ => Err("--dir and --lang go together".into()),
     }
 }
 
@@ -95,7 +118,8 @@ pub fn manifest_targets(root: &Path) -> Result<Vec<Target>, String> {
             continue;
         }
         targets.push(Target {
-            dir: root.join(dir),
+            dir: root.join(&dir),
+            label: dir,
             langs: langs_for(&ecosystem)?,
         });
     }
@@ -103,7 +127,7 @@ pub fn manifest_targets(root: &Path) -> Result<Vec<Target>, String> {
 }
 
 /// Every public symbol under `target`, one entry per file and name, in path
-/// order. A name with several overloads is documented when any overload is.
+/// order, ids relative to the target's directory.
 pub fn entries(target: &Target) -> Result<Vec<Entry>, String> {
     let mut files = Vec::new();
     collect(&target.dir, &target.langs, &mut files)?;
@@ -112,25 +136,46 @@ pub fn entries(target: &Target) -> Result<Vec<Entry>, String> {
     for (path, lang) in files {
         let source = std::fs::read_to_string(&path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let symbols =
-            public_symbols(lang, &source).map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut by_name: BTreeMap<String, (String, bool)> = BTreeMap::new();
-        for s in symbols {
-            let slot = by_name
-                .entry(s.name)
-                .or_insert_with(|| (format!("{:?}", s.kind).to_lowercase(), false));
-            slot.1 |= s.documented;
-        }
         let shown = path.strip_prefix(&target.dir).unwrap_or(&path);
-        for (name, (kind, documented)) in by_name {
-            out.push(Entry {
-                id: format!("{}#{name}", shown.display()),
-                kind,
-                documented,
-            });
-        }
+        out.extend(file_entries(&shown.display().to_string(), lang, &source)?);
     }
     Ok(out)
+}
+
+/// The public symbols of one file, ids `shown#Name`. A name with several
+/// overloads is documented when any overload is.
+pub fn file_entries(shown: &str, lang: Lang, source: &str) -> Result<Vec<Entry>, String> {
+    let symbols = public_symbols(lang, source).map_err(|e| format!("{shown}: {e}"))?;
+    let mut by_name: BTreeMap<String, (String, bool)> = BTreeMap::new();
+    for s in symbols {
+        let slot = by_name
+            .entry(s.name)
+            .or_insert_with(|| (format!("{:?}", s.kind).to_lowercase(), false));
+        slot.1 |= s.documented;
+    }
+    Ok(by_name
+        .into_iter()
+        .map(|(name, (kind, documented))| Entry {
+            id: format!("{shown}#{name}"),
+            kind,
+            documented,
+        })
+        .collect())
+}
+
+/// The language of `rel` when a target for `langs` covers the file: the
+/// extension matches and no directory on the way is skipped.
+pub fn covered(rel: &Path, langs: &[Lang]) -> Option<Lang> {
+    let dirs = rel.parent()?.components();
+    let hidden_or_skipped = dirs.filter_map(|c| c.as_os_str().to_str()).any(skipped_dir);
+    if hidden_or_skipped {
+        return None;
+    }
+    Lang::for_path(rel).filter(|l| langs.contains(l))
+}
+
+fn skipped_dir(name: &str) -> bool {
+    name.starts_with('.') || SKIPPED_DIRS.contains(&name)
 }
 
 fn collect(dir: &Path, langs: &[Lang], out: &mut Vec<(PathBuf, Lang)>) -> Result<(), String> {
@@ -140,7 +185,7 @@ fn collect(dir: &Path, langs: &[Lang], out: &mut Vec<(PathBuf, Lang)>) -> Result
         let path = entry.map_err(|e| e.to_string())?.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if path.is_dir() {
-            if !name.starts_with('.') && !SKIPPED_DIRS.contains(&name) {
+            if !skipped_dir(name) {
                 collect(&path, langs, out)?;
             }
         } else if let Some(lang) = Lang::for_path(&path).filter(|l| langs.contains(l)) {
@@ -179,10 +224,12 @@ mod tests {
             targets,
             [
                 Target {
+                    label: "client".into(),
                     dir: dir.join("client"),
                     langs: vec![Lang::Kotlin, Lang::Java]
                 },
                 Target {
+                    label: "web".into(),
                     dir: dir.join("web"),
                     langs: vec![Lang::JavaScript, Lang::TypeScript, Lang::Tsx]
                 },
@@ -204,6 +251,7 @@ mod tests {
             ],
         );
         let target = Target {
+            label: ".".into(),
             dir: dir.clone(),
             langs: vec![Lang::Python],
         };
@@ -219,6 +267,16 @@ mod tests {
                 ("src/app.py#shown".into(), true)
             ]
         );
+    }
+
+    #[test]
+    fn covered_skips_hidden_and_vendored_directories() {
+        let langs = [Lang::Python];
+        assert_eq!(covered(Path::new("src/a.py"), &langs), Some(Lang::Python));
+        assert_eq!(covered(Path::new("a.py"), &langs), Some(Lang::Python));
+        assert_eq!(covered(Path::new("tests/a.py"), &langs), None);
+        assert_eq!(covered(Path::new(".venv/lib/a.py"), &langs), None);
+        assert_eq!(covered(Path::new("src/A.java"), &langs), None);
     }
 
     #[test]

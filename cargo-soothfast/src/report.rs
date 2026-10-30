@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use soothfast_report::{badges, changelog, llms, perf_table, trend_chart};
 
-use crate::{docs_support, invoke, workspace};
+use crate::{coverage_lang, docs_support, invoke, project_surface, workspace};
 
 pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
@@ -32,6 +32,9 @@ struct ReportArgs {
     against_ref: Option<String>,
     features: Option<String>,
     bot_author: Option<String>,
+    /// Non-Rust source trees besides the manifest's `[[project]]` entries.
+    dirs: Vec<String>,
+    lang: Option<String>,
 }
 
 fn parse(args: &[String]) -> Result<ReportArgs, String> {
@@ -42,6 +45,8 @@ fn parse(args: &[String]) -> Result<ReportArgs, String> {
         against_ref: None,
         features: None,
         bot_author: None,
+        dirs: Vec::new(),
+        lang: None,
     };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -54,6 +59,8 @@ fn parse(args: &[String]) -> Result<ReportArgs, String> {
             "--against-ref" => a.against_ref = it.next().cloned(),
             "--features" => a.features = it.next().cloned(),
             "--bot-author" => a.bot_author = it.next().cloned(),
+            "--dir" => a.dirs.extend(it.next().cloned()),
+            "--lang" => a.lang = it.next().cloned(),
             other => return Err(format!("unknown report arg {other:?}")),
         }
     }
@@ -129,9 +136,14 @@ fn render(args: &[String]) -> i32 {
     }
 
     // llms.txt needs the public surface (nightly rustdoc); skip with a note
-    // when no package is given. Multiple -p flags combine into one digest —
-    // a single facade crate's own surface is typically too thin alone.
-    if a.pkg.is_empty() {
+    // when there is neither a package nor a non-Rust project. Multiple -p
+    // flags combine into one digest — a single facade crate's own surface is
+    // typically too thin alone.
+    let targets = match coverage_lang::targets(&root, &a.dirs, a.lang.as_deref()) {
+        Ok(t) => t,
+        Err(e) => return err(&e),
+    };
+    if a.pkg.is_empty() && targets.is_empty() {
         println!(
             "report: skipped llms.txt (pass -p PKG to generate; repeat -p for multiple crates)"
         );
@@ -145,10 +157,24 @@ fn render(args: &[String]) -> i32 {
         }
         let label = if a.pkg.len() == 1 {
             a.pkg[0].clone()
+        } else if a.pkg.is_empty() {
+            targets
+                .iter()
+                .map(|t| t.label.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         } else {
             a.pkg.join(", ")
         };
-        let text = llms::render(&label, &entries, &baseline);
+        let mut text = llms::render(&label, &entries, &baseline);
+        let mut projects = Vec::new();
+        for target in &targets {
+            match project_surface::llms_section(target) {
+                Ok(p) => projects.push(p),
+                Err(e) => return err(&e),
+            }
+        }
+        text.push_str(&llms::render_projects(&projects, &baseline));
         let path = out_dir.join("llms.txt");
         if std::fs::write(&path, text).is_err() {
             return err("cannot write llms.txt");
@@ -306,7 +332,15 @@ fn changelog_cmd(args: &[String]) -> i32 {
     // Without a reference there is no earlier surface to diff against, so
     // the release is described by what it contains. A facade crate's own
     // surface is thin; pass every crate whose API ships.
-    let (diff_text, entries) = match &a.against_ref {
+    let targets = if cfg.api_surface {
+        match coverage_lang::targets(&root, &a.dirs, a.lang.as_deref()) {
+            Ok(t) => t,
+            Err(e) => return err(&e),
+        }
+    } else {
+        Vec::new()
+    };
+    let (mut diff_text, mut entries) = match &a.against_ref {
         Some(refname) => match surface_diffs(&a.pkg, refname, a.features.as_deref()) {
             Ok(t) => (t, Vec::new()),
             Err(e) => return err(&e),
@@ -322,6 +356,19 @@ fn changelog_cmd(args: &[String]) -> i32 {
             (String::new(), all)
         }
     };
+    for target in &targets {
+        match &a.against_ref {
+            Some(refname) => match project_surface::diff_text(&root, target, refname) {
+                Ok(t) if t.is_empty() => {}
+                Ok(t) => diff_text.push_str(&format!("# {}\n{}\n", target.label, t.trim_end())),
+                Err(e) => return err(&e),
+            },
+            None => match project_surface::inventory(target) {
+                Ok(e) => entries.extend(e),
+                Err(e) => return err(&e),
+            },
+        }
+    }
     // Measuring the ref turns the Performance section from a point-in-time
     // snapshot into "what moved", which is what a changelog reader wants and
     // what keeps a no-op merge from rewriting the whole table.
