@@ -25,6 +25,8 @@ fn prove_in(lines: &[&str]) -> Vec<Proof> {
 }
 
 const LEA: &str = "lea    0x100d(%rip),%rcx        # 2010 <anon>";
+const LEA_SI: &str = "lea    0x100d(%rip),%rsi        # 2010 <anon>";
+const LEA_DX: &str = "lea    0x100d(%rip),%rdx        # 2010 <anon>";
 const LOAD: &str = "movslq (%rcx,%rax,4),%rax";
 const ADD: &str = "add    %rcx,%rax";
 const JMP: &str = "jmp    *%rax";
@@ -75,9 +77,9 @@ fn an_implicit_writer_breaks_the_proof() {
     for odd in [
         "rdtsc",
         "lahf",
-        "cwtd",
         "xgetbv",
-        "cmpxchg16b (%rdi)",
+        "cpuid",
+        "syscall",
         "xchg   %rbx,%rcx",
         "lock xadd %rcx,(%rdi)",
         "cmpxchg %rbx,%rcx",
@@ -91,6 +93,66 @@ fn an_implicit_writer_breaks_the_proof() {
         prove_in(&[LEA, "nop", "pause", LOAD, ADD, JMP, RET]).len(),
         1
     );
+}
+
+#[test]
+fn a_string_op_writes_its_index_registers() {
+    for odd in ["cmpsb  %es:(%rdi),%ds:(%rsi)", "lodsq  %ds:(%rsi),%rax"] {
+        let lines = [
+            LEA_SI,
+            odd,
+            "movslq (%rsi,%rax,4),%rax",
+            "add    %rsi,%rax",
+            JMP,
+            RET,
+        ];
+        assert!(prove_in(&lines).is_empty(), "{odd}");
+    }
+}
+
+#[test]
+fn a_widening_multiply_writes_rdx() {
+    let lines = [
+        LEA_DX,
+        "imulq  0x8(%rsp)",
+        "movslq (%rdx,%rax,4),%rax",
+        "add    %rdx,%rax",
+        JMP,
+        RET,
+    ];
+    assert!(prove_in(&lines).is_empty());
+}
+
+#[test]
+fn a_tail_call_through_a_got_slot_leaves_the_function() {
+    let lines = [
+        LEA,
+        LOAD,
+        ADD,
+        JMP,
+        "jmp    *0x650abb(%rip)        # 12651d8 <_DYNAMIC+0x210>",
+        RET,
+    ];
+    assert_eq!(prove_in(&lines).len(), 1);
+    let through_register = [LEA, LOAD, ADD, JMP, "jmp    *%rdx", RET];
+    assert!(prove_in(&through_register).is_empty());
+}
+
+#[test]
+fn an_implicit_writer_of_other_registers_keeps_the_proof() {
+    for ok in [
+        "cwtd",
+        "cqto",
+        "cltq",
+        "mul    %rdx",
+        "divq   0x8(%rsp)",
+        "imul   %rsi",
+        "imulq  0x8(%rsp)",
+        "cmpxchg16b (%rdi)",
+        "movsq  (%rsi),(%rdi)",
+    ] {
+        assert_eq!(prove_in(&[LEA, ok, LOAD, ADD, JMP, RET]).len(), 1, "{ok}");
+    }
 }
 
 #[test]

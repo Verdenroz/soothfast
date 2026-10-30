@@ -152,46 +152,54 @@ impl Items {
         let _ = std::fs::write(self.path(id), doc.to_string());
     }
 
-    /// The entries that stand for an item in every one of `bins` (each with
-    /// its link-map extents): the same entry hashes true in each, so the item
-    /// ran the same code in all. `listed` is each binary's items with their
-    /// current fingerprints.
+    /// Per binary of `bins`, the entry each item's code in it still hashes to;
+    /// a miss is counted once per item, by the first binary's reason.
     pub fn reusable(
         &self,
         listed: &[BTreeMap<String, String>],
         bins: &[(PathBuf, Vec<Extent>)],
-    ) -> BTreeMap<String, Entry> {
+    ) -> (Vec<BTreeMap<String, Entry>>, Misses) {
         let ids: Vec<String> = listed[0]
             .keys()
             .filter(|id| listed.iter().all(|l| l.contains_key(*id)))
             .cloned()
             .collect();
+        let none = || vec![BTreeMap::new(); bins.len()];
         let stored = self.load(&ids);
         let wanted = stored.wanted();
         if wanted.is_empty() {
-            return BTreeMap::new();
+            return (none(), Misses::all(Miss::Unstored, ids.len()));
         }
         let binaries: Option<Vec<Binary>> = bins
             .iter()
             .map(|(bin, inputs)| Binary::open(bin, &wanted, inputs))
             .collect();
         let Some(binaries) = binaries else {
-            return BTreeMap::new();
+            return (none(), Misses::all(Miss::Unreadable, ids.len()));
         };
-        ids.iter()
-            .filter_map(|id| {
-                let found: Vec<&Entry> = binaries
-                    .iter()
-                    .zip(listed)
-                    .map(|(b, l)| stored.lookup(b, id, &l[id]))
-                    .collect::<Option<_>>()?;
-                let first = found[0];
-                found
-                    .iter()
-                    .all(|e| std::ptr::eq(*e, first))
-                    .then(|| (id.clone(), first.clone()))
-            })
-            .collect()
+        if let (Ok(want), [head, base]) = (std::env::var("SOOTHFAST_EXPLAIN"), binaries.as_slice())
+        {
+            explain(&want, &ids, &stored, head, base);
+        }
+        let mut hits = none();
+        let mut misses = Misses::default();
+        for id in &ids {
+            let mut first_miss = None;
+            for ((bin, l), side) in binaries.iter().zip(listed).zip(hits.iter_mut()) {
+                match stored.lookup(bin, id, &l[id]) {
+                    Ok(entry) => {
+                        side.insert(id.clone(), entry.clone());
+                    }
+                    Err(miss) => {
+                        first_miss.get_or_insert(miss);
+                    }
+                }
+            }
+            if let Some(miss) = first_miss {
+                misses.count(miss);
+            }
+        }
+        (hits, misses)
     }
 
     /// Drop the oldest item files past [`KEEP`], across every scope.
@@ -229,11 +237,97 @@ impl Stored {
     /// and whose item fingerprint is `fingerprint`. The fingerprint carries
     /// the claims (`alloc = N`, `p99 = ...`) its stored assertions were
     /// judged against, which the executed code does not.
-    pub fn lookup(&self, bin: &Binary, id: &str, fingerprint: &str) -> Option<&Entry> {
-        self.0.get(id)?.iter().find(|e| {
-            e.metrics.fingerprint == fingerprint
-                && bin.code_key(&e.functions).as_deref() == Some(&e.code_key)
-        })
+    pub fn lookup(&self, bin: &Binary, id: &str, fingerprint: &str) -> Result<&Entry, Miss> {
+        let entries = self
+            .0
+            .get(id)
+            .filter(|e| !e.is_empty())
+            .ok_or(Miss::Unstored)?;
+        let mut miss = Miss::Claims;
+        for e in entries
+            .iter()
+            .filter(|e| e.metrics.fingerprint == fingerprint)
+        {
+            match bin.code_key(&e.functions) {
+                Some(key) if key == e.code_key => return Ok(e),
+                Some(_) => miss = Miss::Code,
+                None if miss == Miss::Claims => miss = Miss::Unhashed,
+                None => {}
+            }
+        }
+        Err(miss)
+    }
+}
+
+/// Print what differs between `head` and `base` for item `want`, or every
+/// item for `all`, over its newest entry's functions.
+fn explain(want: &str, ids: &[String], stored: &Stored, head: &Binary, base: &Binary) {
+    for id in ids.iter().filter(|id| want == "all" || *id == want) {
+        let Some(entry) = stored.0.get(id).and_then(|e| e.first()) else {
+            continue;
+        };
+        let lines = head.differences(base, &entry.functions);
+        if lines.is_empty() {
+            continue;
+        }
+        println!("explain {id}: head vs base, over the newest entry's functions");
+        for line in lines {
+            println!("explain   {line}");
+        }
+    }
+}
+
+/// Why no stored entry of an item stands for it in one binary, in the order
+/// the gate line reports them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Miss {
+    /// The code an entry ran hashes differently in this binary.
+    Code,
+    /// No entry was measured under the item's current claims.
+    Claims,
+    /// A function an entry ran cannot be hashed in this binary.
+    Unhashed,
+    /// Nothing is stored for the item in this scope.
+    Unstored,
+    /// The binary could not be read at all.
+    Unreadable,
+}
+
+impl Miss {
+    fn reason(self) -> &'static str {
+        match self {
+            Miss::Code => "code changed",
+            Miss::Claims => "claims changed",
+            Miss::Unhashed => "unhashable here",
+            Miss::Unstored => "never stored",
+            Miss::Unreadable => "binary unreadable",
+        }
+    }
+}
+
+/// The items [`Items::reusable`] found no entry for, by reason.
+#[derive(Debug, Default, PartialEq)]
+pub struct Misses(BTreeMap<Miss, usize>);
+
+impl Misses {
+    fn all(miss: Miss, n: usize) -> Misses {
+        Misses(BTreeMap::from([(miss, n)]))
+    }
+
+    fn count(&mut self, miss: Miss) {
+        *self.0.entry(miss).or_default() += 1;
+    }
+}
+
+impl std::fmt::Display for Misses {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let named: Vec<String> = self
+            .0
+            .iter()
+            .filter(|(_, n)| **n > 0)
+            .map(|(miss, n)| format!("{n} {}", miss.reason()))
+            .collect();
+        f.write_str(&named.join(", "))
     }
 }
 
@@ -324,8 +418,42 @@ mod tests {
         .expect("hashable");
         items.store("p::a", stored);
         let loaded = items.load(&ids());
-        assert!(loaded.lookup(&binary, "p::a", "fp").is_some());
-        assert!(loaded.lookup(&binary, "p::a", "other").is_none());
+        assert!(loaded.lookup(&binary, "p::a", "fp").is_ok());
+        assert_eq!(
+            loaded.lookup(&binary, "p::a", "other").err(),
+            Some(Miss::Claims)
+        );
+    }
+
+    #[test]
+    fn a_miss_names_why_no_entry_stands_for_the_item() {
+        let items = scratch("why");
+        items.store("p::a", entry("k1", 1));
+        let loaded = items.load(&ids());
+        let changed = Binary::with_hashes([("f".to_string(), 7)].into());
+        let unhashed = Binary::with_hashes(Default::default());
+        assert_eq!(
+            loaded.lookup(&changed, "p::a", "fp").err(),
+            Some(Miss::Code)
+        );
+        assert_eq!(
+            loaded.lookup(&unhashed, "p::a", "fp").err(),
+            Some(Miss::Unhashed)
+        );
+        let nothing = scratch("why-empty").load(&ids());
+        assert_eq!(
+            nothing.lookup(&changed, "p::a", "fp").err(),
+            Some(Miss::Unstored)
+        );
+    }
+
+    #[test]
+    fn misses_print_only_the_reasons_that_occurred() {
+        let mut misses = Misses::all(Miss::Unstored, 1);
+        for _ in 0..3 {
+            misses.count(Miss::Code);
+        }
+        assert_eq!(misses.to_string(), "3 code changed, 1 never stored");
     }
 
     #[test]

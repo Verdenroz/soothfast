@@ -189,6 +189,27 @@ impl Binary {
         }
         Some(format!("{:016x}", fnv1a(text.as_bytes())))
     }
+
+    /// Each bench-binary function of `functions` whose hash here differs
+    /// from `other`'s, and the thread-local image when it does.
+    pub fn differences(&self, other: &Binary, functions: &[(String, String)]) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.tls != other.tls {
+            out.push(format!(
+                "thread-local image {:016x} vs {:016x}",
+                self.tls, other.tls
+            ));
+        }
+        for (ob, sym) in functions.iter().filter(|(ob, _)| ob == EXE) {
+            let (a, b) = (self.hashes.get(sym), other.hashes.get(sym));
+            if a != b {
+                let show =
+                    |h: Option<&u64>| h.map_or("unhashed".to_string(), |h| format!("{h:016x}"));
+                out.push(format!("{ob} {sym}: {} vs {}", show(a), show(b)));
+            }
+        }
+        out
+    }
 }
 
 /// Content digest of a foreign object, read once per path. Callgrind's `???`
