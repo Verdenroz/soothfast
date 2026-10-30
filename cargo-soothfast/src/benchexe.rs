@@ -200,18 +200,22 @@ pub fn executable(
     build: Build,
 ) -> Option<PathBuf> {
     let plan = Plan::new(common, dir, target_dir, build);
-    resolve(plan.as_ref(), || {
-        let target = common.target.as_deref().unwrap_or("soothfast");
-        let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-        let mut cmd = invoke::bench_build_command(common, dir, target_dir, build, &pkgs).ok()?;
-        cmd.args(["--no-run", "--message-format=json"]);
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::null());
-        let out = cmd.output().ok().filter(|o| o.status.success())?;
-        let exe = invoke::bench_artifact(&out.stdout, target)?;
-        Some(Built {
-            exe,
-            cargo_stdout: out.stdout,
+    let label = format!("bench executable {}", common.pkg.as_deref().unwrap_or(""));
+    invoke::timed(&label, || {
+        resolve(plan.as_ref(), || {
+            let target = common.target.as_deref().unwrap_or("soothfast");
+            let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+            let mut cmd =
+                invoke::bench_build_command(common, dir, target_dir, build, &pkgs).ok()?;
+            cmd.args(["--no-run", "--message-format=json"]);
+            cmd.stdout(Stdio::piped());
+            cmd.stderr(Stdio::null());
+            let out = cmd.output().ok().filter(|o| o.status.success())?;
+            let exe = invoke::bench_artifact(&out.stdout, target)?;
+            Some(Built {
+                exe,
+                cargo_stdout: out.stdout,
+            })
         })
     })
 }

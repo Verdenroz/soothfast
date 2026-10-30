@@ -49,7 +49,15 @@ pub fn key(root: &Path, crate_dirs: &[PathBuf], req: &Request) -> Option<String>
         req.target_dir.display(),
         req.cargo_home,
     );
-    store::cheap_key(root, crate_dirs, &head, req.env)
+    store::cheap_key_skipping(root, crate_dirs, &head, req.env, is_markdown)
+}
+
+/// Markdown stays out of the cheap key so that a docs-only change is a hit.
+/// A build reads one only through `include_str!` and the like, which the
+/// manifest records.
+fn is_markdown(file: &Path) -> bool {
+    file.extension()
+        .is_some_and(|x| x == "md" || x == "markdown")
 }
 
 /// `.soothfast/bins`, created on demand.
@@ -176,8 +184,13 @@ mod tests {
         let repo = Repo::new("bin-edits");
         let base = key_with(&repo, &request());
         repo.write("README.md", "docs only\n");
+        repo.write("app/README.md", "docs only\n");
+        repo.write("app/docs/guide.md", "docs only\n");
         repo.write("other/src/lib.rs", "pub fn other() -> u8 { 0 }\n");
         assert_eq!(base, key_with(&repo, &request()));
+        repo.write("app/data.json", "{}\n");
+        assert_ne!(base, key_with(&repo, &request()));
+        let base = key_with(&repo, &request());
         repo.write("app/src/lib.rs", "pub fn app() -> u8 { 0 }\n");
         let edited = key_with(&repo, &request());
         assert_ne!(base, edited);

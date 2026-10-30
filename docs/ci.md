@@ -227,6 +227,11 @@ dep-info cargo writes for the bench executable and every workspace
 dependency plus the build scripts' `rerun-if-*` lines. An entry is kept only
 if every dependency's dep-info could be read.
 
+Markdown files are left out of the key's file list, so a docs-only change is
+a hit even for a package at the repository root, where that list is the
+whole repository. A markdown file the build included (`include_str!` on a
+README, say) is in the manifest and counts.
+
 **The checkout path is part of the key**, and so are the target directory
 and `CARGO_HOME`. A binary can carry them: `env!("CARGO_MANIFEST_DIR")`,
 `file!()`, `OUT_DIR` and debug info all write absolute paths into its bytes,
@@ -239,8 +244,9 @@ A stored binary has no build to link again, so its link map is the one kept
 under `.soothfast/maps` for its digest, or none: unnamed constants then hash
 as whole sections, which finds fewer reusable items but never a wrong one.
 
-Not covered, beyond what the rustdoc cache lists: the linker and C compiler
-a build script invokes, and anything a bench reads at run time besides its
+Not covered, beyond what the rustdoc cache lists: a markdown file a proc
+macro or build script reads without saying so, the linker and C compiler a
+build script invokes, and anything a bench reads at run time besides its
 working directory and `CARGO_MANIFEST_DIR`. The store keeps 512 MiB.
 
 ## Labels

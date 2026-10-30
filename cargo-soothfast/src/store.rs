@@ -208,6 +208,18 @@ pub fn cheap_key(
     head: &str,
     env: &[(String, String)],
 ) -> Option<String> {
+    cheap_key_skipping(root, crate_dirs, head, env, |_| false)
+}
+
+/// `cheap_key` leaving out the listed files that `skip` names. A skipped file
+/// still counts if the build read it, through the manifest.
+pub fn cheap_key_skipping(
+    root: &Path,
+    crate_dirs: &[PathBuf],
+    head: &str,
+    env: &[(String, String)],
+    skip: fn(&Path) -> bool,
+) -> Option<String> {
     if crate_dirs.is_empty() {
         return None;
     }
@@ -218,7 +230,7 @@ pub fn cheap_key(
 
     let mut files: BTreeSet<PathBuf> = tracked_files(root, &rels)?
         .into_iter()
-        .filter(|f| !f.starts_with(".soothfast") && !f.starts_with(".github"))
+        .filter(|f| !f.starts_with(".soothfast") && !f.starts_with(".github") && !skip(f))
         .collect();
     files.extend(ROOT_FILES.iter().map(PathBuf::from));
 
@@ -465,6 +477,20 @@ mod tests {
         assert_eq!(root_package, cheap_key(&repo.0, &dirs, "h", &[]).unwrap());
         repo.write("README.md", "edited again\n");
         assert_ne!(root_package, cheap_key(&repo.0, &dirs, "h", &[]).unwrap());
+    }
+
+    #[test]
+    fn a_skipped_file_is_left_out_of_the_key() {
+        let repo = Repo::new("skip");
+        let skip_notes: fn(&Path) -> bool = |f| f.extension().is_some_and(|x| x == "notes");
+        let key = |skip| cheap_key_skipping(&repo.0, &repo.dirs(), "h", &[], skip).unwrap();
+        repo.write("app/a.notes", "one\n");
+        let before = key(skip_notes);
+        repo.write("app/a.notes", "two\n");
+        assert_eq!(before, key(skip_notes));
+        let unskipped = key(|_| false);
+        repo.write("app/a.notes", "three\n");
+        assert_ne!(unskipped, key(|_| false));
     }
 
     #[test]
