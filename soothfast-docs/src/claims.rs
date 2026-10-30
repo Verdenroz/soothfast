@@ -70,6 +70,11 @@ pub fn parse(expr: &str) -> Result<Claim, String> {
         other => return Err(format!("unsupported operator {other:?}")),
     };
 
+    if lhs.ends_with(" -") {
+        return Err(format!(
+            "claim difference needs a right operand: `A.backend.metric - B.backend.metric`, got {expr:?}"
+        ));
+    }
     let (first, second) = match lhs.rsplit_once(" - ") {
         Some((a, b)) => (a.trim_end(), Some(b.trim_start())),
         None => (lhs, None),
@@ -206,6 +211,8 @@ mod tests {
         assert_eq!(v.item, "x.bench.ts > a > b");
         assert_eq!(v.minus.unwrap().item, "y.py::t");
         assert!(parse("a.walltime.median_ns - b.walltime < 2us").is_err());
+        let err = parse("a.walltime.median_ns - < 2us").unwrap_err();
+        assert!(err.contains("right operand"), "{err}");
     }
 
     #[test]
