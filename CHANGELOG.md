@@ -12,6 +12,9 @@
 
 ### ✨ Features
 
+- Select, cache and retry tests of other languages (#290)
+- One verdict comment and check per pull request (#288)
+- Init mixed-ecosystem repos via a project manifest (#286)
 - Hybrid-repo binds, claims, reports and doc coverage (#289)
 - Store sweep items under callgrind (#295)
 - Init Gradle, Maven, Python and Node repos (#281)
