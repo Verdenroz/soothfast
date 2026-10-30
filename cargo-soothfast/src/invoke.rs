@@ -5,12 +5,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Instant;
 
 use serde_json::{Value, json};
 
-use crate::rustdocstore;
+use crate::{rustdoc_inputs, rustdocstore};
 
 /// Run `f`, printing its wall time to stderr when `SOOTHFAST_TIMINGS` is set.
 pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
@@ -1206,30 +1206,38 @@ pub fn rustdoc_json_in(
         .join("doc")
         .join(format!("{}.json", pkg.replace('-', "_")));
 
-    let store_key = rustdoc_store_key(pkg, dir, &root, features, visibility, &toolchain);
-    if let Some(doc) = store_key.as_deref().and_then(rustdocstore::load) {
+    let store_key = || rustdoc_store_key(pkg, dir, &root, features, visibility, &toolchain);
+    let key = store_key();
+    if let Some(doc) = key.as_deref().and_then(|k| rustdocstore::load(k, &root)) {
         warn_on_format_version(&doc);
         return Ok((doc, root));
     }
+    let dep_info = json_path.with_extension("soothfast.d");
+    let _ = std::fs::remove_file(&dep_info);
+    let started = std::time::SystemTime::now();
 
     let mut cmd = Command::new("cargo");
     cmd.args([&format!("+{toolchain}"), "rustdoc", "-p", pkg, "--lib"]);
+    cmd.arg("--message-format=json-render-diagnostics");
     // Feature-gated items are invisible to the surface unless enabled.
     if let Some(f) = features {
         cmd.args(["--features", f]);
     }
     cmd.args(["--", "--output-format", "json", "-Zunstable-options"]);
+    cmd.arg(format!("--emit=dep-info={}", dep_info.display()));
     if visibility == Visibility::Private {
         cmd.arg("--document-private-items");
     }
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
-    let status = timed(&format!("cargo rustdoc {pkg}"), || cmd.status())?;
-    if !status.success() {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
+    let built = timed(&format!("cargo rustdoc {pkg}"), || cmd.output())?;
+    if !built.status.success() {
         return Err(io::Error::other(format!(
-            "cargo +{toolchain} rustdoc failed with {status} \
-             (is the {toolchain} toolchain installed?)"
+            "cargo +{toolchain} rustdoc failed with {} \
+             (is the {toolchain} toolchain installed?)",
+            built.status
         )));
     }
     let text = std::fs::read_to_string(&json_path)
@@ -1238,8 +1246,9 @@ pub fn rustdoc_json_in(
         serde_json::from_str(&text)
     })?;
     warn_on_format_version(&doc);
-    if let Some(key) = store_key {
-        rustdocstore::store(&key, &json_path);
+    if let Some(key) = key {
+        let inputs = rustdoc_inputs::collect(&root, &dep_info, &built.stdout);
+        rustdocstore::store(&key, store_key(), &root, &inputs, started, &json_path);
     }
     Ok((doc, root))
 }
@@ -1252,7 +1261,24 @@ fn rustdoc_store_key(
     visibility: Visibility,
     toolchain: &str,
 ) -> Option<String> {
-    let crate_dirs = local_crate_dirs(pkg, dir).ok()?;
+    type Dirs = BTreeMap<(String, Option<PathBuf>), Vec<PathBuf>>;
+    static DIRS: Mutex<Dirs> = Mutex::new(BTreeMap::new());
+    let at = (pkg.to_string(), dir.map(Path::to_path_buf));
+    let known = DIRS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&at)
+        .cloned();
+    let crate_dirs = match known {
+        Some(dirs) => dirs,
+        None => {
+            let dirs = local_crate_dirs(pkg, dir).ok()?;
+            DIRS.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(at, dirs.clone());
+            dirs
+        }
+    };
     let rustc = rustdocstore::rustc_version(toolchain)?;
     let env = rustdocstore::build_env();
     let request = rustdocstore::Request {
