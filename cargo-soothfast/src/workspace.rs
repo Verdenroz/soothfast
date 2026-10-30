@@ -112,7 +112,7 @@ pub fn has_bench_target(pkg: &str, target: &str, dir: Option<&Path>) -> io::Resu
 }
 
 /// The lookup itself, over metadata already in hand — the seam tests use.
-fn bench_target_in(meta: &Value, pkg: &str, target: &str) -> bool {
+pub(crate) fn bench_target_in(meta: &Value, pkg: &str, target: &str) -> bool {
     meta["packages"]
         .as_array()
         .into_iter()
