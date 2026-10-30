@@ -86,10 +86,19 @@ impl<'a> Resolver<'a> {
         (addr - s.addr < s.size).then_some(i)
     }
 
+    fn marker_at(&self, addr: u64) -> Option<Place> {
+        Some(match self.markers.get(&addr)? {
+            Marker::Opaque(name) => Place::Code(name.clone()),
+            Marker::End { name, section } => Place::Bounded(name.clone(), Node::Section(*section)),
+        })
+    }
+
     /// `hint` is the symbol objdump printed next to the address, used only
     /// for code that has no sized symbol (PLT stubs) and GOT slots.
     fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
-        let section = self.section_at(addr)?;
+        let Some(section) = self.section_at(addr) else {
+            return self.marker_at(addr);
+        };
         let code = self.sections[section].code;
         if let Some(i) = self.symbol_at(addr)
             && self.section_at(self.symbols[i].addr) == Some(section)
@@ -101,12 +110,8 @@ impl<'a> Resolver<'a> {
                 Place::Data(Node::Symbol(i), off, String::new())
             });
         }
-        match self.markers.get(&addr) {
-            Some(Marker::Opaque(name)) => return Some(Place::Code(name.clone())),
-            Some(Marker::End { name, section }) => {
-                return Some(Place::Bounded(name.clone(), Node::Section(*section)));
-            }
-            None => {}
+        if let Some(place) = self.marker_at(addr) {
+            return Some(place);
         }
         if code {
             return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
@@ -517,6 +522,42 @@ Idx Name          Size      VMA               LMA               File off  Algn
         assert_ne!(hash(&stops, 0x2009, 1), hash(&stops, 0x2009, 2));
         let none = fixture(HashMap::new());
         assert_ne!(hash(&none, 0x2018, 1), hash(&none, 0x2018, 2));
+    }
+
+    #[test]
+    fn a_linker_boundary_symbol_names_an_address_outside_every_section() {
+        let sections = "\
+Idx Name          Size      VMA               LMA               File off  Algn
+  0 .text         00000100  0000000000001000  0000000000001000  00001000  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  1 .got.plt      00000018  0000000000002000  0000000000002000  00002000  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+  2 .tm_clone_table 00000000  0000000000002018  0000000000002018  00002018  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+  3 .data         00000008  0000000000002020  0000000000002020  00002020  2**3
+                  CONTENTS, ALLOC, LOAD, DATA
+";
+        let dis = |end: &str| {
+            format!(
+                "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # 2018 <{end}>\n    1007:\tret\n"
+            )
+        };
+        let at = |listing: &str, name: &str| {
+            let markers = parse_markers(listing, &loaded(sections));
+            let fixture = Fixture::default()
+                .sections(sections)
+                .symbols(FN_SYMBOLS)
+                .wanted(&[BAR])
+                .markers(markers);
+            bar(&fixture.hashes(&image(7, 1), &dis(name)))
+        };
+        let named = "0000000000002018 D __TMC_END__\n";
+        assert!(at(named, "__TMC_END__").is_some());
+        assert_ne!(
+            at(named, "__TMC_END__"),
+            at("0000000000002018 B _end\n", "_end")
+        );
+        assert_eq!(at("", "nothing"), None);
     }
 
     #[test]
