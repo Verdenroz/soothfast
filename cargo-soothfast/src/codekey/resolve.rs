@@ -133,9 +133,23 @@ impl<'a> Resolver<'a> {
                 (Node::Entry(start, e.entry), start)
             }
             Some(i) => (Node::Input(i), self.inputs[i].vma),
-            None => (Node::Section(section), self.sections[section].vma),
+            None => match self.input_ending_at(addr, section) {
+                Some(i) => (Node::Input(i), self.inputs[i].vma),
+                None => (Node::Section(section), self.sections[section].vma),
+            },
         };
         Some(Place::Data(node, addr - start, slot.to_string()))
+    }
+
+    /// The input section of `section` that ends exactly at `addr`, which no
+    /// input section contains.
+    fn input_ending_at(&self, addr: u64, section: usize) -> Option<usize> {
+        let i = self
+            .inputs
+            .partition_point(|e| e.vma < addr)
+            .checked_sub(1)?;
+        let e = &self.inputs[i];
+        (e.vma + e.size == addr && self.section_at(e.vma) == Some(section)).then_some(i)
     }
 
     pub(super) fn input_at(&self, addr: u64) -> Option<usize> {
@@ -472,6 +486,40 @@ mod tests {
         assert_eq!(hash(&input, 0x2018), hash(&input, 0x201c));
         assert_ne!(hash(&input, 0x2008), hash(&input, 0x2009));
         assert_ne!(hash(&[], 0x2018), hash(&[], 0x201c));
+    }
+
+    #[test]
+    fn an_address_one_past_an_input_section_hashes_that_section_not_the_whole() {
+        let dis = UNNAMED.replace("2008 <anon>", "2010 <end>");
+        let hash = |inputs: &[Extent], byte: usize| {
+            let mut image = image(7, 1);
+            image[byte] = 9;
+            let fixture = Fixture::default().wanted(&[BAR]).inputs(inputs);
+            bar(&fixture.hashes(&image, &dis))
+        };
+        let ends_here = Extent {
+            vma: 0x2008,
+            size: 8,
+            entry: 0,
+        };
+        assert!(hash(std::slice::from_ref(&ends_here), 0x2018).is_some());
+        assert_ne!(
+            hash(std::slice::from_ref(&ends_here), 0x200f),
+            hash(std::slice::from_ref(&ends_here), 0x2012)
+        );
+        assert_eq!(
+            hash(std::slice::from_ref(&ends_here), 0x2018),
+            hash(std::slice::from_ref(&ends_here), 0x201c)
+        );
+        assert_ne!(hash(&[], 0x2018), hash(&[], 0x201c));
+        let starts_here = Extent {
+            vma: 0x2010,
+            size: 8,
+            entry: 0,
+        };
+        let both = [ends_here, starts_here];
+        assert_ne!(hash(&both, 0x2010), hash(&both, 0x201c));
+        assert_eq!(hash(&both, 0x200f), hash(&both, 0x201c));
     }
 
     #[test]
