@@ -7,6 +7,8 @@
 
 use soothfast_registry::{Bencher, MeasuredItem, fixture_items, measured_items, route_items};
 
+use std::cell::Cell;
+
 use crate::json::esc;
 use crate::{alloc, asyncexec, callgrind, clientreq, sweep, walltime};
 
@@ -299,23 +301,25 @@ pub fn main() {
     if let Some(id) = &args.callgrind_exec {
         let item = find_item(id);
         let window = args.callgrind_window;
+        let iters = Cell::new(1);
         let mut collector = |body: &mut dyn FnMut()| {
             if !window {
                 return body();
             }
-            // Each body call is one iteration: the window size is not known
-            // until the warm-up has been counted.
             clientreq::dump_stats();
             body();
             clientreq::dump_stats();
-            let k = callgrind::negotiate_window().unwrap_or_else(|e| die(&e));
+            iters.set(callgrind::negotiate_window().unwrap_or_else(|e| die(&e)));
             clientreq::dump_stats();
-            for _ in 0..k {
-                body();
-            }
+            body();
             clientreq::dump_stats();
         };
-        (item.runner)(&mut Bencher::__new(args.iters, &mut collector));
+        let mut bencher = if window {
+            Bencher::__counted(&iters, &mut collector)
+        } else {
+            Bencher::__new(args.iters, &mut collector)
+        };
+        (item.runner)(&mut bencher);
         return;
     }
     if let Some(id) = &args.triage {
