@@ -3,7 +3,7 @@
 # run in .soothfast/runs for a later pull request whose merge-base is this
 # commit, or builds the same bench binary. Never fails: the code is already
 # merged, and the regeneration after this step must still run.
-# Inputs: CLI PACKAGES, FEATURES (optional).
+# Inputs: CLI PACKAGES, FEATURES and SAVE_BASELINE (optional).
 set -euo pipefail
 
 if ! git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
@@ -13,9 +13,11 @@ fi
 read -ra pkgs <<<"$PACKAGES"
 features=()
 [ -n "${FEATURES:-}" ] && features=(--features "$FEATURES")
+save=()
+[ -n "${SAVE_BASELINE:-}" ] && save=(--save-baseline "$SAVE_BASELINE")
 for pkg in "${pkgs[@]}"; do
   status=0
-  SOOTHFAST_RECORD=1 "$CLI" gate -p "$pkg" --against-ref 'HEAD^' "${features[@]}" || status=$?
+  SOOTHFAST_RECORD=1 "$CLI" gate -p "$pkg" --against-ref 'HEAD^' "${features[@]}" "${save[@]}" || status=$?
   if [ "$status" -ne 0 ]; then
     echo "::warning::soothfast gate for ${pkg} against HEAD^ exited ${status}; a regression still records the run, an error may not"
   fi

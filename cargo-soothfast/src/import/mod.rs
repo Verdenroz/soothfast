@@ -90,7 +90,7 @@ pub fn parse(format: Format, text: &str, prefix: Option<&str>) -> Result<Run, St
     let timings = match format {
         Format::Jmh => jmh::parse(text)?,
         Format::Pyperf => pyperf::parse(text)?,
-        Format::Pytest => pytest::parse(text)?,
+        Format::Pytest => pytest::parse(text, &invoke::project_root())?,
         Format::Vitest => vitest::parse(text)?,
     };
     if timings.is_empty() {

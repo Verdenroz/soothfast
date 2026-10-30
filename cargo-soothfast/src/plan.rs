@@ -46,7 +46,7 @@ fn build(root: &Path) -> Result<Plan, String> {
         .transpose()?;
     let projects = init::manifest(root)?;
     let docs = match &rust {
-        Some(rust) => rust.docs_package.is_some(),
+        Some(rust) => !rust.docs_packages.is_empty(),
         None => !projects.is_empty() && init::has_markers(root),
     };
     Ok(Plan {
@@ -91,7 +91,7 @@ impl Plan {
         let docs_package = self
             .rust
             .as_ref()
-            .and_then(|r| r.docs_package.clone())
+            .map(|r| r.docs_packages.join(" "))
             .unwrap_or_default();
         let packages = self
             .rust
@@ -164,7 +164,7 @@ mod tests {
         Plan {
             rust: rust.map(|packages| RustPlan {
                 packages: packages.iter().map(|p| p.to_string()).collect(),
-                docs_package: None,
+                docs_packages: Vec::new(),
             }),
             projects,
             ci: Ci::default(),
