@@ -282,8 +282,7 @@ installed on is refused.</p>
 <p><code>spec</code> and <code>docs</code> commands build rustdoc JSON, which compiles the package
 and its dependencies under nightly. With <code>rustdoc-cache: &quot;true&quot;</code> the job
 keeps <code>.soothfast/rustdoc</code> between runs, and a command that finds the JSON
-it needs there skips cargo entirely. The reusable <code>run.yml</code> keeps it for its
-docs check, and for the changelog regeneration on a default-branch push.</p>
+it needs there skips cargo entirely.</p>
 <p>Lookup has two levels. A key hashes the package, features, visibility, the
 <code>rustc -vV</code> of the rustdoc toolchain, the rustdoc format version, every
 <code>RUSTFLAGS</code>, <code>RUSTDOCFLAGS</code>, <code>CARGO_ENCODED_*</code>, <code>CARGO_BUILD_*</code>,
@@ -436,10 +435,6 @@ lines of output, reuse counts, seconds) and uploads it as
 <code>cargo soothfast verdict merge</code>, and posts one comment marked
 <code>&lt;!-- soothfast-verdict --&gt;</code> with a section per project, regressed and
 errored first. Shards of one project fold into one section.</p>
-<p>Each section keeps the output of its job without terminal colour codes, and
-without cargo's <code>warning:</code> blocks unless the job errored. A docs check that
-skipped its claims for lack of a measurement reads <code>pass (claims not
-evaluated)</code>. <code>run.yml</code> sets <code>CARGO_TERM_COLOR: never</code> for every job.</p>
 <p>Branch protection needs only the <code>verdict</code> check, named <code>&lt;caller job id&gt; /
 verdict</code>. The caller <code>cargo soothfast init</code> writes names its job <code>soothfast</code>,
 so a repo set up with init requires <code>soothfast / verdict</code>. The check fails when any project
