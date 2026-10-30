@@ -34,6 +34,7 @@ mod mcp;
 mod plan;
 mod report;
 mod runcache;
+mod rustdocstore;
 #[cfg(test)]
 mod schema_check;
 #[cfg(test)]
