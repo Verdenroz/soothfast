@@ -216,7 +216,7 @@ fn write_result(
         .collect();
     let wall_s = started.elapsed().as_secs_f64();
     let verdict = tally.verdict(selected);
-    project::write_result(path, "rust", ".", verdict, &output, wall_s)
+    project::write_result(path, "test-rust", ".", verdict, &output, wall_s)
 }
 
 fn host_triple() -> Result<String, String> {

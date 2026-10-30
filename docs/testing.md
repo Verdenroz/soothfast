@@ -306,7 +306,9 @@ test it settled that way (`skipped` or `reused`) and uploads them together as
 the `soothfast-result-test-settled` artifact. The matrix jobs need only the
 plan job and run beside the gate jobs, which do not wait for them. Each
 uploads `soothfast-result-test-<name>` and, on a pass, its stored pass, and a
-`test-cache` job merges those passes into the cache for the next run.
+`test-cache` job merges those passes into the cache for the next run. The
+verdict job expects a `test-<name>` result for every test the plan covers,
+settled or run, and `test-rust` for the Rust workspace.
 
 The plan job has no toolchain installed, so the key names it by the
 workflow's `java` and `node` inputs and the runner labels the test jobs use (Python is keyed as `uv`)

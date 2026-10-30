@@ -4,6 +4,13 @@
 # merge or waive a gate through soothfast-bot.
 # Needs GH_TOKEN and GITHUB_REPOSITORY.
 
+# perf_accepted PR: succeeds when PR carries soothfast:perf-accepted, applied
+# by someone who can write. It waives regressions only; an error has nothing to accept.
+perf_accepted() {
+  [ "$(gh pr view "$1" --json labels --jq 'any(.labels[]; .name == "soothfast:perf-accepted")')" = true ] &&
+    labelled_by_writer "$1" soothfast:perf-accepted
+}
+
 # labelled_by_writer PR LABEL: succeeds when whoever last applied LABEL to PR
 # has write, maintain or admin permission. The caller checks LABEL is on PR.
 labelled_by_writer() {

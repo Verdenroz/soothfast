@@ -275,6 +275,17 @@ impl Plan {
         json!({ "include": include })
     }
 
+    /// The result name of every test the plan covers, for the verdict job to
+    /// expect.
+    fn test_expect(&self) -> String {
+        let names: Vec<String> = self
+            .candidates()
+            .into_iter()
+            .map(|c| format!("test-{}", c.name))
+            .collect();
+        names.join(" ")
+    }
+
     /// The tests that need no job, and why.
     fn settled(&self) -> Vec<(String, String, Verdict)> {
         self.candidates()
@@ -299,7 +310,7 @@ impl Plan {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         for (name, project, verdict) in settled {
             let path = dir.join(format!("{name}.json"));
-            write_result(&path, &name, &project, verdict, &[], 0.0)?;
+            write_result(&path, &format!("test-{name}"), &project, verdict, &[], 0.0)?;
         }
         Ok(())
     }
@@ -319,7 +330,7 @@ impl Plan {
             .unwrap_or_default();
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\nruns_on={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nruns_on={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -328,6 +339,7 @@ impl Plan {
             tests,
             !tests["include"].as_array().is_none_or(Vec::is_empty),
             self.test_all(),
+            self.test_expect(),
             self.ci.runs_on_json(),
         )
     }
@@ -489,7 +501,7 @@ mod tests {
         assert_eq!(test_names(&p), ["gradle", "node"]);
         assert!(
             p.outputs()
-                .contains("test_projects=true\ntest_all=true\nruns_on")
+                .contains("test_projects=true\ntest_all=true\ntest_expect=")
         );
     }
 
@@ -502,6 +514,23 @@ mod tests {
         assert!(out.contains("projects=false\n"), "{out}");
         assert!(p.matrix(false)["include"].as_array().unwrap().is_empty());
         assert_eq!(test_names(&p), ["python"]);
+    }
+
+    #[test]
+    fn the_verdict_job_expects_every_candidate_even_a_settled_one() {
+        let mut p = plan(
+            None,
+            vec![
+                testable(Ecosystem::Gradle, "client", &[]),
+                testable(Ecosystem::Node, "web", &[]),
+            ],
+        );
+        p.changed = Some(["client/A.java".to_string()].into());
+        assert_eq!(p.test_expect(), "test-gradle test-node");
+        assert!(
+            p.outputs()
+                .contains("test_expect=test-gradle test-node\nruns_on=")
+        );
     }
 
     #[test]
@@ -537,6 +566,7 @@ mod tests {
         let doc: Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("node.json")).unwrap()).unwrap();
         assert_eq!(doc["verdict"], "skipped");
+        assert_eq!(doc["name"], "test-node");
         assert_eq!(doc["kind"], "test");
         std::fs::remove_dir_all(dir).unwrap();
     }
