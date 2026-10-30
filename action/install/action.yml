@@ -1,13 +1,9 @@
 name: install-cargo-soothfast
 description: >-
-  Install cargo-soothfast for the reusable run workflow: the crates.io release
-  named by the caller's Cargo.lock, else by the workflow's own workspace
-  version, else a build of the workflow's own commit. Expects the workflow's
-  repository checked out at `.soothfast-action`.
-inputs:
-  sha:
-    description: Commit of the workflow's repository to build when no release matches.
-    required: true
+  Install the cargo-soothfast that matches the ref the reusable run workflow
+  was called at: the crates.io release when that ref is the commit of a
+  published release tag, else a build of the ref itself. Expects the
+  workflow's repository checked out at that ref in `.soothfast-action`.
 outputs:
   bin:
     description: Path of the installed cargo-soothfast.
@@ -20,17 +16,17 @@ runs:
       id: resolve
       shell: bash
       run: |
-        version=$(grep -A1 '^name = "soothfast"$' "$GITHUB_WORKSPACE/Cargo.lock" 2>/dev/null | sed -n 's/^version = "\(.*\)"/\1/p' | head -n 1)
-        if [ -z "$version" ]; then
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$GITHUB_WORKSPACE/.soothfast-action/Cargo.toml" | head -n 1)
-        fi
-        if curl -fsS -A soothfast-ci -o /dev/null "https://crates.io/api/v1/crates/cargo-soothfast/$version"; then
+        source="$GITHUB_WORKSPACE/.soothfast-action"
+        rev=$(git -C "$source" rev-parse HEAD)
+        version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$source/Cargo.toml" | head -n 1)
+        tag_rev=$(git ls-remote https://github.com/Verdenroz/soothfast "refs/tags/v$version" "refs/tags/v$version^{}" | awk 'END { print $1 }')
+        released=false
+        if [ "$tag_rev" = "$rev" ] && curl -fsS -A soothfast-ci -o /dev/null "https://crates.io/api/v1/crates/cargo-soothfast/$version"; then
           released=true
-        else
-          released=false
         fi
         {
           echo "version=$version"
+          echo "rev=$rev"
           echo "released=$released"
           echo "bin=${CARGO_HOME:-$HOME/.cargo}/bin/cargo-soothfast"
         } >> "$GITHUB_OUTPUT"
@@ -41,16 +37,16 @@ runs:
         version: ${{ steps.resolve.outputs.version }}
         gate: "false"
         changelog: "false"
-    - name: Restore the build of this commit
+    - name: Restore the build of this ref
       if: steps.resolve.outputs.released != 'true'
       id: cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.resolve.outputs.bin }}
-        key: cargo-soothfast-git-${{ runner.os }}-${{ runner.arch }}-${{ inputs.sha }}
-    - name: Build this commit
+        key: cargo-soothfast-git-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.rev }}
+    - name: Build this ref
       if: steps.resolve.outputs.released != 'true' && steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
-        SHA: ${{ inputs.sha }}
-      run: cargo install --locked --git https://github.com/Verdenroz/soothfast --rev "$SHA" cargo-soothfast
+        REV: ${{ steps.resolve.outputs.rev }}
+      run: cargo install --locked --git https://github.com/Verdenroz/soothfast --rev "$REV" cargo-soothfast

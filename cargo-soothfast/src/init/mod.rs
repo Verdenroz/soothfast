@@ -93,6 +93,8 @@ enum Kind {
     Runner,
     /// The `ci` key of the `[test]` table, set in place.
     TestCi,
+    /// The `package` key of the `[docs]` table, set in place.
+    Docs,
 }
 
 impl Kind {
@@ -140,7 +142,8 @@ impl Scaffold {
             Kind::Section => State::Differs,
             Kind::Runner if labels(&text) == labels(&self.content) => State::Current,
             Kind::TestCi if test_ci(&text) == test_ci(&self.content) => State::Current,
-            Kind::Runner | Kind::TestCi => State::Differs,
+            Kind::Docs if docs(&text) == docs(&self.content) => State::Current,
+            Kind::Runner | Kind::TestCi | Kind::Docs => State::Differs,
         }
     }
 
@@ -174,7 +177,16 @@ impl Scaffold {
             }
             Kind::TestCi => {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
-                std::fs::write(path, with_test_ci_off(&text))
+                std::fs::write(path, with_key(&text, "test", "ci", "ci = false"))
+            }
+            Kind::Docs => {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let line = self
+                    .content
+                    .lines()
+                    .find(|l| l.starts_with("package"))
+                    .unwrap_or_default();
+                std::fs::write(path, with_key(&text, "docs", "package", line))
             }
             Kind::Section | Kind::Runner => {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -198,20 +210,24 @@ fn test_ci(text: &str) -> Result<bool, String> {
     Ci::parse(text).map(|ci| ci.runs_test())
 }
 
-/// `text` with `ci = false` in its `[test]` table, which is added when absent.
-fn with_test_ci_off(text: &str) -> String {
+fn docs(text: &str) -> Result<Option<Vec<String>>, String> {
+    Ci::parse(text).map(|ci| ci.docs)
+}
+
+/// `text` with `entry` as the `key` of `table`, which is added when absent.
+fn with_key(text: &str, table: &str, key: &str, entry: &str) -> String {
     let mut out = String::new();
-    let mut in_test = false;
+    let mut in_table = false;
     let mut found = false;
     for line in text.split_inclusive('\n') {
         if line.trim_start().starts_with('[') {
-            in_test = ecosystem::table_name(line) == Some("test");
-            found |= in_test;
+            in_table = ecosystem::table_name(line) == Some(table);
+            found |= in_table;
             out.push_str(line);
-            if in_test {
-                out.push_str("ci = false\n");
+            if in_table {
+                out.push_str(&format!("{entry}\n"));
             }
-        } else if !(in_test && line.split_once('=').is_some_and(|(k, _)| k.trim() == "ci")) {
+        } else if !(in_table && line.split_once('=').is_some_and(|(k, _)| k.trim() == key)) {
             out.push_str(line);
         }
     }
@@ -222,7 +238,7 @@ fn with_test_ci_off(text: &str) -> String {
         if !out.is_empty() {
             out.push('\n');
         }
-        out.push_str("[test]\nci = false\n");
+        out.push_str(&format!("[{table}]\n{entry}\n"));
     }
     out
 }
@@ -257,8 +273,8 @@ struct Workspace {
     ci: Ci,
     /// Packages with a `soothfast` bench target, in name order.
     benched: Vec<String>,
-    /// The package `docs check` reads, when any markdown carries markers.
-    docs_package: Option<String>,
+    /// The packages `docs check` reads, when any markdown carries markers.
+    docs_packages: Vec<String>,
     action: String,
     bot: bool,
     java: String,
@@ -288,6 +304,10 @@ pub fn run(args: &[String]) -> i32 {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
+            "--help" | "-h" => {
+                println!("{}", init_usage());
+                return 0;
+            }
             "--check" => check = true,
             "--force" => force = true,
             "--bot" => bot = true,
@@ -349,6 +369,19 @@ pub fn run(args: &[String]) -> i32 {
     for note in &notes {
         println!("{note}");
     }
+    let callers = other_callers(&root);
+    for caller in &callers {
+        println!(
+            "warn     {caller} calls soothfast; its jobs run twice until it or {WORKFLOW_PATH} is removed"
+        );
+    }
+    let duplicate_only = ws.projects.is_empty() && ws.ci.is_default();
+    if !callers.is_empty() && duplicate_only && !force && !root.join(WORKFLOW_PATH).exists() {
+        println!(
+            "init: nothing written, since {WORKFLOW_PATH} would only duplicate the jobs above; --force writes it"
+        );
+        return 0;
+    }
     let files = scaffold(&ws);
     let rc = report(&root, &files, check, force);
     if check || rc != 0 {
@@ -359,6 +392,45 @@ pub fn run(args: &[String]) -> i32 {
         return create_labels();
     }
     0
+}
+
+/// The workflow files besides the one init writes that call soothfast, as
+/// repo-relative paths.
+fn other_callers(root: &Path) -> Vec<String> {
+    let dir = root.join(".github/workflows");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let calls = |text: &str| {
+        text.lines().any(|l| {
+            let uses = l.trim().trim_start_matches("- ").strip_prefix("uses:");
+            let target = uses.map(str::trim);
+            target.is_some_and(|t| {
+                t.strip_prefix("Verdenroz/soothfast")
+                    .is_some_and(|rest| rest.starts_with(['@', '/']))
+            })
+        })
+    };
+    let mut found: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml"))
+        .filter(|p| p.file_name() != Path::new(WORKFLOW_PATH).file_name())
+        .filter(|p| std::fs::read_to_string(p).is_ok_and(|t| calls(&t)))
+        .filter_map(|p| Some(format!(".github/workflows/{}", p.file_name()?.to_str()?)))
+        .collect();
+    found.sort();
+    found
+}
+
+/// The `init` entry of the CLI usage text.
+fn init_usage() -> String {
+    let lines = crate::USAGE
+        .lines()
+        .skip_while(|l| !l.starts_with("  init "));
+    let rest = lines.skip(1).take_while(|l| l.starts_with("    "));
+    let first = crate::USAGE.lines().find(|l| l.starts_with("  init "));
+    first.into_iter().chain(rest).collect::<Vec<_>>().join("\n")
 }
 
 /// What to do after `init` before the first pull request gates anything.
@@ -421,13 +493,17 @@ fn target(
         });
     }
     let markers = has_markers(&root);
-    let (benched, docs_package) = if rust {
+    let (benched, docs_packages) = if rust {
         invoke::workspace_root().map_err(|e| format!("not in a cargo workspace: {e}"))?;
         let meta = rust_meta(&root, bench, check)?;
-        let docs = markers.then(|| docs_package(&meta)).flatten();
+        let docs = if markers {
+            docs_packages(&root, &meta, &ci)
+        } else {
+            Vec::new()
+        };
         (benched(&meta), docs)
     } else if bench.is_empty() {
-        (Vec::new(), None)
+        (Vec::new(), Vec::new())
     } else {
         return Err("-p adds a bench target to a cargo package".into());
     };
@@ -438,7 +514,7 @@ fn target(
         ci,
         default_branch: default_branch(&root, &existing),
         benched,
-        docs_package,
+        docs_packages,
         action: action_ref(&existing, tools.action.as_deref()),
         bot,
         java: tools
@@ -554,6 +630,7 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
             Kind::Section => format!("{} [[project]]", f.path.display()),
             Kind::Runner => format!("{} [runner]", f.path.display()),
             Kind::TestCi => format!("{} [test] ci", f.path.display()),
+            Kind::Docs => format!("{} [docs] package", f.path.display()),
             _ => f.path.display().to_string(),
         };
         let state = match f.state(root) {
@@ -623,6 +700,13 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
             content: ws.ci.runner_section(),
         });
     }
+    if !ws.docs_packages.is_empty() {
+        files.push(Scaffold {
+            path: "soothfast.toml".into(),
+            kind: Kind::Docs,
+            content: format!("[docs]\n{}\n", Ci::docs_line(&ws.docs_packages)),
+        });
+    }
     if !ws.ci.runs_test() {
         files.push(Scaffold {
             path: "soothfast.toml".into(),
@@ -658,8 +742,8 @@ fn cargo_jobs(ws: &Workspace) -> String {
                 .replace("@@changelog@@", if ws.bot { "true" } else { "false" }),
         );
     }
-    if let Some(pkg) = &ws.docs_package {
-        text.push_str(&DOCS_JOB.replace("@@docs_package@@", pkg));
+    if !ws.docs_packages.is_empty() {
+        text.push_str(&DOCS_JOB.replace("@@docs_package@@", &ws.docs_packages.join(" -p ")));
     }
     text
 }
@@ -667,7 +751,10 @@ fn cargo_jobs(ws: &Workspace) -> String {
 /// The one job of a repo with other-language projects: the reusable
 /// workflow plans and runs everything from `soothfast.toml`.
 fn caller_job(ws: &Workspace) -> String {
+    let pin = ws.action.split_once('@').map_or("", |(_, r)| r);
+    let pin = pin.split(" #").next().unwrap_or(pin);
     let inputs = [
+        ("soothfast_ref", Some(format!("\"{pin}\""))),
         ("bot", ws.bot.then(|| "true".to_string())),
         (
             "runs_on",
@@ -717,6 +804,42 @@ fn benched(meta: &Value) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// The packages `docs check` reads: `[docs] package` when set, else the
+/// workspace packages the markdown binds name, else the root's own package.
+fn docs_packages(root: &Path, meta: &Value, ci: &Ci) -> Vec<String> {
+    if let Some(packages) = &ci.docs {
+        return packages.clone();
+    }
+    let listing = invoke::git_in(root, &["ls-files", "-z", "--", "*.md"]).unwrap_or_default();
+    let prefixes: BTreeSet<String> = listing
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .filter_map(|path| std::fs::read_to_string(root.join(path)).ok())
+        .flat_map(|text| bind_crates(&text))
+        .collect();
+    let bound: Vec<String> = packages(meta)
+        .filter_map(|p| p["name"].as_str())
+        .filter(|name| prefixes.contains(&name.replace('-', "_")))
+        .map(String::from)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if bound.is_empty() {
+        docs_package(meta).into_iter().collect()
+    } else {
+        bound
+    }
+}
+
+/// The crate part of each `crate::path` bind in `text`.
+fn bind_crates(text: &str) -> Vec<String> {
+    text.split("<!-- soothfast:bind ")
+        .skip(1)
+        .filter_map(|rest| rest.split_whitespace().next())
+        .filter_map(|target| Some(target.split_once("::")?.0.to_string()))
+        .collect()
 }
 
 /// The workspace root's own package, else the first member by name.
@@ -864,17 +987,22 @@ pub fn ci(root: &Path) -> Result<Ci, String> {
     Ci::parse(&text).map_err(|e| format!("soothfast.toml: {e}"))
 }
 
-/// The packages and docs package `plan` reads from a cargo workspace.
+/// The packages and docs packages `plan` reads from a cargo workspace.
 pub struct RustPlan {
     pub packages: Vec<String>,
-    pub docs_package: Option<String>,
+    pub docs_packages: Vec<String>,
 }
 
 pub fn rust_plan(root: &Path) -> Result<RustPlan, String> {
     let meta = workspace::metadata(Some(root), true).map_err(|e| e.to_string())?;
+    let docs = if has_markers(root) {
+        docs_packages(root, &meta, &ci(root)?)
+    } else {
+        Vec::new()
+    };
     Ok(RustPlan {
         packages: benched(&meta),
-        docs_package: has_markers(root).then(|| docs_package(&meta)).flatten(),
+        docs_packages: docs,
     })
 }
 
@@ -928,7 +1056,7 @@ mod tests {
             ci: Ci::default(),
             default_branch: "master".into(),
             benched: benched.iter().map(|s| s.to_string()).collect(),
-            docs_package: docs.map(String::from),
+            docs_packages: docs.map(String::from).into_iter().collect(),
             action: "Verdenroz/soothfast@v0".into(),
             bot: false,
             java: "21".into(),
@@ -1026,6 +1154,28 @@ mod tests {
             { "name": "c", "targets": [{ "name": "other", "kind": ["bench"] }] },
         ]});
         assert_eq!(benched(&meta), ["a", "b"]);
+    }
+
+    #[test]
+    fn binds_name_the_crates_that_hold_their_items() {
+        let text = "<!-- soothfast:bind my_core::a::B -->\nprose\n<!-- /soothfast:bind -->\n\
+                    <!-- soothfast:bind other::c -->\n<!-- soothfast:bind src/x.py#f -->\n";
+        assert_eq!(bind_crates(text), ["my_core", "other"]);
+    }
+
+    #[test]
+    fn the_docs_packages_are_written_and_a_flagless_check_is_clean() {
+        let root = scratch("docs");
+        std::fs::write(root.join("soothfast.toml"), "[docs]\nother = 1\n").unwrap();
+        let w = Workspace {
+            docs_packages: vec!["a".into(), "b".into()],
+            ..ws(&[], None)
+        };
+        let files = scaffold(&w);
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert!(text.contains("package = [\"a\",\"b\"]") && text.contains("other = 1"));
+        assert_eq!(report(&root, &files, true, false), 0);
     }
 
     #[test]
@@ -1176,7 +1326,29 @@ mod tests {
         assert!(!text.contains("secrets"));
         assert_eq!(text.matches("\n  soothfast:\n").count(), 1);
         assert_eq!(text.matches("    uses: ").count(), 1);
-        assert!(!text.contains("@@") && !text.contains("\n    with:"));
+        assert!(!text.contains("@@"));
+        assert!(text.contains(&format!("    with:\n      soothfast_ref: \"{sha}\"\n")));
+        let stale = text.replace(
+            &format!("soothfast_ref: \"{sha}\""),
+            "soothfast_ref: \"old\"",
+        );
+        let root = scratch("ref");
+        report(
+            &root,
+            &[Scaffold {
+                path: WORKFLOW_PATH.into(),
+                kind: Kind::Whole,
+                content: text.clone(),
+            }],
+            false,
+            false,
+        );
+        let moved = [Scaffold {
+            path: WORKFLOW_PATH.into(),
+            kind: Kind::Whole,
+            content: stale,
+        }];
+        assert_eq!(report(&root, &moved, true, false), 1);
         assert!(text.contains("branches: [master]"));
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             assert!(!line.starts_with('\t'), "tab indent: {line}");
@@ -1191,7 +1363,9 @@ mod tests {
             ..mixed_ws(false, vec![project(Ecosystem::Node, ".")])
         };
         let text = workflow(&w);
-        assert!(text.contains("    with:\n      bot: true\n      node: \"20\"\n"));
+        assert!(
+            text.contains("      soothfast_ref: \"v0\"\n      bot: true\n      node: \"20\"\n")
+        );
         assert!(text.contains("  schedule:\n    - cron:"));
         assert!(!text.contains("labels:") && !text.contains("java:"));
         assert_eq!(pinned(&text, "node").as_deref(), Some("20"));
@@ -1359,6 +1533,7 @@ mod tests {
             ci: Ci {
                 labels: Some(vec!["corvid".into()]),
                 test: Some(false),
+                docs: None,
             },
             ..ws(&["a"], None)
         };
@@ -1371,6 +1546,39 @@ mod tests {
         assert!(text.contains("ignore = [\"docs/**\"]") && text.contains("ci = false"));
         assert!(text.contains("name = \"x\""));
         assert_eq!(report(&root, &files, true, false), 0);
+    }
+
+    #[test]
+    fn other_workflows_that_call_soothfast_are_found() {
+        let root = scratch("callers");
+        let dir = root.join(".github/workflows");
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, text: &str| std::fs::write(dir.join(name), text).unwrap();
+        write(
+            "ci.yml",
+            "    steps:\n      - uses: Verdenroz/soothfast@abc # v1\n",
+        );
+        write(
+            "reuse.yaml",
+            "    uses: Verdenroz/soothfast/.github/workflows/run.yml@abc\n",
+        );
+        write("soothfast.yml", "    uses: Verdenroz/soothfast@abc\n");
+        write(
+            "other.yml",
+            "      - uses: actions/checkout@abc\n# Verdenroz/soothfast@x\n",
+        );
+        assert_eq!(
+            other_callers(&root),
+            [".github/workflows/ci.yml", ".github/workflows/reuse.yaml"]
+        );
+        assert!(other_callers(&scratch("none")).is_empty());
+    }
+
+    #[test]
+    fn the_init_usage_lists_init_alone() {
+        let usage = init_usage();
+        assert!(usage.starts_with("  init ") && usage.contains("--dir D"));
+        assert!(usage.contains("--runner-labels") && !usage.contains("import "));
     }
 
     #[test]

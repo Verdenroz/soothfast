@@ -114,7 +114,7 @@ commands:
            fatal, and the command still exits 3, not 0, if any were)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
-  docs     check|accept|gen-tests -p PKG [--baseline NAME] [--features F] [PATHS...]
+  docs     check|accept|gen-tests -p PKG [--baseline NAME] [--skip-claims] [--features F] [PATHS...]
   docs     capture -p PKG [--check] [PATHS...]
   docs     diff -p PKG --against-ref REF [--features F]
   docs     reference -p PKG [--baseline NAME] [--features F] [--out DIR]
