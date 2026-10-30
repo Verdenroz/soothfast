@@ -5,12 +5,14 @@ mod config;
 #[cfg(test)]
 mod fixture;
 mod key;
+pub(crate) mod project;
 mod runner;
 pub(crate) mod rustdoc;
 mod select;
 pub(crate) mod shim;
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::{buildstamp, invoke, runcache};
 use cargo::TestBin;
@@ -32,6 +34,8 @@ pub struct TestArgs {
     pub no_doc: bool,
     /// `--no-run`: build the test binaries and run nothing.
     pub no_run: bool,
+    /// `--result`: write the outcome here as JSON.
+    pub result: Option<PathBuf>,
     /// `-p`/`--package` values; select exactly these packages.
     pub only: Vec<String>,
     /// `--exclude` values; drop from the selection.
@@ -70,6 +74,7 @@ pub fn parse_args(args: &[String]) -> Result<TestArgs, String> {
             "--doc" => return Err("doc tests always run; use --no-doc to skip them".into()),
             "-p" | "--package" => out.only.push(value()?),
             "--exclude" => out.exclude.push(value()?),
+            "--result" => out.result = Some(PathBuf::from(value()?)),
             "--workspace" => {}
             _ => match a.strip_prefix("-p") {
                 Some(name) if !name.is_empty() => out.only.push(name.to_string()),
@@ -82,6 +87,12 @@ pub fn parse_args(args: &[String]) -> Result<TestArgs, String> {
 
 /// Entry point for `cargo soothfast test`.
 pub fn run(args: &[String]) -> i32 {
+    if args
+        .iter()
+        .any(|a| a == "--project" || a.starts_with("--project="))
+    {
+        return project::run(args);
+    }
     match drive(args) {
         Ok(code) => code,
         Err(e) => {
@@ -92,9 +103,11 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn drive(args: &[String]) -> Result<i32, String> {
+    let started = Instant::now();
     let args = parse_args(args)?;
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let cfg = config::load(&root)?;
+    let retries = cfg.retries;
     let pkgs = select::packages(&root).map_err(|e| e.to_string())?;
     cfg.check_packages(pkgs.iter().map(|p| p.name.as_str()))?;
     let total = pkgs.len();
@@ -102,6 +115,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
     let mut tally = Tally::default();
     if selected.is_empty() {
         println!("{}", tally.summary(0, total));
+        write_result(&args, &tally, 0, total, started)?;
         return Ok(0);
     }
     let run_dir = RunDir::create()?;
@@ -153,8 +167,56 @@ fn drive(args: &[String]) -> Result<i32, String> {
             run_doc_tests(&args, &doc, &mut tally)?;
         }
     }
+    rerun_failed(&mut tally, retries, |label| {
+        let Some(bin) = built.tests.iter().find(|b| b.label() == label) else {
+            return Ok(false);
+        };
+        println!("test: rerunning {label}");
+        cargo::run_target(bin, &args.cargo_args, &args.run_args)
+            .map_err(|e| format!("{label}: {e}"))
+    })?;
     println!("{}", tally.summary(selected.len(), total));
+    write_result(&args, &tally, selected.len(), total, started)?;
     Ok(i32::from(!tally.failed.is_empty()))
+}
+
+/// Rerun each failed binary up to `retries` times. A binary that passes a
+/// rerun moves from failed to flaky and has no pass stored.
+fn rerun_failed(
+    tally: &mut Tally,
+    retries: u32,
+    mut rerun: impl FnMut(&str) -> Result<bool, String>,
+) -> Result<(), String> {
+    for label in tally.failed.clone() {
+        for _ in 0..retries {
+            if rerun(&label)? {
+                tally.failed.retain(|l| *l != label);
+                tally.flaky.push(label);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_result(
+    args: &TestArgs,
+    tally: &Tally,
+    selected: usize,
+    total: usize,
+    started: Instant,
+) -> Result<(), String> {
+    let Some(path) = &args.result else {
+        return Ok(());
+    };
+    let output: Vec<String> = tally
+        .summary(selected, total)
+        .lines()
+        .map(String::from)
+        .collect();
+    let wall_s = started.elapsed().as_secs_f64();
+    let verdict = tally.verdict(selected);
+    project::write_result(path, "test-rust", ".", verdict, &output, wall_s)
 }
 
 fn host_triple() -> Result<String, String> {
@@ -462,6 +524,8 @@ struct Tally {
     skipped: usize,
     doc: usize,
     failed: Vec<String>,
+    /// Binaries that failed, then passed on a rerun.
+    flaky: Vec<String>,
 }
 
 impl Tally {
@@ -470,10 +534,28 @@ impl Tally {
             "test: {selected} of {total} packages selected, {} binaries run, {} skipped (cached), doc tests in {} packages",
             self.ran, self.skipped, self.doc
         );
+        if !self.flaky.is_empty() {
+            line.push_str(&format!("\ntest: FLAKY: {}", self.flaky.join(", ")));
+        }
         if !self.failed.is_empty() {
             line.push_str(&format!("\ntest: FAILED: {}", self.failed.join(", ")));
         }
         line
+    }
+
+    fn verdict(&self, selected: usize) -> project::Verdict {
+        use project::Verdict;
+        if !self.failed.is_empty() {
+            Verdict::Failed
+        } else if selected == 0 {
+            Verdict::Skipped
+        } else if !self.flaky.is_empty() {
+            Verdict::Flaky
+        } else if self.ran == 0 {
+            Verdict::Reused
+        } else {
+            Verdict::Pass
+        }
     }
 }
 
@@ -493,6 +575,65 @@ mod tests {
             manifest_dir: name.into(),
             deps: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_failed_binary_that_passes_a_rerun_is_flaky() {
+        let mut tally = Tally {
+            failed: vec!["a".into(), "b".into()],
+            ..Tally::default()
+        };
+        let mut calls = Vec::new();
+        rerun_failed(&mut tally, 2, |label| {
+            calls.push(label.to_string());
+            Ok(label == "a" && calls.len() == 2)
+        })
+        .unwrap();
+        assert_eq!(calls, ["a", "a", "b", "b"]);
+        assert_eq!(
+            (tally.failed.as_slice(), tally.flaky.as_slice()),
+            (&["b".to_string()][..], &["a".to_string()][..])
+        );
+        assert!(
+            tally
+                .summary(2, 3)
+                .contains("test: FLAKY: a\ntest: FAILED: b")
+        );
+        assert_eq!(tally.verdict(2), project::Verdict::Failed);
+        tally.failed.clear();
+        assert_eq!(tally.verdict(2), project::Verdict::Flaky);
+        assert_eq!(tally.verdict(0), project::Verdict::Skipped);
+    }
+
+    #[test]
+    fn no_retries_reruns_nothing() {
+        let mut tally = Tally {
+            failed: vec!["a".into()],
+            ..Tally::default()
+        };
+        rerun_failed(&mut tally, 0, |_| panic!("reran")).unwrap();
+        assert_eq!(tally.failed, ["a"]);
+    }
+
+    #[test]
+    fn a_run_of_only_cached_binaries_is_reused() {
+        let tally = Tally {
+            skipped: 3,
+            ..Tally::default()
+        };
+        assert_eq!(tally.verdict(1), project::Verdict::Reused);
+        let ran = Tally {
+            ran: 1,
+            ..Tally::default()
+        };
+        assert_eq!(ran.verdict(1), project::Verdict::Pass);
+    }
+
+    #[test]
+    fn the_result_flag_is_ours_and_not_cargos() {
+        let args = parse(&["--result", "r.json", "--release"]);
+        assert_eq!(args.result, Some(PathBuf::from("r.json")));
+        assert_eq!(args.cargo_args, ["--release"]);
     }
 
     #[test]
@@ -580,6 +721,7 @@ mod tests {
             skipped: 5,
             doc: 2,
             failed: vec!["p t (lib)".into()],
+            ..Tally::default()
         };
         assert_eq!(
             tally.summary(4, 10),

@@ -206,6 +206,21 @@ fn workspace_inputs(root: &Path, pkgs: &[Package], cfg: &TestConfig) -> io::Resu
 /// untracked, so a change digests the same before and after it is committed.
 /// Only files `keep` accepts are hashed.
 fn digest(root: &Path, spec: &str, keep: impl Fn(&str) -> bool) -> io::Result<String> {
+    let joined: Vec<String> = file_ids(root, spec, &keep)?
+        .into_iter()
+        .filter(|(path, _)| keep(path))
+        .map(|(path, id)| format!("{path}\u{0}{id}"))
+        .collect();
+    Ok(hashed(&joined))
+}
+
+/// The blob id of every file under `spec`, with only the modified and
+/// untracked files `keep` accepts read from the worktree.
+pub(super) fn file_ids(
+    root: &Path,
+    spec: &str,
+    keep: &dyn Fn(&str) -> bool,
+) -> io::Result<BTreeMap<String, String>> {
     let ls = |args: &[&str]| -> io::Result<String> {
         let mut full = vec!["-c", "core.quotepath=false", "ls-files"];
         full.extend(args);
@@ -227,12 +242,7 @@ fn digest(root: &Path, spec: &str, keep: impl Fn(&str) -> bool) -> io::Result<St
         dirty.into_iter().partition(|p| root.join(p).is_file());
     ids.extend(gone.into_iter().map(|p| (p, "gone".to_string())));
     ids.extend(blob_ids(root, &present)?);
-    let joined: Vec<String> = ids
-        .into_iter()
-        .filter(|(path, _)| keep(path))
-        .map(|(path, id)| format!("{path}\u{0}{id}"))
-        .collect();
-    Ok(hashed(&joined))
+    Ok(ids)
 }
 
 /// The blob ids git computes for worktree files, a batch per call.

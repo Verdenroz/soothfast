@@ -83,9 +83,19 @@ pub struct Bench {
     pub from: String,
 }
 
+/// How a project's own tests run. `watch` globs are relative to the
+/// repository root; a change to a file they match runs the tests too.
+#[derive(Default, Debug, PartialEq, Clone)]
+pub struct Tests {
+    pub cmd: Option<String>,
+    pub watch: Vec<String>,
+    pub retries: u32,
+    pub retry_cmd: Option<String>,
+}
+
 /// One `[[project]]` table, which is also the shape of init's flags: each
-/// field is set or left to the next layer down. `walltime` and `prefix` are
-/// only ever set in the file.
+/// field is set or left to the next layer down. Everything but `ecosystem`
+/// and the benchmark settings is only ever set in the file.
 #[derive(Default, Debug, PartialEq, Clone)]
 pub struct Settings {
     pub ecosystem: Option<Ecosystem>,
@@ -94,6 +104,12 @@ pub struct Settings {
     pub from: Option<String>,
     pub walltime: Option<String>,
     pub prefix: Option<String>,
+    pub test_cmd: Option<String>,
+    pub watch: Option<Vec<String>>,
+    pub retries: Option<u32>,
+    pub retry_cmd: Option<String>,
+    /// `false` for a project that only runs tests.
+    pub gate: Option<bool>,
 }
 
 /// A saved project: its directory under the project root and its settings.
@@ -108,11 +124,22 @@ pub struct Entry {
 pub struct Project {
     pub ecosystem: Ecosystem,
     pub dir: String,
-    pub bench: Bench,
+    /// None for a project that only runs tests.
+    pub bench: Option<Bench>,
     /// `hard` or `advisory`, over the `[gate]` setting for this project.
     pub walltime: Option<String>,
     /// The item-name prefix of the imported results.
     pub prefix: Option<String>,
+    pub test: Tests,
+}
+
+/// A `[[test.suite]]` table: a command that runs in the directory of
+/// `project` only when a writer applies `label`.
+#[derive(Debug, PartialEq)]
+pub struct Suite {
+    pub label: String,
+    pub project: String,
+    pub cmd: String,
 }
 
 /// The projects a `soothfast.toml` saves, by directory: each `[[project]]`
@@ -147,6 +174,7 @@ pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
         let Some((key, value)) = line.split_once('=') else {
             return Err(format!("line {lineno}: expected `key = value`"));
         };
+        let key = key.trim();
         let known = [
             "dir",
             "ecosystem",
@@ -155,16 +183,42 @@ pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
             "from",
             "walltime",
             "prefix",
+            "watch",
+            "gate",
+            "retries",
+            "test_cmd",
+            "retry_cmd",
         ];
-        if !legacy && !known.contains(&key.trim()) {
+        if !legacy && !known.contains(&key) {
             continue;
         }
-        let TomlValue::Str(value) =
-            parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?
-        else {
-            return Err(format!("line {lineno}: `{}` is a string", key.trim()));
+        let value = parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
+        let value = match (key, value) {
+            ("watch", TomlValue::StrArray(globs)) => {
+                settings.watch = Some(globs);
+                continue;
+            }
+            ("watch", _) => return Err(format!("line {lineno}: `watch` is a list of strings")),
+            ("gate", TomlValue::Bool(gate)) => {
+                settings.gate = Some(gate);
+                continue;
+            }
+            ("gate", _) => return Err(format!("line {lineno}: `gate` is true or false")),
+            ("retries", TomlValue::Int(n)) => {
+                let n = u32::try_from(n)
+                    .map_err(|_| format!("line {lineno}: `retries` is a non-negative integer"))?;
+                settings.retries = Some(n);
+                continue;
+            }
+            ("retries", _) => {
+                return Err(format!(
+                    "line {lineno}: `retries` is a non-negative integer"
+                ));
+            }
+            (_, TomlValue::Str(value)) => value,
+            _ => return Err(format!("line {lineno}: `{key}` is a string")),
         };
-        match (key.trim(), dir.is_some()) {
+        match (key, dir.is_some()) {
             ("dir", false) => dir = Some(normalize_dir(&value)?),
             ("ecosystem", _) => settings.ecosystem = Some(Ecosystem::parse(&value)?),
             ("bench_cmd", _) => settings.bench_cmd = Some(value),
@@ -179,12 +233,89 @@ pub fn parse_projects(text: &str) -> Result<Vec<Entry>, String> {
                 ));
             }
             ("prefix", _) => settings.prefix = Some(value),
+            ("test_cmd", _) => settings.test_cmd = Some(value),
+            ("retry_cmd", _) => settings.retry_cmd = Some(value),
             (k, _) => return Err(format!("line {lineno}: unknown `{k}` under [init]")),
         }
     }
     finish(dir, cfg)?;
     entries.sort_by(|a, b| a.dir.cmp(&b.dir));
     Ok(entries)
+}
+
+/// The `[[test.suite]]` tables of a `soothfast.toml`, in file order.
+pub fn parse_suites(text: &str) -> Result<Vec<Suite>, String> {
+    type Fields = [Option<String>; 3];
+    let mut suites = Vec::new();
+    let mut open: Option<Fields> = None;
+    let mut finish = |open: Option<Fields>| -> Result<(), String> {
+        let Some([label, project, cmd]) = open else {
+            return Ok(());
+        };
+        let missing = |key| format!("[[test.suite]] needs a `{key}`");
+        suites.push(Suite {
+            label: label.ok_or_else(|| missing("label"))?,
+            project: project.ok_or_else(|| missing("project"))?,
+            cmd: cmd.ok_or_else(|| missing("cmd"))?,
+        });
+        Ok(())
+    };
+    for (lineno, line) in logical_lines(text) {
+        if let Some(name) = table_name(&line) {
+            finish(open.take())?;
+            open = (name == SUITE_TABLE).then(Fields::default);
+            continue;
+        }
+        let Some(fields) = open.as_mut() else {
+            continue;
+        };
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!("line {lineno}: expected `key = value`"));
+        };
+        let key = key.trim();
+        let TomlValue::Str(value) =
+            parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?
+        else {
+            return Err(format!("line {lineno}: `{key}` is a string"));
+        };
+        match key {
+            "label" => fields[0] = Some(value),
+            "project" => fields[1] = Some(normalize_dir(&value)?),
+            "cmd" => fields[2] = Some(value),
+            k => return Err(format!("line {lineno}: unknown `{k}` under [[test.suite]]")),
+        }
+    }
+    finish(open)?;
+    for (i, suite) in suites.iter().enumerate() {
+        for other in &suites[..i] {
+            if other.project != suite.project {
+                continue;
+            }
+            if other.label == suite.label {
+                return Err(format!(
+                    "[[test.suite]] label {:?} appears twice for {}",
+                    suite.label, suite.project
+                ));
+            }
+            if slug(&other.label) == slug(&suite.label) {
+                return Err(format!(
+                    "[[test.suite]] labels {:?} and {:?} of {} name the same job",
+                    other.label, suite.label, suite.project
+                ));
+            }
+        }
+    }
+    Ok(suites)
+}
+
+/// `label` as a run of letters and digits joined by `-`, for a job or
+/// artifact name.
+pub fn slug(label: &str) -> String {
+    label
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 impl Settings {
@@ -197,7 +328,30 @@ impl Settings {
             from: self.from.or(base.from),
             walltime: self.walltime.or(base.walltime),
             prefix: self.prefix.or(base.prefix),
+            test_cmd: self.test_cmd.or(base.test_cmd),
+            watch: self.watch.or(base.watch),
+            retries: self.retries.or(base.retries),
+            retry_cmd: self.retry_cmd.or(base.retry_cmd),
+            gate: self.gate.or(base.gate),
         }
+    }
+
+    pub fn tests(&self) -> Tests {
+        Tests {
+            cmd: self.test_cmd.clone(),
+            watch: self.watch.clone().unwrap_or_default(),
+            retries: self.retries.unwrap_or(0),
+            retry_cmd: self.retry_cmd.clone(),
+        }
+    }
+
+    /// How `eco`'s harness runs, or none for a project that sets
+    /// `gate = false`.
+    pub fn bench_for(&self, eco: Ecosystem) -> Result<Option<Bench>, String> {
+        if self.gate == Some(false) {
+            return Ok(None);
+        }
+        self.bench(eco).map(Some)
     }
 
     /// How `eco`'s harness runs, with each unset field defaulted.
@@ -209,7 +363,8 @@ impl Settings {
             (None, None) => {
                 return Err(format!(
                     "{} has no default benchmark command; pass --bench-cmd CMD and \
-                     --bench-out PATH ({{out}} in CMD stands for PATH)",
+                     --bench-out PATH ({{out}} in CMD stands for PATH), or set `gate = false` \
+                     for a project that only runs tests",
                     eco.name()
                 ));
             }
@@ -237,6 +392,9 @@ pub fn table_name(line: &str) -> Option<&str> {
 /// `[[project]]` as `table_name` reads it.
 pub const PROJECT_TABLE: &str = "[project]";
 
+/// `[[test.suite]]` as `table_name` reads it.
+pub const SUITE_TABLE: &str = "[test.suite]";
+
 /// `[[init.project]]` as `table_name` reads it.
 pub const LEGACY_PROJECT_TABLE: &str = "[init.project]";
 
@@ -248,17 +406,34 @@ pub fn section(projects: &[Project]) -> String {
         .iter()
         .map(|p| {
             let mut table = format!(
-                "[[project]]\ndir = {}\necosystem = {}\nbench_cmd = {}\nbench_out = {}\nfrom = {}\n",
+                "[[project]]\ndir = {}\necosystem = {}\n",
                 quote(&p.dir),
                 quote(p.ecosystem.name()),
-                quote(&p.bench.cmd),
-                quote(&p.bench.out),
-                quote(&p.bench.from),
             );
-            for (key, value) in [("walltime", &p.walltime), ("prefix", &p.prefix)] {
+            match &p.bench {
+                Some(bench) => table.push_str(&format!(
+                    "bench_cmd = {}\nbench_out = {}\nfrom = {}\n",
+                    quote(&bench.cmd),
+                    quote(&bench.out),
+                    quote(&bench.from),
+                )),
+                None => table.push_str("gate = false\n"),
+            }
+            for (key, value) in [
+                ("walltime", &p.walltime),
+                ("prefix", &p.prefix),
+                ("test_cmd", &p.test.cmd),
+                ("retry_cmd", &p.test.retry_cmd),
+            ] {
                 if let Some(value) = value {
                     table.push_str(&format!("{key} = {}\n", quote(value)));
                 }
+            }
+            if !p.test.watch.is_empty() {
+                table.push_str(&format!("watch = {}\n", serde_json::json!(p.test.watch)));
+            }
+            if p.test.retries > 0 {
+                table.push_str(&format!("retries = {}\n", p.test.retries));
             }
             table
         })
@@ -352,13 +527,14 @@ mod tests {
         Project {
             ecosystem: eco,
             dir: dir.into(),
-            bench: Bench {
+            bench: Some(Bench {
                 cmd: cmd.into(),
                 out: "a\\b.json".into(),
                 from: "vitest".into(),
-            },
+            }),
             walltime: None,
             prefix: None,
+            test: Tests::default(),
         }
     }
 
@@ -379,10 +555,7 @@ mod tests {
         );
         let web = &entries[1];
         assert_eq!(web.settings.ecosystem, Some(Ecosystem::Node));
-        assert_eq!(
-            web.settings.bench(Ecosystem::Node).unwrap(),
-            projects[0].bench
-        );
+        assert_eq!(web.settings.bench(Ecosystem::Node).ok(), projects[0].bench);
         assert_eq!(parse_projects("[gate]\nx = 1\n"), Ok(Vec::new()));
     }
 
@@ -396,6 +569,98 @@ mod tests {
         assert_eq!(entry.settings.prefix.as_deref(), Some("web"));
         let bad = "[[project]]\ndir = \"x\"\nwalltime = \"soft\"\n";
         assert!(parse_projects(bad).is_err());
+    }
+
+    #[test]
+    fn test_keys_survive_a_round_trip() {
+        let mut p = project("web", Ecosystem::Node, "run {out}");
+        p.test = Tests {
+            cmd: Some("npm test".into()),
+            watch: vec!["gradle/libs.versions.toml".into(), "shared/**".into()],
+            retries: 2,
+            retry_cmd: Some("npm test -- --onlyFailures".into()),
+        };
+        let entry = parse_projects(&section(&[p])).unwrap().remove(0);
+        let tests = entry.settings.tests();
+        assert_eq!(tests.cmd.as_deref(), Some("npm test"));
+        assert_eq!(tests.watch, ["gradle/libs.versions.toml", "shared/**"]);
+        assert_eq!(tests.retries, 2);
+        assert_eq!(
+            tests.retry_cmd.as_deref(),
+            Some("npm test -- --onlyFailures")
+        );
+        assert_eq!(Settings::default().tests(), Tests::default());
+    }
+
+    #[test]
+    fn gate_false_makes_a_project_test_only() {
+        let text = "[[project]]\ndir = \"api\"\necosystem = \"python\"\ntest_cmd = \"uv run pytest\"\ngate = false\n";
+        let entry = parse_projects(text).unwrap().remove(0);
+        assert_eq!(entry.settings.bench_for(Ecosystem::Python), Ok(None));
+        let tests = entry.settings.tests();
+        let mut p = project("api", Ecosystem::Python, "");
+        (p.bench, p.test) = (None, tests);
+        let table = section(&[p]);
+        assert!(table.contains("gate = false") && !table.contains("bench_cmd"));
+        let again = parse_projects(&table).unwrap().remove(0);
+        assert_eq!(again.settings.bench_for(Ecosystem::Python), Ok(None));
+        assert!(!section(&[project("x", Ecosystem::Python, "c {out}")]).contains("gate"));
+    }
+
+    #[test]
+    fn test_cmd_leaves_the_bench_defaults_alone() {
+        let with_tests = Settings {
+            test_cmd: Some("t".into()),
+            ..Settings::default()
+        };
+        assert!(with_tests.bench_for(Ecosystem::Python).unwrap().is_some());
+        let err = with_tests.bench_for(Ecosystem::Gradle).unwrap_err();
+        assert!(err.contains("gate = false"), "{err}");
+        assert!(parse_projects("[[project]]\ndir = \"x\"\ngate = 1\n").is_err());
+    }
+
+    #[test]
+    fn bad_test_keys_are_errors() {
+        for bad in [
+            "test_cmd = 3",
+            "watch = \"x\"",
+            "retries = \"1\"",
+            "retries = -1",
+            "retry_cmd = [\"a\"]",
+        ] {
+            let text = format!("[[project]]\ndir = \"x\"\n{bad}\n");
+            assert!(parse_projects(&text).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn suite_labels_that_collide_are_rejected() {
+        let suite = |label: &str, project: &str| {
+            format!("[[test.suite]]\nlabel = \"{label}\"\nproject = \"{project}\"\ncmd = \"c\"\n")
+        };
+        let twice = suite("a:b", "web") + &suite("a:b", "web");
+        assert!(parse_suites(&twice).unwrap_err().contains("twice"));
+        let same_job = suite("a:b", "web") + &suite("a/b", "web");
+        assert!(parse_suites(&same_job).unwrap_err().contains("same job"));
+        let apart = suite("a:b", "web") + &suite("a:b", "api");
+        assert_eq!(parse_suites(&apart).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn suites_are_read_and_checked() {
+        let text = "[[test.suite]]\nlabel = \"soothfast:e2e\"\nproject = \"./web/\"\ncmd = \"npm run e2e\"\n\n[test]\nci = false\n";
+        assert_eq!(
+            parse_suites(text),
+            Ok(vec![Suite {
+                label: "soothfast:e2e".into(),
+                project: "web".into(),
+                cmd: "npm run e2e".into(),
+            }])
+        );
+        assert_eq!(parse_suites("[test]\nci = false\n"), Ok(Vec::new()));
+        assert!(parse_suites("[[test.suite]]\nlabel = \"a\"\nproject = \".\"\n").is_err());
+        let extra = "[[test.suite]]\nlabel = \"a\"\nproject = \".\"\ncmd = \"c\"\nnope = \"x\"\n";
+        assert!(parse_suites(extra).unwrap_err().contains("unknown `nope`"));
     }
 
     #[test]

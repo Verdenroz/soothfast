@@ -526,6 +526,31 @@ mod tests {
     }
 
     #[test]
+    fn a_directory_of_settled_test_results_is_read_whole() {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-settled-read-{}", std::process::id()));
+        let settled = dir.join("soothfast-result-test-settled");
+        fs::create_dir_all(&settled).unwrap();
+        for (name, verdict) in [("test-node", "reused"), ("test-python", "skipped")] {
+            let record = json!({
+                "name": name, "project": "x", "kind": "test", "verdict": verdict,
+                "output": "", "wall_s": 0.0,
+            });
+            fs::write(settled.join(format!("{name}.json")), record.to_string()).unwrap();
+        }
+        let records = read_records(&dir);
+        fs::remove_dir_all(&dir).unwrap();
+        let seen: Vec<_> = records
+            .iter()
+            .map(|r| (r.name.as_str(), r.verdict))
+            .collect();
+        assert_eq!(
+            seen,
+            [("test-node", Verdict::Pass), ("test-python", Verdict::Pass)]
+        );
+    }
+
+    #[test]
     fn a_bad_file_becomes_an_errored_section_named_after_it() {
         let dir = std::env::temp_dir().join(format!("soothfast-verdict-{}", std::process::id()));
         fs::create_dir_all(dir.join("soothfast-result-x")).unwrap();

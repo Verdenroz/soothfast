@@ -45,6 +45,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs_on) }}
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       projects: ${{ steps.plan.outputs.projects }}
@@ -54,6 +55,10 @@ jobs:
       packages: ${{ steps.plan.outputs.packages }}
       docs: ${{ steps.plan.outputs.docs }}
       docs_package: ${{ steps.plan.outputs.docs_package }}
+      test_matrix: ${{ steps.plan.outputs.test_matrix }}
+      test_projects: ${{ steps.plan.outputs.test_projects }}
+      test_all: ${{ steps.plan.outputs.test_all }}
+      test_expect: ${{ steps.plan.outputs.test_expect }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -70,6 +75,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       # The action scripts at this workflow's own commit, whoever calls it.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -83,9 +89,40 @@ jobs:
           persist-credentials: false
       - id: soothfast
         uses: ./.soothfast-action/action/install
+      - name: Labels a writer applied
+        id: labels
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: .soothfast-action/action/writer-labels.sh
+      # Stored passes are looked up here, before any job or toolchain exists,
+      # so a test a pass covers costs no runner at all.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/tests
+          key: soothfast-tests-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            soothfast-tests-${{ github.ref_name }}-
+            soothfast-tests-${{ github.event.repository.default_branch }}-
       - name: Plan
         id: plan
-        run: cargo soothfast plan --github >> "$GITHUB_OUTPUT"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          LABELS: ${{ steps.labels.outputs.labels }}
+          JAVA: ${{ inputs.java }}
+          NODE: ${{ inputs.node }}
+          SETTLED: ${{ runner.temp }}/settled
+        run: |
+          cargo soothfast plan --github --java "$JAVA" --node "$NODE" \
+            --results "$SETTLED" \
+            ${BASE_REF:+--base "origin/$BASE_REF"} ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
+      - name: Upload the results of tests that need no job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-result-test-settled
+          path: ${{ runner.temp }}/settled
+          if-no-files-found: ignore
 
   test:
     name: Test
@@ -123,6 +160,8 @@ jobs:
       - name: Test
         shell: bash
         env:
+          # Word-split on purpose: empty, or the two flags.
+          ALL: ${{ needs.plan.outputs.test_all == 'true' && '--all --no-cache' || '' }}
           EVENT: ${{ github.event_name }}
           PULL_BASE: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
@@ -139,20 +178,27 @@ jobs:
           if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
             args=(--base "$base")
           fi
+          if [ -n "$ALL" ]; then args=(); fi
           rc=0
-          cargo soothfast test "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/soothfast-result.txt" || rc=$?
+          cargo soothfast test $ALL "${args[@]}" --result "$RUNNER_TEMP/rust-result.json" 2>&1 | tee "$RUNNER_TEMP/soothfast-result.txt" || rc=$?
           echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
           exit "$rc"
-      # A job that stopped before the test command ran left the exit at 3.
+      # A job that stopped before the test command ran left the exit at 3. A
+      # finished run wrote its own record, which also says when a test was flaky.
       - name: Record the verdict
         if: always()
         shell: bash
         run: |
-          cargo soothfast verdict record --name test-rust --kind test \
-            --exit "$(cat "$RUNNER_TEMP/soothfast-exit" 2>/dev/null || echo 3)" \
-            --seconds "$(( $(date +%s) - $(cat "$RUNNER_TEMP/soothfast-start" 2>/dev/null || date +%s) ))" \
-            --output "$RUNNER_TEMP/soothfast-result.txt" \
-            --out "$RUNNER_TEMP/soothfast-results/result.json"
+          mkdir -p "$RUNNER_TEMP/soothfast-results"
+          if [ -s "$RUNNER_TEMP/rust-result.json" ]; then
+            cp "$RUNNER_TEMP/rust-result.json" "$RUNNER_TEMP/soothfast-results/result.json"
+          else
+            cargo soothfast verdict record --name test-rust --kind test \
+              --exit "$(cat "$RUNNER_TEMP/soothfast-exit" 2>/dev/null || echo 3)" \
+              --seconds "$(( $(date +%s) - $(cat "$RUNNER_TEMP/soothfast-start" 2>/dev/null || date +%s) ))" \
+              --output "$RUNNER_TEMP/soothfast-result.txt" \
+              --out "$RUNNER_TEMP/soothfast-results/result.json"
+          fi
       - name: Upload the test result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -160,6 +206,109 @@ jobs:
           name: soothfast-result-test-rust
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
+
+  test-projects:
+    name: Test (${{ matrix.name }})
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.test_projects == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.test_matrix) }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      - if: matrix.ecosystem == 'gradle' || matrix.ecosystem == 'maven'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java }}
+      - if: matrix.ecosystem == 'node'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ inputs.node }}
+      - if: matrix.ecosystem == 'python'
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: ./.soothfast-action/action/install
+      - if: matrix.ecosystem == 'node'
+        working-directory: ${{ matrix.dir }}
+        run: npm ci
+      - name: Test
+        shell: bash
+        env:
+          DIR: ${{ matrix.dir }}
+          SUITE: ${{ matrix.suite }}
+          NAME: ${{ matrix.name }}
+          TOOLCHAIN: ${{ matrix.toolchain }}
+          RESULT: ${{ runner.temp }}/result.json
+        run: |
+          flags=(--project "$DIR" --all --no-cache --toolchain "$TOOLCHAIN" --result "$RESULT" --name "test-$NAME")
+          [ -z "$SUITE" ] || flags+=(--suite "$SUITE")
+          cargo soothfast test "${flags[@]}"
+      - name: Upload the test result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-result-test-${{ matrix.name }}
+          path: ${{ runner.temp }}/result.json
+          if-no-files-found: ignore
+      - name: Upload the stored pass
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-pass-${{ matrix.name }}
+          path: .soothfast/tests
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  # Merges the passes of this run into the cache the plan job restores. The
+  # jobs that ran the tests cannot each save it: one cache entry holds the
+  # passes of every project.
+  test-cache:
+    name: Save test passes
+    needs: [plan, test-projects]
+    if: "!cancelled() && needs.test-projects.result != 'skipped'"
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/tests
+          key: soothfast-tests-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            soothfast-tests-${{ github.ref_name }}-
+            soothfast-tests-${{ github.event.repository.default_branch }}-
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: soothfast-pass-*
+          path: .soothfast/tests
+          merge-multiple: true
+      # Keeps the newest 2048 passes, the bound the Rust test store keeps.
+      - name: Prune the merged passes
+        run: ls -t .soothfast/tests | tail -n +2049 | (cd .soothfast/tests && xargs -r rm -f --)
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/tests
+          key: soothfast-tests-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   gate-rust:
     name: Gate
@@ -421,7 +570,7 @@ jobs:
 
   verdict:
     name: verdict
-    needs: [plan, test, gate-rust, gate, docs]
+    needs: [plan, test, test-projects, gate-rust, gate, docs]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ fromJSON(inputs.runs_on) }}
     environment: soothfast-bot
@@ -466,7 +615,7 @@ jobs:
           EXPECT_RUST: ${{ needs.plan.outputs.packages }}
           EXPECT_IMPORT: ${{ join(fromJSON(needs.plan.outputs.matrix).include.*.name, ' ') }}
           EXPECT_DOCS: ${{ needs.plan.outputs.docs == 'true' && 'docs' || '' }}
-          EXPECT_TEST: ${{ needs.plan.outputs.test == 'true' && 'test-rust' || '' }}
+          EXPECT_TEST: ${{ needs.plan.outputs.test == 'true' && 'test-rust' || '' }} ${{ needs.plan.outputs.test_expect }}
         run: ./.soothfast-action/action/verdict.sh
 
   labels:

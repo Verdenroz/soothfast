@@ -16,7 +16,9 @@ mod detect;
 pub(crate) mod ecosystem;
 
 use ci::Ci;
-use ecosystem::{Ecosystem, Entry, Project, Settings, normalize_dir, parse_projects};
+use ecosystem::{
+    Ecosystem, Entry, Project, Settings, Suite, normalize_dir, parse_projects, parse_suites,
+};
 
 const WORKFLOW: &str = include_str!("workflow.yml.tmpl");
 const TEST_JOB: &str = include_str!("test_job.yml.tmpl");
@@ -583,13 +585,14 @@ fn plan(
             ));
             continue;
         }
-        match found.bench(ecosystem) {
+        match found.bench_for(ecosystem) {
             Ok(bench) => {
                 notes.push(format!("project  {dir} ({})", ecosystem.name()));
                 projects.push(Project {
                     ecosystem,
                     dir,
                     bench,
+                    test: found.tests(),
                     walltime: found.walltime.or(Some("hard".into())),
                     prefix: found.prefix,
                 });
@@ -1015,17 +1018,24 @@ pub fn manifest(root: &Path) -> Result<Vec<Project>, String> {
                 .ecosystem
                 .ok_or_else(|| format!("{dir}: a project needs an ecosystem"))?;
             let bench = settings
-                .bench(ecosystem)
+                .bench_for(ecosystem)
                 .map_err(|e| format!("{dir}: {e}"))?;
             Ok(Project {
                 ecosystem,
                 dir,
                 bench,
+                test: settings.tests(),
                 walltime: settings.walltime.or(Some("hard".into())),
                 prefix: settings.prefix,
             })
         })
         .collect()
+}
+
+/// The `[[test.suite]]` tables saved in `soothfast.toml`.
+pub fn suites(root: &Path) -> Result<Vec<Suite>, String> {
+    let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
+    parse_suites(&text).map_err(|e| format!("soothfast.toml: {e}"))
 }
 
 fn err(msg: &str) -> i32 {
@@ -1035,6 +1045,7 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use super::ecosystem::Tests;
     use super::*;
     use serde_json::json;
 
@@ -1228,9 +1239,10 @@ mod tests {
         Project {
             ecosystem: eco,
             dir: dir.into(),
-            bench: settings.bench(eco).unwrap(),
+            bench: settings.bench(eco).ok(),
             walltime: None,
             prefix: None,
+            test: Tests::default(),
         }
     }
 
@@ -1253,7 +1265,7 @@ mod tests {
         let bench = entry.settings.bench(Ecosystem::Python).unwrap();
         assert_eq!(
             (entry.dir.as_str(), bench),
-            (".", python_ws().projects.remove(0).bench)
+            (".", python_ws().projects.remove(0).bench.unwrap())
         );
         assert_eq!(report(&root, &files, true, false), 0);
     }
@@ -1463,7 +1475,10 @@ mod tests {
         let (projects, _) = plan(&root, Vec::new(), flags, Some("client".into())).unwrap();
         let dirs: Vec<_> = projects.iter().map(|p| p.dir.as_str()).collect();
         assert_eq!(dirs, [".", "client"]);
-        assert_eq!(projects[1].bench.cmd, "./gradlew jmh -Pout={out}");
+        assert_eq!(
+            projects[1].bench.as_ref().unwrap().cmd,
+            "./gradlew jmh -Pout={out}"
+        );
 
         let by_flag = Settings {
             ecosystem: Some(Ecosystem::Python),
