@@ -29,6 +29,10 @@ mod linkmap;
 mod mcp;
 mod report;
 mod runcache;
+#[cfg(test)]
+mod schema_check;
+#[cfg(test)]
+mod schema_drift;
 mod sdk;
 mod sdk_build;
 mod sdk_config;

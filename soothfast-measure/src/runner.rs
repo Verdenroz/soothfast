@@ -354,11 +354,8 @@ pub fn main() {
         for e in &entries {
             if args.json {
                 println!(
-                    "{{\"type\":\"item\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"}}",
-                    esc(&e.id),
-                    esc(e.item.group),
-                    e.fingerprint,
-                    esc(e.item.covers),
+                    "{}",
+                    item_json(&e.id, e.item.group, e.fingerprint, e.item.covers)
                 );
             } else {
                 println!("{} [{}]", e.id, e.item.group);
@@ -396,9 +393,7 @@ pub fn main() {
     if use_wall {
         let noise_pct = walltime::calibrate(args.samples);
         if args.json {
-            println!(
-                "{{\"type\":\"calibration\",\"backend\":\"walltime\",\"noise_pct\":{noise_pct:.4}}}"
-            );
+            println!("{}", calibration_json(noise_pct));
         } else {
             println!("calibration: walltime A/A noise floor {noise_pct:.2}%");
         }
@@ -424,9 +419,12 @@ pub fn main() {
             emit_result(
                 e,
                 "walltime",
-                &format!(
-                    "\"median_ns\":{},\"mad_ns\":{},\"min_ns\":{},\"max_ns\":{},\"p99_ns\":{}",
-                    m.summary.median, m.summary.mad, m.summary.min, m.summary.max, m.p99_ns
+                &walltime_metrics(
+                    m.summary.median,
+                    m.summary.mad,
+                    m.summary.min,
+                    m.summary.max,
+                    m.p99_ns,
                 ),
                 &format!(
                     "walltime  median={:>12.1}ns  mad={:>8.1}  p99={:.1}ns  iters={}",
@@ -442,10 +440,7 @@ pub fn main() {
             emit_result(
                 e,
                 "perfcnt",
-                &format!(
-                    "\"instructions\":{},\"cycles\":{},\"cache_refs\":{}",
-                    m.instructions, m.cycles, m.cache_refs
-                ),
+                &perfcnt_metrics(m.instructions, m.cycles, m.cache_refs),
                 &format!(
                     "perfcnt   instructions={} cycles={} cache_refs={}",
                     m.instructions, m.cycles, m.cache_refs
@@ -459,7 +454,7 @@ pub fn main() {
                     emit_result(
                         e,
                         "callgrind",
-                        &format!("\"ir\":{ir}"),
+                        &callgrind_metrics(*ir),
                         &format!("callgrind ir={ir}"),
                         args.json,
                     );
@@ -471,7 +466,7 @@ pub fn main() {
                         emit_result(
                             e,
                             "perfcnt",
-                            &format!("\"instructions\":{ir},\"cycles\":0,\"cache_refs\":0"),
+                            &perfcnt_metrics(*ir, 0, 0),
                             &format!(
                                 "perfcnt   instructions={ir} cycles=0 cache_refs=0 (via callgrind)"
                             ),
@@ -487,7 +482,7 @@ pub fn main() {
             emit_result(
                 e,
                 "alloc",
-                &format!("\"allocs\":{},\"bytes\":{}", m.allocs, m.bytes),
+                &alloc_metrics(m.allocs, m.bytes),
                 &format!("alloc     allocs={} bytes={}", m.allocs, m.bytes),
                 args.json,
             );
@@ -500,7 +495,7 @@ pub fn main() {
             emit_result(
                 e,
                 "asyncexec",
-                &format!("\"polls\":{},\"wakes\":{}", m.polls, m.wakes),
+                &asyncexec_metrics(m.polls, m.wakes),
                 &format!("asyncexec polls={} wakes={}", m.polls, m.wakes),
                 args.json,
             );
@@ -510,18 +505,77 @@ pub fn main() {
     }
 }
 
+fn item_json(id: &str, group: &str, fingerprint: u64, covers: &str) -> String {
+    format!(
+        "{{\"type\":\"item\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"}}",
+        esc(id),
+        esc(group),
+        fingerprint,
+        esc(covers),
+    )
+}
+
+fn calibration_json(noise_pct: f64) -> String {
+    format!("{{\"type\":\"calibration\",\"backend\":\"walltime\",\"noise_pct\":{noise_pct:.4}}}")
+}
+
+fn walltime_metrics(median: f64, mad: f64, min: f64, max: f64, p99: f64) -> String {
+    format!(
+        "\"median_ns\":{median},\"mad_ns\":{mad},\"min_ns\":{min},\"max_ns\":{max},\"p99_ns\":{p99}"
+    )
+}
+
+fn perfcnt_metrics(instructions: u64, cycles: u64, cache_refs: u64) -> String {
+    format!("\"instructions\":{instructions},\"cycles\":{cycles},\"cache_refs\":{cache_refs}")
+}
+
+fn callgrind_metrics(ir: u64) -> String {
+    format!("\"ir\":{ir}")
+}
+
+fn alloc_metrics(allocs: u64, bytes: u64) -> String {
+    format!("\"allocs\":{allocs},\"bytes\":{bytes}")
+}
+
+fn asyncexec_metrics(polls: u64, wakes: u64) -> String {
+    format!("\"polls\":{polls},\"wakes\":{wakes}")
+}
+
+fn result_json(
+    id: &str,
+    group: &str,
+    fingerprint: u64,
+    covers: &str,
+    tolerance_pct: Option<f64>,
+    backend: &str,
+    metrics_json: &str,
+) -> String {
+    let tolerance = match tolerance_pct {
+        Some(t) => format!(",\"tolerance_pct\":{t}"),
+        None => String::new(),
+    };
+    format!(
+        "{{\"type\":\"result\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"{tolerance},\"backend\":\"{backend}\",\"metrics\":{{{metrics_json}}}}}",
+        esc(id),
+        esc(group),
+        fingerprint,
+        esc(covers),
+    )
+}
+
 fn emit_result(e: &Entry, backend: &str, metrics_json: &str, human: &str, json: bool) {
     if json {
-        let tolerance = match e.item.tolerance_pct {
-            Some(t) => format!(",\"tolerance_pct\":{t}"),
-            None => String::new(),
-        };
         println!(
-            "{{\"type\":\"result\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"{tolerance},\"backend\":\"{backend}\",\"metrics\":{{{metrics_json}}}}}",
-            esc(&e.id),
-            esc(e.item.group),
-            e.fingerprint,
-            esc(e.item.covers),
+            "{}",
+            result_json(
+                &e.id,
+                e.item.group,
+                e.fingerprint,
+                e.item.covers,
+                e.item.tolerance_pct,
+                backend,
+                metrics_json,
+            )
         );
     } else {
         println!("{:<44} {human}", e.id);
@@ -540,13 +594,38 @@ fn executed_json(id: &str, functions: &[(String, String)]) -> String {
     )
 }
 
+fn assertion_json(id: &str, kind: &str, ok: bool, detail: &str) -> String {
+    format!(
+        "{{\"type\":\"assertion\",\"id\":\"{}\",\"kind\":\"{kind}\",\"ok\":{ok},\"detail\":\"{}\"}}",
+        esc(id),
+        esc(detail),
+    )
+}
+
+fn sweep_json(
+    id: &str,
+    claimed: &str,
+    sizes: &[usize],
+    values: &[f64],
+    drift: f64,
+    ok: bool,
+) -> String {
+    let values = values
+        .iter()
+        .map(|v| format!("{v:.0}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"type\":\"sweep\",\"id\":\"{}\",\"claimed\":\"{}\",\"sizes\":{},\"values\":[{values}],\"drift\":{drift:.3},\"ok\":{ok}}}",
+        esc(id),
+        esc(claimed),
+        format!("{sizes:?}").replace(' ', ""),
+    )
+}
+
 fn emit_assertion(id: &str, kind: &str, ok: bool, detail: &str, json: bool) {
     if json {
-        println!(
-            "{{\"type\":\"assertion\",\"id\":\"{}\",\"kind\":\"{kind}\",\"ok\":{ok},\"detail\":\"{}\"}}",
-            esc(id),
-            esc(detail),
-        );
+        println!("{}", assertion_json(id, kind, ok, detail));
     } else {
         let mark = if ok { "assert ok  " } else { "assert FAIL" };
         println!("{mark} {id} {kind}: {detail}");
@@ -601,20 +680,10 @@ fn evaluate_assertions(
             .collect();
         let outcome = sweep::evaluate(class, item.sizes, &values);
         let sizes_str = format!("{:?}", item.sizes);
-        let values_str = values
-            .iter()
-            .map(|v| format!("{v:.0}"))
-            .collect::<Vec<_>>()
-            .join(",");
         if args.json {
             println!(
-                "{{\"type\":\"sweep\",\"id\":\"{}\",\"claimed\":\"{}\",\"sizes\":{},\"values\":[{}],\"drift\":{:.3},\"ok\":{}}}",
-                esc(&e.id),
-                esc(class),
-                sizes_str.replace(' ', ""),
-                values_str,
-                outcome.drift,
-                outcome.ok,
+                "{}",
+                sweep_json(&e.id, class, item.sizes, &values, outcome.drift, outcome.ok)
             );
         }
         emit_assertion(
@@ -888,5 +957,87 @@ mod tests {
     fn identity_fields_are_escaped() {
         let item = RouteItem::new("a\"b", "s", "op", "GET", "/x");
         assert!(route_json(&item).contains("a\\\"b"));
+    }
+
+    #[test]
+    fn every_record_type_matches_the_published_samples() {
+        let env = |guest| Env {
+            perf: Ok(()),
+            use_perf: true,
+            use_cg: false,
+            use_wall: true,
+            use_alloc: true,
+            gating: "perfcnt",
+            guest,
+        };
+        let result = |tolerance, backend, metrics: String| {
+            result_json(
+                "app::decode",
+                "self",
+                0xff,
+                "app::decode",
+                tolerance,
+                backend,
+                &metrics,
+            )
+        };
+        let full_route = RouteItem::new(
+            "app::create",
+            "openapi.yaml",
+            "createItem",
+            "POST",
+            "/items",
+        )
+        .with_shape(Some("NewItem"), Some("Item"), Some(201))
+        .with_params(Some("Query"))
+        .with_path_params(Some("Path"))
+        .with_summary(Some("Create an item"));
+        let lines = [
+            env_line(&env(None), true),
+            env_line(&env(Some(guest())), true),
+            item_json("app::decode", "self", 0xff, "app::decode"),
+            calibration_json(1.25),
+            result(
+                Some(7.5),
+                "walltime",
+                walltime_metrics(10.5, 0.5, 10.0, 12.0, 11.5),
+            ),
+            result(None, "perfcnt", perfcnt_metrics(100, 50, 5)),
+            result(None, "callgrind", callgrind_metrics(123_456)),
+            result(None, "alloc", alloc_metrics(2, 64)),
+            result(None, "asyncexec", asyncexec_metrics(9, 8)),
+            // Written by the CLI's buildcost backend, never by the runner; readers accept it here.
+            result(
+                None,
+                "buildcost",
+                "\"build_ms\":900,\"size_bytes\":4096".into(),
+            ),
+            executed_json(
+                "app::decode",
+                &[("/usr/bin/app".into(), "_ZN3app6decodeE".into())],
+            ),
+            assertion_json("app::decode", "alloc", true, "allocs 2 <= 2"),
+            sweep_json(
+                "app::decode",
+                "n",
+                &[1024, 8192],
+                &[100.0, 800.0],
+                0.996,
+                true,
+            ),
+            route_json(&full_route),
+            route_json(&PLAIN),
+        ];
+        let actual = lines.join("\n") + "\n";
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../cargo-soothfast/src/schema_samples/runner-records.jsonl");
+        if std::env::var_os("UPDATE_SAMPLES").is_some() {
+            std::fs::write(&path, &actual).unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            actual,
+            "run UPDATE_SAMPLES=1 cargo test -p soothfast-measure"
+        );
     }
 }
