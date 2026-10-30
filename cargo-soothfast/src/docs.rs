@@ -299,7 +299,8 @@ fn surfaces_for_binds(
         .docs
         .iter()
         .flat_map(|(_, d, _)| &d.binds)
-        .any(|b| matches!(docs_binds::classify(&b.item), docs_binds::Target::Rust(_)));
+        .flat_map(|b| b.targets())
+        .any(|t| matches!(docs_binds::classify(t), docs_binds::Target::Rust(_)));
     if !rust_binds {
         return Ok(Vec::new());
     }
@@ -369,32 +370,34 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
         } else {
             for (file, doc, _) in &scanned.docs {
                 for bind in &doc.binds {
-                    let current = match docs_binds::resolve(&scanned.root, &surfs, &bind.item) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            failures += 1;
-                            println!("FAIL  {file}:{} bind {}: {e}", bind.line, bind.item);
-                            continue;
+                    for target in bind.targets() {
+                        let current = match docs_binds::resolve(&scanned.root, &surfs, target) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                failures += 1;
+                                println!("FAIL  {file}:{} bind {target}: {e}", bind.line);
+                                continue;
+                            }
+                        };
+                        match lock.binds.get(target) {
+                            None => {
+                                failures += 1;
+                                let pkg: String =
+                                    a.pkgs.iter().map(|pkg| format!(" -p {pkg}")).collect();
+                                println!(
+                                    "FAIL  {file}:{} bind {target}: not locked — verify the prose, then `cargo soothfast docs accept{pkg}`",
+                                    bind.line
+                                );
+                            }
+                            Some(locked) if *locked != current => {
+                                failures += 1;
+                                println!(
+                                    "FAIL  {file}:{} bind {target}: STALE — code changed under this prose; re-verify, then `docs accept`",
+                                    bind.line
+                                );
+                            }
+                            Some(_) => println!("ok    {file}:{} bind {target}", bind.line),
                         }
-                    };
-                    match lock.binds.get(&bind.item) {
-                        None => {
-                            failures += 1;
-                            let pkg: String =
-                                a.pkgs.iter().map(|pkg| format!(" -p {pkg}")).collect();
-                            println!(
-                                "FAIL  {file}:{} bind {}: not locked — verify the prose, then `cargo soothfast docs accept{pkg}`",
-                                bind.line, bind.item
-                            );
-                        }
-                        Some(locked) if *locked != current => {
-                            failures += 1;
-                            println!(
-                                "FAIL  {file}:{} bind {}: STALE — code changed under this prose; re-verify, then `docs accept`",
-                                bind.line, bind.item
-                            );
-                        }
-                        Some(_) => println!("ok    {file}:{} bind {}", bind.line, bind.item),
                     }
                 }
             }
@@ -488,12 +491,14 @@ fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
     let mut fresh = lockfile::Binds::new();
     for (file, doc, _) in &scanned.docs {
         for bind in &doc.binds {
-            match docs_binds::resolve(&scanned.root, &surfs, &bind.item) {
-                Ok(fp) => fresh.insert(bind.item.clone(), fp),
-                Err(e) => {
-                    return err(&format!("{file}:{} bind {}: {e}", bind.line, bind.item));
-                }
-            };
+            for target in bind.targets() {
+                match docs_binds::resolve(&scanned.root, &surfs, target) {
+                    Ok(fp) => fresh.insert(target.to_string(), fp),
+                    Err(e) => {
+                        return err(&format!("{file}:{} bind {target}: {e}", bind.line));
+                    }
+                };
+            }
         }
     }
     // Explicit PATHS scan a subset of docs: merge so locks for binds in
@@ -1005,6 +1010,32 @@ mod tests {
         std::fs::write(dir.join("src/util.py"), "x = 1\n").unwrap();
         let a = DocsArgs::default();
         assert_eq!(accept_scanned(&a, &scan_at(&a, dir).unwrap()), 2);
+    }
+
+    #[test]
+    fn a_multi_target_bind_goes_stale_when_any_target_changes() {
+        let dir = project_without_cargo("multi");
+        std::fs::write(dir.join("src/other.py"), "def other():\n    return 1\n").unwrap();
+        std::fs::write(
+            dir.join("README.md"),
+            "<!-- soothfast:bind src/util.py#parse src/other.py#other -->\nboth.\n<!-- /soothfast:bind -->\n",
+        )
+        .unwrap();
+        let a = DocsArgs::default();
+        let run =
+            |f: fn(&DocsArgs, &super::Scanned) -> i32| f(&a, &scan_at(&a, dir.clone()).unwrap());
+        assert_eq!(run(accept_scanned), 0);
+        let lock = soothfast_docs::lockfile::read(&dir).unwrap().binds;
+        assert_eq!(
+            lock.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["src/other.py#other", "src/util.py#parse"]
+        );
+        assert_eq!(run(check_scanned), 0);
+
+        std::fs::write(dir.join("src/other.py"), "def other():\n    return 2\n").unwrap();
+        assert_eq!(run(check_scanned), 1);
+        assert_eq!(run(accept_scanned), 0);
+        assert_eq!(run(check_scanned), 0);
     }
 
     #[test]

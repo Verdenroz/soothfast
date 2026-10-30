@@ -23,38 +23,29 @@ pub struct SurfaceEntry {
     pub docs: String,
 }
 
+/// One public symbol of a non-Rust project.
+pub struct ProjectEntry {
+    /// `path/to/file#Symbol`, relative to the repository root.
+    pub id: String,
+    /// Lowercase symbol kind (`function`, `class`).
+    pub kind: String,
+    /// Whether a doc comment or docstring is present.
+    pub documented: bool,
+}
+
+/// A non-Rust project's public symbols, as listed in `llms.txt`.
+pub struct ProjectSurface {
+    /// The project's directory.
+    pub name: String,
+    /// Every public symbol, documented or not.
+    pub entries: Vec<ProjectEntry>,
+}
+
 /// Render `llms.txt`: every public item grouped by crate, with its full
 /// doc comment and measured facts attributed via `covers` (or direct id)
 /// matching.
 pub fn render(pkg: &str, entries: &[SurfaceEntry], baseline: &Value) -> String {
-    // Measurements attribute to public items via `covers` (or direct id).
-    // These numbers are point-in-time and will drift slightly between any
-    // two measurement runs (even perfcnt/alloc, not just walltime) — a
-    // committed llms.txt's drift gate (see the Makefile's `llms-gate`)
-    // deliberately ignores `**Measured:**` lines rather than pretend these
-    // are reproducible; regression detection is `make gate`'s job.
-    let mut measured: BTreeMap<String, String> = BTreeMap::new();
-    if let Some(items) = baseline["items"].as_object() {
-        for (id, m) in items {
-            let target = m["covers"].as_str().filter(|c| !c.is_empty()).unwrap_or(id);
-            let mut facts = Vec::new();
-            if let Some(i) = m["perfcnt"]["instructions"].as_u64() {
-                facts.push(format!("{i} instructions/iter"));
-            }
-            if let Some(ns) = m["walltime"]["median_ns"].as_f64() {
-                facts.push(format!("{ns:.0}ns median"));
-            }
-            if let Some(a) = m["alloc"]["allocs"].as_u64() {
-                facts.push(format!("{a} allocs/iter"));
-            }
-            if let Some(p) = m["asyncexec"]["polls"].as_u64() {
-                facts.push(format!("{p} polls/iter"));
-            }
-            if !facts.is_empty() {
-                measured.insert(target.to_string(), facts.join(", "));
-            }
-        }
-    }
+    let measured = measured_facts(baseline);
 
     // Group by source crate, preserving each crate's own path order.
     let mut groups: BTreeMap<&str, Vec<&SurfaceEntry>> = BTreeMap::new();
@@ -89,6 +80,63 @@ pub fn render(pkg: &str, entries: &[SurfaceEntry], baseline: &Value) -> String {
                 out.push_str("\n\n");
             }
             if let Some(facts) = measured.get(&e.path) {
+                out.push_str(&format!("**Measured:** {facts}\n\n"));
+            }
+        }
+    }
+    out
+}
+
+/// Measured facts per item, keyed by the public item they attribute to via
+/// `covers` (or the item's own id).
+fn measured_facts(baseline: &Value) -> BTreeMap<String, String> {
+    // Measurements attribute to public items via `covers` (or direct id).
+    // These numbers are point-in-time and will drift slightly between any
+    // two measurement runs (even perfcnt/alloc, not just walltime) — a
+    // committed llms.txt's drift gate (see the Makefile's `llms-gate`)
+    // deliberately ignores `**Measured:**` lines rather than pretend these
+    // are reproducible; regression detection is `make gate`'s job.
+    let mut measured: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(items) = baseline["items"].as_object() {
+        for (id, m) in items {
+            let target = m["covers"].as_str().filter(|c| !c.is_empty()).unwrap_or(id);
+            let mut facts = Vec::new();
+            if let Some(i) = m["perfcnt"]["instructions"].as_u64() {
+                facts.push(format!("{i} instructions/iter"));
+            }
+            if let Some(ns) = m["walltime"]["median_ns"].as_f64() {
+                facts.push(format!("{ns:.0}ns median"));
+            }
+            if let Some(a) = m["alloc"]["allocs"].as_u64() {
+                facts.push(format!("{a} allocs/iter"));
+            }
+            if let Some(p) = m["asyncexec"]["polls"].as_u64() {
+                facts.push(format!("{p} polls/iter"));
+            }
+            if !facts.is_empty() {
+                measured.insert(target.to_string(), facts.join(", "));
+            }
+        }
+    }
+    measured
+}
+
+/// One `## <dir>` section per project listing its documented public symbols
+/// with their latest measured walltime, matched like Rust items by `covers`
+/// or id. Undocumented symbols are counted, not listed.
+pub fn render_projects(projects: &[ProjectSurface], baseline: &Value) -> String {
+    let measured = measured_facts(baseline);
+    let mut out = String::new();
+    for project in projects {
+        let documented = project.entries.iter().filter(|e| e.documented).count();
+        out.push_str(&format!(
+            "## {}\n\n{documented} of {} public symbols documented.\n\n",
+            project.name,
+            project.entries.len(),
+        ));
+        for e in project.entries.iter().filter(|e| e.documented) {
+            out.push_str(&format!("### `{}` ({})\n\n", e.id, e.kind));
+            if let Some(facts) = measured.get(&e.id) {
                 out.push_str(&format!("**Measured:** {facts}\n\n"));
             }
         }
@@ -138,6 +186,35 @@ mod tests {
             summary: docs.lines().next().unwrap_or("").to_string(),
             docs: docs.to_string(),
         }
+    }
+
+    #[test]
+    fn projects_list_documented_symbols_with_their_walltime() {
+        let projects = [ProjectSurface {
+            name: "client".into(),
+            entries: vec![
+                ProjectEntry {
+                    id: "client/Headers.kt#Headers.parse".into(),
+                    kind: "method".into(),
+                    documented: true,
+                },
+                ProjectEntry {
+                    id: "client/Headers.kt#Headers.skip".into(),
+                    kind: "method".into(),
+                    documented: false,
+                },
+            ],
+        }];
+        let baseline = json!({ "items": { "jmh::Headers.parse": {
+            "covers": "client/Headers.kt#Headers.parse",
+            "walltime": { "median_ns": 2500.0 }
+        }}});
+        let out = render_projects(&projects, &baseline);
+        assert!(out.contains("## client\n\n1 of 2 public symbols documented."));
+        assert!(out.contains(
+            "### `client/Headers.kt#Headers.parse` (method)\n\n**Measured:** 2500ns median"
+        ));
+        assert!(!out.contains("Headers.skip"));
     }
 
     #[test]

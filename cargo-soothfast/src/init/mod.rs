@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{invoke, workspace};
 
-mod ecosystem;
+pub(crate) mod ecosystem;
 
 use ecosystem::{Bench, Ecosystem, Settings};
 

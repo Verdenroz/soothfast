@@ -13,6 +13,7 @@ mod buildstamp;
 mod changelog_config;
 mod codekey;
 mod coverage;
+mod coverage_lang;
 mod docs;
 mod docs_binds;
 mod docs_config;
@@ -31,6 +32,7 @@ mod itemreuse;
 mod jumptable;
 mod linkmap;
 mod mcp;
+mod project_surface;
 mod report;
 mod runcache;
 #[cfg(test)]
@@ -115,6 +117,8 @@ commands:
   docs     gh-deploy [--baseline NAME] [--branch NAME] [--remote NAME] [--message MSG]
            (build + publish to a gh-pages-style branch, replaces `mkdocs gh-deploy`)
   coverage measure|docs -p PKG [--min PCT] [--features F]
+  coverage docs --dir D --lang L [--min PCT]   (Kotlin, Java, Python, TS/JS symbols; reads
+           [[project]] dir/ecosystem from soothfast.toml when no -p or --dir is given)
   spec     gen -p PKG [--features F] [--check]
   spec     gate -p PKG [--base REF] [--allow-breaking]
   spec     check -p PKG [--features F] [--target NAME]
@@ -132,7 +136,7 @@ commands:
            the SDK surface is the linked generate-mode spec surface)
   sdk      publish -p PKG [--only LANG] [--dry-run]   (refuses stale output;
            python publishes via `uv build` + `uv publish`)
-  report   render -p PKG [--out DIR] [--baseline NAME] [--features F]
+  report   render -p PKG [--out DIR] [--baseline NAME] [--features F] [--dir D --lang L]
   report   changelog -p PKG [-p PKG ...] [--against-ref REF] [--features F]
            [--bot-author NAME]
            (no --against-ref: first release, lists the surface it ships)
