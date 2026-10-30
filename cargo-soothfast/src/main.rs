@@ -59,6 +59,8 @@ usage: cargo soothfast <command>
 
 commands:
   init     [-p PKG]... [--check] [--force] [--bot] [--labels]
+           [--ecosystem rust|gradle|maven|python|node] [--bench-cmd CMD]
+           [--bench-out PATH] [--from FORMAT]
            (writes the soothfast CI workflow, soothfast.toml and .gitignore
            entry; -p gives PKG a soothfast bench target; --check reports
            drift and writes nothing; --bot lands regenerated files and

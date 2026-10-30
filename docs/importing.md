@@ -107,3 +107,44 @@ help:
 - Set `[gate] walltime = "advisory"` in `soothfast.toml` where the numbers
   cannot be trusted to a single run. An overrun prints as `SOFT` and the gate
   passes.
+
+## Other languages
+
+`cargo soothfast init` detects the repo from the first build file it finds at
+the project root: `Cargo.toml`, then `build.gradle.kts` or `build.gradle`,
+then `pom.xml`, then `pyproject.toml` or `setup.py`, then `package.json`.
+`--ecosystem rust|gradle|maven|python|node` overrides the detection. For
+anything but Rust it writes a workflow that gates the repo's own harness on
+pull requests, plus a docs check when tracked markdown carries
+`<!-- soothfast:` markers.
+
+The gate job checks out the full history, runs the harness on the merge base
+in a `git worktree` and on HEAD, then runs `gate --import` with the merge
+base's file as `--reference-import`. When the merge base cannot run the
+harness or writes no result file, the gate notes that and passes. Nothing is
+stored, and a push to the default branch does nothing extra. An imported gate
+measures walltime only, so the seeded `soothfast.toml` sets
+`[gate] walltime = "hard"`; set it to `"advisory"` if the runner is too noisy
+to trust.
+
+| Ecosystem | Command | Format | Setup |
+|-----------|---------|--------|-------|
+| `gradle` | none; pass `--bench-cmd` and `--bench-out` | `jmh` | `setup-java` |
+| `maven` | `mvn -B -q -DskipTests package && java -jar target/benchmarks.jar -rf json -rff {out}` | `jmh` | `setup-java` |
+| `python` | `uv run pytest --benchmark-only --benchmark-json {out}` | `pytest-benchmark` | `setup-uv` |
+| `node` | `npx vitest bench --run --outputJson {out}` | `vitest` | `setup-node`, `npm ci` |
+
+`--bench-cmd CMD`, `--bench-out PATH` and `--from FORMAT` replace the command,
+the result file (default `soothfast-bench.json`, relative to the checkout the
+command runs in) and the format. `{out}` in the command stands for the result
+file. `--java` (default `21`) and `--node` (default `22`) pick the toolchain
+version.
+
+The choice is saved in an `[init]` table of `soothfast.toml`
+(`ecosystem`, `bench_cmd`, `bench_out`, `from`), so `init --check` without
+flags renders the same workflow; the toolchain versions are read back from
+the workflow. The workflow installs the CLI with the action's `version`
+input, since there is no `Cargo.lock` to read it from.
+
+`docs check` and `docs accept` need no cargo project for `path#Symbol` binds
+(see [living docs](living-docs.md)).
