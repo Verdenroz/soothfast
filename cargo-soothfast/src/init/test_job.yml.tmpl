@@ -9,6 +9,7 @@
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
@@ -17,4 +18,22 @@
         with:
           gate: "false"
           changelog: "false"
-      - run: cargo soothfast test
+      # The checkout has no default-branch ref for the CLI to diff against,
+      # so the change is named by the commit the event started from.
+      - name: Test what the change can affect
+        env:
+          EVENT: ${{ github.event_name }}
+          PULL_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base=""
+          if [ "$EVENT" = pull_request ]; then
+            base="$PULL_BASE"
+          elif [ "$PUSH_BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            base="$PUSH_BEFORE"
+          fi
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            cargo soothfast test --base "$base"
+          else
+            cargo soothfast test --all
+          fi
