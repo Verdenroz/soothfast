@@ -170,6 +170,12 @@ surface, meaning each signature and its first doc line, joined against the
 baseline by id and falling back to <code>covers=</code>. An agent reading it can answer
 "what does <code>X</code> measure right now" without guessing from a README that may be
 out of date.</p>
+<p>Items brought in by <code>import</code> get their own section per import prefix in the
+perf tables, with walltime median, mad and p99 under the harness name. Each
+one also draws as a line in the trend charts, apart from the Rust fleet's
+band. When the repo has non-Rust <code>[[project]]</code> entries (or <code>--dir D --lang L</code>
+is given), <code>llms.txt</code> adds a section per project listing its documented
+public symbols and their measured walltime.</p>
 <h2 id="trend-and-changelog">Trend and changelog<a class="anchor" href="#trend-and-changelog" aria-label="Link to this section">#</a></h2>
 <p><code>cargo soothfast trend append -p mylib</code> appends one line per run
 (<code>{unix, commit, noise_pct, items}</code>) to <code>.soothfast/trend.jsonl</code>. That file
@@ -213,6 +219,13 @@ feature that is not enabled never shows up in it, so too narrow a set shortens
 the diff with nothing to say it did. It falls back to <code>[gate] features</code> when
 absent. <code>packages</code> supplies <code>-p</code> when the command line gives none. An explicit
 <code>--features</code> or <code>-p</code> still wins over either.</p>
+<p><code>api_surface</code> is off unless set. With <code>api_surface = true</code>, the API section
+also covers every non-Rust <code>[[project]]</code> (or <code>--dir D --lang L</code>): the symbols
+that became public or stopped being public since <code>--against-ref</code>, or the
+full list when there is no reference. Passing <code>--dir</code>/<code>--lang</code> to
+<code>report changelog</code> opts in for that run without the setting.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[changelog]</span>
+<span class="tok-ty">api_surface </span>=<span class="tok-kw"> true</span></code></pre></figure>
 <p><code>bot-author</code> names the commit author whose entries are dropped: the bot that
 lands regenerated artifacts, whose commits are paperwork rather than changes.
 It defaults to <code>soothfast-bot[bot]</code>, what the action commits as, so only a

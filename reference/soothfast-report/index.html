@@ -217,6 +217,14 @@ its own paperwork is noise.</p>
 <p>Subjects that are not conventional commits of a known type: the ones a
 release would otherwise drop in silence.</p>
 <h2 id="soothfast-report-llms"><code>soothfast_report::llms</code><a class="anchor" href="#soothfast-report-llms" aria-label="Link to this section">#</a></h2>
+<h3 id="projectentry-struct"><code>ProjectEntry</code> <sup>struct</sup><a class="anchor" href="#projectentry-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ProjectEntry</span> { <span class="tok-kw">pub</span> id: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> kind: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> documented: <span class="tok-ty">bool</span> }
+</code></pre></figure>
+<p>One public symbol of a non-Rust project.</p>
+<h3 id="projectsurface-struct"><code>ProjectSurface</code> <sup>struct</sup><a class="anchor" href="#projectsurface-struct" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">ProjectSurface</span> { <span class="tok-kw">pub</span> name: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> entries: <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">ProjectEntry</span>&gt; }
+</code></pre></figure>
+<p>A non-Rust project's public symbols, as listed in <code>llms.txt</code>.</p>
 <h3 id="surfaceentry-struct"><code>SurfaceEntry</code> <sup>struct</sup><a class="anchor" href="#surfaceentry-struct" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">SurfaceEntry</span> { <span class="tok-kw">pub</span> path: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> kind: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> signature: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> pkg: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> summary: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> docs: <span class="tok-ty">String</span> }
 </code></pre></figure>
@@ -227,10 +235,16 @@ release would otherwise drop in silence.</p>
 <p>Render <code>llms.txt</code>: every public item grouped by crate, with its full
 doc comment and measured facts attributed via <code>covers</code> (or direct id)
 matching.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x0.98 over sizes [64, 256, 1024] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_report::bench_llms_render`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">305189</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">318461</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">7191</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">1197537</span></div></div></div>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x0.96 over sizes [64, 256, 1024] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_report::bench_llms_render`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">182256</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">183777</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">7191</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">1197537</span></div></div></div>
+<h3 id="render-projects-function"><code>render_projects</code> <sup>function</sup><a class="anchor" href="#render-projects-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">render_projects</span>(projects: &amp;[<span class="tok-ty">ProjectSurface</span>], baseline: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>One <code>## &lt;dir&gt;</code> section per project listing its documented public symbols
+with their latest measured walltime, matched like Rust items by <code>covers</code>
+or id. Undocumented symbols are counted, not listed.</p>
 <h2 id="soothfast-report-perf-table"><code>soothfast_report::perf_table</code><a class="anchor" href="#soothfast-report-perf-table" aria-label="Link to this section">#</a></h2>
 <h3 id="row-struct"><code>Row</code> <sup>struct</sup><a class="anchor" href="#row-struct" aria-label="Link to this section">#</a></h3>
-<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Row</span> { <span class="tok-kw">pub</span> id: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> instructions: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">u64</span>&gt;, <span class="tok-kw">pub</span> median_ns: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">f64</span>&gt;, <span class="tok-kw">pub</span> p99_ns: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">f64</span>&gt;, <span class="tok-kw">pub</span> allocs: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">u64</span>&gt;, <span class="tok-kw">pub</span> polls: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">u64</span>&gt; }
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">struct</span> <span class="tok-ty">Row</span> { <span class="tok-kw">pub</span> id: <span class="tok-ty">String</span>, <span class="tok-kw">pub</span> instructions: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">u64</span>&gt;, <span class="tok-kw">pub</span> median_ns: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">f64</span>&gt;, <span class="tok-kw">pub</span> p99_ns: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">f64</span>&gt;, <span class="tok-kw">pub</span> allocs: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">u64</span>&gt;, <span class="tok-kw">pub</span> polls: <span class="tok-ty">Option</span>&lt;<span class="tok-ty">u64</span>&gt;, <span class="tok-kw">pub</span> imported: <span class="tok-ty">bool</span> }
 </code></pre></figure>
 <p>One measured item's metrics, each <code>None</code> when that backend didn't run.</p>
 <h3 id="html-function"><code>html</code> <sup>function</sup><a class="anchor" href="#html-function" aria-label="Link to this section">#</a></h3>
@@ -240,8 +254,14 @@ matching.</p>
 <h3 id="markdown-function"><code>markdown</code> <sup>function</sup><a class="anchor" href="#markdown-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">markdown</span>(baseline: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">String</span>
 </code></pre></figure>
-<p><code>rows</code> rendered as a GitHub-flavored markdown table.</p>
-<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x0.93 over sizes [64, 256, 1024] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_report::bench_perf_table`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">841532</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">853354</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">8204</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">465747</span></div></div></div>
+<p><code>rows</code> rendered as a GitHub-flavored markdown table, imported harnesses
+under <code>##</code> headings.</p>
+<div class="evidence-panel"><div class="ev-ledger"><div class="ev-ledger-head">verified claims</div><div class="ev-row ev-row-pass"><span class="ev-mark">✓</span><span class="ev-item">complexity</span><span class="ev-detail">claimed O(n); growth drift x0.95 over sizes [64, 256, 1024] (limit x2.5)</span></div></div><div class="ev-ledger"><div class="ev-ledger-head">measured as `soothfast_report::bench_perf_table`</div><div class="ev-row"><span class="ev-metric">median walltime (ns)</span><span class="ev-actual">507218</span></div><div class="ev-row"><span class="ev-metric">p99 walltime (ns)</span><span class="ev-actual">524314</span></div><div class="ev-row"><span class="ev-metric">allocations/iter</span><span class="ev-actual">8205</span></div><div class="ev-row"><span class="ev-metric">allocated bytes/iter</span><span class="ev-actual">473941</span></div></div></div>
+<h3 id="markdown-at-function"><code>markdown_at</code> <sup>function</sup><a class="anchor" href="#markdown-at-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">markdown_at</span>(baseline: &amp;<span class="tok-ty">Value</span>, depth: <span class="tok-ty">usize</span>) -&gt; <span class="tok-ty">String</span>
+</code></pre></figure>
+<p>[<code>markdown</code>] with harness headings at <code>depth</code> <code>#</code>s, for embedding the
+table below a heading of the same document.</p>
 <h3 id="rows-function"><code>rows</code> <sup>function</sup><a class="anchor" href="#rows-function" aria-label="Link to this section">#</a></h3>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">rows</span>(baseline: &amp;<span class="tok-ty">Value</span>) -&gt; <span class="tok-ty">Vec</span>&lt;<span class="tok-ty">Row</span>&gt;
 </code></pre></figure>
@@ -303,9 +323,15 @@ deterministic and compare directly against their first point.</p>
   
     <li><a class="toc-l2" href="#soothfast-report-llms">soothfast_report::llms</a></li>
   
+    <li><a class="toc-l3" href="#projectentry-struct">ProjectEntry struct</a></li>
+  
+    <li><a class="toc-l3" href="#projectsurface-struct">ProjectSurface struct</a></li>
+  
     <li><a class="toc-l3" href="#surfaceentry-struct">SurfaceEntry struct</a></li>
   
     <li><a class="toc-l3" href="#render-function">render function</a></li>
+  
+    <li><a class="toc-l3" href="#render-projects-function">render_projects function</a></li>
   
     <li><a class="toc-l2" href="#soothfast-report-perf-table">soothfast_report::perf_table</a></li>
   
@@ -314,6 +340,8 @@ deterministic and compare directly against their first point.</p>
     <li><a class="toc-l3" href="#html-function">html function</a></li>
   
     <li><a class="toc-l3" href="#markdown-function">markdown function</a></li>
+  
+    <li><a class="toc-l3" href="#markdown-at-function">markdown_at function</a></li>
   
     <li><a class="toc-l3" href="#rows-function">rows function</a></li>
   

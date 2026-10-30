@@ -224,8 +224,12 @@ it), and <code>soothfast-gate.lock</code> accepts apply. <code>--ratchet</code>,
 <code>--filter</code> gates the items whose name contains it.</p>
 <h2 id="noise">Noise<a class="anchor" href="#noise" aria-label="Link to this section">#</a></h2>
 <p>Walltime from a different machine or a different run is noisy, and an
-imported run carries no A/A noise floor to scale the threshold by. Two things
-help:</p>
+imported run carries no A/A noise floor. The gate derives one per item from
+the data instead: the larger of the two sides' relative dispersion
+(<code>mad_ns / median_ns</code>). The walltime limit is then the larger of +10% and
+three times that, as in a native run, and an item whose limit was raised
+prints a <code>NOTE</code> with the floor it used. An item with tight samples keeps the
+fixed +10%. Two more things help:</p>
 <ul>
 <li>Gate against a long-lived baseline such as the last release, saved from the same kind of machine, rather than against a file from whichever runner happened to produce the last result. That is what a ratchet is for.</li>
 <li>Set <code>[gate] walltime = &quot;advisory&quot;</code> in <code>soothfast.toml</code> where the numbers cannot be trusted to a single run. An overrun prints as <code>SOFT</code> and the gate passes.</li>
