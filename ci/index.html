@@ -272,9 +272,107 @@ installed on is refused.</p>
 <tr><td><code>shard</code></td><td>none</td><td><code>I/N</code> to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own.</td></tr>
 <tr><td><code>comment</code></td><td><code>true</code></td><td>Post the pull request gate comment. <code>false</code> posts nothing and records a result per package for <code>cargo soothfast verdict merge</code>.</td></tr>
 <tr><td><code>cache</code></td><td><code>true</code></td><td>Restore and save <code>.soothfast/runs</code>, <code>items</code> and <code>maps</code>, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved.</td></tr>
+<tr><td><code>rustdoc-cache</code></td><td><code>false</code></td><td>Restore and save <code>.soothfast/rustdoc</code> for a job that runs <code>spec</code> or <code>docs</code> commands. A hit skips the nightly rustdoc build; see <a href="#rustdoc-cache">Rustdoc cache</a>.</td></tr>
+<tr><td><code>bin-cache</code></td><td><code>false</code></td><td>Restore <code>.soothfast/bins</code>, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See <a href="#bench-executable-cache">Bench executable cache</a>.</td></tr>
+<tr><td><code>cache-suffix</code></td><td>none</td><td>Tells apart the legs of a job matrix that share a job name, so each keeps its own <code>rustdoc-cache</code> and <code>bin-cache</code>.</td></tr>
 </tbody>
 </table></div>
 <p>Outputs are <code>version</code> and <code>cache-hit</code>.</p>
+<h2 id="rustdoc-cache">Rustdoc cache<a class="anchor" href="#rustdoc-cache" aria-label="Link to this section">#</a></h2>
+<p><code>spec</code> and <code>docs</code> commands build rustdoc JSON, which compiles the package
+and its dependencies under nightly. With <code>rustdoc-cache: &quot;true&quot;</code> the job
+keeps <code>.soothfast/rustdoc</code> between runs, and a command that finds the JSON
+it needs there skips cargo entirely.</p>
+<p>Lookup has two levels. A key hashes the package, features, visibility, the
+<code>rustc -vV</code> of the rustdoc toolchain, the rustdoc format version, every
+<code>RUSTFLAGS</code>, <code>RUSTDOCFLAGS</code>, <code>CARGO_ENCODED_*</code>, <code>CARGO_BUILD_*</code>,
+<code>CARGO_PROFILE_*</code> and <code>CARGO_TARGET_*</code> variable (bar the target directory
+and job count), <code>Cargo.lock</code>, the root manifest and cargo config, and the
+content of every file git lists in the package and its path dependencies,
+apart from <code>.github</code> and <code>.soothfast</code>. Uncommitted edits count, and a nested
+repository or submodule is hashed through. The key selects a manifest of
+the other files the last build read (from rustdoc's and cargo's dep-info and
+the build scripts' <code>rerun-if-changed</code>) and the variables it depends on
+(<code>env-dep</code> lines and <code>rerun-if-env-changed</code>). The entry is named for the key
+and a hash of those, so a changed <code>include_str!</code> target outside the package,
+or a changed build script input, is a miss. The merge-base checkout hashes
+the same way, so JSON a default-branch push saved is the base side of a
+pull request's <code>docs diff</code>.</p>
+<p>A result is stored only if nothing it read changed during the build.</p>
+<p>Not covered:</p>
+<ul>
+<li>What a build script reads without declaring it, and variables outside the families above that it does not name in <code>rerun-if-env-changed</code>.</li>
+<li>Cargo configuration outside the repository, such as <code>~/.cargo/config.toml</code>, and variables such as <code>RUSTC_WRAPPER</code>.</li>
+<li>Absolute paths rustdoc records for sources outside the workspace.</li>
+<li>A package whose sources sit outside the repository, or a tree without git, has no key and is always rebuilt.</li>
+</ul>
+<p>A package at the repository root hashes every file git lists outside the
+other packages, so a doc or README edit there misses.</p>
+<p>Caches are kept per job, runner OS and architecture, and <code>cache-suffix</code>, and
+the rustdoc store is capped at 1 GiB, dropping the least recently used entries
+first. The action saves through <code>actions/cache</code>, which saves a new entry at
+the end of every job that did not hit its exact key, even when nothing was
+added. A composite action has no end-of-job step to compare against, so
+that cost is accepted. Set <code>SOOTHFAST_TIMINGS=1</code> to print how long each
+rustdoc build, parse and <code>cargo bench</code> took.</p>
+<h2 id="bench-executable-cache">Bench executable cache<a class="anchor" href="#bench-executable-cache" aria-label="Link to this section">#</a></h2>
+<p>A job that gates, or runs <code>spec check</code>, builds its bench executable from
+cold: <code>cargo bench --no-run</code> for the gate's HEAD side, and a dev-profile
+build for the route listing behind <code>spec check</code>. A change that leaves the
+sources alone, a docs-only pull request, yields the same bytes, and the
+build dominates the job. <code>bin-cache</code> keeps <code>.soothfast/bins</code> between runs;
+a job that finds its executable there builds nothing, and the gate
+runs the stored file directly. It gets the package directory as its working
+directory, as <code>cargo bench</code> gives it, and the variables <code>CARGO_MANIFEST_DIR</code>
+and <code>CARGO_PKG_NAME</code>. Other <code>CARGO_*</code> variables and <code>LD_LIBRARY_PATH</code> are not
+set. A tree with a configured cargo <code>runner</code> (a <code>runner</code> key in the
+repository's or <code>CARGO_HOME</code>'s config, or a <code>CARGO_TARGET_*_RUNNER</code> variable)
+is never served from the store, since the runner is part of what is measured.</p>
+<p>The key and the manifest are built as for the <a href="#rustdoc-cache">rustdoc cache</a>,
+over the package, bench target, profile, features, <code>codegen-units</code> pin,
+toolchain, <code>rustc -vV</code> and the same variable families, with two additions:
+<code>RUSTC</code>, <code>RUSTC_WRAPPER</code>, <code>RUSTC_WORKSPACE_WRAPPER</code>, <code>RUSTUP_TOOLCHAIN</code> and
+<code>CARGO_INCREMENTAL</code> join the variables, and the manifest comes from the
+dep-info cargo writes for the bench executable and every workspace
+dependency plus the build scripts' <code>rerun-if-*</code> lines. An entry is kept only
+if every dependency's dep-info could be read.</p>
+<p>Markdown files are left out of the key's file list, so a docs-only change is
+a hit even for a package at the repository root, where that list is the
+whole repository. A markdown file the build included (<code>include_str!</code> on a
+README, say) is in the manifest and counts.</p>
+<p><strong>The checkout path is part of the key</strong>, and so are the target directory
+and <code>CARGO_HOME</code>. A binary can carry them: <code>env!(&quot;CARGO_MANIFEST_DIR&quot;)</code>,
+<code>file!()</code>, <code>OUT_DIR</code> and debug info all write absolute paths into its bytes,
+and the run cache, item cache and link maps all key on those bytes. Two
+checkouts of one tree at different paths gave identical executables only
+while no such path was compiled in. A job that moves its checkout between
+runs misses; CI runners use one path per repository.</p>
+<p>Each entry also keeps the digest of its binary and its link map, written
+once the first run has worked them out. A hit reads the digest instead of
+computing it, and puts the map back under <code>.soothfast/maps</code> if that was
+pruned. A map found nowhere is made by linking the bench target again, which
+on a cold target directory means a full build, once: the map is then kept in
+the entry for the runs after it.</p>
+<p>The store holds one executable per checkout, target directory, package, bench
+target, features and profile: a newer one replaces the older, so a saved
+cache is the binary the branch runs and not its history. The merge-base
+worktree builds elsewhere and so has its own. <code>cache merge</code> keeps the newest
+of each group by the time it was made, and pruning by size removes whole
+entries, oldest payload first.</p>
+<h3 id="cache-budget">Cache budget<a class="anchor" href="#cache-budget" aria-label="Link to this section">#</a></h3>
+<p>A saved entry is as large as the executable, tens of MB, and GitHub keeps
+about 10 GB of cache per repository, evicting the least recently used. An
+entry that displaced the measured-run caches would cost more than it saves,
+so the action is conservative:</p>
+<ul>
+<li><code>bin-cache</code> is off by default. Turn it on for the job that builds the bench target through the action (<code>gate: &quot;true&quot;</code>, the default).</li>
+<li>The executables are restored before the gate and saved after it, in a step of their own, only if a listing of the store (names and sizes, not times) differs from the one taken before the gate. A job that hit its executable, such as a docs-only pull request, saves nothing.</li>
+<li>A job outside the action, such as a <code>spec check</code> step in the adopter's own workflow, restores and saves <code>.soothfast/bins</code> with <code>actions/cache</code> on a key of its choosing. Key it per job and runner like <code>rustdoc-cache</code>, and save it with <code>actions/cache/save</code> guarded the same way, or only on the default branch.</li>
+</ul>
+<p>Not covered, beyond what the rustdoc cache lists: a markdown file a proc
+macro or build script reads without saying so, the linker and C compiler a
+build script invokes, and anything a bench reads at run time besides its
+working directory and <code>CARGO_MANIFEST_DIR</code>. The store keeps 512 MiB at most.</p>
 <h2 id="labels">Labels<a class="anchor" href="#labels" aria-label="Link to this section">#</a></h2>
 <p>With <code>labels: &quot;true&quot;</code> on a job that runs on default-branch pushes and on a
 schedule, soothfast-bot sweeps the open pull requests:</p>
@@ -376,6 +474,12 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l2" href="#why-the-environment">Why the environment</a></li>
   
     <li><a class="toc-l2" href="#inputs">Inputs</a></li>
+  
+    <li><a class="toc-l2" href="#rustdoc-cache">Rustdoc cache</a></li>
+  
+    <li><a class="toc-l2" href="#bench-executable-cache">Bench executable cache</a></li>
+  
+    <li><a class="toc-l3" href="#cache-budget">Cache budget</a></li>
   
     <li><a class="toc-l2" href="#labels">Labels</a></li>
   
