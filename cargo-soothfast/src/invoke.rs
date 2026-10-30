@@ -1216,23 +1216,16 @@ pub fn rustdoc_json_in(
     let _ = std::fs::remove_file(&dep_info);
     let started = std::time::SystemTime::now();
 
-    let mut cmd = Command::new("cargo");
-    cmd.args([&format!("+{toolchain}"), "rustdoc", "-p", pkg, "--lib"]);
-    cmd.arg("--message-format=json-render-diagnostics");
-    // Feature-gated items are invisible to the surface unless enabled.
-    if let Some(f) = features {
-        cmd.args(["--features", f]);
+    let build = |dep_info: Option<&Path>| {
+        let cmd = rustdoc_command(&toolchain, pkg, dir, features, visibility, dep_info);
+        timed(&format!("cargo rustdoc {pkg}"), || run_teeing_stderr(cmd))
+    };
+    let mut built = build(Some(&dep_info))?;
+    let mut tracked = true;
+    if !built.status.success() && rejects_tracking_flags(&built.stderr) {
+        tracked = false;
+        built = build(None)?;
     }
-    cmd.args(["--", "--output-format", "json", "-Zunstable-options"]);
-    cmd.arg(format!("--emit=dep-info={}", dep_info.display()));
-    if visibility == Visibility::Private {
-        cmd.arg("--document-private-items");
-    }
-    if let Some(d) = dir {
-        cmd.current_dir(d);
-    }
-    cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
-    let built = timed(&format!("cargo rustdoc {pkg}"), || cmd.output())?;
     if !built.status.success() {
         return Err(io::Error::other(format!(
             "cargo +{toolchain} rustdoc failed with {} \
@@ -1246,11 +1239,87 @@ pub fn rustdoc_json_in(
         serde_json::from_str(&text)
     })?;
     warn_on_format_version(&doc);
-    if let Some(key) = key {
+    if let (Some(key), true) = (key, tracked) {
         let inputs = rustdoc_inputs::collect(&root, &dep_info, &built.stdout);
         rustdocstore::store(&key, store_key(), &root, &inputs, started, &json_path);
     }
     Ok((doc, root))
+}
+
+/// `cargo rustdoc` for `pkg`, recording what it read in `dep_info` when given.
+fn rustdoc_command(
+    toolchain: &str,
+    pkg: &str,
+    dir: Option<&Path>,
+    features: Option<&str>,
+    visibility: Visibility,
+    dep_info: Option<&Path>,
+) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.args([&format!("+{toolchain}"), "rustdoc", "-p", pkg, "--lib"]);
+    if dep_info.is_some() {
+        cmd.arg("--message-format=json-render-diagnostics");
+    }
+    // Feature-gated items are invisible to the surface unless enabled.
+    if let Some(f) = features {
+        cmd.args(["--features", f]);
+    }
+    cmd.args(["--", "--output-format", "json", "-Zunstable-options"]);
+    if let Some(path) = dep_info {
+        cmd.arg(format!("--emit=dep-info={}", path.display()));
+    }
+    if visibility == Visibility::Private {
+        cmd.arg("--document-private-items");
+    }
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    cmd
+}
+
+/// Whether `stderr` says the toolchain refused the flags that record what a
+/// rustdoc build read, as opposed to the documented crate failing to build.
+fn rejects_tracking_flags(stderr: &str) -> bool {
+    let e = stderr.to_lowercase();
+    e.contains("invalid message format")
+        || (e.contains("emit")
+            && (e.contains("unrecognized option") || e.contains("unexpected argument")))
+}
+
+struct Built {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: String,
+}
+
+/// Run `cmd`, passing its stderr through as it arrives and keeping a copy.
+fn run_teeing_stderr(mut cmd: Command) -> io::Result<Built> {
+    use std::io::{Read, Write};
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let mut err = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("no stderr"))?;
+    let tee = std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut chunk = [0u8; 8192];
+        while let Ok(n) = err.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            let _ = io::stderr().write_all(&chunk[..n]);
+            kept.extend_from_slice(&chunk[..n]);
+        }
+        String::from_utf8_lossy(&kept).into_owned()
+    });
+    let out = child.wait_with_output()?;
+    let stderr = tee.join().unwrap_or_default();
+    Ok(Built {
+        status: out.status,
+        stdout: out.stdout,
+        stderr,
+    })
 }
 
 fn rustdoc_store_key(
@@ -2111,6 +2180,31 @@ optional = true
             super::HarnessSync::from_unpinned(missed.unpinned().to_vec()),
             missed
         );
+    }
+
+    #[test]
+    fn a_toolchain_that_refuses_the_tracking_flags_is_told_from_a_failed_build() {
+        let refused = [
+            "error: Unrecognized option: 'emit'",
+            "error: invalid message format specifier: `json-render-diagnostics`",
+            "error: unexpected argument '--emit' found",
+        ];
+        for stderr in refused {
+            assert!(super::rejects_tracking_flags(stderr), "{stderr}");
+        }
+        let failed = "error[E0425]: cannot find value `x` in this scope\n\
+                      Caused by: process didn't exit successfully: `rustdoc --emit=dep-info=x.d`";
+        assert!(!super::rejects_tracking_flags(failed));
+    }
+
+    #[test]
+    fn a_failing_command_keeps_its_stderr_and_stdout() {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "echo out; echo oops >&2; exit 3"]);
+        let built = super::run_teeing_stderr(cmd).unwrap();
+        assert_eq!(built.status.code(), Some(3));
+        assert_eq!(built.stdout, b"out\n");
+        assert_eq!(built.stderr, "oops\n");
     }
 
     #[test]
