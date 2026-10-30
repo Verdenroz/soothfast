@@ -225,3 +225,77 @@ nothing. The cache key follows the one used for measured runs in
 [Gating](gating.md): a branch restores its own earlier passes, then the
 default branch's. The cache saves even when a test failed, since only passes
 are stored: the next run re-runs the failures and skips what already passed.
+
+## Other languages
+
+A Gradle, Maven, Python or Node project that [`init`](importing.md) wires up
+as a `[[project]]` can carry its own test command. The Rust workspace keeps
+its per-package selection above; these keys select and cache a whole
+project.
+
+```toml
+[[project]]
+dir = "client"
+ecosystem = "gradle"
+bench_cmd = "./gradlew jmh -Pout={out}"
+test_cmd = "./gradlew check"
+watch = ["gradle/libs.versions.toml"]
+retries = 2
+
+[[project]]
+dir = "api"
+ecosystem = "python"
+test_cmd = "uv run pytest"
+retry_cmd = "uv run pytest --lf"
+retries = 1
+
+[[test.suite]]
+label = "soothfast:e2e"
+project = "api"
+cmd = "uv run pytest -m e2e"
+```
+
+| Key | Meaning |
+| --- | --- |
+| `test_cmd` | Run in the project's directory through `sh -c`. Without it the project has no tests to run. |
+| `watch` | Globs relative to the repository root. A change to a matching file runs the project's tests as well as a change under `dir`. |
+| `retries` | Reruns after a failure. Default 0. |
+| `retry_cmd` | The command for a rerun. Defaults to `test_cmd`. |
+
+A `[[test.suite]]` runs `cmd` in the directory of `project`, which must be a
+`[[project]]`, only on a pull request whose `label` a writer applied. It
+inherits the project's `retries` and reruns with its own `cmd`. An unknown
+key in either table is an error.
+
+```console
+$ cargo soothfast test --project client            # vs the default branch's merge-base
+$ cargo soothfast test --project client --all      # skip the selection, keep the cache
+$ cargo soothfast test --project api --suite soothfast:e2e
+```
+
+`--project DIR` runs only when the diff against the merge-base (`--base`
+works as above) touches a file under `DIR` or one `watch` matches; it prints
+that the project is untouched otherwise. A base with no merge-base runs it.
+`--no-cache` runs it even with a stored pass. `--result FILE` writes the
+outcome as JSON: `name` (`--name`, else the directory), `project`, `kind`
+(`test`), `verdict`, `output` (the last 40 lines) and `wall_s`.
+
+The verdict is `pass`, `reused`, `flaky`, `failed` or `skipped`. A pass is
+stored under `.soothfast/tests`, keyed by the content of every tracked file
+under `DIR` and every file `watch` matches, the command, and the toolchain
+(`java -version`, `python --version` or `node --version`; `--toolchain TEXT`
+names it instead). The same key later is `reused` and runs nothing. A
+failure reruns up to `retries` times; a pass on a rerun is `flaky`, exits 0
+and stores nothing, so the next run executes the tests again.
+
+In the reusable workflow, the plan job lists the projects the pull request
+reaches and the suites a writer labelled, and a `test-projects` matrix runs
+them beside the gate jobs, which do not wait for it. Each job restores
+`.soothfast/tests` and looks the key up before it installs Java, Node or uv,
+so a stored pass finishes without setting up a toolchain. The key then names
+the toolchain by the workflow's `java` and `node` inputs and the runner, not
+by a probe of the installed binary. The `soothfast:test-all` label, applied
+by a writer, selects every project and the Rust workspace and ignores stored
+passes for that run. Labels are read when the workflow starts, so applying
+one takes a new push or a re-run. Each job uploads its result as the
+`soothfast-result-test-<name>` artifact.
