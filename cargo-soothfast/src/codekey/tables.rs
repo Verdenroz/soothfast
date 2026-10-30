@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use soothfast_registry::fnv1a;
 
-use super::elf::Target;
 use super::resolve::{Resolver, strip_rip_displacement};
 use crate::jumptable;
 
@@ -39,21 +38,6 @@ impl Resolver<'_> {
             }
         }
         tables
-    }
-
-    /// Whether the relocated slot at `slot` holds a symbol outside this
-    /// function, or the entry of another function of this image.
-    pub(super) fn slot_leaves(&self, slot: u64, start: u64, end: u64) -> bool {
-        let Ok(i) = self.relocs.binary_search_by_key(&slot, |r| r.offset) else {
-            return false;
-        };
-        match &self.relocs[i].target {
-            Target::Symbol(_) => true,
-            Target::Relative(to) => self.symbol_at(*to).is_some_and(|s| {
-                let s = &self.symbols[s];
-                s.addr == *to && !(start..end).contains(to) && !s.name.contains(".cold")
-            }),
-        }
     }
 
     /// The input section a table at `table` may be decoded from.

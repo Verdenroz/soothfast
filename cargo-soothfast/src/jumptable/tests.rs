@@ -13,13 +13,40 @@ fn code(lines: &[&str]) -> Vec<(u64, String)> {
         .collect()
 }
 
-/// Every table jumps to the last instruction.
-fn prove_in(lines: &[&str]) -> Vec<Proof> {
-    prove_slots(lines, true)
+/// Where jumps may leave for, and what kind of function this is.
+struct World {
+    /// Addresses that are the entry of another function.
+    entries: &'static [u64],
+    slots_leave: bool,
+    rust: bool,
 }
 
-/// As `prove_in`, with every slot holding another function's entry or not.
-fn prove_slots(lines: &[&str], slots_leave: bool) -> Vec<Proof> {
+impl Exits for World {
+    fn branch_leaves(&self, target: u64) -> bool {
+        self.entries.contains(&target)
+    }
+
+    fn slot_leaves(&self, _: u64) -> bool {
+        self.slots_leave
+    }
+
+    fn rust(&self) -> bool {
+        self.rust
+    }
+}
+
+const RUST: World = World {
+    entries: &[0x2000],
+    slots_leave: true,
+    rust: true,
+};
+
+/// Every table jumps to the last instruction.
+fn prove_in(lines: &[&str]) -> Vec<Proof> {
+    prove_world(lines, &RUST)
+}
+
+fn prove_world(lines: &[&str], world: &World) -> Vec<Proof> {
     let instrs = code(lines);
     let last = instrs.last().map(|(a, _)| *a).unwrap_or(0);
     let span = (0x1000, last + 4);
@@ -27,7 +54,7 @@ fn prove_slots(lines: &[&str], slots_leave: bool) -> Vec<Proof> {
         &instrs,
         span,
         &|tables| tables.iter().map(|t| (*t, vec![last])).collect(),
-        &|_| slots_leave,
+        world,
     )
     .proofs
 }
@@ -242,7 +269,7 @@ fn a_loop_back_edge_that_keeps_the_lea_dominant_proves() {
         &instrs,
         (0x1000, 0x1020),
         &|tables| tables.iter().map(|t| (*t, vec![at(4), at(6)])).collect(),
-        &|_| true,
+        &RUST,
     )
     .proofs;
     assert_eq!(proofs.len(), 1);
@@ -426,26 +453,41 @@ fn unwind_resume_does_not_unwind_into_another_pad() {
 }
 
 #[test]
-fn a_conditional_tail_call_to_another_function_leaves_the_function() {
-    let tail = "jne    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other>";
-    assert_eq!(prove_in(&[LEA, tail, LOAD, ADD, JMP, RET]).len(), 1);
+fn a_branch_out_of_the_function_is_an_exit_only_to_the_entry_of_another() {
+    let entry = "jne    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other>";
+    assert_eq!(prove_in(&[LEA, entry, LOAD, ADD, JMP, RET]).len(), 1);
+    let unconditional = "jmp    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other>";
+    assert_eq!(
+        prove_in(&[LEA, LOAD, ADD, JMP, unconditional, RET]).len(),
+        1
+    );
+    for target in ["2010 <other+0x10>", "2100 <sqlite3VdbeExec.cold>", "2200"] {
+        for jump in ["jne", "jmp"] {
+            let branch = format!("{jump}    {target}");
+            assert!(
+                prove_in(&[LEA, &branch, LOAD, ADD, JMP, RET]).is_empty(),
+                "{branch}"
+            );
+        }
+    }
 }
 
 #[test]
-fn a_conditional_branch_into_the_middle_of_another_symbol_is_no_exit() {
-    let inside = "jne    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other+0x10>";
-    assert!(prove_in(&[LEA, inside, LOAD, ADD, JMP, RET]).is_empty());
+fn a_tail_call_through_a_slot_is_an_exit_only_when_the_slot_leaves() {
+    let slot = "jmp    *0x650abb(%rip)        # 12651d8 <_DYNAMIC+0x210>";
+    let lines = [LEA, LOAD, ADD, JMP, slot, RET];
+    assert_eq!(prove_in(&lines).len(), 1);
+    let stays = World {
+        slots_leave: false,
+        ..RUST
+    };
+    assert!(prove_world(&lines, &stays).is_empty());
+    let no_address = "jmp    *0x650abb(%rip)";
+    assert!(prove_in(&[LEA, LOAD, ADD, JMP, no_address, RET]).is_empty());
 }
 
 #[test]
-fn a_conditional_branch_to_a_cold_part_is_no_exit() {
-    let cold = "jne    2000 <sqlite3VdbeExec.cold>";
-    assert!(prove_in(&[LEA, cold, LOAD, ADD, JMP, RET]).is_empty());
-    assert!(prove_in(&[LEA, "jne    2000", LOAD, ADD, JMP, RET]).is_empty());
-}
-
-#[test]
-fn a_tail_call_through_a_pointer_in_memory_leaves_the_function() {
+fn a_tail_call_through_a_pointer_in_memory_leaves_a_rust_function() {
     let vtable = "jmp    *0x17(%rax)";
     assert_eq!(prove_in(&[LEA, LOAD, ADD, JMP, vtable, RET]).len(), 1);
     assert_eq!(
@@ -456,25 +498,28 @@ fn a_tail_call_through_a_pointer_in_memory_leaves_the_function() {
     assert!(prove_in(&[LEA, LOAD, ADD, JMP, indexed, RET]).is_empty());
 }
 
-fn exit_through_rdx(first: &str) -> Vec<Proof> {
-    prove_in(&[
-        LEA,
-        first,
-        "je     1018 <f+0x18>",
-        LOAD,
-        ADD,
-        JMP,
-        "jmp    *%rdx",
-    ])
+fn exit_through_rdx(first: &str, world: &World) -> Vec<Proof> {
+    prove_world(
+        &[
+            LEA,
+            first,
+            "je     1018 <f+0x18>",
+            LOAD,
+            ADD,
+            JMP,
+            "jmp    *%rdx",
+        ],
+        world,
+    )
 }
 
 #[test]
 fn a_tail_call_through_a_register_needs_a_pointer_loaded_on_every_path() {
     let load = "mov    0x18(%rdx),%rdx";
-    assert_eq!(exit_through_rdx(load).len(), 1);
-    assert!(exit_through_rdx("mov    %rbx,%rdx").is_empty());
-    assert!(exit_through_rdx("mov    0x0(,%rax,8),%rdx").is_empty());
-    assert!(exit_through_rdx("add    0x18(%rdx),%rdx").is_empty());
+    assert_eq!(exit_through_rdx(load, &RUST).len(), 1);
+    assert!(exit_through_rdx("mov    %rbx,%rdx", &RUST).is_empty());
+    assert!(exit_through_rdx("mov    0x0(,%rax,8),%rdx", &RUST).is_empty());
+    assert!(exit_through_rdx("add    0x18(%rdx),%rdx", &RUST).is_empty());
     let skipped = [
         LEA,
         "je     1018 <f+0x18>",
@@ -488,22 +533,30 @@ fn a_tail_call_through_a_register_needs_a_pointer_loaded_on_every_path() {
 }
 
 #[test]
-fn an_unconditional_jump_out_of_the_function_is_an_exit_only_to_an_entry() {
-    let tail = "jmp    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other>";
-    assert_eq!(prove_in(&[LEA, LOAD, ADD, JMP, tail, RET]).len(), 1);
-    let inside = "jmp    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other+0x10>";
-    assert!(prove_in(&[LEA, LOAD, ADD, JMP, inside, RET]).is_empty());
-    let cold = "jmp    2000 <sqlite3VdbeExec.cold>";
-    assert!(prove_in(&[LEA, LOAD, ADD, JMP, cold, RET]).is_empty());
-    assert!(prove_in(&[LEA, LOAD, ADD, JMP, "jmp    2000", RET]).is_empty());
+fn a_loaded_pointer_is_no_exit_from_a_function_that_may_use_computed_goto() {
+    let c = World {
+        rust: false,
+        ..RUST
+    };
+    let load = "mov    0x18(%rdx),%rdx";
+    assert!(exit_through_rdx(load, &c).is_empty());
+    let memory = [LEA, LOAD, ADD, JMP, "jmp    *0x17(%rax)", RET];
+    assert!(prove_world(&memory, &c).is_empty());
+    let tail = [LEA, LOAD, ADD, JMP, "jmp    2000 <other>", RET];
+    assert_eq!(prove_world(&tail, &c).len(), 1);
 }
 
 #[test]
-fn a_tail_call_through_a_slot_is_an_exit_only_when_the_slot_holds_an_entry() {
-    let slot = "jmp    *0x650abb(%rip)        # 12651d8 <_DYNAMIC+0x210>";
-    let lines = [LEA, LOAD, ADD, JMP, slot, RET];
-    assert_eq!(prove_slots(&lines, true).len(), 1);
-    assert!(prove_slots(&lines, false).is_empty());
-    let no_address = "jmp    *0x650abb(%rip)";
-    assert!(prove_slots(&[LEA, LOAD, ADD, JMP, no_address, RET], true).is_empty());
+fn two_exits_through_one_register_are_judged_together() {
+    let lines = [
+        LEA,
+        "mov    0x18(%rdx),%rdx",
+        "je     1018 <f+0x18>",
+        LOAD,
+        ADD,
+        JMP,
+        "jmp    *%rdx",
+        "jmp    *%rdx",
+    ];
+    assert_eq!(prove_in(&lines).len(), 1);
 }
