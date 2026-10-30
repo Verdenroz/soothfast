@@ -4,6 +4,7 @@
 use std::io::ErrorKind;
 use std::path::Path;
 
+use soothfast_docs::surface::Surface;
 use soothfast_lang::Lang;
 
 /// What a bind marker's target refers to.
@@ -17,6 +18,18 @@ pub fn classify(item: &str) -> Target<'_> {
     match item.split_once('#') {
         Some((path, symbol)) => Target::File { path, symbol },
         None => Target::Rust(item),
+    }
+}
+
+/// Current fingerprint of a bind target. `surf` is the rustdoc surface, which
+/// exists whenever the scanned docs bind at least one Rust item.
+pub fn resolve(root: &Path, surf: Option<&Surface>, item: &str) -> Result<String, String> {
+    match classify(item) {
+        Target::File { path, symbol } => file_fingerprint(root, path, symbol),
+        Target::Rust(item) => surf
+            .and_then(|s| s.items.get(item))
+            .map(|info| format!("{:016x}", info.fingerprint))
+            .ok_or_else(|| "item not found in crate".into()),
     }
 }
 

@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use soothfast_docs::{claims, diff, gentests, lockfile, markdown, reference, surface};
 
-use crate::{docs_generated, docs_support, invoke};
+use crate::{docs_binds, docs_generated, docs_support, invoke};
 
+#[derive(Default)]
 struct DocsArgs {
     pkg: Option<String>,
     baseline: String,
@@ -230,7 +231,10 @@ fn print_kept(kept: usize, pkg: &str) {
 }
 
 fn scan_all(a: &DocsArgs) -> Result<Scanned, String> {
-    let root = invoke::workspace_root().map_err(|e| e.to_string())?;
+    scan_at(a, invoke::project_root())
+}
+
+fn scan_at(a: &DocsArgs, root: PathBuf) -> Result<Scanned, String> {
     let mut docs = Vec::new();
     for file in md_files(a, &root) {
         let text =
@@ -246,6 +250,19 @@ fn scan_all(a: &DocsArgs) -> Result<Scanned, String> {
     Ok(Scanned { root, docs })
 }
 
+/// The rustdoc surface, built only when some bind names a Rust item.
+fn surface_for_binds(a: &DocsArgs, scanned: &Scanned) -> Result<Option<surface::Surface>, String> {
+    let rust_binds = scanned
+        .docs
+        .iter()
+        .flat_map(|(_, d, _)| &d.binds)
+        .any(|b| matches!(docs_binds::classify(&b.item), docs_binds::Target::Rust(_)));
+    if !rust_binds {
+        return Ok(None);
+    }
+    build_surface(a).map(|(surf, _, _)| Some(surf))
+}
+
 fn build_surface(a: &DocsArgs) -> Result<(surface::Surface, Value, PathBuf), String> {
     let pkg = a.pkg.as_deref().ok_or("this docs command needs -p PKG")?;
     let (doc, root) =
@@ -255,16 +272,19 @@ fn build_surface(a: &DocsArgs) -> Result<(surface::Surface, Value, PathBuf), Str
 }
 
 fn check(a: &DocsArgs) -> i32 {
-    let scanned = match scan_all(a) {
-        Ok(s) => s,
-        Err(e) => return err(&e),
-    };
+    match scan_all(a) {
+        Ok(scanned) => check_scanned(a, &scanned),
+        Err(e) => err(&e),
+    }
+}
+
+fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
     let mut failures = 0u32;
 
     // 1. Bind fingerprints vs soothfast.lock.
     let any_binds = scanned.docs.iter().any(|(_, d, _)| !d.binds.is_empty());
     if any_binds {
-        let (surf, _, _) = match build_surface(a) {
+        let surf = match surface_for_binds(a, scanned) {
             Ok(s) => s,
             Err(e) => return err(&format!("binds present but surface unavailable: {e}")),
         };
@@ -288,23 +308,25 @@ fn check(a: &DocsArgs) -> i32 {
         } else {
             for (file, doc, _) in &scanned.docs {
                 for bind in &doc.binds {
-                    let Some(info) = surf.items.get(&bind.item) else {
-                        failures += 1;
-                        println!(
-                            "FAIL  {file}:{} bind {}: item not found in crate",
-                            bind.line, bind.item
-                        );
-                        continue;
-                    };
-                    let current = format!("{:016x}", info.fingerprint);
+                    let current =
+                        match docs_binds::resolve(&scanned.root, surf.as_ref(), &bind.item) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                failures += 1;
+                                println!("FAIL  {file}:{} bind {}: {e}", bind.line, bind.item);
+                                continue;
+                            }
+                        };
                     match lock.binds.get(&bind.item) {
                         None => {
                             failures += 1;
+                            let pkg = match (&surf, a.pkg.as_deref()) {
+                                (Some(_), pkg) => format!(" -p {}", pkg.unwrap_or("PKG")),
+                                (None, _) => String::new(),
+                            };
                             println!(
-                                "FAIL  {file}:{} bind {}: not locked — verify the prose, then `cargo soothfast docs accept -p {}`",
-                                bind.line,
-                                bind.item,
-                                a.pkg.as_deref().unwrap_or("PKG")
+                                "FAIL  {file}:{} bind {}: not locked — verify the prose, then `cargo soothfast docs accept{pkg}`",
+                                bind.line, bind.item
                             );
                         }
                         Some(locked) if *locked != current => {
@@ -394,24 +416,26 @@ fn check(a: &DocsArgs) -> i32 {
 }
 
 fn accept(a: &DocsArgs) -> i32 {
-    let scanned = match scan_all(a) {
-        Ok(s) => s,
-        Err(e) => return err(&e),
-    };
-    let (surf, _, _) = match build_surface(a) {
+    match scan_all(a) {
+        Ok(scanned) => accept_scanned(a, &scanned),
+        Err(e) => err(&e),
+    }
+}
+
+fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
+    let surf = match surface_for_binds(a, scanned) {
         Ok(s) => s,
         Err(e) => return err(&e),
     };
     let mut fresh = lockfile::Binds::new();
     for (file, doc, _) in &scanned.docs {
         for bind in &doc.binds {
-            let Some(info) = surf.items.get(&bind.item) else {
-                return err(&format!(
-                    "{file}:{} bind {}: item not found in crate",
-                    bind.line, bind.item
-                ));
+            match docs_binds::resolve(&scanned.root, surf.as_ref(), &bind.item) {
+                Ok(fp) => fresh.insert(bind.item.clone(), fp),
+                Err(e) => {
+                    return err(&format!("{file}:{} bind {}: {e}", bind.line, bind.item));
+                }
             };
-            fresh.insert(bind.item.clone(), format!("{:016x}", info.fingerprint));
         }
     }
     // Explicit PATHS scan a subset of docs: merge so locks for binds in
@@ -761,7 +785,10 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{blocks_named_in, head_for_sniff};
+    use super::{
+        DocsArgs, accept_scanned, blocks_named_in, check_scanned, head_for_sniff, scan_at,
+    };
+    use crate::docs_binds;
 
     #[test]
     fn compiler_errors_name_each_block_file_once() {
@@ -789,5 +816,62 @@ mod tests {
         assert_eq!(head, "€".repeat(133));
         assert_eq!(head_for_sniff("short", 400), "short");
         assert_eq!(head_for_sniff("abcdef", 3), "abc");
+    }
+
+    const PY: &str = "def parse(s):\n    return s.strip()\n";
+
+    fn project_without_cargo() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("soothfast-nocargo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/util.py"), PY).unwrap();
+        std::fs::write(
+            dir.join("README.md"),
+            "# Demo\n\n<!-- soothfast:bind src/util.py#parse -->\nparse trims.\n<!-- /soothfast:bind -->\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn file_binds_check_and_accept_without_a_cargo_workspace() {
+        let dir = project_without_cargo();
+        let a = DocsArgs::default();
+        let run =
+            |f: fn(&DocsArgs, &super::Scanned) -> i32| f(&a, &scan_at(&a, dir.clone()).unwrap());
+        assert_eq!(run(check_scanned), 1, "unlocked bind fails");
+        assert_eq!(run(accept_scanned), 0);
+        assert_eq!(run(check_scanned), 0);
+
+        std::fs::write(dir.join("src/util.py"), "# note\n".to_string() + PY).unwrap();
+        assert_eq!(run(check_scanned), 0, "comment edit stays locked");
+
+        std::fs::write(dir.join("src/util.py"), PY.replace("strip", "lstrip")).unwrap();
+        assert_eq!(run(check_scanned), 1, "body edit is stale");
+        assert_eq!(run(accept_scanned), 0);
+        assert_eq!(run(check_scanned), 0);
+    }
+
+    #[test]
+    fn accept_refuses_a_bind_whose_symbol_is_gone() {
+        let dir = project_without_cargo();
+        std::fs::write(dir.join("src/util.py"), "x = 1\n").unwrap();
+        let a = DocsArgs::default();
+        assert_eq!(accept_scanned(&a, &scan_at(&a, dir).unwrap()), 2);
+    }
+
+    #[test]
+    fn a_file_only_repo_needs_no_rust_surface() {
+        let dir = project_without_cargo();
+        let a = DocsArgs::default();
+        let scanned = scan_at(&a, dir).unwrap();
+        assert!(super::surface_for_binds(&a, &scanned).unwrap().is_none());
+        assert_eq!(
+            docs_binds::classify(&scanned.docs[0].1.binds[0].item),
+            docs_binds::Target::File {
+                path: "src/util.py",
+                symbol: "parse"
+            }
+        );
     }
 }
