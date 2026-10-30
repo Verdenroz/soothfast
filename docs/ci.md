@@ -374,6 +374,11 @@ lines of output, reuse counts, seconds) and uploads it as
 `<!-- soothfast-verdict -->` with a section per project, regressed and
 errored first. Shards of one project fold into one section.
 
+Each section keeps the output of its job without terminal colour codes, and
+without cargo's `warning:` blocks unless the job errored. A docs check that
+skipped its claims for lack of a measurement reads `pass (claims not
+evaluated)`.
+
 Branch protection needs only the `verdict` check, named `<caller job id> /
 verdict`. The caller `cargo soothfast init` writes names its job `soothfast`,
 so a repo set up with init requires `soothfast / verdict`. The check fails when any project
