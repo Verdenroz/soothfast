@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Verdenroz/soothfast/master/schemas/baseline.schema.json",
+  "title": "soothfast baseline",
+  "description": "A saved measurement run, stored as .soothfast/baselines/NAME.json. `gate`, `docs check`, `report` and `trend` read it. Readers ignore unknown keys at every level and treat a missing key as absent, so every key is optional; a baseline without `items` simply measures nothing.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "description": "Format version. Written as 1; readers ignore it.",
+      "type": "integer"
+    },
+    "created_unix": {
+      "description": "Unix seconds when the baseline was last saved.",
+      "type": "integer"
+    },
+    "noise_pct": {
+      "description": "Measured timer noise floor of the machine, in percent. Used to widen walltime gate thresholds.",
+      "type": "number"
+    },
+    "build": {
+      "description": "What the measured binary was compiled with. Instruction counts are comparable only between equal stamps; a baseline without one reads as predating stamps.",
+      "type": "object",
+      "properties": {
+        "rustc": {
+          "description": "rustc release and host triple.",
+          "type": "string"
+        },
+        "codegen_units": {
+          "description": "Codegen-unit setting the gate pinned, or `inherit`.",
+          "type": "string"
+        },
+        "profiles": {
+          "description": "Opaque hash of the cargo profile tables in effect.",
+          "type": "string"
+        },
+        "rustflags": {
+          "description": "Opaque hash of the rustc flags from the environment and cargo config.",
+          "type": "string"
+        }
+      }
+    },
+    "items": {
+      "description": "Measured items keyed by item id (`package::module::function`, with `-` in the package normalized to `_`; buildcost pseudo-items are `buildcost::...`).",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/item" }
+    },
+    "assertions": {
+      "description": "Verdicts of the runner's checked claims (alloc, p99, complexity), written alongside items so reports can show verified claims.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "Id of the item the assertion belongs to.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Which claim was checked, for example `alloc`, `p99` or `complexity`.",
+            "type": "string"
+          },
+          "ok": {
+            "description": "Whether the claim held.",
+            "type": "boolean"
+          },
+          "detail": {
+            "description": "Human-readable measured-versus-claimed text.",
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "description": "One measured item. Each metric group is present only for the backends that ran. Unsigned integers are non-negative JSON integers; a float such as 3.0 does not read as one.",
+      "type": "object",
+      "properties": {
+        "fingerprint": {
+          "description": "Hex FNV-1a fingerprint of the annotated item's token stream. Compared across builds to detect a changed benchmark.",
+          "type": "string"
+        },
+        "covers": {
+          "description": "Path of the public item the benchmark covers, from `covers = ...`; empty when unset.",
+          "type": "string"
+        },
+        "imported": {
+          "description": "Import prefix the item came from, written by `cargo soothfast import`. Absent for measured items.",
+          "type": "string"
+        },
+        "tolerance_pct": {
+          "description": "Per-item gate threshold override, in percent.",
+          "type": "number"
+        },
+        "walltime": {
+          "description": "Wall-clock backend.",
+          "type": "object",
+          "properties": {
+            "median_ns": { "description": "Median iteration time in nanoseconds.", "type": "number" },
+            "mad_ns": { "description": "Median absolute deviation in nanoseconds.", "type": "number" },
+            "p99_ns": { "description": "99th percentile iteration time in nanoseconds.", "type": "number" },
+            "rounds": {
+              "description": "Per-round medians in nanoseconds when the side ran interleaved rounds. Omitted otherwise.",
+              "type": "array",
+              "items": { "type": "number" }
+            }
+          }
+        },
+        "perfcnt": {
+          "description": "Hardware performance-counter backend.",
+          "type": "object",
+          "properties": {
+            "instructions": { "description": "Retired instructions. Unsigned integer.", "type": "integer" },
+            "cycles": { "description": "CPU cycles. Unsigned integer.", "type": "integer" },
+            "cache_refs": { "description": "Cache references. Unsigned integer.", "type": "integer" }
+          }
+        },
+        "callgrind": {
+          "description": "Callgrind backend.",
+          "type": "object",
+          "properties": {
+            "ir": { "description": "Instructions executed (Ir). Unsigned integer.", "type": "integer" }
+          }
+        },
+        "alloc": {
+          "description": "Allocation-counting backend.",
+          "type": "object",
+          "properties": {
+            "allocs": { "description": "Allocation count. Unsigned integer.", "type": "integer" },
+            "bytes": { "description": "Bytes allocated. Unsigned integer.", "type": "integer" }
+          }
+        },
+        "asyncexec": {
+          "description": "Async executor backend.",
+          "type": "object",
+          "properties": {
+            "polls": { "description": "Future polls. Unsigned integer.", "type": "integer" },
+            "wakes": { "description": "Waker wake calls. Unsigned integer.", "type": "integer" }
+          }
+        },
+        "buildcost": {
+          "description": "Build-cost backend, on `buildcost::...` pseudo-items.",
+          "type": "object",
+          "properties": {
+            "build_ms": { "description": "Build time in milliseconds. Unsigned integer.", "type": "integer" },
+            "size_bytes": { "description": "Artifact size in bytes. Unsigned integer.", "type": "integer" }
+          }
+        },
+        "reused": {
+          "description": "Set when the metrics came from a stored measurement rather than this run.",
+          "type": "object",
+          "properties": {
+            "from": { "description": "What supplied them, for example `item cache`.", "type": "string" },
+            "metrics": {
+              "description": "Which metric groups were reused.",
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
