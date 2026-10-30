@@ -155,8 +155,35 @@ installed on is refused.
 | `labels` | `false` | On default-branch pushes and schedules, act on pull request labels as soothfast-bot (see [Labels](#labels)). |
 | `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
 | `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved. |
+| `rustdoc-cache` | `false` | Restore and save `.soothfast/rustdoc` for a job that runs `spec` or `docs` commands. A hit skips the nightly rustdoc build; see [Rustdoc cache](#rustdoc-cache). |
 
 Outputs are `version` and `cache-hit`.
+
+## Rustdoc cache
+
+`spec` and `docs` commands build rustdoc JSON, which compiles the package
+and its dependencies under nightly. With `rustdoc-cache: "true"` the job
+keeps `.soothfast/rustdoc` between runs, and a command that finds the JSON
+it needs there skips cargo entirely.
+
+An entry is named for a hash of the package, features, visibility, the
+`rustc -vV` of the rustdoc toolchain, the rustdoc format version, the
+`RUSTFLAGS` and `RUSTDOCFLAGS` family of variables, `Cargo.lock`, the root
+manifest and cargo config, and every file git lists in the package and its
+path dependencies. Uncommitted edits count. The merge-base checkout hashes
+the same way, so JSON a default-branch push saved is the base side of a
+pull request's `docs diff`.
+
+The key does not cover what a build script reads beyond those variables,
+or cargo configuration outside the repository such as
+`~/.cargo/config.toml`. A package whose sources sit outside the repository
+has no key and is always rebuilt. A package at the repository root hashes
+every tracked file outside the other packages, so an edit to a doc or a
+README there misses.
+
+Caches are kept per job, and the store is capped at 1 GiB, dropping the
+least recently used entries first. Set `SOOTHFAST_TIMINGS=1` to print how
+long each rustdoc build, parse and `cargo bench` took.
 
 ## Labels
 
