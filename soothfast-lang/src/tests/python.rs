@@ -76,3 +76,24 @@ fn syntax_errors_keep_parsed_symbols() {
     let broken = "def ok():\n    pass\n\ndef broken(:\n";
     assert!(names(Lang::Python, broken).contains(&"ok".to_string()));
 }
+
+#[test]
+fn indentation_changes_fingerprint() {
+    let inside = "def f(x):\n    if x:\n        a()\n    b()\n";
+    let nested = "def f(x):\n    if x:\n        a()\n        b()\n";
+    assert_ne!(fp(Lang::Python, inside, "f"), fp(Lang::Python, nested, "f"));
+}
+
+#[test]
+fn removing_a_comment_line_keeps_fingerprint() {
+    let with = "def f(x):\n    if x:\n        # why\n        a()\n\n    b()\n";
+    let without = "def f(x):\n    if x:\n        a()\n    b()\n";
+    assert_eq!(fp(Lang::Python, with, "f"), fp(Lang::Python, without, "f"));
+}
+
+#[test]
+fn moving_a_def_to_another_depth_keeps_fingerprint() {
+    let top = "def f():\n    return 1\n";
+    let nested = "class C:\n    def f():\n        return 1\n";
+    assert_eq!(fp(Lang::Python, top, "f"), fp(Lang::Python, nested, "C.f"));
+}
