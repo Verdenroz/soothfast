@@ -36,12 +36,12 @@ impl<'a> Bin<'a> {
     }
 }
 
-/// What a callgrind measurement may take from the store: the items whose
-/// executed code is the same in every binary measured, and the items left to
-/// run, per binary.
+/// What a callgrind measurement may take from the store: per binary, the
+/// items whose executed code a stored entry covers there, and the items left
+/// to run.
 pub struct Reuse {
     items: Items,
-    hits: BTreeMap<String, Entry>,
+    hits: Vec<BTreeMap<String, Entry>>,
     todo: Vec<Vec<String>>,
     measured_on: Value,
     /// Each binary measured, with its link-map extents.
@@ -87,34 +87,33 @@ impl Reuse {
             println!(
                 "{cmd}: per-item reuse off (SOOTHFAST_RECORD=1); measuring in full and storing the items it measures"
             );
-            (BTreeMap::new(), Vec::new())
+            (
+                vec![BTreeMap::new(); bins.len()],
+                vec![Vec::new(); bins.len()],
+            )
         } else {
             let listed: Vec<BTreeMap<String, String>> = bins
                 .iter()
                 .map(|bin| invoke::list_items(bin.exe, common.filter.as_deref()))
                 .collect::<Option<_>>()?;
-            let all: BTreeSet<&String> = listed.iter().flat_map(|l| l.keys()).collect();
-            let hits = items.reusable(&listed, &sides);
-            let todo = listed
+            let (hits, misses) = items.reusable(&listed, &sides);
+            let todo: Vec<Vec<String>> = listed
                 .iter()
-                .map(|l| {
+                .zip(&hits)
+                .map(|(l, hit)| {
                     l.keys()
-                        .filter(|id| !hits.contains_key(*id))
+                        .filter(|id| !hit.contains_key(*id))
                         .cloned()
                         .collect()
                 })
                 .collect();
-            let what = if bins.len() > 1 {
-                "run identical code on both sides"
+            let why = misses.to_string();
+            let why = if why.is_empty() {
+                why
             } else {
-                "run code a stored measurement covers"
+                format!(" ({why})")
             };
-            println!(
-                "{cmd}: {}/{} items {what}, measuring {}",
-                hits.len(),
-                all.len(),
-                all.len() - hits.len()
-            );
+            println!("{cmd}: {}{why}", reuse_summary(&listed, &todo));
             (hits, todo)
         };
         Some(Reuse {
@@ -152,7 +151,7 @@ impl Reuse {
         stamp: impl FnOnce() -> BuildStamp,
         measure: impl FnOnce(&[&str]) -> Result<Run, String>,
     ) -> Result<Run, String> {
-        if self.hits.is_empty() {
+        if self.hits[side].is_empty() {
             return measure(extra);
         }
         if self.todo[side].is_empty() {
@@ -180,21 +179,22 @@ impl Reuse {
         Ok(run)
     }
 
-    /// Keep what `run` measured of binary `side`, then splice the reused
-    /// items into it.
+    /// Keep what `run` measured of binary `side`, then splice the items
+    /// reused for it.
     pub fn finish(&self, side: usize, run: &mut Run) {
         self.record(side, run);
-        self.splice(run);
+        self.splice(side, run);
     }
 
-    /// Ids spliced by [`Reuse::finish`].
-    pub fn reused_ids(&self) -> impl Iterator<Item = &String> {
-        self.hits.keys()
+    /// Ids [`Reuse::finish`] splices into binary `side`'s run.
+    pub fn reused_ids(&self, side: usize) -> impl Iterator<Item = &String> {
+        self.hits[side].keys()
     }
 
-    /// Put the stored metrics and assertions of every reused item into `run`.
-    fn splice(&self, run: &mut Run) {
-        for (id, entry) in &self.hits {
+    /// Put the stored metrics and assertions of every item reused for binary
+    /// `side` into `run`.
+    fn splice(&self, side: usize, run: &mut Run) {
+        for (id, entry) in &self.hits[side] {
             let mut metrics = entry.metrics.clone();
             metrics.reused = Some(Reused {
                 from: "item cache".into(),
@@ -250,5 +250,62 @@ impl Reuse {
             }
         }
         self.items.prune();
+    }
+}
+
+/// The plan line: how many items each binary reuses and how many it measures.
+fn reuse_summary(listed: &[BTreeMap<String, String>], todo: &[Vec<String>]) -> String {
+    let all: BTreeSet<&String> = listed.iter().flat_map(|l| l.keys()).collect();
+    if let [only] = todo {
+        return format!(
+            "{}/{} items run code a stored measurement covers, measuring {}",
+            all.len() - only.len(),
+            all.len(),
+            only.len()
+        );
+    }
+    let sides: Vec<String> = ["head", "base"]
+        .iter()
+        .zip(listed.iter().zip(todo))
+        .map(|(label, (l, t))| format!("{label} {}/{}", l.len() - t.len(), l.len()))
+        .collect();
+    let measuring: usize = todo.iter().map(Vec::len).sum();
+    format!(
+        "items a stored measurement covers: {}, measuring {measuring}",
+        sides.join(", ")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listed(ids: &[&str]) -> BTreeMap<String, String> {
+        ids.iter()
+            .map(|id| (id.to_string(), "fp".to_string()))
+            .collect()
+    }
+
+    fn todo(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn a_lone_binary_counts_what_it_still_measures() {
+        let line = reuse_summary(&[listed(&["a", "b", "c"])], &[todo(&["c"])]);
+        assert_eq!(
+            line,
+            "2/3 items run code a stored measurement covers, measuring 1"
+        );
+    }
+
+    #[test]
+    fn a_gate_counts_each_side_on_its_own() {
+        let both = listed(&["a", "b"]);
+        let line = reuse_summary(&[both.clone(), both], &[todo(&["b"]), Vec::new()]);
+        assert_eq!(
+            line,
+            "items a stored measurement covers: head 1/2, base 2/2, measuring 1"
+        );
     }
 }

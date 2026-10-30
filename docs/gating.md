@@ -220,14 +220,29 @@ The run cache reuses a whole run. Under `callgrind`, the gate and `measure`
 can also reuse a single item, keyed on the machine code the item executed
 rather than on the commit. Callgrind already lists every function a run
 executes; the runner reports that set, and the CLI hashes those functions in
-each bench binary. An item whose executed code hashes the same on both sides
-of a gate is not measured: its stored metrics and assertion verdicts are
-placed on both sides, so its delta is zero, and only the remaining items run
-(`--id` on the runner).
+each bench binary. A side whose executed code a stored entry covers does not
+measure that item: the entry's metrics and assertion verdicts are placed on
+that side, and only the remaining items run (`--id` on the runner). An item
+whose code is unchanged reuses one entry on both sides, so its delta is zero.
+A changed item reuses whatever each side measured before, such as HEAD's run
+from an earlier push to the same pull request. Its walltime then comes from
+another run, so it is reported but never fails the gate; the counters still
+gate it.
 
 ```console
-gate: 14/16 items run identical code on both sides, measuring 2
+gate: items a stored measurement covers: head 14/16, base 16/16, measuring 2 (2 code changed)
 ```
+
+The reasons in parentheses say why the rest missed: `code changed`, `claims
+changed` (the item's fingerprint), `unhashable here` (a function that cannot
+be resolved), `never stored` (nothing in this cache scope, often a cache that
+was not restored) and `binary unreadable`.
+
+To see why an item's code changed between the two sides of a gate, set
+`SOOTHFAST_EXPLAIN=pkg::item` (or `all`) on the gate. For each such item it
+lists the functions of its newest stored entry that hash differently in
+HEAD's and the merge-base's binaries, and the thread-local image when that
+differs.
 
 The whole-run keys above are tried first. Per-item reuse applies on the full
 measurement path and when `measure` finds no run stored for its binary. It

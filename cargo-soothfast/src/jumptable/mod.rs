@@ -124,24 +124,12 @@ fn writes(ins: &Ins) -> Writes {
     let m = ins.mnemonic;
     let starts = |names: &[&str]| names.iter().any(|n| m.starts_with(n));
     let is = |names: &[&str]| names.contains(&m);
-    let one_operand_imul = m == "imul" && ins.operands.len() == 1;
-    if starts(&[
-        "call",
-        "rep",
-        "loop",
-        "cmpxchg8b",
-        "cmpxchg16b",
-        "cpuid",
-        "syscall",
-    ]) || is(&[
-        "mul", "mulb", "mulw", "mull", "mulq", "div", "divb", "divw", "divl", "divq",
-    ]) || is(&[
-        "idiv", "idivb", "idivw", "idivl", "idivq", "cltd", "cqto", "cltq", "cwtl", "leave",
-    ]) || is(&[
-        "movsb", "movsw", "movsl", "movsq", "stosb", "stosw", "stosl", "stosq",
-    ]) || one_operand_imul
-    {
+    let regs = |names: &[&str]| Writes::Reg(names.iter().map(|n| n.to_string()).collect());
+    if starts(&["call", "rep"]) {
         return Writes::Any;
+    }
+    if let Some(implicit) = implicit_writes(m, ins.operands.len()) {
+        return regs(implicit);
     }
     if starts(&["cmpxchg", "xchg", "xadd"]) {
         let mut regs: Vec<String> = ins.operands.iter().filter_map(|o| family(o)).collect();
@@ -175,6 +163,28 @@ fn writes(ins: &Ins) -> Writes {
     }
 }
 
+/// The registers an instruction writes without naming them as operands.
+fn implicit_writes(m: &str, operands: usize) -> Option<&'static [&'static str]> {
+    Some(match m {
+        "mul" | "mulb" | "mulw" | "mull" | "mulq" | "div" | "divb" | "divw" | "divl" | "divq"
+        | "idiv" | "idivb" | "idivw" | "idivl" | "idivq" => &["a", "d"],
+        _ if m.starts_with("imul") && operands == 1 => &["a", "d"],
+        _ if m.starts_with("cmpxchg8b") || m.starts_with("cmpxchg16b") => &["a", "d"],
+        "cltd" | "cqto" | "cwtd" => &["d"],
+        "cltq" | "cwtl" | "cbtw" => &["a"],
+        "leave" => &["sp", "bp"],
+        _ if m.starts_with("loop") => &["c"],
+        "cpuid" => &["a", "b", "c", "d"],
+        "syscall" => &["a", "c", "r11"],
+        "movsb" | "movsw" | "movsl" | "movsq" | "cmpsb" | "cmpsw" | "cmpsl" | "cmpsq" => {
+            &["si", "di"]
+        }
+        "stosb" | "stosw" | "stosl" | "stosq" | "scasb" | "scasw" | "scasl" | "scasq" => &["di"],
+        "lodsb" | "lodsw" | "lodsl" | "lodsq" => &["a", "si"],
+        _ => return None,
+    })
+}
+
 fn disturbs(ins: &Ins, regs: &[&str]) -> bool {
     match writes(ins) {
         Writes::Nothing => false,
@@ -188,6 +198,14 @@ fn scaled_base(operand: &str) -> Option<String> {
     let inner = operand.strip_suffix(",4)")?.rsplit_once('(')?.1;
     let (base, _index) = inner.split_once(',')?;
     family(base)
+}
+
+/// `jmp *d(%rip)`: a tail call through a GOT slot. It can only re-enter this
+/// function at its entry, where every register is unknown anyway.
+fn through_slot(ins: &Ins) -> bool {
+    ins.operands.len() == 1
+        && ins.operands[0].starts_with('*')
+        && ins.operands[0].ends_with("(%rip)")
 }
 
 fn direct_target(ins: &Ins) -> Option<u64> {
@@ -441,6 +459,7 @@ impl Graph {
                     }
                     Some(_) if unconditional => {}
                     Some(_) => return None,
+                    None if unconditional && through_slot(ins) => {}
                     None if unconditional => {
                         let table = active.iter().find(|c| c.jmp == i)?.table;
                         for t in targets.get(&table)? {

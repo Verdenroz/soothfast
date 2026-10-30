@@ -974,7 +974,7 @@ fn measure_ref_interleaved(
                     reuse.finish(side, run);
                 }
             }
-            reused = reuse.reused_ids().cloned().collect();
+            reused = reuse.reused_ids(1).cloned().collect();
         }
         // Read again here, where the merge-base worktree still exists; the
         // comparison itself uses the first reading either way.
@@ -1495,6 +1495,8 @@ fn compare(
             walltime_downgrade(old, cur, wall_limit)
                 .or(build_soft)
                 .or(reused_soft)
+                .or((old["reused_from"].is_string() || cur.reused.is_some())
+                    .then_some("item measured in an earlier run"))
                 .or(accepted_counters_soft)
                 .or(ctx
                     .walltime_advisory
@@ -2145,6 +2147,21 @@ mod tests {
         let (failures, failing) = gate_failures(&reused(walltime_reference()), &walltime_head());
         assert_eq!(failures, 0);
         assert!(failing.is_empty());
+    }
+
+    #[test]
+    fn an_item_reused_from_the_store_softens_its_walltime() {
+        let mut doc = walltime_reference();
+        doc["items"]["pkg::bt_base_to_htf_index"]["reused_from"] = json!("item cache");
+        assert_eq!(gate_failures(&doc, &walltime_head()).0, 0);
+        let mut head = walltime_head();
+        for item in head.items.values_mut() {
+            item.reused = Some(crate::invoke::Reused {
+                from: "item cache".into(),
+                metrics: Vec::new(),
+            });
+        }
+        assert_eq!(gate_failures(&walltime_reference(), &head).0, 0);
     }
 
     #[test]
