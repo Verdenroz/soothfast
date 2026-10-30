@@ -20,9 +20,9 @@ fn jmh_ids_carry_sorted_params() {
     assert_eq!(
         ids,
         [
-            "jmh::com.acme.codec.HashBench.digest",
-            "jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=1000]",
-            "jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=10]",
+            "jmh::com.acme.codec.HashBench.digest[mode=thrpt]",
+            "jmh::com.acme.codec.ParseBench.parse[mode=avgt,encoding=utf8,size=1000]",
+            "jmh::com.acme.codec.ParseBench.parse[mode=avgt,encoding=utf8,size=10]",
         ]
     );
 }
@@ -36,11 +36,11 @@ fn a_prefix_replaces_the_format_name() {
 #[test]
 fn jmh_time_units_become_nanoseconds_with_sample_statistics() {
     let run = imported(Format::Jmh, JMH);
-    let us = &run.items["jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=1000]"];
+    let us = &run.items["jmh::com.acme.codec.ParseBench.parse[mode=avgt,encoding=utf8,size=1000]"];
     assert_close(us.median_ns, 1255.0);
     assert_close(us.mad_ns, 30.0);
     assert_close(us.p99_ns, 1320.0);
-    let ns = &run.items["jmh::com.acme.codec.ParseBench.parse[encoding=utf8,size=10]"];
+    let ns = &run.items["jmh::com.acme.codec.ParseBench.parse[mode=avgt,encoding=utf8,size=10]"];
     assert_close(ns.median_ns, 140.5);
     assert_close(ns.mad_ns, 3.0);
 }
@@ -48,7 +48,7 @@ fn jmh_time_units_become_nanoseconds_with_sample_statistics() {
 #[test]
 fn jmh_throughput_is_inverted_to_time_per_op() {
     let run = imported(Format::Jmh, JMH);
-    let digest = &run.items["jmh::com.acme.codec.HashBench.digest"];
+    let digest = &run.items["jmh::com.acme.codec.HashBench.digest[mode=thrpt]"];
     assert_close(digest.median_ns, 500.0);
     assert_close(digest.mad_ns, 11.9);
 }
@@ -67,9 +67,60 @@ fn jmh_sample_mode_reads_its_percentiles() {
     }])
     .to_string();
     let run = imported(Format::Jmh, &text);
-    let read = &run.items["jmh::com.acme.Lat.read"];
+    let read = &run.items["jmh::com.acme.Lat.read[mode=sample]"];
     assert_close(read.median_ns, 48_000.0);
     assert_close(read.p99_ns, 90_000.0);
+}
+
+#[test]
+fn jmh_modes_of_one_benchmark_get_distinct_ids() {
+    let entry = |mode: &str, unit: &str| {
+        json!({
+            "benchmark": "b",
+            "mode": mode,
+            "primaryMetric": {
+                "score": 2.0,
+                "scoreUnit": unit,
+                "scorePercentiles": { "50.0": 2.0 }
+            }
+        })
+    };
+    let text = json!([entry("avgt", "ns/op"), entry("thrpt", "ops/s")]).to_string();
+    let run = imported(Format::Jmh, &text);
+    let ids: Vec<&str> = run.items.keys().map(String::as_str).collect();
+    assert_eq!(ids, ["jmh::b[mode=avgt]", "jmh::b[mode=thrpt]"]);
+}
+
+#[test]
+fn jmh_throughput_percentiles_give_no_p99() {
+    let text = json!([{
+        "benchmark": "b",
+        "mode": "thrpt",
+        "primaryMetric": {
+            "score": 1000.0,
+            "scoreUnit": "ops/s",
+            "scorePercentiles": { "50.0": 1000.0, "99.0": 2000.0 }
+        }
+    }]);
+    let run = parse(Format::Jmh, &text.to_string(), None).unwrap();
+    let item = &run.items["jmh::b[mode=thrpt]"];
+    assert_close(item.median_ns, 1e6);
+    assert_eq!(item.p99_ns, None);
+}
+
+#[test]
+fn jmh_percentiles_without_a_median_name_the_benchmark() {
+    let text = json!([{
+        "benchmark": "com.acme.Lat.read",
+        "mode": "sample",
+        "primaryMetric": {
+            "score": 52.0,
+            "scoreUnit": "us/op",
+            "scorePercentiles": { "99.0": 90.0 }
+        }
+    }]);
+    let err = parse(Format::Jmh, &text.to_string(), None).err().unwrap();
+    assert!(err.contains("com.acme.Lat.read"), "{err}");
 }
 
 #[test]
@@ -83,24 +134,15 @@ fn an_unknown_unit_is_rejected_by_name() {
 fn a_zero_throughput_score_is_rejected() {
     let text = json!([{
         "benchmark": "b",
+        "mode": "avgt",
         "primaryMetric": { "score": 0.0, "scoreUnit": "ops/s" }
     }]);
     assert!(parse(Format::Jmh, &text.to_string(), None).is_err());
 }
 
 #[test]
-fn a_score_without_raw_data_is_a_single_sample() {
-    let text = json!([{
-        "benchmark": "b",
-        "primaryMetric": { "score": 3.0, "scoreUnit": "ms/op" }
-    }]);
-    let run = parse(Format::Jmh, &text.to_string(), None).unwrap();
-    assert_close(run.items["jmh::b"].median_ns, 3e6);
-}
-
-#[test]
 fn duplicate_ids_are_rejected() {
-    let one = json!({ "benchmark": "b", "primaryMetric": { "score": 1.0, "scoreUnit": "ns/op" } });
+    let one = json!({ "benchmark": "b", "mode": "avgt", "primaryMetric": { "score": 1.0, "scoreUnit": "ns/op" } });
     let text = json!([one, one]).to_string();
     assert!(parse(Format::Jmh, &text, None).is_err());
 }
@@ -110,7 +152,7 @@ fn the_doc_has_the_baseline_shape() {
     let doc = to_doc(&imported(Format::Jmh, JMH));
     assert_eq!(doc["version"], 1);
     assert_eq!(doc["assertions"], json!([]));
-    let wall = &doc["items"]["jmh::com.acme.codec.HashBench.digest"]["walltime"];
+    let wall = &doc["items"]["jmh::com.acme.codec.HashBench.digest[mode=thrpt]"]["walltime"];
     assert!(wall["median_ns"].is_f64() && wall["mad_ns"].is_f64() && wall["p99_ns"].is_f64());
 }
 
@@ -136,7 +178,7 @@ fn saving_replaces_the_prefix_and_keeps_other_items() {
 
     assert!(saved["items"]["jmh::stale"].is_null());
     assert!(saved["items"]["pkg::kept"].is_object());
-    assert!(saved["items"]["jmh::com.acme.codec.HashBench.digest"].is_object());
+    assert!(saved["items"]["jmh::com.acme.codec.HashBench.digest[mode=thrpt]"].is_object());
 }
 
 fn rust_item(ids: &[&str]) -> Run {
@@ -175,7 +217,7 @@ fn a_full_bench_save_keeps_imported_items() {
             (&rust, scope),
         ];
         let saved = saved_after(name, steps);
-        assert!(saved["items"]["jmh::com.acme.codec.HashBench.digest"].is_object());
+        assert!(saved["items"]["jmh::com.acme.codec.HashBench.digest[mode=thrpt]"].is_object());
         assert!(saved["items"]["pkg::new"].is_object());
     }
 }
@@ -197,7 +239,7 @@ fn a_prefix_equal_to_a_package_name_keeps_its_rust_items() {
 fn a_prefix_with_separators_replaces_its_stale_entries() {
     let stale = parse(Format::Jmh, JMH, Some("app::bench")).unwrap();
     let mut fresh = parse(Format::Jmh, JMH, Some("app::bench")).unwrap();
-    fresh.items.retain(|id, _| id.ends_with("digest"));
+    fresh.items.retain(|id, _| id.contains("digest"));
     let scope = invoke::SaveScope::Imported("app::bench".into());
     let steps = vec![(&stale, invoke::SaveScope::BenchFiltered), (&fresh, scope)];
     let saved = saved_after("sep", steps);

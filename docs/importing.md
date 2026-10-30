@@ -35,7 +35,7 @@ renamed:
 
 | Format | Name |
 |--------|------|
-| JMH | `benchmark`, followed by `[k=v,...]` of its params sorted by key when it has any |
+| JMH | `benchmark[mode=M,k=v,...]`: the mode first, then its params sorted by key, so one benchmark run in several modes keeps one id per mode |
 | pyperf | the benchmark's `metadata.name`, else the file's (`timeit` for `pyperf timeit`) |
 | pytest-benchmark | `fullname` |
 | vitest | `<group full name> > <benchmark name>`, the group name being file-relative as vitest prints it |
@@ -50,7 +50,7 @@ computed from them; the MAD is unscaled, as in measured runs.
 
 | Format | Samples | Unit |
 |--------|---------|------|
-| JMH | `rawData` of every fork, else the single `score` | `scoreUnit`: `ns/op`, `us/op`, `ms/op`, `s/op` |
+| JMH | `rawData` of every fork, else `scorePercentiles` | `scoreUnit`: `ns/op`, `us/op`, `ms/op`, `s/op` |
 | pyperf | `values` of every run; calibration runs have none | seconds |
 | pytest-benchmark | `stats.data` | seconds |
 | vitest | `samples` | milliseconds |
@@ -58,6 +58,11 @@ computed from them; the MAD is unscaled, as in measured runs.
 JMH throughput modes (`ops/ns`, `ops/us`, `ops/ms`, `ops/s`) are inverted
 sample by sample into time per operation, so a slower run still reads as a
 larger number. A throughput score of zero is rejected.
+
+Sample-mode results carry a histogram instead of `rawData`. The median comes
+from `scorePercentiles["50.0"]` (its absence is an error naming the
+benchmark) and `p99_ns` from `99.0` for time units. Throughput units get no
+`p99_ns`, since their 99th percentile is the fastest time.
 
 An unknown unit is an error that names it, not a guess. When a format has no
 samples (pytest-benchmark without `data`, vitest without `samples`), the
