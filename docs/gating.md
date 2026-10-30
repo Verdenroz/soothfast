@@ -74,7 +74,12 @@ outside it that moves the numbers:
   string, which a distro-patched valgrind may keep unchanged. valgrind
   synthesizes the same guest CPU on different host models, so callgrind runs
   from differently named CI hosts share a key, while a machine with another
-  glibc or valgrind does not.
+  glibc or valgrind does not;
+- for `callgrind`, the method the harness counts with, `one-process` or
+  `two-process` (`SOOTHFAST_CALLGRIND_TWO_PROCESS=1` forces the latter). The
+  two differ slightly (teardown, the dump requests), so a count taken one way
+  is never served to a gate that counts the other. A harness that does not
+  name its method counts as `two-process`.
 
 A merge-base with a stored run under the same key is served from there, and
 the worktree is never built:
@@ -92,8 +97,9 @@ for that invocation rather than keying on a guess:
 gate: run cache disabled for this invocation: bench harness does not answer --env (soothfast runner: unknown runner arg "--env") (harness soothfast@0.3.2, ..., CLI ...)
 ```
 
-Each stored run records what it was keyed on under `measured_on`, so two runs
-that should have matched can be compared directly. A change to any keyed
+Each stored run records what it was keyed on under `measured_on` (for
+callgrind, the guest keys and `callgrind_method`), so two runs that should
+have matched can be compared directly. A change to any keyed
 condition, including a CI image that updates glibc or valgrind, starts a new
 key; runs stored under the old one are not migrated, and age out. The same
 holds for runs stored by cargo-soothfast 0.3.2 and earlier, whose keys named
@@ -512,6 +518,17 @@ of a harness bump: a small uniform shift across every item, nothing
 concentrated in what the PR touched. It waives comparison failures only.
 Checked claims hold HEAD against its own declared numbers, so they fail
 through it.
+
+Under callgrind the gate also compares the counting method of the two bench
+binaries. A merge-base that counts another way, or whose method cannot be
+read, reads as a mismatch too:
+
+```console
+gate: HARNESS MISMATCH — base measured with callgrind method two-process, head with one-process; comparison is not conclusive
+```
+
+Such a merge-base is measured in full and nothing of it is stored, since its
+counts would otherwise be filed under HEAD's method.
 
 A run that is otherwise clean still reports the mismatch. Both sides being
 measured with different instruments is not evidence in either direction,

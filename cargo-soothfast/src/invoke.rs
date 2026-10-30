@@ -1521,66 +1521,55 @@ pub fn tree_is_clean() -> bool {
     git(&["status", "--porcelain"]).is_ok_and(|s| s.trim().is_empty())
 }
 
-/// Opens the label of a callgrind method difference between the sides.
-const METHOD_LABEL: &str = "base measured with callgrind method ";
-
 /// Whether the reference side ended up embedding HEAD's measurement harness.
 /// A reference built against another harness measures a different protocol,
 /// so the outcome travels with the run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HarnessSync {
-    /// Every soothfast-family crate on the reference side is at HEAD's version.
-    Matched,
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HarnessSync {
     /// Crates cargo would not move, each spelled `name 0.2.0 -> 0.3.1`.
-    Mismatched(Vec<String>),
+    unpinned: Vec<String>,
+    /// The callgrind methods of the reference and of HEAD, when they differ
+    /// or the reference's is unknown.
+    method: Option<(String, String)>,
 }
 
 impl HarnessSync {
     /// Rebuild an outcome from the crate labels a stored run kept.
-    pub fn from_unpinned(labels: Vec<String>) -> Self {
-        if labels.is_empty() {
-            Self::Matched
-        } else {
-            Self::Mismatched(labels)
+    pub fn from_unpinned(unpinned: Vec<String>) -> Self {
+        HarnessSync {
+            unpinned,
+            method: None,
         }
     }
 
     /// The crates left at a version of their own, empty when the pin held.
     pub fn unpinned(&self) -> &[String] {
-        match self {
-            Self::Matched => &[],
-            Self::Mismatched(labels) => labels,
+        &self.unpinned
+    }
+
+    /// This outcome with the callgrind methods of the two sides.
+    pub fn with_method(self, base: &str, head: &str) -> Self {
+        HarnessSync {
+            method: Some((base.into(), head.into())),
+            ..self
         }
     }
 
-    /// This outcome with the callgrind method the reference side measured
-    /// with, when it is not HEAD's.
-    pub fn with_method(self, base: &str, head: &str) -> Self {
-        let mut labels = self.unpinned().to_vec();
-        labels.push(format!("{METHOD_LABEL}{base}, head with {head}"));
-        Self::Mismatched(labels)
-    }
-
-    /// The crates left unpinned, without the method difference.
-    pub fn pins(&self) -> Vec<&str> {
-        self.unpinned()
-            .iter()
-            .map(String::as_str)
-            .filter(|l| !l.starts_with(METHOD_LABEL))
-            .collect()
+    /// The stored form of [`HarnessSync::with_method`]: `[base, head]`.
+    pub fn method(&self) -> Option<[&str; 2]> {
+        self.method.as_ref().map(|(b, h)| [b.as_str(), h.as_str()])
     }
 
     /// The method difference, spelled for a reader, when there is one.
-    pub fn method_change(&self) -> Option<&str> {
-        self.unpinned()
-            .iter()
-            .map(String::as_str)
-            .find(|l| l.starts_with(METHOD_LABEL))
+    pub fn method_note(&self) -> Option<String> {
+        self.method().map(|[base, head]| {
+            format!("base measured with callgrind method {base}, head with {head}")
+        })
     }
 
     /// Whether the two sides embed different measurement harnesses.
     pub fn is_mismatched(&self) -> bool {
-        matches!(self, Self::Mismatched(_))
+        !self.unpinned.is_empty() || self.method.is_some()
     }
 }
 
@@ -1603,17 +1592,17 @@ pub fn sync_harness_versions(wt: &Path) -> Result<HarnessSync, String> {
         .map_err(|e| e.to_string())?
         .join("Cargo.lock");
     let Ok(head) = std::fs::read_to_string(&head_path) else {
-        return Ok(HarnessSync::Matched);
+        return Ok(HarnessSync::default());
     };
     // One crate per pass, re-reading the lock: pinning the facade drags its
     // family along, and already-moved entries must not be warned about.
     for _ in 0..16 {
         let Ok(base) = std::fs::read_to_string(wt.join("Cargo.lock")) else {
-            return Ok(HarnessSync::Matched);
+            return Ok(HarnessSync::default());
         };
         let mismatches = harness_mismatches(&head, &base);
         let Some((name, from, to)) = mismatches.first().cloned() else {
-            return Ok(HarnessSync::Matched);
+            return Ok(HarnessSync::default());
         };
         println!(
             "gate: pinning {name} {from} -> {to} in the merge-base worktree (harness must match HEAD)"
@@ -1992,11 +1981,11 @@ mod tests {
 
     #[test]
     fn a_method_difference_mismatches_the_harness_without_a_pin() {
-        let sync = super::HarnessSync::Matched.with_method("two-process", "one-process");
+        let sync = super::HarnessSync::default().with_method("two-process", "one-process");
         assert!(sync.is_mismatched());
-        assert!(sync.pins().is_empty());
+        assert!(sync.unpinned().is_empty());
         assert_eq!(
-            sync.method_change(),
+            sync.method_note().as_deref(),
             Some("base measured with callgrind method two-process, head with one-process")
         );
     }

@@ -24,9 +24,10 @@ fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
     Ok(unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) })
 }
 
-fn keep_across_exec(fd: RawFd) -> io::Result<()> {
+fn set_close_on_exec(fd: RawFd, on: bool) -> io::Result<()> {
+    let flags = if on { libc::FD_CLOEXEC } else { 0 };
     // SAFETY: fcntl on a descriptor this process holds.
-    match unsafe { libc::fcntl(fd, libc::F_SETFD, 0) } {
+    match unsafe { libc::fcntl(fd, libc::F_SETFD, flags) } {
         -1 => Err(io::Error::last_os_error()),
         _ => Ok(()),
     }
@@ -68,8 +69,8 @@ impl Control {
         // async-signal-safe.
         unsafe {
             cmd.pre_exec(move || {
-                keep_across_exec(read)?;
-                keep_across_exec(write)
+                set_close_on_exec(read, false)?;
+                set_close_on_exec(write, false)
             });
         }
     }
@@ -106,6 +107,10 @@ impl Child {
             .split_once(',')
             .and_then(|(r, w)| Some((r.parse::<RawFd>().ok()?, w.parse::<RawFd>().ok()?)))
             .ok_or_else(|| format!("{ENV} is not two descriptors: {named:?}"))?;
+        // A bench's setup may spawn processes, and one that outlived this
+        // process would hold the channel open.
+        set_close_on_exec(fds.0, true).map_err(|e| e.to_string())?;
+        set_close_on_exec(fds.1, true).map_err(|e| e.to_string())?;
         // SAFETY: the parent opened these descriptors for this process and
         // named them here; nothing else in it uses them.
         let (from_parent, to_parent) =

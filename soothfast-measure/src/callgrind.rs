@@ -286,10 +286,11 @@ fn run_window(id: &str, tag: &str) -> Result<(Vec<String>, u64), String> {
     let _ = printed.join();
     let stderr = errors.join().unwrap_or_default();
     let dumps = take_dumps(&out);
+    let window = chosen.map_err(|e| format!("{e}: {stderr}"))?;
     if !status.success() {
         return Err(format!("valgrind failed ({status}): {stderr}"));
     }
-    Ok((dumps?, chosen?))
+    Ok((dumps?, window))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -331,14 +332,18 @@ fn take_dumps(out: &Path) -> Result<Vec<String>, String> {
         })
         .collect();
     parts.sort();
-    parts
+    let dumps: Vec<String> = parts
         .into_iter()
         .map(|(_, path)| {
             let text = std::fs::read_to_string(&path).map_err(|e| e.to_string());
             let _ = std::fs::remove_file(&path);
             text
         })
-        .collect()
+        .collect::<Result<_, _>>()?;
+    if dumps.is_empty() {
+        return Err("callgrind wrote no dump".into());
+    }
+    Ok(dumps)
 }
 
 /// Total Ir of one dump file, from its summary line.
@@ -442,8 +447,11 @@ fn measure_window(id: &str) -> Result<Measurement, String> {
 fn measure_difference(id: &str) -> Result<Measurement, String> {
     let low = run_valgrind(id, K_MAX, "k1", true)?;
     let high = run_valgrind(id, 2 * K_MAX, "k2", true)?;
+    let (Some(low_total), Some(high_total)) = (low.first(), high.first()) else {
+        return Err("callgrind wrote no dump".into());
+    };
     Ok(Measurement {
-        ir: summary_ir(&high[0])?.saturating_sub(summary_ir(&low[0])?) / K_MAX,
+        ir: summary_ir(high_total)?.saturating_sub(summary_ir(low_total)?) / K_MAX,
         window: K_MAX,
         functions: executed(&high),
     })
@@ -530,7 +538,7 @@ fn executed<'a>(dumps: impl IntoIterator<Item = &'a String>) -> Vec<(String, Str
 /// Human triage report: top self-cost functions for one item's workload.
 pub fn annotate(id: &str) -> Result<String, String> {
     let dumps = run_valgrind(id, 1, "annotate", false)?;
-    let text = &dumps[0];
+    let text = dumps.first().ok_or("callgrind wrote no dump")?;
     let total = summary_ir(text)?;
     let mut costs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for (_, name, cost) in function_costs(text) {
@@ -617,6 +625,11 @@ summary: 1052
             ["first", "second", "tenth", "exit"]
         );
         assert!(!at(".1").exists() && !at("").exists());
+    }
+
+    #[test]
+    fn no_dump_at_all_is_an_error() {
+        assert!(take_dumps(&out_file("none")).is_err());
     }
 
     #[test]

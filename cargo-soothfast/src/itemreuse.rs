@@ -22,6 +22,8 @@ pub struct Bin<'a> {
     pub digest: Option<&'a str>,
     pub dir: Option<&'a Path>,
     pub target_dir: Option<&'a Path>,
+    /// What `exe` resolves, when the caller already asked it.
+    pub env: Option<&'a invoke::HostEnv>,
 }
 
 impl<'a> Bin<'a> {
@@ -32,6 +34,7 @@ impl<'a> Bin<'a> {
             digest,
             dir: None,
             target_dir: None,
+            env: None,
         }
     }
 }
@@ -67,9 +70,10 @@ impl Reuse {
         }
         let backend = common.backend.as_deref();
         let capable = env.item_reuse
-            && bins[1..]
-                .iter()
-                .all(|bin| invoke::host_env(bin.exe, backend).is_ok_and(|e| e.item_reuse));
+            && bins[1..].iter().all(|bin| match bin.env {
+                Some(env) => env.item_reuse,
+                None => invoke::host_env(bin.exe, backend).is_ok_and(|e| e.item_reuse),
+            });
         if !capable {
             println!(
                 "{cmd}: per-item reuse disabled for this invocation: bench harness does not take --id (harness {}, CLI {})",

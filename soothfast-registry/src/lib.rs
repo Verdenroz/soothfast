@@ -10,14 +10,30 @@ pub use linkme;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// How many times a workload body loops: fixed, or read from a cell the
+/// backend sets between body calls.
+#[derive(Clone, Copy)]
+enum Iters<'a> {
+    Fixed(u64),
+    Shared(&'a Cell<u64>),
+}
+
+impl Iters<'_> {
+    fn get(self) -> u64 {
+        match self {
+            Iters::Fixed(n) => n,
+            Iters::Shared(cell) => cell.get(),
+        }
+    }
+}
+
 /// Single-use measurement context handed to registered runner glue.
 ///
 /// Generated glue performs setup, then calls [`Bencher::iter`] (or
 /// [`Bencher::iter_async`]) exactly once with the workload; the active
 /// backend decides how many times (and how) the workload body actually runs.
 pub struct Bencher<'a> {
-    iters: u64,
-    shared: Option<&'a Cell<u64>>,
+    iters: Iters<'a>,
     collector: &'a mut dyn FnMut(&mut dyn FnMut()),
 }
 
@@ -26,8 +42,7 @@ impl<'a> Bencher<'a> {
     #[doc(hidden)]
     pub fn __new(iters: u64, collector: &'a mut dyn FnMut(&mut dyn FnMut())) -> Self {
         Bencher {
-            iters,
-            shared: None,
+            iters: Iters::Fixed(iters),
             collector,
         }
     }
@@ -37,17 +52,16 @@ impl<'a> Bencher<'a> {
     #[doc(hidden)]
     pub fn __counted(iters: &'a Cell<u64>, collector: &'a mut dyn FnMut(&mut dyn FnMut())) -> Self {
         Bencher {
-            iters: 0,
-            shared: Some(iters),
+            iters: Iters::Shared(iters),
             collector,
         }
     }
 
     /// Hand the workload to the active backend. Call exactly once per glue call.
     pub fn iter<T>(&mut self, mut f: impl FnMut() -> T) {
-        let (iters, shared) = (self.iters, self.shared);
+        let iters = self.iters;
         (self.collector)(&mut || {
-            for _ in 0..shared.map_or(iters, Cell::get) {
+            for _ in 0..iters.get() {
                 std::hint::black_box(f());
             }
         });
@@ -60,9 +74,9 @@ impl<'a> Bencher<'a> {
         F: FnMut() -> Fut,
         Fut: Future,
     {
-        let (iters, shared) = (self.iters, self.shared);
+        let iters = self.iters;
         (self.collector)(&mut || {
-            for _ in 0..shared.map_or(iters, Cell::get) {
+            for _ in 0..iters.get() {
                 std::hint::black_box(block_on_counting(f()));
             }
         });
