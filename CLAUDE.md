@@ -386,7 +386,9 @@ gates all of this; see `.github/dependabot.yml` for the automated dependency
 - Public API items require `///` doc comments.
 - No `unwrap()`/`expect()` in library code outside tests.
 - Dependencies are treated as a measured, gated claim — the CLI's full
-  dependency tree is intentionally tiny (~12–15 crates); stats, markdown
+  dependency tree is intentionally tiny (~12–15 crates, plus tree-sitter and
+  five grammars, the deliberate exception for non-Rust symbol discovery in
+  `soothfast-lang`); stats, markdown
   scanning, SVG charts, and git operations are hand-rolled in-repo rather than
   imported. Justify any new dependency in the PR description; it must also
   satisfy `deny.toml` (crates.io only, no wildcard versions, allowed licenses).

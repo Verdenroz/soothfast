@@ -35,6 +35,39 @@ it with no PATHS replaces the whole map, which is how dead binds get
 dropped. A lock written under an older `version` reports as needing one
 re-accept rather than as prose that drifted.
 
+### Binding code in other languages
+
+A target containing `#` is `<path>#<symbol>`: a symbol in a source file, with
+the path relative to the project root (the cargo workspace root, else the git
+toplevel, else the current directory). Java, Kotlin, Python, JavaScript,
+TypeScript and TSX files are supported, chosen by extension. Anything else is
+a Rust item path as above. File binds are parsed with tree-sitter, so
+`docs check` and `docs accept` need no cargo project and no `-p`; a repo whose
+binds are all file binds never builds rustdoc JSON.
+
+```markdown ignore
+<!-- soothfast:bind src/app/util.py#Parser.parse -->
+<!-- soothfast:bind web/src/price.ts#formatPrice -->
+<!-- soothfast:bind app/src/main/java/acme/Cart.java#Cart.total -->
+<!-- soothfast:bind app/src/main/kotlin/acme/Cart.kt#Cart.Companion.empty -->
+```
+
+Symbol names follow these rules:
+
+- Containers are dotted: `Outer.Inner.method`. A Kotlin companion object is
+  the container `Companion`.
+- Overloads share one name, and the fingerprint covers all of them.
+- In Python, indentation is part of the code and counts toward the
+  fingerprint. Ordinary comments do not, in any language.
+- A symbol inside code that does not parse is reported as missing, never
+  guessed.
+
+The lock key is the whole target string and the fingerprint is the symbol's
+own, so Rust binds and the `soothfast.lock` format are unchanged. Failures
+read `unsupported language for PATH`, `file not found`, or `symbol not found
+in PATH`; `not locked` and `STALE` behave as for Rust items. Claims are
+unchanged and still read the measurement baseline.
+
 ## Claims: numbers checked against a real run
 
 A claim marker looks like
