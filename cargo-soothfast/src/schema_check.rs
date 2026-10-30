@@ -160,6 +160,15 @@ fn one_of(root: &Value, branches: &[Value], v: &Value, path: &str, sp: &str, out
             r
         })
         .collect();
+    for (branch, attempt) in branches.iter().zip(&attempts) {
+        if let Some(tag) = discriminator(root, branch) {
+            let position = format!("{sp}<{tag}>");
+            if attempt.errors.is_empty() {
+                out.seen.insert(position.clone());
+            }
+            out.declared.insert(position);
+        }
+    }
     let mut passing = attempts.into_iter().filter(|r| r.errors.is_empty());
     match (passing.next(), passing.next()) {
         (Some(only), None) => {
@@ -173,6 +182,13 @@ fn one_of(root: &Value, branches: &[Value], v: &Value, path: &str, sp: &str, out
             .errors
             .push(format!("{path}: matches several oneOf branches")),
     }
+}
+
+/// The `type` const that tells a branch apart, if it has one.
+fn discriminator(root: &Value, branch: &Value) -> Option<String> {
+    resolve(root, branch)
+        .pointer("/properties/type/const")
+        .map(|c| c.as_str().map_or_else(|| c.to_string(), str::to_string))
 }
 
 fn visit_object(
@@ -239,6 +255,19 @@ mod tests {
         ] });
         assert!(check(&schema, &json!({ "t": "b" })).errors.is_empty());
         assert!(!check(&schema, &json!({ "t": "c" })).errors.is_empty());
+    }
+
+    #[test]
+    fn a_one_of_branch_no_instance_matched_is_reported_unused() {
+        let schema = json!({ "oneOf": [
+            { "type": "object", "properties": { "type": { "const": "a" } } },
+            { "type": "object", "properties": { "type": { "const": "b" } } },
+        ] });
+        let report = check_many(&schema, &[json!({ "type": "a" })]);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(report.unused(), ["$<b>"]);
+        let both = check_many(&schema, &[json!({ "type": "a" }), json!({ "type": "b" })]);
+        assert!(both.unused().is_empty(), "{:?}", both.unused());
     }
 
     #[test]
