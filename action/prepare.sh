@@ -10,14 +10,23 @@
 # recorded runs the gate compares against) and cache_runs.
 set -euo pipefail
 
-for tool in gh jq cargo; do
-  command -v "$tool" >/dev/null || {
-    echo "::error::${tool} must be installed on the runner; see docs/ci.md, Self-hosted runners"
-    exit 1
-  }
-done
+need() {
+  local tool
+  for tool in "$@"; do
+    command -v "$tool" >/dev/null || {
+      echo "::error::${tool} must be installed on the runner for this step; see docs/ci.md, Self-hosted runners"
+      exit 1
+    }
+  done
+}
 
-default=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)
+need cargo
+if command -v jq >/dev/null; then
+  default=$(jq -r .repository.default_branch "$GITHUB_EVENT_PATH")
+else
+  need gh
+  default=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)
+fi
 on_default=false
 [ "${GITHUB_REF:-}" = "refs/heads/${default}" ] && on_default=true
 echo "on_default_branch=$on_default" >>"$GITHUB_OUTPUT"
@@ -25,6 +34,7 @@ echo "default_branch=$default" >>"$GITHUB_OUTPUT"
 sweep=false
 if [ "${LABELS:-false}" = true ] && [ "${GITHUB_EVENT_NAME:-}" != pull_request ] && [ "$on_default" = true ]; then
   sweep=true
+  need gh
 fi
 echo "sweep=$sweep" >>"$GITHUB_OUTPUT"
 # Shard 1 of a matrix records every item for all of them.
@@ -46,6 +56,7 @@ if [ "$gating" = false ] && [ "$recording" = false ] && [ "$regenerating" = fals
 fi
 
 if [ -z "$PACKAGES" ]; then
+  need jq
   PACKAGES=$(cargo metadata --format-version 1 --no-deps |
     jq -r '[.packages[] | select(any(.targets[]; .kind == ["bench"] and .name == "soothfast")) | .name] | join(" ")')
 fi

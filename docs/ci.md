@@ -258,9 +258,16 @@ Every job:
   into `$CARGO_HOME/bin`. The first
   build of a ref takes several minutes.
 
-Jobs that run the composite action (the cargo gate and the labels job):
+Jobs that run the composite action (the cargo gate and the labels job). A
+plain pull request gate needs `cargo` and one of `jq` or `gh` (to read the
+default branch). The rest is needed only by the step that uses it, and each
+fails naming the tool:
 
-- `gh` and `jq`. The step fails naming the tool when one is missing.
+- `gh`, to comment with the job token, to act on labels and to land
+  regenerated files. Without it the gate still runs and only skips the
+  `soothfast:perf-accepted` check, with a warning.
+- `jq`, to comment or mint a token as soothfast-bot, and to find the bench
+  packages when none are named.
 - `valgrind`, for the callgrind fallback on machines without hardware
   performance counters. The step installs it with `apt-get` when it runs as
   root or passwordless `sudo` is available, and otherwise warns and carries on.

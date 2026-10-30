@@ -1378,9 +1378,7 @@ pub fn with_merge_base_worktree<T>(
         .to_str()
         .ok_or_else(|| "worktree path is not UTF-8".to_string())?;
 
-    // A worktree whose directory was deleted stays registered, and `add`
-    // refuses the path until the registration is pruned.
-    let _ = git(&["worktree", "prune"]);
+    forget_missing_worktree(&wt);
     discard_worktrees_except(&dir, &sha);
 
     if is_worktree_root(&wt) {
@@ -1443,8 +1441,27 @@ fn discard_worktrees_except(dir: &Path, keep: &str) {
             let _ = git(&["worktree", "remove", "--force", path]);
         }
         let _ = std::fs::remove_dir_all(entry.path());
+        forget_missing_worktree(&entry.path());
     }
-    let _ = git(&["worktree", "prune"]);
+}
+
+/// Drop the registration of `wt` when its directory is gone. A deleted
+/// worktree stays registered and `add` refuses the path. Never `git worktree
+/// prune`: that drops every other worktree whose directory this process
+/// cannot see, such as one on an unmounted drive or outside a container.
+pub fn forget_missing_worktree(wt: &Path) {
+    if let Ok(root) = workspace_root() {
+        forget_missing_worktree_in(&root, wt);
+    }
+}
+
+fn forget_missing_worktree_in(repo: &Path, wt: &Path) {
+    if wt.exists() {
+        return;
+    }
+    if let Some(path) = wt.to_str() {
+        let _ = git_in(repo, &["worktree", "remove", "--force", "--force", path]);
+    }
 }
 
 /// One `[[package]]` entry from a Cargo.lock.
@@ -1859,9 +1876,40 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, Shard, harness_mismatches,
-        run_from_items_value, run_to_items_value, saved_items,
+        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, Shard,
+        forget_missing_worktree_in, git_in, harness_mismatches, run_from_items_value,
+        run_to_items_value, saved_items,
     };
+
+    #[test]
+    fn only_our_missing_worktree_is_forgotten() {
+        let root = std::env::temp_dir().join(format!("soothfast-forget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        let (ours, foreign) = (root.join("ours"), root.join("foreign"));
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| git_in(&repo, args).unwrap();
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ]);
+        for wt in [&ours, &foreign] {
+            git(&["worktree", "add", "-q", "--detach", wt.to_str().unwrap()]);
+            std::fs::remove_dir_all(wt).unwrap();
+        }
+        forget_missing_worktree_in(&repo, &ours);
+        let listing = git(&["worktree", "list", "--porcelain"]);
+        assert!(!listing.contains("ours"), "{listing}");
+        assert!(listing.contains("foreign"), "{listing}");
+    }
 
     #[test]
     fn a_shard_parses_from_one_and_rejects_out_of_range() {
