@@ -161,7 +161,16 @@ pub fn values(claim: &Claim, baseline: &Value) -> Result<(f64, Option<f64>), Str
 
 /// Evaluate against a baseline document; returns (holds, actual value).
 pub fn evaluate(claim: &Claim, baseline: &Value) -> Result<(bool, f64), String> {
-    let (first, second) = values(claim, baseline)?;
+    let (first, second) = values(claim, baseline).map_err(|e| {
+        if claim.minus.is_none() && claim.item.contains(" - ") {
+            format!(
+                "{e} (read as one item; for a difference both sides need a known backend: {})",
+                BACKENDS.join(", ")
+            )
+        } else {
+            e
+        }
+    })?;
     let actual = first - second.unwrap_or(0.0);
     let holds = match claim.op {
         Op::Lt => actual < claim.bound,
@@ -252,6 +261,14 @@ mod tests {
             parse("x.walltime.p99_ns - vitest::f.bench.ts > d - n.walltime.p99_ns < 5ms").unwrap();
         assert_eq!(diff.item, "x");
         assert_eq!(diff.minus.unwrap().item, "vitest::f.bench.ts > d - n");
+    }
+
+    #[test]
+    fn a_dash_in_a_single_operand_hints_at_the_difference_form() {
+        let c = parse("a.walltime.median_ns - b.nope.median_ns < 2us").unwrap();
+        let err = evaluate(&c, &json!({})).unwrap_err();
+        assert!(err.contains("read as one item"), "{err}");
+        assert!(err.contains("perfcnt, walltime"), "{err}");
     }
 
     #[test]
