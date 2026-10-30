@@ -51,9 +51,17 @@ The `[test]` section of `soothfast.toml` tunes this:
 ignore = ["docs/**", "*.md"]        # changes here select nothing
 inputs = ["fixtures/shared/**"]     # files tests read from outside a package
 env    = ["DATABASE_URL"]           # variables whose values change the result
+retries = 2                         # reruns of a failed test binary
 ```
 
 `inputs` wins over `ignore`. Ignore only files no test reads.
+
+`retries` (default 0) reruns each failed test binary alone, through its own
+`cargo test -p PKG --lib` (or `--bin`, `--test`, `--bench NAME`), up to that
+many times. A binary that passes a rerun is flaky: the summary lists it on a
+`test: FLAKY:` line, the command exits 0 for it, and no pass is stored, so the
+next run executes it again. Doc tests are not rerun. `--result FILE` writes
+the outcome as JSON, with the verdict `flaky` when any binary was.
 
 ### Allow-lists
 
@@ -257,7 +265,7 @@ cmd = "uv run pytest -m e2e"
 
 | Key | Meaning |
 | --- | --- |
-| `test_cmd` | Run in the project's directory through `sh -c`. Without it the project has no tests to run. |
+| `test_cmd` | Run in the project's directory through `sh -c`. Without it the project has no tests to run. With no `bench_cmd`, `bench_out` or `from`, the project is test-only and no gate runs for it. |
 | `watch` | Globs relative to the repository root. A change to a matching file runs the project's tests as well as a change under `dir`. |
 | `retries` | Reruns after a failure. Default 0. |
 | `retry_cmd` | The command for a rerun. Defaults to `test_cmd`. |
@@ -288,14 +296,23 @@ names it instead). The same key later is `reused` and runs nothing. A
 failure reruns up to `retries` times; a pass on a rerun is `flaky`, exits 0
 and stores nothing, so the next run executes the tests again.
 
-In the reusable workflow, the plan job lists the projects the pull request
-reaches and the suites a writer labelled, and a `test-projects` matrix runs
-them beside the gate jobs, which do not wait for it. Each job restores
-`.soothfast/tests` and looks the key up before it installs Java, Node or uv,
-so a stored pass finishes without setting up a toolchain. The key then names
-the toolchain by the workflow's `java` and `node` inputs and the runner, not
-by a probe of the installed binary. The `soothfast:test-all` label, applied
-by a writer, selects every project and the Rust workspace and ignores stored
-passes for that run. Labels are read when the workflow starts, so applying
-one takes a new push or a re-run. Each job uploads its result as the
-`soothfast-result-test-<name>` artifact.
+In the reusable workflow, the plan job restores `.soothfast/tests`, works
+out which tests the pull request reaches, and looks each one's key up. Only
+a test with no stored pass becomes an entry of the `test-projects` matrix, so
+a change that touches no tests, or only tests a pass covers, starts no test
+job and installs no toolchain. The plan job writes a result file for each
+test it settled that way (`skipped` or `reused`) and uploads them together as
+the `soothfast-result-test-settled` artifact. The matrix jobs need only the
+plan job and run beside the gate jobs, which do not wait for them. Each
+uploads `soothfast-result-test-<name>` and, on a pass, its stored pass, and a
+`test-cache` job merges those passes into the cache for the next run.
+
+The plan job has no toolchain installed, so the key names it by the
+workflow's `java` and `node` inputs and the runner (Python is keyed as `uv`)
+instead of a probe of the installed binary. A patch release that a runner
+picks up under the same input does not invalidate a pass.
+
+The `soothfast:test-all` label, applied by a writer, selects every project
+and the Rust workspace and ignores stored passes for that run. Labels are
+read when the workflow starts, so applying one takes a new push or a
+re-run.
