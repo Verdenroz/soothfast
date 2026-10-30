@@ -157,10 +157,19 @@ inputs:
       was added.
     required: false
     default: "false"
+  bin-cache:
+    description: >-
+      Restore and save the built bench executables (`.soothfast/bins`), so a
+      job whose sources a change leaves alone, such as a docs-only pull
+      request, runs the binary a previous job built instead of building it
+      again. Keyed and merged like `rustdoc-cache`. The store keeps at most
+      512 MiB, dropping the least recently used.
+    required: false
+    default: "true"
   cache-suffix:
     description: >-
       Tells apart the legs of a job matrix that share a job name, so each
-      keeps its own `rustdoc-cache`. Commas are replaced.
+      keeps its own `rustdoc-cache` and `bin-cache`. Commas are replaced.
     required: false
     default: ""
 
@@ -350,6 +359,56 @@ runs:
         if [ -d .soothfast-rustdoc-branch ]; then
           "$CLI" cache merge --from .soothfast-rustdoc-branch
           rm -rf .soothfast-rustdoc-branch
+        fi
+
+    # Bench executables follow the rustdoc cache: same keying, restore order
+    # and merge.
+    - name: Name the bin cache
+      if: inputs.bin-cache == 'true'
+      id: bin-key
+      shell: bash
+      env:
+        JOB: ${{ github.job }}
+        SUFFIX: ${{ inputs.cache-suffix }}
+        RUNNER_OS_NAME: ${{ runner.os }}
+        RUNNER_ARCH_NAME: ${{ runner.arch }}
+      run: |
+        suffix="${SUFFIX//,/_}"
+        echo "prefix=soothfast-bins-${JOB}-${suffix}-${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}" >>"$GITHUB_OUTPUT"
+    - name: Restore this branch's bench executables
+      if: inputs.bin-cache == 'true' && github.event_name == 'pull_request'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .soothfast/bins
+        key: ${{ steps.bin-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
+        restore-keys: |
+          ${{ steps.bin-key.outputs.prefix }}-${{ github.ref_name }}-
+    - name: Set the branch's bench executables aside
+      if: inputs.bin-cache == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        if [ -d .soothfast/bins ]; then
+          mkdir -p .soothfast-bins-branch
+          mv .soothfast/bins .soothfast-bins-branch/bins
+        fi
+    - name: Restore and save bench executables
+      if: inputs.bin-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .soothfast/bins
+        key: ${{ steps.bin-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
+        restore-keys: |
+          ${{ steps.bin-key.outputs.prefix }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
+          ${{ steps.bin-key.outputs.prefix }}-${{ github.event.repository.default_branch }}-
+    - name: Merge the branch's bench executables
+      if: inputs.bin-cache == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        CLI: ${{ steps.resolve.outputs.bin }}
+      run: |
+        if [ -d .soothfast-bins-branch ]; then
+          "$CLI" cache merge --from .soothfast-bins-branch
+          rm -rf .soothfast-bins-branch
         fi
 
     - name: Gate against the base branch

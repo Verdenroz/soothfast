@@ -15,7 +15,7 @@ use crate::runcache;
 use crate::store::{self, Inputs};
 
 /// Bytes kept before the least recently used entries are dropped.
-pub(crate) const MAX_BYTES: u64 = 1 << 30;
+pub(crate) const MAX_BYTES: u64 = 1 << 29;
 
 /// One bench build, as far as the key is concerned.
 pub struct Request<'a> {
