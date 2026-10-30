@@ -35,6 +35,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs_on) }}
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       projects: ${{ steps.plan.outputs.projects }}
@@ -44,6 +45,9 @@ jobs:
       packages: ${{ steps.plan.outputs.packages }}
       docs: ${{ steps.plan.outputs.docs }}
       docs_package: ${{ steps.plan.outputs.docs_package }}
+      test_matrix: ${{ steps.plan.outputs.test_matrix }}
+      test_projects: ${{ steps.plan.outputs.test_projects }}
+      test_all: ${{ steps.plan.outputs.test_all }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -51,6 +55,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       # The action scripts at this workflow's own commit, whoever calls it.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -66,9 +71,22 @@ jobs:
         uses: ./.soothfast-action/action/install
         with:
           sha: ${{ github.job_workflow_sha }}
+      - name: Labels a writer applied
+        id: labels
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: .soothfast-action/action/writer-labels.sh
       - name: Plan
         id: plan
-        run: cargo soothfast plan --github >> "$GITHUB_OUTPUT"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          LABELS: ${{ steps.labels.outputs.labels }}
+        run: |
+          cargo soothfast plan --github ${BASE_REF:+--base "origin/$BASE_REF"} \
+            ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
 
   test:
     name: Test
@@ -102,7 +120,113 @@ jobs:
         uses: ./.soothfast-action/action/install
         with:
           sha: ${{ github.job_workflow_sha }}
-      - run: cargo soothfast test
+      - name: Test
+        env:
+          # Word-split on purpose: empty, or the two flags.
+          ALL: ${{ needs.plan.outputs.test_all == 'true' && '--all --no-cache' || '' }}
+        run: cargo soothfast test $ALL
+
+  test-projects:
+    name: Test (${{ matrix.name }})
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.test_projects == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.test_matrix) }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ github.job_workflow_sha }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      - uses: ./.soothfast-action/action/install
+        with:
+          sha: ${{ github.job_workflow_sha }}
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/tests
+          key: soothfast-tests-${{ matrix.name }}-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            soothfast-tests-${{ matrix.name }}-${{ github.ref_name }}-
+            soothfast-tests-${{ matrix.name }}-${{ github.event.repository.default_branch }}-
+      # The stored pass is looked up before any toolchain is installed, so the
+      # key names the toolchain by the version this workflow would install.
+      - name: Look up a stored pass
+        id: decide
+        shell: bash
+        env:
+          ECOSYSTEM: ${{ matrix.ecosystem }}
+          DIR: ${{ matrix.dir }}
+          SUITE: ${{ matrix.suite }}
+          NAME: ${{ matrix.name }}
+          JAVA: ${{ inputs.java }}
+          NODE: ${{ inputs.node }}
+          TEST_ALL: ${{ needs.plan.outputs.test_all }}
+          RESULT: ${{ runner.temp }}/result.json
+        run: |
+          case "$ECOSYSTEM" in
+          node) version=$NODE ;;
+          python) version=uv ;;
+          *) version=$JAVA ;;
+          esac
+          echo "toolchain=$ECOSYSTEM $version $RUNNER_OS $RUNNER_ARCH" >>"$GITHUB_OUTPUT"
+          flags=(--project "$DIR" --all --toolchain "$ECOSYSTEM $version $RUNNER_OS $RUNNER_ARCH" --result "$RESULT" --name "$NAME")
+          [ -z "$SUITE" ] || flags+=(--suite "$SUITE")
+          [ "$TEST_ALL" != true ] || flags+=(--no-cache)
+          cargo soothfast test "${flags[@]}" --decide >>"$GITHUB_OUTPUT"
+      - if: steps.decide.outputs.run == 'true' && (matrix.ecosystem == 'gradle' || matrix.ecosystem == 'maven')
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java }}
+      - if: steps.decide.outputs.run == 'true' && matrix.ecosystem == 'node'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ inputs.node }}
+      - if: steps.decide.outputs.run == 'true' && matrix.ecosystem == 'python'
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - if: steps.decide.outputs.run == 'true' && matrix.ecosystem == 'node'
+        working-directory: ${{ matrix.dir }}
+        run: npm ci
+      - name: Test
+        if: steps.decide.outputs.run == 'true'
+        shell: bash
+        env:
+          DIR: ${{ matrix.dir }}
+          SUITE: ${{ matrix.suite }}
+          NAME: ${{ matrix.name }}
+          TOOLCHAIN: ${{ steps.decide.outputs.toolchain }}
+          RESULT: ${{ runner.temp }}/result.json
+        run: |
+          flags=(--project "$DIR" --all --toolchain "$TOOLCHAIN" --result "$RESULT" --name "$NAME" --no-cache)
+          [ -z "$SUITE" ] || flags+=(--suite "$SUITE")
+          cargo soothfast test "${flags[@]}"
+      - if: steps.decide.outputs.run == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/tests
+          key: soothfast-tests-${{ matrix.name }}-${{ github.ref_name }}-${{ github.sha }}
+      - name: Upload the test result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-result-test-${{ matrix.name }}
+          path: ${{ runner.temp }}/result.json
+          if-no-files-found: ignore
 
   gate-rust:
     name: Gate
