@@ -260,7 +260,6 @@ impl Passes {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn at(dir: PathBuf) -> Passes {
         Passes { dir }
     }

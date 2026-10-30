@@ -1,25 +1,45 @@
 //! `cargo soothfast plan`: what the reusable workflow runs for this repo,
 //! read from `soothfast.toml` and the cargo workspace at the root.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde_json::{Value, json};
 
 use crate::init::ci::Ci;
-use crate::init::ecosystem::Project;
+use crate::init::ecosystem::{Project, Suite};
 use crate::init::{self, RustPlan};
 use crate::invoke;
+use crate::test::project::{TEST_ALL_LABEL, changed_since, suites_for, touches};
 
 pub fn run(args: &[String]) -> i32 {
     let mut github = false;
-    for a in args {
+    let mut base = None;
+    let mut labels = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
         match a.as_str() {
             "--github" => github = true,
+            "--base" | "--labels" => {
+                let Some(value) = it.next() else {
+                    return err(&format!("{a} needs a value"));
+                };
+                match a.as_str() {
+                    "--base" => base = Some(value.clone()),
+                    _ => {
+                        labels = value
+                            .split(',')
+                            .filter(|l| !l.is_empty())
+                            .map(String::from)
+                            .collect()
+                    }
+                }
+            }
             other => return err(&format!("unknown plan arg {other:?}")),
         }
     }
     let root = invoke::project_root();
-    let plan = match build(&root) {
+    let plan = match build(&root, base.as_deref(), labels) {
         Ok(plan) => plan,
         Err(e) => return err(&e),
     };
@@ -36,9 +56,14 @@ struct Plan {
     projects: Vec<Project>,
     ci: Ci,
     docs: bool,
+    suites: Vec<Suite>,
+    /// Labels a writer applied to the pull request.
+    labels: Vec<String>,
+    /// The files the change touches; none selects every project.
+    changed: Option<BTreeSet<String>>,
 }
 
-fn build(root: &Path) -> Result<Plan, String> {
+fn build(root: &Path, base: Option<&str>, labels: Vec<String>) -> Result<Plan, String> {
     let rust = root
         .join("Cargo.toml")
         .is_file()
@@ -49,11 +74,28 @@ fn build(root: &Path) -> Result<Plan, String> {
         Some(rust) => rust.docs_package.is_some(),
         None => !projects.is_empty() && init::has_markers(root),
     };
+    let suites = init::suites(root)?;
+    if let Some(suite) = suites
+        .iter()
+        .find(|s| !projects.iter().any(|p| p.dir == s.project))
+    {
+        return Err(format!(
+            "suite {:?} names {}, which is not a [[project]]",
+            suite.label, suite.project
+        ));
+    }
+    let changed = match base {
+        Some(base) => changed_since(root, Some(base)).map_err(|e| e.to_string())?,
+        None => None,
+    };
     Ok(Plan {
         rust,
         projects,
         ci: init::ci(root)?,
         docs,
+        suites,
+        labels,
+        changed,
     })
 }
 
@@ -85,6 +127,43 @@ impl Plan {
         json!({ "include": include })
     }
 
+    fn test_all(&self) -> bool {
+        self.labels.iter().any(|l| l == TEST_ALL_LABEL)
+    }
+
+    /// One entry per project with a `test_cmd` that the change reaches, and
+    /// one per suite whose label a writer applied. `test-all` takes every
+    /// project.
+    fn test_matrix(&self) -> Value {
+        let mut include = Vec::new();
+        let named = self.projects.iter().zip(names(&self.projects));
+        for (project, name) in named {
+            let entry = |name: &str, dir: &str, suite: &str| {
+                json!({
+                    "name": name,
+                    "ecosystem": project.ecosystem.name(),
+                    "dir": dir,
+                    "suite": suite,
+                })
+            };
+            let reached = self.test_all()
+                || self
+                    .changed
+                    .as_ref()
+                    .is_none_or(|c| touches(&project.dir, &project.test.watch, c));
+            if project.test.cmd.is_some() && reached {
+                include.push(entry(&name, &project.dir, ""));
+            }
+            for suite in suites_for(&self.suites, &self.labels) {
+                if suite.project == project.dir {
+                    let slug = format!("{name}-{}", slug(&suite.label));
+                    include.push(entry(&slug, &project.dir, &suite.label));
+                }
+            }
+        }
+        json!({ "include": include })
+    }
+
     /// `key=value` lines for `$GITHUB_OUTPUT`. The matrix holds only the
     /// non-Rust projects: the cargo workspace gates through its own job.
     fn outputs(&self) -> String {
@@ -98,13 +177,17 @@ impl Plan {
             .as_ref()
             .map(|r| r.packages.join(" "))
             .unwrap_or_default();
+        let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\nruns_on={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\nruns_on={}\n",
             self.matrix(false),
             !self.projects.is_empty(),
             self.rust.is_some(),
             self.rust.is_some() && self.ci.runs_test(),
             self.docs,
+            tests,
+            !tests["include"].as_array().is_none_or(Vec::is_empty),
+            self.test_all(),
             self.ci.runs_on_json(),
         )
     }
@@ -134,6 +217,16 @@ fn names(projects: &[Project]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+/// `label` as a run of letters and digits joined by `-`, for a job or
+/// artifact name.
+fn slug(label: &str) -> String {
+    label
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 fn err(msg: &str) -> i32 {
@@ -170,6 +263,9 @@ mod tests {
             projects,
             ci: Ci::default(),
             docs: false,
+            suites: Vec::new(),
+            labels: Vec::new(),
+            changed: None,
         }
     }
 
@@ -215,6 +311,67 @@ mod tests {
             out.ends_with("runs_on=[\"self-hosted\",\"linux\"]\n"),
             "{out}"
         );
+    }
+
+    fn testable(ecosystem: Ecosystem, dir: &str, watch: &[&str]) -> Project {
+        let mut p = project(ecosystem, dir);
+        p.test = Tests {
+            cmd: Some("run tests".into()),
+            watch: watch.iter().map(|g| g.to_string()).collect(),
+            ..Tests::default()
+        };
+        p
+    }
+
+    fn test_names(p: &Plan) -> Vec<String> {
+        let matrix = p.test_matrix();
+        let entries = matrix["include"].as_array().unwrap();
+        entries
+            .iter()
+            .map(|e| e["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn the_test_matrix_holds_the_projects_the_change_reaches() {
+        let mut p = plan(
+            None,
+            vec![
+                testable(Ecosystem::Gradle, "client", &["gradle/libs.versions.toml"]),
+                testable(Ecosystem::Node, "web", &[]),
+                project(Ecosystem::Python, "py"),
+            ],
+        );
+        assert_eq!(test_names(&p), ["gradle", "node"]);
+        p.changed = Some(["web/a.js".to_string()].into());
+        assert_eq!(test_names(&p), ["node"]);
+        p.changed = Some(["gradle/libs.versions.toml".to_string()].into());
+        assert_eq!(test_names(&p), ["gradle"]);
+        p.changed = Some(BTreeSet::new());
+        assert!(test_names(&p).is_empty());
+        p.labels = vec![TEST_ALL_LABEL.into()];
+        assert!(p.test_all());
+        assert_eq!(test_names(&p), ["gradle", "node"]);
+        assert!(
+            p.outputs()
+                .contains("test_projects=true\ntest_all=true\nruns_on")
+        );
+    }
+
+    #[test]
+    fn a_suite_joins_the_matrix_when_its_label_is_applied() {
+        let mut p = plan(None, vec![testable(Ecosystem::Node, "web", &[])]);
+        p.suites = vec![Suite {
+            label: "soothfast:e2e".into(),
+            project: "web".into(),
+            cmd: "npm run e2e".into(),
+        }];
+        p.changed = Some(BTreeSet::new());
+        assert!(test_names(&p).is_empty());
+        assert!(p.outputs().contains("test_projects=false\n"));
+        p.labels = vec!["soothfast:e2e".into()];
+        assert_eq!(test_names(&p), ["node-soothfast-e2e"]);
+        assert_eq!(p.test_matrix()["include"][0]["suite"], "soothfast:e2e");
     }
 
     #[test]

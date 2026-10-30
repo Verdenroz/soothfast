@@ -16,7 +16,9 @@ mod detect;
 pub mod ecosystem;
 
 use ci::Ci;
-use ecosystem::{Ecosystem, Entry, Project, Settings, Tests, normalize_dir, parse_projects};
+use ecosystem::{
+    Ecosystem, Entry, Project, Settings, Suite, normalize_dir, parse_projects, parse_suites,
+};
 
 const WORKFLOW: &str = include_str!("workflow.yml.tmpl");
 const TEST_JOB: &str = include_str!("test_job.yml.tmpl");
@@ -902,6 +904,12 @@ pub fn manifest(root: &Path) -> Result<Vec<Project>, String> {
         .collect()
 }
 
+/// The `[[test.suite]]` tables saved in `soothfast.toml`.
+pub fn suites(root: &Path) -> Result<Vec<Suite>, String> {
+    let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
+    parse_suites(&text).map_err(|e| format!("soothfast.toml: {e}"))
+}
+
 fn err(msg: &str) -> i32 {
     eprintln!("init: {msg}");
     2
@@ -909,6 +917,7 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use super::ecosystem::Tests;
     use super::*;
     use serde_json::json;
 

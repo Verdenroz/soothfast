@@ -5,6 +5,7 @@ mod config;
 #[cfg(test)]
 mod fixture;
 mod key;
+pub(crate) mod project;
 mod runner;
 pub(crate) mod rustdoc;
 mod select;
@@ -82,6 +83,12 @@ pub fn parse_args(args: &[String]) -> Result<TestArgs, String> {
 
 /// Entry point for `cargo soothfast test`.
 pub fn run(args: &[String]) -> i32 {
+    if args
+        .iter()
+        .any(|a| a == "--project" || a.starts_with("--project="))
+    {
+        return project::run(args);
+    }
     match drive(args) {
         Ok(code) => code,
         Err(e) => {
