@@ -113,13 +113,16 @@ impl Plan {
             }));
         }
         for (project, name) in self.projects.iter().zip(names(&self.projects)) {
+            let Some(bench) = &project.bench else {
+                continue;
+            };
             include.push(json!({
                 "name": name,
                 "ecosystem": project.ecosystem.name(),
                 "dir": project.dir,
-                "bench_cmd": project.bench.cmd,
-                "bench_out": project.bench.out,
-                "from": project.bench.from,
+                "bench_cmd": bench.cmd,
+                "bench_out": bench.out,
+                "from": bench.from,
                 "walltime": project.walltime.clone().unwrap_or_default(),
                 "prefix": project.prefix.clone().unwrap_or_default(),
             }));
@@ -181,7 +184,7 @@ impl Plan {
         format!(
             "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\nruns_on={}\n",
             self.matrix(false),
-            !self.projects.is_empty(),
+            self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
             self.rust.is_some() && self.ci.runs_test(),
             self.docs,
@@ -243,11 +246,11 @@ mod tests {
         Project {
             ecosystem,
             dir: dir.into(),
-            bench: Bench {
+            bench: Some(Bench {
                 cmd: "run {out}".into(),
                 out: "soothfast-bench.json".into(),
                 from: "jmh".into(),
-            },
+            }),
             walltime: None,
             prefix: None,
             test: Tests::default(),
@@ -356,6 +359,17 @@ mod tests {
             p.outputs()
                 .contains("test_projects=true\ntest_all=true\nruns_on")
         );
+    }
+
+    #[test]
+    fn a_test_only_project_stays_out_of_the_gate_matrix() {
+        let mut only = testable(Ecosystem::Python, "py", &[]);
+        only.bench = None;
+        let p = plan(None, vec![only]);
+        let out = p.outputs();
+        assert!(out.contains("projects=false\n"), "{out}");
+        assert!(p.matrix(false)["include"].as_array().unwrap().is_empty());
+        assert_eq!(test_names(&p), ["python"]);
     }
 
     #[test]

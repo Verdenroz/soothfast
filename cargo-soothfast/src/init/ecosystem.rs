@@ -109,7 +109,8 @@ pub struct Entry {
 pub struct Project {
     pub ecosystem: Ecosystem,
     pub dir: String,
-    pub bench: Bench,
+    /// None for a project that only runs tests.
+    pub bench: Option<Bench>,
     /// `hard` or `advisory`, over the `[gate]` setting for this project.
     pub walltime: Option<String>,
     /// The item-name prefix of the imported results.
@@ -275,6 +276,16 @@ impl Settings {
         }
     }
 
+    /// How `eco`'s harness runs, or none for a project with a `test_cmd` and
+    /// no benchmark key.
+    pub fn bench_for(&self, eco: Ecosystem) -> Result<Option<Bench>, String> {
+        let keyed = self.bench_cmd.is_some() || self.bench_out.is_some() || self.from.is_some();
+        if self.test_cmd.is_some() && !keyed {
+            return Ok(None);
+        }
+        self.bench(eco).map(Some)
+    }
+
     /// How `eco`'s harness runs, with each unset field defaulted.
     pub fn bench(&self, eco: Ecosystem) -> Result<Bench, String> {
         let (default_cmd, default_from) = eco.defaults();
@@ -284,7 +295,8 @@ impl Settings {
             (None, None) => {
                 return Err(format!(
                     "{} has no default benchmark command; pass --bench-cmd CMD and \
-                     --bench-out PATH ({{out}} in CMD stands for PATH)",
+                     --bench-out PATH ({{out}} in CMD stands for PATH), or set `test_cmd` \
+                     for a project that only runs tests",
                     eco.name()
                 ));
             }
@@ -326,13 +338,18 @@ pub fn section(projects: &[Project]) -> String {
         .iter()
         .map(|p| {
             let mut table = format!(
-                "[[project]]\ndir = {}\necosystem = {}\nbench_cmd = {}\nbench_out = {}\nfrom = {}\n",
+                "[[project]]\ndir = {}\necosystem = {}\n",
                 quote(&p.dir),
                 quote(p.ecosystem.name()),
-                quote(&p.bench.cmd),
-                quote(&p.bench.out),
-                quote(&p.bench.from),
             );
+            if let Some(bench) = &p.bench {
+                table.push_str(&format!(
+                    "bench_cmd = {}\nbench_out = {}\nfrom = {}\n",
+                    quote(&bench.cmd),
+                    quote(&bench.out),
+                    quote(&bench.from),
+                ));
+            }
             for (key, value) in [
                 ("walltime", &p.walltime),
                 ("prefix", &p.prefix),
@@ -441,11 +458,11 @@ mod tests {
         Project {
             ecosystem: eco,
             dir: dir.into(),
-            bench: Bench {
+            bench: Some(Bench {
                 cmd: cmd.into(),
                 out: "a\\b.json".into(),
                 from: "vitest".into(),
-            },
+            }),
             walltime: None,
             prefix: None,
             test: Tests::default(),
@@ -469,10 +486,7 @@ mod tests {
         );
         let web = &entries[1];
         assert_eq!(web.settings.ecosystem, Some(Ecosystem::Node));
-        assert_eq!(
-            web.settings.bench(Ecosystem::Node).unwrap(),
-            projects[0].bench
-        );
+        assert_eq!(web.settings.bench(Ecosystem::Node).ok(), projects[0].bench);
         assert_eq!(parse_projects("[gate]\nx = 1\n"), Ok(Vec::new()));
     }
 
@@ -507,6 +521,30 @@ mod tests {
             Some("npm test -- --onlyFailures")
         );
         assert_eq!(Settings::default().tests(), Tests::default());
+    }
+
+    #[test]
+    fn a_project_with_tests_and_no_bench_keys_is_test_only() {
+        let text =
+            "[[project]]\ndir = \"api\"\necosystem = \"python\"\ntest_cmd = \"uv run pytest\"\n";
+        let entry = parse_projects(text).unwrap().remove(0);
+        assert_eq!(entry.settings.bench_for(Ecosystem::Python), Ok(None));
+        let tests = entry.settings.tests();
+        let mut p = project("api", Ecosystem::Python, "");
+        (p.bench, p.test) = (None, tests);
+        let again = parse_projects(&section(&[p])).unwrap().remove(0);
+        assert_eq!(again.settings.bench_for(Ecosystem::Python), Ok(None));
+        assert!(!section(&[project("x", Ecosystem::Python, "c {out}")]).contains("test_cmd"));
+        let keyed = Settings {
+            test_cmd: Some("t".into()),
+            from: Some("pyperf".into()),
+            ..Settings::default()
+        };
+        assert!(keyed.bench_for(Ecosystem::Python).unwrap().is_some());
+        let neither = Settings::default()
+            .bench_for(Ecosystem::Gradle)
+            .unwrap_err();
+        assert!(neither.contains("test_cmd"), "{neither}");
     }
 
     #[test]
