@@ -23,6 +23,7 @@ version = "0.4.4"
 dependencies = [
  "serde_json",
  "soothfast-docs",
+ "soothfast-lang",
  "soothfast-registry",
  "soothfast-report",
  "soothfast-sdk",

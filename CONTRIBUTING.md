@@ -142,7 +142,9 @@ maintainer can re-baseline the affected assertions.
 ## Dependency Policy
 
 Dependencies are a measured, gated claim in this project.
-The full CLI dependency tree is intentionally tiny (~12–15 crates), and the
+The full CLI dependency tree is intentionally tiny (~12–15 crates, plus
+tree-sitter and five grammars, the deliberate exception for non-Rust symbol
+discovery in `soothfast-lang`), and the
 core `soothfast` library that user crates depend on stays at essentially
 `linkme` + proc-macro machinery. Hand-rolled beats imported here: stats,
 markdown scanning, SVG charts, and git operations are all written in-repo.
