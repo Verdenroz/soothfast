@@ -200,12 +200,13 @@ fn scaled_base(operand: &str) -> Option<String> {
     family(base)
 }
 
-/// `jmp *d(%rip)`: a tail call through a GOT slot. It can only re-enter this
-/// function at its entry, where every register is unknown anyway.
-fn through_slot(ins: &Ins) -> bool {
-    ins.operands.len() == 1
+/// `jmp *d(%rip)`: a tail call through a slot, and the address of that slot.
+fn through_slot(ins: &Ins) -> Option<u64> {
+    let slot = ins.operands.len() == 1
         && ins.operands[0].starts_with('*')
-        && ins.operands[0].ends_with("(%rip)")
+        && ins.operands[0].ends_with("(%rip)");
+    slot.then(|| u64::from_str_radix(ins.comment?.split_whitespace().next()?, 16).ok())
+        .flatten()
 }
 
 /// `jmp *d(%rA)` or `jmp *(%rA)`: a tail call through a pointer in memory,
@@ -216,7 +217,7 @@ fn loads_pointer(ins: &Ins) -> bool {
     ins.operands.len() == 1
         && ins.operands[0]
             .strip_prefix('*')
-            .is_some_and(unindexed_memory)
+            .is_some_and(|o| unindexed_memory(o) && !o.ends_with("(%rip)"))
 }
 
 /// `jmp *%rA`, whose register `exits_through_loaded_pointers` must show holds
@@ -235,8 +236,8 @@ fn unindexed_memory(operand: &str) -> bool {
         && !operand.contains(',')
 }
 
-/// A conditional branch out of the function to the entry of another one, a
-/// tail call. A `.cold` part is not: it jumps back into this function.
+/// A branch out of the function to the entry of another one, a tail call. A
+/// `.cold` part is not: it jumps back into this function.
 fn tail_target(ins: &Ins) -> bool {
     let named = ins
         .operands
@@ -286,6 +287,10 @@ const CALLER_SAVED: &[&str] = &["a", "c", "d", "si", "di", "r8", "r9", "r10", "r
 /// Where each candidate table jumps to, for those whose words decode.
 pub type Decoder<'a> = dyn Fn(&[u64]) -> HashMap<u64, Vec<u64>> + 'a;
 
+/// Whether the slot at an address holds the entry of another function, which
+/// a tail call through it leaves for good.
+pub type SlotCheck<'a> = dyn Fn(u64) -> bool + 'a;
+
 /// A table read as `movslq (%rA,%rI,4),%rB; add; jmp *%rD`, from one `lea`.
 struct Candidate {
     table: u64,
@@ -314,7 +319,12 @@ struct Candidate {
 /// leaves it by an unconditional tail jump. Otherwise nothing is proven. A
 /// candidate that fails is dropped, and the rest are checked again against
 /// the graph without it.
-pub fn prove(instrs: &[(u64, String)], span: (u64, u64), decode: &Decoder) -> Proven {
+pub fn prove(
+    instrs: &[(u64, String)],
+    span: (u64, u64),
+    decode: &Decoder,
+    slot: &SlotCheck,
+) -> Proven {
     let Some(parsed) = instrs
         .iter()
         .map(|(addr, body)| Some((*addr, parse(body)?)))
@@ -338,7 +348,7 @@ pub fn prove(instrs: &[(u64, String)], span: (u64, u64), decode: &Decoder) -> Pr
         if active.is_empty() {
             return Proven::default();
         }
-        let Some(graph) = Graph::build(&parsed, &at, span, &active, &targets) else {
+        let Some(graph) = Graph::build(&parsed, &at, span, &active, &targets, slot) else {
             return Proven::default();
         };
         if !graph.exits_through_loaded_pointers(&parsed) {
@@ -481,6 +491,7 @@ impl Graph {
         span: (u64, u64),
         active: &[Candidate],
         targets: &HashMap<u64, Vec<u64>>,
+        slot: &SlotCheck,
     ) -> Option<Graph> {
         let n = parsed.len();
         let mut succ = vec![Vec::new(); n];
@@ -503,9 +514,9 @@ impl Graph {
                         leader[to] = true;
                         succ[i].push(to);
                     }
-                    Some(_) if unconditional || tail_target(ins) => {}
+                    Some(_) if tail_target(ins) => {}
                     Some(_) => return None,
-                    None if unconditional && through_slot(ins) => {}
+                    None if unconditional && through_slot(ins).is_some_and(slot) => {}
                     None if unconditional => match active.iter().find(|c| c.jmp == i) {
                         Some(c) => {
                             for t in targets.get(&c.table)? {

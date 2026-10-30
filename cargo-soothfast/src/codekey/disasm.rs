@@ -36,9 +36,12 @@ impl Span {
     /// Normalize the instructions. A jump table the instructions prove (see
     /// `jumptable`) is hashed as the places in this function it jumps to.
     fn read(&mut self, resolver: &mut Resolver) {
-        let proven = jumptable::prove(&self.instrs, (self.start, self.end), &|tables| {
-            resolver.table_targets(tables, self.start, self.end)
-        });
+        let proven = jumptable::prove(
+            &self.instrs,
+            (self.start, self.end),
+            &|tables| resolver.table_targets(tables, self.start, self.end),
+            &|slot| resolver.slot_leaves(slot, self.start, self.end),
+        );
         let tables = resolver.decode_tables(&proven, self.start);
         self.normalize(resolver, &tables);
     }

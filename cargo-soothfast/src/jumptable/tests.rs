@@ -15,12 +15,20 @@ fn code(lines: &[&str]) -> Vec<(u64, String)> {
 
 /// Every table jumps to the last instruction.
 fn prove_in(lines: &[&str]) -> Vec<Proof> {
+    prove_slots(lines, true)
+}
+
+/// As `prove_in`, with every slot holding another function's entry or not.
+fn prove_slots(lines: &[&str], slots_leave: bool) -> Vec<Proof> {
     let instrs = code(lines);
     let last = instrs.last().map(|(a, _)| *a).unwrap_or(0);
     let span = (0x1000, last + 4);
-    prove(&instrs, span, &|tables| {
-        tables.iter().map(|t| (*t, vec![last])).collect()
-    })
+    prove(
+        &instrs,
+        span,
+        &|tables| tables.iter().map(|t| (*t, vec![last])).collect(),
+        &|_| slots_leave,
+    )
     .proofs
 }
 
@@ -230,9 +238,12 @@ fn a_loop_back_edge_that_keeps_the_lea_dominant_proves() {
         RET,
     ];
     let instrs = code(&lines);
-    let proofs = prove(&instrs, (0x1000, 0x1020), &|tables| {
-        tables.iter().map(|t| (*t, vec![at(4), at(6)])).collect()
-    })
+    let proofs = prove(
+        &instrs,
+        (0x1000, 0x1020),
+        &|tables| tables.iter().map(|t| (*t, vec![at(4), at(6)])).collect(),
+        &|_| true,
+    )
     .proofs;
     assert_eq!(proofs.len(), 1);
 }
@@ -474,4 +485,25 @@ fn a_tail_call_through_a_register_needs_a_pointer_loaded_on_every_path() {
         "jmp    *%rdx",
     ];
     assert!(prove_in(&skipped).is_empty());
+}
+
+#[test]
+fn an_unconditional_jump_out_of_the_function_is_an_exit_only_to_an_entry() {
+    let tail = "jmp    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other>";
+    assert_eq!(prove_in(&[LEA, LOAD, ADD, JMP, tail, RET]).len(), 1);
+    let inside = "jmp    2000 <_RNvNtCsg0jXFtQWPuf_9scry_core4repo5other+0x10>";
+    assert!(prove_in(&[LEA, LOAD, ADD, JMP, inside, RET]).is_empty());
+    let cold = "jmp    2000 <sqlite3VdbeExec.cold>";
+    assert!(prove_in(&[LEA, LOAD, ADD, JMP, cold, RET]).is_empty());
+    assert!(prove_in(&[LEA, LOAD, ADD, JMP, "jmp    2000", RET]).is_empty());
+}
+
+#[test]
+fn a_tail_call_through_a_slot_is_an_exit_only_when_the_slot_holds_an_entry() {
+    let slot = "jmp    *0x650abb(%rip)        # 12651d8 <_DYNAMIC+0x210>";
+    let lines = [LEA, LOAD, ADD, JMP, slot, RET];
+    assert_eq!(prove_slots(&lines, true).len(), 1);
+    assert!(prove_slots(&lines, false).is_empty());
+    let no_address = "jmp    *0x650abb(%rip)";
+    assert!(prove_slots(&[LEA, LOAD, ADD, JMP, no_address, RET], true).is_empty());
 }
