@@ -76,11 +76,37 @@ fn add_artifact(inputs: &mut Inputs, root: &Path, msg: &Value) -> bool {
     let Some(first) = msg["filenames"][0].as_str() else {
         return true;
     };
-    let Ok(text) = std::fs::read_to_string(dep_info_beside(Path::new(first))) else {
+    let Some(text) = read_dep_info(Path::new(first)) else {
         return false;
     };
     add_dep_info(inputs, root, &text);
     true
+}
+
+/// The dep-info of `artifact`, found beside it or beside the `deps/` file an
+/// uplifted binary links to.
+fn read_dep_info(artifact: &Path) -> Option<String> {
+    let read = |a: &Path| std::fs::read_to_string(dep_info_beside(a)).ok();
+    read(artifact).or_else(|| read(&deps_twin(artifact)?))
+}
+
+/// Cargo links a binary at `target/<profile>/name` to `deps/name-hash`, which
+/// is the file the dep-info is named for.
+#[cfg(unix)]
+fn deps_twin(artifact: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+
+    let inode = std::fs::metadata(artifact).ok()?.ino();
+    std::fs::read_dir(artifact.parent()?.join("deps"))
+        .ok()?
+        .flatten()
+        .find(|e| e.path().extension().is_none() && e.metadata().is_ok_and(|m| m.ino() == inode))
+        .map(|e| e.path())
+}
+
+#[cfg(not(unix))]
+fn deps_twin(_: &Path) -> Option<PathBuf> {
+    None
 }
 
 /// Cargo's `deps/libname-hash.rmeta` has its dep-info at `deps/name-hash.d`,
@@ -193,6 +219,23 @@ mod tests {
         assert_eq!(files, ["../README.md", "docs/a b.md", "src/lib.rs"]);
         let env: Vec<_> = inputs.env.iter().map(String::as_str).collect();
         assert_eq!(env, ["API_BASE"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_binary_linked_out_of_deps_finds_its_dep_info() {
+        let root = temp("twin");
+        let deps = root.join("target/debug/deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        std::fs::write(deps.join("app-1a2b"), "bin").unwrap();
+        std::fs::write(deps.join("app-1a2b.d"), "x: src/main.rs\n").unwrap();
+        std::fs::write(deps.join("other-3c4d"), "bin").unwrap();
+        std::fs::hard_link(deps.join("app-1a2b"), root.join("target/debug/app")).unwrap();
+        let text = read_dep_info(&root.join("target/debug/app")).unwrap();
+        assert_eq!(text, "x: src/main.rs\n");
+        std::fs::write(root.join("target/debug/lone"), "bin").unwrap();
+        assert_eq!(read_dep_info(&root.join("target/debug/lone")), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
