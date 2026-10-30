@@ -118,7 +118,8 @@
           "description": "Callgrind backend.",
           "type": "object",
           "properties": {
-            "ir": { "description": "Instructions executed (Ir). Unsigned integer.", "type": "integer" }
+            "ir": { "description": "Instructions executed (Ir) per iteration. Unsigned integer.", "type": "integer" },
+            "window": { "description": "Iterations `ir` averages over. Unsigned integer; absent when the harness did not say.", "type": "integer" }
           }
         },
         "alloc": {

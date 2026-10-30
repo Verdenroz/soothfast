@@ -194,6 +194,8 @@ struct Env {
     gating: &'static str,
     /// What callgrind's counts depend on, when callgrind gates.
     guest: Option<callgrind::Guest>,
+    /// How callgrind's counts are taken, when callgrind gates.
+    method: Option<callgrind::Method>,
 }
 
 /// Explicit choices fail hard when unavailable; auto/all degrade gracefully
@@ -251,6 +253,7 @@ fn resolve_env(
         use_alloc,
         gating,
         guest: if use_cg { guest_probe() } else { None },
+        method: use_cg.then(callgrind::Method::current),
     }
 }
 
@@ -267,14 +270,9 @@ fn env_line(env: &Env, json: bool) -> String {
                     esc(&g.valgrind)
                 )
             });
-            let method = if env.use_cg {
-                format!(
-                    ",\"callgrind_method\":\"{}\"",
-                    callgrind::Method::current().name()
-                )
-            } else {
-                String::new()
-            };
+            let method = env.method.map_or(String::new(), |m| {
+                format!(",\"callgrind_method\":\"{}\"", m.name())
+            });
             format!(
                 "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\",\"item_reuse\":true{guest}{method}}}",
                 perf.is_ok(),
@@ -302,12 +300,20 @@ pub fn main() {
         let item = find_item(id);
         let window = args.callgrind_window;
         let mut collector = |body: &mut dyn FnMut()| {
-            body();
-            if window {
-                clientreq::dump_stats();
-                body();
-                clientreq::dump_stats();
+            if !window {
+                return body();
             }
+            // Each body call is one iteration: the window size is not known
+            // until the warm-up has been counted.
+            clientreq::dump_stats();
+            body();
+            clientreq::dump_stats();
+            let k = callgrind::negotiate_window().unwrap_or_else(|e| die(&e));
+            clientreq::dump_stats();
+            for _ in 0..k {
+                body();
+            }
+            clientreq::dump_stats();
         };
         (item.runner)(&mut Bencher::__new(args.iters, &mut collector));
         return;
@@ -469,11 +475,15 @@ pub fn main() {
         }
         if use_cg {
             match &cg_runs[idx] {
-                Ok(callgrind::Measurement { ir, functions }) => {
+                Ok(callgrind::Measurement {
+                    ir,
+                    window,
+                    functions,
+                }) => {
                     emit_result(
                         e,
                         "callgrind",
-                        &callgrind_metrics(*ir),
+                        &callgrind_metrics(*ir, *window),
                         &format!("callgrind ir={ir}"),
                         args.json,
                     );
@@ -548,8 +558,8 @@ fn perfcnt_metrics(instructions: u64, cycles: u64, cache_refs: u64) -> String {
     format!("\"instructions\":{instructions},\"cycles\":{cycles},\"cache_refs\":{cache_refs}")
 }
 
-fn callgrind_metrics(ir: u64) -> String {
-    format!("\"ir\":{ir}")
+fn callgrind_metrics(ir: u64, window: u64) -> String {
+    format!("\"ir\":{ir},\"window\":{window}")
 }
 
 fn alloc_metrics(allocs: u64, bytes: u64) -> String {
@@ -980,13 +990,14 @@ mod tests {
 
     #[test]
     fn every_record_type_matches_the_published_samples() {
-        let env = |guest| Env {
+        let env = |guest: Option<callgrind::Guest>| Env {
             perf: Ok(()),
             use_perf: true,
             use_cg: false,
             use_wall: true,
             use_alloc: true,
             gating: "perfcnt",
+            method: guest.is_some().then_some(callgrind::Method::OneProcess),
             guest,
         };
         let result = |tolerance, backend, metrics: String| {
@@ -1022,7 +1033,7 @@ mod tests {
                 walltime_metrics(10.5, 0.5, 10.0, 12.0, 11.5),
             ),
             result(None, "perfcnt", perfcnt_metrics(100, 50, 5)),
-            result(None, "callgrind", callgrind_metrics(123_456)),
+            result(None, "callgrind", callgrind_metrics(123_456, 10)),
             result(None, "alloc", alloc_metrics(2, 64)),
             result(None, "asyncexec", asyncexec_metrics(9, 8)),
             // Written by the CLI's buildcost backend, never by the runner; readers accept it here.

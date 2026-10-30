@@ -1568,6 +1568,12 @@ fn compare(
             println!("NOTE  {id}: code changed since reference");
         }
 
+        if let (Some(was), Some(now)) = (old["callgrind"]["window"].as_u64(), cur.window)
+            && was != now
+        {
+            println!("NOTE  {id}: callgrind ir averaged over {was} iterations, now {now}");
+        }
+
         // Hard-gated relative metrics. A `downgrade` reason turns a hard
         // fail into a SOFT warning (walltime anti-flake rules). An accepted
         // entry — reviewed, one-sided ceiling anchored at its own value —

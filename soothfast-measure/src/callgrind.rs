@@ -1,27 +1,32 @@
 //! Callgrind backend: fully deterministic Ir counts for PMU-less
 //! environments (default-seccomp containers, CI VMs).
 //!
-//! One valgrind process runs per item, as `--callgrind-exec <id> --iters K
-//! --callgrind-window`, with instrumentation on from the start. After setup
-//! the runner executes K iterations, requests a stats dump, executes K more
-//! and requests another. A dump zeroes the counters, so the second dump file
-//! holds exactly K iterations and per-iteration Ir is its summary / K. Setup
-//! runs once under valgrind instead of twice, which fixture-heavy items need.
-//! The request is the target's magic instruction sequence (see `clientreq`).
+//! One valgrind process runs per item, as `--callgrind-exec <id>
+//! --callgrind-window`, with instrumentation on from the start. A dump
+//! request writes the counters out and zeroes them, so each phase lands in
+//! its own dump file: startup and setup, one warm-up iteration, a handshake
+//! with this side, then a window of K iterations. Per-iteration Ir is the
+//! window's summary / K. The process tells this side when the warm-up dump is
+//! written, this side picks K from its Ir (see [`window_for`]) and sends it
+//! back, so heavy items measure few iterations and cheap ones many. Setup
+//! runs once under valgrind, which fixture-heavy items need. The request is
+//! the target's magic instruction sequence (see `clientreq`).
 //!
 //! Where the sequence is unavailable, or with `SOOTHFAST_CALLGRIND_TWO_PROCESS=1`,
-//! the runner executes twice, at `--iters K` and `--iters 2K`, and
-//! per-iteration Ir is (2K − K) / K, which cancels startup and setup. The two
-//! methods count differently (teardown, the request itself), so [`Method`]
-//! belongs in every cache key.
+//! the runner executes twice, at `--iters K_MAX` and `--iters 2 * K_MAX`, and
+//! per-iteration Ir is the difference / K_MAX, which cancels startup and
+//! setup. The two methods count differently (teardown, the requests), so
+//! [`Method`] belongs in every cache key, and each measurement carries the K
+//! it averaged over.
 //!
-//! The executed function set is the union of every dump the process wrote:
-//! startup, setup, the iterations and teardown. K > 1 so the window
-//! averages: see the constant below for why a single iteration is not enough.
+//! The executed function set is the union of the dumps for setup, the
+//! warm-up, the window and teardown; the handshake dump holds only this
+//! protocol's own I/O.
 
 use crate::clientreq;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -198,19 +203,8 @@ fn out_file(tag: &str) -> PathBuf {
     ))
 }
 
-/// Run this bench binary under callgrind executing `id` for `iters`
-/// iterations; return the text of every dump it wrote, in order. `mangled`
-/// keeps the symbol-table spelling of function names instead of demangling
-/// them. `window` makes the runner request a dump after each K iterations.
-fn run_valgrind(
-    id: &str,
-    iters: u64,
-    window: bool,
-    tag: &str,
-    mangled: bool,
-) -> Result<Vec<String>, String> {
+fn valgrind_cmd(out: &Path, mangled: bool) -> Result<Command, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let out = out_file(tag);
     let mut cmd = Command::new("valgrind");
     cmd.env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
         .args([
@@ -220,12 +214,18 @@ fn run_valgrind(
             &format!("--demangle={}", if mangled { "no" } else { "yes" }),
             &format!("--callgrind-out-file={}", out.display()),
         ])
-        .arg(&exe)
-        .args(["--callgrind-exec", id, "--iters", &iters.to_string()]);
-    if window {
-        cmd.arg("--callgrind-window");
-    }
-    let status = cmd
+        .arg(&exe);
+    Ok(cmd)
+}
+
+/// Run this bench binary under callgrind executing `id` for `iters`
+/// iterations; return the text of every dump it wrote, in order. `mangled`
+/// keeps the symbol-table spelling of function names instead of demangling
+/// them.
+fn run_valgrind(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<Vec<String>, String> {
+    let out = out_file(tag);
+    let status = valgrind_cmd(&out, mangled)?
+        .args(["--callgrind-exec", id, "--iters", &iters.to_string()])
         .output()
         .map_err(|e| format!("failed to spawn valgrind: {e}"))?;
     let dumps = take_dumps(&out);
@@ -237,6 +237,77 @@ fn run_valgrind(
         ));
     }
     dumps
+}
+
+/// Run `id` in one valgrind process with `--callgrind-window`. The process
+/// dumps after setup and after a warm-up iteration, then tells this side so
+/// and waits for the number of iterations to measure, which this side picks
+/// from the warm-up's dump. Returns every dump and that number.
+fn run_window(id: &str, tag: &str) -> Result<(Vec<String>, u64), String> {
+    let out = out_file(tag);
+    let mut child = valgrind_cmd(&out, true)?
+        .args(["--callgrind-exec", id, "--callgrind-window"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn valgrind: {e}"))?;
+    let (Some(mut stdin), Some(stdout), Some(mut stderr)) =
+        (child.stdin.take(), child.stdout.take(), child.stderr.take())
+    else {
+        return Err("valgrind pipes were not opened".into());
+    };
+    let errors = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stderr.read_to_string(&mut text);
+        text
+    });
+    let mut window = None;
+    let mut failure = None;
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        if window.is_none() && line == WARM {
+            let chosen = std::fs::read_to_string(format!("{}.2", out.display()))
+                .map_err(|e| e.to_string())
+                .and_then(|warmup| summary_ir(&warmup))
+                .map(window_for);
+            match chosen {
+                Ok(k) => {
+                    window = Some(k);
+                    let _ = writeln!(stdin, "{k}");
+                }
+                Err(e) => {
+                    failure = Some(e);
+                    let _ = child.kill();
+                    break;
+                }
+            }
+        }
+    }
+    drop(stdin);
+    let status = child.wait().map_err(|e| e.to_string())?;
+    let stderr = errors.join().unwrap_or_default();
+    let dumps = take_dumps(&out);
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    if !status.success() {
+        return Err(format!("valgrind failed ({status}): {stderr}"));
+    }
+    let k = window.ok_or("valgrind exited before the warm-up iteration finished")?;
+    Ok((dumps?, k))
+}
+
+/// Child side of [`run_window`]: announce the warm-up dump and read how many
+/// iterations to measure.
+pub fn negotiate_window() -> Result<u64, String> {
+    println!("{WARM}");
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
+    line.trim()
+        .parse()
+        .map_err(|_| format!("no window size from the parent: {line:?}"))
 }
 
 /// Read and delete the dump files callgrind wrote for `out`, in dump order:
@@ -281,24 +352,42 @@ fn summary_ir(text: &str) -> Result<u64, String> {
         .ok_or_else(|| "unparseable summary line".into())
 }
 
-/// Iterations in the measured window; the two-process method runs K and 2K.
+/// The most iterations a measurement averages over; the two-process method
+/// runs this many and twice this many.
 ///
-/// K must exceed 1. `gate` compares two builds run from different working
-/// directories — the reference side lives in a worktree whose path is ~60
-/// characters longer — and that difference in environment size alone shifts
-/// heap layout, hence the instruction count of allocator work inside the
-/// measured region. Measured directly: the same binary run from a 42- and a
-/// 115-character path differs by 0.08%. At K=1 the subtraction reports one
-/// iteration, so that offset lands at full weight; averaging over K spreads it
-/// to 1/K. Valgrind process startup dominates each run, so raising K costs far
-/// less than it looks like it does.
-const K: u64 = 10;
+/// More than one matters for cheap items. `gate` compares two builds run from
+/// different working directories — the reference side lives in a worktree
+/// whose path is ~60 characters longer — and that difference in environment
+/// size alone shifts heap layout, hence the instruction count of allocator
+/// work inside the measured region. Measured directly: the same binary run
+/// from a 42- and a 115-character path differs by 0.08%. At one iteration
+/// that offset lands at full weight; averaging over K spreads it to 1/K.
+const K_MAX: u64 = 10;
+
+/// Instructions one measured window aims to cover. A window carries a fixed
+/// offset of about 150 Ir (a bench reads 149 Ir higher at one iteration than
+/// at ten), so a window this size keeps the offset under 0.01% and two sides
+/// that choose different K differ by less than that.
+const WINDOW_IR: u64 = 2_000_000;
+
+/// Marks the end of the warm-up on the child's stdout.
+const WARM: &str = "soothfast-warm";
+
+/// Iterations to measure after a warm-up iteration of `warmup_ir`: as many as
+/// fit [`WINDOW_IR`], at most [`K_MAX`]. Powers of two keep an item's K the
+/// same across the small changes between a head and its base.
+fn window_for(warmup_ir: u64) -> u64 {
+    let fit = (WINDOW_IR / warmup_ir.max(1)).max(1);
+    (1 << fit.ilog2()).min(K_MAX)
+}
 
 /// One item's callgrind result: per-iteration Ir, and every function the
 /// process executed as sorted, deduplicated `(object, mangled symbol)`.
 pub struct Measurement {
     /// Instructions per iteration.
     pub ir: u64,
+    /// Iterations `ir` averages over.
+    pub window: u64,
     /// Executed `(object, mangled symbol)` pairs.
     pub functions: Vec<(String, String)>,
 }
@@ -306,9 +395,9 @@ pub struct Measurement {
 /// How per-iteration Ir is taken from valgrind runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
-    /// One process; a dump request brackets a K-iteration window.
+    /// One process; a dump request brackets a window of iterations.
     OneProcess,
-    /// Two processes, at K and 2K iterations.
+    /// Two processes, at K_MAX and 2 * K_MAX iterations.
     TwoProcess,
 }
 
@@ -341,21 +430,23 @@ pub fn measure(id: &str) -> Result<Measurement, String> {
 }
 
 fn measure_window(id: &str) -> Result<Measurement, String> {
-    let dumps = run_valgrind(id, K, true, "window", true)?;
-    let [_, window, _] = dumps.as_slice() else {
-        return Err(format!("expected 3 callgrind dumps, found {}", dumps.len()));
+    let (dumps, window) = run_window(id, "window")?;
+    let [setup, warmup, _handshake, measured, exit] = dumps.as_slice() else {
+        return Err(format!("expected 5 callgrind dumps, found {}", dumps.len()));
     };
     Ok(Measurement {
-        ir: summary_ir(window)? / K,
-        functions: executed(&dumps),
+        ir: summary_ir(measured)? / window,
+        window,
+        functions: executed([setup, warmup, measured, exit]),
     })
 }
 
 fn measure_difference(id: &str) -> Result<Measurement, String> {
-    let low = run_valgrind(id, K, false, "k1", true)?;
-    let high = run_valgrind(id, 2 * K, false, "k2", true)?;
+    let low = run_valgrind(id, K_MAX, "k1", true)?;
+    let high = run_valgrind(id, 2 * K_MAX, "k2", true)?;
     Ok(Measurement {
-        ir: summary_ir(&high[0])?.saturating_sub(summary_ir(&low[0])?) / K,
+        ir: summary_ir(&high[0])?.saturating_sub(summary_ir(&low[0])?) / K_MAX,
+        window: K_MAX,
         functions: executed(&high),
     })
 }
@@ -427,9 +518,9 @@ fn function_costs(text: &str) -> impl Iterator<Item = (&str, &str, u64)> {
     })
 }
 
-fn executed(dumps: &[String]) -> Vec<(String, String)> {
+fn executed<'a>(dumps: impl IntoIterator<Item = &'a String>) -> Vec<(String, String)> {
     let set: std::collections::BTreeSet<(&str, &str)> = dumps
-        .iter()
+        .into_iter()
         .flat_map(|text| function_costs(text))
         .map(|(ob, f, _)| (ob, f))
         .collect();
@@ -440,7 +531,7 @@ fn executed(dumps: &[String]) -> Vec<(String, String)> {
 
 /// Human triage report: top self-cost functions for one item's workload.
 pub fn annotate(id: &str) -> Result<String, String> {
-    let dumps = run_valgrind(id, 1, false, "annotate", false)?;
+    let dumps = run_valgrind(id, 1, "annotate", false)?;
     let text = &dumps[0];
     let total = summary_ir(text)?;
     let mut costs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
@@ -462,7 +553,7 @@ pub fn annotate(id: &str) -> Result<String, String> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{executed, function_costs, out_file, summary_ir, take_dumps};
+    use super::{executed, function_costs, out_file, summary_ir, take_dumps, window_for};
 
     const OUT: &str = "\
 events: Ir
@@ -545,5 +636,23 @@ summary: 1052
             .map(|(_, f)| f)
             .collect();
         assert_eq!(names, ["hot", "setup"]);
+    }
+
+    #[test]
+    fn the_window_shrinks_to_one_iteration_as_items_get_heavier() {
+        let got: Vec<u64> = [
+            585, 125_000, 130_000, 600_000, 1_100_000, 2_000_000, 91_000_000,
+        ]
+        .map(window_for)
+        .into();
+        assert_eq!(got, [10, 10, 8, 2, 1, 1, 1]);
+    }
+
+    #[test]
+    fn the_window_is_a_power_of_two_or_the_cap() {
+        for ir in (1..60).map(|n| n * 400_000) {
+            let k = window_for(ir);
+            assert!(k.is_power_of_two() || k == 10, "{ir} -> {k}");
+        }
     }
 }

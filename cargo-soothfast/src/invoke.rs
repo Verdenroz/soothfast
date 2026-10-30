@@ -563,6 +563,8 @@ pub struct ItemMetrics {
     pub cycles: Option<u64>,
     pub cache_refs: Option<u64>,
     pub ir: Option<u64>,
+    /// Iterations `ir` averages over, when the harness says.
+    pub window: Option<u64>,
     pub allocs: Option<u64>,
     pub bytes: Option<u64>,
     pub polls: Option<u64>,
@@ -682,7 +684,10 @@ pub fn collect(records: &[Value]) -> Run {
                         item.cycles = m["cycles"].as_u64();
                         item.cache_refs = m["cache_refs"].as_u64();
                     }
-                    Some("callgrind") => item.ir = m["ir"].as_u64(),
+                    Some("callgrind") => {
+                        item.ir = m["ir"].as_u64();
+                        item.window = m["window"].as_u64();
+                    }
                     Some("alloc") => {
                         item.allocs = m["allocs"].as_u64();
                         item.bytes = m["bytes"].as_u64();
@@ -731,6 +736,9 @@ pub fn run_to_items_value(run: &Run) -> Value {
         }
         if let Some(ir) = m.ir {
             entry["callgrind"] = json!({ "ir": ir });
+            if let Some(window) = m.window {
+                entry["callgrind"]["window"] = json!(window);
+            }
         }
         if let (Some(a), Some(b)) = (m.allocs, m.bytes) {
             entry["alloc"] = json!({ "allocs": a, "bytes": b });
@@ -777,6 +785,7 @@ pub fn run_from_items_value(items: &Value) -> Run {
                 cycles: v["perfcnt"]["cycles"].as_u64(),
                 cache_refs: v["perfcnt"]["cache_refs"].as_u64(),
                 ir: v["callgrind"]["ir"].as_u64(),
+                window: v["callgrind"]["window"].as_u64(),
                 allocs: v["alloc"]["allocs"].as_u64(),
                 bytes: v["alloc"]["bytes"].as_u64(),
                 polls: v["asyncexec"]["polls"].as_u64(),
@@ -2040,6 +2049,7 @@ mod tests {
                 cycles: Some(600),
                 cache_refs: Some(10),
                 ir: Some(700),
+                window: Some(10),
                 allocs: Some(2),
                 bytes: Some(64),
                 polls: Some(3),
