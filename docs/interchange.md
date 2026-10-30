@@ -41,7 +41,7 @@ What each record does:
 
 - `result` carries one backend's metrics for one item id. The backend picks
   which `metrics` keys are read: `walltime` (`median_ns`, `mad_ns`, `p99_ns`),
-  `perfcnt` (`instructions`, `cycles`, `cache_refs`), `callgrind` (`ir`),
+  `perfcnt` (`instructions`, `cycles`, `cache_refs`), `callgrind` (`ir`, and `window`, the iterations it averages over),
   `alloc` (`allocs`, `bytes`), `asyncexec` (`polls`, `wakes`). Counts must be
   JSON integers.
 - `env.gating_backend` names the backend `gate` compares. Emit a `result` for

@@ -10,11 +10,14 @@
 mod agreement;
 mod buildcost;
 mod buildstamp;
+mod cache;
 mod changelog_config;
 mod codekey;
 mod coverage;
+mod coverage_lang;
 mod docs;
 mod docs_binds;
+mod docs_config;
 mod docs_generated;
 mod docs_support;
 mod gate;
@@ -31,6 +34,7 @@ mod jumptable;
 mod linkmap;
 mod mcp;
 mod plan;
+mod project_surface;
 mod report;
 mod runcache;
 #[cfg(test)]
@@ -74,6 +78,10 @@ commands:
            acts on pull request labels as soothfast-bot; --labels creates
            soothfast:merge, soothfast:update, soothfast:perf-accepted and
            do-not-merge with gh)
+  cache    merge --from DIR
+           (folds a restored .soothfast cache layout in DIR into this
+           project's: items keep the entries of both, runs and link maps are
+           copied when absent)
   plan     [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
@@ -130,6 +138,8 @@ commands:
   docs     gh-deploy [--baseline NAME] [--branch NAME] [--remote NAME] [--message MSG]
            (build + publish to a gh-pages-style branch, replaces `mkdocs gh-deploy`)
   coverage measure|docs -p PKG [--min PCT] [--features F]
+  coverage docs --dir D --lang L [--min PCT]   (Kotlin, Java, Python, TS/JS symbols; reads
+           [[project]] dir/ecosystem from soothfast.toml when no -p or --dir is given)
   spec     gen -p PKG [--features F] [--check]
   spec     gate -p PKG [--base REF] [--allow-breaking]
   spec     check -p PKG [--features F] [--target NAME]
@@ -147,7 +157,7 @@ commands:
            the SDK surface is the linked generate-mode spec surface)
   sdk      publish -p PKG [--only LANG] [--dry-run]   (refuses stale output;
            python publishes via `uv build` + `uv publish`)
-  report   render -p PKG [--out DIR] [--baseline NAME] [--features F]
+  report   render -p PKG [--out DIR] [--baseline NAME] [--features F] [--dir D --lang L]
   report   changelog -p PKG [-p PKG ...] [--against-ref REF] [--features F]
            [--bot-author NAME]
            (no --against-ref: first release, lists the surface it ships)
@@ -195,6 +205,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "measure" => cmd_measure(rest),
         "init" => init::run(rest),
         "plan" => plan::run(rest),
+        "cache" => cache::run(rest),
         "import" => import::run(rest),
         "gate" => gate::run(rest),
         "trend" => trend::run(rest),

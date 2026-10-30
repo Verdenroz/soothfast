@@ -11,6 +11,7 @@ set -euo pipefail
 source "$(dirname "$0")/oidc.sh"
 
 if oidc=$(oidc_token); then
+  command -v jq >/dev/null || { echo "::error::jq must be installed on the runner to comment as soothfast-bot; see docs/ci.md, Self-hosted runners"; exit 1; }
   payload=$(jq -n --argjson pr "$PR_NUMBER" --arg marker "$MARKER" --rawfile body "$BODY_FILE" \
     '{pull_request: $pr, marker: $marker, body: $body}')
   response=$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "$BROKER/comment" \
@@ -25,6 +26,7 @@ if oidc=$(oidc_token); then
   echo "::notice::soothfast-bot did not post the comment (HTTP $status${reason:+: $reason}); posting with the job token instead"
 fi
 
+command -v gh >/dev/null || { echo "::error::gh must be installed on the runner to comment with the job token; see docs/ci.md, Self-hosted runners"; exit 1; }
 with_marker="${RUNNER_TEMP:-/tmp}/soothfast-comment.md"
 { echo "$MARKER"; cat "$BODY_FILE"; } >"$with_marker"
 id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \

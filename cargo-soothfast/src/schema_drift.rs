@@ -31,6 +31,7 @@ fn full_item() -> ItemMetrics {
         cycles: Some(20),
         cache_refs: Some(30),
         ir: Some(40),
+        window: Some(10),
         allocs: Some(1),
         bytes: Some(64),
         polls: Some(2),

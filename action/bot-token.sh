@@ -12,6 +12,7 @@ fail() {
   exit 1
 }
 
+command -v jq >/dev/null || fail "jq must be installed on the runner to mint a soothfast-bot token; see docs/ci.md, Self-hosted runners"
 oidc=$(oidc_token) || fail "soothfast-bot needs 'id-token: write' in the job's permissions"
 
 response=$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "$BROKER/token" -H "Authorization: Bearer $oidc") ||

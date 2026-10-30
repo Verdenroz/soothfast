@@ -1,6 +1,6 @@
 //! Where the reusable workflow runs and whether it runs the repo's tests:
 //! `[runner] labels` and `[test] ci` in `soothfast.toml`, and the packages
-//! `[docs] package` names for `docs check`.
+//! `[docs] package` names for `docs check` (read by `docs_config`).
 
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
@@ -25,7 +25,6 @@ impl Ci {
                 table = match name {
                     "runner" => "runner",
                     "test" => "test",
-                    "docs" => "docs",
                     _ => "",
                 };
                 continue;
@@ -55,20 +54,10 @@ impl Ci {
                     Ok(TomlValue::Bool(test)) => ci.test = Some(test),
                     _ => return Err(format!("line {lineno}: `ci` under [test] is true or false")),
                 },
-                ("docs", "package") => match parse_value(value.trim()) {
-                    Ok(TomlValue::Str(package)) => ci.docs = Some(vec![package]),
-                    Ok(TomlValue::StrArray(packages)) if !packages.is_empty() => {
-                        ci.docs = Some(packages)
-                    }
-                    _ => {
-                        return Err(format!(
-                            "line {lineno}: `package` under [docs] is a name or a non-empty list of names"
-                        ));
-                    }
-                },
                 _ => {}
             }
         }
+        ci.docs = crate::docs_config::parse(text)?.package;
         Ok(ci)
     }
 

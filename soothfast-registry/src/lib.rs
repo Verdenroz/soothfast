@@ -7,7 +7,25 @@
 
 pub use linkme;
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// How many times a workload body loops: fixed, or read from a cell the
+/// backend sets between body calls.
+#[derive(Clone, Copy)]
+enum Iters<'a> {
+    Fixed(u64),
+    Shared(&'a Cell<u64>),
+}
+
+impl Iters<'_> {
+    fn get(self) -> u64 {
+        match self {
+            Iters::Fixed(n) => n,
+            Iters::Shared(cell) => cell.get(),
+        }
+    }
+}
 
 /// Single-use measurement context handed to registered runner glue.
 ///
@@ -15,7 +33,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// [`Bencher::iter_async`]) exactly once with the workload; the active
 /// backend decides how many times (and how) the workload body actually runs.
 pub struct Bencher<'a> {
-    iters: u64,
+    iters: Iters<'a>,
     collector: &'a mut dyn FnMut(&mut dyn FnMut()),
 }
 
@@ -23,14 +41,27 @@ impl<'a> Bencher<'a> {
     /// Constructor for measurement backends. Not user API.
     #[doc(hidden)]
     pub fn __new(iters: u64, collector: &'a mut dyn FnMut(&mut dyn FnMut())) -> Self {
-        Bencher { iters, collector }
+        Bencher {
+            iters: Iters::Fixed(iters),
+            collector,
+        }
+    }
+
+    /// [`Bencher::__new`] with an iteration count the backend sets between
+    /// body calls. Not user API.
+    #[doc(hidden)]
+    pub fn __counted(iters: &'a Cell<u64>, collector: &'a mut dyn FnMut(&mut dyn FnMut())) -> Self {
+        Bencher {
+            iters: Iters::Shared(iters),
+            collector,
+        }
     }
 
     /// Hand the workload to the active backend. Call exactly once per glue call.
     pub fn iter<T>(&mut self, mut f: impl FnMut() -> T) {
         let iters = self.iters;
         (self.collector)(&mut || {
-            for _ in 0..iters {
+            for _ in 0..iters.get() {
                 std::hint::black_box(f());
             }
         });
@@ -45,7 +76,7 @@ impl<'a> Bencher<'a> {
     {
         let iters = self.iters;
         (self.collector)(&mut || {
-            for _ in 0..iters {
+            for _ in 0..iters.get() {
                 std::hint::black_box(block_on_counting(f()));
             }
         });
@@ -579,5 +610,19 @@ mod tests {
         b.iter(|| work += 1);
         assert_eq!(calls, 1, "collector invoked once per iter() call");
         assert_eq!(work, 6, "2 body calls x 3 iters");
+    }
+
+    #[test]
+    fn a_counted_bencher_reads_the_count_at_each_body_call() {
+        let iters = Cell::new(1);
+        let mut collector = |body: &mut dyn FnMut()| {
+            body();
+            iters.set(4);
+            body();
+        };
+        let mut b = Bencher::__counted(&iters, &mut collector);
+        let mut work = 0u64;
+        b.iter(|| work += 1);
+        assert_eq!(work, 5);
     }
 }

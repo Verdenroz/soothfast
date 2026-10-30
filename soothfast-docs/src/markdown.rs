@@ -89,11 +89,19 @@ impl CodeBlock {
     }
 }
 
-/// `<!-- soothfast:bind path::to::item -->`
+/// `<!-- soothfast:bind path::to::item -->`, or several whitespace-separated
+/// targets in one marker.
 #[derive(Debug, Clone)]
 pub struct Bind {
     pub item: String,
     pub line: usize,
+}
+
+impl Bind {
+    /// The marker's targets: Rust items or `path#Symbol` file targets.
+    pub fn targets(&self) -> impl Iterator<Item = &str> {
+        self.item.split_whitespace()
+    }
 }
 
 /// `<!-- soothfast:claim item.backend.metric < value -->`
@@ -393,6 +401,22 @@ not rust
             scan("```rust\nlet x = 1;\n```\n").unwrap().blocks[0]
                 .feature_list()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_bind_splits_into_whitespace_separated_targets() {
+        let doc = scan(
+            "<!-- soothfast:bind corvid_mime::parse_headers  client/Headers.kt#Headers.parse -->\n",
+        )
+        .unwrap();
+        let targets: Vec<&str> = doc.binds[0].targets().collect();
+        assert_eq!(
+            targets,
+            [
+                "corvid_mime::parse_headers",
+                "client/Headers.kt#Headers.parse"
+            ]
         );
     }
 

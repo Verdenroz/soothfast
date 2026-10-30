@@ -18,7 +18,7 @@ use crate::itemreuse::Bin;
 use crate::runcache;
 
 /// Maps kept before the oldest are dropped.
-const KEEP: usize = 64;
+pub(crate) const KEEP: usize = 64;
 
 /// One input section's place in the binary.
 #[derive(Clone, Debug, PartialEq)]

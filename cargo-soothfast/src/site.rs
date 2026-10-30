@@ -176,6 +176,7 @@ pub fn gh_deploy_cmd(baseline: &str, branch: &str, remote: &str, message: Option
         Some(s) => s,
         None => return err("worktree path is not UTF-8"),
     };
+    invoke::forget_missing_worktree(&wt);
     if wt.exists() {
         let _ = invoke::git(&["worktree", "remove", "--force", wt_str]);
     }

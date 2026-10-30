@@ -7,6 +7,10 @@
 # perf_accepted PR: succeeds when PR carries soothfast:perf-accepted, applied
 # by someone who can write. It waives regressions only; an error has nothing to accept.
 perf_accepted() {
+  if ! command -v gh >/dev/null; then
+    echo "::warning::gh is not installed, so the soothfast:perf-accepted label was not checked"
+    return 1
+  fi
   [ "$(gh pr view "$1" --json labels --jq 'any(.labels[]; .name == "soothfast:perf-accepted")')" = true ] &&
     labelled_by_writer "$1" soothfast:perf-accepted
 }

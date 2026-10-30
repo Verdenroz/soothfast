@@ -13,7 +13,7 @@ use crate::{invoke, workspace};
 
 pub mod ci;
 mod detect;
-pub mod ecosystem;
+pub(crate) mod ecosystem;
 
 use ci::Ci;
 use ecosystem::{
@@ -1166,7 +1166,7 @@ mod tests {
     #[test]
     fn the_docs_packages_are_written_and_a_flagless_check_is_clean() {
         let root = scratch("docs");
-        std::fs::write(root.join("soothfast.toml"), "[docs]\nother = 1\n").unwrap();
+        std::fs::write(root.join("soothfast.toml"), "[docs]\npaths = [\"x\"]\n").unwrap();
         let w = Workspace {
             docs_packages: vec!["a".into(), "b".into()],
             ..ws(&[], None)
@@ -1174,7 +1174,7 @@ mod tests {
         let files = scaffold(&w);
         assert_eq!(report(&root, &files, false, false), 0);
         let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
-        assert!(text.contains("package = [\"a\",\"b\"]") && text.contains("other = 1"));
+        assert!(text.contains("package = [\"a\",\"b\"]") && text.contains("paths = [\"x\"]"));
         assert_eq!(report(&root, &files, true, false), 0);
     }
 
