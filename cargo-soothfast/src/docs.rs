@@ -346,7 +346,7 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
     // 2. Claims vs the measurement baseline.
     let any_claims = scanned.docs.iter().any(|(_, d, _)| !d.claims.is_empty());
     if any_claims {
-        let baseline = match invoke::load_baseline(&a.baseline) {
+        let baseline = match invoke::load_baseline_in(&scanned.root, &a.baseline) {
             Ok(Some(b)) => b,
             Ok(None) => {
                 return err(&format!(
@@ -851,6 +851,27 @@ mod tests {
         assert_eq!(run(check_scanned), 1, "body edit is stale");
         assert_eq!(run(accept_scanned), 0);
         assert_eq!(run(check_scanned), 0);
+    }
+
+    #[test]
+    fn claims_read_the_baseline_under_the_project_root() {
+        let dir = project_without_cargo("claims");
+        std::fs::create_dir_all(dir.join(".soothfast/baselines")).unwrap();
+        std::fs::write(
+            dir.join(".soothfast/baselines/base.json"),
+            r#"{"version":1,"items":{"pytest::t.py::test_parse":{"walltime":{"median_ns":800.0}}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("README.md"),
+            "# Demo\n\n<!-- soothfast:claim pytest::t.py::test_parse.walltime.median_ns < 1000 -->\nfast.\n",
+        )
+        .unwrap();
+        let a = DocsArgs {
+            baseline: "base".into(),
+            ..DocsArgs::default()
+        };
+        assert_eq!(check_scanned(&a, &scan_at(&a, dir).unwrap()), 0);
     }
 
     #[test]

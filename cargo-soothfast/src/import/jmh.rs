@@ -16,22 +16,23 @@ fn timing(entry: &Value) -> Result<Timing, String> {
     let benchmark = entry["benchmark"]
         .as_str()
         .ok_or("entry without `benchmark`")?;
-    let name = match entry["params"].as_object().filter(|p| !p.is_empty()) {
-        Some(params) => {
-            let mut pairs: Vec<String> = params
-                .iter()
-                .map(|(k, v)| {
-                    format!(
-                        "{k}={}",
-                        v.as_str().map_or_else(|| v.to_string(), str::to_string)
-                    )
-                })
-                .collect();
-            pairs.sort();
-            format!("{benchmark}[{}]", pairs.join(","))
-        }
-        None => benchmark.to_string(),
-    };
+    let mode = entry["mode"]
+        .as_str()
+        .ok_or_else(|| format!("{benchmark}: no mode"))?;
+    let mut params: Vec<String> = entry["params"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| {
+            format!(
+                "{k}={}",
+                v.as_str().map_or_else(|| v.to_string(), str::to_string)
+            )
+        })
+        .collect();
+    params.sort();
+    params.insert(0, format!("mode={mode}"));
+    let name = format!("{benchmark}[{}]", params.join(","));
     let primary = &entry["primaryMetric"];
     let unit = primary["scoreUnit"]
         .as_str()
@@ -45,7 +46,7 @@ fn timing(entry: &Value) -> Result<Timing, String> {
         .collect();
     let to_ns = |s: f64| ns_per_op(unit, s).map_err(|e| format!("{name}: {e}"));
     if raw.is_empty() {
-        return percentile_timing(name.clone(), primary, to_ns);
+        return percentile_timing(name.clone(), primary, unit, to_ns);
     }
     let samples = raw
         .into_iter()
@@ -55,20 +56,25 @@ fn timing(entry: &Value) -> Result<Timing, String> {
 }
 
 /// Sample-time mode writes a histogram instead of `rawData`; its
-/// `scorePercentiles` still give the median and the 99th percentile.
+/// `scorePercentiles` still give the median and, for time units, the 99th
+/// percentile. A throughput percentile is the opposite tail of the time, so
+/// no p99 is taken from it.
 fn percentile_timing(
     name: String,
     primary: &Value,
+    unit: &str,
     to_ns: impl Fn(f64) -> Result<f64, String>,
 ) -> Result<Timing, String> {
     let pct = |key: &str| primary["scorePercentiles"][key].as_f64();
-    let median = pct("50.0")
-        .or_else(|| primary["score"].as_f64())
-        .ok_or_else(|| format!("{name}: no score"))?;
+    let median = pct("50.0").ok_or_else(|| format!("{name}: no rawData and no 50.0 percentile"))?;
+    let p99 = match unit.starts_with("ops/") {
+        true => None,
+        false => pct("99.0").map(&to_ns).transpose()?,
+    };
     Ok(Timing {
         median_ns: to_ns(median)?,
         mad_ns: 0.0,
-        p99_ns: pct("99.0").map(&to_ns).transpose()?,
+        p99_ns: p99,
         name,
     })
 }

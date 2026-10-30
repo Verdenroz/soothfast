@@ -87,6 +87,7 @@ struct ImportArgs {
     current: Option<(String, String)>,
     reference: Option<(String, String)>,
     prefix: Option<String>,
+    baseline_given: bool,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -121,7 +122,10 @@ pub fn run(args: &[String]) -> i32 {
                 None => return err("--features-matrix needs combos like \"default;full\""),
             },
             "--baseline" => match it.next() {
-                Some(n) => g.baseline = n.clone(),
+                Some(n) => {
+                    g.baseline = n.clone();
+                    g.import.baseline_given = true;
+                }
                 None => return err("--baseline needs a name"),
             },
             "--ratchet" => match it.next() {
@@ -349,25 +353,36 @@ fn run_imported(g: &GateArgs, root: &std::path::Path) -> i32 {
     if g.ratchet.is_some() || g.against_ref.is_some() || g.save_baseline.is_some() || g.deps {
         return err("--import gates against --baseline or --reference-import only");
     }
+    if g.import.baseline_given && g.import.reference.is_some() {
+        return err("--baseline and --reference-import both name the reference; pass one");
+    }
+    if g.common.shard.is_some() || g.common.pkg.is_some() {
+        return err("--import gates a result file whole; --shard and -p do not apply");
+    }
     let walltime_advisory = match gate_config::load(root) {
         Ok(cfg) => cfg.walltime_advisory,
         Err(e) => return err(&e),
     };
     let prefix = g.import.prefix.as_deref();
-    let (current, prefix) = match import::read(format, file, prefix) {
+    let (mut current, prefix) = match import::read(format, file, prefix) {
         Ok(read) => read,
         Err(e) => return err(&e),
     };
+    if let Some(f) = &g.common.filter {
+        current.items.retain(|id, _| id.contains(f.as_str()));
+        if current.items.is_empty() {
+            return err("--filter matches no imported item; refusing to gate");
+        }
+    }
     let reference = match &g.import.reference {
         Some((format, file)) => {
             import::read(format, file, Some(&prefix)).map(|(run, _)| import::to_doc(&run))
         }
         None => match invoke::load_baseline_in(root, &g.baseline) {
             Ok(Some(mut doc)) => {
-                // A baseline can hold other prefixes; theirs are not missing here.
-                let own = format!("{prefix}::");
+                // A baseline can hold other prefixes and Rust items; theirs are not missing here.
                 if let Some(items) = doc["items"].as_object_mut() {
-                    items.retain(|id, _| id.starts_with(&own));
+                    items.retain(|_, v| v["imported"].as_str() == Some(prefix.as_str()));
                 }
                 Ok(doc)
             }
@@ -383,7 +398,7 @@ fn run_imported(g: &GateArgs, root: &std::path::Path) -> i32 {
     let ctx = CompareCtx {
         deps_mode: false,
         allow_gone: g.allow_gone,
-        filter: None,
+        filter: g.common.filter.clone(),
         shard: None,
         pkg: None,
         buildcost_mode: false,
@@ -2670,6 +2685,16 @@ mod tests {
     }
 
     fn imported_gate(name: &str, current: f64, config: &str, baseline: bool) -> i32 {
+        imported_gate_with(name, current, config, baseline, |_| {})
+    }
+
+    fn imported_gate_with(
+        name: &str,
+        current: f64,
+        config: &str,
+        baseline: bool,
+        tweak: impl FnOnce(&mut GateArgs),
+    ) -> i32 {
         let root = std::env::temp_dir().join(format!("soothfast-gate-import-{name}"));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
@@ -2695,14 +2720,17 @@ mod tests {
                 current: Some(file("cur.json", pyperf(current))),
                 reference: Some(reference.clone()),
                 prefix: None,
+                baseline_given: false,
             },
         };
+        tweak(&mut g);
         if baseline {
             let (run, prefix) = crate::import::read(&reference.0, &reference.1, None).unwrap();
             let scope = invoke::SaveScope::Imported(prefix);
             invoke::save_baseline_in(&root, "base", &run, scope).unwrap();
             let other = ItemMetrics {
                 median_ns: Some(1.0),
+                imported: Some("jmh".into()),
                 ..ItemMetrics::default()
             };
             let mut other_run = Run::default();
@@ -2714,6 +2742,42 @@ mod tests {
         let code = super::run_imported(&g, &root);
         let _ = std::fs::remove_dir_all(&root);
         code
+    }
+
+    #[test]
+    fn an_import_filter_matching_nothing_is_refused() {
+        let code = imported_gate_with("filter-none", 0.0013, "", false, |g| {
+            g.common.filter = Some("nothing".into());
+        });
+        assert_eq!(code, 2);
+    }
+
+    #[test]
+    fn an_import_filter_gates_the_matching_items() {
+        let code = imported_gate_with("filter-some", 0.0013, "", false, |g| {
+            g.common.filter = Some("b".into());
+        });
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn an_import_rejects_shard_and_package() {
+        let shard = imported_gate_with("shard", 0.001, "", false, |g| {
+            g.common.shard = Some(invoke::Shard::parse("1/2").unwrap());
+        });
+        let pkg = imported_gate_with("pkg", 0.001, "", false, |g| {
+            g.common.pkg = Some("mylib".into());
+        });
+        assert_eq!((shard, pkg), (2, 2));
+    }
+
+    #[test]
+    fn an_import_rejects_a_baseline_beside_a_reference_import() {
+        let code = imported_gate_with("both", 0.001, "", false, |g| {
+            g.baseline = "base".into();
+            g.import.baseline_given = true;
+        });
+        assert_eq!(code, 2);
     }
 
     #[test]

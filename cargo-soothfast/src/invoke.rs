@@ -567,6 +567,8 @@ pub struct ItemMetrics {
     pub size_bytes: Option<u64>,
     /// Set when this item alone came from a stored measurement.
     pub reused: Option<Reused>,
+    /// Id prefix of the `import` that produced this item.
+    pub imported: Option<String>,
 }
 
 /// One assertion verdict from the runner.
@@ -730,6 +732,9 @@ pub fn run_to_items_value(run: &Run) -> Value {
         if let (Some(ms), Some(sz)) = (m.build_ms, m.size_bytes) {
             entry["buildcost"] = json!({ "build_ms": ms, "size_bytes": sz });
         }
+        if let Some(prefix) = &m.imported {
+            entry["imported"] = json!(prefix);
+        }
         items.insert(id.clone(), entry);
     }
     Value::Object(items)
@@ -770,6 +775,7 @@ pub fn run_from_items_value(items: &Value) -> Run {
                 build_ms: v["buildcost"]["build_ms"].as_u64(),
                 size_bytes: v["buildcost"]["size_bytes"].as_u64(),
                 reused: None,
+                imported: v["imported"].as_str().map(String::from),
             },
         );
     }
@@ -850,7 +856,7 @@ pub enum SaveScope {
     BenchFiltered,
     /// Buildcost run of one package (`None`: replace every buildcost entry).
     Buildcost(Option<String>),
-    /// Import of the items whose id starts `<prefix>::`.
+    /// Import under `<prefix>`: replaces the items it marked with that prefix.
     Imported(String),
 }
 
@@ -871,6 +877,10 @@ impl SaveScope {
 /// First segment of a measured-item id (the package, `-` normalized to `_`).
 pub fn id_pkg(id: &str) -> &str {
     id.split("::").next().unwrap_or(id)
+}
+
+fn is_imported(item: &Value) -> bool {
+    item["imported"].is_string()
 }
 
 /// Persist a run as a named baseline.
@@ -905,15 +915,21 @@ pub fn save_baseline_in(
         match scope {
             SaveScope::BenchFull(Some(pkg)) => {
                 let pkg = pkg.replace('-', "_");
-                map.retain(|k, _| k.starts_with("buildcost::") || id_pkg(k) != pkg);
+                map.retain(|k, v| {
+                    is_imported(v) || k.starts_with("buildcost::") || id_pkg(k) != pkg
+                });
             }
-            SaveScope::BenchFull(None) => map.retain(|k, _| k.starts_with("buildcost::")),
+            SaveScope::BenchFull(None) => {
+                map.retain(|k, v| is_imported(v) || k.starts_with("buildcost::"))
+            }
             SaveScope::Buildcost(Some(pkg)) => map.retain(|k, _| {
                 k.strip_prefix("buildcost::")
                     .is_none_or(|rest| rest.split("::").next() != Some(pkg.as_str()))
             }),
             SaveScope::Buildcost(None) => map.retain(|k, _| !k.starts_with("buildcost::")),
-            SaveScope::Imported(prefix) => map.retain(|k, _| id_pkg(k) != prefix),
+            SaveScope::Imported(prefix) => {
+                map.retain(|_, v| v["imported"].as_str() != Some(prefix.as_str()))
+            }
             SaveScope::BenchFiltered => {}
         }
         for (k, v) in new_map {
@@ -1971,6 +1987,7 @@ mod tests {
                 build_ms: None,
                 size_bytes: None,
                 reused: None,
+                imported: Some("jmh".into()),
             },
         );
         let round_tripped = run_from_items_value(&run_to_items_value(&run));
@@ -1981,6 +1998,7 @@ mod tests {
         assert_eq!(back.median_ns, original.median_ns);
         assert_eq!(back.mad_ns, original.mad_ns);
         assert_eq!(back.p99_ns, original.p99_ns);
+        assert_eq!(back.imported, original.imported);
         assert_eq!(back.wall_rounds, original.wall_rounds);
         assert_eq!(back.instructions, original.instructions);
         assert_eq!(back.cycles, original.cycles);
