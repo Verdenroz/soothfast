@@ -3,11 +3,11 @@
 # check, the package list, full history for merge-base and tag lookups, the
 # callgrind fallback, and the rustdoc toolchain when anything regenerates.
 # A default-branch push with the gate on records a reference run.
-# Inputs: GATE REGEN CACHE (true|false) SHARD PACKAGES RUSTDOC_TOOLCHAIN
+# Inputs: GATE REGEN LABELS CACHE (true|false) SHARD PACKAGES RUSTDOC_TOOLCHAIN
 # GH_TOKEN.
-# Outputs: on_default_branch, default_branch, packages, records (this leg
-# records the reference), reference (the commit whose recorded runs the gate
-# compares against) and cache_runs.
+# Outputs: on_default_branch, default_branch, packages, sweep (act on labels),
+# records (this leg records the reference), reference (the commit whose
+# recorded runs the gate compares against) and cache_runs.
 set -euo pipefail
 
 default=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)
@@ -15,6 +15,11 @@ on_default=false
 [ "${GITHUB_REF:-}" = "refs/heads/${default}" ] && on_default=true
 echo "on_default_branch=$on_default" >>"$GITHUB_OUTPUT"
 echo "default_branch=$default" >>"$GITHUB_OUTPUT"
+sweep=false
+if [ "${LABELS:-false}" = true ] && [ "${GITHUB_EVENT_NAME:-}" != pull_request ] && [ "$on_default" = true ]; then
+  sweep=true
+fi
+echo "sweep=$sweep" >>"$GITHUB_OUTPUT"
 # Shard 1 of a matrix records every item for all of them.
 records=false
 if [ -z "${SHARD:-}" ] || [ "${SHARD%%/*}" = 1 ]; then

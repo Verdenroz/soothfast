@@ -51,11 +51,13 @@ usage: cargo soothfast <command>
        cargo soothfast --version
 
 commands:
-  init     [-p PKG]... [--check] [--force] [--bot]
+  init     [-p PKG]... [--check] [--force] [--bot] [--labels]
            (writes the soothfast CI workflow, soothfast.toml and .gitignore
            entry; -p gives PKG a soothfast bench target; --check reports
-           drift and writes nothing; --bot lands regenerated files as
-           soothfast-bot)
+           drift and writes nothing; --bot lands regenerated files and
+           acts on pull request labels as soothfast-bot; --labels creates
+           soothfast:merge, soothfast:update, soothfast:perf-accepted and
+           do-not-merge with gh)
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]
