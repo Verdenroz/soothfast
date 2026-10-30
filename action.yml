@@ -86,8 +86,8 @@ inputs:
     default: ""
   save-baseline:
     description: >-
-      Baseline name a passing pull-request gate saves its HEAD measurement
-      under, in `.soothfast/baselines/`. A later job that needs HEAD's
+      Baseline name a passing pull-request gate, or the reference run of a
+      default-branch push, saves its HEAD measurement under, in `.soothfast/baselines/`. A later job that needs HEAD's
       numbers (a docs claim check) can then read it instead of measuring
       again. A failing gate saves nothing, and neither does one whose bench
       binaries are identical on both sides. Empty saves nothing.
@@ -238,6 +238,28 @@ runs:
           key="${key}-shard-${SHARD%/*}-of-${SHARD#*/}"
         fi
         echo "key=$key" >>"$GITHUB_OUTPUT"
+    # A pull request starts from the union of its own latest saved entry and
+    # the merge-base's. Restoring both into the same paths would make the
+    # second overwrite the first, so the first is set aside and merged.
+    - name: Restore this branch's measured runs
+      if: steps.prepare.outputs.cache_runs == 'true' && github.event_name == 'pull_request'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          .soothfast/runs
+          .soothfast/items
+          .soothfast/maps
+        key: ${{ steps.save-key.outputs.key }}
+        restore-keys: |
+          soothfast-runs-${{ github.ref_name }}-
+    - name: Set the branch's runs aside
+      if: steps.prepare.outputs.cache_runs == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      run: |
+        mkdir -p .soothfast-branch
+        for dir in runs items maps; do
+          if [ -d ".soothfast/$dir" ]; then mv ".soothfast/$dir" ".soothfast-branch/$dir"; fi
+        done
     # The default-branch push saves under its own sha, which is the exact key
     # a later pull request asks for as its merge-base.
     - name: Restore measured runs
@@ -253,6 +275,14 @@ runs:
         restore-keys: |
           soothfast-runs-${{ github.ref_name }}-
           soothfast-runs-${{ steps.prepare.outputs.default_branch }}-
+    - name: Merge the branch's runs
+      if: steps.prepare.outputs.cache_runs == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        CLI: ${{ steps.resolve.outputs.bin }}
+      run: |
+        "$CLI" cache merge --from .soothfast-branch
+        rm -rf .soothfast-branch
 
     - name: Gate against the base branch
       if: github.event_name == 'pull_request' && inputs.gate == 'true'
@@ -292,6 +322,7 @@ runs:
         CLI: ${{ steps.resolve.outputs.bin }}
         PACKAGES: ${{ steps.prepare.outputs.packages }}
         FEATURES: ${{ inputs.features }}
+        SAVE_BASELINE: ${{ inputs.save-baseline }}
       run: "$GITHUB_ACTION_PATH/action/record.sh"
     # A push saves under the plain key a pull request asks for; only the leg
     # that recorded has anything to save. A pull request's shards each save

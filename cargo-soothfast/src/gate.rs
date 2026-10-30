@@ -104,6 +104,7 @@ struct ImportArgs {
     current: Option<(String, String)>,
     reference: Option<(String, String)>,
     prefix: Option<String>,
+    walltime: Option<String>,
     baseline_given: bool,
 }
 
@@ -176,6 +177,10 @@ pub fn run(args: &[String]) -> i32 {
             "--prefix" => match it.next() {
                 Some(p) => g.import.prefix = Some(p.clone()),
                 None => return err("--prefix needs a value"),
+            },
+            "--walltime" => match it.next() {
+                Some(m) if m == "hard" || m == "advisory" => g.import.walltime = Some(m.clone()),
+                _ => return err("--walltime needs hard or advisory"),
             },
             "--no-reuse-base" => g.reuse_base = false,
             "--deps" => g.deps = true,
@@ -376,9 +381,10 @@ fn run_imported(g: &GateArgs, root: &std::path::Path) -> i32 {
     if g.common.shard.is_some() || g.common.pkg.is_some() {
         return err("--import gates a result file whole; --shard and -p do not apply");
     }
-    let walltime_advisory = match gate_config::load(root) {
-        Ok(cfg) => cfg.walltime_advisory,
-        Err(e) => return err(&e),
+    let walltime_advisory = match (&g.import.walltime, gate_config::load(root)) {
+        (Some(mode), _) => mode == "advisory",
+        (None, Ok(cfg)) => cfg.walltime_advisory,
+        (None, Err(e)) => return err(&e),
     };
     let prefix = g.import.prefix.as_deref();
     let (mut current, prefix) = match import::read(format, file, prefix) {
@@ -2820,6 +2826,7 @@ mod tests {
                 current: Some(file("cur.json", pyperf(current))),
                 reference: Some(reference.clone()),
                 prefix: None,
+                walltime: None,
                 baseline_given: false,
             },
         };

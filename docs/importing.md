@@ -37,7 +37,7 @@ renamed:
 |--------|------|
 | JMH | `benchmark[mode=M,k=v,...]`: the mode first, then its params sorted by key, so one benchmark run in several modes keeps one id per mode |
 | pyperf | the benchmark's `metadata.name`, else the file's (`timeit` for `pyperf timeit`) |
-| pytest-benchmark | `fullname` |
+| pytest-benchmark | `fullname`, its file path made relative to the project root so a checkout's directory name never enters an id |
 | vitest | `<group full name> > <benchmark name>`, the group name being file-relative as vitest prints it |
 
 Two benchmarks that map to one id are an error.
@@ -114,22 +114,48 @@ fixed +10%. Two more things help:
 
 ## Other languages
 
-`cargo soothfast init` detects the repo from the first build file it finds at
-the project root: `Cargo.toml`, then `build.gradle.kts` or `build.gradle`,
-then `pom.xml`, then `pyproject.toml` or `setup.py`, then `package.json`.
-`--ecosystem rust|gradle|maven|python|node` overrides the detection. For
-anything but Rust it writes a workflow that gates the repo's own harness on
-pull requests, plus a docs check when tracked markdown carries
-`<!-- soothfast:` markers.
+`cargo soothfast init` wires up repos that mix ecosystems: a cargo workspace
+at the root plus any number of Gradle, Maven, Python and Node projects below
+it. The root is Rust when it has a `Cargo.toml`. The other projects come from
+tracked files (`git ls-files`), at any depth:
 
-The gate job checks out the full history, runs the harness on the merge base
-in a `git worktree` and on HEAD, then runs `gate --import` with the merge
-base's file as `--reference-import`. When the merge base cannot run the
-harness or writes no result file, the gate notes that and passes. Nothing is
-stored, and a push to the default branch does nothing extra. An imported gate
-measures walltime only, so the seeded `soothfast.toml` sets
-`[gate] walltime = "hard"`; set it to `"advisory"` if the runner is too noisy
-to trust.
+- A directory with `settings.gradle(.kts)` is a Gradle project, and the
+  `build.gradle(.kts)` files below it belong to it. Without a settings file,
+  the top-most `build.gradle(.kts)` directory is the project.
+- `pom.xml`, `package.json`: the top-most directories only.
+- `pyproject.toml`, `setup.py`: each directory, except those under another
+  Python directory.
+- Nothing under `target/`, `build/`, `dist/`, `node_modules/`, `.venv/`,
+  `vendor/` or `.soothfast/` counts.
+
+Init reports every project it finds. A detected project is gated only when
+its own manifests name the harness its default command runs, and a benchmark
+command is known:
+
+- Python: `pyproject.toml` or `setup.py` names `pytest-benchmark` or `pyperf`.
+- Node: a `package.json` names `vitest`, and either a script is `bench` (or
+  runs `vitest bench`) or a `*.bench.*` file is tracked under the directory.
+- Gradle: a Gradle file names `kotlinx.benchmark`, `jmh` or
+  `me.champeau.jmh`. Gradle also has no default command.
+- Maven: a `pom.xml` names `jmh`.
+
+A root `package.json` that only holds tooling is therefore listed as
+skipped, not turned into a gate that cannot run. A skipped project prints the
+flags that add it:
+
+```bash
+cargo soothfast init --dir client \
+  --bench-cmd './gradlew jmh -Pout={out}' --bench-out build/jmh.json
+```
+
+`--dir D` selects or creates the project in `D` and always gates it, and
+`--ecosystem`,
+`--bench-cmd`, `--bench-out` and `--from` apply to it. That is also how a
+directory with no build file, such as Python tests with no `pyproject.toml`,
+joins the set (`--ecosystem python --dir plugin/hooks --bench-cmd ...
+--bench-out ...`). Without `--dir` those flags describe the project at the
+root. `--ecosystem rust` is the cargo workspace at the root and takes no
+`--dir`.
 
 | Ecosystem | Command | Format | Setup |
 |-----------|---------|--------|-------|
@@ -138,17 +164,99 @@ to trust.
 | `python` | `uv run pytest --benchmark-only --benchmark-json {out}` | `pytest-benchmark` | `setup-uv` |
 | `node` | `npx vitest bench --run --outputJson {out}` | `vitest` | `setup-node`, `npm ci` |
 
-`--bench-cmd CMD`, `--bench-out PATH` and `--from FORMAT` replace the command,
-the result file (default `soothfast-bench.json`, relative to the checkout the
-command runs in) and the format. `{out}` in the command stands for the result
-file. `--java` (default `21`) and `--node` (default `22`) pick the toolchain
-version.
+The command runs in the project's directory. `{out}` stands for the result
+file (default `soothfast-bench.json`, relative to that directory). `--java`
+(default `21`) and `--node` (default `22`) pick the toolchain versions.
 
-The choice is saved in an `[init]` table of `soothfast.toml`
-(`ecosystem`, `bench_cmd`, `bench_out`, `from`), so `init --check` without
-flags renders the same workflow; the toolchain versions are read back from
-the workflow. The workflow installs the CLI with the action's `version`
-input, since there is no `Cargo.lock` to read it from.
+### What init writes
+
+The projects are saved as `[[project]]` tables of `soothfast.toml`, which is
+the source of truth for what runs. Earlier releases saved a single `[init]`
+table or `[[init.project]]` tables; both are read as projects and rewritten
+as `[[project]]` the next time init writes.
+
+```toml
+[gate]
+walltime = "hard"
+
+[[project]]
+dir = "client"
+ecosystem = "gradle"
+bench_cmd = "./gradlew jmh -Pout={out}"
+bench_out = "build/jmh.json"
+from = "jmh"
+
+[[project]]
+dir = "plugin/plugins/x/hooks"
+ecosystem = "python"
+bench_cmd = "uv run pytest --benchmark-json {out}"
+bench_out = "bench.json"
+from = "pytest-benchmark"
+prefix = "hooks"
+walltime = "advisory"
+
+[runner]
+labels = ["self-hosted", "linux"]
+
+[test]
+ci = false
+
+[docs]
+package = ["my-core"]
+```
+
+A project may also set `prefix` (the item-name prefix of the imported
+results). Its `walltime` is `"hard"` unless set to `"advisory"`; init writes
+`walltime = "hard"` into each new project, and `[gate] walltime` governs only
+the cargo workspace. `[runner] labels` is a list of runner labels (no table
+means `ubuntu-latest`), and `ci = false` under `[test]` drops the cargo
+`test` job (the other `[test]` keys are unchanged). Init writes them only for
+`--runner-labels A,B` and `--no-test`. `[docs] package` (a name or a list)
+names the packages `docs check` reads; without it, init picks the workspace
+packages the markdown binds (`crate::path`) name, else the root package, and
+writes what it chose.
+
+A repo with only a cargo workspace keeps the workflow init has always
+written. Once it has other projects, `[runner]` labels or `ci = false` under
+`[test]`, the workflow is a caller: triggers, permissions and one job that uses
+`.github/workflows/run.yml` from this repository at the pinned release. The
+pin is written twice, as the `uses:` ref and as the `soothfast_ref` input,
+because a called workflow cannot read its own ref; the workflow stops when
+the input is empty, and `init --check` reports a caller where they disagree.
+It passes no secrets: the bot authenticates by OIDC and comments use the job's
+own token. `--pin REF` writes the `uses:` at another commit, tag or branch,
+so an unreleased commit can be tried; a bare commit pin is kept by later
+runs. The reusable workflow installs the `cargo-soothfast` that matches the
+ref it was called at: the crates.io release when that ref is the commit of a
+published release tag, otherwise a build of the ref itself, cached by commit. It runs `cargo soothfast plan --github`
+to read `soothfast.toml`, then runs a test job, a gate for the cargo
+workspace, one gate job per other project and a docs check when tracked
+markdown carries `<!-- soothfast:` markers. The plan job runs on the labels
+the caller passes as `runs_on` (written when `[runner]` sets them); every
+other job runs on the labels `[runner]` names. `init --check` compares the whole set,
+so a flagless check after a flagged init is clean.
+
+Init warns about any other workflow in `.github/workflows` that calls
+soothfast, since its jobs run twice next to the generated ones. A plain init
+that would only add a second Rust workflow next to one of those writes
+nothing unless `--force` is given.
+
+The docs job waits for the cargo gate, which saves the head measurement as the
+`soothfast-baseline` artifact, and checks claims against it. A pull request
+that leaves the bench binaries unchanged saves none, so the job falls back to
+the default branch's measurement, which each default-branch push caches as
+`soothfast-baseline-<sha>` (the base commit's, else the nearest). Only when
+neither exists does the check report "claims not evaluated: no measurement" as
+a notice, still checking binds and examples.
+
+Each project's gate checks out the full history, runs the harness on the
+merge base in a `git worktree` and on HEAD, then runs `gate --import` with
+the merge base's file as `--reference-import`. When the merge base cannot run
+the harness or writes no result file, the gate notes that and passes. Nothing
+is stored. An imported gate measures walltime only, so each project gates
+hard; set its `walltime = "advisory"` if the runner is too noisy to trust.
+Each gate uploads its output as the `soothfast-result-<project>`
+artifact.
 
 `docs check` and `docs accept` need no cargo project for `path#Symbol` binds
 (see [living docs](living-docs.md)).

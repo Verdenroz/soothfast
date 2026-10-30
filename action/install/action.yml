@@ -1,0 +1,93 @@
+name: install-cargo-soothfast
+description: >-
+  Install the cargo-soothfast that matches the ref the reusable run workflow
+  was called at: the crates.io release when that ref is the commit of a
+  published release tag, else a build of the ref itself. Sets up a Rust
+  toolchain first when the runner has no cargo. Expects the workflow's
+  repository checked out at that ref in `.soothfast-action`.
+outputs:
+  bin:
+    description: Path of the installed cargo-soothfast.
+    value: ${{ steps.resolve.outputs.bin }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the runner
+      id: runner
+      shell: bash
+      run: |
+        missing=()
+        for tool in git curl; do
+          command -v "$tool" >/dev/null || missing+=("$tool")
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "::error::the runner needs ${missing[*]} on PATH; see docs/ci.md, Self-hosted runners"
+          exit 1
+        fi
+        if command -v cargo >/dev/null; then
+          echo "cargo=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "cargo=false" >> "$GITHUB_OUTPUT"
+        fi
+    # `cargo soothfast` is a cargo subcommand, so every leg needs cargo.
+    - name: Set up a Rust toolchain
+      if: steps.runner.outputs.cargo != 'true'
+      uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      with:
+        toolchain: stable
+    - name: Resolve cargo-soothfast
+      id: resolve
+      shell: bash
+      run: |
+        source="$GITHUB_WORKSPACE/.soothfast-action"
+        rev=$(git -C "$source" rev-parse HEAD)
+        version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$source/Cargo.toml" | head -n 1)
+        tag_rev=$(git ls-remote https://github.com/Verdenroz/soothfast "refs/tags/v$version" "refs/tags/v$version^{}" | awk 'END { print $1 }')
+        released=false
+        if [ "$tag_rev" = "$rev" ] && curl -fsS -A soothfast-ci -o /dev/null "https://crates.io/api/v1/crates/cargo-soothfast/$version"; then
+          released=true
+        fi
+        root="${RUNNER_TOOL_CACHE:-$HOME/.cache}/soothfast-cli/$rev"
+        if [ "$released" = true ]; then
+          bin="${CARGO_HOME:-$HOME/.cargo}/bin/cargo-soothfast"
+        else
+          bin="$root/bin/cargo-soothfast"
+        fi
+        {
+          echo "version=$version"
+          echo "rev=$rev"
+          echo "released=$released"
+          echo "root=$root"
+          echo "bin=$bin"
+        } >> "$GITHUB_OUTPUT"
+    - name: Install the release
+      if: steps.resolve.outputs.released == 'true'
+      uses: ./.soothfast-action
+      with:
+        version: ${{ steps.resolve.outputs.version }}
+        gate: "false"
+        changelog: "false"
+    - name: Restore the build of this ref
+      if: steps.resolve.outputs.released != 'true'
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.resolve.outputs.root }}
+        key: cargo-soothfast-git-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.rev }}
+    - name: Build this ref
+      if: steps.resolve.outputs.released != 'true' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        REV: ${{ steps.resolve.outputs.rev }}
+        ROOT: ${{ steps.resolve.outputs.root }}
+      run: cargo install --locked --git https://github.com/Verdenroz/soothfast --rev "$REV" --root "$ROOT" cargo-soothfast
+    - name: Link it where cargo finds subcommands
+      if: steps.resolve.outputs.released != 'true'
+      shell: bash
+      env:
+        BIN: ${{ steps.resolve.outputs.bin }}
+      run: |
+        dir="${CARGO_HOME:-$HOME/.cargo}/bin"
+        mkdir -p "$dir"
+        ln -sf "$BIN" "$dir/cargo-soothfast"

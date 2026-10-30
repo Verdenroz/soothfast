@@ -19,6 +19,8 @@ struct DocsArgs {
     against_ref: Option<String>,
     out: Option<PathBuf>,
     check_only: bool,
+    /// `docs check` leaves claims unevaluated, for a run with no measurement.
+    skip_claims: bool,
     features: Option<String>,
     /// `docs routes` `[[bench]]` target to link the route registry from.
     target: Option<String>,
@@ -47,6 +49,7 @@ pub fn run(args: &[String]) -> i32 {
         against_ref: None,
         out: None,
         check_only: false,
+        skip_claims: false,
         features: None,
         target: None,
         addr: None,
@@ -69,6 +72,7 @@ pub fn run(args: &[String]) -> i32 {
             "--against-ref" => a.against_ref = it.next().cloned(),
             "--out" => a.out = it.next().map(PathBuf::from),
             "--check" => a.check_only = true,
+            "--skip-claims" => a.skip_claims = true,
             "--features" => a.features = it.next().cloned(),
             "--target" => a.target = it.next().cloned(),
             "--addr" => match it.next() {
@@ -406,7 +410,9 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
 
     // 2. Claims vs the measurement baseline.
     let any_claims = scanned.docs.iter().any(|(_, d, _)| !d.claims.is_empty());
-    if any_claims {
+    if any_claims && a.skip_claims {
+        println!("docs check: claims not evaluated: no measurement");
+    } else if any_claims {
         let baseline = match invoke::load_baseline_in(&scanned.root, &a.baseline) {
             Ok(Some(b)) => b,
             Ok(None) => {
@@ -1002,6 +1008,23 @@ mod tests {
             ..DocsArgs::default()
         };
         assert_eq!(check_scanned(&a, &scan_at(&a, dir).unwrap()), 0);
+    }
+
+    #[test]
+    fn skipped_claims_pass_without_a_baseline() {
+        let dir = project_without_cargo("skip");
+        std::fs::write(
+            dir.join("README.md"),
+            "# Demo\n\n<!-- soothfast:claim pytest::t.py::test_parse.walltime.median_ns < 1000 -->\nfast.\n",
+        )
+        .unwrap();
+        let a = DocsArgs::default();
+        assert_eq!(check_scanned(&a, &scan_at(&a, dir.clone()).unwrap()), 2);
+        let skip = DocsArgs {
+            skip_claims: true,
+            ..DocsArgs::default()
+        };
+        assert_eq!(check_scanned(&skip, &scan_at(&skip, dir).unwrap()), 0);
     }
 
     #[test]

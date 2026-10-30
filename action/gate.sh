@@ -50,6 +50,10 @@ mkdir -p "$out_dir"
 source "$(dirname "$0")/labels.sh"
 # The label waives regressions only; a gate that errored has nothing to accept.
 accepted() {
+  if ! command -v gh >/dev/null; then
+    echo "::warning::gh is not installed, so the soothfast:perf-accepted label was not checked"
+    return 1
+  fi
   [ "$(gh pr view "$PR_NUMBER" --json labels --jq 'any(.labels[]; .name == "soothfast:perf-accepted")')" = true ] &&
     labelled_by_writer "$PR_NUMBER" soothfast:perf-accepted
 }

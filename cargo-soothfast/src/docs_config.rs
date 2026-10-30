@@ -13,12 +13,16 @@ pub struct DocsConfig {
     /// Files, directories and globs (relative to the project root) whose
     /// markdown carries the scanned markers.
     pub paths: Vec<String>,
+    /// Workspace packages `docs check` reads, when named. `None` leaves the
+    /// choice to whoever runs it.
+    pub package: Option<Vec<String>>,
 }
 
 impl Default for DocsConfig {
     fn default() -> Self {
         Self {
             paths: vec!["README.md".into(), "docs".into()],
+            package: None,
         }
     }
 }
@@ -55,6 +59,10 @@ pub fn parse(text: &str) -> Result<DocsConfig, String> {
         let value = parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
         match (key.trim(), value) {
             ("paths", TomlValue::StrArray(v)) => cfg.paths = v,
+            ("package", TomlValue::Str(name)) => cfg.package = Some(vec![name]),
+            ("package", TomlValue::StrArray(names)) if !names.is_empty() => {
+                cfg.package = Some(names)
+            }
             (k, _) => {
                 return Err(format!(
                     "line {lineno}: unknown or mistyped `{k}` under [docs]"
@@ -79,6 +87,19 @@ mod tests {
     fn reads_paths_and_ignores_other_tables() {
         let text = "[gate]\nfeatures = \"a\"\n\n[docs]\npaths = [\"README.md\", \"book/**\"]\n";
         assert_eq!(parse(text).unwrap().paths, ["README.md", "book/**"]);
+    }
+
+    #[test]
+    fn package_is_a_name_or_a_non_empty_list_beside_paths() {
+        let one = parse("[docs]\npackage = \"a\"\npaths = [\"x\"]\n").unwrap();
+        assert_eq!(
+            (one.package, one.paths),
+            (Some(vec!["a".into()]), vec!["x".into()])
+        );
+        let many = parse("[docs]\npackage = [\"a\", \"b\"]\n").unwrap();
+        assert_eq!(many.package, Some(vec!["a".into(), "b".into()]));
+        assert_eq!(parse("[site]\n").unwrap().package, None);
+        assert!(parse("[docs]\npackage = []\n").is_err());
     }
 
     #[test]

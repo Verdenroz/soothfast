@@ -5,9 +5,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use soothfast_lang::{Lang, public_symbols};
-use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
-use crate::init::ecosystem::{Ecosystem, table_name};
+use crate::init::ecosystem::{Ecosystem, parse_projects};
 
 /// Directories that hold dependencies, build output or tests rather than the
 /// documented surface.
@@ -98,8 +97,8 @@ pub fn targets(root: &Path, dirs: &[String], lang: Option<&str>) -> Result<Vec<T
     }
 }
 
-/// The non-Rust `[[project]]` entries of `root`'s `soothfast.toml`. Only
-/// `dir` and `ecosystem` are read; every other key and table is ignored.
+/// The non-Rust `[[project]]` entries of `root`'s `soothfast.toml`, read with
+/// the same parser as `init`. Only `dir` and `ecosystem` are used.
 pub fn manifest_targets(root: &Path) -> Result<Vec<Target>, String> {
     let path = root.join("soothfast.toml");
     let text = match std::fs::read_to_string(&path) {
@@ -107,37 +106,15 @@ pub fn manifest_targets(root: &Path) -> Result<Vec<Target>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
     };
-    let mut projects: Vec<(Option<String>, Option<String>)> = Vec::new();
-    let mut in_project = false;
-    for (_, line) in logical_lines(&text) {
-        if let Some(name) = table_name(&line) {
-            in_project = name == "[project]";
-            if in_project {
-                projects.push((None, None));
-            }
-        } else if let (true, Some((key, value)), Some(project)) =
-            (in_project, line.split_once('='), projects.last_mut())
-            && let Ok(TomlValue::Str(value)) = parse_value(value.trim())
-        {
-            match key.trim() {
-                "dir" => project.0 = Some(value),
-                "ecosystem" => project.1 = Some(value),
-                _ => {}
-            }
-        }
-    }
     let mut targets = Vec::new();
-    for (dir, ecosystem) in projects {
-        let (Some(dir), Some(ecosystem)) = (dir, ecosystem) else {
+    for project in parse_projects(&text)? {
+        let Some(ecosystem) = project.settings.ecosystem.filter(|e| *e != Ecosystem::Rust) else {
             continue;
         };
-        if Ecosystem::parse(&ecosystem)? == Ecosystem::Rust {
-            continue;
-        }
         targets.push(Target {
-            label: normalize_label(&dir),
-            dir: root.join(&dir),
-            langs: langs_for(&ecosystem)?,
+            label: normalize_label(&project.dir),
+            dir: root.join(&project.dir),
+            langs: ecosystem.langs(),
         });
     }
     Ok(targets)
