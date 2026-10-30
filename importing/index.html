@@ -230,43 +230,6 @@ help:</p>
 <li>Gate against a long-lived baseline such as the last release, saved from the same kind of machine, rather than against a file from whichever runner happened to produce the last result. That is what a ratchet is for.</li>
 <li>Set <code>[gate] walltime = &quot;advisory&quot;</code> in <code>soothfast.toml</code> where the numbers cannot be trusted to a single run. An overrun prints as <code>SOFT</code> and the gate passes.</li>
 </ul>
-<h2 id="other-languages">Other languages<a class="anchor" href="#other-languages" aria-label="Link to this section">#</a></h2>
-<p><code>cargo soothfast init</code> detects the repo from the first build file it finds at
-the project root: <code>Cargo.toml</code>, then <code>build.gradle.kts</code> or <code>build.gradle</code>,
-then <code>pom.xml</code>, then <code>pyproject.toml</code> or <code>setup.py</code>, then <code>package.json</code>.
-<code>--ecosystem rust|gradle|maven|python|node</code> overrides the detection. For
-anything but Rust it writes a workflow that gates the repo's own harness on
-pull requests, plus a docs check when tracked markdown carries
-<code>&lt;!-- soothfast:</code> markers.</p>
-<p>The gate job checks out the full history, runs the harness on the merge base
-in a <code>git worktree</code> and on HEAD, then runs <code>gate --import</code> with the merge
-base's file as <code>--reference-import</code>. When the merge base cannot run the
-harness or writes no result file, the gate notes that and passes. Nothing is
-stored, and a push to the default branch does nothing extra. An imported gate
-measures walltime only, so the seeded <code>soothfast.toml</code> sets
-<code>[gate] walltime = &quot;hard&quot;</code>; set it to <code>&quot;advisory&quot;</code> if the runner is too noisy
-to trust.</p>
-<div class="tablewrap"><table>
-<thead><tr><th>Ecosystem</th><th>Command</th><th>Format</th><th>Setup</th></tr></thead>
-<tbody>
-<tr><td><code>gradle</code></td><td>none; pass <code>--bench-cmd</code> and <code>--bench-out</code></td><td><code>jmh</code></td><td><code>setup-java</code></td></tr>
-<tr><td><code>maven</code></td><td><code>mvn -B -q -DskipTests package &amp;&amp; java -jar target/benchmarks.jar -rf json -rff {out}</code></td><td><code>jmh</code></td><td><code>setup-java</code></td></tr>
-<tr><td><code>python</code></td><td><code>uv run pytest --benchmark-only --benchmark-json {out}</code></td><td><code>pytest-benchmark</code></td><td><code>setup-uv</code></td></tr>
-<tr><td><code>node</code></td><td><code>npx vitest bench --run --outputJson {out}</code></td><td><code>vitest</code></td><td><code>setup-node</code>, <code>npm ci</code></td></tr>
-</tbody>
-</table></div>
-<p><code>--bench-cmd CMD</code>, <code>--bench-out PATH</code> and <code>--from FORMAT</code> replace the command,
-the result file (default <code>soothfast-bench.json</code>, relative to the checkout the
-command runs in) and the format. <code>{out}</code> in the command stands for the result
-file. <code>--java</code> (default <code>21</code>) and <code>--node</code> (default <code>22</code>) pick the toolchain
-version.</p>
-<p>The choice is saved in an <code>[init]</code> table of <code>soothfast.toml</code>
-(<code>ecosystem</code>, <code>bench_cmd</code>, <code>bench_out</code>, <code>from</code>), so <code>init --check</code> without
-flags renders the same workflow; the toolchain versions are read back from
-the workflow. The workflow installs the CLI with the action's <code>version</code>
-input, since there is no <code>Cargo.lock</code> to read it from.</p>
-<p><code>docs check</code> and <code>docs accept</code> need no cargo project for <code>path#Symbol</code> binds
-(see <a href="../living-docs/">living docs</a>).</p>
 
 <div class="doc-foot">
   <span>built with <b>cargo soothfast docs build</b></span>
@@ -290,8 +253,6 @@ input, since there is no <code>Cargo.lock</code> to read it from.</p>
     <li><a class="toc-l2" href="#gating">Gating</a></li>
   
     <li><a class="toc-l2" href="#noise">Noise</a></li>
-  
-    <li><a class="toc-l2" href="#other-languages">Other languages</a></li>
   
   </ul>
 
