@@ -91,6 +91,8 @@ enum Kind {
     Runner,
     /// The `ci` key of the `[test]` table, set in place.
     TestCi,
+    /// The `package` key of the `[docs]` table, set in place.
+    Docs,
 }
 
 impl Kind {
@@ -138,7 +140,8 @@ impl Scaffold {
             Kind::Section => State::Differs,
             Kind::Runner if labels(&text) == labels(&self.content) => State::Current,
             Kind::TestCi if test_ci(&text) == test_ci(&self.content) => State::Current,
-            Kind::Runner | Kind::TestCi => State::Differs,
+            Kind::Docs if docs(&text) == docs(&self.content) => State::Current,
+            Kind::Runner | Kind::TestCi | Kind::Docs => State::Differs,
         }
     }
 
@@ -172,7 +175,16 @@ impl Scaffold {
             }
             Kind::TestCi => {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
-                std::fs::write(path, with_test_ci_off(&text))
+                std::fs::write(path, with_key(&text, "test", "ci", "ci = false"))
+            }
+            Kind::Docs => {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let line = self
+                    .content
+                    .lines()
+                    .find(|l| l.starts_with("package"))
+                    .unwrap_or_default();
+                std::fs::write(path, with_key(&text, "docs", "package", line))
             }
             Kind::Section | Kind::Runner => {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -196,20 +208,24 @@ fn test_ci(text: &str) -> Result<bool, String> {
     Ci::parse(text).map(|ci| ci.runs_test())
 }
 
-/// `text` with `ci = false` in its `[test]` table, which is added when absent.
-fn with_test_ci_off(text: &str) -> String {
+fn docs(text: &str) -> Result<Option<Vec<String>>, String> {
+    Ci::parse(text).map(|ci| ci.docs)
+}
+
+/// `text` with `entry` as the `key` of `table`, which is added when absent.
+fn with_key(text: &str, table: &str, key: &str, entry: &str) -> String {
     let mut out = String::new();
-    let mut in_test = false;
+    let mut in_table = false;
     let mut found = false;
     for line in text.split_inclusive('\n') {
         if line.trim_start().starts_with('[') {
-            in_test = ecosystem::table_name(line) == Some("test");
-            found |= in_test;
+            in_table = ecosystem::table_name(line) == Some(table);
+            found |= in_table;
             out.push_str(line);
-            if in_test {
-                out.push_str("ci = false\n");
+            if in_table {
+                out.push_str(&format!("{entry}\n"));
             }
-        } else if !(in_test && line.split_once('=').is_some_and(|(k, _)| k.trim() == "ci")) {
+        } else if !(in_table && line.split_once('=').is_some_and(|(k, _)| k.trim() == key)) {
             out.push_str(line);
         }
     }
@@ -220,7 +236,7 @@ fn with_test_ci_off(text: &str) -> String {
         if !out.is_empty() {
             out.push('\n');
         }
-        out.push_str("[test]\nci = false\n");
+        out.push_str(&format!("[{table}]\n{entry}\n"));
     }
     out
 }
@@ -255,8 +271,8 @@ struct Workspace {
     ci: Ci,
     /// Packages with a `soothfast` bench target, in name order.
     benched: Vec<String>,
-    /// The package `docs check` reads, when any markdown carries markers.
-    docs_package: Option<String>,
+    /// The packages `docs check` reads, when any markdown carries markers.
+    docs_packages: Vec<String>,
     action: String,
     bot: bool,
     java: String,
@@ -475,13 +491,17 @@ fn target(
         });
     }
     let markers = has_markers(&root);
-    let (benched, docs_package) = if rust {
+    let (benched, docs_packages) = if rust {
         invoke::workspace_root().map_err(|e| format!("not in a cargo workspace: {e}"))?;
         let meta = rust_meta(&root, bench, check)?;
-        let docs = markers.then(|| docs_package(&meta)).flatten();
+        let docs = if markers {
+            docs_packages(&root, &meta, &ci)
+        } else {
+            Vec::new()
+        };
         (benched(&meta), docs)
     } else if bench.is_empty() {
-        (Vec::new(), None)
+        (Vec::new(), Vec::new())
     } else {
         return Err("-p adds a bench target to a cargo package".into());
     };
@@ -492,7 +512,7 @@ fn target(
         ci,
         default_branch: default_branch(&root, &existing),
         benched,
-        docs_package,
+        docs_packages,
         action: action_ref(&existing, tools.action.as_deref()),
         bot,
         java: tools
@@ -607,6 +627,7 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
             Kind::Section => format!("{} [[project]]", f.path.display()),
             Kind::Runner => format!("{} [runner]", f.path.display()),
             Kind::TestCi => format!("{} [test] ci", f.path.display()),
+            Kind::Docs => format!("{} [docs] package", f.path.display()),
             _ => f.path.display().to_string(),
         };
         let state = match f.state(root) {
@@ -676,6 +697,13 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
             content: ws.ci.runner_section(),
         });
     }
+    if !ws.docs_packages.is_empty() {
+        files.push(Scaffold {
+            path: "soothfast.toml".into(),
+            kind: Kind::Docs,
+            content: format!("[docs]\n{}\n", Ci::docs_line(&ws.docs_packages)),
+        });
+    }
     if !ws.ci.runs_test() {
         files.push(Scaffold {
             path: "soothfast.toml".into(),
@@ -711,8 +739,8 @@ fn cargo_jobs(ws: &Workspace) -> String {
                 .replace("@@changelog@@", if ws.bot { "true" } else { "false" }),
         );
     }
-    if let Some(pkg) = &ws.docs_package {
-        text.push_str(&DOCS_JOB.replace("@@docs_package@@", pkg));
+    if !ws.docs_packages.is_empty() {
+        text.push_str(&DOCS_JOB.replace("@@docs_package@@", &ws.docs_packages.join(" -p ")));
     }
     text
 }
@@ -773,6 +801,42 @@ fn benched(meta: &Value) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// The packages `docs check` reads: `[docs] package` when set, else the
+/// workspace packages the markdown binds name, else the root's own package.
+fn docs_packages(root: &Path, meta: &Value, ci: &Ci) -> Vec<String> {
+    if let Some(packages) = &ci.docs {
+        return packages.clone();
+    }
+    let listing = invoke::git_in(root, &["ls-files", "-z", "--", "*.md"]).unwrap_or_default();
+    let prefixes: BTreeSet<String> = listing
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .filter_map(|path| std::fs::read_to_string(root.join(path)).ok())
+        .flat_map(|text| bind_crates(&text))
+        .collect();
+    let bound: Vec<String> = packages(meta)
+        .filter_map(|p| p["name"].as_str())
+        .filter(|name| prefixes.contains(&name.replace('-', "_")))
+        .map(String::from)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if bound.is_empty() {
+        docs_package(meta).into_iter().collect()
+    } else {
+        bound
+    }
+}
+
+/// The crate part of each `crate::path` bind in `text`.
+fn bind_crates(text: &str) -> Vec<String> {
+    text.split("<!-- soothfast:bind ")
+        .skip(1)
+        .filter_map(|rest| rest.split_whitespace().next())
+        .filter_map(|target| Some(target.split_once("::")?.0.to_string()))
+        .collect()
 }
 
 /// The workspace root's own package, else the first member by name.
@@ -920,17 +984,22 @@ pub fn ci(root: &Path) -> Result<Ci, String> {
     Ci::parse(&text).map_err(|e| format!("soothfast.toml: {e}"))
 }
 
-/// The packages and docs package `plan` reads from a cargo workspace.
+/// The packages and docs packages `plan` reads from a cargo workspace.
 pub struct RustPlan {
     pub packages: Vec<String>,
-    pub docs_package: Option<String>,
+    pub docs_packages: Vec<String>,
 }
 
 pub fn rust_plan(root: &Path) -> Result<RustPlan, String> {
     let meta = workspace::metadata(Some(root), true).map_err(|e| e.to_string())?;
+    let docs = if has_markers(root) {
+        docs_packages(root, &meta, &ci(root)?)
+    } else {
+        Vec::new()
+    };
     Ok(RustPlan {
         packages: benched(&meta),
-        docs_package: has_markers(root).then(|| docs_package(&meta)).flatten(),
+        docs_packages: docs,
     })
 }
 
@@ -976,7 +1045,7 @@ mod tests {
             ci: Ci::default(),
             default_branch: "master".into(),
             benched: benched.iter().map(|s| s.to_string()).collect(),
-            docs_package: docs.map(String::from),
+            docs_packages: docs.map(String::from).into_iter().collect(),
             action: "Verdenroz/soothfast@v0".into(),
             bot: false,
             java: "21".into(),
@@ -1074,6 +1143,28 @@ mod tests {
             { "name": "c", "targets": [{ "name": "other", "kind": ["bench"] }] },
         ]});
         assert_eq!(benched(&meta), ["a", "b"]);
+    }
+
+    #[test]
+    fn binds_name_the_crates_that_hold_their_items() {
+        let text = "<!-- soothfast:bind my_core::a::B -->\nprose\n<!-- /soothfast:bind -->\n\
+                    <!-- soothfast:bind other::c -->\n<!-- soothfast:bind src/x.py#f -->\n";
+        assert_eq!(bind_crates(text), ["my_core", "other"]);
+    }
+
+    #[test]
+    fn the_docs_packages_are_written_and_a_flagless_check_is_clean() {
+        let root = scratch("docs");
+        std::fs::write(root.join("soothfast.toml"), "[docs]\nother = 1\n").unwrap();
+        let w = Workspace {
+            docs_packages: vec!["a".into(), "b".into()],
+            ..ws(&[], None)
+        };
+        let files = scaffold(&w);
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert!(text.contains("package = [\"a\",\"b\"]") && text.contains("other = 1"));
+        assert_eq!(report(&root, &files, true, false), 0);
     }
 
     #[test]
@@ -1427,6 +1518,7 @@ mod tests {
             ci: Ci {
                 labels: Some(vec!["corvid".into()]),
                 test: Some(false),
+                docs: None,
             },
             ..ws(&["a"], None)
         };

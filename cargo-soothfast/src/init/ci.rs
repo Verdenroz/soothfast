@@ -1,5 +1,6 @@
 //! Where the reusable workflow runs and whether it runs the repo's tests:
-//! `[runner] labels` and `[test] ci` in `soothfast.toml`.
+//! `[runner] labels` and `[test] ci` in `soothfast.toml`, and the packages
+//! `[docs] package` names for `docs check`.
 
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
@@ -10,6 +11,7 @@ use super::ecosystem::table_name;
 pub struct Ci {
     pub labels: Option<Vec<String>>,
     pub test: Option<bool>,
+    pub docs: Option<Vec<String>>,
 }
 
 impl Ci {
@@ -23,6 +25,7 @@ impl Ci {
                 table = match name {
                     "runner" => "runner",
                     "test" => "test",
+                    "docs" => "docs",
                     _ => "",
                 };
                 continue;
@@ -52,6 +55,17 @@ impl Ci {
                     Ok(TomlValue::Bool(test)) => ci.test = Some(test),
                     _ => return Err(format!("line {lineno}: `ci` under [test] is true or false")),
                 },
+                ("docs", "package") => match parse_value(value.trim()) {
+                    Ok(TomlValue::Str(package)) => ci.docs = Some(vec![package]),
+                    Ok(TomlValue::StrArray(packages)) if !packages.is_empty() => {
+                        ci.docs = Some(packages)
+                    }
+                    _ => {
+                        return Err(format!(
+                            "line {lineno}: `package` under [docs] is a name or a non-empty list of names"
+                        ));
+                    }
+                },
                 _ => {}
             }
         }
@@ -63,6 +77,7 @@ impl Ci {
         Ci {
             labels: self.labels.or(base.labels),
             test: self.test.or(base.test),
+            docs: self.docs.or(base.docs),
         }
     }
 
@@ -85,6 +100,11 @@ impl Ci {
             [one] => serde_json::json!(one).to_string(),
             many => serde_json::json!(many).to_string(),
         }
+    }
+
+    /// The `package` key of `[docs]`.
+    pub fn docs_line(packages: &[String]) -> String {
+        format!("package = {}", serde_json::json!(packages))
     }
 
     /// The `[runner]` table.
@@ -124,10 +144,21 @@ mod tests {
         let ci = Ci {
             labels: Some(vec!["a".into(), "b".into()]),
             test: None,
+            docs: None,
         };
         let text = format!("[gate]\nwalltime = \"hard\"\n\n{}", ci.runner_section());
         assert_eq!(Ci::parse(&text), Ok(ci));
         assert_eq!(Ci::parse("[gate]\nx = 1\n"), Ok(Ci::default()));
+    }
+
+    #[test]
+    fn the_docs_package_is_a_name_or_a_list() {
+        let one = Ci::parse("[docs]\npackage = \"a\"\n").unwrap();
+        assert_eq!(one.docs, Some(vec!["a".into()]));
+        let many = Ci::parse("[docs]\npackage = [\"a\", \"b\"]\n").unwrap();
+        assert_eq!(many.docs, Some(vec!["a".into(), "b".into()]));
+        assert!(Ci::parse("[docs]\npackage = []\n").is_err());
+        assert!(Ci::default().is_default() && one.is_default());
     }
 
     #[test]
@@ -147,6 +178,7 @@ mod tests {
         let table = Ci {
             labels: Some(vec!["x".into()]),
             test: Some(true),
+            docs: None,
         };
         let merged = flags.over(table);
         assert_eq!(merged.test, Some(false));

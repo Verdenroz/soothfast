@@ -277,7 +277,10 @@ jobs:
       - name: Check the docs
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
-        run: cargo soothfast docs check ${DOCS_PACKAGE:+-p "$DOCS_PACKAGE"}
+        run: |
+          args=()
+          for package in $DOCS_PACKAGE; do args+=(-p "$package"); done
+          cargo soothfast docs check "${args[@]}"
 
   labels:
     name: Labels
