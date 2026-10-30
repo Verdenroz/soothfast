@@ -9,8 +9,12 @@ use serde_json::{Value, json};
 
 const TAIL_LINES: usize = 40;
 const REUSE_LINE: &str = "items a stored measurement covers";
+const REUSE_ONE_SIDED: &str = "items run code a stored measurement covers";
 const NOTHING_TO_COMPARE: &str = "nothing to compare";
-const KINDS: [&str; 3] = ["rust", "import", "docs"];
+const KINDS: [&str; 4] = ["rust", "import", "docs", "test"];
+/// GitHub rejects a comment over 65,536 characters; the rest is the marker.
+const BODY_LIMIT: usize = 65_000;
+const TRUNCATED: &str = "output truncated";
 
 /// Declared worst first: sorting ascending lists the sections to read first,
 /// and the minimum of two verdicts is the one that decides.
@@ -73,14 +77,26 @@ fn test_verdict(word: &str) -> Option<(Verdict, bool)> {
 }
 
 impl Record {
+    /// A test record uses the test runner's field names and words, so one
+    /// reader serves both producers.
     fn to_json(&self) -> Value {
-        let mut v = json!({
-            "name": self.name,
-            "kind": self.kind,
-            "verdict": self.verdict.name(),
-            "tail": self.tail,
-            "seconds": self.seconds,
-        });
+        let mut v = if self.kind == "test" {
+            json!({
+                "name": self.name,
+                "kind": self.kind,
+                "verdict": if self.verdict == Verdict::Errored { "failed" } else { "pass" },
+                "output": self.tail,
+                "wall_s": self.seconds,
+            })
+        } else {
+            json!({
+                "name": self.name,
+                "kind": self.kind,
+                "verdict": self.verdict.name(),
+                "tail": self.tail,
+                "seconds": self.seconds,
+            })
+        };
         if let Some(r) = self.reuse {
             v["reuse"] = json!({"covered": r.covered, "total": r.total, "measuring": r.measuring});
         }
@@ -133,6 +149,7 @@ impl Record {
                 self.tail.push('\n');
             }
             self.tail.push_str(&other.tail);
+            self.tail = tail(&self.tail);
         }
         self.reuse = match (self.reuse, other.reuse) {
             (Some(a), Some(b)) => Some(Reuse {
@@ -221,7 +238,7 @@ fn classify(code: i32, kind: &str, output: &str) -> Verdict {
     match code {
         0 if output.contains(NOTHING_TO_COMPARE) => Verdict::NothingToCompare,
         0 => Verdict::Pass,
-        1 if kind != "docs" => Verdict::Regressed,
+        1 if matches!(kind, "rust" | "import") => Verdict::Regressed,
         _ => Verdict::Errored,
     }
 }
@@ -231,10 +248,30 @@ fn tail(output: &str) -> String {
     lines[lines.len().saturating_sub(TAIL_LINES)..].join("\n")
 }
 
-/// Reads `items a stored measurement covers: head 14/16, base 16/16,
-/// measuring 2` into one count over both sides.
 fn parse_reuse(output: &str) -> Option<Reuse> {
-    let line = output.lines().find(|l| l.contains(REUSE_LINE))?;
+    output
+        .lines()
+        .find_map(|l| two_sided(l).or_else(|| one_sided(l)))
+}
+
+/// `3/5 items run code a stored measurement covers, measuring 2`.
+fn one_sided(line: &str) -> Option<Reuse> {
+    let (before, rest) = line.split_once(REUSE_ONE_SIDED)?;
+    let (covered, total) = before.split_whitespace().last()?.split_once('/')?;
+    let measuring = rest
+        .trim_start_matches(',')
+        .trim()
+        .strip_prefix("measuring ")?;
+    Some(Reuse {
+        covered: covered.parse().ok()?,
+        total: total.parse().ok()?,
+        measuring: measuring.split_whitespace().next()?.parse().ok()?,
+    })
+}
+
+/// `items a stored measurement covers: head 14/16, base 16/16, measuring 2`,
+/// counted over both sides.
+fn two_sided(line: &str) -> Option<Reuse> {
     let rest = line.split_once(REUSE_LINE)?.1.trim_start_matches(':');
     let mut reuse = Reuse::default();
     for part in rest.split(',').map(str::trim) {
@@ -259,38 +296,58 @@ fn merge(args: &[String]) -> Result<i32, String> {
         match a.as_str() {
             "--out" => out = Some(value(&mut it, a)?),
             "--accepted" => accepted = true,
-            "--expect" => expect.push(value(&mut it, a)?),
+            "--expect" => expect.push(expected(&value(&mut it, a)?)?),
             other if !other.starts_with("--") && dir.is_none() => dir = Some(PathBuf::from(other)),
             other => return Err(format!("unknown merge arg {other:?}")),
         }
     }
     let dir = dir.ok_or("merge needs a results directory")?;
     let out = out.ok_or("merge needs --out")?;
-    let mut records = fold(read_records(&dir)?);
-    for name in expect {
+    let mut records = fold(read_records(&dir));
+    for (name, kind) in expect {
         if !records.iter().any(|r| r.name == name) {
-            records.push(Record {
-                name,
-                kind: "rust".into(),
-                verdict: Verdict::Errored,
-                tail: "the job recorded no result".into(),
-                reuse: None,
-                seconds: 0,
-                flaky: false,
-            });
+            records.push(errored(name, kind, "the job recorded no result".into()));
         }
     }
     records.sort_by(|a, b| (a.verdict, &a.name).cmp(&(b.verdict, &b.name)));
-    fs::write(&out, render(&records, accepted)).map_err(|e| format!("{out}: {e}"))?;
+    fs::write(&out, fit(&records, accepted)).map_err(|e| format!("{out}: {e}"))?;
     Ok(i32::from(fails(&records, accepted)))
 }
 
-fn read_records(dir: &Path) -> Result<Vec<Record>, String> {
+fn errored(name: String, kind: String, tail: String) -> Record {
+    Record {
+        name,
+        kind,
+        verdict: Verdict::Errored,
+        tail,
+        reuse: None,
+        seconds: 0,
+        flaky: false,
+    }
+}
+
+/// `NAME:KIND`, the kind a missing result is shown with.
+fn expected(arg: &str) -> Result<(String, String), String> {
+    match arg.split_once(':') {
+        Some((name, kind)) if KINDS.contains(&kind) => Ok((name.to_string(), kind.to_string())),
+        _ => Err(format!(
+            "--expect is NAME:KIND with KIND one of {}",
+            KINDS.join(", ")
+        )),
+    }
+}
+
+/// Every result under `dir`. A directory that is missing is empty, and a
+/// file that is unreadable or not a record becomes an errored section named
+/// after it, so a bad artifact cannot stop the comment.
+fn read_records(dir: &Path) -> Vec<Record> {
     let mut files = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(d) = pending.pop() {
-        for entry in fs::read_dir(&d).map_err(|e| format!("{}: {e}", d.display()))? {
-            let path = entry.map_err(|e| e.to_string())?.path();
+        let Ok(entries) = fs::read_dir(&d) else {
+            continue;
+        };
+        for path in entries.flatten().map(|e| e.path()) {
             if path.is_dir() {
                 pending.push(path);
             } else if path.extension().is_some_and(|e| e == "json") {
@@ -302,10 +359,15 @@ fn read_records(dir: &Path) -> Result<Vec<Record>, String> {
     files
         .iter()
         .map(|f| {
-            let text = fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
-            let v: Value =
-                serde_json::from_str(&text).map_err(|e| format!("{}: {e}", f.display()))?;
-            Record::from_json(&v).ok_or(format!("{}: not a verdict record", f.display()))
+            let text = fs::read_to_string(f).map_err(|e| e.to_string());
+            let record = text.and_then(|t| {
+                let v: Value = serde_json::from_str(&t).map_err(|e| e.to_string())?;
+                Record::from_json(&v).ok_or("not a verdict record".to_string())
+            });
+            record.unwrap_or_else(|e| {
+                let name = f.strip_prefix(dir).unwrap_or(f).display().to_string();
+                errored(name, "result".into(), format!("unreadable result: {e}"))
+            })
         })
         .collect()
 }
@@ -330,6 +392,21 @@ fn fails(records: &[Record], accepted: bool) -> bool {
         Verdict::Regressed => !accepted,
         _ => false,
     })
+}
+
+/// The comment body under GitHub's size limit: sections are emptied from the
+/// end of the sort order, so passing output goes first and errors keep theirs.
+fn fit(records: &[Record], accepted: bool) -> String {
+    let mut records = records.to_vec();
+    let mut body = render(&records, accepted);
+    for i in (0..records.len()).rev() {
+        if body.chars().count() <= BODY_LIMIT {
+            break;
+        }
+        records[i].tail = TRUNCATED.into();
+        body = render(&records, accepted);
+    }
+    body
 }
 
 fn render(records: &[Record], accepted: bool) -> String {
@@ -435,6 +512,77 @@ mod tests {
         assert!(render(&[flaky], false).contains("pass (flaky) | test | 12s"));
         assert_eq!(read("failed").unwrap().verdict, Verdict::Errored);
         assert_eq!(read("exploded"), None);
+    }
+
+    #[test]
+    fn the_one_sided_reuse_line_is_read() {
+        let out = "gate: 2/3 items run code a stored measurement covers, measuring 1";
+        assert_eq!(parse_reuse(out), reuse(2, 3, 1));
+    }
+
+    #[test]
+    fn a_missing_directory_has_no_records() {
+        assert!(read_records(Path::new("/nonexistent/soothfast-results")).is_empty());
+    }
+
+    #[test]
+    fn a_bad_file_becomes_an_errored_section_named_after_it() {
+        let dir = std::env::temp_dir().join(format!("soothfast-verdict-{}", std::process::id()));
+        fs::create_dir_all(dir.join("soothfast-result-x")).unwrap();
+        fs::write(dir.join("soothfast-result-x/result.json"), "{not json").unwrap();
+        let records = read_records(&dir);
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].name, "soothfast-result-x/result.json");
+        assert_eq!(records[0].verdict, Verdict::Errored);
+    }
+
+    #[test]
+    fn an_expected_result_names_its_kind() {
+        assert_eq!(
+            expected("docs:docs"),
+            Ok(("docs".to_string(), "docs".to_string()))
+        );
+        assert!(expected("docs").is_err());
+        assert!(expected("a:other").is_err());
+    }
+
+    #[test]
+    fn a_failed_test_run_is_errored_even_on_exit_one() {
+        assert_eq!(classify(1, "test", ""), Verdict::Errored);
+        let mut r = rec("test-rust", Verdict::Errored, "boom");
+        r.kind = "test".into();
+        assert_eq!(r.to_json()["verdict"], "failed");
+        assert_eq!(Record::from_json(&r.to_json()), Some(r));
+    }
+
+    #[test]
+    fn folded_tails_are_trimmed_to_forty_lines() {
+        let lines = |p: &str| {
+            (0..30)
+                .map(|i| format!("{p}{i}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let folded = fold(vec![
+            rec("a", Verdict::Pass, &lines("x")),
+            rec("a", Verdict::Pass, &lines("y")),
+        ]);
+        assert_eq!(folded[0].tail.lines().count(), 40);
+        assert!(folded[0].tail.ends_with("y29"));
+    }
+
+    #[test]
+    fn an_oversized_body_loses_passing_output_first() {
+        let big = "x".repeat(40_000);
+        let records = [
+            rec("a", Verdict::Errored, "kept"),
+            rec("b", Verdict::Pass, &big),
+            rec("c", Verdict::Pass, &big),
+        ];
+        let body = fit(&records, false);
+        assert!(body.chars().count() <= BODY_LIMIT);
+        assert!(body.contains("kept") && body.contains(TRUNCATED));
     }
 
     #[test]
