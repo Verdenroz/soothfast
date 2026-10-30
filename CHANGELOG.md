@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Bind docs to Java, Kotlin, Python, JS and TS symbols (#280)
 - Import JMH, pyperf, pytest-benchmark and vitest results (#279)
 - Tree-sitter symbols for Java, Kotlin, Python, JS, TS (#277)
 - Act on soothfast labels as the bot (#274)
@@ -36,7 +37,16 @@
 # soothfast-measure
 CHANGED  soothfast_measure::main (body)
 CHANGED  soothfast_measure::runner::main (body)
+
+# soothfast-docs
+CHANGED  soothfast_docs::claims::parse (body)
 ```
+
+### 📊 Gate movement
+
+| item | metric | was | now | delta |
+|---|---|---:|---:|---:|
+| `soothfast_docs::bench_claim_parse` | allocs | 6.0 | 5.0 | -16.7% |
 
 
 ## 0.4.4 - 2026-10-21
