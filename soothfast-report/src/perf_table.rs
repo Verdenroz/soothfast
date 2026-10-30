@@ -11,13 +11,11 @@ pub struct Row {
     pub id: String,
     pub instructions: Option<u64>,
     pub median_ns: Option<f64>,
-    /// Median absolute deviation of the walltime samples.
-    pub mad_ns: Option<f64>,
     pub p99_ns: Option<f64>,
     pub allocs: Option<u64>,
     pub polls: Option<u64>,
-    /// Import prefix (the harness) when the item was imported.
-    pub imported: Option<String>,
+    /// Brought in by `import` from another language's harness.
+    pub imported: bool,
 }
 
 /// One `Row` per measured item in the baseline, in baseline (map) order.
@@ -31,28 +29,28 @@ pub fn rows(baseline: &Value) -> Vec<Row> {
             id: id.clone(),
             instructions: m["perfcnt"]["instructions"].as_u64(),
             median_ns: m["walltime"]["median_ns"].as_f64(),
-            mad_ns: m["walltime"]["mad_ns"].as_f64(),
             p99_ns: m["walltime"]["p99_ns"].as_f64(),
             allocs: m["alloc"]["allocs"].as_u64(),
             polls: m["asyncexec"]["polls"].as_u64(),
-            imported: m["imported"].as_str().map(String::from),
+            imported: m["imported"].is_string(),
         })
         .collect()
 }
 
-/// Rust items (no import prefix) and, per import prefix, the imported ones.
-fn split(baseline: &Value) -> (Vec<Row>, BTreeMap<String, Vec<Row>>) {
-    let (imported, native): (Vec<Row>, Vec<Row>) = rows(baseline)
-        .into_iter()
-        .partition(|r| r.imported.is_some());
-    let mut by_harness: BTreeMap<String, Vec<Row>> = BTreeMap::new();
-    for r in imported {
-        by_harness
-            .entry(r.imported.clone().unwrap_or_default())
-            .or_default()
-            .push(r);
+/// The walltime columns of each imported item, grouped by import prefix.
+fn by_harness(baseline: &Value) -> BTreeMap<&str, Vec<[String; 4]>> {
+    let mut by_harness: BTreeMap<&str, Vec<[String; 4]>> = BTreeMap::new();
+    for (id, m) in baseline["items"].as_object().into_iter().flatten() {
+        if let Some(prefix) = m["imported"].as_str() {
+            by_harness.entry(prefix).or_default().push([
+                id.clone(),
+                fmt_ns(m["walltime"]["median_ns"].as_f64()),
+                fmt_ns(m["walltime"]["mad_ns"].as_f64()),
+                fmt_ns(m["walltime"]["p99_ns"].as_f64()),
+            ]);
+        }
     }
-    (native, by_harness)
+    by_harness
 }
 
 fn fmt_u(v: Option<u64>) -> String {
@@ -80,8 +78,9 @@ pub fn markdown_at(baseline: &Value, depth: usize) -> String {
     let mut out = String::from(
         "| item | instructions | median | p99 | allocs | polls |\n|---|---:|---:|---:|---:|---:|\n",
     );
-    let (native, imported) = split(baseline);
-    for r in native {
+    let rows = rows(baseline);
+    let any_imported = rows.iter().any(|r| r.imported);
+    for r in rows.into_iter().filter(|r| !r.imported) {
         out.push_str(&format!(
             "| `{}` | {} | {} | {} | {} | {} |\n",
             r.id,
@@ -92,18 +91,17 @@ pub fn markdown_at(baseline: &Value, depth: usize) -> String {
             fmt_u(r.polls),
         ));
     }
+    let imported = if any_imported {
+        by_harness(baseline)
+    } else {
+        BTreeMap::new()
+    };
     for (harness, rows) in imported {
         out.push_str(&format!(
             "\n{hashes} {harness}\n\nImported from the `{harness}` harness; walltime only.\n\n| item | median | mad | p99 |\n|---|---:|---:|---:|\n"
         ));
-        for r in rows {
-            out.push_str(&format!(
-                "| `{}` | {} | {} | {} |\n",
-                r.id,
-                fmt_ns(r.median_ns),
-                fmt_ns(r.mad_ns),
-                fmt_ns(r.p99_ns),
-            ));
+        for [id, median, mad, p99] in rows {
+            out.push_str(&format!("| `{id}` | {median} | {mad} | {p99} |\n"));
         }
     }
     out
@@ -114,8 +112,9 @@ pub fn html(baseline: &Value) -> String {
     let mut out = String::from(
         "<table>\n<thead><tr><th>item</th><th>instructions</th><th>median</th><th>p99</th><th>allocs</th><th>polls</th></tr></thead>\n<tbody>\n",
     );
-    let (native, imported) = split(baseline);
-    for r in native {
+    let rows = rows(baseline);
+    let any_imported = rows.iter().any(|r| r.imported);
+    for r in rows.into_iter().filter(|r| !r.imported) {
         out.push_str(&format!(
             "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
             r.id,
@@ -127,17 +126,18 @@ pub fn html(baseline: &Value) -> String {
         ));
     }
     out.push_str("</tbody>\n</table>\n");
+    let imported = if any_imported {
+        by_harness(baseline)
+    } else {
+        BTreeMap::new()
+    };
     for (harness, rows) in imported {
         out.push_str(&format!(
             "<h2>{harness}</h2>\n<p>Imported from the <code>{harness}</code> harness; walltime only.</p>\n<table>\n<thead><tr><th>item</th><th>median</th><th>mad</th><th>p99</th></tr></thead>\n<tbody>\n"
         ));
-        for r in rows {
+        for [id, median, mad, p99] in rows {
             out.push_str(&format!(
-                "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-                r.id,
-                fmt_ns(r.median_ns),
-                fmt_ns(r.mad_ns),
-                fmt_ns(r.p99_ns),
+                "<tr><td><code>{id}</code></td><td>{median}</td><td>{mad}</td><td>{p99}</td></tr>\n"
             ));
         }
         out.push_str("</tbody>\n</table>\n");
