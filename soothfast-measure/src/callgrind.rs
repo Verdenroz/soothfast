@@ -1,11 +1,26 @@
 //! Callgrind backend: fully deterministic Ir counts for PMU-less
-//! environments (default-seccomp containers, CI VMs). The runner re-executes
-//! itself under valgrind with `--callgrind-exec <id> --iters K`; per-iteration
-//! Ir = (run at 2K − run at K) / K, which cancels startup + setup exactly —
-//! no client requests, no toggle-collect fragility. K > 1 so the window
+//! environments (default-seccomp containers, CI VMs).
+//!
+//! One valgrind process runs per item, as `--callgrind-exec <id> --iters K
+//! --callgrind-window`, with instrumentation on from the start. After setup
+//! the runner executes K iterations, requests a stats dump, executes K more
+//! and requests another. A dump zeroes the counters, so the second dump file
+//! holds exactly K iterations and per-iteration Ir is its summary / K. Setup
+//! runs once under valgrind instead of twice, which fixture-heavy items need.
+//! The request is the target's magic instruction sequence (see `clientreq`).
+//!
+//! Where the sequence is unavailable, or with `SOOTHFAST_CALLGRIND_TWO_PROCESS=1`,
+//! the runner executes twice, at `--iters K` and `--iters 2K`, and
+//! per-iteration Ir is (2K − K) / K, which cancels startup and setup. The two
+//! methods count differently (teardown, the request itself), so [`Method`]
+//! belongs in every cache key.
+//!
+//! The executed function set is the union of every dump the process wrote:
+//! startup, setup, the iterations and teardown. K > 1 so the window
 //! averages: see the constant below for why a single iteration is not enough.
 
-use std::path::PathBuf;
+use crate::clientreq;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -184,13 +199,20 @@ fn out_file(tag: &str) -> PathBuf {
 }
 
 /// Run this bench binary under callgrind executing `id` for `iters`
-/// iterations; return total Ir and the out-file text. `mangled` keeps the
-/// symbol-table spelling of function names instead of demangling them.
-fn run_ir(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<(u64, String), String> {
+/// iterations; return the text of every dump it wrote, in order. `mangled`
+/// keeps the symbol-table spelling of function names instead of demangling
+/// them. `window` makes the runner request a dump after each K iterations.
+fn run_valgrind(
+    id: &str,
+    iters: u64,
+    window: bool,
+    tag: &str,
+    mangled: bool,
+) -> Result<Vec<String>, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let out = out_file(tag);
-    let status = Command::new("valgrind")
-        .env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
+    let mut cmd = Command::new("valgrind");
+    cmd.env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
         .args([
             "--tool=callgrind",
             "--compress-strings=no",
@@ -199,9 +221,14 @@ fn run_ir(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<(u64, String
             &format!("--callgrind-out-file={}", out.display()),
         ])
         .arg(&exe)
-        .args(["--callgrind-exec", id, "--iters", &iters.to_string()])
+        .args(["--callgrind-exec", id, "--iters", &iters.to_string()]);
+    if window {
+        cmd.arg("--callgrind-window");
+    }
+    let status = cmd
         .output()
         .map_err(|e| format!("failed to spawn valgrind: {e}"))?;
+    let dumps = take_dumps(&out);
     if !status.status.success() {
         return Err(format!(
             "valgrind failed ({}): {}",
@@ -209,19 +236,49 @@ fn run_ir(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<(u64, String
             String::from_utf8_lossy(&status.stderr)
         ));
     }
-    let text = std::fs::read_to_string(&out).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&out);
-    let summary = text
-        .lines()
+    dumps
+}
+
+/// Read and delete the dump files callgrind wrote for `out`, in dump order:
+/// `out.1`, `out.2`, ... for each requested dump, then `out` for the exit dump.
+fn take_dumps(out: &Path) -> Result<Vec<String>, String> {
+    let name = out.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let dir = out.parent().unwrap_or(out);
+    let mut parts: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .filter_map(|entry| {
+            let file = entry.file_name();
+            let rest = file.to_str()?.strip_prefix(name)?;
+            let part = match rest.strip_prefix('.') {
+                Some(n) => n.parse().ok()?,
+                None if rest.is_empty() => u64::MAX,
+                None => return None,
+            };
+            Some((part, entry.path()))
+        })
+        .collect();
+    parts.sort();
+    parts
+        .into_iter()
+        .map(|(_, path)| {
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string());
+            let _ = std::fs::remove_file(&path);
+            text
+        })
+        .collect()
+}
+
+/// Total Ir of one dump file, from its summary line.
+fn summary_ir(text: &str) -> Result<u64, String> {
+    text.lines()
         .rev()
         .find_map(|l| l.strip_prefix("summary: "))
-        .ok_or("no summary line in callgrind output")?;
-    let ir: u64 = summary
+        .ok_or("no summary line in callgrind output")?
         .split_whitespace()
         .next()
         .and_then(|v| v.parse().ok())
-        .ok_or("unparseable summary line")?;
-    Ok((ir, text))
+        .ok_or_else(|| "unparseable summary line".into())
 }
 
 /// Iterations in the low run; the high run does twice this.
@@ -246,13 +303,60 @@ pub struct Measurement {
     pub functions: Vec<(String, String)>,
 }
 
+/// How per-iteration Ir is taken from valgrind runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    /// One process; a dump request brackets a K-iteration window.
+    OneProcess,
+    /// Two processes, at K and 2K iterations.
+    TwoProcess,
+}
+
+impl Method {
+    /// The method this binary measures with.
+    pub fn current() -> Method {
+        let forced = std::env::var_os("SOOTHFAST_CALLGRIND_TWO_PROCESS").is_some_and(|v| v == "1");
+        if clientreq::SUPPORTED && !forced {
+            Method::OneProcess
+        } else {
+            Method::TwoProcess
+        }
+    }
+
+    /// The spelling cache keys and the env line carry.
+    pub fn name(self) -> &'static str {
+        match self {
+            Method::OneProcess => "one-process",
+            Method::TwoProcess => "two-process",
+        }
+    }
+}
+
 /// Per-iteration Ir for one item.
 pub fn measure(id: &str) -> Result<Measurement, String> {
-    let (low, _) = run_ir(id, K, "k1", true)?;
-    let (high, text) = run_ir(id, 2 * K, "k2", true)?;
+    match Method::current() {
+        Method::OneProcess => measure_window(id),
+        Method::TwoProcess => measure_difference(id),
+    }
+}
+
+fn measure_window(id: &str) -> Result<Measurement, String> {
+    let dumps = run_valgrind(id, K, true, "window", true)?;
+    let [_, window, _] = dumps.as_slice() else {
+        return Err(format!("expected 3 callgrind dumps, found {}", dumps.len()));
+    };
     Ok(Measurement {
-        ir: high.saturating_sub(low) / K,
-        functions: executed(&text),
+        ir: summary_ir(window)? / K,
+        functions: executed(&dumps),
+    })
+}
+
+fn measure_difference(id: &str) -> Result<Measurement, String> {
+    let low = run_valgrind(id, K, false, "k1", true)?;
+    let high = run_valgrind(id, 2 * K, false, "k2", true)?;
+    Ok(Measurement {
+        ir: summary_ir(&high[0])?.saturating_sub(summary_ir(&low[0])?) / K,
+        functions: executed(&high),
     })
 }
 
@@ -323,9 +427,12 @@ fn function_costs(text: &str) -> impl Iterator<Item = (&str, &str, u64)> {
     })
 }
 
-fn executed(text: &str) -> Vec<(String, String)> {
-    let set: std::collections::BTreeSet<(&str, &str)> =
-        function_costs(text).map(|(ob, f, _)| (ob, f)).collect();
+fn executed(dumps: &[String]) -> Vec<(String, String)> {
+    let set: std::collections::BTreeSet<(&str, &str)> = dumps
+        .iter()
+        .flat_map(|text| function_costs(text))
+        .map(|(ob, f, _)| (ob, f))
+        .collect();
     set.into_iter()
         .map(|(ob, f)| (ob.to_string(), f.to_string()))
         .collect()
@@ -333,9 +440,11 @@ fn executed(text: &str) -> Vec<(String, String)> {
 
 /// Human triage report: top self-cost functions for one item's workload.
 pub fn annotate(id: &str) -> Result<String, String> {
-    let (total, text) = run_ir(id, 1, "annotate", false)?;
+    let dumps = run_valgrind(id, 1, false, "annotate", false)?;
+    let text = &dumps[0];
+    let total = summary_ir(text)?;
     let mut costs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
-    for (_, name, cost) in function_costs(&text) {
+    for (_, name, cost) in function_costs(text) {
         *costs.entry(name.to_string()).or_default() += cost;
     }
     let mut ranked: Vec<(String, u64)> = costs.into_iter().collect();
@@ -351,7 +460,9 @@ pub fn annotate(id: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{executed, function_costs, out_file};
+    use std::path::PathBuf;
+
+    use super::{executed, function_costs, out_file, summary_ir, take_dumps};
 
     const OUT: &str = "\
 events: Ir
@@ -401,6 +512,38 @@ summary: 1052
                 "_ZN5bench4hot17h0123456789abcdefE".into(),
             ),
         ];
-        assert_eq!(executed(OUT), want);
+        assert_eq!(executed(&[OUT.to_string()]), want);
+    }
+
+    #[test]
+    fn dumps_read_in_request_order_then_the_exit_dump() {
+        let out = out_file("dumps");
+        let at = |suffix: &str| PathBuf::from(format!("{}{suffix}", out.display()));
+        std::fs::write(at(".2"), "second").unwrap();
+        std::fs::write(at(""), "exit").unwrap();
+        std::fs::write(at(".10"), "tenth").unwrap();
+        std::fs::write(at(".1"), "first").unwrap();
+        assert_eq!(
+            take_dumps(&out).unwrap(),
+            ["first", "second", "tenth", "exit"]
+        );
+        assert!(!at(".1").exists() && !at("").exists());
+    }
+
+    #[test]
+    fn a_dump_summary_is_its_total_ir() {
+        assert_eq!(summary_ir(OUT), Ok(1052));
+        assert!(summary_ir("events: Ir\n").is_err());
+    }
+
+    #[test]
+    fn executed_functions_span_every_dump() {
+        let setup = "ob=/work/bench\nfn=setup\n1 10\n".to_string();
+        let window = "ob=/work/bench\nfn=hot\n1 10\n".to_string();
+        let names: Vec<_> = executed(&[setup, window])
+            .into_iter()
+            .map(|(_, f)| f)
+            .collect();
+        assert_eq!(names, ["hot", "setup"]);
     }
 }

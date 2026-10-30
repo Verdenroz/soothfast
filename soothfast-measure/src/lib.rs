@@ -10,6 +10,7 @@
 pub mod alloc;
 pub mod asyncexec;
 pub mod callgrind;
+mod clientreq;
 mod json;
 #[cfg(target_os = "linux")]
 pub mod perfcnt;

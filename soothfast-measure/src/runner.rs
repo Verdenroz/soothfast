@@ -8,7 +8,7 @@
 use soothfast_registry::{Bencher, MeasuredItem, fixture_items, measured_items, route_items};
 
 use crate::json::esc;
-use crate::{alloc, asyncexec, callgrind, sweep, walltime};
+use crate::{alloc, asyncexec, callgrind, clientreq, sweep, walltime};
 
 #[derive(PartialEq, Clone, Copy)]
 enum Backend {
@@ -31,6 +31,7 @@ struct Args {
     callgrind_exec: Option<String>,
     triage: Option<String>,
     iters: u64,
+    callgrind_window: bool,
     skip_gating_counters: bool,
     env: bool,
     guest_view: bool,
@@ -52,6 +53,7 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
         callgrind_exec: None,
         triage: None,
         iters: 1,
+        callgrind_window: false,
         skip_gating_counters: false,
         env: false,
         guest_view: false,
@@ -98,6 +100,7 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
                 Some(n) if n > 0 => args.iters = n,
                 _ => die("--iters needs a positive integer"),
             },
+            "--callgrind-window" => args.callgrind_window = true,
             "--skip-gating-counters" => args.skip_gating_counters = true,
             "--guest-view" => args.guest_view = true,
             "--env" => {
@@ -264,8 +267,16 @@ fn env_line(env: &Env, json: bool) -> String {
                     esc(&g.valgrind)
                 )
             });
+            let method = if env.use_cg {
+                format!(
+                    ",\"callgrind_method\":\"{}\"",
+                    callgrind::Method::current().name()
+                )
+            } else {
+                String::new()
+            };
             format!(
-                "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\",\"item_reuse\":true{guest}}}",
+                "{{\"type\":\"env\",\"perfcnt\":{},\"perfcnt_detail\":\"{}\",\"gating_backend\":\"{gating}\",\"item_reuse\":true{guest}{method}}}",
                 perf.is_ok(),
                 esc(perf.as_ref().err().map(String::as_str).unwrap_or("ok")),
             )
@@ -289,7 +300,15 @@ pub fn main() {
     // Hidden mode: execute one item's body under valgrind (see callgrind.rs).
     if let Some(id) = &args.callgrind_exec {
         let item = find_item(id);
-        let mut collector = |body: &mut dyn FnMut()| body();
+        let window = args.callgrind_window;
+        let mut collector = |body: &mut dyn FnMut()| {
+            body();
+            if window {
+                clientreq::dump_stats();
+                body();
+                clientreq::dump_stats();
+            }
+        };
         (item.runner)(&mut Bencher::__new(args.iters, &mut collector));
         return;
     }
