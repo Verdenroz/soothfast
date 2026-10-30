@@ -167,7 +167,8 @@ Outputs are `version` and `cache-hit`.
 `spec` and `docs` commands build rustdoc JSON, which compiles the package
 and its dependencies under nightly. With `rustdoc-cache: "true"` the job
 keeps `.soothfast/rustdoc` between runs, and a command that finds the JSON
-it needs there skips cargo entirely.
+it needs there skips cargo entirely. The reusable `run.yml` keeps it for its
+docs check, and for the changelog regeneration on a default-branch push.
 
 Lookup has two levels. A key hashes the package, features, visibility, the
 `rustc -vV` of the rustdoc toolchain, the rustdoc format version, every
@@ -373,6 +374,11 @@ lines of output, reuse counts, seconds) and uploads it as
 `cargo soothfast verdict merge`, and posts one comment marked
 `<!-- soothfast-verdict -->` with a section per project, regressed and
 errored first. Shards of one project fold into one section.
+
+Each section keeps the output of its job without terminal colour codes, and
+without cargo's `warning:` blocks unless the job errored. A docs check that
+skipped its claims for lack of a measurement reads `pass (claims not
+evaluated)`. `run.yml` sets `CARGO_TERM_COLOR: never` for every job.
 
 Branch protection needs only the `verdict` check, named `<caller job id> /
 verdict`. The caller `cargo soothfast init` writes names its job `soothfast`,

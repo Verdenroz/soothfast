@@ -11,6 +11,7 @@ const TAIL_LINES: usize = 40;
 const REUSE_LINE: &str = "items a stored measurement covers";
 const REUSE_ONE_SIDED: &str = "items run code a stored measurement covers";
 const NOTHING_TO_COMPARE: &str = "nothing to compare";
+const CLAIMS_SKIPPED: &str = "claims not evaluated";
 const KINDS: [&str; 4] = ["rust", "import", "docs", "test"];
 /// GitHub rejects a comment over 65,536 characters; the rest is the marker.
 const BODY_LIMIT: usize = 65_000;
@@ -64,6 +65,7 @@ struct Record {
     reuse: Option<Reuse>,
     seconds: u64,
     flaky: bool,
+    unevaluated: bool,
 }
 
 /// The test runner's verdict words, which are not the gate's.
@@ -103,6 +105,9 @@ impl Record {
         if self.flaky {
             v["flaky"] = json!(true);
         }
+        if self.unevaluated {
+            v["unevaluated"] = json!(true);
+        }
         v
     }
 
@@ -122,8 +127,8 @@ impl Record {
             None => test_verdict(word)?,
         };
         let tail = match v.get("tail") {
-            Some(t) => t.as_str()?.to_string(),
-            None => tail(v.get("output")?.as_str()?),
+            Some(t) => strip_ansi(t.as_str()?),
+            None => tail(&strip_ansi(v.get("output")?.as_str()?)),
         };
         let seconds = v.get("seconds").or(v.get("wall_s"))?;
         Some(Record {
@@ -136,6 +141,7 @@ impl Record {
                 .as_u64()
                 .or_else(|| seconds.as_f64().map(|s| s.round() as u64))?,
             flaky,
+            unevaluated: v["unevaluated"].as_bool().unwrap_or(false),
         })
     }
 
@@ -161,6 +167,7 @@ impl Record {
         };
         self.seconds = self.seconds.max(other.seconds);
         self.flaky |= other.flaky;
+        self.unevaluated |= other.unevaluated;
     }
 }
 
@@ -215,21 +222,32 @@ fn record(args: &[String]) -> Result<i32, String> {
     let output = output.ok_or("record needs --output")?;
     // A job that died before the gate wrote anything still records an error.
     let output = fs::read_to_string(&output).unwrap_or_default();
-    let rec = Record {
-        name,
-        verdict: classify(code, &kind, &output),
-        kind,
-        tail: tail(&output),
-        reuse: parse_reuse(&output),
-        seconds,
-        flaky: false,
-    };
+    let rec = build(name, kind, code, &output, seconds);
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let text = serde_json::to_string_pretty(&rec.to_json()).map_err(|e| e.to_string())?;
     fs::write(&out, text).map_err(|e| format!("{}: {e}", out.display()))?;
     Ok(0)
+}
+
+fn build(name: String, kind: String, code: i32, output: &str, seconds: u64) -> Record {
+    let output = strip_ansi(output);
+    let verdict = classify(code, &kind, &output);
+    Record {
+        name,
+        tail: if verdict == Verdict::Errored {
+            tail(&output)
+        } else {
+            tail(&drop_warnings(&output))
+        },
+        reuse: parse_reuse(&output),
+        unevaluated: kind == "docs" && output.contains(CLAIMS_SKIPPED),
+        kind,
+        verdict,
+        seconds,
+        flaky: false,
+    }
 }
 
 /// A docs failure is drift, not a perf regression, so it is never one the
@@ -241,6 +259,54 @@ fn classify(code: i32, kind: &str, output: &str) -> Verdict {
         1 if matches!(kind, "rust" | "import") => Verdict::Regressed,
         _ => Verdict::Errored,
     }
+}
+
+/// Removes CSI and OSC escape sequences; cargo colours its stderr even when
+/// it is piped.
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                let mut prev = '\0';
+                for c in chars.by_ref() {
+                    if c == '\x07' || (prev == '\x1b' && c == '\\') {
+                        break;
+                    }
+                    prev = c;
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Drops each `warning:` line with the indented lines under it.
+fn drop_warnings(output: &str) -> String {
+    let mut in_warning = false;
+    let mut kept = Vec::new();
+    for line in output.lines() {
+        if line.starts_with("warning:") {
+            in_warning = true;
+        } else if !(in_warning && line.starts_with([' ', '\t'])) {
+            in_warning = false;
+            kept.push(line);
+        }
+    }
+    kept.join("\n")
 }
 
 fn tail(output: &str) -> String {
@@ -323,6 +389,7 @@ fn errored(name: String, kind: String, tail: String) -> Record {
         reuse: None,
         seconds: 0,
         flaky: false,
+        unevaluated: false,
     }
 }
 
@@ -423,10 +490,15 @@ fn render(records: &[Record], accepted: bool) -> String {
     }
     for r in records {
         out.push_str(&format!(
-            "\n### {}\n{}{} | {} | {}s",
+            "\n### {}\n{}{}{} | {} | {}s",
             r.name,
             r.verdict.name(),
             if r.flaky { " (flaky)" } else { "" },
+            if r.unevaluated {
+                " (claims not evaluated)"
+            } else {
+                ""
+            },
             r.kind,
             r.seconds
         ));
@@ -456,6 +528,7 @@ mod tests {
             reuse: None,
             seconds: 10,
             flaky: false,
+            unevaluated: false,
         }
     }
 
@@ -512,6 +585,38 @@ mod tests {
         assert!(render(&[flaky], false).contains("pass (flaky) | test | 12s"));
         assert_eq!(read("failed").unwrap().verdict, Verdict::Errored);
         assert_eq!(read("exploded"), None);
+    }
+
+    #[test]
+    fn escapes_are_stripped_from_recorded_and_stored_tails() {
+        let raw = "\x1b[1m\x1b[94mnote\x1b[0m \x1b]8;;http://x\x07link\x1b]8;;\x1b\\ done";
+        assert_eq!(strip_ansi(raw), "note link done");
+        let r = build("a".into(), "rust".into(), 0, raw, 1);
+        assert_eq!(r.tail, "note link done");
+        let old = json!({
+            "name": "a", "kind": "docs", "verdict": "pass", "tail": raw, "seconds": 1,
+        });
+        assert_eq!(Record::from_json(&old).unwrap().tail, "note link done");
+    }
+
+    #[test]
+    fn cargo_warnings_are_dropped_unless_the_job_errored() {
+        let out = "building\nwarning: unused dep\n  --> Cargo.toml\n   |\nwarning: `x` generated 1 warning\nchecked";
+        let docs = |code| build("a".into(), "docs".into(), code, out, 1);
+        assert_eq!(docs(0).tail, "building\nchecked");
+        assert_eq!(docs(2).tail, out);
+    }
+
+    #[test]
+    fn skipped_claims_show_in_the_header_and_count_as_pass() {
+        let out = "claims not evaluated: no measurement\n".to_string() + &"x\n".repeat(60);
+        let r = build("docs".into(), "docs".into(), 0, &out, 5);
+        assert!(r.unevaluated && r.verdict == Verdict::Pass);
+        assert_eq!(Record::from_json(&r.to_json()), Some(r.clone()));
+        let body = render(&[r], false);
+        assert!(body.contains("pass (claims not evaluated) | docs | 5s"));
+        assert!(body.contains("1 projects: 0 regressed, 0 errored, 1 pass"));
+        assert!(!build("rust".into(), "rust".into(), 0, &out, 5).unevaluated);
     }
 
     #[test]
