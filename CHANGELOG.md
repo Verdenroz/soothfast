@@ -12,8 +12,15 @@
 
 ### ✨ Features
 
+- Act on soothfast labels as the bot (#274)
+- Add cargo soothfast init (#273)
+- Cache gate runs and add gate --shard I/N (#272)
 - Skip timing-only gate rounds under advisory walltime (#268)
 - Seed the gate's base build, advisory walltime, save-baseline input (#266)
+
+### ⚡ Performance
+
+- Reuse items per side, say why one missed (#271)
 
 
 ## 0.4.4 - 2026-10-21
