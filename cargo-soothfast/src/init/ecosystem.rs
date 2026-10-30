@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use soothfast_lang::Lang;
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
 use crate::import::Format;
@@ -37,6 +38,18 @@ impl Ecosystem {
             Ecosystem::Maven => "maven",
             Ecosystem::Python => "python",
             Ecosystem::Node => "node",
+        }
+    }
+
+    /// The source languages of this ecosystem's trees. Rust has none here:
+    /// its surface comes from rustdoc.
+    pub fn langs(self) -> Vec<Lang> {
+        match self {
+            Ecosystem::Rust => Vec::new(),
+            Ecosystem::Gradle => vec![Lang::Kotlin, Lang::Java],
+            Ecosystem::Maven => vec![Lang::Java],
+            Ecosystem::Python => vec![Lang::Python],
+            Ecosystem::Node => vec![Lang::JavaScript, Lang::TypeScript, Lang::Tsx],
         }
     }
 

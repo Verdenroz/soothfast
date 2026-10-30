@@ -75,22 +75,16 @@ pub fn parse(expr: &str) -> Result<Claim, String> {
             "claim difference needs a right operand: `A.backend.metric - B.backend.metric`, got {expr:?}"
         ));
     }
-    let (first, second) = match lhs.rsplit_once(" - ") {
-        Some((a, b)) => (a.trim_end(), Some(b.trim_start())),
-        None => (lhs, None),
-    };
+    let (first, second) = split_difference(lhs).map_or((lhs, None), |(a, b)| (a, Some(b)));
     let (item, backend, metric) = split_operand(first)?;
-    let minus = match second {
-        Some(text) => {
-            let (item, backend, metric) = split_operand(text)?;
-            Some(Operand {
-                item: item.to_string(),
-                backend: backend.to_string(),
-                metric: metric.to_string(),
-            })
-        }
-        None => None,
-    };
+    let minus = second.and_then(|text| {
+        let (item, backend, metric) = split_operand(text).ok()?;
+        Some(Operand {
+            item: item.to_string(),
+            backend: backend.to_string(),
+            metric: metric.to_string(),
+        })
+    });
 
     let unit_at = rhs
         .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '_')
@@ -121,20 +115,54 @@ pub fn parse(expr: &str) -> Result<Claim, String> {
     })
 }
 
+/// Backends a measurement baseline records under an item.
+const BACKENDS: [&str; 6] = [
+    "perfcnt",
+    "walltime",
+    "alloc",
+    "asyncexec",
+    "callgrind",
+    "buildcost",
+];
+
+/// The ` - ` that separates two operands, trying split points from the
+/// right. An imported id may hold ` - ` itself, so a split counts only when
+/// both sides are operands with a known backend.
+fn split_difference(lhs: &str) -> Option<(&str, &str)> {
+    let known =
+        |text: &str| split_operand(text).is_ok_and(|(_, backend, _)| BACKENDS.contains(&backend));
+    lhs.rmatch_indices(" - ").find_map(|(at, sep)| {
+        let (a, b) = (lhs[..at].trim_end(), lhs[at + sep.len()..].trim_start());
+        (known(a) && known(b)).then_some((a, b))
+    })
+}
+
 /// Backend and metric never hold a dot; an imported item id may.
 fn split_operand(text: &str) -> Result<(&str, &str, &str), String> {
     text.rsplit_once('.')
         .and_then(|(rest, metric)| Some((rest.rsplit_once('.')?, metric)))
         .map(|((item, backend), metric)| (item.trim_start(), backend, metric))
+        .filter(|(_, backend, metric)| {
+            !backend.contains(char::is_whitespace) && !metric.contains(char::is_whitespace)
+        })
         .ok_or_else(|| format!("left side must be item.backend.metric, got {text:?}"))
+}
+
+/// The measured value of the claim's item and, for a difference, of the item
+/// subtracted from it.
+pub fn values(claim: &Claim, baseline: &Value) -> Result<(f64, Option<f64>), String> {
+    let first = measured(baseline, &claim.item, &claim.backend, &claim.metric)?;
+    let second = match &claim.minus {
+        Some(m) => Some(measured(baseline, &m.item, &m.backend, &m.metric)?),
+        None => None,
+    };
+    Ok((first, second))
 }
 
 /// Evaluate against a baseline document; returns (holds, actual value).
 pub fn evaluate(claim: &Claim, baseline: &Value) -> Result<(bool, f64), String> {
-    let mut actual = measured(baseline, &claim.item, &claim.backend, &claim.metric)?;
-    if let Some(m) = &claim.minus {
-        actual -= measured(baseline, &m.item, &m.backend, &m.metric)?;
-    }
+    let (first, second) = values(claim, baseline)?;
+    let actual = first - second.unwrap_or(0.0);
     let holds = match claim.op {
         Op::Lt => actual < claim.bound,
         Op::Le => actual <= claim.bound,
@@ -213,6 +241,17 @@ mod tests {
         assert!(parse("a.walltime.median_ns - b.walltime < 2us").is_err());
         let err = parse("a.walltime.median_ns - < 2us").unwrap_err();
         assert!(err.contains("right operand"), "{err}");
+    }
+
+    #[test]
+    fn an_imported_id_with_a_dash_is_one_operand_or_one_side() {
+        let single = parse("vitest::f.bench.ts > d - n.walltime.p99_ns < 5ms").unwrap();
+        assert_eq!(single.item, "vitest::f.bench.ts > d - n");
+        assert!(single.minus.is_none());
+        let diff =
+            parse("x.walltime.p99_ns - vitest::f.bench.ts > d - n.walltime.p99_ns < 5ms").unwrap();
+        assert_eq!(diff.item, "x");
+        assert_eq!(diff.minus.unwrap().item, "vitest::f.bench.ts > d - n");
     }
 
     #[test]

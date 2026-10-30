@@ -163,10 +163,13 @@ pub fn render(
         .collect();
     drifted.sort_by(|a, b| b.end_drift.total_cmp(&a.end_drift));
     let total_movers = drifted.len();
-    let mut movers: Vec<&Series> = series.iter().filter(|s| s.imported).collect();
-    let n_imported = movers.len();
-    movers.extend(drifted);
-    movers.truncate(COLORS.len());
+    drifted.truncate(COLORS.len());
+    let shown = drifted.len();
+    let imported: Vec<&Series> = series.iter().filter(|s| s.imported).collect();
+    let n_imported = imported.len();
+    let imported_shown = n_imported.min(COLORS.len() - shown);
+    let mut movers = drifted;
+    movers.extend(imported.into_iter().take(imported_shown));
 
     let (lo, hi) = movers
         .iter()
@@ -289,9 +292,8 @@ pub fn render(
     ));
 
     let n_items = series.len() - n_imported;
-    let shown = movers.len() - n_imported.min(movers.len());
     let footer = if n_items == 0 {
-        format!("{n_imported} imported items, each drawn as a line")
+        format!("{imported_shown} of {n_imported} imported items drawn as lines")
     } else if total_movers == 0 {
         format!(
             "all {n_items} items ended within \u{b1}{threshold_pct:.0}% of their first point; band spans p10-p90"
@@ -304,6 +306,11 @@ pub fn render(
         format!(
             "{total_movers} of {n_items} items ended \u{2265}{threshold_pct:.0}% from start; band spans p10-p90"
         )
+    };
+    let footer = if n_items > 0 && n_imported > 0 {
+        format!("{footer}; {imported_shown} of {n_imported} imported items drawn")
+    } else {
+        footer
     };
     svg.push_str(&format!(
         "<text x=\"{PAD_L}\" y=\"{fy}\" fill=\"{INK}\" font-size=\"10\">{footer}</text>\n",
@@ -400,6 +407,32 @@ mod tests {
         .unwrap();
         assert!(svg.contains("A.b +0.0%"), "{svg}");
         assert!(svg.contains("all 1 items ended"), "{svg}");
+    }
+
+    #[test]
+    fn rust_movers_keep_their_colours_when_imported_lines_crowd_the_palette() {
+        let at = |scale: u64| {
+            let mut items = vec![("demo::f".to_string(), 100 * scale)];
+            for n in 0..8 {
+                items.push((format!("jmh::B.{n}"), 500));
+            }
+            let refs: Vec<(&str, u64)> = items.iter().map(|(i, v)| (i.as_str(), *v)).collect();
+            let mut p = point(&refs);
+            for n in 0..8 {
+                p["items"][format!("jmh::B.{n}")]["imported"] = json!("jmh");
+            }
+            p
+        };
+        let svg = super::render(
+            &[at(1), at(2)],
+            &["perfcnt", "instructions"],
+            "instructions",
+            2.0,
+            false,
+        )
+        .unwrap();
+        assert!(svg.contains("f +100.0%"), "{svg}");
+        assert!(svg.contains("5 of 8 imported items drawn"), "{svg}");
     }
 
     #[test]

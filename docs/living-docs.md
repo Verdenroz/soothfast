@@ -124,9 +124,11 @@ The Kotlin client parses within 2µs of the Rust core.
 <!-- /soothfast:claim -->
 ```
 
-Each side is a full `item.backend.metric`, and the split is at the last
-` - `, so item ids with spaces and dots still work. The bound applies to the
-left value minus the right. A side with no measurement fails the claim and
+Each side is a full `item.backend.metric`. A ` - ` splits the claim only when
+both halves end in a known backend (`perfcnt`, `walltime`, `alloc`,
+`asyncexec`, `callgrind`, `buildcost`), trying split points from the right, so
+an imported id that contains ` - ` still reads as one item. The bound applies
+to the left value minus the right. A side with no measurement fails the claim and
 the message names it; a ` -` with nothing after it fails to parse.
 
 ## Doc coverage outside Rust
@@ -144,7 +146,8 @@ cargo soothfast coverage docs --dir client/core --lang kotlin --min 80
 repeat. With neither `-p` nor `--dir`, it reads the `dir` and `ecosystem` of
 each non-Rust `[[project]]` in `soothfast.toml`. Public means `public` in Java
 and Kotlin (Kotlin's default; `private`, `internal` and `protected` are not),
-`export` in JavaScript and TypeScript, and a name without a leading
+`export` in JavaScript and TypeScript (including `export { a, b as c }` and
+`export default a`), and a name without a leading
 underscore in Python. Members count only when their container does. Trees
 named `node_modules`, `build`, `target`, `dist`, `venv`, `test`, `tests` or
 `__tests__`, and hidden directories, are skipped.

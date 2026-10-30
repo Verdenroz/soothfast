@@ -125,6 +125,19 @@ class Local {
 }
 
 #[test]
+fn export_lists_and_default_export_make_local_names_public() {
+    let src = "function a() {}\nfunction b() {}\nfunction c() {}\nfunction d() {}\nexport { a, b as renamed };\nexport default c;\nexport { d } from './other';\n";
+    assert_eq!(
+        surface(Lang::TypeScript, src),
+        expect(&[("a", false), ("b", false), ("c", false)])
+    );
+    assert_eq!(
+        surface(Lang::JavaScript, "const f = () => 1;\nexport { f };\n"),
+        expect(&[("f", false)])
+    );
+}
+
+#[test]
 fn javascript_exports_are_public() {
     let src = "export function a() {}\nfunction b() {}\n";
     assert_eq!(surface(Lang::JavaScript, src), expect(&[("a", false)]));

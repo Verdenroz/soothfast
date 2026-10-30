@@ -14,28 +14,40 @@ use crate::invoke;
 pub fn current(target: &Target) -> Result<Vec<Entry>, String> {
     let mut entries = coverage_lang::entries(target)?;
     for e in &mut entries {
-        e.id = format!("{}/{}", target.label, e.id);
+        e.id = coverage_lang::join_label(&target.label, &e.id);
     }
     Ok(entries)
 }
 
 /// The project's public symbols as committed at `refname`. A project that
-/// did not exist there has none.
+/// did not exist there has none. Git lists and shows paths relative to
+/// `root`, the same form `current` produces.
 pub fn at_ref(root: &Path, target: &Target, refname: &str) -> Result<Vec<Entry>, String> {
-    let listing = invoke::git_in(
-        root,
-        &["ls-tree", "-r", "--name-only", refname, "--", &target.label],
-    )
-    .map_err(|e| e.to_string())?;
+    let spec = if target.label.is_empty() {
+        "."
+    } else {
+        &target.label
+    };
+    let listing = invoke::git_in(root, &["ls-tree", "-r", "-z", refname, "--", spec])
+        .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
-    for path in listing.lines() {
+    for record in listing.split('\0').filter(|r| !r.is_empty()) {
+        let Some((meta, path)) = record.split_once('\t') else {
+            continue;
+        };
+        let mut fields = meta.split(' ');
+        let mode = fields.next();
+        let kind = fields.next();
+        if kind != Some("blob") || mode == Some("120000") {
+            continue;
+        }
         let rel = Path::new(path)
             .strip_prefix(&target.label)
             .unwrap_or(Path::new(path));
         let Some(lang) = coverage_lang::covered(rel, &target.langs) else {
             continue;
         };
-        let source = invoke::git_in(root, &["show", &format!("{refname}:{path}")])
+        let source = invoke::git_in(root, &["show", &format!("{refname}:./{path}")])
             .map_err(|e| e.to_string())?;
         out.extend(coverage_lang::file_entries(path, lang, &source)?);
     }
@@ -152,6 +164,25 @@ mod tests {
         let text = diff_text(&dir, &target, "v1").unwrap();
         assert_eq!(text, "ADDED    web/a.ts#fresh\nREMOVED  web/a.ts#gone\n");
         assert_eq!(diff_text(&dir, &target, "HEAD").unwrap(), "");
+    }
+
+    #[test]
+    fn dot_and_trailing_slash_labels_match_the_ref_side() {
+        let dir = repo("labels");
+        commit(&dir, "web/a.ts", "export function keep() {}\n");
+        commit(&dir, "top.ts", "export function top() {}\n");
+        invoke::git_in(&dir, &["tag", "v1"]).unwrap();
+        for dir_arg in ["./web/", "web//", "web"] {
+            let target = coverage_lang::targets(&dir, &[dir_arg.into()], Some("typescript"))
+                .unwrap()
+                .remove(0);
+            assert_eq!(diff_text(&dir, &target, "v1").unwrap(), "", "{dir_arg}");
+        }
+        let root = coverage_lang::targets(&dir, &[".".into()], Some("typescript"))
+            .unwrap()
+            .remove(0);
+        assert_eq!(diff_text(&dir, &root, "v1").unwrap(), "");
+        assert_eq!(current(&root).unwrap().len(), 2);
     }
 
     #[test]

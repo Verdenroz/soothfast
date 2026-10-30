@@ -67,8 +67,16 @@ fn fmt_ns(v: Option<f64>) -> String {
     }
 }
 
-/// `rows` rendered as a GitHub-flavored markdown table.
+/// `rows` rendered as a GitHub-flavored markdown table, imported harnesses
+/// under `##` headings.
 pub fn markdown(baseline: &Value) -> String {
+    markdown_at(baseline, 2)
+}
+
+/// [`markdown`] with harness headings at `depth` `#`s, for embedding the
+/// table below a heading of the same document.
+pub fn markdown_at(baseline: &Value, depth: usize) -> String {
+    let hashes = "#".repeat(depth);
     let mut out = String::from(
         "| item | instructions | median | p99 | allocs | polls |\n|---|---:|---:|---:|---:|---:|\n",
     );
@@ -86,7 +94,7 @@ pub fn markdown(baseline: &Value) -> String {
     }
     for (harness, rows) in imported {
         out.push_str(&format!(
-            "\n## {harness}\n\nImported from the `{harness}` harness; walltime only.\n\n| item | median | mad | p99 |\n|---|---:|---:|---:|\n"
+            "\n{hashes} {harness}\n\nImported from the `{harness}` harness; walltime only.\n\n| item | median | mad | p99 |\n|---|---:|---:|---:|\n"
         ));
         for r in rows {
             out.push_str(&format!(

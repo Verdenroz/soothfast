@@ -130,7 +130,8 @@ absent. `packages` supplies `-p` when the command line gives none. An explicit
 `api_surface` is off unless set. With `api_surface = true`, the API section
 also covers every non-Rust `[[project]]` (or `--dir D --lang L`): the symbols
 that became public or stopped being public since `--against-ref`, or the
-full list when there is no reference.
+full list when there is no reference. Passing `--dir`/`--lang` to
+`report changelog` opts in for that run without the setting.
 
 ```toml
 [changelog]

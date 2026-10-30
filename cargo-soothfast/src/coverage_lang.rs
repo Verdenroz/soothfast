@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use soothfast_lang::{Lang, public_symbols};
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
+use crate::init::ecosystem::{Ecosystem, table_name};
+
 /// Directories that hold dependencies, build output or tests rather than the
 /// documented surface.
 const SKIPPED_DIRS: [&str; 8] = [
@@ -23,8 +25,8 @@ const SKIPPED_DIRS: [&str; 8] = [
 /// A source directory and the languages whose files it contributes.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Target {
-    /// The directory as written in the manifest or on the command line,
-    /// relative to the repository root.
+    /// The directory relative to the repository root, normalized: no `./`,
+    /// no doubled or trailing `/`, empty for the root itself.
     pub label: String,
     /// The directory to read, resolved against the repository root.
     pub dir: PathBuf,
@@ -42,21 +44,37 @@ pub struct Entry {
     pub documented: bool,
 }
 
-/// Languages named by a `--lang` value: a language, or the ecosystem that
-/// builds one. Rust is covered by `-p`, so it names none.
+/// Languages named by a `--lang` value: an ecosystem, or a single language
+/// of one. Rust is covered by `-p`, so it names none.
 pub fn langs_for(word: &str) -> Result<Vec<Lang>, String> {
-    match word {
-        "java" => Ok(vec![Lang::Java]),
-        "kotlin" => Ok(vec![Lang::Kotlin]),
-        "python" => Ok(vec![Lang::Python]),
-        "javascript" => Ok(vec![Lang::JavaScript]),
-        "typescript" => Ok(vec![Lang::TypeScript, Lang::Tsx]),
-        "gradle" => Ok(vec![Lang::Kotlin, Lang::Java]),
-        "maven" => Ok(vec![Lang::Java]),
-        "node" => Ok(vec![Lang::JavaScript, Lang::TypeScript, Lang::Tsx]),
-        other => Err(format!(
-            "unknown --lang {other:?} (java, kotlin, python, javascript, typescript, gradle, maven, node)"
+    match (Ecosystem::parse(word), word) {
+        (Ok(Ecosystem::Rust), _) => Err("rust is covered by -p, not --lang".into()),
+        (Ok(eco), _) => Ok(eco.langs()),
+        (_, "java") => Ok(vec![Lang::Java]),
+        (_, "kotlin") => Ok(vec![Lang::Kotlin]),
+        (_, "javascript") => Ok(vec![Lang::JavaScript]),
+        (_, "typescript") => Ok(vec![Lang::TypeScript, Lang::Tsx]),
+        _ => Err(format!(
+            "unknown --lang {word:?} (gradle, maven, python, node, java, kotlin, javascript or typescript)"
         )),
+    }
+}
+
+/// A directory as a repository-relative label: no `./`, no doubled or
+/// trailing `/`, and empty for the root itself.
+pub fn normalize_label(dir: &str) -> String {
+    dir.split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The id of `rel` inside the directory `label`.
+pub fn join_label(label: &str, rel: &str) -> String {
+    if label.is_empty() {
+        rel.to_string()
+    } else {
+        format!("{label}/{rel}")
     }
 }
 
@@ -70,7 +88,7 @@ pub fn targets(root: &Path, dirs: &[String], lang: Option<&str>) -> Result<Vec<T
             Ok(dirs
                 .iter()
                 .map(|dir| Target {
-                    label: dir.clone(),
+                    label: normalize_label(dir),
                     dir: root.join(dir),
                     langs: langs.clone(),
                 })
@@ -92,21 +110,15 @@ pub fn manifest_targets(root: &Path) -> Result<Vec<Target>, String> {
     let mut projects: Vec<(Option<String>, Option<String>)> = Vec::new();
     let mut in_project = false;
     for (_, line) in logical_lines(&text) {
-        if let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            in_project = inner.trim() == "[project]";
+        if let Some(name) = table_name(&line) {
+            in_project = name == "[project]";
             if in_project {
                 projects.push((None, None));
             }
-            continue;
-        }
-        let (Some((key, value)), Some(project)) = (line.split_once('='), projects.last_mut())
-        else {
-            continue;
-        };
-        if !in_project {
-            continue;
-        }
-        if let Ok(TomlValue::Str(value)) = parse_value(value.trim()) {
+        } else if let (true, Some((key, value)), Some(project)) =
+            (in_project, line.split_once('='), projects.last_mut())
+            && let Ok(TomlValue::Str(value)) = parse_value(value.trim())
+        {
             match key.trim() {
                 "dir" => project.0 = Some(value),
                 "ecosystem" => project.1 = Some(value),
@@ -119,12 +131,12 @@ pub fn manifest_targets(root: &Path) -> Result<Vec<Target>, String> {
         let (Some(dir), Some(ecosystem)) = (dir, ecosystem) else {
             continue;
         };
-        if ecosystem == "rust" {
+        if Ecosystem::parse(&ecosystem)? == Ecosystem::Rust {
             continue;
         }
         targets.push(Target {
+            label: normalize_label(&dir),
             dir: root.join(&dir),
-            label: dir,
             langs: langs_for(&ecosystem)?,
         });
     }
@@ -183,17 +195,24 @@ fn skipped_dir(name: &str) -> bool {
     name.starts_with('.') || SKIPPED_DIRS.contains(&name)
 }
 
+/// Symlinks are skipped: git records them as links, and a cycle would never
+/// end.
 fn collect(dir: &Path, langs: &[Lang], out: &mut Vec<(PathBuf, Lang)>) -> Result<(), String> {
     let entries =
         std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
     for entry in entries {
-        let path = entry.map_err(|e| e.to_string())?.path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if path.is_dir() {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let name = name.to_str().unwrap_or("");
+        if kind.is_dir() {
             if !skipped_dir(name) {
                 collect(&path, langs, out)?;
             }
-        } else if let Some(lang) = Lang::for_path(&path).filter(|l| langs.contains(l)) {
+        } else if kind.is_file()
+            && let Some(lang) = Lang::for_path(&path).filter(|l| langs.contains(l))
+        {
             out.push((path, lang));
         }
     }
@@ -221,7 +240,7 @@ mod tests {
             "manifest",
             &[(
                 "soothfast.toml",
-                "[site]\nname = \"x\"\n\n[[project]]\ndir = \"core\"\necosystem = \"rust\"\n\n[[project]]\ndir = \"client\"\necosystem = \"gradle\"\nfuture = { a = 1 }\n\n[[project]]\ndir = \"web\"\necosystem = \"node\"\n",
+                "[site]\nname = \"x\"\n\n[[project]]\ndir = \"core\"\necosystem = \"rust\"\n\n[[project]]\ndir = \"client\"\necosystem = \"gradle\"\nfuture = { a = 1 }\n\n[[project]]\ndir = \"web/\"\necosystem = \"node\"\n",
             )],
         );
         let targets = manifest_targets(&dir).unwrap();
@@ -235,11 +254,20 @@ mod tests {
                 },
                 Target {
                     label: "web".into(),
-                    dir: dir.join("web"),
+                    dir: dir.join("web/"),
                     langs: vec![Lang::JavaScript, Lang::TypeScript, Lang::Tsx]
                 },
             ]
         );
+    }
+
+    #[test]
+    fn labels_drop_dot_segments_and_extra_slashes() {
+        assert_eq!(normalize_label("."), "");
+        assert_eq!(normalize_label("./web/"), "web");
+        assert_eq!(normalize_label("a//b/./c"), "a/b/c");
+        assert_eq!(join_label("", "a.py"), "a.py");
+        assert_eq!(join_label("web", "a.py"), "web/a.py");
     }
 
     #[test]
@@ -256,7 +284,7 @@ mod tests {
             ],
         );
         let target = Target {
-            label: ".".into(),
+            label: String::new(),
             dir: dir.clone(),
             langs: vec![Lang::Python],
         };
@@ -274,6 +302,25 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_are_skipped_so_a_cycle_ends() {
+        let dir = fixture("links", &[("src/a.py", "def a():\n    pass\n")]);
+        std::os::unix::fs::symlink(&dir, dir.join("src/loop")).unwrap();
+        std::os::unix::fs::symlink(dir.join("src/a.py"), dir.join("src/b.py")).unwrap();
+        let target = Target {
+            label: String::new(),
+            dir,
+            langs: vec![Lang::Python],
+        };
+        let ids: Vec<String> = entries(&target)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, ["src/a.py#a"]);
+    }
+
     #[test]
     fn covered_skips_hidden_and_vendored_directories() {
         let langs = [Lang::Python];
@@ -285,7 +332,10 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_lang_names_the_choices() {
+    fn lang_words_name_ecosystems_or_languages() {
+        assert_eq!(langs_for("gradle").unwrap(), [Lang::Kotlin, Lang::Java]);
+        assert_eq!(langs_for("kotlin").unwrap(), [Lang::Kotlin]);
+        assert!(langs_for("rust").unwrap_err().contains("-p"));
         assert!(langs_for("cobol").unwrap_err().contains("kotlin"));
     }
 }

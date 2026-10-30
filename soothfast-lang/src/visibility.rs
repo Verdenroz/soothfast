@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use tree_sitter::Node;
 
 use crate::lang::Lang;
@@ -11,6 +13,7 @@ pub(crate) fn declared_public(
     src: &str,
     in_type: bool,
     outer: Option<Node>,
+    exported: &HashSet<String>,
 ) -> bool {
     let restricted = |kinds: &[&str]| keywords(node).iter().any(|k| kinds.contains(k));
     match lang {
@@ -33,9 +36,41 @@ pub(crate) fn declared_public(
             !name.starts_with('#') && !restricted_member(node, src)
         }
         Lang::JavaScript | Lang::TypeScript | Lang::Tsx => {
-            outer.is_some_and(|o| o.kind() == "export_statement")
+            outer.is_some_and(|o| o.kind() == "export_statement") || exported.contains(name)
         }
     }
+}
+
+/// Local names a JavaScript or TypeScript module exports without a modifier on
+/// the declaration: `export { a, b as c }` and `export default a`. A
+/// re-export from another module names nothing declared here.
+pub(crate) fn exported_names(root: Node, src: &str) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut cursor = root.walk();
+    for statement in root
+        .named_children(&mut cursor)
+        .filter(|n| n.kind() == "export_statement" && n.child_by_field_name("source").is_none())
+    {
+        if let Some(value) = statement
+            .child_by_field_name("value")
+            .filter(|v| v.kind() == "identifier")
+        {
+            names.insert(src[value.byte_range()].to_string());
+        }
+        let mut inner = statement.walk();
+        for clause in statement
+            .named_children(&mut inner)
+            .filter(|n| n.kind() == "export_clause")
+        {
+            let mut specs = clause.walk();
+            for spec in clause.named_children(&mut specs) {
+                if let Some(name) = spec.child_by_field_name("name") {
+                    names.insert(src[name.byte_range()].to_string());
+                }
+            }
+        }
+    }
+    names
 }
 
 /// Docstring of a Python function or class: a leading string statement.

@@ -332,7 +332,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
     // Without a reference there is no earlier surface to diff against, so
     // the release is described by what it contains. A facade crate's own
     // surface is thin; pass every crate whose API ships.
-    let targets = if cfg.api_surface {
+    let targets = if cfg.api_surface || !a.dirs.is_empty() || a.lang.is_some() {
         match coverage_lang::targets(&root, &a.dirs, a.lang.as_deref()) {
             Ok(t) => t,
             Err(e) => return err(&e),
@@ -658,6 +658,36 @@ mod tests {
         DEFAULT_BOT_AUTHOR, PriorRelease, changelog_already_cut, merge_changelog,
         prior_release_ref, resolve_bot_author, resolve_features, subjects_excluding_author,
     };
+
+    #[test]
+    fn an_imported_harness_section_does_not_split_the_changelog() {
+        let baseline = serde_json::json!({ "items": { "jmh::A.b": {
+            "imported": "jmh",
+            "walltime": { "median_ns": 2500.0, "mad_ns": 40.0, "p99_ns": 3100.0 }
+        }}});
+        let icons = soothfast_report::changelog::Icons::default();
+        let draft = soothfast_report::changelog::draft(&soothfast_report::changelog::DraftInputs {
+            api: soothfast_report::changelog::ApiSection::Initial(&[]),
+            changes: &[],
+            icons: &icons,
+            old_baseline: None,
+            new_baseline: &baseline,
+            thresholds: soothfast_report::changelog::PerfThresholds {
+                instructions_pct: 5.0,
+                allocs_pct: 5.0,
+            },
+        });
+        assert!(draft.contains("#### jmh"), "{draft}");
+        let merged = merge_changelog("", &draft);
+        let again = merge_changelog(&merged, &draft);
+        assert_eq!(merged, again);
+        assert_eq!(
+            prior_release_ref(&merged),
+            None,
+            "an imported prefix must not read as a released section"
+        );
+        assert!(!changelog_already_cut(&merged, None));
+    }
 
     #[test]
     fn a_release_pr_still_diffing_against_the_previous_tag_is_already_cut() {

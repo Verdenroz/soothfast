@@ -1,8 +1,10 @@
+use std::collections::HashSet;
+
 use tree_sitter::{Node, Tree};
 
 use crate::classify::{Decl, classify};
 use crate::lang::{Error, Lang};
-use crate::visibility::{declared_public, has_docstring};
+use crate::visibility::{declared_public, exported_names, has_docstring};
 
 /// The syntactic category of a [`Symbol`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -82,6 +84,7 @@ pub(crate) fn scan(lang: Lang, source: &str) -> Result<(Tree, Vec<Found>), Error
         lang,
         source,
         found: Vec::new(),
+        exported: exported_names(tree.root_node(), source),
     };
     walk.visit(tree.root_node(), "", false, true, None);
     Ok((tree, walk.found))
@@ -91,6 +94,7 @@ struct Walk<'a> {
     lang: Lang,
     source: &'a str,
     found: Vec<Found>,
+    exported: HashSet<String>,
 }
 
 impl Walk<'_> {
@@ -119,7 +123,15 @@ impl Walk<'_> {
                         other => other,
                     };
                     let public = public
-                        && declared_public(self.lang, child, &name, self.source, in_type, outer);
+                        && declared_public(
+                            self.lang,
+                            child,
+                            &name,
+                            self.source,
+                            in_type,
+                            outer,
+                            &self.exported,
+                        );
                     self.record(child, outer.unwrap_or(child), &path, kind, public);
                     if scope {
                         self.visit(child, &path, true, public, None);

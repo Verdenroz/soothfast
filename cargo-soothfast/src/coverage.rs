@@ -190,17 +190,17 @@ fn lang_targets(
     dirs: &[String],
     lang: Option<&str>,
 ) -> Result<Vec<Target>, String> {
-    match (dirs, lang) {
-        ([], None) if pkgs.is_empty() => {
-            let targets = coverage_lang::manifest_targets(Path::new("."))?;
-            if targets.is_empty() {
-                return Err("coverage docs requires -p PKG, --dir D --lang L, or [[project]] entries in soothfast.toml".into());
-            }
-            Ok(targets)
+    if dirs.is_empty() && lang.is_none() {
+        if !pkgs.is_empty() {
+            return Ok(Vec::new());
         }
-        ([], None) => Ok(Vec::new()),
-        _ => coverage_lang::targets(Path::new("."), dirs, lang),
+        let targets = coverage_lang::targets(Path::new("."), dirs, lang)?;
+        if targets.is_empty() {
+            return Err("coverage docs requires -p PKG, --dir D --lang L, or [[project]] entries in soothfast.toml".into());
+        }
+        return Ok(targets);
     }
+    coverage_lang::targets(Path::new("."), dirs, lang)
 }
 
 fn load_surface(
