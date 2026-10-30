@@ -198,8 +198,8 @@ fallback on machines without performance counters.
 ## One verdict
 
 The reusable `run.yml` workflow gives a pull request one soothfast comment and
-one check, however many projects or shards it gates. Every gate job and the
-docs check records a `result.json` (project, kind, verdict, the last forty
+one check, however many projects or shards it gates. Every gate job, the test
+job and the docs check records a `result.json` (project, kind, verdict, the last forty
 lines of output, reuse counts, seconds) and uploads it as
 `soothfast-result-<name>`. The `verdict` job downloads them all, runs
 `cargo soothfast verdict merge`, and posts one comment marked

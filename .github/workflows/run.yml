@@ -29,6 +29,12 @@ on:
 
 permissions: {}
 
+# Steps default to bash without pipefail otherwise, and a `| tee` would hide
+# the failing command's exit status.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   plan:
     name: Plan
@@ -102,7 +108,32 @@ jobs:
         uses: ./.soothfast-action/action/install
         with:
           sha: ${{ github.job_workflow_sha }}
-      - run: cargo soothfast test
+      - name: Test
+        shell: bash
+        run: |
+          echo 3 >"$RUNNER_TEMP/soothfast-exit"
+          date +%s >"$RUNNER_TEMP/soothfast-start"
+          rc=0
+          cargo soothfast test 2>&1 | tee "$RUNNER_TEMP/soothfast-result.txt" || rc=$?
+          echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
+          exit "$rc"
+      # A job that stopped before the test command ran left the exit at 3.
+      - name: Record the verdict
+        if: always()
+        shell: bash
+        run: |
+          cargo soothfast verdict record --name test-rust --kind test \
+            --exit "$(cat "$RUNNER_TEMP/soothfast-exit" 2>/dev/null || echo 3)" \
+            --seconds "$(( $(date +%s) - $(cat "$RUNNER_TEMP/soothfast-start" 2>/dev/null || date +%s) ))" \
+            --output "$RUNNER_TEMP/soothfast-result.txt" \
+            --out "$RUNNER_TEMP/soothfast-results/result.json"
+      - name: Upload the test result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-result-test-rust
+          path: ${{ runner.temp }}/soothfast-results
+          if-no-files-found: ignore
 
   gate-rust:
     name: Gate
@@ -166,6 +197,7 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     defaults:
       run:
+        shell: bash
         working-directory: ${{ matrix.dir }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -214,30 +246,41 @@ jobs:
           WALLTIME: ${{ matrix.walltime }}
           PREFIX: ${{ matrix.prefix }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
+        # The exit file stays 3 (errored) until the gate command itself
+        # finishes, so a failing bench, npm or worktree step is never a
+        # regression. Everything the leg prints, stderr included, is the result.
         run: |
-          trap 'echo "$?" >"$RUNNER_TEMP/soothfast-exit"; echo "$SECONDS" >"$RUNNER_TEMP/soothfast-seconds"' EXIT
-          bench() { (cd "$1" && { [ "$ECOSYSTEM" != node ] || npm ci; } && eval "${BENCH_CMD//\{out\}/$OUT}"); }
-          base="$RUNNER_TEMP/base"
-          git worktree add "$base" "$(git merge-base HEAD "origin/$BASE_REF")"
-          [ "$DIR" = . ] || base="$base/$DIR"
-          bench .
-          if ! bench "$base" || [ ! -f "$base/$OUT" ]; then
-            echo "merge-base has no benchmark results; nothing to compare" | tee "$RESULT"
-            echo "::notice::merge-base has no benchmark results; nothing to compare"
-            exit 0
-          fi
-          cargo soothfast gate --import "$FROM" "$OUT" --reference-import "$FROM" "$base/$OUT" \
-            ${PREFIX:+--prefix "$PREFIX"} ${WALLTIME:+--walltime "$WALLTIME"} | tee "$RESULT"
+          echo 3 >"$RUNNER_TEMP/soothfast-exit"
+          date +%s >"$RUNNER_TEMP/soothfast-start"
+          {
+            bench() { (cd "$1" && { [ "$ECOSYSTEM" != node ] || npm ci; } && eval "${BENCH_CMD//\{out\}/$OUT}"); }
+            base="$RUNNER_TEMP/base"
+            git worktree add "$base" "$(git merge-base HEAD "origin/$BASE_REF")"
+            [ "$DIR" = . ] || base="$base/$DIR"
+            bench .
+            if ! bench "$base" || [ ! -f "$base/$OUT" ]; then
+              echo "merge-base has no benchmark results; nothing to compare"
+              echo "::notice::merge-base has no benchmark results; nothing to compare"
+              echo 0 >"$RUNNER_TEMP/soothfast-exit"
+              exit 0
+            fi
+            set +e
+            cargo soothfast gate --import "$FROM" "$OUT" --reference-import "$FROM" "$base/$OUT" \
+              ${PREFIX:+--prefix "$PREFIX"} ${WALLTIME:+--walltime "$WALLTIME"}
+            rc=$?
+            set -e
+            echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
+            exit "$rc"
+          } 2>&1 | tee "$RESULT"
       - name: Record the verdict
         if: always()
         shell: bash
         env:
           NAME: ${{ matrix.name }}
-        # A leg that died before the trap ran, or never started, is an error.
         run: |
           cargo soothfast verdict record --name "$NAME" --kind import \
             --exit "$(cat "$RUNNER_TEMP/soothfast-exit" 2>/dev/null || echo 3)" \
-            --seconds "$(cat "$RUNNER_TEMP/soothfast-seconds" 2>/dev/null || echo 0)" \
+            --seconds "$(( $(date +%s) - $(cat "$RUNNER_TEMP/soothfast-start" 2>/dev/null || date +%s) ))" \
             --output "$RUNNER_TEMP/soothfast-result.txt" \
             --out "$RUNNER_TEMP/soothfast-results/result.json"
       - name: Upload the gate results
@@ -283,17 +326,23 @@ jobs:
         with:
           sha: ${{ github.job_workflow_sha }}
       - name: Check the docs
+        shell: bash
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
         run: |
-          trap 'echo "$?" >"$RUNNER_TEMP/soothfast-exit"; echo "$SECONDS" >"$RUNNER_TEMP/soothfast-seconds"' EXIT
-          cargo soothfast docs check ${DOCS_PACKAGE:+-p "$DOCS_PACKAGE"} 2>&1 | tee "$RUNNER_TEMP/soothfast-result.txt"
+          echo 3 >"$RUNNER_TEMP/soothfast-exit"
+          date +%s >"$RUNNER_TEMP/soothfast-start"
+          rc=0
+          cargo soothfast docs check ${DOCS_PACKAGE:+-p "$DOCS_PACKAGE"} 2>&1 | tee "$RUNNER_TEMP/soothfast-result.txt" || rc=$?
+          echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
+          exit "$rc"
       - name: Record the verdict
         if: always()
+        shell: bash
         run: |
           cargo soothfast verdict record --name docs --kind docs \
             --exit "$(cat "$RUNNER_TEMP/soothfast-exit" 2>/dev/null || echo 3)" \
-            --seconds "$(cat "$RUNNER_TEMP/soothfast-seconds" 2>/dev/null || echo 0)" \
+            --seconds "$(( $(date +%s) - $(cat "$RUNNER_TEMP/soothfast-start" 2>/dev/null || date +%s) ))" \
             --output "$RUNNER_TEMP/soothfast-result.txt" \
             --out "$RUNNER_TEMP/soothfast-results/result.json"
       - name: Upload the docs result
@@ -351,7 +400,10 @@ jobs:
           RESULTS: ${{ runner.temp }}/soothfast-results
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
-          EXPECT: ${{ needs.plan.outputs.packages }} ${{ join(fromJSON(needs.plan.outputs.matrix).include.*.name, ' ') }} ${{ needs.plan.outputs.docs == 'true' && 'docs' || '' }}
+          EXPECT_RUST: ${{ needs.plan.outputs.packages }}
+          EXPECT_IMPORT: ${{ join(fromJSON(needs.plan.outputs.matrix).include.*.name, ' ') }}
+          EXPECT_DOCS: ${{ needs.plan.outputs.docs == 'true' && 'docs' || '' }}
+          EXPECT_TEST: ${{ needs.plan.outputs.test == 'true' && 'test-rust' || '' }}
         run: ./.soothfast-action/action/verdict.sh
 
   labels:
