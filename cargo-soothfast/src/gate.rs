@@ -364,10 +364,9 @@ fn run_imported(g: &GateArgs, root: &std::path::Path) -> i32 {
         }
         None => match invoke::load_baseline_in(root, &g.baseline) {
             Ok(Some(mut doc)) => {
-                // A baseline can hold other prefixes; theirs are not missing here.
-                let own = format!("{prefix}::");
+                // A baseline can hold other prefixes and Rust items; theirs are not missing here.
                 if let Some(items) = doc["items"].as_object_mut() {
-                    items.retain(|id, _| id.starts_with(&own));
+                    items.retain(|_, v| v["imported"].as_str() == Some(prefix.as_str()));
                 }
                 Ok(doc)
             }
@@ -2703,6 +2702,7 @@ mod tests {
             invoke::save_baseline_in(&root, "base", &run, scope).unwrap();
             let other = ItemMetrics {
                 median_ns: Some(1.0),
+                imported: Some("jmh".into()),
                 ..ItemMetrics::default()
             };
             let mut other_run = Run::default();

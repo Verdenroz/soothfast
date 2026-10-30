@@ -124,6 +124,7 @@ fn saving_replaces_the_prefix_and_keeps_other_items() {
             id.into(),
             ItemMetrics {
                 median_ns: Some(1.0),
+                imported: id.starts_with("jmh::").then(|| "jmh".to_string()),
                 ..ItemMetrics::default()
             },
         );
@@ -136,6 +137,71 @@ fn saving_replaces_the_prefix_and_keeps_other_items() {
     assert!(saved["items"]["jmh::stale"].is_null());
     assert!(saved["items"]["pkg::kept"].is_object());
     assert!(saved["items"]["jmh::com.acme.codec.HashBench.digest"].is_object());
+}
+
+fn rust_item(ids: &[&str]) -> Run {
+    let mut run = Run::default();
+    for id in ids {
+        let item = ItemMetrics {
+            median_ns: Some(1.0),
+            ..ItemMetrics::default()
+        };
+        run.items.insert((*id).into(), item);
+    }
+    run
+}
+
+fn saved_after(name: &str, steps: Vec<(&Run, invoke::SaveScope)>) -> serde_json::Value {
+    let root = std::env::temp_dir().join(format!("soothfast-import-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (run, scope) in steps {
+        invoke::save_baseline_in(&root, "base", run, scope).unwrap();
+    }
+    let saved = invoke::load_baseline_in(&root, "base").unwrap().unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    saved
+}
+
+#[test]
+fn a_full_bench_save_keeps_imported_items() {
+    let imported = imported(Format::Jmh, JMH);
+    let rust = rust_item(&["pkg::new"]);
+    for (name, scope) in [
+        ("all", invoke::SaveScope::BenchFull(None)),
+        ("pkg", invoke::SaveScope::BenchFull(Some("pkg".into()))),
+    ] {
+        let steps = vec![
+            (&imported, invoke::SaveScope::BenchFiltered),
+            (&rust, scope),
+        ];
+        let saved = saved_after(name, steps);
+        assert!(saved["items"]["jmh::com.acme.codec.HashBench.digest"].is_object());
+        assert!(saved["items"]["pkg::new"].is_object());
+    }
+}
+
+#[test]
+fn a_prefix_equal_to_a_package_name_keeps_its_rust_items() {
+    let rust = rust_item(&["soothfast_docs::bench"]);
+    let imported = parse(Format::Jmh, JMH, Some("soothfast_docs")).unwrap();
+    let scope = invoke::SaveScope::Imported("soothfast_docs".into());
+    let steps = vec![
+        (&rust, invoke::SaveScope::BenchFiltered),
+        (&imported, scope),
+    ];
+    let saved = saved_after("pkgname", steps);
+    assert!(saved["items"]["soothfast_docs::bench"].is_object());
+}
+
+#[test]
+fn a_prefix_with_separators_replaces_its_stale_entries() {
+    let stale = parse(Format::Jmh, JMH, Some("app::bench")).unwrap();
+    let mut fresh = parse(Format::Jmh, JMH, Some("app::bench")).unwrap();
+    fresh.items.retain(|id, _| id.ends_with("digest"));
+    let scope = invoke::SaveScope::Imported("app::bench".into());
+    let steps = vec![(&stale, invoke::SaveScope::BenchFiltered), (&fresh, scope)];
+    let saved = saved_after("sep", steps);
+    assert_eq!(saved["items"].as_object().unwrap().len(), 1);
 }
 
 const PYPERF: &str = include_str!("../../tests/fixtures/import/pyperf.json");
