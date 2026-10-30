@@ -156,6 +156,7 @@ installed on is refused.
 | `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
 | `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved. |
 | `rustdoc-cache` | `false` | Restore and save `.soothfast/rustdoc` for a job that runs `spec` or `docs` commands. A hit skips the nightly rustdoc build; see [Rustdoc cache](#rustdoc-cache). |
+| `cache-suffix` | none | Tells apart the legs of a job matrix that share a job name, so each keeps its own `rustdoc-cache`. |
 
 Outputs are `version` and `cache-hit`.
 
@@ -166,24 +167,44 @@ and its dependencies under nightly. With `rustdoc-cache: "true"` the job
 keeps `.soothfast/rustdoc` between runs, and a command that finds the JSON
 it needs there skips cargo entirely.
 
-An entry is named for a hash of the package, features, visibility, the
-`rustc -vV` of the rustdoc toolchain, the rustdoc format version, the
-`RUSTFLAGS` and `RUSTDOCFLAGS` family of variables, `Cargo.lock`, the root
-manifest and cargo config, and every file git lists in the package and its
-path dependencies, apart from `.github`. Uncommitted edits count. The
-merge-base checkout hashes the same way, so JSON a default-branch push
-saved is the base side of a pull request's `docs diff`.
+Lookup has two levels. A key hashes the package, features, visibility, the
+`rustc -vV` of the rustdoc toolchain, the rustdoc format version, every
+`RUSTFLAGS`, `RUSTDOCFLAGS`, `CARGO_ENCODED_*`, `CARGO_BUILD_*`,
+`CARGO_PROFILE_*` and `CARGO_TARGET_*` variable (bar the target directory
+and job count), `Cargo.lock`, the root manifest and cargo config, and the
+content of every file git lists in the package and its path dependencies,
+apart from `.github` and `.soothfast`. Uncommitted edits count, and a nested
+repository or submodule is hashed through. The key selects a manifest of
+the other files the last build read (from rustdoc's and cargo's dep-info and
+the build scripts' `rerun-if-changed`) and the variables it depends on
+(`env-dep` lines and `rerun-if-env-changed`). The entry is named for the key
+and a hash of those, so a changed `include_str!` target outside the package,
+or a changed build script input, is a miss. The merge-base checkout hashes
+the same way, so JSON a default-branch push saved is the base side of a
+pull request's `docs diff`.
 
-The key does not cover what a build script reads beyond those variables,
-or cargo configuration outside the repository such as
-`~/.cargo/config.toml`. A package whose sources sit outside the repository
-has no key and is always rebuilt. A package at the repository root hashes
-every tracked file outside the other packages, so an edit to a doc or a
-README there misses.
+A result is stored only if nothing it read changed during the build.
 
-Caches are kept per job, and the store is capped at 1 GiB, dropping the
-least recently used entries first. Set `SOOTHFAST_TIMINGS=1` to print how
-long each rustdoc build, parse and `cargo bench` took.
+Not covered:
+
+- What a build script reads without declaring it, and variables outside the
+  families above that it does not name in `rerun-if-env-changed`.
+- Cargo configuration outside the repository, such as
+  `~/.cargo/config.toml`, and variables such as `RUSTC_WRAPPER`.
+- Absolute paths rustdoc records for sources outside the workspace.
+- A package whose sources sit outside the repository, or a tree without
+  git, has no key and is always rebuilt.
+
+A package at the repository root hashes every file git lists outside the
+other packages, so a doc or README edit there misses.
+
+Caches are kept per job, runner OS and architecture, and `cache-suffix`, and
+the store is capped at 1 GiB, dropping the least recently used entries
+first. The action saves through `actions/cache`, which saves a new entry at
+the end of every job that did not hit its exact key, even when nothing was
+added. A composite action has no end-of-job step to compare against, so
+that cost is accepted. Set `SOOTHFAST_TIMINGS=1` to print how long each
+rustdoc build, parse and `cargo bench` took.
 
 ## Labels
 

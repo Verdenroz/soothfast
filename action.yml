@@ -151,9 +151,18 @@ inputs:
       job that runs `spec` or `docs` commands. Entries are named for the
       toolchain, flags, lockfile and sources they were built from, so a hit
       skips the nightly build. A pull request starts from its own latest
-      entry merged with the base branch's. Kept per job.
+      entry merged with the base branch's. Kept per job, runner OS and
+      architecture, and `cache-suffix`. The cache saves a new entry at the
+      end of every job that restored without an exact hit, even when nothing
+      was added.
     required: false
     default: "false"
+  cache-suffix:
+    description: >-
+      Tells apart the legs of a job matrix that share a job name, so each
+      keeps its own `rustdoc-cache`. Commas are replaced.
+    required: false
+    default: ""
 
 outputs:
   version:
@@ -295,14 +304,26 @@ runs:
 
     # The store is content-addressed, so entries from any lineage are safe to
     # combine. actions/cache saves the merged directory when the job ends.
+    - name: Name the rustdoc cache
+      if: inputs.rustdoc-cache == 'true'
+      id: rustdoc-key
+      shell: bash
+      env:
+        JOB: ${{ github.job }}
+        SUFFIX: ${{ inputs.cache-suffix }}
+        RUNNER_OS_NAME: ${{ runner.os }}
+        RUNNER_ARCH_NAME: ${{ runner.arch }}
+      run: |
+        suffix="${SUFFIX//,/_}"
+        echo "prefix=soothfast-rustdoc-${JOB}-${suffix}-${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}" >>"$GITHUB_OUTPUT"
     - name: Restore this branch's rustdoc JSON
       if: inputs.rustdoc-cache == 'true' && github.event_name == 'pull_request'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .soothfast/rustdoc
-        key: soothfast-rustdoc-${{ github.job }}-${{ github.ref_name }}-${{ github.sha }}
+        key: ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
         restore-keys: |
-          soothfast-rustdoc-${{ github.job }}-${{ github.ref_name }}-
+          ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-
     - name: Set the branch's rustdoc JSON aside
       if: inputs.rustdoc-cache == 'true' && github.event_name == 'pull_request'
       shell: bash
@@ -316,9 +337,10 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .soothfast/rustdoc
-        key: soothfast-rustdoc-${{ github.job }}-${{ github.ref_name }}-${{ github.sha }}
+        key: ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
         restore-keys: |
-          soothfast-rustdoc-${{ github.job }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
+          ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
+          ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.event.repository.default_branch }}-
     - name: Merge the branch's rustdoc JSON
       if: inputs.rustdoc-cache == 'true' && github.event_name == 'pull_request'
       shell: bash
