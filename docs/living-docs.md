@@ -33,6 +33,10 @@ type, as `crate::path::Type::method`. Its fingerprint is the member's own
 span under the same rule. Trait impl methods are not addressable; bind the
 trait instead.
 
+`-p` may repeat. A bind resolves against the package its first path segment
+names (`-` and `_` are interchangeable), and a bind naming a crate that is
+not among the `-p` packages fails with a request to add it.
+
 `soothfast.lock` is plain JSON: `{"version": 2, "binds": {"item::path":
 "<16-hex-digit fingerprint>"}}`. Running `docs accept` with explicit PATHS
 merges into the existing lock, so binds outside that scope survive. Running

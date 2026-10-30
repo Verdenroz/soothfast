@@ -11,7 +11,10 @@ use crate::{docs_binds, docs_generated, docs_support, invoke};
 
 #[derive(Default)]
 struct DocsArgs {
+    /// The last `-p`, for commands that act on one package.
     pkg: Option<String>,
+    /// Every `-p`, for resolving binds across crates.
+    pkgs: Vec<String>,
     baseline: String,
     against_ref: Option<String>,
     out: Option<PathBuf>,
@@ -39,6 +42,7 @@ pub fn run(args: &[String]) -> i32 {
     };
     let mut a = DocsArgs {
         pkg: None,
+        pkgs: Vec::new(),
         baseline: "base".into(),
         against_ref: None,
         out: None,
@@ -54,7 +58,10 @@ pub fn run(args: &[String]) -> i32 {
     let mut it = args[1..].iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "-p" | "--package" => a.pkg = it.next().cloned(),
+            "-p" | "--package" => {
+                a.pkg = it.next().cloned();
+                a.pkgs.extend(a.pkg.clone());
+            }
             "--baseline" => match it.next() {
                 Some(n) => a.baseline = n.clone(),
                 None => return err("--baseline needs a name"),
@@ -250,21 +257,33 @@ fn scan_at(a: &DocsArgs, root: PathBuf) -> Result<Scanned, String> {
     Ok(Scanned { root, docs })
 }
 
-/// The rustdoc surface, built only when some bind names a Rust item.
-fn surface_for_binds(a: &DocsArgs, scanned: &Scanned) -> Result<Option<surface::Surface>, String> {
+/// The rustdoc surface of each `-p` package, built only when some bind names
+/// a Rust item.
+fn surfaces_for_binds(
+    a: &DocsArgs,
+    scanned: &Scanned,
+) -> Result<Vec<(String, surface::Surface)>, String> {
     let rust_binds = scanned
         .docs
         .iter()
         .flat_map(|(_, d, _)| &d.binds)
         .any(|b| matches!(docs_binds::classify(&b.item), docs_binds::Target::Rust(_)));
     if !rust_binds {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    build_surface(a).map(|(surf, _, _)| Some(surf))
+    if a.pkgs.is_empty() {
+        return Err("this docs command needs -p PKG".into());
+    }
+    a.pkgs
+        .iter()
+        .map(|pkg| {
+            let (surf, _, _) = build_surface(a, pkg)?;
+            Ok((pkg.clone(), surf))
+        })
+        .collect()
 }
 
-fn build_surface(a: &DocsArgs) -> Result<(surface::Surface, Value, PathBuf), String> {
-    let pkg = a.pkg.as_deref().ok_or("this docs command needs -p PKG")?;
+fn build_surface(a: &DocsArgs, pkg: &str) -> Result<(surface::Surface, Value, PathBuf), String> {
     let (doc, root) =
         invoke::rustdoc_json_in(pkg, None, a.features.as_deref(), invoke::Visibility::Public)
             .map_err(|e| e.to_string())?;
@@ -284,7 +303,7 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
     // 1. Bind fingerprints vs soothfast.lock.
     let any_binds = scanned.docs.iter().any(|(_, d, _)| !d.binds.is_empty());
     if any_binds {
-        let surf = match surface_for_binds(a, scanned) {
+        let surfs = match surfaces_for_binds(a, scanned) {
             Ok(s) => s,
             Err(e) => return err(&format!("binds present but surface unavailable: {e}")),
         };
@@ -308,22 +327,19 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
         } else {
             for (file, doc, _) in &scanned.docs {
                 for bind in &doc.binds {
-                    let current =
-                        match docs_binds::resolve(&scanned.root, surf.as_ref(), &bind.item) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                failures += 1;
-                                println!("FAIL  {file}:{} bind {}: {e}", bind.line, bind.item);
-                                continue;
-                            }
-                        };
+                    let current = match docs_binds::resolve(&scanned.root, &surfs, &bind.item) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            failures += 1;
+                            println!("FAIL  {file}:{} bind {}: {e}", bind.line, bind.item);
+                            continue;
+                        }
+                    };
                     match lock.binds.get(&bind.item) {
                         None => {
                             failures += 1;
-                            let pkg = match (&surf, a.pkg.as_deref()) {
-                                (Some(_), pkg) => format!(" -p {}", pkg.unwrap_or("PKG")),
-                                (None, _) => String::new(),
-                            };
+                            let pkg: String =
+                                a.pkgs.iter().map(|pkg| format!(" -p {pkg}")).collect();
                             println!(
                                 "FAIL  {file}:{} bind {}: not locked — verify the prose, then `cargo soothfast docs accept{pkg}`",
                                 bind.line, bind.item
@@ -423,14 +439,14 @@ fn accept(a: &DocsArgs) -> i32 {
 }
 
 fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
-    let surf = match surface_for_binds(a, scanned) {
+    let surfs = match surfaces_for_binds(a, scanned) {
         Ok(s) => s,
         Err(e) => return err(&e),
     };
     let mut fresh = lockfile::Binds::new();
     for (file, doc, _) in &scanned.docs {
         for bind in &doc.binds {
-            match docs_binds::resolve(&scanned.root, surf.as_ref(), &bind.item) {
+            match docs_binds::resolve(&scanned.root, &surfs, &bind.item) {
                 Ok(fp) => fresh.insert(bind.item.clone(), fp),
                 Err(e) => {
                     return err(&format!("{file}:{} bind {}: {e}", bind.line, bind.item));
@@ -723,7 +739,7 @@ fn surface_diff(a: &DocsArgs) -> i32 {
     let Some(refname) = a.against_ref.clone() else {
         return err("diff needs --against-ref REF");
     };
-    let (new_surf, _, _) = match build_surface(a) {
+    let (new_surf, _, _) = match build_surface(a, &pkg) {
         Ok(s) => s,
         Err(e) => return err(&e),
     };
@@ -761,7 +777,7 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
     let Some(pkg) = a.pkg.clone() else {
         return err("reference needs -p PKG");
     };
-    let (surf, doc, root) = match build_surface(a) {
+    let (surf, doc, root) = match build_surface(a, &pkg) {
         Ok(s) => s,
         Err(e) => return err(&e),
     };
@@ -887,7 +903,7 @@ mod tests {
         let dir = project_without_cargo("surface");
         let a = DocsArgs::default();
         let scanned = scan_at(&a, dir).unwrap();
-        assert!(super::surface_for_binds(&a, &scanned).unwrap().is_none());
+        assert!(super::surfaces_for_binds(&a, &scanned).unwrap().is_empty());
         assert_eq!(
             docs_binds::classify(&scanned.docs[0].1.binds[0].item),
             docs_binds::Target::File {
