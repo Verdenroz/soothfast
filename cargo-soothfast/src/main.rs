@@ -20,6 +20,7 @@ mod gate_config;
 mod gate_lock;
 mod glob;
 mod headrun;
+mod import;
 mod init;
 mod invoke;
 mod itemcache;
@@ -161,6 +162,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
     match cmd.as_str() {
         "measure" => cmd_measure(rest),
         "init" => init::run(rest),
+        "import" => import::run(rest),
         "gate" => gate::run(rest),
         "trend" => trend::run(rest),
         "docs" => docs::run(rest),

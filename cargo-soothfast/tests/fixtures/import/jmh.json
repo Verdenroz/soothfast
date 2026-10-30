@@ -1,0 +1,78 @@
+[
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.acme.codec.ParseBench.parse",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 2,
+        "warmupIterations" : 3,
+        "measurementIterations" : 5,
+        "params" : {
+            "size" : "1000",
+            "encoding" : "utf8"
+        },
+        "primaryMetric" : {
+            "score" : 1.25,
+            "scoreError" : 0.04,
+            "scoreConfidence" : [1.21, 1.29],
+            "scorePercentiles" : {
+                "0.0" : 1.2, "50.0" : 1.25, "90.0" : 1.3, "99.0" : 1.32, "100.0" : 1.32
+            },
+            "scoreUnit" : "us/op",
+            "rawData" : [
+                [1.2, 1.22, 1.25, 1.27, 1.3],
+                [1.21, 1.24, 1.26, 1.28, 1.32]
+            ]
+        },
+        "secondaryMetrics" : {}
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.acme.codec.ParseBench.parse",
+        "mode" : "avgt",
+        "threads" : 1,
+        "forks" : 2,
+        "warmupIterations" : 3,
+        "measurementIterations" : 5,
+        "params" : {
+            "size" : "10",
+            "encoding" : "utf8"
+        },
+        "primaryMetric" : {
+            "score" : 140.0,
+            "scoreError" : 3.0,
+            "scoreConfidence" : [137.0, 143.0],
+            "scorePercentiles" : {
+                "0.0" : 135.0, "50.0" : 140.0, "90.0" : 146.0, "99.0" : 148.0, "100.0" : 148.0
+            },
+            "scoreUnit" : "ns/op",
+            "rawData" : [
+                [135.0, 138.0, 140.0, 142.0, 144.0],
+                [136.0, 139.0, 141.0, 146.0, 148.0]
+            ]
+        },
+        "secondaryMetrics" : {}
+    },
+    {
+        "jmhVersion" : "1.37",
+        "benchmark" : "com.acme.codec.HashBench.digest",
+        "mode" : "thrpt",
+        "threads" : 1,
+        "forks" : 1,
+        "warmupIterations" : 3,
+        "measurementIterations" : 4,
+        "primaryMetric" : {
+            "score" : 2000000.0,
+            "scoreError" : 50000.0,
+            "scoreConfidence" : [1950000.0, 2050000.0],
+            "scorePercentiles" : {
+                "0.0" : 1900000.0, "50.0" : 2000000.0, "99.0" : 2100000.0, "100.0" : 2100000.0
+            },
+            "scoreUnit" : "ops/s",
+            "rawData" : [
+                [1900000.0, 2000000.0, 2000000.0, 2100000.0]
+            ]
+        },
+        "secondaryMetrics" : {}
+    }
+]
