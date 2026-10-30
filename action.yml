@@ -159,13 +159,16 @@ inputs:
     default: "false"
   bin-cache:
     description: >-
-      Restore and save the built bench executables (`.soothfast/bins`), so a
-      job whose sources a change leaves alone, such as a docs-only pull
-      request, runs the binary a previous job built instead of building it
-      again. Keyed and merged like `rustdoc-cache`. The store keeps at most
-      512 MiB, dropping the least recently used.
+      Restore the built bench executables (`.soothfast/bins`) before the gate
+      and save them after it, so a job whose sources a change leaves alone,
+      such as a docs-only pull request, runs the binary a previous job built
+      instead of building it again. Keyed and merged like `rustdoc-cache`, but
+      saved only when the gate added or replaced an executable, and holding
+      one executable per package, bench target and profile. A saved entry is
+      as large as the executable (tens of MB), so enable it for the job that
+      builds the bench target, not for every job.
     required: false
-    default: "true"
+    default: "false"
   cache-suffix:
     description: >-
       Tells apart the legs of a job matrix that share a job name, so each
@@ -361,8 +364,8 @@ runs:
           rm -rf .soothfast-rustdoc-branch
         fi
 
-    # Bench executables follow the rustdoc cache: same keying, restore order
-    # and merge.
+    # Bench executables are restored like the rustdoc JSON but saved only
+    # after the gate, and only if it changed the store: an entry is large.
     - name: Name the bin cache
       if: inputs.bin-cache == 'true'
       id: bin-key
@@ -391,9 +394,10 @@ runs:
           mkdir -p .soothfast-bins-branch
           mv .soothfast/bins .soothfast-bins-branch/bins
         fi
-    - name: Restore and save bench executables
+    - name: Restore bench executables
       if: inputs.bin-cache == 'true'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      id: bins
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .soothfast/bins
         key: ${{ steps.bin-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
@@ -410,6 +414,11 @@ runs:
           "$CLI" cache merge --from .soothfast-bins-branch
           rm -rf .soothfast-bins-branch
         fi
+    - name: List bench executables before the gate
+      if: inputs.bin-cache == 'true'
+      id: bins-before
+      shell: bash
+      run: echo "listing=$("$GITHUB_ACTION_PATH/action/listing.sh" .soothfast/bins)" >>"$GITHUB_OUTPUT"
 
     - name: Gate against the base branch
       if: github.event_name == 'pull_request' && inputs.gate == 'true'
@@ -466,6 +475,26 @@ runs:
           .soothfast/items
           .soothfast/maps
         key: ${{ steps.save-key.outputs.key }}
+
+    # Names and sizes only: a hit renews modification times without adding
+    # anything worth a new entry.
+    - name: List bench executables after the gate
+      if: always() && inputs.bin-cache == 'true'
+      id: bins-after
+      shell: bash
+      env:
+        BEFORE: ${{ steps.bins-before.outputs.listing }}
+      run: |
+        after="$("$GITHUB_ACTION_PATH/action/listing.sh" .soothfast/bins)"
+        if [ "$after" != "$BEFORE" ]; then echo "changed=true" >>"$GITHUB_OUTPUT"; fi
+    - name: Save bench executables
+      if: >-
+        always() && steps.bins-after.outputs.changed == 'true'
+        && steps.bins.outputs.cache-matched-key != format('{0}-{1}-{2}', steps.bin-key.outputs.prefix, github.ref_name, github.sha)
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .soothfast/bins
+        key: ${{ steps.bin-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
 
     - name: Mint a soothfast-bot token for labels
       if: steps.prepare.outputs.sweep == 'true' && inputs.bot-token == ''

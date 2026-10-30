@@ -172,6 +172,7 @@ jobs:
           packages: ${{ needs.plan.outputs.packages }}
           changelog: ${{ inputs.bot && 'true' || 'false' }}
           save-baseline: head
+          bin-cache: "true"
       # The docs job reads claims from this instead of measuring again. A
       # failing gate, or one whose bench binaries match the base, saves none.
       - name: Upload the head measurement

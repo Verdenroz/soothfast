@@ -156,7 +156,7 @@ installed on is refused.
 | `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
 | `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved. |
 | `rustdoc-cache` | `false` | Restore and save `.soothfast/rustdoc` for a job that runs `spec` or `docs` commands. A hit skips the nightly rustdoc build; see [Rustdoc cache](#rustdoc-cache). |
-| `bin-cache` | `true` | Restore and save `.soothfast/bins`, the built bench executables, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See [Bench executable cache](#bench-executable-cache). Set `false` for a job that builds no bench target. |
+| `bin-cache` | `false` | Restore `.soothfast/bins`, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See [Bench executable cache](#bench-executable-cache). |
 | `cache-suffix` | none | Tells apart the legs of a job matrix that share a job name, so each keeps its own `rustdoc-cache` and `bin-cache`. |
 
 Outputs are `version` and `cache-hit`.
@@ -240,14 +240,40 @@ checkouts of one tree at different paths gave identical executables only
 while no such path was compiled in. A job that moves its checkout between
 runs misses; CI runners use one path per repository.
 
-A stored binary has no build to link again, so its link map is the one kept
-under `.soothfast/maps` for its digest, or none: unnamed constants then hash
-as whole sections, which finds fewer reusable items but never a wrong one.
+Each entry also keeps the digest of its binary and its link map, written
+once the first run has worked them out. A hit reads the digest instead of
+computing it, and puts the map back under `.soothfast/maps` if that was
+pruned. A stored binary has no build to link again, so a map found nowhere
+means none: unnamed constants then hash as whole sections, which finds fewer
+reusable items but never a wrong one.
+
+The store holds one executable per package, bench target and profile: a
+new one replaces the old, so a saved cache is the binary the branch runs and
+not its history.
+
+### Cache budget
+
+A saved entry is as large as the executable, tens of MB, and GitHub keeps
+about 10 GB of cache per repository, evicting the least recently used. An
+entry that displaced the measured-run caches would cost more than it saves,
+so the action is conservative:
+
+- `bin-cache` is off by default. Turn it on for the job that builds the bench
+  target through the action (`gate: "true"`, the default).
+- The executables are restored before the gate and saved after it, in a step
+  of their own, only if a listing of the store (names and sizes, not times)
+  differs from the one taken before the gate. A job that hit its executable,
+  such as a docs-only pull request, saves nothing.
+- A job outside the action, such as a `spec check` step in the adopter's own
+  workflow, restores and saves `.soothfast/bins` with `actions/cache` on a
+  key of its choosing. Key it per job and runner like `rustdoc-cache`, and
+  save it with `actions/cache/save` guarded the same way, or only on the
+  default branch.
 
 Not covered, beyond what the rustdoc cache lists: a markdown file a proc
 macro or build script reads without saying so, the linker and C compiler a
 build script invokes, and anything a bench reads at run time besides its
-working directory and `CARGO_MANIFEST_DIR`. The store keeps 512 MiB.
+working directory and `CARGO_MANIFEST_DIR`. The store keeps 512 MiB at most.
 
 ## Labels
 
