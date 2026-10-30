@@ -250,10 +250,9 @@ jobs:
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           bench() { (cd "$1" && { [ "$ECOSYSTEM" != node ] || npm ci; } && eval "${BENCH_CMD//\{out\}/$OUT}"); }
-          # The checkout outlives _temp on a persistent runner, so a worktree
-          # left registered by an earlier run must be pruned first.
+          # Unique per run, so a worktree an earlier run left registered on a
+          # persistent runner never collides, and none is pruned.
           tree="$RUNNER_TEMP/soothfast-base-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          git worktree prune
           git worktree add "$tree" "$(git merge-base HEAD "origin/$BASE_REF")"
           trap 'git worktree remove --force "$tree" >/dev/null 2>&1 || true' EXIT
           base="$tree"
