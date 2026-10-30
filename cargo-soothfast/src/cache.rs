@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use crate::{itemcache, linkmap, runcache, rustdocstore};
+use crate::{itemcache, linkmap, runcache, rustdocstore, store};
 
 pub fn run(args: &[String]) -> i32 {
     let [sub, flag, from] = args else {
@@ -25,7 +25,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     if let Some(dir) = runcache::state_dir("rustdoc") {
         copy_missing(&from.join("rustdoc"), &dir);
-        rustdocstore::prune(&dir, rustdocstore::MAX_BYTES);
+        store::prune(&dir, rustdocstore::MAX_BYTES);
     }
     0
 }

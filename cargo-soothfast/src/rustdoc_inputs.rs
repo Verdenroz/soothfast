@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::invoke;
-use crate::rustdocstore::Inputs;
+use crate::store::Inputs;
 
 /// Everything the build read beyond the files of the package directories:
 /// `dep_info` is what rustdoc wrote for the documented crate, and

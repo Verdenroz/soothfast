@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 
-use crate::{rustdoc_inputs, rustdocstore};
+use crate::{rustdoc_inputs, rustdocstore, store};
 
 /// Run `f`, printing its wall time to stderr when `SOOTHFAST_TIMINGS` is set.
 pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
@@ -1348,8 +1348,8 @@ fn rustdoc_store_key(
             dirs
         }
     };
-    let rustc = rustdocstore::rustc_version(toolchain)?;
-    let env = rustdocstore::build_env();
+    let rustc = store::rustc_version(Some(toolchain), &root)?;
+    let env = store::build_env();
     let request = rustdocstore::Request {
         pkg,
         features,

@@ -51,6 +51,7 @@ mod spec_gate;
 mod spec_gen;
 mod spec_html;
 mod spec_probe;
+mod store;
 mod test;
 mod trend;
 mod workspace;
