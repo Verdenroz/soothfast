@@ -58,7 +58,8 @@ Symbol names follow these rules:
   the container `Companion`.
 - Overloads share one name, and the fingerprint covers all of them.
 - In Python, indentation is part of the code and counts toward the
-  fingerprint. Ordinary comments do not, in any language.
+  fingerprint. Ordinary comments do not, in any language; doc comments
+  (`/** */`, docstrings) do, since the prose is bound to them.
 - A symbol inside code that does not parse is reported as missing, never
   guessed.
 
