@@ -73,7 +73,7 @@ impl<'a> Resolver<'a> {
 
     /// The section holding `addr`, else the one empty section that starts
     /// exactly there (`__TMC_END__` lands on `.tm_clone_table`).
-    fn section_at(&self, addr: u64) -> Option<usize> {
+    pub(super) fn section_at(&self, addr: u64) -> Option<usize> {
         let after = self.sections.partition_point(|s| s.vma <= addr);
         let before = &self.sections[..after];
         if let Some(i) = before.iter().rposition(|s| s.size > 0)
@@ -133,9 +133,43 @@ impl<'a> Resolver<'a> {
                 (Node::Entry(start, e.entry), start)
             }
             Some(i) => (Node::Input(i), self.inputs[i].vma),
-            None => (Node::Section(section), self.sections[section].vma),
+            None => self
+                .end_of(addr, section)
+                .unwrap_or((Node::Section(section), self.sections[section].vma)),
         };
         Some(Place::Data(node, addr - start, slot.to_string()))
+    }
+
+    /// The node of `section` that ends exactly at `addr`, which nothing
+    /// contains, and where it starts: a sized symbol, else an input section,
+    /// else the last entry of a pool.
+    fn end_of(&self, addr: u64, section: usize) -> Option<(Node, u64)> {
+        let in_section = |at: u64| self.section_at(at) == Some(section);
+        let i = self
+            .symbols
+            .partition_point(|s| s.addr < addr)
+            .checked_sub(1);
+        if let Some(i) = i.filter(|&i| {
+            let s = &self.symbols[i];
+            s.addr + s.size == addr && in_section(s.addr)
+        }) {
+            return Some((Node::Symbol(i), self.symbols[i].addr));
+        }
+        let i = self
+            .inputs
+            .partition_point(|e| e.vma < addr)
+            .checked_sub(1)?;
+        let e = &self.inputs[i];
+        if e.vma + e.size != addr || !in_section(e.vma) {
+            return None;
+        }
+        Some(match (e.size - 1).checked_div(e.entry) {
+            Some(last) => {
+                let start = e.vma + last * e.entry;
+                (Node::Entry(start, e.entry), start)
+            }
+            None => (Node::Input(i), e.vma),
+        })
     }
 
     pub(super) fn input_at(&self, addr: u64) -> Option<usize> {
@@ -303,7 +337,7 @@ fn is_transfer(mnemonic: &str) -> bool {
 
 /// `3f000 <sym+0x10>` or a bare `3f000`.
 pub(super) fn split_target(tail: &str) -> Option<(u64, Option<&str>)> {
-    let addr = u64::from_str_radix(tail.split_whitespace().next()?, 16).ok()?;
+    let addr = jumptable::address_of(tail)?;
     let hint = tail
         .find('<')
         .and_then(|i| tail.rfind('>').map(|j| &tail[i + 1..j]));
@@ -471,7 +505,80 @@ mod tests {
         }];
         assert_eq!(hash(&input, 0x2018), hash(&input, 0x201c));
         assert_ne!(hash(&input, 0x2008), hash(&input, 0x2009));
+        let unmapped = UNNAMED.replace("2008 <anon>", "200a <anon>");
+        let whole = |byte: usize| {
+            let mut image = image(7, 1);
+            image[byte] = 9;
+            bar(&Fixture::default().wanted(&[BAR]).hashes(&image, &unmapped))
+        };
+        assert_ne!(whole(0x2018), whole(0x201c));
+    }
+
+    #[test]
+    fn an_address_one_past_an_input_section_hashes_that_section_not_the_whole() {
+        let dis = UNNAMED.replace("2008 <anon>", "2010 <end>");
+        let hash = |inputs: &[Extent], byte: usize| {
+            let mut image = image(7, 1);
+            image[byte] = 9;
+            let fixture = Fixture::default().wanted(&[BAR]).inputs(inputs);
+            bar(&fixture.hashes(&image, &dis))
+        };
+        let ends_here = Extent {
+            vma: 0x2008,
+            size: 8,
+            entry: 0,
+        };
+        assert!(hash(std::slice::from_ref(&ends_here), 0x2018).is_some());
+        assert_ne!(
+            hash(std::slice::from_ref(&ends_here), 0x200f),
+            hash(std::slice::from_ref(&ends_here), 0x2012)
+        );
+        assert_eq!(
+            hash(std::slice::from_ref(&ends_here), 0x2018),
+            hash(std::slice::from_ref(&ends_here), 0x201c)
+        );
         assert_ne!(hash(&[], 0x2018), hash(&[], 0x201c));
+        let starts_here = Extent {
+            vma: 0x2010,
+            size: 8,
+            entry: 0,
+        };
+        let both = [ends_here, starts_here];
+        assert_ne!(hash(&both, 0x2010), hash(&both, 0x201c));
+        assert_eq!(hash(&both, 0x200f), hash(&both, 0x201c));
+    }
+
+    #[test]
+    fn an_address_one_past_a_sized_symbol_hashes_that_symbol() {
+        let dis = UNNAMED.replace("2008 <anon>", "2008 <end>");
+        let hash = |byte: usize| {
+            let mut image = image(7, 1);
+            image[byte] = 9;
+            bar(&Fixture::default().wanted(&[BAR]).hashes(&image, &dis))
+        };
+        assert!(hash(0x2018).is_some());
+        assert_ne!(hash(0x2003), hash(0x2018));
+        assert_eq!(hash(0x2018), hash(0x201c));
+    }
+
+    #[test]
+    fn an_address_one_past_a_pool_hashes_its_last_entry() {
+        let dis = UNNAMED.replace("2008 <anon>", "2018 <end>");
+        let pool = [Extent {
+            vma: 0x2008,
+            size: 16,
+            entry: 8,
+        }];
+        let hash = |byte: usize| {
+            let mut image = image(7, 1);
+            image[byte] = 9;
+            bar(&Fixture::default()
+                .wanted(&[BAR])
+                .inputs(&pool)
+                .hashes(&image, &dis))
+        };
+        assert_ne!(hash(0x2010), hash(0x2008));
+        assert_eq!(hash(0x2008), hash(0x201c));
     }
 
     #[test]

@@ -11,6 +11,7 @@
 
 mod disasm;
 mod elf;
+mod exits;
 #[cfg(test)]
 mod fixture;
 mod resolve;
@@ -45,6 +46,31 @@ fn strip_llvm(name: &str) -> Cow<'_, str> {
     let rest = &name[at + ".llvm.".len()..];
     let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
     Cow::Owned(format!("{}{}", &name[..at], &rest[digits..]))
+}
+
+/// A piece of another function rather than a function: control jumps into it
+/// and back. `.cold` is a split-off cold path (gcc, LLVM); `.__part.` and
+/// `.lto_priv` are renamed pieces. gcc's `.part.N` is not one: it is a
+/// callable function holding the tail of its parent, which returns to the
+/// parent's caller, so a jump to it is a tail call like any other.
+fn is_fragment(name: &str) -> bool {
+    [".cold", ".__part.", ".lto_priv"]
+        .iter()
+        .any(|piece| name.contains(piece))
+}
+
+/// A Rust symbol: v0 (`_R...`) or legacy (`_ZN...17h<16 hex>E`).
+fn is_rust_symbol(name: &str) -> bool {
+    let name = strip_llvm(name.strip_prefix(LABELED).unwrap_or(name));
+    if name.starts_with("_R") {
+        return true;
+    }
+    let hash = name
+        .strip_prefix("_ZN")
+        .and_then(|rest| rest.strip_suffix('E'))
+        .and_then(|rest| rest.rsplit_once("17h"))
+        .map(|(_, hash)| hash);
+    hash.is_some_and(|h| h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 /// Callgrind's name for the frames under `main`, which is no symbol.
@@ -237,6 +263,41 @@ mod tests {
         assert_eq!(strip_llvm("foo.llvm.12+0x10"), "foo+0x10");
         assert_eq!(strip_llvm("foo.llvm.12"), "foo");
         assert_eq!(strip_llvm("foo+0x10"), "foo+0x10");
+    }
+
+    #[test]
+    fn fragments_are_pieces_of_a_function_and_part_clones_are_not() {
+        for piece in [
+            "sqlite3VdbeExec.cold",
+            "f.cold.3",
+            "f.__part.1",
+            "f.lto_priv.0",
+        ] {
+            assert!(is_fragment(piece), "{piece}");
+        }
+        for whole in ["f", "f.part.0", "f.isra.0", "f.constprop.1", "f.llvm.12"] {
+            assert!(!is_fragment(whole), "{whole}");
+        }
+    }
+
+    #[test]
+    fn rust_symbols_are_told_by_their_mangling() {
+        for rust in [
+            "_RNvNtCs1_3foo3bar",
+            "_ZN3foo3bar17h0123456789abcdefE",
+            "_ZN3foo3bar17h0123456789abcdefE.llvm.77",
+            "at:_RNvCs1_3foo3bar",
+        ] {
+            assert!(is_rust_symbol(rust), "{rust}");
+        }
+        for other in [
+            "sqlite3VdbeExec",
+            "_ZN3foo3barEv",
+            "_ZN3foo3bar17hnothexnothexnotE",
+            "main",
+        ] {
+            assert!(!is_rust_symbol(other), "{other}");
+        }
     }
 
     #[test]

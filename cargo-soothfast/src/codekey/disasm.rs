@@ -5,9 +5,10 @@ use std::io::BufRead;
 
 use soothfast_registry::fnv1a;
 
+use super::exits::FunctionExits;
 use super::resolve::Resolver;
 use super::tables::table_operand;
-use super::{LABELED, strip_llvm};
+use super::{LABELED, is_rust_symbol, strip_llvm};
 use crate::jumptable;
 
 /// One function being hashed: its extent, its instructions as disassembled,
@@ -36,9 +37,16 @@ impl Span {
     /// Normalize the instructions. A jump table the instructions prove (see
     /// `jumptable`) is hashed as the places in this function it jumps to.
     fn read(&mut self, resolver: &mut Resolver) {
-        let proven = jumptable::prove(&self.instrs, (self.start, self.end), &|tables| {
-            resolver.table_targets(tables, self.start, self.end)
-        });
+        let proven = jumptable::prove(
+            &self.instrs,
+            (self.start, self.end),
+            &|tables| resolver.table_targets(tables, self.start, self.end),
+            &FunctionExits {
+                resolver,
+                span: (self.start, self.end),
+                rust: self.names.first().is_some_and(|n| is_rust_symbol(n)),
+            },
+        );
         let tables = resolver.decode_tables(&proven, self.start);
         self.normalize(resolver, &tables);
     }

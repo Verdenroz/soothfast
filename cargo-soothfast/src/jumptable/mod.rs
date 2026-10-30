@@ -200,17 +200,48 @@ fn scaled_base(operand: &str) -> Option<String> {
     family(base)
 }
 
-/// `jmp *d(%rip)`: a tail call through a GOT slot. It can only re-enter this
-/// function at its entry, where every register is unknown anyway.
-fn through_slot(ins: &Ins) -> bool {
-    ins.operands.len() == 1
+/// The address an instruction's `# addr <sym>` comment, or a bare operand,
+/// starts with.
+pub fn address_of(text: &str) -> Option<u64> {
+    u64::from_str_radix(text.split_whitespace().next()?, 16).ok()
+}
+
+/// `jmp *d(%rip)`: a tail call through a slot, and the address of that slot.
+fn through_slot(ins: &Ins) -> Option<u64> {
+    let slot = ins.operands.len() == 1
         && ins.operands[0].starts_with('*')
-        && ins.operands[0].ends_with("(%rip)")
+        && ins.operands[0].ends_with("(%rip)");
+    slot.then(|| address_of(ins.comment?)).flatten()
+}
+
+/// `jmp *d(%rA)` or `jmp *(%rA)`: a jump through a pointer in memory, with no
+/// index register, which a table jump always has.
+fn loads_pointer(ins: &Ins) -> bool {
+    ins.operands.len() == 1
+        && ins.operands[0]
+            .strip_prefix('*')
+            .is_some_and(|o| unindexed_memory(o) && !o.ends_with("(%rip)"))
+}
+
+/// `jmp *%rA`, whose register `exits_through_loaded_pointers` must show holds
+/// a pointer from memory.
+fn through_loaded_register(ins: &Ins) -> bool {
+    ins.operands.len() == 1
+        && ins.operands[0]
+            .strip_prefix('*')
+            .is_some_and(|o| family(o).is_some())
+}
+
+fn unindexed_memory(operand: &str) -> bool {
+    !operand.starts_with('%')
+        && !operand.starts_with('$')
+        && operand.ends_with(')')
+        && !operand.contains(',')
 }
 
 fn direct_target(ins: &Ins) -> Option<u64> {
     is_jump(ins.mnemonic)
-        .then(|| u64::from_str_radix(ins.operands.first()?.split_whitespace().next()?, 16).ok())
+        .then(|| address_of(ins.operands.first()?))
         .flatten()
 }
 
@@ -247,6 +278,17 @@ const CALLER_SAVED: &[&str] = &["a", "c", "d", "si", "di", "r8", "r9", "r10", "r
 /// Where each candidate table jumps to, for those whose words decode.
 pub type Decoder<'a> = dyn Fn(&[u64]) -> HashMap<u64, Vec<u64>> + 'a;
 
+/// What the image says about the places a function's jumps leave for.
+pub trait Exits {
+    /// Whether control that jumps to `target` has left for good: it is the
+    /// entry of a function outside this one, and no fragment of another.
+    fn branch_leaves(&self, target: u64) -> bool;
+    /// The same for a tail call through the slot at the address.
+    fn slot_leaves(&self, slot: u64) -> bool;
+    /// Whether this function is Rust, which has no computed goto.
+    fn rust(&self) -> bool;
+}
+
 /// A table read as `movslq (%rA,%rI,4),%rB; add; jmp *%rD`, from one `lea`.
 struct Candidate {
     table: u64,
@@ -270,12 +312,27 @@ struct Candidate {
 ///   keeps the callee-saved registers and clobbers the rest; an instruction
 ///   that may write anything clobbers all.
 ///
-/// The graph must be complete: every indirect jump is a proven table jump,
-/// and every direct branch lands on an instruction of the function, or
-/// leaves it by an unconditional tail jump. Otherwise nothing is proven. A
-/// candidate that fails is dropped, and the rest are checked again against
-/// the graph without it.
-pub fn prove(instrs: &[(u64, String)], span: (u64, u64), decode: &Decoder) -> Proven {
+/// The graph must be complete, and a path may end only at one of these:
+///
+/// - `ret` and the other instructions that end a block;
+/// - a direct branch, conditional or not, out of the span to `Exits::branch_leaves`;
+/// - `jmp *d(%rip)` through a slot for which `Exits::slot_leaves` holds;
+/// - in a Rust function only, `jmp *d(%rA)` or `jmp *(%rA)` through unindexed
+///   memory, and `jmp *%rA` where every path last loaded `%rA` that way. C
+///   has labels as values, so such a jump can re-enter the span; Rust has
+///   none, and an async state machine resumes through a switch.
+///
+/// Every other indirect jump is a proven table jump, or nothing is proven. A
+/// branch to a fragment of another function (`.cold`) or into the middle of a
+/// symbol is not an exit: it can come back. All exits assume control never
+/// re-enters the span except through a call. A candidate that fails is
+/// dropped, and the rest are checked again against the graph without it.
+pub fn prove(
+    instrs: &[(u64, String)],
+    span: (u64, u64),
+    decode: &Decoder,
+    exits: &dyn Exits,
+) -> Proven {
     let Some(parsed) = instrs
         .iter()
         .map(|(addr, body)| Some((*addr, parse(body)?)))
@@ -299,9 +356,12 @@ pub fn prove(instrs: &[(u64, String)], span: (u64, u64), decode: &Decoder) -> Pr
         if active.is_empty() {
             return Proven::default();
         }
-        let Some(graph) = Graph::build(&parsed, &at, span, &active, &targets) else {
+        let Some(graph) = Graph::build(&parsed, &at, span, &active, &targets, exits) else {
             return Proven::default();
         };
+        if !graph.exits_through_loaded_pointers(&parsed) {
+            return Proven::default();
+        }
         let before = active.len();
         active.retain(|c| graph.reads_table(&parsed, c, &leas));
         if active.len() == before {
@@ -334,7 +394,7 @@ fn rip_leas(parsed: &[(u64, Ins)]) -> Vec<Lea> {
             i.operands.first().filter(|o| o.ends_with("(%rip)"))?;
             Some(Lea {
                 at,
-                table: u64::from_str_radix(i.comment?.split_whitespace().next()?, 16).ok()?,
+                table: address_of(i.comment?)?,
                 dest: family(i.operands.get(1)?)?,
             })
         })
@@ -424,6 +484,10 @@ struct Graph {
     /// padding: landing pads the unwinder enters.
     orphans: Vec<usize>,
     has_call: bool,
+    /// `jmp *%rA` instructions that are no table jump, with their register:
+    /// exits, provided `exits_through_loaded_pointers` shows `%rA` holds a
+    /// pointer from memory.
+    pointer_exits: Vec<(usize, String)>,
 }
 
 impl Graph {
@@ -436,11 +500,13 @@ impl Graph {
         span: (u64, u64),
         active: &[Candidate],
         targets: &HashMap<u64, Vec<u64>>,
+        exits: &dyn Exits,
     ) -> Option<Graph> {
         let n = parsed.len();
         let mut succ = vec![Vec::new(); n];
         let mut leader = vec![false; n];
         leader[0] = true;
+        let mut pointer_exits = Vec::new();
         for (i, (_, ins)) in parsed.iter().enumerate() {
             let next = (i + 1 < n).then_some(i + 1);
             if ins.mnemonic == "(bad)" {
@@ -457,17 +523,25 @@ impl Graph {
                         leader[to] = true;
                         succ[i].push(to);
                     }
-                    Some(_) if unconditional => {}
+                    Some(t) if exits.branch_leaves(t) => {}
                     Some(_) => return None,
-                    None if unconditional && through_slot(ins) => {}
-                    None if unconditional => {
-                        let table = active.iter().find(|c| c.jmp == i)?.table;
-                        for t in targets.get(&table)? {
-                            let to = *at.get(t)?;
-                            leader[to] = true;
-                            succ[i].push(to);
+                    None if unconditional
+                        && through_slot(ins).is_some_and(|a| exits.slot_leaves(a)) => {}
+                    None if unconditional => match active.iter().find(|c| c.jmp == i) {
+                        Some(c) => {
+                            for t in targets.get(&c.table)? {
+                                let to = *at.get(t)?;
+                                leader[to] = true;
+                                succ[i].push(to);
+                            }
                         }
-                    }
+                        None if exits.rust() && loads_pointer(ins) => {}
+                        None if exits.rust() && through_loaded_register(ins) => {
+                            let reg = ins.operands[0].strip_prefix('*').and_then(family)?;
+                            pointer_exits.push((i, reg));
+                        }
+                        None => return None,
+                    },
                     None => return None,
                 }
                 if !unconditional {
@@ -488,6 +562,30 @@ impl Graph {
             leader,
             orphans,
             has_call,
+            pointer_exits,
+        })
+    }
+
+    /// Whether every register-indirect exit jumps through a register whose
+    /// last definition, on every path, is a load of a pointer from memory.
+    /// Each register is followed through the graph once for all its exits.
+    fn exits_through_loaded_pointers(&self, parsed: &[(u64, Ins)]) -> bool {
+        let mut by_reg: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (at, reg) in &self.pointer_exits {
+            by_reg.entry(reg).or_default().push(*at);
+        }
+        by_reg.into_iter().all(|(reg, exits)| {
+            let good: Vec<bool> = parsed
+                .iter()
+                .map(|(_, ins)| {
+                    ins.mnemonic.starts_with("mov")
+                        && ins.operands.len() == 2
+                        && unindexed_memory(ins.operands[0])
+                        && family(ins.operands[1]).as_deref() == Some(reg)
+                })
+                .collect();
+            let state = self.reaching(parsed, reg, &good);
+            exits.iter().all(|&at| state[at] == 1)
         })
     }
 
@@ -510,7 +608,12 @@ impl Graph {
     /// Reaching definitions of register `reg` at instruction `at`: true when
     /// on every path from the entry the last definition is one of `good`.
     fn always_defined(&self, parsed: &[(u64, Ins)], reg: &str, good: &[bool], at: usize) -> bool {
-        // 0: not reached yet, 1: defined by a good instruction, 2: anything else.
+        self.reaching(parsed, reg, good)[at] == 1
+    }
+
+    /// For each instruction, how `reg` is defined on entering it: 0 not
+    /// reached, 1 by a good instruction on every path, 2 otherwise.
+    fn reaching(&self, parsed: &[(u64, Ins)], reg: &str, good: &[bool]) -> Vec<u8> {
         let mut state = vec![0u8; parsed.len()];
         // Only a call unwinds, and it restores callee-saved registers to their
         // values at the call: an orphan gets their join, else unknown.
@@ -559,7 +662,7 @@ impl Graph {
                 }
             }
         }
-        state[at] == 1
+        state
     }
 }
 

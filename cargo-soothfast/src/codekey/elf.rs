@@ -28,6 +28,8 @@ pub(super) struct Symbol {
     pub(super) addr: u64,
     pub(super) size: u64,
     pub(super) name: String,
+    /// Code, by `nm`'s type letter (`T`, `t`, `W`, `w`).
+    pub(super) func: bool,
 }
 
 /// One section of an `objdump -h` listing.
@@ -109,7 +111,7 @@ pub(super) fn parse_symbols(listing: &str) -> Vec<Symbol> {
         .lines()
         .filter_map(|line| {
             let f: Vec<&str> = line.split_whitespace().collect();
-            let [addr, size, _, name] = f[..] else {
+            let [addr, size, kind, name] = f[..] else {
                 return None;
             };
             let size = u64::from_str_radix(size, 16).ok().filter(|&s| s > 0)?;
@@ -117,6 +119,7 @@ pub(super) fn parse_symbols(listing: &str) -> Vec<Symbol> {
                 addr: u64::from_str_radix(addr, 16).ok()?,
                 size,
                 name: name.to_string(),
+                func: matches!(kind, "T" | "t" | "W" | "w"),
             })
         })
         .collect();
