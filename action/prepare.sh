@@ -10,6 +10,13 @@
 # recorded runs the gate compares against) and cache_runs.
 set -euo pipefail
 
+for tool in gh jq cargo; do
+  command -v "$tool" >/dev/null || {
+    echo "::error::${tool} must be installed on the runner; see docs/ci.md, Self-hosted runners"
+    exit 1
+  }
+done
+
 default=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)
 on_default=false
 [ "${GITHUB_REF:-}" = "refs/heads/${default}" ] && on_default=true
@@ -65,7 +72,13 @@ echo "reference=${reference:-}" >>"$GITHUB_OUTPUT"
 echo "cache_runs=$cache_runs" >>"$GITHUB_OUTPUT"
 
 if [ "$(uname -s)" = Linux ] && ! command -v valgrind >/dev/null && command -v apt-get >/dev/null; then
-  sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
+  if [ "$(id -u)" = 0 ]; then
+    apt-get update -qq && apt-get install -y -qq valgrind
+  elif sudo -n true 2>/dev/null; then
+    sudo -n apt-get update -qq && sudo -n apt-get install -y -qq valgrind
+  else
+    echo "::warning::valgrind is not installed and the runner has no root; a runner without hardware counters cannot fall back to callgrind"
+  fi
 fi
 
 if [ "$regenerating" = true ]; then
