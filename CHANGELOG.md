@@ -45,6 +45,10 @@
 
 - JSON Schemas for runner records, baselines, lockfile (#278)
 
+### 📦 Dependencies
+
+- Bump libc from 0.2.190 to 0.2.191 in the all-dependencies group (#270)
+
 ---
 
 ### 🔍 API surface
