@@ -78,6 +78,23 @@ read `unsupported language for PATH`, `file not found`, or `symbol not found
 in PATH`; `not locked` and `STALE` behave as for Rust items. Claims are
 unchanged and still read the measurement baseline.
 
+### One block, several targets
+
+A bind may name several targets separated by whitespace, each a Rust item or
+a `<path>#<symbol>` file target. That is how prose about a feature spanning
+two languages gets one block that fails when either side moves.
+
+```markdown ignore
+<!-- soothfast:bind corvid_mime::parse_headers client/core/src/Headers.kt#Headers.parse -->
+Both parsers split the header block the same way.
+<!-- /soothfast:bind -->
+```
+
+The lock keeps one fingerprint per target, keyed by the target string, so a
+block with a single target locks exactly as before. `docs check` reports each
+target on its own line and names the one that moved; `docs accept` locks every
+target in the block.
+
 ## Claims: numbers checked against a real run
 
 A claim marker looks like
@@ -96,6 +113,41 @@ missing or the comparison does not hold.
 Parsing one claim expression, the exact work `docs check` does per marker on
 this page, costs under 50µs at the tail.
 <!-- /soothfast:claim -->
+
+A claim can also bound the difference of two items' metrics, which is how to
+state that one implementation stays within a margin of another, across
+languages included:
+
+```markdown ignore
+<!-- soothfast:claim jmh::Headers.parse.walltime.median_ns - mylib::parse_headers.walltime.median_ns < 2us -->
+The Kotlin client parses within 2µs of the Rust core.
+<!-- /soothfast:claim -->
+```
+
+Each side is a full `item.backend.metric`, and the split is at the last
+` - `, so item ids with spaces and dots still work. The bound applies to the
+left value minus the right. A side with no measurement fails the claim and
+the message names it; a ` -` with nothing after it fails to parse.
+
+## Doc coverage outside Rust
+
+`cargo soothfast coverage docs` counts public symbols with a doc comment or
+docstring in Kotlin, Java, Python, JavaScript and TypeScript trees, with the
+same `--min` gate and `--badge` output as for Rust crates:
+
+```bash
+cargo soothfast coverage docs --dir client/core --lang kotlin --min 80
+```
+
+`--lang` takes a language (`java`, `kotlin`, `python`, `javascript`,
+`typescript`) or an ecosystem (`gradle`, `maven`, `node`), and `--dir` may
+repeat. With neither `-p` nor `--dir`, it reads the `dir` and `ecosystem` of
+each non-Rust `[[project]]` in `soothfast.toml`. Public means `public` in Java
+and Kotlin (Kotlin's default; `private`, `internal` and `protected` are not),
+`export` in JavaScript and TypeScript, and a name without a leading
+underscore in Python. Members count only when their container does. Trees
+named `node_modules`, `build`, `target`, `dist`, `venv`, `test`, `tests` or
+`__tests__`, and hidden directories, are skipped.
 
 ## Fence tags on rust code blocks
 

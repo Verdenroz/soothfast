@@ -27,7 +27,9 @@ pub struct SurfaceEntry {
 pub struct ProjectEntry {
     /// `path/to/file#Symbol`, relative to the repository root.
     pub id: String,
+    /// Lowercase symbol kind (`function`, `class`).
     pub kind: String,
+    /// Whether a doc comment or docstring is present.
     pub documented: bool,
 }
 
@@ -35,6 +37,7 @@ pub struct ProjectEntry {
 pub struct ProjectSurface {
     /// The project's directory.
     pub name: String,
+    /// Every public symbol, documented or not.
     pub entries: Vec<ProjectEntry>,
 }
 

@@ -11,6 +11,7 @@ pub struct Row {
     pub id: String,
     pub instructions: Option<u64>,
     pub median_ns: Option<f64>,
+    /// Median absolute deviation of the walltime samples.
     pub mad_ns: Option<f64>,
     pub p99_ns: Option<f64>,
     pub allocs: Option<u64>,

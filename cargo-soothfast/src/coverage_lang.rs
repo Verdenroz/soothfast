@@ -26,14 +26,19 @@ pub struct Target {
     /// The directory as written in the manifest or on the command line,
     /// relative to the repository root.
     pub label: String,
+    /// The directory to read, resolved against the repository root.
     pub dir: PathBuf,
+    /// The languages whose files count.
     pub langs: Vec<Lang>,
 }
 
 /// A public symbol and whether it is documented.
 pub struct Entry {
+    /// `path#Symbol`.
     pub id: String,
+    /// Lowercase symbol kind (`function`, `class`).
     pub kind: String,
+    /// Whether a doc comment or docstring is present.
     pub documented: bool,
 }
 

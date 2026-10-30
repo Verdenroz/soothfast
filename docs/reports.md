@@ -63,6 +63,13 @@ baseline by id and falling back to `covers=`. An agent reading it can answer
 "what does `X` measure right now" without guessing from a README that may be
 out of date.
 
+Items brought in by `import` get their own section per import prefix in the
+perf tables, with walltime median, mad and p99 under the harness name. Each
+one also draws as a line in the trend charts, apart from the Rust fleet's
+band. When the repo has non-Rust `[[project]]` entries (or `--dir D --lang L`
+is given), `llms.txt` adds a section per project listing its documented
+public symbols and their measured walltime.
+
 ## Trend and changelog
 
 `cargo soothfast trend append -p mylib` appends one line per run
@@ -119,6 +126,16 @@ feature that is not enabled never shows up in it, so too narrow a set shortens
 the diff with nothing to say it did. It falls back to `[gate] features` when
 absent. `packages` supplies `-p` when the command line gives none. An explicit
 `--features` or `-p` still wins over either.
+
+`api_surface` is off unless set. With `api_surface = true`, the API section
+also covers every non-Rust `[[project]]` (or `--dir D --lang L`): the symbols
+that became public or stopped being public since `--against-ref`, or the
+full list when there is no reference.
+
+```toml
+[changelog]
+api_surface = true
+```
 
 `bot-author` names the commit author whose entries are dropped: the bot that
 lands regenerated artifacts, whose commits are paperwork rather than changes.
