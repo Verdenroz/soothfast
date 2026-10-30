@@ -1,0 +1,18 @@
+[package]
+name = "soothfast-lang"
+description = "Soothfast language engine: declared symbols, spans and fingerprints for non-Rust sources via tree-sitter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# CLI-side crate (consumed only by cargo-soothfast, never by user libs).
+soothfast-registry.workspace = true
+tree-sitter = "0.25"
+tree-sitter-python = "0.25.0"
