@@ -242,10 +242,22 @@ pub fn run(args: &[String]) -> i32 {
     };
     let files = scaffold(&ws);
     let rc = report(&root, &files, check, force);
-    if labels && !check && rc == 0 {
+    if check || rc != 0 {
+        return rc;
+    }
+    println!("init: done. Next: {}", next_step(ws.ecosystem));
+    if labels {
         return create_labels();
     }
-    rc
+    0
+}
+
+/// What to do after `init` before the first pull request gates anything.
+fn next_step(ecosystem: Ecosystem) -> &'static str {
+    match ecosystem {
+        Ecosystem::Rust => "annotate code with #[soothfast::bench] and push.",
+        _ => "check that the bench command writes its result file, then push.",
+    }
 }
 
 /// Create or refresh the labels on the repository `gh` resolves here.
@@ -361,9 +373,6 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
     if check && drift > 0 {
         println!("init: {drift} file(s) drifted from `cargo soothfast init`; run it to update");
         return 1;
-    }
-    if !check && drift == 0 {
-        println!("init: done. Next: annotate code with #[soothfast::bench] and push.");
     }
     i32::from(drift > 0)
 }
