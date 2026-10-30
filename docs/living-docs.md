@@ -28,6 +28,11 @@ marker silently would report a green check for a claim nothing evaluated.
 <!-- /soothfast:bind -->
 ```
 
+A bind can also name an inherent method or associated const of a public
+type, as `crate::path::Type::method`. Its fingerprint is the member's own
+span under the same rule. Trait impl methods are not addressable; bind the
+trait instead.
+
 `soothfast.lock` is plain JSON: `{"version": 2, "binds": {"item::path":
 "<16-hex-digit fingerprint>"}}`. Running `docs accept` with explicit PATHS
 merges into the existing lock, so binds outside that scope survive. Running

@@ -27,7 +27,7 @@ pub fn resolve(root: &Path, surf: Option<&Surface>, item: &str) -> Result<String
     match classify(item) {
         Target::File { path, symbol } => file_fingerprint(root, path, symbol),
         Target::Rust(item) => surf
-            .and_then(|s| s.items.get(item))
+            .and_then(|s| s.lookup(item))
             .map(|info| format!("{:016x}", info.fingerprint))
             .ok_or_else(|| "item not found in crate".into()),
     }
