@@ -158,7 +158,7 @@ impl Evidence {
     /// match the code right now? "Fingerprint" is our implementation detail,
     /// not theirs — CI keeps this row honest regardless of what it's called.
     fn bind_state(&self, item: &str) -> (&'static str, &'static str, &'static str) {
-        if self.binds.contains_key(item) {
+        if item.split_whitespace().all(|t| self.binds.contains_key(t)) {
             ("bind", "⌖", "verified current")
         } else {
             ("warn", "⌖", "not yet verified")
@@ -167,7 +167,8 @@ impl Evidence {
 
     fn bind_chip(&self, item: &str) -> String {
         let (state, mark, detail) = self.bind_state(item);
-        let short = item.rsplit("::").next().unwrap_or(item);
+        let first = item.split_whitespace().next().unwrap_or(item);
+        let short = first.rsplit("::").next().unwrap_or(first);
         let segments = [
             ("chip-item", short),
             ("chip-sep", "·"),
@@ -179,7 +180,8 @@ impl Evidence {
     /// Richer form of a bind, attached to the code block it covers.
     fn bind_row(&self, item: &str) -> String {
         let (state, mark, detail) = self.bind_state(item);
-        let short = item.rsplit("::").next().unwrap_or(item);
+        let first = item.split_whitespace().next().unwrap_or(item);
+        let short = first.rsplit("::").next().unwrap_or(first);
         format!(
             "<div class=\"ev-row ev-row-{state}\" data-soothfast-bind title=\"{}\">\
 <span class=\"ev-mark\">{mark}</span><span class=\"ev-item\">{}</span>\
