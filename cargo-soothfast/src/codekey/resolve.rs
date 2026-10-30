@@ -71,10 +71,24 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// The section holding `addr`, else the one empty section that starts
+    /// exactly there (`__TMC_END__` lands on `.tm_clone_table`).
     fn section_at(&self, addr: u64) -> Option<usize> {
         let after = self.sections.partition_point(|s| s.vma <= addr);
-        let i = self.sections[..after].iter().rposition(|s| s.size > 0)?;
-        (addr - self.sections[i].vma < self.sections[i].size).then_some(i)
+        let before = &self.sections[..after];
+        if let Some(i) = before.iter().rposition(|s| s.size > 0)
+            && before[i].contains(addr)
+        {
+            return Some(i);
+        }
+        let mut empty = before
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.size == 0 && s.vma == addr);
+        match (empty.next(), empty.next()) {
+            (Some((i, _)), None) => Some(i),
+            _ => None,
+        }
     }
 
     pub(super) fn symbol_at(&self, addr: u64) -> Option<usize> {
@@ -86,19 +100,10 @@ impl<'a> Resolver<'a> {
         (addr - s.addr < s.size).then_some(i)
     }
 
-    fn marker_at(&self, addr: u64) -> Option<Place> {
-        Some(match self.markers.get(&addr)? {
-            Marker::Opaque(name) => Place::Code(name.clone()),
-            Marker::End { name, section } => Place::Bounded(name.clone(), Node::Section(*section)),
-        })
-    }
-
     /// `hint` is the symbol objdump printed next to the address, used only
     /// for code that has no sized symbol (PLT stubs) and GOT slots.
     fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
-        let Some(section) = self.section_at(addr) else {
-            return self.marker_at(addr);
-        };
+        let section = self.section_at(addr)?;
         let code = self.sections[section].code;
         if let Some(i) = self.symbol_at(addr)
             && self.section_at(self.symbols[i].addr) == Some(section)
@@ -110,8 +115,12 @@ impl<'a> Resolver<'a> {
                 Place::Data(Node::Symbol(i), off, String::new())
             });
         }
-        if let Some(place) = self.marker_at(addr) {
-            return Some(place);
+        match self.markers.get(&addr) {
+            Some(Marker::Opaque(name)) => return Some(Place::Code(name.clone())),
+            Some(Marker::End { name, section }) => {
+                return Some(Place::Bounded(name.clone(), Node::Section(*section)));
+            }
+            None => {}
         }
         if code {
             return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
@@ -549,21 +558,19 @@ Idx Name          Size      VMA               LMA               File off  Algn
 ";
 
     #[test]
-    fn a_boundary_symbol_names_the_end_of_a_section_before_an_empty_one() {
-        let hash = |nm: &str| {
+    fn an_address_on_an_empty_sections_vma_resolves_to_that_section() {
+        let hash = |dis: &str| {
             let fixture = Fixture::default()
                 .sections(LAZY_SECTIONS)
-                .markers(parse_markers(nm, &loaded(LAZY_SECTIONS)))
                 .wanted(&["at:deregister_tm_clones"]);
+            let image = vec![0; 0x1c8b1c0];
             fixture
-                .hashes(&[], LAZY_DEREGISTER)
+                .hashes(&image, dis)
                 .get("at:deregister_tm_clones")
                 .copied()
         };
-        let named = hash("0000000001c8e1b8 d __TMC_END__\n0000000001c8e1b8 d __TMC_LIST__\n");
-        assert!(named.is_some());
-        assert_ne!(named, hash("0000000001c8e1b8 d __TMC_ELSE__\n"));
-        assert_eq!(hash(""), None);
+        assert!(hash(LAZY_DEREGISTER).is_some());
+        assert_eq!(hash(&LAZY_DEREGISTER.replace("1c8e1b8", "1c8e1b9")), None);
     }
 
     #[test]
