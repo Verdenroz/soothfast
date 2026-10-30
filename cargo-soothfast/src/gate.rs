@@ -439,12 +439,16 @@ fn reuse_hint(reference: &Value, backend: Option<&str>, regressions: u32) -> Opt
 /// reference built against another harness measures another protocol, so
 /// its numbers are not this change's in either direction.
 fn harness_note(harness: &invoke::HarnessSync) {
-    if harness.is_mismatched() {
+    let pins = harness.pins();
+    if !pins.is_empty() {
         println!(
             "gate: HARNESS MISMATCH — the merge-base could not be pinned to HEAD's soothfast ({}); \
              deltas below may be the harness, not this change",
-            harness.unpinned().join(", ")
+            pins.join(", ")
         );
+    }
+    if let Some(method) = harness.method_change() {
+        println!("gate: HARNESS MISMATCH — {method}; comparison is not conclusive");
     }
 }
 
@@ -453,6 +457,15 @@ fn harness_note(harness: &invoke::HarnessSync) {
 fn harness_verdict(harness: &invoke::HarnessSync, regressed: bool) -> String {
     if !harness.is_mismatched() {
         return String::new();
+    }
+    if harness.pins().is_empty()
+        && let Some(method) = harness.method_change()
+    {
+        return if regressed {
+            format!(" — {method}; pass --allow-harness-change if the method explains it")
+        } else {
+            format!(" — {method}; comparison is not conclusive")
+        };
     }
     let unpinned = harness.unpinned().join(", ");
     if regressed {
@@ -490,12 +503,17 @@ fn triage_harness_note(dir: &std::path::Path, harness: &invoke::HarnessSync) {
         .iter()
         .map(|u| format!("  {u}\n"))
         .collect();
+    let why = if harness.pins().is_empty() {
+        "The reference bench measures callgrind a different way from HEAD's:"
+    } else {
+        "The merge-base worktree could not be pinned to HEAD's soothfast versions, so the\n\
+         reference bench embeds a different measurement harness:"
+    };
     let _ = std::fs::write(
         &path,
         format!(
             "harness mismatch\n\n\
-             The merge-base worktree could not be pinned to HEAD's soothfast versions, so the\n\
-             reference bench embeds a different measurement harness:\n\n\
+             {why}\n\n\
              {unpinned}\n\
              Deltas in this run may be that harness change rather than the measured code.\n"
         ),
@@ -1039,18 +1057,17 @@ fn measure_ref_interleaved(
         let digests = bench_text_digests(common, wt, wt_target.as_deref());
         // Callgrind counts differ by method, and a path dependency on the
         // harness is not pinned, so the sides can disagree.
-        let harness =
-            match (runs.env(), &digests) {
-                (Some(head), Some(d)) if head.gating_backend == "callgrind" => {
-                    match invoke::host_env(&d.base_exe, common.backend.as_deref()) {
-                        Ok(base) if base.method() != head.method() => harness.with_unpinned(
-                            format!("callgrind method {} -> {}", base.method(), head.method()),
-                        ),
-                        _ => harness,
+        let harness = match (runs.env(), &digests) {
+            (Some(head), Some(d)) if head.gating_backend == "callgrind" => {
+                match invoke::host_env(&d.base_exe, common.backend.as_deref()) {
+                    Ok(base) if base.method() != head.method() => {
+                        harness.with_method(base.method(), head.method())
                     }
+                    _ => harness,
                 }
-                _ => harness,
-            };
+            }
+            _ => harness,
+        };
         // A run measured from byte-identical machine code under the same
         // conditions is that binary's measurement, whatever commit built it.
         let by_binary = match (reuse, &digests) {

@@ -1512,6 +1512,9 @@ pub fn tree_is_clean() -> bool {
     git(&["status", "--porcelain"]).is_ok_and(|s| s.trim().is_empty())
 }
 
+/// Opens the label of a callgrind method difference between the sides.
+const METHOD_LABEL: &str = "base measured with callgrind method ";
+
 /// Whether the reference side ended up embedding HEAD's measurement harness.
 /// A reference built against another harness measures a different protocol,
 /// so the outcome travels with the run.
@@ -1541,12 +1544,29 @@ impl HarnessSync {
         }
     }
 
-    /// This outcome with one more crate or setting the reference side does
-    /// not share with HEAD.
-    pub fn with_unpinned(self, label: String) -> Self {
+    /// This outcome with the callgrind method the reference side measured
+    /// with, when it is not HEAD's.
+    pub fn with_method(self, base: &str, head: &str) -> Self {
         let mut labels = self.unpinned().to_vec();
-        labels.push(label);
+        labels.push(format!("{METHOD_LABEL}{base}, head with {head}"));
         Self::Mismatched(labels)
+    }
+
+    /// The crates left unpinned, without the method difference.
+    pub fn pins(&self) -> Vec<&str> {
+        self.unpinned()
+            .iter()
+            .map(String::as_str)
+            .filter(|l| !l.starts_with(METHOD_LABEL))
+            .collect()
+    }
+
+    /// The method difference, spelled for a reader, when there is one.
+    pub fn method_change(&self) -> Option<&str> {
+        self.unpinned()
+            .iter()
+            .map(String::as_str)
+            .find(|l| l.starts_with(METHOD_LABEL))
     }
 
     /// Whether the two sides embed different measurement harnesses.
@@ -1962,12 +1982,13 @@ mod tests {
     }
 
     #[test]
-    fn an_extra_unpinned_label_makes_the_harness_mismatched() {
-        let sync = super::HarnessSync::Matched
-            .with_unpinned("callgrind method two-process -> one-process".into());
+    fn a_method_difference_mismatches_the_harness_without_a_pin() {
+        let sync = super::HarnessSync::Matched.with_method("two-process", "one-process");
+        assert!(sync.is_mismatched());
+        assert!(sync.pins().is_empty());
         assert_eq!(
-            sync.unpinned(),
-            ["callgrind method two-process -> one-process"]
+            sync.method_change(),
+            Some("base measured with callgrind method two-process, head with one-process")
         );
     }
 
