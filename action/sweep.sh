@@ -6,6 +6,7 @@
 set -euo pipefail
 
 : "${TOKEN:?}" "${DEFAULT_BRANCH:?}"
+command -v gh >/dev/null || { echo "::error::gh must be installed on the runner to act on labels; see docs/ci.md, Self-hosted runners"; exit 1; }
 export GH_TOKEN="$TOKEN"
 if [ "${REVOKE:-false}" = true ]; then
   trap 'gh api -X DELETE /installation/token >/dev/null || true' EXIT
