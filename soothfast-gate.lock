@@ -7,10 +7,14 @@
         {
           "accepted_unix": 1793325364,
           "text": "tree-sitter and five grammars (Java, Kotlin, Python, JS, TS/TSX) for non-Rust bind markers; one binary serves every language"
+        },
+        {
+          "accepted_unix": 1793401924,
+          "text": "mixed-ecosystem init and reusable-workflow planner, one verdict per PR, tests across languages, and the rustdoc and bench-executable stores"
         }
       ],
       "metrics": {
-        "size_bytes": 14175992.0
+        "size_bytes": 14984424.0
       }
     }
   },
