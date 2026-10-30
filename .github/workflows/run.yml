@@ -320,18 +320,29 @@ jobs:
           key: soothfast-baseline-${{ github.event.pull_request.base.sha || github.sha }}
           restore-keys: soothfast-baseline-
       - name: Check the docs
+        shell: bash
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
+          RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           args=()
           for package in $DOCS_PACKAGE; do args+=(-p "$package"); done
+          : > "$RESULT"
           if [ -f .soothfast/baselines/head.json ]; then
             args+=(--baseline head)
           else
-            echo "::notice::claims not evaluated: no measurement"
+            echo "::warning::claims not evaluated: no measurement"
+            echo "claims not evaluated: no measurement" >> "$RESULT"
             args+=(--skip-claims)
           fi
-          cargo soothfast docs check "${args[@]}"
+          cargo soothfast docs check "${args[@]}" | tee -a "$RESULT"
+      - name: Upload the docs output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-result-docs
+          path: ${{ runner.temp }}/soothfast-result.txt
+          if-no-files-found: ignore
 
   labels:
     name: Labels
