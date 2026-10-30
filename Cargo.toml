@@ -6,6 +6,7 @@ members = [
     "soothfast-registry",
     "soothfast-measure",
     "soothfast-docs",
+    "soothfast-lang",
     "soothfast-spec",
     "soothfast-sdk",
     "soothfast-report",
@@ -30,6 +31,7 @@ soothfast-macros = { path = "soothfast-macros", version = "0.4.4" }
 soothfast-registry = { path = "soothfast-registry", version = "0.4.4" }
 soothfast-measure = { path = "soothfast-measure", version = "0.4.4" }
 soothfast-docs = { path = "soothfast-docs", version = "0.4.4" }
+soothfast-lang = { path = "soothfast-lang", version = "0.4.4" }
 soothfast-spec = { path = "soothfast-spec", version = "0.4.4" }
 soothfast-sdk = { path = "soothfast-sdk", version = "0.4.4" }
 soothfast-report = { path = "soothfast-report", version = "0.4.4" }
