@@ -236,6 +236,16 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    /// The version this workspace's `Cargo.lock` holds for `name`, which an
+    /// `--offline` build can resolve because the workspace build fetched it.
+    fn locked(name: &str) -> String {
+        let lock =
+            fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../Cargo.lock")).unwrap();
+        let entry = format!("name = \"{name}\"\nversion = \"");
+        let start = lock.find(&entry).unwrap() + entry.len();
+        lock[start..].split('"').next().unwrap().to_string()
+    }
+
     fn write_workspace(root: &Path, deps: &str, body: &str) {
         let files = [
             (
@@ -299,11 +309,12 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let (head, base) = (root.join("head"), root.join("base"));
         let (head_t, base_t) = (root.join("head-target"), root.join("base-target"));
-        let shared = "itoa = \"=1.0.18\"\nlibc = \"=0.2.190\"\n";
-        write_workspace(&head, shared, "pub fn f() -> u8 { 1 }\n");
+        let pin = |name: &str| format!("{name} = \"={}\"\n", locked(name));
+        let shared = format!("{}{}", pin("itoa"), pin("libc"));
+        write_workspace(&head, &shared, "pub fn f() -> u8 { 1 }\n");
         write_workspace(
             &base,
-            &format!("{shared}memchr = \"=2.8.3\"\n"),
+            &format!("{shared}{}", pin("memchr")),
             "pub fn f() -> u8 { 2 }\n",
         );
 
