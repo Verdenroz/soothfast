@@ -6,15 +6,30 @@ use tree_sitter::{Parser, Tree};
 /// A source language with a tree-sitter grammar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lang {
+    /// Java (`.java`).
+    Java,
+    /// Kotlin (`.kt`, `.kts`).
+    Kotlin,
     /// Python (`.py`, `.pyi`).
     Python,
+    /// JavaScript (`.js`, `.mjs`, `.cjs`, `.jsx`).
+    JavaScript,
+    /// TypeScript (`.ts`, `.mts`, `.cts`).
+    TypeScript,
+    /// TypeScript with JSX (`.tsx`).
+    Tsx,
 }
 
 impl Lang {
     /// The language of a file, chosen by extension.
     pub fn for_path(path: &Path) -> Option<Lang> {
         match path.extension()?.to_str()? {
+            "java" => Some(Lang::Java),
+            "kt" | "kts" => Some(Lang::Kotlin),
             "py" | "pyi" => Some(Lang::Python),
+            "js" | "mjs" | "cjs" | "jsx" => Some(Lang::JavaScript),
+            "ts" | "mts" | "cts" => Some(Lang::TypeScript),
+            "tsx" => Some(Lang::Tsx),
             _ => None,
         }
     }
@@ -22,13 +37,23 @@ impl Lang {
     /// Lowercase language name.
     pub fn name(self) -> &'static str {
         match self {
+            Lang::Java => "java",
+            Lang::Kotlin => "kotlin",
             Lang::Python => "python",
+            Lang::JavaScript => "javascript",
+            Lang::TypeScript => "typescript",
+            Lang::Tsx => "tsx",
         }
     }
 
     fn grammar(self) -> tree_sitter::Language {
         match self {
+            Lang::Java => tree_sitter_java::LANGUAGE.into(),
+            Lang::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
             Lang::Python => tree_sitter_python::LANGUAGE.into(),
+            Lang::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+            Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
         }
     }
 

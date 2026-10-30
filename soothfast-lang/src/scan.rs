@@ -80,15 +80,16 @@ impl Walk<'_> {
     fn visit(&mut self, node: Node, prefix: &str, in_type: bool, outer: Option<Node>) {
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
+            // Recovered members lose their container, so their paths would be wrong.
+            if child.is_error() {
+                continue;
+            }
             match classify(self.lang, child, self.source) {
                 Decl::Skip => self.visit(child, prefix, in_type, None),
                 Decl::Wrap => self.visit(child, prefix, in_type, outer.or(Some(child))),
+                Decl::Scope(name) => self.visit(child, &join(prefix, &name), false, None),
                 Decl::Symbol { kind, name, scope } => {
-                    let path = if prefix.is_empty() {
-                        name
-                    } else {
-                        format!("{prefix}.{name}")
-                    };
+                    let path = join(prefix, &name);
                     let kind = match kind {
                         SymbolKind::Function if in_type => SymbolKind::Method,
                         other => other,
@@ -116,6 +117,14 @@ impl Walk<'_> {
             },
             text_start,
         });
+    }
+}
+
+fn join(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{prefix}.{name}")
     }
 }
 
