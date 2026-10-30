@@ -34,9 +34,10 @@ pub fn run(args: &[String]) -> i32 {
     0
 }
 
-/// Copy each file of `from` that `into` does not have. Runs, link maps,
-/// bench executables and rustdoc JSON are named by what they were made from, so a name that exists
-/// is the same file.
+/// Copy each file of `from` that `into` does not have. Runs, link maps, bench
+/// executables and rustdoc JSON are named by what they were made from, so a
+/// name that exists is the same file. A copy is renamed into place, so an
+/// interrupted one never leaves a truncated executable under a valid name.
 fn copy_missing(from: &Path, into: &Path) {
     let Ok(files) = std::fs::read_dir(from) else {
         return;
@@ -44,7 +45,7 @@ fn copy_missing(from: &Path, into: &Path) {
     for file in files.flatten() {
         let dest = into.join(file.file_name());
         if !dest.exists() {
-            let _ = std::fs::copy(file.path(), dest);
+            store::copy_atomic(&file.path(), &dest);
         }
     }
 }

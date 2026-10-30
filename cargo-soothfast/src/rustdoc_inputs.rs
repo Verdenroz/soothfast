@@ -34,7 +34,7 @@ pub fn collect_build(root: &Path, exe: &Path, cargo_stdout: &[u8]) -> Option<Inp
 }
 
 /// Add what each workspace artifact and build script of `cargo_stdout` read.
-/// Whether every artifact's dep-info could be read.
+/// False when the dep-info of an artifact could not be read.
 fn walk(inputs: &mut Inputs, root: &Path, cargo_stdout: &[u8]) -> bool {
     let mut read_all = true;
     let mut package_dirs: BTreeMap<String, PathBuf> = BTreeMap::new();

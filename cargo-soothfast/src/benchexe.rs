@@ -283,11 +283,7 @@ mod tests {
         std::fs::write(&exe, bytes).unwrap();
         std::fs::write(
             deps.join("soothfast-1a2b.d"),
-            format!(
-                "{}: app/src/lib.rs docs/guide.md
-",
-                exe.display()
-            ),
+            format!("{}: app/src/lib.rs docs/guide.md\n", exe.display()),
         )
         .unwrap();
         let message = json!({
@@ -317,11 +313,7 @@ mod tests {
     #[test]
     fn a_hit_skips_cargo_and_returns_the_same_bytes() {
         let repo = Repo::new("exe-hit");
-        repo.write(
-            "docs/guide.md",
-            "one
-",
-        );
+        repo.write("docs/guide.md", "one\n");
         let store = repo.store_dir();
         let plan = plan(&repo, store.clone());
         let bytes = b"bench bytes".to_vec();
@@ -339,19 +331,11 @@ mod tests {
     #[test]
     fn an_edit_to_a_file_the_build_read_is_a_miss() {
         let repo = Repo::new("exe-read");
-        repo.write(
-            "docs/guide.md",
-            "one
-",
-        );
+        repo.write("docs/guide.md", "one\n");
         let store = repo.store_dir();
         let plan = plan(&repo, store);
         resolve_counting(&plan, &repo, b"one");
-        repo.write(
-            "docs/guide.md",
-            "two
-",
-        );
+        repo.write("docs/guide.md", "two\n");
         let (exe, builds) = resolve_counting(&plan, &repo, b"two");
         assert_eq!(builds, 1);
         assert_eq!(std::fs::read(exe).unwrap(), b"two");
@@ -360,27 +344,15 @@ mod tests {
     #[test]
     fn a_docs_only_edit_is_a_hit_and_a_source_edit_is_not() {
         let repo = Repo::new("exe-docs");
-        repo.write(
-            "docs/guide.md",
-            "one
-",
-        );
+        repo.write("docs/guide.md", "one\n");
         let store = repo.store_dir();
         resolve_counting(&plan(&repo, store.clone()), &repo, b"one");
 
-        repo.write(
-            "README.md",
-            "edited
-",
-        );
+        repo.write("README.md", "edited\n");
         let (_, builds) = resolve_counting(&plan(&repo, store.clone()), &repo, b"x");
         assert_eq!(builds, 0);
 
-        repo.write(
-            "app/src/lib.rs",
-            "pub fn app() -> u8 { 0 }
-",
-        );
+        repo.write("app/src/lib.rs", "pub fn app() -> u8 { 0 }\n");
         let (_, builds) = resolve_counting(&plan(&repo, store), &repo, b"y");
         assert_eq!(builds, 1);
     }

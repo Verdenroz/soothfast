@@ -1364,7 +1364,7 @@ fn rustdoc_store_key(
     toolchain: &str,
 ) -> Option<String> {
     let crate_dirs = crate_dirs(pkg, dir)?;
-    let rustc = store::rustc_version(Some(toolchain), &root)?;
+    let rustc = store::rustc_version(Some(toolchain), root)?;
     let env = store::build_env();
     let request = rustdocstore::Request {
         pkg,

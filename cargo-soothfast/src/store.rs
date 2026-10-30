@@ -330,7 +330,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
     std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, path).is_ok()
 }
 
-fn copy_atomic(from: &Path, to: &Path) -> bool {
+pub fn copy_atomic(from: &Path, to: &Path) -> bool {
     let tmp = temp_for(to);
     std::fs::copy(from, &tmp).is_ok() && std::fs::rename(&tmp, to).is_ok()
 }
