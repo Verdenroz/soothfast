@@ -5,10 +5,26 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
-use std::time::SystemTime;
+use std::sync::{Mutex, OnceLock, PoisonError};
+use std::time::Instant;
 
 use serde_json::{Value, json};
+
+use crate::{rustdoc_inputs, rustdocstore};
+
+/// Run `f`, printing its wall time to stderr when `SOOTHFAST_TIMINGS` is set.
+pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
+    if std::env::var_os("SOOTHFAST_TIMINGS").is_none() {
+        return f();
+    }
+    let start = Instant::now();
+    let out = f();
+    eprintln!(
+        "soothfast-timing: {label} {:.1}s",
+        start.elapsed().as_secs_f64()
+    );
+    out
+}
 
 /// Flags shared by `measure` and `gate`.
 #[derive(Default, Clone)]
@@ -328,7 +344,7 @@ fn run_records(
     let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    let out = cmd.output()?;
+    let out = timed("cargo bench (build and run)", || cmd.output())?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let reason = stderr
@@ -1079,7 +1095,7 @@ pub enum Visibility {
 /// different one still parses, but the surface it yields can differ, and a
 /// derived artifact generated under one version will look "stale" under
 /// another. Naming both numbers turns that into an explicable message.
-const RUSTDOC_FORMAT_VERSION: u64 = 61;
+pub(crate) const RUSTDOC_FORMAT_VERSION: u64 = 61;
 
 /// Toolchain that builds rustdoc JSON, `SOOTHFAST_RUSTDOC_TOOLCHAIN` or
 /// plain `nightly`.
@@ -1184,133 +1200,13 @@ fn local_crate_dirs(pkg: &str, dir: Option<&Path>) -> io::Result<Vec<PathBuf>> {
     Ok(dirs)
 }
 
-/// Latest modification time of `path` or, recursively, anything under it.
-/// `target`/`.git` are skipped as build/VCS noise, not doc-relevant inputs.
-fn newest_mtime(path: &Path) -> io::Result<Option<SystemTime>> {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return Ok(None);
-    };
-    if meta.is_file() {
-        return Ok(Some(meta.modified()?));
-    }
-    let mut newest = meta.modified().ok();
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if name == "target" || name == ".git" {
-            continue;
-        }
-        if let Some(t) = newest_mtime(&entry.path())?
-            && newest.is_none_or(|n| t > n)
-        {
-            newest = Some(t);
-        }
-    }
-    Ok(newest)
-}
-
-/// Newest mtime among `pkg`'s own Cargo.toml/src/build.rs, the same files
-/// for its transitive workspace-local dependencies, and the workspace
-/// lockfile — the set of inputs `rustdoc_json_in`'s freshness check covers.
-fn newest_relevant_mtime(pkg: &str, dir: Option<&Path>) -> io::Result<Option<SystemTime>> {
-    let mut newest: Option<SystemTime> = None;
-    let mut bump = |t: Option<SystemTime>| {
-        if let Some(t) = t
-            && newest.is_none_or(|n| t > n)
-        {
-            newest = Some(t);
-        }
-    };
-    for crate_dir in local_crate_dirs(pkg, dir)? {
-        bump(newest_mtime(&crate_dir.join("Cargo.toml"))?);
-        bump(newest_mtime(&crate_dir.join("src"))?);
-        bump(newest_mtime(&crate_dir.join("build.rs"))?);
-    }
-    let root = match dir {
-        Some(d) => d.to_path_buf(),
-        None => workspace_root()?,
-    };
-    bump(newest_mtime(&root.join("Cargo.lock"))?);
-    Ok(newest)
-}
-
-/// Sidecar recording which (toolchain, features, visibility) produced
-/// `json_path`'s current contents — its filename is keyed only by package
-/// name, so a later call with different flags must not reuse it just
-/// because the file's mtime looks fresh.
-fn cache_meta_path(json_path: &Path) -> PathBuf {
-    json_path.with_extension("json.soothfast-cache")
-}
-
-/// Cache slot for one rustdoc configuration. rustdoc always writes
-/// `<pkg>.json`, so a private-items extraction and a public one of the same
-/// crate evict each other unless each is kept under its own name.
-fn cached_json_path(json_path: &Path, features: Option<&str>, visibility: Visibility) -> PathBuf {
-    let scope = format!(
-        "{}\u{1}{}",
-        features.unwrap_or(""),
-        visibility == Visibility::Private
-    );
-    let key = soothfast_registry::fnv1a(scope.as_bytes());
-    json_path.with_extension(format!("{key:016x}.json"))
-}
-
-/// A prior extraction at `json_path`, if it was built with the same flags
-/// requested now and is no older than the source it covers. Every failure
-/// mode (missing sidecar, unreadable JSON, unresolvable source tree) falls
-/// through to `None` — the caller then regenerates — because staleness must
-/// never be silently assumed away.
-fn read_fresh_cache(
-    json_path: &Path,
-    pkg: &str,
-    dir: Option<&Path>,
-    features: Option<&str>,
-    visibility: Visibility,
-    toolchain: &str,
-) -> Option<Value> {
-    let meta_text = std::fs::read_to_string(cache_meta_path(json_path)).ok()?;
-    let meta: Value = serde_json::from_str(&meta_text).ok()?;
-    let matches = meta["toolchain"].as_str() == Some(toolchain)
-        && meta["features"].as_str() == features
-        && meta["private"].as_bool() == Some(visibility == Visibility::Private);
-    if !matches {
-        return None;
-    }
-    let json_mtime = std::fs::metadata(json_path).ok()?.modified().ok()?;
-    let newest_src = newest_relevant_mtime(pkg, dir).ok()??;
-    if newest_src > json_mtime {
-        return None;
-    }
-    let text = std::fs::read_to_string(json_path).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-/// Records the flags that produced `json_path`'s current contents, so a
-/// later call can tell whether reusing it would silently drop feature-gated
-/// or private items the caller now needs.
-fn write_cache_meta(
-    json_path: &Path,
-    features: Option<&str>,
-    visibility: Visibility,
-    toolchain: &str,
-) -> io::Result<()> {
-    let meta = json!({
-        "toolchain": toolchain,
-        "features": features,
-        "private": visibility == Visibility::Private,
-    });
-    std::fs::write(cache_meta_path(json_path), serde_json::to_string(&meta)?)
-}
-
 /// Build rustdoc JSON for a package (nightly-only job) and load it.
 /// `dir` runs the build in another worktree; JSON lands in its target/doc.
 ///
-/// Reuses a prior extraction instead of re-running `cargo rustdoc` when it's
-/// still fresh: rustdoc's JSON backend re-serializes unconditionally on every
-/// invocation even when the underlying compilation is fully cached, so
-/// repeat calls for the same (package, features, visibility) — e.g. `docs
-/// reference`, `report render`, and `coverage docs` all documenting the same
-/// crate within one `make docs` run — otherwise pay that cost redundantly.
+/// Reuses a stored extraction of the same inputs (see `rustdocstore`) instead
+/// of re-running `cargo rustdoc`: rustdoc's JSON backend re-serializes on every
+/// invocation even when the compilation is fully cached, so repeat calls for
+/// one package, and the same sources in another run, would pay for it again.
 pub fn rustdoc_json_in(
     pkg: &str,
     dir: Option<&Path>,
@@ -1328,40 +1224,169 @@ pub fn rustdoc_json_in(
         .join("doc")
         .join(format!("{}.json", pkg.replace('-', "_")));
 
-    let cached = cached_json_path(&json_path, features, visibility);
-    if let Some(doc) = read_fresh_cache(&cached, pkg, dir, features, visibility, &toolchain) {
+    let store_key = || rustdoc_store_key(pkg, dir, &root, features, visibility, &toolchain);
+    let key = store_key();
+    if let Some(doc) = key.as_deref().and_then(|k| rustdocstore::load(k, &root)) {
+        warn_on_format_version(&doc);
         return Ok((doc, root));
     }
+    let dep_info = json_path.with_extension("soothfast.d");
+    let _ = std::fs::remove_file(&dep_info);
+    let started = std::time::SystemTime::now();
 
+    let build = |dep_info: Option<&Path>| {
+        let cmd = rustdoc_command(&toolchain, pkg, dir, features, visibility, dep_info);
+        timed(&format!("cargo rustdoc {pkg}"), || run_teeing_stderr(cmd))
+    };
+    let mut built = build(Some(&dep_info))?;
+    let mut tracked = true;
+    if !built.status.success() && rejects_tracking_flags(&built.stderr) {
+        tracked = false;
+        built = build(None)?;
+    }
+    let failed = |built: &Built| {
+        io::Error::other(format!(
+            "cargo +{toolchain} rustdoc failed with {} \
+             (is the {toolchain} toolchain installed?)",
+            built.status
+        ))
+    };
+    if !built.status.success() {
+        return Err(failed(&built));
+    }
+    // With `--emit=dep-info` rustdoc writes nothing else, so the JSON comes
+    // from a second run without it.
+    if tracked {
+        let plain = build(None)?;
+        if !plain.status.success() {
+            return Err(failed(&plain));
+        }
+    }
+    let text = std::fs::read_to_string(&json_path)
+        .map_err(|e| io::Error::other(format!("cannot read {}: {e}", json_path.display())))?;
+    let doc: Value = timed(&format!("parse rustdoc json {pkg}"), || {
+        serde_json::from_str(&text)
+    })?;
+    warn_on_format_version(&doc);
+    if let (Some(key), true) = (key, tracked) {
+        let inputs = rustdoc_inputs::collect(&root, &dep_info, &built.stdout);
+        rustdocstore::store(&key, store_key(), &root, &inputs, started, &json_path);
+    }
+    Ok((doc, root))
+}
+
+/// `cargo rustdoc` for `pkg`, recording what it read in `dep_info` when given.
+fn rustdoc_command(
+    toolchain: &str,
+    pkg: &str,
+    dir: Option<&Path>,
+    features: Option<&str>,
+    visibility: Visibility,
+    dep_info: Option<&Path>,
+) -> Command {
     let mut cmd = Command::new("cargo");
     cmd.args([&format!("+{toolchain}"), "rustdoc", "-p", pkg, "--lib"]);
+    if dep_info.is_some() {
+        cmd.arg("--message-format=json-render-diagnostics");
+    }
     // Feature-gated items are invisible to the surface unless enabled.
     if let Some(f) = features {
         cmd.args(["--features", f]);
     }
     cmd.args(["--", "--output-format", "json", "-Zunstable-options"]);
+    if let Some(path) = dep_info {
+        cmd.arg(format!("--emit=dep-info={}", path.display()));
+    }
     if visibility == Visibility::Private {
         cmd.arg("--document-private-items");
     }
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
-    let status = cmd.status()?;
-    if !status.success() {
-        return Err(io::Error::other(format!(
-            "cargo +{toolchain} rustdoc failed with {status} \
-             (is the {toolchain} toolchain installed?)"
-        )));
-    }
-    let text = std::fs::read_to_string(&json_path)
-        .map_err(|e| io::Error::other(format!("cannot read {}: {e}", json_path.display())))?;
-    let doc: Value = serde_json::from_str(&text)?;
-    warn_on_format_version(&doc);
-    // Best-effort: a failed cache write only costs a future redundant
-    // rebuild, not correctness, so it must not fail the extraction itself.
-    let _ = std::fs::copy(&json_path, &cached);
-    let _ = write_cache_meta(&cached, features, visibility, &toolchain);
-    Ok((doc, root))
+    cmd
+}
+
+/// Whether `stderr` says the toolchain refused the flags that record what a
+/// rustdoc build read, as opposed to the documented crate failing to build.
+fn rejects_tracking_flags(stderr: &str) -> bool {
+    let e = stderr.to_lowercase();
+    e.contains("invalid message format")
+        || (e.contains("emit")
+            && (e.contains("unrecognized option") || e.contains("unexpected argument")))
+}
+
+struct Built {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: String,
+}
+
+/// Run `cmd`, passing its stderr through as it arrives and keeping a copy.
+fn run_teeing_stderr(mut cmd: Command) -> io::Result<Built> {
+    use std::io::{Read, Write};
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let mut err = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("no stderr"))?;
+    let tee = std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut chunk = [0u8; 8192];
+        while let Ok(n) = err.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            let _ = io::stderr().write_all(&chunk[..n]);
+            kept.extend_from_slice(&chunk[..n]);
+        }
+        String::from_utf8_lossy(&kept).into_owned()
+    });
+    let out = child.wait_with_output()?;
+    let stderr = tee.join().unwrap_or_default();
+    Ok(Built {
+        status: out.status,
+        stdout: out.stdout,
+        stderr,
+    })
+}
+
+fn rustdoc_store_key(
+    pkg: &str,
+    dir: Option<&Path>,
+    root: &Path,
+    features: Option<&str>,
+    visibility: Visibility,
+    toolchain: &str,
+) -> Option<String> {
+    type Dirs = BTreeMap<(String, Option<PathBuf>), Vec<PathBuf>>;
+    static DIRS: Mutex<Dirs> = Mutex::new(BTreeMap::new());
+    let at = (pkg.to_string(), dir.map(Path::to_path_buf));
+    let known = DIRS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&at)
+        .cloned();
+    let crate_dirs = match known {
+        Some(dirs) => dirs,
+        None => {
+            let dirs = local_crate_dirs(pkg, dir).ok()?;
+            DIRS.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(at, dirs.clone());
+            dirs
+        }
+    };
+    let rustc = rustdocstore::rustc_version(toolchain)?;
+    let env = rustdocstore::build_env();
+    let request = rustdocstore::Request {
+        pkg,
+        features,
+        visibility,
+        rustc: &rustc,
+        env: &env,
+    };
+    rustdocstore::key(root, &crate_dirs, &request)
 }
 
 /// Check out the merge-base of HEAD and `refname` under
@@ -2277,18 +2302,28 @@ optional = true
     }
 
     #[test]
-    fn each_rustdoc_configuration_gets_its_own_cache_slot() {
-        let json = std::path::Path::new("/t/doc/soothfast_spec.json");
-        let public = super::cached_json_path(json, None, super::Visibility::Public);
-        let private = super::cached_json_path(json, None, super::Visibility::Private);
-        let featured = super::cached_json_path(json, Some("runner"), super::Visibility::Public);
-        assert_ne!(public, private);
-        assert_ne!(public, featured);
-        assert_ne!(private, featured);
-        assert_eq!(
-            public,
-            super::cached_json_path(json, None, super::Visibility::Public)
-        );
+    fn a_toolchain_that_refuses_the_tracking_flags_is_told_from_a_failed_build() {
+        let refused = [
+            "error: Unrecognized option: 'emit'",
+            "error: invalid message format specifier: `json-render-diagnostics`",
+            "error: unexpected argument '--emit' found",
+        ];
+        for stderr in refused {
+            assert!(super::rejects_tracking_flags(stderr), "{stderr}");
+        }
+        let failed = "error[E0425]: cannot find value `x` in this scope\n\
+                      Caused by: process didn't exit successfully: `rustdoc --emit=dep-info=x.d`";
+        assert!(!super::rejects_tracking_flags(failed));
+    }
+
+    #[test]
+    fn a_failing_command_keeps_its_stderr_and_stdout() {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "echo out; echo oops >&2; exit 3"]);
+        let built = super::run_teeing_stderr(cmd).unwrap();
+        assert_eq!(built.status.code(), Some(3));
+        assert_eq!(built.stdout, b"out\n");
+        assert_eq!(built.stderr, "oops\n");
     }
 
     #[test]

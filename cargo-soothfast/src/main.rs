@@ -37,6 +37,8 @@ mod plan;
 mod project_surface;
 mod report;
 mod runcache;
+mod rustdoc_inputs;
+mod rustdocstore;
 #[cfg(test)]
 mod schema_check;
 #[cfg(test)]

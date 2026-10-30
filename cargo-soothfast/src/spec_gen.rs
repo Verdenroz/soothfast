@@ -311,7 +311,9 @@ pub(crate) fn build(
 
     for (spec_file, routes) in &by_spec {
         let entry = cfg.for_path(spec_file);
-        let (ops, gaps) = operations_for(docs, entry, routes)?;
+        let (ops, gaps) = invoke::timed(&format!("operations {spec_file}"), || {
+            operations_for(docs, entry, routes)
+        })?;
         built.resolved.insert(
             spec_file.clone(),
             ops.iter()
