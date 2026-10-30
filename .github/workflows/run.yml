@@ -158,6 +158,16 @@ jobs:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
           changelog: ${{ inputs.bot && 'true' || 'false' }}
+          save-baseline: head
+      # The docs job reads claims from this instead of measuring again. A
+      # failing gate, or one whose bench binaries match the base, saves none.
+      - name: Upload the head measurement
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-baseline
+          path: .soothfast/baselines/head.json
+          if-no-files-found: ignore
 
   gate:
     name: Gate (${{ matrix.name }})
@@ -242,8 +252,8 @@ jobs:
 
   docs:
     name: Docs check
-    needs: plan
-    if: github.event_name != 'schedule' && needs.plan.outputs.docs == 'true'
+    needs: [plan, gate-rust]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.plan.outputs.docs == 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
       contents: read
@@ -274,12 +284,24 @@ jobs:
         uses: ./.soothfast-action/action/install
         with:
           sha: ${{ inputs.soothfast_ref }}
+      - name: Download the head measurement
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: soothfast-baseline
+          path: .soothfast/baselines
       - name: Check the docs
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
         run: |
           args=()
           for package in $DOCS_PACKAGE; do args+=(-p "$package"); done
+          if [ -f .soothfast/baselines/head.json ]; then
+            args+=(--baseline head)
+          else
+            echo "::notice::claims not evaluated: no measurement"
+            args+=(--skip-claims)
+          fi
           cargo soothfast docs check "${args[@]}"
 
   labels:
