@@ -223,11 +223,18 @@ fn valgrind_cmd(out: &Path, mangled: bool) -> Result<Command, String> {
 /// Run this bench binary under callgrind executing `id` for `iters`
 /// iterations; return the text of every dump it wrote, in order. `mangled`
 /// keeps the symbol-table spelling of function names instead of demangling
-/// them.
-fn run_valgrind(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<Vec<String>, String> {
+/// them. `size` runs a sweep item at that input size instead of its largest.
+fn run_valgrind(
+    id: &str,
+    size: Option<usize>,
+    iters: u64,
+    tag: &str,
+    mangled: bool,
+) -> Result<Vec<String>, String> {
     let out = out_file(tag);
     let status = valgrind_cmd(&out, mangled)?
         .args(["--callgrind-exec", id, "--iters", &iters.to_string()])
+        .args(size_args(size))
         .output()
         .map_err(|e| format!("failed to spawn valgrind: {e}"))?;
     let dumps = take_dumps(&out);
@@ -241,17 +248,24 @@ fn run_valgrind(id: &str, iters: u64, tag: &str, mangled: bool) -> Result<Vec<St
     dumps
 }
 
+fn size_args(size: Option<usize>) -> impl Iterator<Item = String> {
+    size.map(|n| ["--size".to_string(), n.to_string()])
+        .into_iter()
+        .flatten()
+}
+
 /// Run `id` in one valgrind process with `--callgrind-window`. The process
 /// dumps after setup and after a warm-up iteration, then tells this side so
 /// over a control channel (see `ctl`) and waits for the number of iterations
 /// to measure, which this side picks from the warm-up's dump. Returns every
 /// dump and that number.
 #[cfg(target_os = "linux")]
-fn run_window(id: &str, tag: &str) -> Result<(Vec<String>, u64), String> {
+fn run_window(id: &str, size: Option<usize>, tag: &str) -> Result<(Vec<String>, u64), String> {
     let out = out_file(tag);
     let control = ctl::Control::new().map_err(|e| e.to_string())?;
     let mut cmd = valgrind_cmd(&out, true)?;
     cmd.args(["--callgrind-exec", id, "--callgrind-window"])
+        .args(size_args(size))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -294,7 +308,7 @@ fn run_window(id: &str, tag: &str) -> Result<(Vec<String>, u64), String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn run_window(_id: &str, _tag: &str) -> Result<(Vec<String>, u64), String> {
+fn run_window(_id: &str, _size: Option<usize>, _tag: &str) -> Result<(Vec<String>, u64), String> {
     Err("the window method needs linux".into())
 }
 
@@ -425,15 +439,15 @@ impl Method {
 }
 
 /// Per-iteration Ir for one item.
-pub fn measure(id: &str) -> Result<Measurement, String> {
+pub fn measure(id: &str, size: Option<usize>) -> Result<Measurement, String> {
     match Method::current() {
-        Method::OneProcess => measure_window(id),
-        Method::TwoProcess => measure_difference(id),
+        Method::OneProcess => measure_window(id, size),
+        Method::TwoProcess => measure_difference(id, size),
     }
 }
 
-fn measure_window(id: &str) -> Result<Measurement, String> {
-    let (dumps, window) = run_window(id, "window")?;
+fn measure_window(id: &str, size: Option<usize>) -> Result<Measurement, String> {
+    let (dumps, window) = run_window(id, size, "window")?;
     let [setup, warmup, _handshake, measured, exit] = dumps.as_slice() else {
         return Err(format!("expected 5 callgrind dumps, found {}", dumps.len()));
     };
@@ -444,9 +458,9 @@ fn measure_window(id: &str) -> Result<Measurement, String> {
     })
 }
 
-fn measure_difference(id: &str) -> Result<Measurement, String> {
-    let low = run_valgrind(id, K_MAX, "k1", true)?;
-    let high = run_valgrind(id, 2 * K_MAX, "k2", true)?;
+fn measure_difference(id: &str, size: Option<usize>) -> Result<Measurement, String> {
+    let low = run_valgrind(id, size, K_MAX, "k1", true)?;
+    let high = run_valgrind(id, size, 2 * K_MAX, "k2", true)?;
     let (Some(low_total), Some(high_total)) = (low.first(), high.first()) else {
         return Err("callgrind wrote no dump".into());
     };
@@ -461,24 +475,26 @@ fn measure_difference(id: &str) -> Result<Measurement, String> {
 // so the pool is capped rather than sized to the machine.
 const MAX_PARALLEL: usize = 4;
 
-/// Per-iteration Ir for many items, measured concurrently (Ir counts are
-/// timing-independent). Results come back in input order.
-pub fn measure_all(ids: &[&str]) -> Vec<Result<Measurement, String>> {
+/// Per-iteration Ir for many `(item, size)` jobs, measured concurrently (Ir
+/// counts are timing-independent). Results come back in input order.
+pub fn measure_all(jobs: &[(&str, Option<usize>)]) -> Vec<Result<Measurement, String>> {
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
         .min(MAX_PARALLEL)
-        .min(ids.len());
+        .min(jobs.len());
     let next = AtomicUsize::new(0);
     let slots: Vec<Mutex<Option<Result<Measurement, String>>>> =
-        ids.iter().map(|_| Mutex::new(None)).collect();
+        jobs.iter().map(|_| Mutex::new(None)).collect();
     std::thread::scope(|s| {
         for _ in 0..workers {
             s.spawn(|| {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(id) = ids.get(i) else { break };
-                    *slots[i].lock().unwrap() = Some(measure(id));
+                    let Some(&(id, size)) = jobs.get(i) else {
+                        break;
+                    };
+                    *slots[i].lock().unwrap() = Some(measure(id, size));
                 }
             });
         }
@@ -537,7 +553,7 @@ fn executed<'a>(dumps: impl IntoIterator<Item = &'a String>) -> Vec<(String, Str
 
 /// Human triage report: top self-cost functions for one item's workload.
 pub fn annotate(id: &str) -> Result<String, String> {
-    let dumps = run_valgrind(id, 1, "annotate", false)?;
+    let dumps = run_valgrind(id, None, 1, "annotate", false)?;
     let text = dumps.first().ok_or("callgrind wrote no dump")?;
     let total = summary_ir(text)?;
     let mut costs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
