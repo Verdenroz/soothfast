@@ -15,6 +15,7 @@ use crate::headrun::{
     self, RECOUNT, Settled, binary_digest, cache_head, cache_head_doc, head_from_runcache, ref_doc,
     settle, settled_doc,
 };
+use crate::import;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::itemreuse::{Bin, Reuse};
 use crate::workspace;
@@ -76,6 +77,17 @@ struct GateArgs {
     matrix: String,
     save_baseline: Option<String>,
     reuse_base: bool,
+    import: ImportArgs,
+}
+
+/// `--import`: gate result files from another harness instead of measuring.
+/// Each side is a `(format, file)` pair.
+#[derive(Default)]
+struct ImportArgs {
+    current: Option<(String, String)>,
+    reference: Option<(String, String)>,
+    prefix: Option<String>,
+    baseline_given: bool,
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -97,6 +109,7 @@ pub fn run(args: &[String]) -> i32 {
         matrix: "default".into(),
         save_baseline: None,
         reuse_base: true,
+        import: ImportArgs::default(),
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -109,7 +122,10 @@ pub fn run(args: &[String]) -> i32 {
                 None => return err("--features-matrix needs combos like \"default;full\""),
             },
             "--baseline" => match it.next() {
-                Some(n) => g.baseline = n.clone(),
+                Some(n) => {
+                    g.baseline = n.clone();
+                    g.import.baseline_given = true;
+                }
                 None => return err("--baseline needs a name"),
             },
             "--ratchet" => match it.next() {
@@ -129,6 +145,21 @@ pub fn run(args: &[String]) -> i32 {
                 Some(Err(e)) => return err(&e),
                 None => return err("--shard needs I/N"),
             },
+            "--import" | "--reference-import" => {
+                let (Some(format), Some(file)) = (it.next(), it.next()) else {
+                    return err(&format!("{a} needs a format and a file"));
+                };
+                let side = Some((format.clone(), file.clone()));
+                if a == "--import" {
+                    g.import.current = side;
+                } else {
+                    g.import.reference = side;
+                }
+            }
+            "--prefix" => match it.next() {
+                Some(p) => g.import.prefix = Some(p.clone()),
+                None => return err("--prefix needs a value"),
+            },
             "--no-reuse-base" => g.reuse_base = false,
             "--deps" => g.deps = true,
             "--allow-gone" => g.allow_gone = true,
@@ -137,6 +168,9 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
+    if g.import.current.is_some() {
+        return run_imported(&g, &invoke::project_root());
+    }
     let walltime_advisory = match gate_config::apply(&mut g.common) {
         Ok(cfg) => cfg.walltime_advisory,
         Err(e) => return err(&e),
@@ -305,6 +339,88 @@ pub fn run(args: &[String]) -> i32 {
             current.items.len(),
             harness_verdict(&harness, false)
         );
+        0
+    }
+}
+
+/// Gate an imported run against a baseline or another imported run. Nothing
+/// is built or measured, so this works outside a cargo workspace; `root`
+/// holds the baselines and `soothfast.toml`.
+fn run_imported(g: &GateArgs, root: &std::path::Path) -> i32 {
+    let Some((format, file)) = &g.import.current else {
+        return err("gate --import needs a format and a file");
+    };
+    if g.ratchet.is_some() || g.against_ref.is_some() || g.save_baseline.is_some() || g.deps {
+        return err("--import gates against --baseline or --reference-import only");
+    }
+    if g.import.baseline_given && g.import.reference.is_some() {
+        return err("--baseline and --reference-import both name the reference; pass one");
+    }
+    if g.common.shard.is_some() || g.common.pkg.is_some() {
+        return err("--import gates a result file whole; --shard and -p do not apply");
+    }
+    let walltime_advisory = match gate_config::load(root) {
+        Ok(cfg) => cfg.walltime_advisory,
+        Err(e) => return err(&e),
+    };
+    let prefix = g.import.prefix.as_deref();
+    let (mut current, prefix) = match import::read(format, file, prefix) {
+        Ok(read) => read,
+        Err(e) => return err(&e),
+    };
+    if let Some(f) = &g.common.filter {
+        current.items.retain(|id, _| id.contains(f.as_str()));
+        if current.items.is_empty() {
+            return err("--filter matches no imported item; refusing to gate");
+        }
+    }
+    let reference = match &g.import.reference {
+        Some((format, file)) => {
+            import::read(format, file, Some(&prefix)).map(|(run, _)| import::to_doc(&run))
+        }
+        None => match invoke::load_baseline_in(root, &g.baseline) {
+            Ok(Some(mut doc)) => {
+                // A baseline can hold other prefixes and Rust items; theirs are not missing here.
+                if let Some(items) = doc["items"].as_object_mut() {
+                    items.retain(|_, v| v["imported"].as_str() == Some(prefix.as_str()));
+                }
+                Ok(doc)
+            }
+            Ok(None) => Err(format!("no baseline named {:?}", g.baseline)),
+            Err(e) => Err(format!("failed to load baseline: {e}")),
+        },
+    };
+    let reference = match reference {
+        Ok(doc) => doc,
+        Err(e) => return err(&e),
+    };
+
+    let ctx = CompareCtx {
+        deps_mode: false,
+        allow_gone: g.allow_gone,
+        filter: g.common.filter.clone(),
+        shard: None,
+        pkg: None,
+        buildcost_mode: false,
+        accepted: gate_lock::read(root).unwrap_or_default(),
+        headroom_pct: None,
+        walltime_advisory,
+    };
+    let mut failing_ids = Vec::new();
+    let failures = compare(
+        &reference,
+        &current,
+        "",
+        &ctx,
+        &mut failing_ids,
+        &mut Vec::new(),
+        &mut Vec::new(),
+    );
+    if failures > 0 {
+        println!("gate: FAILED ({failures} regression(s))");
+        1
+    } else {
+        println!("gate: passed ({} item(s))", current.items.len());
         0
     }
 }
@@ -628,6 +744,7 @@ fn accept_cmd(args: &[String]) -> i32 {
         matrix: a.matrix,
         save_baseline: None,
         reuse_base: true,
+        import: ImportArgs::default(),
     };
     let Resolved {
         reference,
@@ -1715,13 +1832,13 @@ fn partial(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompareCtx, FailedMetric, SaveVerdict, combine_min, combine_rounds, compare,
+        CompareCtx, FailedMetric, GateArgs, SaveVerdict, combine_min, combine_rounds, compare,
         identical_pass_args, identical_pass_cache, reuse_hint, round_duration, save_verdict,
         walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
-    use crate::invoke::{HarnessSync, ItemMetrics, Run};
+    use crate::invoke::{self, CommonArgs, HarnessSync, ItemMetrics, Run};
     use serde_json::{Value, json};
 
     fn ctx() -> CompareCtx {
@@ -2560,5 +2677,128 @@ mod tests {
         super::triage_harness_note(&dir, &HarnessSync::Matched);
         assert!(!dir.join("harness-mismatch.txt").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn pyperf(seconds: f64) -> String {
+        let runs = json!([{ "values": [seconds, seconds, seconds] }]);
+        json!({ "benchmarks": [{ "metadata": { "name": "b" }, "runs": runs }] }).to_string()
+    }
+
+    fn imported_gate(name: &str, current: f64, config: &str, baseline: bool) -> i32 {
+        imported_gate_with(name, current, config, baseline, |_| {})
+    }
+
+    fn imported_gate_with(
+        name: &str,
+        current: f64,
+        config: &str,
+        baseline: bool,
+        tweak: impl FnOnce(&mut GateArgs),
+    ) -> i32 {
+        let root = std::env::temp_dir().join(format!("soothfast-gate-import-{name}"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("soothfast.toml"), config).unwrap();
+        let file = |stem: &str, text: String| {
+            let path = root.join(stem);
+            std::fs::write(&path, text).unwrap();
+            ("pyperf".to_string(), path.display().to_string())
+        };
+        let reference = file("ref.json", pyperf(0.001));
+        let mut g = GateArgs {
+            common: CommonArgs::default(),
+            baseline: "base".into(),
+            ratchet: None,
+            against_ref: None,
+            deps: false,
+            allow_gone: false,
+            allow_harness_change: false,
+            matrix: "default".into(),
+            save_baseline: None,
+            reuse_base: true,
+            import: super::ImportArgs {
+                current: Some(file("cur.json", pyperf(current))),
+                reference: Some(reference.clone()),
+                prefix: None,
+                baseline_given: false,
+            },
+        };
+        tweak(&mut g);
+        if baseline {
+            let (run, prefix) = crate::import::read(&reference.0, &reference.1, None).unwrap();
+            let scope = invoke::SaveScope::Imported(prefix);
+            invoke::save_baseline_in(&root, "base", &run, scope).unwrap();
+            let other = ItemMetrics {
+                median_ns: Some(1.0),
+                imported: Some("jmh".into()),
+                ..ItemMetrics::default()
+            };
+            let mut other_run = Run::default();
+            other_run.items.insert("jmh::elsewhere".into(), other);
+            let scope = invoke::SaveScope::Imported("jmh".into());
+            invoke::save_baseline_in(&root, "base", &other_run, scope).unwrap();
+            g.import.reference = None;
+        }
+        let code = super::run_imported(&g, &root);
+        let _ = std::fs::remove_dir_all(&root);
+        code
+    }
+
+    #[test]
+    fn an_import_filter_matching_nothing_is_refused() {
+        let code = imported_gate_with("filter-none", 0.0013, "", false, |g| {
+            g.common.filter = Some("nothing".into());
+        });
+        assert_eq!(code, 2);
+    }
+
+    #[test]
+    fn an_import_filter_gates_the_matching_items() {
+        let code = imported_gate_with("filter-some", 0.0013, "", false, |g| {
+            g.common.filter = Some("b".into());
+        });
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn an_import_rejects_shard_and_package() {
+        let shard = imported_gate_with("shard", 0.001, "", false, |g| {
+            g.common.shard = Some(invoke::Shard::parse("1/2").unwrap());
+        });
+        let pkg = imported_gate_with("pkg", 0.001, "", false, |g| {
+            g.common.pkg = Some("mylib".into());
+        });
+        assert_eq!((shard, pkg), (2, 2));
+    }
+
+    #[test]
+    fn an_import_rejects_a_baseline_beside_a_reference_import() {
+        let code = imported_gate_with("both", 0.001, "", false, |g| {
+            g.baseline = "base".into();
+            g.import.baseline_given = true;
+        });
+        assert_eq!(code, 2);
+    }
+
+    #[test]
+    fn an_imported_run_30_percent_slower_fails() {
+        assert_eq!(imported_gate("slow", 0.0013, "", false), 1);
+    }
+
+    #[test]
+    fn an_imported_run_2_percent_slower_passes() {
+        assert_eq!(imported_gate("flat", 0.00102, "", false), 0);
+    }
+
+    #[test]
+    fn an_imported_run_gates_against_a_stored_baseline_of_its_own_prefix() {
+        assert_eq!(imported_gate("base-slow", 0.0013, "", true), 1);
+        assert_eq!(imported_gate("base-flat", 0.00102, "", true), 0);
+    }
+
+    #[test]
+    fn advisory_walltime_lets_an_imported_regression_through() {
+        let advisory = "[gate]\nwalltime = \"advisory\"\n";
+        assert_eq!(imported_gate("advisory", 0.0013, advisory, false), 0);
     }
 }

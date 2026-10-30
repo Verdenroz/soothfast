@@ -1,6 +1,7 @@
 //! `cargo soothfast` — CLI entry point.
 //!
 //! Subcommands: `measure` (bench or buildcost backends, baseline save),
+//! `import` (other harnesses' results as runs and baselines),
 //! `gate` (baseline / merge-base worktree / ratchet comparison with
 //! thresholds + triage artifacts), `trend append|render`, `coverage`,
 //! `docs`, `spec`, `sdk`, `report`, `site`, and `mcp`.
@@ -20,6 +21,7 @@ mod gate_config;
 mod gate_lock;
 mod glob;
 mod headrun;
+mod import;
 mod init;
 mod invoke;
 mod itemcache;
@@ -62,6 +64,10 @@ commands:
            acts on pull request labels as soothfast-bot; --labels creates
            soothfast:merge, soothfast:update, soothfast:perf-accepted and
            do-not-merge with gh)
+  import   --from jmh|pyperf|pytest-benchmark|vitest FILE [--prefix P]
+           (--save-baseline NAME | --out FILE)
+           (turns another harness's benchmark results into walltime items
+           named PREFIX::NAME; the prefix defaults to the format)
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]
@@ -80,6 +86,10 @@ commands:
            pinned to HEAD's soothfast, where the delta may be the harness)
            (--codegen-units pins both sides' partitioning; default 1)
            (--no-reuse-base re-measures the reference instead of reusing it)
+  gate     --import FORMAT FILE [--prefix P] [--allow-gone]
+           (--baseline NAME | --reference-import FORMAT FILE)
+           (gates an imported run without building or measuring, so it works
+           outside a cargo workspace; walltime is the only metric)
   gate     accept -p PKG --against-ref REF --justification \"...\"
            [--only ID]... [--headroom PCT]
            (records currently-failing benches into soothfast-gate.lock as a
@@ -165,6 +175,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
     match cmd.as_str() {
         "measure" => cmd_measure(rest),
         "init" => init::run(rest),
+        "import" => import::run(rest),
         "gate" => gate::run(rest),
         "trend" => trend::run(rest),
         "docs" => docs::run(rest),
