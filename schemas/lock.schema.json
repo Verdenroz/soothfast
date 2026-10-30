@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Verdenroz/soothfast/master/schemas/lock.schema.json",
+  "title": "soothfast.lock",
+  "description": "Committed fingerprints of every bound item, at the workspace root. `docs check` reports a bind stale when its current fingerprint differs from the locked one; `docs accept` re-locks. Readers ignore unknown keys and default every missing key, so no key is required; a missing file reads as an empty map.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "description": "Lockfile format. Currently 2, bumped whenever the fingerprint input changes. A file without it reads as 1; a lower version than the build's reads as needing one re-accept, and a higher one is refused by `docs accept`.",
+      "type": "integer"
+    },
+    "binds": {
+      "description": "Bound item path to hex fingerprint. Entries whose value is not a string are ignored.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}
