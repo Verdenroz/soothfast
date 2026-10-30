@@ -154,7 +154,7 @@ installed on is refused.
 | `broker` | built in | Token broker URL. |
 | `labels` | `false` | On default-branch pushes and schedules, act on pull request labels as soothfast-bot (see [Labels](#labels)). |
 | `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
-| `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded. |
+| `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved. |
 
 Outputs are `version` and `cache-hit`.
 
