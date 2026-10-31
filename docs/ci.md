@@ -414,7 +414,8 @@ and the gates and tests of the other ecosystems, do not wait for either build.
 
 A job that runs when its build job failed finds nothing to download and
 compiles for itself, so a compile error still shows up in that job's output
-and in the verdict.
+and in the verdict. The docs job also keeps the [Rustdoc cache](#rustdoc-cache)
+as a fallback, so a store that misses costs no more than before.
 
 A hit needs the reading job to be the same machine setup as the building one.
 The key names the checkout path, the target directory, `CARGO_HOME`, `rustc
@@ -444,8 +445,9 @@ jobs:
 
 The legs record `soothfast-result-rust-shard-<i>-of-<n>` and the verdict folds them
 into one section for the package. A pull request's shards cannot save the
-`head` baseline, which holds every item, so the docs check reads the default
-branch's measurement for its claims. A default-branch push records every item
+`head` baseline, which holds every item, so on a pull request with `shard`
+above 1 the docs check reports "claims not evaluated: sharded gate saves no
+measurement" and checks binds and examples only. A default-branch push records every item
 in its first leg and saves the baseline as before; the other legs are
 skipped on a push, since they would only set up.
 
