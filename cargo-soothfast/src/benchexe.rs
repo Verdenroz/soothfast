@@ -160,34 +160,29 @@ impl Plan {
     }
 
     fn keep(&self, cargo_stdout: &[u8], exe: &Path, started: SystemTime) {
-        let pkg = &self.id.pkg;
         let inputs = match rustdoc_inputs::collect_build(&self.root, exe, cargo_stdout) {
             Ok(inputs) => inputs,
-            Err(why) => {
-                eprintln!("soothfast: {pkg} not stored: dep-info unreadable: {why}");
-                return;
-            }
+            Err(why) => return self.not_stored(&format!("dep-info unreadable: {why}")),
         };
-        let key_now = self.key_now();
-        if key_now.as_deref() != Some(&self.key) {
-            eprintln!("soothfast: {pkg} not stored: the tree changed during the build");
-            return;
-        }
         let kept = binstore::store(
             &self.store,
             &self.key,
-            key_now,
+            self.key_now(),
             &self.root,
             &inputs,
             started,
             exe,
             &self.group(),
         );
-        if kept.is_none() && self.load().is_none() {
-            eprintln!(
-                "soothfast: {pkg} not stored: an input changed during the build or the entry could not be written"
-            );
+        if let Err(skip) = kept
+            && let Some(why) = skip.why()
+        {
+            self.not_stored(why);
         }
+    }
+
+    fn not_stored(&self, why: &str) {
+        note_once(&self.id.pkg, why);
     }
 
     /// `exe` run as `cargo bench` would, before any runner argument.
@@ -259,10 +254,12 @@ pub fn executable(
     build: Build,
 ) -> Option<PathBuf> {
     let plan = plan(common, dir, target_dir, build);
-    if plan.is_none() {
-        eprintln!(
-            "soothfast: {} not stored: the build cannot be keyed or a cargo runner is configured",
-            common.pkg.as_deref().unwrap_or("")
+    if plan.is_none()
+        && let Some(pkg) = common.pkg.as_deref()
+    {
+        note_once(
+            pkg,
+            "the build cannot be keyed or a cargo runner is configured",
         );
     }
     let label = format!("bench executable {}", common.pkg.as_deref().unwrap_or(""));
@@ -271,6 +268,17 @@ pub fn executable(
             cargo_build(common, dir, target_dir, build)
         })
     })
+}
+
+/// Say once per process why `pkg`'s executable is not kept.
+fn note_once(pkg: &str, why: &str) {
+    static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let line = format!("soothfast: {pkg} not stored: {why}");
+    let mut said = SAID.lock().unwrap_or_else(PoisonError::into_inner);
+    if !said.contains(&line) {
+        eprintln!("{line}");
+        said.push(line);
+    }
 }
 
 fn cargo_build(

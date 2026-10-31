@@ -116,7 +116,14 @@ fn seed_nested(
         if split_unit(&name).is_some() || members.contains(&name) || !pkg.path().is_dir() {
             continue;
         }
-        for unit in fs::read_dir(pkg.path())? {
+        let units = match fs::read_dir(pkg.path()) {
+            Ok(units) => units,
+            Err(e) => {
+                seeded.skipped.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        for unit in units {
             let hash = unit?.file_name().to_string_lossy().into_owned();
             let rel = Path::new("build").join(&name).join(&hash);
             if !is_hash(&hash) || fs::symlink_metadata(base.join(&rel)).is_ok() {
@@ -308,6 +315,30 @@ mod tests {
         assert!(base.join("build/serde/0123456789abcdef/out/x").exists());
         assert!(!base.join("build/app").exists());
         assert_eq!(seed(&head, &base, &members).unwrap().units, 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_package_directory_is_skipped_not_fatal() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("soothfast-seed-deny-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (head, base) = (root.join("head"), root.join("base"));
+        for unit in ["locked/0123456789abcdef", "open/fedcba9876543210"] {
+            let path = head.join("build").join(unit).join("out/x");
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, unit).unwrap();
+        }
+        let locked = head.join("build/locked");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let seeded = seed(&head, &base, &BTreeSet::new()).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        let readable = fs::read_dir(&locked).is_ok();
+        assert_eq!(seeded.units, 1);
+        assert_eq!(seeded.skipped.len(), 1, "{seeded:?}");
+        assert!(readable);
         let _ = fs::remove_dir_all(&root);
     }
 

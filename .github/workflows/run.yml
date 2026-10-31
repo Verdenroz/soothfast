@@ -185,6 +185,7 @@ jobs:
           packages: ${{ needs.plan.outputs.packages }}
           changelog: "false"
           prebuild: bench
+          prebuild-shards: ${{ inputs.shard }}
           prebuild-stage: ${{ runner.temp }}/store
           bin-cache: "true"
       - name: Upload the stores
@@ -489,9 +490,10 @@ jobs:
           changelog: ${{ inputs.bot && 'true' || 'false' }}
           comment: "false"
           shard: ${{ matrix.shard }}
-          # A pull request's shard measures some items, and a baseline holds
-          # all of them. A push records every item in its first leg.
-          save-baseline: ${{ (matrix.shard == '' || github.event_name != 'pull_request') && 'head' || '' }}
+          # A pull request's shard saves the partial baseline of the items it
+          # owns, which the docs job merges. A push records every item in its
+          # first leg.
+          save-baseline: head
           # The build job owns the executables; only the changelog
           # regeneration on a default-branch push builds rustdoc here.
           rustdoc-cache: ${{ inputs.bot && github.event_name == 'push' && 'true' || 'false' }}
@@ -508,7 +510,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-baseline
+          name: soothfast-baseline${{ matrix.shard != '' && github.event_name == 'pull_request' && format('-shard-{0}', matrix.slug) || '' }}
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
       # A pull request that leaves the bench binaries unchanged saves none,
@@ -677,8 +679,35 @@ jobs:
         with:
           name: soothfast-baseline
           path: .soothfast/baselines
+      # Each shard of a pull request saved the baseline of its own items.
+      - name: Download the shard measurements
+        if: github.event_name == 'pull_request' && inputs.shard > 1
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: soothfast-baseline-shard-*
+          path: .soothfast/shard-baselines
+      # All shards merge into the measurement. None means the bench binaries
+      # were unchanged and the default branch's measurement stands. Some
+      # leave the claims unevaluated.
+      - name: Merge the shard measurements
+        if: github.event_name == 'pull_request' && inputs.shard > 1
+        id: shards
+        shell: bash
+        env:
+          SHARDS: ${{ inputs.shard }}
+        run: |
+          mapfile -t files < <(find .soothfast/shard-baselines -name head.json 2>/dev/null | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "complete=none" >>"$GITHUB_OUTPUT"
+          elif cargo soothfast baseline merge --into head --expect "$SHARDS" "${files[@]}"; then
+            echo "complete=all" >>"$GITHUB_OUTPUT"
+          else
+            echo "::warning::${#files[@]} of $SHARDS shard measurements arrived; claims not evaluated"
+            echo "complete=partial" >>"$GITHUB_OUTPUT"
+          fi
       - name: Restore the default-branch measurement
-        if: hashFiles('.soothfast/baselines/head.json') == ''
+        if: hashFiles('.soothfast/baselines/head.json') == '' && steps.shards.outputs.complete != 'partial'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .soothfast/baselines/head.json

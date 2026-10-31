@@ -204,6 +204,13 @@ inputs:
       spec is generated.
     required: false
     default: ""
+  prebuild-shards:
+    description: >-
+      Legs the gate is split into (the `shard` count of the legs that will
+      read the stores), so a merge-base whose run every leg has stored is
+      not built. Empty or 1 for an unsharded gate.
+    required: false
+    default: ""
   prebuild-stage:
     description: Directory to copy the entries the lanes built or found into, for a job to upload. Empty copies nothing.
     required: false
@@ -482,6 +489,7 @@ runs:
         CLI: ${{ steps.resolve.outputs.bin }}
         LANES: ${{ steps.lanes.outputs.lanes }}
         STAGE: ${{ inputs.prebuild-stage }}
+        SHARDS: ${{ inputs.prebuild-shards }}
         PACKAGES: ${{ steps.prepare.outputs.packages }}
         FEATURES: ${{ inputs.features }}
         BASE_REF: ${{ github.base_ref }}

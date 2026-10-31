@@ -4,13 +4,14 @@
 # packages, or rustdoc JSON. The merge-base is the pull request's base, or the
 # parent of a default-branch push, as the gate compares them.
 # Inputs: CLI LANES (space-separated) PACKAGES BASE_REF EVENT ON_DEFAULT, and
-# FEATURES, DOCS and SPEC (space-separated packages), STAGE (optional).
+# FEATURES, DOCS and SPEC (space-separated packages), STAGE, SHARDS (optional).
 set -euo pipefail
 
 args=()
 read -ra chosen <<<"$LANES"
 for lane in "${chosen[@]}"; do args+=(--only "$lane"); done
 [ -n "${STAGE:-}" ] && args+=(--stage "$STAGE")
+[ -n "${SHARDS:-}" ] && args+=(--shards "$SHARDS")
 read -ra packages <<<"${PACKAGES:-}"
 for pkg in "${packages[@]}"; do args+=(-p "$pkg"); done
 read -ra docs <<<"${DOCS:-}"

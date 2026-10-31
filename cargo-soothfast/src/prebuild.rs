@@ -14,12 +14,14 @@
 //! `--stage DIR` copies just the entries the run built or found, so the
 //! machine hands on those and not everything it restored.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::invoke::{self, Build, CommonArgs, Visibility};
+use crate::invoke::{self, Build, CommonArgs, HostEnv, Shard, Visibility};
 use crate::itemreuse::{self, Bin};
+use crate::runcache::Runs;
 use crate::{
     benchexe, binstore, buildstamp, gate, gate_config, headrun, linkmap, runcache, seed,
     spec_config, spec_gen, workspace,
@@ -118,6 +120,9 @@ struct Wanted {
     against_ref: Option<String>,
     reuse_base: bool,
     stage: Option<PathBuf>,
+    /// Legs the gate is split into, which decide the run-cache keys a stored
+    /// merge-base run is looked up under.
+    shards: u64,
 }
 
 /// What the stores and the run cache hold.
@@ -233,6 +238,14 @@ struct Live<'a> {
     base_sha: String,
     /// Where the entries this run needs are copied to, when asked.
     stage: Option<&'a Path>,
+    shards: u64,
+    /// What HEAD's bench binaries resolved, kept for the merge-base side.
+    heads: &'a RefCell<BTreeMap<String, Head>>,
+}
+
+struct Head {
+    digest: Option<String>,
+    env: Option<HostEnv>,
 }
 
 impl Live<'_> {
@@ -284,8 +297,19 @@ impl State for Live<'_> {
     fn reference_stored(&self, pkg: &str) -> bool {
         let one = self.one(pkg, None);
         let stamp = buildstamp::capture(one.codegen_units_stamp().as_deref(), None);
-        let (_, runs, _) = headrun::probe("prebuild", &one, &stamp);
-        gate::stored_reference(&runs, true, &self.base_sha).is_some()
+        let env = self.heads.borrow().get(pkg).and_then(|h| h.env.clone());
+        let loaded = |shard: Option<Shard>| {
+            let common = CommonArgs {
+                shard,
+                ..one.clone()
+            };
+            let runs = Runs::new(&stamp, &common, env.clone());
+            gate::stored_reference(&runs, true, &self.base_sha).is_some()
+        };
+        match self.shards {
+            0 | 1 => loaded(None),
+            count => (1..=count).all(|index| loaded(Some(Shard { index, count }))),
+        }
     }
 
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>> {
@@ -320,20 +344,17 @@ fn executable_key(exe: &Path) -> Option<String> {
 
 /// Copy what a later job reads for `item` into `stage`: its entry, the
 /// manifest naming its inputs, and the digest and extents kept beside it.
-fn stage_item(item: &Item, live: &Live, stage: &Path) {
+fn stage_item(item: &Item, built: Option<PathBuf>, live: &Live, stage: &Path) {
     match item {
-        Item::Bench { pkg, side } => {
-            let (dir, target_dir) = live.tree(*side);
-            let exe = benchexe::executable(&live.one(pkg, None), dir, target_dir, Build::Measure);
-            stage_from(
-                exe.as_deref().and_then(executable_key),
-                binstore::dir(),
-                stage,
-            );
-        }
+        Item::Bench { .. } => stage_from(
+            built.as_deref().and_then(executable_key),
+            binstore::dir(),
+            stage,
+        ),
         Item::Routes { pkg, target } => {
-            let exe =
-                benchexe::executable(&live.one(pkg, Some(target)), None, None, Build::Discover);
+            let exe = built.or_else(|| {
+                benchexe::executable(&live.one(pkg, Some(target)), None, None, Build::Discover)
+            });
             stage_from(
                 exe.as_deref().and_then(executable_key),
                 binstore::dir(),
@@ -361,11 +382,17 @@ fn stage_from(key: Option<String>, store: Option<PathBuf>, stage: &Path) {
 
 /// Link the bench target a second time for its map, when the gate would read
 /// one for this binary.
-fn link_map(common: &CommonArgs, exe: &Path, dir: Option<&Path>, target_dir: Option<&Path>) {
-    let Ok(env) = invoke::host_env(exe, common.backend.as_deref()) else {
+fn link_map(
+    common: &CommonArgs,
+    exe: &Path,
+    env: Option<&HostEnv>,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+) {
+    let Some(env) = env else {
         return;
     };
-    if !itemreuse::reads_maps(&env, common) {
+    if !itemreuse::reads_maps(env, common) {
         return;
     }
     let digest = headrun::binary_digest(exe);
@@ -374,16 +401,14 @@ fn link_map(common: &CommonArgs, exe: &Path, dir: Option<&Path>, target_dir: Opt
         digest: digest.as_deref(),
         dir,
         target_dir,
-        env: Some(&env),
+        env: Some(env),
     };
     linkmap::extents("prebuild", common, &bin);
 }
 
-fn build_item(
-    step: &Step,
-    live: &Live,
-    heads: &mut BTreeMap<String, String>,
-) -> Result<(), String> {
+/// Builds what `step` names. The executable of a bench or routes step, which
+/// staging then reads.
+fn build_item(step: &Step, live: &Live) -> Result<Option<PathBuf>, String> {
     let missing = |pkg: &str| format!("{pkg}: the executable did not build");
     match &step.item {
         Item::Bench { pkg, side } => {
@@ -392,23 +417,29 @@ fn build_item(
             let exe = benchexe::executable(&one, dir, target_dir, Build::Measure)
                 .ok_or_else(|| missing(pkg))?;
             let digest = headrun::binary_digest(&exe);
+            let env = invoke::host_env(&exe, one.backend.as_deref()).ok();
             // Identical binaries need no map of the merge-base: the gate
             // measures the one pass.
-            let same_as_head =
-                *side == Side::Base && digest.is_some() && heads.get(pkg) == digest.as_ref();
-            if *side == Side::Head
-                && let Some(digest) = digest
-            {
-                heads.insert(pkg.clone(), digest);
+            let same_as_head = *side == Side::Base
+                && digest.is_some()
+                && live.heads.borrow().get(pkg).map(|h| &h.digest) == Some(&digest);
+            if *side == Side::Head {
+                live.heads.borrow_mut().insert(
+                    pkg.clone(),
+                    Head {
+                        digest,
+                        env: env.clone(),
+                    },
+                );
             }
             if !same_as_head {
-                link_map(&one, &exe, dir, target_dir);
+                link_map(&one, &exe, env.as_ref(), dir, target_dir);
             }
-            Ok(())
+            Ok(Some(exe))
         }
         Item::Routes { pkg, target } => {
             benchexe::executable(&live.one(pkg, Some(target)), None, None, Build::Discover)
-                .map(drop)
+                .map(Some)
                 .ok_or_else(|| missing(pkg))
         }
         Item::Rustdoc {
@@ -420,10 +451,10 @@ fn build_item(
             let built =
                 invoke::rustdoc_json_in(pkg, None, features.as_deref(), visibility(*private));
             match built {
-                Ok(_) => Ok(()),
+                Ok(_) => Ok(None),
                 Err(e) if *aux => {
                     eprintln!("prebuild: cannot document workspace crate {pkg} ({e}); dropped");
-                    Ok(())
+                    Ok(None)
                 }
                 Err(e) => Err(format!("{pkg}: {e}")),
             }
@@ -433,7 +464,7 @@ fn build_item(
 
 /// Run `steps`, building the benches of one side together first so cargo
 /// shares their dependency graph.
-fn execute(steps: &[Step], live: &Live, heads: &mut BTreeMap<String, String>) -> Vec<Outcome> {
+fn execute(steps: &[Step], live: &Live) -> Vec<Outcome> {
     let side_of = |s: &Step| match &s.item {
         Item::Bench { side, .. } => Some(*side),
         _ => None,
@@ -463,22 +494,22 @@ fn execute(steps: &[Step], live: &Live, heads: &mut BTreeMap<String, String>) ->
             let wants_build = s.action == Action::Build || side_of(s).is_some();
             let label = format!("prebuild {}", s.item);
             let built = if wants_build {
-                invoke::timed(&label, || build_item(s, live, heads))
+                invoke::timed(&label, || build_item(s, live))
             } else {
-                Ok(())
+                Ok(None)
+            };
+            let outcome = match &built {
+                Err(e) => Outcome::Failed(e.clone()),
+                Ok(_) if s.action == Action::Stored => Outcome::Stored,
+                Ok(_) if live.stored(&s.item) => Outcome::Built,
+                Ok(_) => Outcome::Unstored,
             };
             if let Some(stage) = live.stage
-                && matches!(s.action, Action::Build | Action::Stored)
-                && built.is_ok()
+                && matches!(outcome, Outcome::Built | Outcome::Stored)
             {
-                stage_item(&s.item, live, stage);
+                stage_item(&s.item, built.ok().flatten(), live, stage);
             }
-            match built {
-                Err(e) => Outcome::Failed(e),
-                Ok(()) if s.action == Action::Stored => Outcome::Stored,
-                Ok(()) if live.stored(&s.item) => Outcome::Built,
-                Ok(()) => Outcome::Unstored,
-            }
+            outcome
         })
         .collect()
 }
@@ -506,6 +537,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         against_ref: None,
         reuse_base: true,
         stage: None,
+        shards: 1,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -523,6 +555,11 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "--against-ref" => wanted.against_ref = Some(take(&mut it, a)?),
             "--no-reuse-base" => wanted.reuse_base = false,
             "--stage" => wanted.stage = Some(PathBuf::from(take(&mut it, a)?)),
+            "--shards" => {
+                wanted.shards = take(&mut it, a)?
+                    .parse()
+                    .map_err(|_| "--shards wants a count".to_string())?
+            }
             "--only" => {
                 lanes.insert(match take(&mut it, a)?.as_str() {
                     "bench" => Lane::Bench,
@@ -560,7 +597,7 @@ pub fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
-    let mut heads = BTreeMap::new();
+    let heads = RefCell::new(BTreeMap::new());
     let base_sha = wanted
         .against_ref
         .as_deref()
@@ -571,9 +608,11 @@ pub fn run(args: &[String]) -> i32 {
         base: None,
         base_sha: base_sha.clone(),
         stage: wanted.stage.as_deref(),
+        shards: wanted.shards,
+        heads: &heads,
     };
     let steps = select(&wanted, &live);
-    let outcomes = execute(&steps, &live, &mut heads);
+    let outcomes = execute(&steps, &live);
     let mut report: Vec<(Step, Outcome)> = steps.into_iter().zip(outcomes).collect();
 
     let head_built = head_benches_built(&report);
@@ -586,7 +625,7 @@ pub fn run(args: &[String]) -> i32 {
             .as_deref()
             .filter(|_| wanted.lanes.contains(&Lane::Bench))
     {
-        match base_side(&common, &wanted, refname, &base_sha, &mut heads) {
+        match base_side(&live, &wanted, refname) {
             Ok(done) => report.extend(done),
             Err(e) => eprintln!("prebuild: no merge-base side: {e}"),
         }
@@ -611,15 +650,26 @@ fn head_benches_built(report: &[(Step, Outcome)]) -> bool {
 
 /// The merge-base's executables, built in its worktree the way the gate
 /// builds them.
-fn base_side(
-    common: &CommonArgs,
-    wanted: &Wanted,
-    refname: &str,
-    base_sha: &str,
-    heads: &mut BTreeMap<String, String>,
-) -> Result<Vec<(Step, Outcome)>, String> {
+fn base_side(head: &Live, wanted: &Wanted, refname: &str) -> Result<Vec<(Step, Outcome)>, String> {
+    let covered = |pkg: &String| Step {
+        item: Item::Bench {
+            pkg: pkg.clone(),
+            side: Side::Base,
+        },
+        action: Action::Covered,
+    };
+    // The worktree is only made when some package needs the merge-base built.
+    if wanted.packages.is_empty()
+        || (wanted.reuse_base && wanted.packages.iter().all(|p| head.reference_stored(p)))
+    {
+        return Ok(wanted
+            .packages
+            .iter()
+            .map(|p| (covered(p), Outcome::Covered))
+            .collect());
+    }
     let target = invoke::worktree_target_dir().map_err(|e| e.to_string())?;
-    let bench = common.target.as_deref().unwrap_or("soothfast");
+    let bench = head.common.target.as_deref().unwrap_or("soothfast");
     invoke::with_merge_base_worktree(refname, |wt| {
         let packages = wanted
             .packages
@@ -631,20 +681,22 @@ fn base_side(
         invoke::sync_harness_versions(wt)?;
         seed::seed_worktree(wt, &target);
         let live = Live {
-            common,
+            common: head.common,
             base: Some(Tree {
                 wt: wt.to_path_buf(),
                 target,
             }),
-            base_sha: base_sha.to_string(),
-            stage: wanted.stage.as_deref(),
+            base_sha: head.base_sha.clone(),
+            stage: head.stage,
+            shards: head.shards,
+            heads: head.heads,
         };
         let wanted = Wanted {
             packages,
             ..wanted.clone()
         };
         let steps = select_base(&wanted, &live);
-        let outcomes = execute(&steps, &live, heads);
+        let outcomes = execute(&steps, &live);
         Ok(steps.into_iter().zip(outcomes).collect())
     })
 }
@@ -757,6 +809,7 @@ mod tests {
             against_ref: Some("origin/main".into()),
             reuse_base: true,
             stage: None,
+            shards: 1,
         }
     }
 

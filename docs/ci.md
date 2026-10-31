@@ -162,6 +162,7 @@ installed on is refused.
 | `prebuild` | none | Lanes (`bench`, `routes`, `rustdoc`, space-separated) to build into the stores in place of the gate (see [One build](#one-build)). |
 | `prebuild-docs` | none | Packages whose rustdoc JSON `docs check` reads. Alone, it builds the `rustdoc` lane. |
 | `prebuild-spec` | none | `PKG` or `PKG:TARGET` that `spec` commands run on. Alone, it builds the `routes` lane, and the `rustdoc` lane for a package whose spec is generated. |
+| `prebuild-shards` | none | The `shard` count of the legs that read the stores, so a merge-base whose run every leg has stored is not built. |
 | `prebuild-stage` | none | A directory to copy just the entries the lanes built or found into, for a job to upload. |
 
 Outputs are `version` and `cache-hit`.
@@ -442,15 +443,18 @@ jobs:
 ```
 
 The legs record `soothfast-result-rust-shard-<i>-of-<n>` and the verdict folds them
-into one section for the package. A pull request's shards cannot save the
-`head` baseline, which holds every item, so the docs check reads the default
-branch's measurement for its claims. A default-branch push records every item
+into one section for the package. On a pull request each leg also uploads the
+baseline of its items as `soothfast-baseline-shard-<i>-of-<n>`, and the docs
+check merges them with `cargo soothfast baseline merge` before it evaluates
+claims. If only some arrive it reports "claims not evaluated" rather than
+reading the default branch's measurement; if none arrive, the bench binaries
+were unchanged and it reads the default branch's. A default-branch push records every item
 in its first leg and saves the baseline as before; the other legs are
 skipped on a push, since they would only set up.
 
 `cargo soothfast prebuild` runs the same lanes by hand: `-p PKG` for bench
 packages, `--against-ref REF` for the merge-base, `--docs PKG`, `--spec
-PKG[:TARGET]`, `--only bench|routes|rustdoc` and `--stage DIR`.
+PKG[:TARGET]`, `--only bench|routes|rustdoc`, `--stage DIR` and `--shards N`.
 
 A spec job of the caller's builds its own lane with the action:
 `prebuild-spec: PKG:TARGET` alone runs the `routes` lane (and `rustdoc` for a

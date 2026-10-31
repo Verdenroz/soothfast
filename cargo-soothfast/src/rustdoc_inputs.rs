@@ -85,7 +85,8 @@ fn add_artifact(inputs: &mut Inputs, root: &Path, msg: &Value) -> Result<(), Str
     let Some(first) = msg["filenames"][0].as_str() else {
         return Ok(());
     };
-    let Some(text) = read_dep_info(Path::new(first)) else {
+    let pkg = msg["package_id"].as_str().map(package_name);
+    let Some(text) = read_dep_info(Path::new(first), pkg) else {
         let name = msg["target"]["name"].as_str().unwrap_or("?");
         let kind = msg["target"]["kind"][0].as_str().unwrap_or("?");
         return Err(format!(
@@ -98,62 +99,52 @@ fn add_artifact(inputs: &mut Inputs, root: &Path, msg: &Value) -> Result<(), Str
 
 /// The dep-info of `artifact`, found beside it or beside the `deps/` file an
 /// uplifted binary links to.
-fn read_dep_info(artifact: &Path) -> Option<String> {
+fn read_dep_info(artifact: &Path, pkg: Option<&str>) -> Option<String> {
     let read = |a: &Path| std::fs::read_to_string(dep_info_beside(a)).ok();
-    read(artifact).or_else(|| read(&deps_twin(artifact)?))
+    read(artifact).or_else(|| read(&deps_twin(artifact, pkg)?))
+}
+
+/// The package name in a cargo package id: `name@version` after the `#`, or
+/// the last path segment when the id carries only a version.
+fn package_name(id: &str) -> &str {
+    let (url, fragment) = id.split_once('#').unwrap_or((id, ""));
+    match fragment.split_once('@') {
+        Some((name, _)) => name,
+        None => url.rsplit('/').next().unwrap_or(url),
+    }
 }
 
 /// Cargo links a binary at `target/<profile>/name` to `deps/name-hash`, and a
 /// build script at `build/pkg-hash/build-script-build` to
 /// `build_script_build-hash` beside it. Its newer layout puts the file at
-/// `build/pkg/hash/out/name` instead, with `name.d` beside. The file the
+/// `build/<pkg>/hash/out/name` instead, with `name.d` beside. The file the
 /// dep-info is named for is the one this finds.
 #[cfg(unix)]
-fn deps_twin(artifact: &Path) -> Option<PathBuf> {
+fn deps_twin(artifact: &Path, pkg: Option<&str>) -> Option<PathBuf> {
     use std::os::unix::fs::MetadataExt;
 
     let parent = artifact.parent()?;
     let inode = std::fs::metadata(artifact).ok()?.ino();
     let same = |path: &Path| std::fs::metadata(path).is_ok_and(|m| m.ino() == inode);
-    let named = parent
-        .join("build")
-        .read_dir()
-        .into_iter()
+    [parent.join("deps"), parent.to_path_buf()]
+        .iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
         .flatten()
         .flatten()
-        .flat_map(|pkg| {
-            std::fs::read_dir(pkg.path())
-                .into_iter()
+        .find(|e| e.path() != artifact && e.path().extension().is_none() && same(&e.path()))
+        .map(|e| e.path())
+        .or_else(|| {
+            let name = artifact.file_name()?.to_string_lossy().replace('-', "_");
+            std::fs::read_dir(parent.join("build").join(pkg?))
+                .ok()?
                 .flatten()
-                .flatten()
+                .map(|unit| unit.path().join("out").join(&name))
+                .find(|candidate| same(candidate))
         })
-        .map(|hash| {
-            hash.path().join("out").join(
-                artifact
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .replace('-', "_"),
-            )
-        })
-        .find(|candidate| same(candidate));
-    named.or_else(|| {
-        [parent.join("deps"), parent.to_path_buf()]
-            .iter()
-            .filter_map(|dir| std::fs::read_dir(dir).ok())
-            .flatten()
-            .flatten()
-            .find(|e| {
-                e.path() != artifact
-                    && e.path().extension().is_none()
-                    && e.metadata().is_ok_and(|m| m.ino() == inode)
-            })
-            .map(|e| e.path())
-    })
 }
 
 #[cfg(not(unix))]
-fn deps_twin(_: &Path) -> Option<PathBuf> {
+fn deps_twin(_: &Path, _: Option<&str>) -> Option<PathBuf> {
     None
 }
 
@@ -287,10 +278,10 @@ mod tests {
         std::fs::write(deps.join("app-1a2b.d"), "x: src/main.rs\n").unwrap();
         std::fs::write(deps.join("other-3c4d"), "bin").unwrap();
         std::fs::hard_link(deps.join("app-1a2b"), root.join("target/debug/app")).unwrap();
-        let text = read_dep_info(&root.join("target/debug/app")).unwrap();
+        let text = read_dep_info(&root.join("target/debug/app"), None).unwrap();
         assert_eq!(text, "x: src/main.rs\n");
         std::fs::write(root.join("target/debug/lone"), "bin").unwrap();
-        assert_eq!(read_dep_info(&root.join("target/debug/lone")), None);
+        assert_eq!(read_dep_info(&root.join("target/debug/lone"), None), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -303,9 +294,19 @@ mod tests {
         std::fs::write(out.join("app_server"), "bin").unwrap();
         std::fs::write(out.join("app_server.d"), "x: src/main.rs\n").unwrap();
         std::fs::hard_link(out.join("app_server"), root.join("target/debug/app-server")).unwrap();
-        let text = read_dep_info(&root.join("target/debug/app-server")).unwrap();
+        let text = read_dep_info(&root.join("target/debug/app-server"), Some("app")).unwrap();
         assert_eq!(text, "x: src/main.rs\n");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn package_names_come_from_the_package_id() {
+        assert_eq!(package_name("path+file:///w/dep#dep@0.1.0"), "dep");
+        assert_eq!(package_name("path+file:///w/dep#0.1.0"), "dep");
+        assert_eq!(
+            package_name("registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0"),
+            "serde"
+        );
     }
 
     #[test]
