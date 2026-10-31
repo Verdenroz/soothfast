@@ -412,7 +412,9 @@ under the key pull requests restore, and each shard compares its own items
 against that run. On a pull request each shard saves what it measured under
 its own key, for a rerun.
 `--shard` and `--save-baseline` cannot be combined, since a baseline must
-hold every item.
+hold every item. Each leg builds both sides itself unless the stores hold
+them; `shard:` on the [reusable workflow](ci.md#one-build) builds them once
+and gives every leg a hit.
 
 ## Thresholds
 
