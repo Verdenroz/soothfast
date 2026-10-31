@@ -199,9 +199,6 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     if let Some(shard) = g.common.shard {
-        if g.save_baseline.is_some() {
-            return err("--save-baseline needs every item; a --shard run measures some");
-        }
         println!("gate: shard {shard}: gating the items it owns");
     }
 

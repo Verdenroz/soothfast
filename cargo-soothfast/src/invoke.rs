@@ -911,7 +911,7 @@ impl SaveScope {
     pub fn of(common: &CommonArgs) -> SaveScope {
         if common.backend.as_deref() == Some("buildcost") {
             SaveScope::Buildcost(common.pkg.clone())
-        } else if common.filter.is_some() {
+        } else if common.filter.is_some() || common.shard.is_some() {
             SaveScope::BenchFiltered
         } else {
             SaveScope::BenchFull(common.pkg.clone())
@@ -1025,6 +1025,14 @@ fn prune_absorbed_accepts(root: &Path, run: &Run) {
             println!("soothfast-gate.lock: {id} absorbed into the new baseline, entry removed");
         }
     }
+}
+
+/// Write `doc` as the named baseline under the workspace root.
+pub fn write_baseline(name: &str, doc: &Value) -> io::Result<PathBuf> {
+    let path = baseline_path(&workspace_root()?, name);
+    std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
+    std::fs::write(&path, serde_json::to_string_pretty(doc)?)?;
+    Ok(path)
 }
 
 /// Load a named baseline, if present.
@@ -1954,6 +1962,15 @@ mod tests {
         forget_missing_worktree_in, git_in, harness_mismatches, run_from_items_value,
         run_to_items_value, saved_items,
     };
+
+    #[test]
+    fn a_sharded_run_saves_without_replacing_its_scope() {
+        let common = CommonArgs {
+            shard: Some(Shard { index: 1, count: 3 }),
+            ..CommonArgs::default()
+        };
+        assert!(matches!(SaveScope::of(&common), SaveScope::BenchFiltered));
+    }
 
     #[test]
     fn only_our_missing_worktree_is_forgotten() {

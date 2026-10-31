@@ -411,8 +411,10 @@ branch only shard 1 records a reference: it measures every item and saves
 under the key pull requests restore, and each shard compares its own items
 against that run. On a pull request each shard saves what it measured under
 its own key, for a rerun.
-`--shard` and `--save-baseline` cannot be combined, since a baseline must
-hold every item. Each leg builds both sides itself unless the stores hold
+`--shard` with `--save-baseline` saves the baseline of the items that shard
+owns without dropping the others already in it; `cargo soothfast baseline
+merge --into NAME --expect N FILE...` folds the N shard baselines into one
+and fails if fewer arrive. Each leg builds both sides itself unless the stores hold
 them; `shard:` on the [reusable workflow](ci.md#one-build) builds them once
 and gives every leg a hit.
 
