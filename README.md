@@ -142,8 +142,8 @@ Numbers in prose become gated facts.
 `cargo soothfast init` writes the workflow for you: a test job, a gate job
 for each package with a soothfast bench target (`-p PKG` adds one), and a
 docs check when your markdown carries markers. `cargo soothfast init --check`
-fails when the workflow differs from what `init` would write now, for
-example after a package gains a bench target. In a Gradle, Maven, Python or
+fails, with a diff per file, when the workflow differs from what `init`
+would write now, for example after a package gains a bench target. In a Gradle, Maven, Python or
 Node repo it writes a gate over the project's own JMH, pytest-benchmark or
 vitest harness instead ([importing](docs/importing.md)).
 

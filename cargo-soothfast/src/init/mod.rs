@@ -14,6 +14,7 @@ use crate::{invoke, workspace};
 pub mod ci;
 mod detect;
 pub(crate) mod ecosystem;
+mod textdiff;
 
 use ci::Ci;
 use ecosystem::{
@@ -160,45 +161,54 @@ impl Scaffold {
             })
     }
 
-    fn write(&self, root: &Path) -> std::io::Result<()> {
-        let path = root.join(&self.path);
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
+    /// The file as `init` leaves it, given what it holds now.
+    fn updated(&self, current: &str) -> String {
         match self.kind {
             Kind::Line => {
-                let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+                let mut text = current.to_string();
                 if !text.is_empty() && !text.ends_with('\n') {
                     text.push('\n');
                 }
                 text.push_str(&self.content);
                 text.push('\n');
-                std::fs::write(path, text)
+                text
             }
-            Kind::TestCi => {
-                let text = std::fs::read_to_string(&path).unwrap_or_default();
-                std::fs::write(path, with_key(&text, "test", "ci", "ci = false"))
-            }
+            Kind::TestCi => with_key(current, "test", "ci", "ci = false"),
             Kind::Docs => {
-                let text = std::fs::read_to_string(&path).unwrap_or_default();
                 let line = self
                     .content
                     .lines()
                     .find(|l| l.starts_with("package"))
                     .unwrap_or_default();
-                std::fs::write(path, with_key(&text, "docs", "package", line))
+                with_key(current, "docs", "package", line)
             }
             Kind::Section | Kind::Runner => {
-                let text = std::fs::read_to_string(&path).unwrap_or_default();
-                let mut text = without_tables(&text, self.kind.tables());
+                let mut text = without_tables(current, self.kind.tables());
                 if !text.is_empty() {
                     text.push('\n');
                 }
                 text.push_str(&self.content);
-                std::fs::write(path, text)
+                text
             }
-            Kind::Whole | Kind::Seed => std::fs::write(path, &self.content),
+            Kind::Whole | Kind::Seed => self.content.clone(),
         }
+    }
+
+    fn write(&self, root: &Path) -> std::io::Result<()> {
+        let path = root.join(&self.path);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        std::fs::write(path, self.updated(&current))
+    }
+
+    /// What `write` would change in the file, as a unified diff.
+    fn diff(&self, root: &Path) -> String {
+        let current = std::fs::read_to_string(root.join(&self.path)).unwrap_or_default();
+        let hunks = textdiff::unified(&current, &self.updated(&current));
+        let path = self.path.display();
+        format!("--- {path} (current)\n+++ {path} (init would write)\n{hunks}")
     }
 }
 
@@ -647,6 +657,9 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
                     "differs"
                 };
                 println!("{what:<8} {path}");
+                if state == State::Differs {
+                    print!("{}", f.diff(root));
+                }
             }
             (State::Differs, false) if f.kind == Kind::Whole && !force => {
                 drift += 1;
@@ -1218,6 +1231,44 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.join(".gitignore")).unwrap(),
             "target\n.soothfast/\n"
+        );
+    }
+
+    #[test]
+    fn a_drifted_pin_shows_as_a_changed_line() {
+        let root = scratch("diff-pin");
+        let workflow = Scaffold {
+            path: "ci.yml".into(),
+            kind: Kind::Whole,
+            content: "jobs:\n  gate:\n    uses: acme/soothfast@v1\n    with: {}\n".into(),
+        };
+        std::fs::write(
+            root.join("ci.yml"),
+            "jobs:\n  gate:\n    uses: acme/soothfast@v0\n    with: {}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            workflow.diff(&root),
+            "--- ci.yml (current)\n+++ ci.yml (init would write)\n\
+             @@ -1,4 +1,4 @@\n jobs:\n   gate:\n-    uses: acme/soothfast@v0\n\
+             +    uses: acme/soothfast@v1\n     with: {}\n"
+        );
+        assert_eq!(report(&root, &[workflow], true, false), 1);
+    }
+
+    #[test]
+    fn a_missing_ignore_line_shows_as_an_added_line() {
+        let root = scratch("diff-line");
+        let ignore = Scaffold {
+            path: ".gitignore".into(),
+            kind: Kind::Line,
+            content: ".soothfast/".into(),
+        };
+        std::fs::write(root.join(".gitignore"), "target\n").unwrap();
+        assert_eq!(
+            ignore.diff(&root),
+            "--- .gitignore (current)\n+++ .gitignore (init would write)\n\
+             @@ -1,1 +1,2 @@\n target\n+.soothfast/\n"
         );
     }
 
