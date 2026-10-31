@@ -299,7 +299,7 @@ map is never read for another binary. lld, mold and GNU ld maps are read. A
 map that cannot be built or read is a miss, not a guess:
 
 ```console
-gate: no link map for <binary> (unrecognized map format); unnamed constants hash as whole sections, and code that reads a duplicate-named local static or writable data with no symbol is left unhashed
+gate: no link map for <binary> (unrecognized map format); unnamed constants hash as whole sections, and code that reads a duplicate-named local static or writable data with no symbol or label is left unhashed
 ```
 
 A reference outside every input section falls back to the whole output
@@ -320,9 +320,12 @@ the binary has is its own identity. Two that share a name (C `static`s of
 the same name in two files) are told apart by the input section each is
 defined in. Read-only data, and data the loader seals after relocation
 (the `PT_GNU_RELRO` range, read from the program headers), is keyed by its
-bytes alone. Without a link map, a function that reads a duplicate-named
-local static, or writable data with no symbol (`__dso_handle` and
-`__TMC_END__` are listed without a size), is left unhashed. The object part
+bytes alone. Data in a writable section with no symbol or input around it is
+named by the labels `nm` lists at its address without a size (`__dso_handle`,
+`__TMC_END__`), provided their names are unique in the binary, and is keyed
+with the whole section so reads on either side of the label stay covered.
+Without a link map, a function that reads a duplicate-named local static, or
+writable data with neither a symbol nor such a label, is left unhashed. The object part
 of an input section's name follows the compiler's code generation units,
 which can move on an unrelated edit. That costs a miss and never a wrong
 hit, which is why the symbol name is used whenever it is unique.
