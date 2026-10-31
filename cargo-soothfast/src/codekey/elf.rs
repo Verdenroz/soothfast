@@ -162,6 +162,33 @@ pub(super) fn parse_symbols(listing: &str) -> Vec<Symbol> {
     symbols
 }
 
+/// The names `nm` lists without a size at an address in a data section, by
+/// address: `__dso_handle`, `__TMC_END__` and other labels the linker and the
+/// C runtime define. Absolute symbols are values, not addresses.
+pub(super) fn parse_labels(listing: &str, sections: &[Section]) -> HashMap<u64, Vec<String>> {
+    let mut labels: HashMap<u64, Vec<String>> = HashMap::new();
+    for line in listing.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        let (addr, kind, name) = match f[..] {
+            [addr, kind, name] => (addr, kind, name),
+            [addr, size, kind, name] if u64::from_str_radix(size, 16) == Ok(0) => {
+                (addr, kind, name)
+            }
+            _ => continue,
+        };
+        let Ok(addr) = u64::from_str_radix(addr, 16) else {
+            continue;
+        };
+        if !kind.eq_ignore_ascii_case("a") && sections.iter().any(|s| !s.code && s.contains(addr)) {
+            labels
+                .entry(addr)
+                .or_default()
+                .push(strip_llvm(name).into_owned());
+        }
+    }
+    labels
+}
+
 /// An address that names no data to hash.
 #[derive(Debug, PartialEq)]
 pub(super) enum Marker {
@@ -259,6 +286,23 @@ pub(super) fn parse_relocs(listing: &str) -> Vec<Reloc> {
 mod tests {
     use super::*;
     use crate::codekey::fixture::{SECTIONS, loaded};
+
+    #[test]
+    fn labels_are_unsized_names_at_data_addresses() {
+        let listing = "\
+0000000000001040 0000000000000010 t _ZN3foo4code17h1E
+0000000000001100 T _etext
+0000000000001050 t code_label
+0000000000002008 d __dso_handle
+0000000000002010 0000000000000000 d __TMC_END__
+0000000000002018 A absolute_value
+0000000000002008 D data_start
+";
+        let labels = parse_labels(listing, &loaded(SECTIONS));
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[&0x2008], ["__dso_handle", "data_start"]);
+        assert_eq!(labels[&0x2010], ["__TMC_END__"]);
+    }
 
     #[test]
     fn the_relro_segment_is_read_from_the_program_headers() {

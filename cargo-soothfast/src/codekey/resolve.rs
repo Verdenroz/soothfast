@@ -51,7 +51,9 @@ pub(super) struct Resolver<'a> {
     pub(super) image: &'a [u8],
     roots: RefCell<HashMap<Node, Option<u64>>>,
     described: RefCell<HashMap<u64, Option<String>>>,
-    /// Names that more than one symbol of the binary has.
+    /// Unsized names at data addresses.
+    labels: &'a HashMap<u64, Vec<String>>,
+    /// Names that more than one symbol or label of the binary has.
     duplicated: HashSet<String>,
 }
 
@@ -61,12 +63,17 @@ impl<'a> Resolver<'a> {
         symbols: &'a [Symbol],
         relocs: &'a [Reloc],
         markers: &'a HashMap<u64, Marker>,
+        labels: &'a HashMap<u64, Vec<String>>,
         inputs: &'a [Extent],
         image: &'a [u8],
     ) -> Resolver<'a> {
         let mut counts: HashMap<String, usize> = HashMap::new();
-        for s in symbols {
-            *counts.entry(strip_llvm(&s.name).into_owned()).or_default() += 1;
+        let names = symbols
+            .iter()
+            .map(|s| strip_llvm(&s.name).into_owned())
+            .chain(labels.values().flatten().cloned());
+        for name in names {
+            *counts.entry(name).or_default() += 1;
         }
         Resolver {
             duplicated: counts
@@ -77,6 +84,7 @@ impl<'a> Resolver<'a> {
             symbols,
             relocs,
             markers,
+            labels,
             inputs,
             image,
             roots: RefCell::default(),
@@ -243,9 +251,10 @@ impl<'a> Resolver<'a> {
                 Target::Relative(to) => match self.place(*to, None)? {
                     Place::Code(name) => (name, None),
                     Place::Bounded(name, next) => (format!("{name}("), Some(next)),
-                    Place::Data(next, off, _) => {
-                        (format!("+{off:x}{}(", self.identity(next)?), Some(next))
-                    }
+                    Place::Data(next, off, _) => (
+                        format!("+{off:x}{}(", self.identity(next, off)?),
+                        Some(next),
+                    ),
                 },
             };
             walk.out.extend(text.bytes());
@@ -291,8 +300,9 @@ impl<'a> Resolver<'a> {
     /// two zeroed statics are two objects. Read-only data is its bytes. A
     /// symbol is its own name unless another symbol of the binary has it too
     /// (statics of two files), when the input section it is defined in tells
-    /// them apart.
-    fn identity(&self, node: Node) -> Option<String> {
+    /// them apart. Data in a section with no symbol or input around it is
+    /// named by the unique labels at its address, and only then.
+    fn identity(&self, node: Node, off: u64) -> Option<String> {
         let (section, _, size) = self.extent(node)?;
         if !self.sections[section].writable || size == 0 {
             return Some(String::new());
@@ -308,9 +318,24 @@ impl<'a> Resolver<'a> {
                 }
             }
             Node::Input(i) => self.inputs[i].name.clone(),
-            Node::Section(_) | Node::Entry(..) => String::new(),
+            Node::Section(i) => self.labelled(self.sections[i].vma + off),
+            Node::Entry(..) => String::new(),
         };
         (!name.is_empty()).then(|| format!("@{name}"))
+    }
+
+    /// The names of the labels at `addr` that no other symbol shares.
+    fn labelled(&self, addr: u64) -> String {
+        let mut names: Vec<&str> = self
+            .labels
+            .get(&addr)
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .filter(|n| !self.duplicated.contains(*n))
+            .collect();
+        names.sort_unstable();
+        names.join(",")
     }
 
     /// What a table word naming `addr` hashes as, worked out once: `None`
@@ -364,7 +389,10 @@ impl<'a> Resolver<'a> {
                     Node::Section(i) => &self.sections[i].name,
                 };
                 let hash = self.root_hash(node)?;
-                format!("{label}:{hash:016x}{}+{off:x}{slot}", self.identity(node)?)
+                format!(
+                    "{label}:{hash:016x}{}+{off:x}{slot}",
+                    self.identity(node, off)?
+                )
             }
         })
     }
@@ -879,6 +907,35 @@ Idx Name          Size      VMA               LMA               File off  Algn
         };
         assert!(takes("3000 <a>").is_some());
         assert_ne!(takes("3000 <a>"), takes("3008 <b>"));
+    }
+
+    #[test]
+    fn a_unique_label_names_the_writable_data_at_its_address() {
+        let takes = |object: &str, labels: &str| {
+            let dis = format!(
+                "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # {object}\n    1007:\tret\n"
+            );
+            let fixture = Fixture::default()
+                .sections(&object_sections(WRITABLE))
+                .symbols(FN_SYMBOLS)
+                .labels(labels)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&vec![0; 0x4000], &dis))
+        };
+        let labels = "\
+0000000000003000 d __dso_handle
+0000000000003000 d __alias
+0000000000003008 d solo
+";
+        assert!(takes("3000 <__dso_handle>", labels).is_some());
+        assert_ne!(takes("3000 <a>", labels), takes("3008 <b>", labels));
+        assert_eq!(takes("3004 <inside>", labels), None);
+        assert_eq!(takes("3000 <a>", ""), None);
+        let twice = "0000000000003000 d same\n0000000000003008 d same\n";
+        assert_eq!(takes("3000 <a>", twice), None);
+        let one_twice =
+            "0000000000003000 d same\n0000000000003000 d only\n0000000000003008 d same\n";
+        assert!(takes("3000 <a>", one_twice).is_some());
     }
 
     #[test]

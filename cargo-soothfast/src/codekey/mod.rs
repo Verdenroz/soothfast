@@ -31,8 +31,8 @@ use crate::linkmap::Extent;
 use disasm::hash_functions;
 pub(crate) use elf::section_headers;
 use elf::{
-    addressable, parse_markers, parse_relocs, parse_sections, parse_symbols, relro_range, seal,
-    tls_digest,
+    addressable, parse_labels, parse_markers, parse_relocs, parse_sections, parse_symbols,
+    relro_range, seal, tls_digest,
 };
 use resolve::Resolver;
 
@@ -161,7 +161,10 @@ impl Binary {
         let relro = command_text("objdump", &["-p"], bin).and_then(|text| relro_range(&text));
         let sections = addressable(seal(sections, relro));
         let markers = parse_markers(&listing, &sections);
-        let resolver = Resolver::new(&sections, &symbols, &relocs, &markers, inputs, &image);
+        let labels = parse_labels(&listing, &sections);
+        let resolver = Resolver::new(
+            &sections, &symbols, &relocs, &markers, &labels, inputs, &image,
+        );
         let mut child = Command::new("objdump")
             .args(["-d", "--no-show-raw-insn"])
             .arg(bin)
@@ -411,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn every_function_of_a_tiny_c_binary_hashes_under_each_linker() {
+    fn every_function_of_a_tiny_c_binary_hashes_under_each_linker_with_and_without_a_map() {
         let dir = scratch("c");
         let src = dir.join("t.c");
         std::fs::write(&src, "int main(void){return 0;}\n").unwrap();
@@ -436,13 +439,15 @@ mod tests {
                 .ok()
                 .and_then(|text| crate::linkmap::parse(&text))
                 .unwrap_or_default();
-            let binary = Binary::open(&bin, &wanted, &inputs);
-            unhashed.extend(
-                wanted
-                    .into_iter()
-                    .filter(|n| !binary.as_ref().is_some_and(|b| b.hashes.contains_key(n)))
-                    .map(|n| format!("{linker}: {n}")),
-            );
+            for (mapped, inputs) in [("no map", &[][..]), ("map", &inputs[..])] {
+                let binary = Binary::open(&bin, &wanted, inputs);
+                unhashed.extend(
+                    wanted
+                        .iter()
+                        .filter(|n| !binary.as_ref().is_some_and(|b| b.hashes.contains_key(*n)))
+                        .map(|n| format!("{linker} {mapped}: {n}")),
+                );
+            }
         }
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(built > 0, "no linker built a binary");

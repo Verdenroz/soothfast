@@ -5,7 +5,8 @@ use std::io::Cursor;
 
 use super::disasm::hash_functions;
 use super::elf::{
-    Marker, Reloc, Section, Symbol, addressable, parse_relocs, parse_sections, parse_symbols, seal,
+    Marker, Reloc, Section, Symbol, addressable, parse_labels, parse_relocs, parse_sections,
+    parse_symbols, seal,
 };
 use super::resolve::Resolver;
 use crate::linkmap::Extent;
@@ -89,6 +90,7 @@ pub struct Fixture {
     symbols: Vec<Symbol>,
     relocs: Vec<Reloc>,
     markers: HashMap<u64, Marker>,
+    labels: HashMap<u64, Vec<String>>,
     inputs: Vec<Extent>,
     wanted: BTreeSet<String>,
 }
@@ -100,6 +102,7 @@ impl Default for Fixture {
             symbols: parse_symbols(SYMBOLS),
             relocs: Vec::new(),
             markers: HashMap::new(),
+            labels: HashMap::new(),
             inputs: Vec::new(),
             wanted: [BAR, BAZ].map(String::from).into(),
         }
@@ -124,6 +127,13 @@ impl Fixture {
     pub fn relocs(self, listing: &str) -> Fixture {
         Fixture {
             relocs: parse_relocs(listing),
+            ..self
+        }
+    }
+
+    pub fn labels(self, listing: &str) -> Fixture {
+        Fixture {
+            labels: parse_labels(listing, &self.sections),
             ..self
         }
     }
@@ -168,6 +178,7 @@ impl Fixture {
             &self.symbols,
             &self.relocs,
             &self.markers,
+            &self.labels,
             &self.inputs,
             image,
         );
