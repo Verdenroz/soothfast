@@ -1,6 +1,6 @@
 //! Where a function's jumps out of its own span go, for the jump-table proof.
 
-use super::elf::{Symbol, Target};
+use super::elf::{Symbol, Target, section_index};
 use super::is_fragment;
 use super::resolve::Resolver;
 use crate::jumptable::Exits;
@@ -88,6 +88,13 @@ impl Exits for FunctionExits<'_> {
 
     fn rust(&self) -> bool {
         self.rust
+    }
+
+    fn data_table(&self, table: u64) -> Option<(u64, u64)> {
+        let r = self.resolver;
+        let input = &r.inputs[r.table_input(table)?];
+        let section = &r.sections[section_index(r.sections, input.vma)?];
+        (!section.writable && !section.sealed).then_some((input.vma, input.vma + input.size))
     }
 }
 

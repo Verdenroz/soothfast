@@ -33,6 +33,10 @@ impl Exits for World {
     fn rust(&self) -> bool {
         self.rust
     }
+
+    fn data_table(&self, table: u64) -> Option<(u64, u64)> {
+        Some((table, table + 0x10))
+    }
 }
 
 const RUST: World = World {

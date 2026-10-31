@@ -61,7 +61,7 @@ impl Resolver<'_> {
     }
 
     /// The input section a table at `table` may be decoded from.
-    fn table_input(&self, table: u64) -> Option<usize> {
+    pub(super) fn table_input(&self, table: u64) -> Option<usize> {
         self.input_at(table)
             .filter(|&j| self.inputs[j].entry == 0 && self.symbol_at(table).is_none())
     }

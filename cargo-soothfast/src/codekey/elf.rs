@@ -17,6 +17,8 @@ pub(super) struct Section {
     pub(super) tls: bool,
     /// Data the program can change after the loader is done with it.
     pub(super) writable: bool,
+    /// Data the loader makes read-only once it has relocated it (`RELRO`).
+    pub(super) sealed: bool,
 }
 
 impl Section {
@@ -96,6 +98,7 @@ pub(super) fn parse_sections(listing: &str) -> Vec<Section> {
             contents: h.flags.contains("CONTENTS"),
             tls: h.flags.contains("THREAD_LOCAL"),
             writable: !h.flags.contains("READONLY") && !h.flags.contains("CODE"),
+            sealed: false,
         })
         .collect()
 }
@@ -132,9 +135,13 @@ pub(super) fn seal(sections: Vec<Section>, relro: Option<(u64, u64)>) -> Vec<Sec
     };
     sections
         .into_iter()
-        .map(|s| Section {
-            writable: s.writable && !(s.vma >= start && s.vma + s.size <= start + size),
-            ..s
+        .map(|s| {
+            let inside = s.vma >= start && s.vma + s.size <= start + size;
+            Section {
+                writable: s.writable && !inside,
+                sealed: s.sealed || (s.writable && inside),
+                ..s
+            }
         })
         .collect()
 }
