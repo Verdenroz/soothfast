@@ -323,6 +323,19 @@ pub fn run_discovery(common: &CommonArgs, extra: &[&str]) -> io::Result<Vec<Valu
     run_discovery_in(common, extra, None)
 }
 
+/// Lines of a failed merge-base build's stderr to show: enough for rustc's
+/// notes under the first error, which name what it rejected.
+const BASE_STDERR_TAIL: usize = 40;
+
+fn report_base_failure(stderr: &str, target_dir: &Path) {
+    let lines: Vec<&str> = stderr.lines().collect();
+    eprintln!("gate: the merge-base build failed; its last cargo output:");
+    for line in &lines[lines.len().saturating_sub(BASE_STDERR_TAIL)..] {
+        eprintln!("  {line}");
+    }
+    crate::seed::report(target_dir);
+}
+
 fn run_records(
     common: &CommonArgs,
     extra: &[&str],
@@ -354,6 +367,9 @@ fn run_records(
     let out = timed("cargo bench (build and run)", || cmd.output())?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
+        if let (Some(_), Some(td)) = (dir, target_dir) {
+            report_base_failure(&stderr, td);
+        }
         let reason = stderr
             .lines()
             .find(|l| l.contains("error"))

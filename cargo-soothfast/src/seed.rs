@@ -31,6 +31,8 @@ use crate::workspace;
 pub struct Seeded {
     pub units: usize,
     pub bytes: u64,
+    /// Each copied unit, as its `.fingerprint/` or `build/<pkg>/<hash>` name.
+    pub names: Vec<String>,
     /// Units left for the base build to compile, each with why it could not
     /// be copied.
     pub skipped: Vec<String>,
@@ -93,6 +95,7 @@ fn seed_flat(
             Ok(bytes) => {
                 seeded.units += 1;
                 seeded.bytes += bytes;
+                seeded.names.push(fingerprint);
             }
             Err(e) => seeded.skipped.push(format!("{fingerprint}: {e}")),
         }
@@ -146,6 +149,7 @@ fn seed_nested(
                 Ok(bytes) => {
                     seeded.units += 1;
                     seeded.bytes += bytes;
+                    seeded.names.push(format!("{name}/{hash}"));
                 }
                 Err(e) => seeded.skipped.push(format!("{name}/{hash}: {e}")),
             }
@@ -188,6 +192,10 @@ pub fn seed_worktree(wt: &Path, wt_target: &Path) {
         &members,
     ) {
         Ok(s) => {
+            let _ = fs::write(
+                wt_target.join("release").join(SEEDED),
+                s.names.iter().map(|n| format!("{n}\n")).collect::<String>(),
+            );
             if s.units > 0 {
                 println!(
                     "gate: seeded {} dependency units ({:.1} MiB) from HEAD's target dir in {:.1}s",
@@ -207,6 +215,56 @@ pub fn seed_worktree(wt: &Path, wt_target: &Path) {
             "gate: could not seed the merge-base target dir ({e}); its dependencies build cold"
         ),
     }
+}
+
+/// Where [`seed_worktree`] lists the units it copied, for [`report`].
+const SEEDED: &str = ".soothfast-seeded";
+
+/// After a failed merge-base build, name what the seed put in its target dir.
+/// `SOOTHFAST_DEBUG_SEED=1` also lists the harness artifacts there.
+pub fn report(wt_target: &Path) {
+    let profile = wt_target.join("release");
+    if let Ok(list) = fs::read_to_string(profile.join(SEEDED)) {
+        for unit in list.lines() {
+            eprintln!("gate: seeded unit {unit}");
+        }
+    }
+    if std::env::var_os("SOOTHFAST_DEBUG_SEED").is_some_and(|v| v == "1") {
+        for line in harness_artifacts(&profile) {
+            eprintln!("gate: seed debug {line}");
+        }
+    }
+}
+
+/// `deps/libsoothfast*` and `.fingerprint/soothfast-*` in `profile`, each
+/// with its size and mtime in seconds since the epoch.
+fn harness_artifacts(profile: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for (dir, prefix) in [("deps", "libsoothfast"), (".fingerprint", "soothfast-")] {
+        let Ok(entries) = fs::read_dir(profile.join(dir)) else {
+            out.push(format!("{dir}: unreadable"));
+            continue;
+        };
+        let mut names: Vec<_> = entries
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
+            .collect();
+        names.sort_by_key(|e| e.file_name());
+        for entry in names {
+            let Ok(meta) = entry.metadata() else { continue };
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs());
+            out.push(format!(
+                "{dir}/{} {} bytes mtime {mtime}",
+                entry.file_name().to_string_lossy(),
+                meta.len()
+            ));
+        }
+    }
+    out
 }
 
 /// `name-<16 hex>` into the name and the unit hash.
