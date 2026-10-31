@@ -1,7 +1,16 @@
 paths:
-  .github/workflows/**/*.yml:
+  # Word splitting in these scripts is deliberate.
+  .github/workflows/ci.yml:
     ignore:
-      # Word splitting and ls ordering in these scripts are deliberate.
-      - 'shellcheck reported issue in this script: SC(2086|2012|2016):info:'
-      # A reusable workflow's own commit; actionlint's context table predates it.
-      - 'property "job_workflow_sha" is not defined'
+      - 'shellcheck reported issue in this script: SC2086:info:'
+  .github/workflows/release.yml:
+    ignore:
+      - 'shellcheck reported issue in this script: SC2086:info:'
+  .github/workflows/run.yml:
+    ignore:
+      - 'shellcheck reported issue in this script: SC2086:info:'
+      - 'shellcheck reported issue in this script: SC2012:info:'
+  # The single quotes hold a literal backtick fence.
+  .github/workflows/soothfast-gate.yml:
+    ignore:
+      - 'shellcheck reported issue in this script: SC2016:info:'
