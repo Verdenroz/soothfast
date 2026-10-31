@@ -312,6 +312,14 @@ assumes code never reads across two entries through one reference, which
 holds because LLVM gives each pool constant its own label and the linker
 merges whole entries. String pools (`.rodata.str*`) stay one object.
 
+A writable object (`.data`, `.bss`) is told from another by its symbol name,
+or by the link map's object and section for one with no symbol, as well as
+by its bytes: two zeroed statics hold the same bytes, and code that reads
+one is not code that reads the other. Read-only data, and data the loader
+seals after relocation (`.data.rel.ro`), is keyed by its bytes alone. A
+writable object that has neither a symbol nor a named input section leaves
+the function unhashed.
+
 A jump table stores code offsets as 32-bit integers, so its bytes change
 whenever code moves. Where the instructions prove how a table is read, it is
 hashed as the places in the function it jumps to instead of as bytes. The
