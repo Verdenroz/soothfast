@@ -1,13 +1,45 @@
 # Changelog
 
-## Unreleased (draft vs v0.5.1)
+## 0.5.2 - 2026-10-31
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+CI now compiles once. `cargo soothfast prebuild` builds the bench
+executables, the routes executables and the rustdoc JSON into the stores the
+gate, `spec check` and `docs check` read, and the reusable `run.yml` runs it
+in two build jobs whose stores the gate and the docs check download instead
+of compiling. The Rust gate can be split into shards. The action downloads
+the release binary straight from the GitHub release and checks it against
+`SHA256SUMS`, using `cargo binstall` only when that fails. Item reuse no
+longer misses on functions that read a table of offsets to strings when only
+the layout around them moved. `docs build` accepts a `soothfast.toml` that
+holds tables other commands own, such as `[[project]]`.
+
+### Upgrade notes
+
+- The action has five new inputs, `prebuild`, `prebuild-docs`,
+  `prebuild-spec`, `prebuild-stage` and `prebuild-shards`. All default to
+  empty, which runs the gate as before. `docs/ci.md` describes them.
+- `run.yml` takes a `shard` input, default 1. With `shard` above 1, a pull
+  request's docs check reports its claims as not evaluated for now, because
+  the shards save no baseline. Binds are still checked. A push runs one leg and
+  measures as before.
+- `soothfast-gate.yml` takes an optional `soothfast_ref` for the action
+  scripts. Left empty, it uses `job_workflow_sha`, which is the ref your
+  `uses:` line pins, and only then the default branch, with a warning.
+- The docs job in `run.yml` now installs the rustdoc nightly pinned in
+  `action.yml` instead of the latest nightly. A self-hosted runner needs
+  `rustup` and network access to install it, or that toolchain already
+  installed.
+- `docs build` no longer fails on tables outside `[site]`. Unknown keys and
+  tables under `[site]` are still rejected.
+- `docs check`, `accept`, `capture`, `gen-tests`, `reference`, `diff` and
+  `routes` use `[docs] package` when no `-p` is given. An explicit `-p` still
+  wins.
+- `init` treats `.soothfast`, `.soothfast/`, `/.soothfast` and `/.soothfast/`
+  in `.gitignore` as the same line, so `init --check` no longer reports
+  drift for a root-anchored entry.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
