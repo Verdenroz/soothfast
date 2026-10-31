@@ -520,28 +520,8 @@ jobs:
           name: soothfast-baseline${{ matrix.shard != '' && github.event_name == 'pull_request' && format('-shard-{0}', matrix.slug) || '' }}
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
-      # A passing gate that matched the binaries of its reference leaves that commit's sha behind; carry its measurement.
-      - name: Find the measurement to carry
-        if: github.event_name == 'push' && hashFiles('.soothfast/baselines/head.json') == ''
-        id: carry
-        env:
-          PACKAGES: ${{ needs.plan.outputs.packages }}
-        run: |
-          sha=""
-          for pkg in $PACKAGES; do
-            one=$(cat ".soothfast/identical/$pkg" 2>/dev/null || true)
-            if [ -z "$one" ] || { [ -n "$sha" ] && [ "$sha" != "$one" ]; }; then sha=""; break; fi
-            sha=$one
-          done
-          echo "sha=$sha" >>"$GITHUB_OUTPUT"
-      - name: Carry the previous measurement
-        if: steps.carry.outputs.sha != ''
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .soothfast/baselines/head.json
-          key: soothfast-baseline-${{ steps.carry.outputs.sha }}
-      # A pull request that leaves the bench binaries unchanged saves none,
-      # so the docs job reads the merge-base's measurement saved here.
+      # A gate whose binaries match its reference saves that reference's stored run, so every push saves one.
+      # A pull request whose gate cannot save any reads the merge-base's measurement saved here.
       - name: Keep the default-branch measurement
         if: github.event_name == 'push' && hashFiles('.soothfast/baselines/head.json') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

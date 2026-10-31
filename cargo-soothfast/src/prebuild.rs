@@ -192,7 +192,7 @@ fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
             wanted
                 .docs
                 .iter()
-                .map(|pkg| rustdoc(pkg, false, None, false)),
+                .map(|pkg| rustdoc(pkg, false, wanted.features.clone(), false)),
         );
         for s in &wanted.spec {
             let Some(aux) = state.generated_from(&s.pkg) else {
@@ -1066,6 +1066,23 @@ mod tests {
             ["k1-d.bin", "k1-d.bin.extents", "k1.group", "k1.manifest"]
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_docs_lane_keys_rustdoc_with_the_features_docs_check_uses() {
+        let wanted = Wanted {
+            lanes: BTreeSet::from([Lane::Rustdoc]),
+            features: Some("full".into()),
+            ..wanted()
+        };
+        let items: Vec<_> = select(&wanted, &Fake::default())
+            .into_iter()
+            .map(|s| s.item)
+            .collect();
+        assert!(matches!(
+            &items[0],
+            Item::Rustdoc { features: Some(f), private: false, .. } if f == "full"
+        ));
     }
 
     #[test]
