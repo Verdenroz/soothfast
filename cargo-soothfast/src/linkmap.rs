@@ -32,14 +32,18 @@ pub struct Extent {
     /// (`.rodata.cstN`), else 0.
     pub entry: u64,
     /// `object:section`, which names the same input in another link of the
-    /// same code.
+    /// same code. The object is its path below the target directory, with
+    /// the archive member when it has one.
     pub name: String,
 }
 
-/// `object:section`, the object being the last component of its path.
-fn named(path: &str, section: &str) -> String {
-    let object = path.trim().rsplit('/').next().unwrap_or_default();
-    format!("{object}:{section}")
+fn named(path: &str, section: &str, root: &str) -> String {
+    let path = path.trim();
+    let path = match path.strip_prefix(root) {
+        Some(below) if !root.is_empty() => below.trim_start_matches('/'),
+        _ => path,
+    };
+    format!("{path}:{section}")
 }
 
 /// `line` after its first `columns` whitespace-separated fields.
@@ -59,15 +63,16 @@ fn entry_size(section: &str) -> u64 {
 }
 
 /// The extents of the input sections in `text`, read as an lld, mold or GNU ld
-/// map. `None` for any other format.
-pub fn parse(text: &str) -> Option<Vec<Extent>> {
+/// map, their objects named below `root` (a path outside it stays whole).
+/// `None` for any other format.
+pub fn parse(text: &str, root: &str) -> Option<Vec<Extent>> {
     let header = text.lines().next()?;
     let mut extents = if header.contains("VMA") && header.contains("LMA") {
-        parse_columns(text, 16, 16)
+        parse_columns(text, 16, 16, root)
     } else if header.contains("VMA") {
-        parse_columns(text, 16, 10)
+        parse_columns(text, 16, 10, root)
     } else if text.contains("Linker script and memory map") {
-        parse_gnu(text)
+        parse_gnu(text, root)
     } else {
         return None;
     };
@@ -79,7 +84,7 @@ pub fn parse(text: &str) -> Option<Vec<Extent>> {
 /// lld writes `VMA LMA Size Align Out In Symbol` rows in bare hexadecimal;
 /// mold writes `VMA Size Align Out In Symbol` with a `0x` VMA and a decimal
 /// size. An input section is a row whose last column reads `file:(section)`.
-fn parse_columns(text: &str, vma_radix: u32, size_radix: u32) -> Vec<Extent> {
+fn parse_columns(text: &str, vma_radix: u32, size_radix: u32, root: &str) -> Vec<Extent> {
     let lma = size_radix == 16;
     text.lines()
         .filter(|line| line.ends_with(')') && line.contains(":("))
@@ -97,7 +102,7 @@ fn parse_columns(text: &str, vma_radix: u32, size_radix: u32) -> Vec<Extent> {
                 vma,
                 size,
                 entry: entry_size(section),
-                name: named(path, section),
+                name: named(path, section, root),
             })
         })
         .collect()
@@ -105,14 +110,14 @@ fn parse_columns(text: &str, vma_radix: u32, size_radix: u32) -> Vec<Extent> {
 
 /// GNU ld lists `.section 0xADDR 0xSIZE file` under an output section, with
 /// the numbers on the next line when the name is long.
-fn parse_gnu(text: &str) -> Vec<Extent> {
+fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
     let hex = |s: &str| u64::from_str_radix(s.strip_prefix("0x")?, 16).ok();
     let extent = |addr: &str, size: &str, section: &str, path: &str| {
         Some(Extent {
             vma: hex(addr)?,
             size: hex(size)?,
             entry: entry_size(section),
-            name: named(path, section),
+            name: named(path, section, root),
         })
     };
     let mut extents = Vec::new();
@@ -189,14 +194,25 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     }
     // Kept, not removed: cargo answers a repeated map build as fresh without
     // relinking, so the map from the first link is the only one there is.
-    let map = maps.join(format!("{digest}.map"));
-    let built = invoke::build_link_map(common, bin.dir, bin.target_dir, &map);
-    let text = std::fs::read_to_string(&map);
-    let built = built.ok_or("the map build failed")?;
+    // When that one is gone, a map path cargo has not seen forces the link.
+    let kept = maps.join(format!("{digest}.map"));
+    let forced = maps.join(format!("{digest}.{}.map", std::process::id()));
+    let (built, text) = [kept, forced]
+        .iter()
+        .find_map(|map| {
+            let built = invoke::build_link_map(common, bin.dir, bin.target_dir, map)?;
+            Some((built, std::fs::read_to_string(map).ok()?))
+        })
+        .ok_or("the map build failed")?;
     if binary_digest(&built).as_deref() != Some(digest) {
         return Err("the map build links different code".into());
     }
-    let extents = parse(&text.map_err(|e| e.to_string())?).ok_or("unrecognized map format")?;
+    let root = bin
+        .target_dir
+        .or_else(|| bin.exe.ancestors().nth(3))
+        .map(|dir| std::path::absolute(dir).unwrap_or(dir.to_path_buf()))
+        .unwrap_or_default();
+    let extents = parse(&text, &root.to_string_lossy()).ok_or("unrecognized map format")?;
     let encoded = encode(&extents);
     if std::fs::write(maps.join(format!("{digest}.extents")), &encoded).is_ok() {
         runcache::prune_oldest(&maps, KEEP);
@@ -289,13 +305,48 @@ Linker script and memory map
     #[test]
     fn an_lld_map_yields_its_input_sections() {
         assert_eq!(
-            parse(LLD).expect("parsed"),
+            parse(LLD, "").expect("parsed"),
             [
                 at(0x2e0, 0x1c, "<internal>:.interp"),
                 pool(0xce40, 0xd8, 8, "<internal>:.rodata.cst8"),
-                at(0xcf18, 7, "bench-1.o:.rodata..Lanon.1.0"),
-                at(0xcf64, 0x11, "bench-1.o:.rodata..Lanon.1.1"),
+                at(0xcf18, 7, "/w/target/deps/bench-1.o:.rodata..Lanon.1.0"),
+                at(0xcf64, 0x11, "/w path/deps/bench-1.o:.rodata..Lanon.1.1"),
                 pool(0xcf90, 0x10, 8, "<internal>:.rodata.cst8")
+            ]
+        );
+    }
+
+    #[test]
+    fn objects_are_named_below_the_target_directory() {
+        let names: Vec<String> = parse(LLD, "/w/target")
+            .expect("parsed")
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert!(names.contains(&"deps/bench-1.o:.rodata..Lanon.1.0".to_string()));
+        assert!(names.contains(&"/w path/deps/bench-1.o:.rodata..Lanon.1.1".to_string()));
+    }
+
+    #[test]
+    fn two_objects_of_one_file_name_in_different_directories_are_told_apart() {
+        let map = "\
+             VMA              LMA     Size Align Out     In      Symbol
+            1000             1000        8     1 .bss
+            1000             1000        4     1         /w/t/release/build/a/out/util.o:(.bss.x)
+            1004             1004        4     1         /w/t/release/build/b/out/util.o:(.bss.x)
+            1008             1008        4     1         /w/t/release/deps/libfoo.rlib(bar.o):(.bss.x)
+";
+        let names: Vec<String> = parse(map, "/w/t")
+            .expect("parsed")
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "release/build/a/out/util.o:.bss.x",
+                "release/build/b/out/util.o:.bss.x",
+                "release/deps/libfoo.rlib(bar.o):.bss.x",
             ]
         );
     }
@@ -312,7 +363,7 @@ Linker script and memory map
     #[test]
     fn a_mold_map_reads_its_hex_addresses_and_decimal_sizes() {
         assert_eq!(
-            parse(MOLD).expect("parsed"),
+            parse(MOLD, "").expect("parsed"),
             [
                 at(0xd850, 1, "m.cgu.0.rcgu.o:.rodata..Lanon.1"),
                 at(0xd851, 20, "m.cgu.0.rcgu.o:.rodata..Lanon.2"),
@@ -324,22 +375,26 @@ Linker script and memory map
     #[test]
     fn a_gnu_ld_map_yields_its_input_sections_with_wrapped_names() {
         assert_eq!(
-            parse(GNU).expect("parsed"),
+            parse(GNU, "").expect("parsed"),
             [
-                at(0x2000, 4, "crt1.o:.rodata"),
+                at(0x2000, 4, "/usr/lib/crt1.o:.rodata"),
                 at(0x2008, 0x10, "foo.o:.rodata.foo"),
                 at(0x2018, 0x18, "bar.o:.rodata._ZN3bar17h0123456789abcdefE"),
                 pool(0x2030, 0x20, 16, "baz.o:.rodata.cst16"),
-                at(0x4000, 8, "a b.o:.bss.counter"),
-                at(0x4008, 8, "baz.o:.bss._ZN3baz17h0123456789abcdefE")
+                at(0x4000, 8, "/w path/deps/a b.o:.bss.counter"),
+                at(
+                    0x4008,
+                    8,
+                    "/w path/deps/baz.o:.bss._ZN3baz17h0123456789abcdefE"
+                )
             ]
         );
     }
 
     #[test]
     fn an_unknown_map_format_yields_nothing() {
-        assert_eq!(parse("not a map\n"), None);
-        assert_eq!(parse(""), None);
+        assert_eq!(parse("not a map\n", ""), None);
+        assert_eq!(parse("", ""), None);
     }
 
     #[test]
@@ -349,8 +404,13 @@ Linker script and memory map
     }
 
     #[test]
-    fn a_stored_form_without_names_is_no_map() {
+    fn a_stored_form_without_names_is_a_cache_miss() {
         assert_eq!(decode("2e0 1c 0\n"), []);
+        let root = std::env::temp_dir().join(format!("soothfast-oldmap-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("abc.extents"), "2e0 1c 0\n").unwrap();
+        assert_eq!(cached(&root, "abc", None), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

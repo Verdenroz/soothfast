@@ -631,6 +631,14 @@ fn a_sequence_that_could_be_a_jump_is_no_data_table() {
     }
     let used = [LEA, LOAD, ADD, "mov    (%rax),%rax", RET];
     assert_eq!(prove_data(&used).pointers.len(), 1);
+    let mut overwritten = vec![LEA, LOAD, ADD, "mov    (%rax),%rax"];
+    overwritten.extend(["nop"; 600]);
+    overwritten.push(RET);
+    assert_eq!(prove_data(&overwritten).pointers.len(), 1);
+    let mut endless = vec![LEA, LOAD, ADD];
+    endless.extend(["mov    %rax,0x8(%rsp)"; 600]);
+    endless.push(RET);
+    assert!(prove_data(&endless).pointers.is_empty());
     let mut stored = vec![LEA, LOAD, ADD];
     stored.extend(["mov    %rax,0x8(%rsp)"; 40]);
     stored.push(RET);

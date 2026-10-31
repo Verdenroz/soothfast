@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use soothfast_registry::fnv1a;
 
 use super::elf::{Marker, Reloc, Section, Symbol, Target};
+use super::identity::duplicated;
 use super::strip_llvm;
 use crate::jumptable;
 use crate::linkmap::Extent;
@@ -50,11 +51,11 @@ pub(super) struct Resolver<'a> {
     pub(super) inputs: &'a [Extent],
     pub(super) image: &'a [u8],
     roots: RefCell<HashMap<Node, Option<u64>>>,
-    described: RefCell<HashMap<u64, Option<String>>>,
+    pub(super) described: RefCell<HashMap<u64, Option<String>>>,
     /// Unsized names at data addresses.
-    labels: &'a HashMap<u64, Vec<String>>,
-    /// Names that more than one symbol or label of the binary has.
-    duplicated: HashSet<String>,
+    pub(super) labels: &'a HashMap<u64, Vec<String>>,
+    /// Names that more than one data symbol or label of the binary has.
+    pub(super) duplicated: HashSet<String>,
 }
 
 impl<'a> Resolver<'a> {
@@ -67,19 +68,8 @@ impl<'a> Resolver<'a> {
         inputs: &'a [Extent],
         image: &'a [u8],
     ) -> Resolver<'a> {
-        let mut counts: HashMap<String, usize> = HashMap::new();
-        let names = symbols
-            .iter()
-            .map(|s| strip_llvm(&s.name).into_owned())
-            .chain(labels.values().flatten().cloned());
-        for name in names {
-            *counts.entry(name).or_default() += 1;
-        }
         Resolver {
-            duplicated: counts
-                .into_iter()
-                .filter_map(|(name, n)| (n > 1).then_some(name))
-                .collect(),
+            duplicated: duplicated(sections, symbols, labels),
             sections,
             symbols,
             relocs,
@@ -123,7 +113,7 @@ impl<'a> Resolver<'a> {
 
     /// `hint` is the symbol objdump printed next to the address, used only
     /// for code that has no sized symbol (PLT stubs) and GOT slots.
-    fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
+    pub(super) fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
         let section = self.section_at(addr)?;
         let code = self.sections[section].code;
         if let Some(i) = self.symbol_at(addr)
@@ -202,7 +192,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Section, address and size of a node.
-    fn extent(&self, node: Node) -> Option<(usize, u64, u64)> {
+    pub(super) fn extent(&self, node: Node) -> Option<(usize, u64, u64)> {
         match node {
             Node::Symbol(i) => {
                 let s = &self.symbols[i];
@@ -295,70 +285,6 @@ impl<'a> Resolver<'a> {
         h
     }
 
-    /// What tells `node` from another object with the same bytes, when
-    /// reading either gives different results: writable data is a place, so
-    /// two zeroed statics are two objects. Read-only data is its bytes. A
-    /// symbol is its own name unless another symbol of the binary has it too
-    /// (statics of two files), when the input section it is defined in tells
-    /// them apart. Data in a section with no symbol or input around it is
-    /// named by the unique labels at its address, and only then.
-    fn identity(&self, node: Node, off: u64) -> Option<String> {
-        let (section, _, size) = self.extent(node)?;
-        if !self.sections[section].writable || size == 0 {
-            return Some(String::new());
-        }
-        let name = match node {
-            Node::Symbol(i) => {
-                let s = &self.symbols[i];
-                let name = strip_llvm(&s.name);
-                if self.duplicated.contains(name.as_ref()) {
-                    format!("{name}@{}", self.inputs[self.input_at(s.addr)?].name)
-                } else {
-                    name.into_owned()
-                }
-            }
-            Node::Input(i) => self.inputs[i].name.clone(),
-            Node::Section(i) => self.labelled(self.sections[i].vma + off),
-            Node::Entry(..) => String::new(),
-        };
-        (!name.is_empty()).then(|| format!("@{name}"))
-    }
-
-    /// The names of the labels at `addr` that no other symbol shares.
-    fn labelled(&self, addr: u64) -> String {
-        let mut names: Vec<&str> = self
-            .labels
-            .get(&addr)
-            .into_iter()
-            .flatten()
-            .map(String::as_str)
-            .filter(|n| !self.duplicated.contains(*n))
-            .collect();
-        names.sort_unstable();
-        names.join(",")
-    }
-
-    /// What a table word naming `addr` hashes as, worked out once: `None`
-    /// unless it lands on one object (code, a symbol, a link-map input or a
-    /// pool entry) and not only on the section around it.
-    pub(super) fn described(&self, addr: u64) -> Option<String> {
-        if let Some(text) = self.described.borrow().get(&addr) {
-            return text.clone();
-        }
-        let text = self
-            .place(addr, None)
-            .filter(|p| {
-                matches!(
-                    p,
-                    Place::Code(_)
-                        | Place::Data(Node::Symbol(_) | Node::Input(_) | Node::Entry(..), ..)
-                )
-            })
-            .and_then(|p| self.show(p));
-        self.described.borrow_mut().insert(addr, text.clone());
-        text
-    }
-
     fn resolve(&self, addr: u64, hint: Option<&str>) -> Option<String> {
         // A GOT entry reads as its relocation target. Elsewhere a relocated
         // address starts an object (a vtable) read past its first slot.
@@ -379,7 +305,7 @@ impl<'a> Resolver<'a> {
         self.show(self.place(addr, hint)?)
     }
 
-    fn show(&self, place: Place) -> Option<String> {
+    pub(super) fn show(&self, place: Place) -> Option<String> {
         Some(match place {
             Place::Code(name) => name,
             Place::Bounded(name, node) => format!("{name}:{:016x}", self.root_hash(node)?),
@@ -455,10 +381,7 @@ pub(super) fn strip_rip_displacement(operands: &str) -> String {
 mod tests {
     use super::*;
     use crate::codekey::elf::parse_markers;
-    use crate::codekey::fixture::{
-        BAR, BAZ, DIS, FN_SYMBOLS, Fixture, OBJECTS, READ_ONLY, WRITABLE, bar, image, loaded,
-        object_sections,
-    };
+    use crate::codekey::fixture::{BAR, BAZ, DIS, FN_SYMBOLS, Fixture, bar, image, loaded};
 
     #[test]
     fn a_reference_into_unsized_data_hashes_its_section() {
@@ -745,54 +668,6 @@ Idx Name          Size      VMA               LMA               File off  Algn
         assert_eq!(hash(&none, 0x2018, 1), None);
     }
 
-    #[test]
-    fn a_slot_pointing_at_writable_data_with_no_symbol_or_map_leaves_the_function_unhashed() {
-        let slot = |symbols: &str| {
-            let dis = "\
-0000000000001000 <_ZN3foo3bar17h1E>:
-    1000:\tlea    0x1000(%rip),%rax        # 2000 <slot>
-    1007:\tret
-";
-            let fixture = Fixture::default()
-                .sections(&object_sections(WRITABLE))
-                .symbols(symbols)
-                .relocs("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x0000000000003004")
-                .wanted(&[BAR]);
-            bar(&fixture.hashes(&vec![0; 0x4000], dis))
-        };
-        let slot_only = "\
-0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
-0000000000002000 0000000000000008 r slot
-";
-        assert_eq!(slot(slot_only), None);
-        let named = format!("{slot_only}0000000000003000 0000000000000010 D object\n");
-        assert!(slot(&named).is_some());
-    }
-
-    #[test]
-    fn a_relro_section_is_read_only_and_one_outside_it_is_not() {
-        let hash = |relro: Option<(u64, u64)>| {
-            let dis = "\
-0000000000001000 <_ZN3foo3bar17h1E>:
-    1000:\tlea    0x1000(%rip),%rax        # 3004 <inside>
-    1007:\tret
-";
-            let fixture = Fixture::default()
-                .sections(&object_sections(WRITABLE))
-                .symbols(FN_SYMBOLS)
-                .wanted(&[BAR]);
-            let fixture = match relro {
-                Some((start, size)) => fixture.relro(start, size),
-                None => fixture,
-            };
-            bar(&fixture.hashes(&vec![0; 0x4000], dis))
-        };
-        assert_eq!(hash(None), None);
-        assert_eq!(hash(Some((0x3000, 0x10))), hash(Some((0x2000, 0x2000))));
-        assert!(hash(Some((0x3000, 0x10))).is_some());
-        assert_eq!(hash(Some((0x3000, 0x8))), None);
-    }
-
     const LAZY_SECTIONS: &str = "\
 Idx Name          Size      VMA               LMA               File off  Algn
  18 .text         00359bd2  000000000191c2c0  000000000191c2c0  0191b2c0  2**6
@@ -831,148 +706,6 @@ Idx Name          Size      VMA               LMA               File off  Algn
         };
         assert!(hash(LAZY_DEREGISTER).is_some());
         assert_eq!(hash(&LAZY_DEREGISTER.replace("1c8e1b8", "1c8e1b9")), None);
-    }
-
-    fn takes(flags: &str, object: &str, relocs: &str) -> Option<u64> {
-        let dis = format!(
-            "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # {object}\n    1007:\tret\n"
-        );
-        let fixture = Fixture::default()
-            .sections(&object_sections(flags))
-            .symbols(&format!(
-                "{OBJECTS}0000000000002000 0000000000000008 r slot\n"
-            ))
-            .relocs(relocs)
-            .wanted(&[BAR]);
-        bar(&fixture.hashes(&vec![0; 0x4000], &dis))
-    }
-
-    #[test]
-    fn two_writable_objects_with_the_same_bytes_hash_apart() {
-        assert!(takes(WRITABLE, "3000 <one>", "").is_some());
-        assert_ne!(
-            takes(WRITABLE, "3000 <one>", ""),
-            takes(WRITABLE, "3008 <two>", "")
-        );
-    }
-
-    #[test]
-    fn local_symbols_of_one_name_in_two_objects_hash_apart() {
-        let symbols = "\
-0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
-0000000000003000 0000000000000008 d counter
-0000000000003008 0000000000000008 d counter
-";
-        let inputs = |first: &str, second: &str| {
-            [(0x3000, first), (0x3008, second)].map(|(vma, name)| Extent {
-                vma,
-                size: 8,
-                name: name.to_string(),
-                ..Extent::default()
-            })
-        };
-        let takes = |inputs: &[Extent], object: &str| {
-            let dis = format!(
-                "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # {object} <counter>\n    1007:\tret\n"
-            );
-            let fixture = Fixture::default()
-                .sections(&object_sections(WRITABLE))
-                .symbols(symbols)
-                .inputs(inputs)
-                .wanted(&[BAR]);
-            bar(&fixture.hashes(&vec![0; 0x4000], &dis))
-        };
-        let apart = inputs("a.o:.data.counter", "b.o:.data.counter");
-        assert!(takes(&apart, "3000").is_some());
-        assert_ne!(takes(&apart, "3000"), takes(&apart, "3008"));
-        assert_eq!(takes(&[], "3000"), None);
-    }
-
-    #[test]
-    fn a_local_symbol_with_a_name_of_its_own_needs_no_input() {
-        let symbols = "\
-0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
-0000000000003000 0000000000000008 d completed.0
-0000000000003008 0000000000000008 d solo
-";
-        let takes = |object: &str| {
-            let dis = format!(
-                "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # {object}\n    1007:\tret\n"
-            );
-            let fixture = Fixture::default()
-                .sections(&object_sections(WRITABLE))
-                .symbols(symbols)
-                .wanted(&[BAR]);
-            bar(&fixture.hashes(&vec![0; 0x4000], &dis))
-        };
-        assert!(takes("3000 <a>").is_some());
-        assert_ne!(takes("3000 <a>"), takes("3008 <b>"));
-    }
-
-    #[test]
-    fn a_unique_label_names_the_writable_data_at_its_address() {
-        let takes = |object: &str, labels: &str| {
-            let dis = format!(
-                "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # {object}\n    1007:\tret\n"
-            );
-            let fixture = Fixture::default()
-                .sections(&object_sections(WRITABLE))
-                .symbols(FN_SYMBOLS)
-                .labels(labels)
-                .wanted(&[BAR]);
-            bar(&fixture.hashes(&vec![0; 0x4000], &dis))
-        };
-        let labels = "\
-0000000000003000 d __dso_handle
-0000000000003000 d __alias
-0000000000003008 d solo
-";
-        assert!(takes("3000 <__dso_handle>", labels).is_some());
-        assert_ne!(takes("3000 <a>", labels), takes("3008 <b>", labels));
-        assert_eq!(takes("3004 <inside>", labels), None);
-        assert_eq!(takes("3000 <a>", ""), None);
-        let twice = "0000000000003000 d same\n0000000000003008 d same\n";
-        assert_eq!(takes("3000 <a>", twice), None);
-        let one_twice =
-            "0000000000003000 d same\n0000000000003000 d only\n0000000000003008 d same\n";
-        assert!(takes("3000 <a>", one_twice).is_some());
-    }
-
-    #[test]
-    fn a_writable_section_with_no_symbol_or_input_leaves_the_function_unhashed() {
-        let takes = |flags: &str| {
-            let dis = "\
-0000000000001000 <_ZN3foo3bar17h1E>:
-    1000:\tlea    0x1000(%rip),%rax        # 3004 <inside>
-    1007:\tret
-";
-            let fixture = Fixture::default()
-                .sections(&object_sections(flags))
-                .symbols(FN_SYMBOLS)
-                .wanted(&[BAR]);
-            bar(&fixture.hashes(&vec![0; 0x4000], dis))
-        };
-        assert!(takes(READ_ONLY).is_some());
-        assert_eq!(takes(WRITABLE), None);
-    }
-
-    #[test]
-    fn two_read_only_objects_with_the_same_bytes_hash_alike() {
-        assert!(takes(READ_ONLY, "3000 <one>", "").is_some());
-        assert_eq!(
-            takes(READ_ONLY, "3000 <one>", ""),
-            takes(READ_ONLY, "3008 <two>", "")
-        );
-    }
-
-    #[test]
-    fn a_pointer_to_a_writable_object_hashes_which_object() {
-        let slot = |to: u64| {
-            let relocs = format!("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x{to:016x}");
-            takes(WRITABLE, "2000 <slot>", &relocs)
-        };
-        assert!(slot(0x3000).is_some());
-        assert_ne!(slot(0x3000), slot(0x3008));
     }
 
     #[test]

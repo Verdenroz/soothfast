@@ -134,7 +134,7 @@ impl Resolver<'_> {
             let at = e.vma + 4 * i as u64;
             let base = bases[bases.partition_point(|&b| b <= at) - 1];
             let target = base.wrapping_add_signed(i64::from(i32::from_le_bytes(*word)));
-            if !lands(target) {
+            if !lands(target) || (e.vma..e.vma + e.size).contains(&target) {
                 return None;
             }
             targets.push(target);
@@ -298,6 +298,26 @@ mod tests {
         let base = names([0x2010, 0x2018], [1, 2], true, true);
         assert!(base.is_some());
         assert_ne!(base, names([0x2018, 0x2010], [1, 2], true, true));
+    }
+
+    #[test]
+    fn a_table_word_landing_on_the_table_itself_stays_raw() {
+        let hash = |string: u64| {
+            let mut image = vec![0; 0x3000];
+            image[0x2000..0x2004].copy_from_slice(&((string - 0x2000) as i32).to_le_bytes());
+            let inputs = [0x2000, string].map(|vma| Extent {
+                vma,
+                size: 8,
+                ..Extent::default()
+            });
+            let fixture = Fixture::default()
+                .symbols(FN_SYMBOLS)
+                .inputs(&inputs)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&image, NAMES))
+        };
+        assert!(hash(0x2010).is_some());
+        assert_ne!(hash(0x2010), hash(0x2018));
     }
 
     #[test]

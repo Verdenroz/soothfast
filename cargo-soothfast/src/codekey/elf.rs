@@ -162,24 +162,40 @@ pub(super) fn parse_symbols(listing: &str) -> Vec<Symbol> {
     symbols
 }
 
-/// The names `nm` lists without a size at an address in a data section, by
-/// address: `__dso_handle`, `__TMC_END__` and other labels the linker and the
-/// C runtime define. Absolute symbols are values, not addresses.
-pub(super) fn parse_labels(listing: &str, sections: &[Section]) -> HashMap<u64, Vec<String>> {
-    let mut labels: HashMap<u64, Vec<String>> = HashMap::new();
-    for line in listing.lines() {
+/// The `(address, type letter, name)` of each symbol `nm -S` lists without a
+/// size.
+fn unsized_symbols(listing: &str) -> impl Iterator<Item = (u64, &str, &str)> {
+    listing.lines().filter_map(|line| {
         let f: Vec<&str> = line.split_whitespace().collect();
         let (addr, kind, name) = match f[..] {
             [addr, kind, name] => (addr, kind, name),
             [addr, size, kind, name] if u64::from_str_radix(size, 16) == Ok(0) => {
                 (addr, kind, name)
             }
-            _ => continue,
+            _ => return None,
         };
-        let Ok(addr) = u64::from_str_radix(addr, 16) else {
-            continue;
-        };
-        if !kind.eq_ignore_ascii_case("a") && sections.iter().any(|s| !s.code && s.contains(addr)) {
+        Some((u64::from_str_radix(addr, 16).ok()?, kind, name))
+    })
+}
+
+/// Whether `addr` falls in a section of data. `sections` are ordered by
+/// address.
+pub(super) fn in_data(sections: &[Section], addr: u64) -> bool {
+    let after = sections.partition_point(|s| s.vma <= addr);
+    sections[..after]
+        .iter()
+        .rev()
+        .find(|s| s.size > 0)
+        .is_some_and(|s| !s.code && s.contains(addr))
+}
+
+/// The names `nm` lists without a size at an address in a data section, by
+/// address: `__dso_handle`, `__TMC_END__` and other labels the linker and the
+/// C runtime define. Absolute symbols are values, not addresses.
+pub(super) fn parse_labels(listing: &str, sections: &[Section]) -> HashMap<u64, Vec<String>> {
+    let mut labels: HashMap<u64, Vec<String>> = HashMap::new();
+    for (addr, kind, name) in unsized_symbols(listing) {
+        if !kind.eq_ignore_ascii_case("a") && in_data(sections, addr) {
             labels
                 .entry(addr)
                 .or_default()
@@ -207,18 +223,9 @@ pub(super) enum Marker {
 ///
 /// A sized symbol at the same address is resolved first and wins.
 pub(super) fn parse_markers(listing: &str, sections: &[Section]) -> HashMap<u64, Marker> {
-    let mut named: Vec<(u64, String)> = listing
-        .lines()
-        .filter_map(|line| {
-            let f: Vec<&str> = line.split_whitespace().collect();
-            let (addr, name) = match f[..] {
-                [addr, _, name] => (addr, name),
-                [addr, size, _, name] if u64::from_str_radix(size, 16) == Ok(0) => (addr, name),
-                _ => return None,
-            };
-            let addr = u64::from_str_radix(addr, 16).ok()?;
-            let in_data = sections.iter().any(|s| !s.code && s.contains(addr));
-            if !in_data {
+    let mut named: Vec<(u64, String)> = unsized_symbols(listing)
+        .filter_map(|(addr, _, name)| {
+            if !in_data(sections, addr) {
                 return None;
             }
             if name.starts_with("__stop_") {

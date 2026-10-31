@@ -315,20 +315,26 @@ merges whole entries. String pools (`.rodata.str*`) stay one object.
 A writable object (`.data`, `.bss`) is told from another by its symbol name,
 or by the link map's object and section for one with no symbol, as well as
 by its bytes: two zeroed statics hold the same bytes, and code that reads
-one is not code that reads the other. A symbol whose name no other symbol of
-the binary has is its own identity. Two that share a name (C `static`s of
-the same name in two files) are told apart by the input section each is
-defined in. Read-only data, and data the loader seals after relocation
-(the `PT_GNU_RELRO` range, read from the program headers), is keyed by its
-bytes alone. Data in a writable section with no symbol or input around it is
-named by the labels `nm` lists at its address without a size (`__dso_handle`,
-`__TMC_END__`), provided their names are unique in the binary, and is keyed
-with the whole section so reads on either side of the label stay covered.
-Without a link map, a function that reads a duplicate-named local static, or
-writable data with neither a symbol nor such a label, is left unhashed. The object part
-of an input section's name follows the compiler's code generation units,
-which can move on an unrelated edit. That costs a miss and never a wrong
-hit, which is why the symbol name is used whenever it is unique.
+one is not code that reads the other. A symbol whose name no other data
+symbol or label of the binary has is its own identity. Two that share a name
+(C `static`s of the same name in two files) are told apart by the input
+section each is defined in, named by the object's path below the target
+directory and its archive member, so `a/util.o` and `b/util.o` differ. Code
+symbols do not count towards a duplicate. A new static of the same name
+elsewhere makes both duplicates, which costs a miss until the link map names
+them and never a wrong hit. Read-only data, and data the loader seals after
+relocation (the `PT_GNU_RELRO` range, read from the program headers), is
+keyed by its bytes alone; a binary with no such range prints a line saying
+so and treats relocated data as writable. Data in a writable section with no
+symbol or input around it is named by the labels `nm` lists at its address
+without a size (`__dso_handle`, `__TMC_END__`), provided their names are
+unique in the binary, and is keyed with the whole section so reads on either
+side of the label stay covered. Without a link map, a function that reads a
+duplicate-named local static, or writable data with neither a symbol nor
+such a label, is left unhashed. The object part of an input section's name
+follows the compiler's code generation units, which can move on an unrelated
+edit. That costs a miss and never a wrong hit, which is why the symbol name
+is used whenever it is unique.
 
 A jump table stores code offsets as 32-bit integers, so its bytes change
 whenever code moves. Where the instructions prove how a table is read, it is

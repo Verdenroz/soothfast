@@ -41,6 +41,9 @@ pub struct Proven {
 /// How far past a `lea` the rest of the pattern may sit.
 const WINDOW: usize = 32;
 
+/// How far past an add a data table's sum is followed for a register jump.
+const REACH: usize = 512;
+
 struct Ins<'a> {
     mnemonic: &'a str,
     operands: Vec<&'a str>,
@@ -469,22 +472,22 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
 
 /// Where `after` ends reading a table through `base` and `word`: the index of
 /// the `jmp *` through the sum of the two and `false`, or the index of the add
-/// and `true` when the block then ends with no indirect jump through a
-/// register. `None` when nothing adds them, one of them is written first, a
+/// and `true` when the sum then ends its life: the block ends, or an
+/// instruction writes the sum register or a call clobbers it, with no register
+/// jump before. `None` when nothing adds them, one of them is written first, a
 /// register jump follows that is not through the sum or is further than
-/// [`WINDOW`], or the code ends inside the block: that is a jump table gone
-/// wrong or one not seen whole.
+/// [`WINDOW`], or [`REACH`] runs out inside the block.
 fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool)> {
-    let mut sum: Option<(usize, String, bool)> = None;
+    let mut sum: Option<(usize, String)> = None;
     for (i, (_, ins)) in after.iter().enumerate() {
-        let Some((add, total, disturbed)) = &mut sum else {
+        let Some((add, total)) = &sum else {
             let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
             let pair = |a: &str, b: &str| {
                 regs.len() == 2 && regs[0].as_deref() == Some(a) && regs[1].as_deref() == Some(b)
             };
             let adds = ins.mnemonic == "add" && (pair(base, word) || pair(word, base));
             match regs.get(1).cloned().flatten() {
-                Some(total) if adds => sum = Some((i, total, false)),
+                Some(total) if adds => sum = Some((i, total)),
                 _ if ends_block(ins) || disturbs(ins, &[base, word]) => return None,
                 _ => {}
             }
@@ -497,16 +500,18 @@ fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool
                 .and_then(family)
                 .as_deref()
                 == Some(total.as_str());
-        if through && !*disturbed && i < WINDOW {
+        if through && i < WINDOW {
             return Some((i, false));
         }
         if ins.mnemonic == "jmp" && through_loaded_register(ins) {
             return None;
         }
-        if ends_block(ins) {
+        if ends_block(ins) || disturbs(ins, &[total.as_str()]) {
             return Some((*add, true));
         }
-        *disturbed |= disturbs(ins, &[total.as_str()]);
+        if i >= REACH {
+            return None;
+        }
     }
     None
 }

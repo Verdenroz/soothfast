@@ -14,6 +14,7 @@ mod elf;
 mod exits;
 #[cfg(test)]
 mod fixture;
+mod identity;
 mod resolve;
 mod tables;
 
@@ -159,6 +160,12 @@ impl Binary {
         }
         let tls = tls_digest(&sections, &image)?;
         let relro = command_text("objdump", &["-p"], bin).and_then(|text| relro_range(&text));
+        if relro.is_none() {
+            println!(
+                "codekey: no PT_GNU_RELRO range in {} (objdump -p failed or lists none); relocated data counts as writable",
+                bin.display()
+            );
+        }
         let sections = addressable(seal(sections, relro));
         let markers = parse_markers(&listing, &sections);
         let labels = parse_labels(&listing, &sections);
@@ -435,10 +442,8 @@ mod tests {
             }
             built += 1;
             let wanted = functions(&bin);
-            let inputs = std::fs::read_to_string(&map)
-                .ok()
-                .and_then(|text| crate::linkmap::parse(&text))
-                .unwrap_or_default();
+            let text = std::fs::read_to_string(&map).expect("the linker wrote a map");
+            let inputs = crate::linkmap::parse(&text, "").expect("the map parses");
             for (mapped, inputs) in [("no map", &[][..]), ("map", &inputs[..])] {
                 let binary = Binary::open(&bin, &wanted, inputs);
                 unhashed.extend(
