@@ -404,8 +404,8 @@ prebuild: skipped  bench executable core (merge-base)
 prebuild: 1 built, 1 skipped, 1 stored
 ```
 
-Each job uploads `soothfast-store-bench` or `soothfast-store-rustdoc`, kept one
-day. They hold only the entries the lane built or found (`prebuild-stage`): the
+Each job uploads `soothfast-store-bench` or `soothfast-store-rustdoc` as a tar
+(an artifact drops file modes, a tar keeps them), kept one day. They hold only the entries the lane built or found (`prebuild-stage`): the
 executables with their digests and link-map extents, and the rustdoc JSON,
 not the rest of a restored cache. The Rust gate, every shard of it, downloads
 the bench artifact into `.soothfast/` and the docs check the rustdoc artifact,
@@ -446,9 +446,9 @@ The legs record `soothfast-result-rust-shard-<i>-of-<n>` and the verdict folds t
 into one section for the package. On a pull request each leg also uploads the
 baseline of its items as `soothfast-baseline-shard-<i>-of-<n>`, and the docs
 check merges them with `cargo soothfast baseline merge` before it evaluates
-claims. If only some arrive it reports "claims not evaluated" rather than
-reading the default branch's measurement; if none arrive, the bench binaries
-were unchanged and it reads the default branch's. A default-branch push records every item
+claims. If only some arrive it reports "claims not evaluated". If none arrive
+the bench binaries were unchanged, and it reads the measurement saved for the
+merge-base commit, evaluating no claims when that is missing. A default-branch push records every item
 in its first leg and saves the baseline as before; the other legs are
 skipped on a push, since they would only set up.
 

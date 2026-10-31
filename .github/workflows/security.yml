@@ -54,10 +54,8 @@ jobs:
         with:
           version: 1.29.0
 
-  # Syntax and expression checks that zizmor does not make, such as a context
-  # used where GitHub does not provide it. The image is pinned by digest and
-  # bumped deliberately; actionlint reads the workflows only, so the composite
-  # actions are left to zizmor.
+  # Expression checks zizmor lacks, such as a context GitHub does not provide there.
+  # The image is pinned by digest; composite actions are left to zizmor.
   actionlint:
     name: actionlint
     if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
