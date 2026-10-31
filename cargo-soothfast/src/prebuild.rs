@@ -354,7 +354,9 @@ fn execute(steps: &[Step], live: &Live, heads: &mut BTreeMap<String, String>) ->
             .filter(|s| s.action == Action::Build && side_of(s) == Some(side))
             .map(|s| s.item.pkg().to_string())
             .collect();
-        if !missing.is_empty() {
+        // `--features` names one package's features, so across several cargo
+        // wants `pkg/feature`; those builds are left to the one-by-one pass.
+        if !missing.is_empty() && live.common.features.is_none() {
             let (dir, target_dir) = live.tree(side);
             let label = format!("cargo bench build {side:?}");
             let _ = invoke::timed(&label, || {

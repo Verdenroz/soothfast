@@ -10,6 +10,7 @@ use crate::init::ci::Ci;
 use crate::init::ecosystem::{Project, Suite, slug};
 use crate::init::{self, RustPlan};
 use crate::invoke;
+use crate::spec_config;
 use crate::test::project::{
     Pins, TEST_ALL_LABEL, Verdict, changed_since, covered, suites_for, target_for, toolchain_for,
     touches, write_result,
@@ -23,10 +24,17 @@ struct Args {
     labels: Vec<String>,
     results: Option<PathBuf>,
     pins: Pins,
+    /// Packages `spec` commands run on, each `PKG` or `PKG:TARGET`.
+    spec: Vec<String>,
+    /// Legs the Rust gate is split into.
+    shards: u64,
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
-    let mut out = Args::default();
+    let mut out = Args {
+        shards: 1,
+        ..Args::default()
+    };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         if a == "--github" {
@@ -47,6 +55,15 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
                     .collect()
             }
             "--results" => out.results = Some(PathBuf::from(value)),
+            "--spec" => out.spec = value.split_whitespace().map(String::from).collect(),
+            "--shard" => match value.parse() {
+                Ok(n) if n >= 1 => out.shards = n,
+                _ => {
+                    return Err(format!(
+                        "--shard wants a count of at least 1, got {value:?}"
+                    ));
+                }
+            },
             "--java" => out.pins.java = Some(value),
             "--node" => out.pins.node = Some(value),
             other => return Err(format!("unknown plan arg {other:?}")),
@@ -61,7 +78,14 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     let root = invoke::project_root();
-    let plan = match build(&root, args.base.as_deref(), args.labels, args.pins) {
+    let plan = match build(
+        &root,
+        args.base.as_deref(),
+        args.labels,
+        args.pins,
+        args.spec,
+        args.shards,
+    ) {
         Ok(plan) => plan,
         Err(e) => return err(&e),
     };
@@ -91,6 +115,10 @@ struct Plan {
     pins: Pins,
     /// Names of the tests a stored pass already covers.
     reused: BTreeSet<String>,
+    spec: Vec<String>,
+    /// Whether a `spec` package generates a spec, which needs rustdoc.
+    spec_generates: bool,
+    shards: u64,
 }
 
 /// One project's tests, or one suite's, and whether the change reaches them.
@@ -106,6 +134,8 @@ fn build(
     base: Option<&str>,
     labels: Vec<String>,
     mut pins: Pins,
+    spec: Vec<String>,
+    shards: u64,
 ) -> Result<Plan, String> {
     let rust = root
         .join("Cargo.toml")
@@ -145,6 +175,9 @@ fn build(
         changed,
         pins,
         reused: BTreeSet::new(),
+        spec_generates: spec_generates(&spec),
+        spec,
+        shards,
     };
     plan.check_names()?;
     plan.reused = plan.stored_passes(root)?;
@@ -315,6 +348,33 @@ impl Plan {
         Ok(())
     }
 
+    /// The lanes of the build job, one machine each so they run side by side.
+    /// A lane with nothing to build is left out.
+    fn build_lanes(&self) -> Vec<&'static str> {
+        let rust = self.rust.as_ref();
+        let mut lanes = Vec::new();
+        if rust.is_some_and(|r| !r.packages.is_empty()) {
+            lanes.push("bench");
+        }
+        if !self.spec.is_empty() {
+            lanes.push("routes");
+        }
+        if rust.is_some_and(|r| !r.docs_packages.is_empty()) || self.spec_generates {
+            lanes.push("rustdoc");
+        }
+        lanes
+    }
+
+    /// The legs the Rust gate runs as: `I/N` each, or one with no shard.
+    fn shard_legs(&self) -> Vec<String> {
+        if self.shards <= 1 {
+            return vec![String::new()];
+        }
+        (1..=self.shards)
+            .map(|i| format!("{i}/{}", self.shards))
+            .collect()
+    }
+
     /// `key=value` lines for `$GITHUB_OUTPUT`. The matrix holds only the
     /// non-Rust projects: the cargo workspace gates through its own job.
     fn outputs(&self) -> String {
@@ -329,8 +389,11 @@ impl Plan {
             .map(|r| r.packages.join(" "))
             .unwrap_or_default();
         let tests = self.test_matrix();
+        let lanes = self.build_lanes();
+        let build_matrix =
+            json!({ "include": lanes.iter().map(|l| json!({ "lane": l })).collect::<Vec<_>>() });
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nruns_on={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nbuild={}\nbuild_matrix={build_matrix}\nshards={}\nruns_on={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -340,9 +403,22 @@ impl Plan {
             !tests["include"].as_array().is_none_or(Vec::is_empty),
             self.test_all(),
             self.test_expect(),
+            !lanes.is_empty(),
+            serde_json::to_string(&self.shard_legs()).unwrap_or_default(),
             self.ci.runs_on_json(),
         )
     }
+}
+
+/// Whether any `PKG[:TARGET]` names a package with a generate-mode spec.
+fn spec_generates(spec: &[String]) -> bool {
+    spec.iter().any(|entry| {
+        let pkg = entry.split_once(':').map_or(entry.as_str(), |(pkg, _)| pkg);
+        invoke::pkg_dir(pkg)
+            .ok()
+            .and_then(|dir| spec_config::load(&dir).ok())
+            .is_some_and(|cfg| cfg.generates())
+    })
 }
 
 /// Each project's name: its ecosystem, plus its directory when another
@@ -413,7 +489,60 @@ mod tests {
                 ..Pins::default()
             },
             reused: BTreeSet::new(),
+            spec: Vec::new(),
+            spec_generates: false,
+            shards: 1,
         }
+    }
+
+    #[test]
+    fn the_build_job_has_a_lane_for_each_thing_the_plan_needs_built() {
+        let mut p = plan(Some(&["a"]), vec![]);
+        assert_eq!(p.build_lanes(), ["bench"]);
+        p.rust.as_mut().unwrap().docs_packages = vec!["a".into()];
+        assert_eq!(p.build_lanes(), ["bench", "rustdoc"]);
+        p.spec = vec!["server:routes".into()];
+        assert_eq!(p.build_lanes(), ["bench", "routes", "rustdoc"]);
+        p.rust.as_mut().unwrap().docs_packages.clear();
+        assert_eq!(p.build_lanes(), ["bench", "routes"]);
+        p.spec_generates = true;
+        assert_eq!(p.build_lanes(), ["bench", "routes", "rustdoc"]);
+        assert!(plan(None, vec![]).build_lanes().is_empty());
+    }
+
+    #[test]
+    fn a_plan_with_nothing_to_build_has_no_build_job() {
+        let out = plan(Some(&[]), vec![]).outputs();
+        assert!(
+            out.contains("build=false\nbuild_matrix={\"include\":[]}\n"),
+            "{out}"
+        );
+        let out = plan(Some(&["a"]), vec![]).outputs();
+        assert!(
+            out.contains("build=true\nbuild_matrix={\"include\":[{\"lane\":\"bench\"}]}\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn the_gate_runs_as_one_leg_or_one_per_shard() {
+        let mut p = plan(Some(&["a"]), vec![]);
+        assert_eq!(p.shard_legs(), [""]);
+        assert!(p.outputs().contains("shards=[\"\"]\n"));
+        p.shards = 3;
+        assert_eq!(p.shard_legs(), ["1/3", "2/3", "3/3"]);
+        assert!(p.outputs().contains("shards=[\"1/3\",\"2/3\",\"3/3\"]\n"));
+    }
+
+    #[test]
+    fn spec_and_shard_flags_are_parsed() {
+        let argv = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let a = parse_args(&argv(&["--spec", "a b:routes", "--shard", "3"])).unwrap();
+        assert_eq!(a.spec, ["a", "b:routes"]);
+        assert_eq!(a.shards, 3);
+        assert_eq!(parse_args(&argv(&[])).unwrap().shards, 1);
+        assert!(parse_args(&argv(&["--shard", "0"])).is_err());
+        assert!(parse_args(&argv(&["--shard", "many"])).is_err());
     }
 
     #[test]
@@ -529,7 +658,7 @@ mod tests {
         assert_eq!(p.test_expect(), "test-gradle test-node");
         assert!(
             p.outputs()
-                .contains("test_expect=test-gradle test-node\nruns_on=")
+                .contains("test_expect=test-gradle test-node\nbuild=")
         );
     }
 
