@@ -64,7 +64,9 @@ waits for a human.
 ## What the step does
 
 Every run installs `cargo-soothfast` pinned to the `soothfast` version in
-your `Cargo.lock`, cached across runs. Pin the action to a release no newer
+your `Cargo.lock`, cached across runs. The binary is downloaded from the
+GitHub release and checked against its `SHA256SUMS`; if that fails the step
+warns and falls back to `cargo-binstall`. Pin the action to a release no newer
 than that version: the scripts pass flags the CLI at the action's ref
 understands. Runs that have nothing to do (a push to another branch, a pull
 request with `gate: false`) stop there. Otherwise the checkout is unshallowed

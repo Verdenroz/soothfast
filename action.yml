@@ -226,13 +226,21 @@ runs:
       with:
         path: ${{ steps.resolve.outputs.bin }}
         key: cargo-soothfast-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.version }}
-    - name: Install cargo-binstall
+    - name: Download cargo-soothfast
       if: steps.resolve.outputs.install == 'true' && steps.cache.outputs.cache-hit != 'true'
+      id: direct
+      shell: bash
+      env:
+        VERSION: ${{ steps.resolve.outputs.version }}
+        BIN: ${{ steps.resolve.outputs.bin }}
+      run: "$GITHUB_ACTION_PATH/action/install-release.sh"
+    - name: Install cargo-binstall
+      if: steps.resolve.outputs.install == 'true' && steps.cache.outputs.cache-hit != 'true' && steps.direct.outputs.direct != 'true'
       uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
       with:
         tool: cargo-binstall
     - name: Install cargo-soothfast
-      if: steps.resolve.outputs.install == 'true' && steps.cache.outputs.cache-hit != 'true'
+      if: steps.resolve.outputs.install == 'true' && steps.cache.outputs.cache-hit != 'true' && steps.direct.outputs.direct != 'true'
       shell: bash
       env:
         VERSION: ${{ steps.resolve.outputs.version }}
