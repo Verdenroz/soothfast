@@ -1038,9 +1038,21 @@ pub fn write_baseline_in(root: &Path, name: &str, doc: &Value) -> io::Result<Pat
     Ok(path)
 }
 
-/// Whether a baseline named `name` exists under `root`.
-pub fn baseline_exists_in(root: &Path, name: &str) -> bool {
-    baseline_path(root, name).exists()
+/// Whether the baseline `name` under `root` already holds bench items of
+/// `pkg`, or any when no package is named. A shard saving into it would leave
+/// those items half old.
+pub fn baseline_holds_in(root: &Path, name: &str, pkg: Option<&str>) -> bool {
+    let Ok(Some(doc)) = load_baseline_in(root, name) else {
+        return baseline_path(root, name).exists();
+    };
+    let pkg = pkg.map(|p| p.replace('-', "_"));
+    doc["items"].as_object().is_some_and(|items| {
+        items.iter().any(|(id, item)| {
+            !is_imported(item)
+                && !id.starts_with("buildcost::")
+                && pkg.as_deref().is_none_or(|p| id_pkg(id) == p)
+        })
+    })
 }
 
 /// Load a named baseline, if present.
@@ -1963,10 +1975,33 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, Shard,
-        forget_missing_worktree_in, git_in, harness_mismatches, run_from_items_value,
-        run_to_items_value, saved_items,
+        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, Shard, baseline_holds_in,
+        forget_missing_worktree_in, git_in, harness_mismatches, load_baseline_in,
+        run_from_items_value, run_to_items_value, saved_items, write_baseline_in,
     };
+    use serde_json::json;
+
+    #[test]
+    fn a_sharded_baseline_takes_one_package_after_another_but_not_one_twice() {
+        let root =
+            std::env::temp_dir().join(format!("soothfast-shard-pkgs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let save = |id: &str| {
+            let mut doc = load_baseline_in(&root, "head")
+                .unwrap()
+                .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+            doc["items"][id] = json!({ "ir": 1 });
+            write_baseline_in(&root, "head", &doc).unwrap();
+        };
+        assert!(!baseline_holds_in(&root, "head", Some("a")));
+        save("a::x");
+        assert!(!baseline_holds_in(&root, "head", Some("b-pkg")));
+        save("b_pkg::y");
+        assert!(baseline_holds_in(&root, "head", Some("a")));
+        assert!(baseline_holds_in(&root, "head", Some("b-pkg")));
+        assert!(baseline_holds_in(&root, "head", None));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn a_sharded_run_saves_without_replacing_its_scope() {

@@ -200,10 +200,10 @@ pub fn run(args: &[String]) -> i32 {
     };
     if let Some(shard) = g.common.shard {
         if let Some(name) = &g.save_baseline
-            && invoke::baseline_exists_in(&invoke::project_root(), name)
+            && invoke::baseline_holds_in(&invoke::project_root(), name, g.common.pkg.as_deref())
         {
             return err(&format!(
-                "--shard with --save-baseline {name:?}: that baseline exists, and a shard would leave it half old; \
+                "--shard with --save-baseline {name:?}: that baseline already holds items of this package, and a shard would leave them half old; \
                  save into a fresh name and fold the shards in with `baseline merge`"
             ));
         }
