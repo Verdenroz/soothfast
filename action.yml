@@ -199,8 +199,14 @@ inputs:
     default: ""
   prebuild-docs-paths:
     description: >-
-      Space-separated PATHS `docs check` is given, which decide whether it
+      The PATHS `docs check` is given, one per line, which decide whether it
       builds rustdoc at all. Empty means the `[docs] paths` scope.
+    required: false
+    default: ""
+  prebuild-docs-features:
+    description: >-
+      The `--features` `docs check` is given, which key its rustdoc JSON.
+      Empty means none: `docs check` never reads the `features` input.
     required: false
     default: ""
   prebuild-spec:
@@ -512,6 +518,7 @@ runs:
         ON_DEFAULT: ${{ steps.prepare.outputs.on_default_branch }}
         DOCS: ${{ inputs.prebuild-docs }}
         DOCS_PATHS: ${{ inputs.prebuild-docs-paths }}
+        DOCS_FEATURES: ${{ inputs.prebuild-docs-features }}
         SPEC: ${{ inputs.prebuild-spec }}
       run: "$GITHUB_ACTION_PATH/action/prebuild.sh"
 

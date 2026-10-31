@@ -163,7 +163,8 @@ installed on is refused.
 | `cache-suffix` | none | Tells apart the legs of a job matrix that share a job name, so each keeps its own `rustdoc-cache` and `bin-cache`. |
 | `prebuild` | none | Lanes (`bench`, `routes`, `rustdoc`, space-separated) to build into the stores in place of the gate (see [One build](#one-build)). |
 | `prebuild-docs` | none | Packages whose rustdoc JSON `docs check` reads. Alone, it builds the `rustdoc` lane. They are built only when the docs bind a Rust item, as `docs check` builds them. |
-| `prebuild-docs-paths` | none | The PATHS `docs check` is given, which decide whether it binds a Rust item. Empty means the `[docs] paths` scope. |
+| `prebuild-docs-paths` | none | The PATHS `docs check` is given, one per line, which decide whether it binds a Rust item. Empty means the `[docs] paths` scope. |
+| `prebuild-docs-features` | none | The `--features` `docs check` is given, which key the docs package's rustdoc JSON. Empty means none, since `docs check` never reads `features`. |
 | `prebuild-spec` | none | `PKG` or `PKG:TARGET` that `spec` commands run on. Alone, it builds the `routes` lane, and the `rustdoc` lane for a package whose spec is generated. |
 | `prebuild-shards` | none | The `shard` count of the legs that read the stores, so a merge-base whose run every leg has stored is not built. |
 | `prebuild-stage` | none | A directory to copy just the entries the lanes built or found into, for a job to upload. |
