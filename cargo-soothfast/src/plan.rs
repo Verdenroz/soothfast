@@ -10,7 +10,6 @@ use crate::init::ci::Ci;
 use crate::init::ecosystem::{Project, Suite, slug};
 use crate::init::{self, RustPlan};
 use crate::invoke;
-use crate::spec_config;
 use crate::test::project::{
     Pins, TEST_ALL_LABEL, Verdict, changed_since, covered, suites_for, target_for, toolchain_for,
     touches, write_result,
@@ -24,8 +23,6 @@ struct Args {
     labels: Vec<String>,
     results: Option<PathBuf>,
     pins: Pins,
-    /// Packages `spec` commands run on, each `PKG` or `PKG:TARGET`.
-    spec: Vec<String>,
     /// Legs the Rust gate is split into.
     shards: u64,
 }
@@ -55,7 +52,6 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
                     .collect()
             }
             "--results" => out.results = Some(PathBuf::from(value)),
-            "--spec" => out.spec = value.split_whitespace().map(String::from).collect(),
             "--shard" => match value.parse() {
                 Ok(n) if n >= 1 => out.shards = n,
                 _ => {
@@ -83,7 +79,6 @@ pub fn run(args: &[String]) -> i32 {
         args.base.as_deref(),
         args.labels,
         args.pins,
-        args.spec,
         args.shards,
     ) {
         Ok(plan) => plan,
@@ -115,9 +110,6 @@ struct Plan {
     pins: Pins,
     /// Names of the tests a stored pass already covers.
     reused: BTreeSet<String>,
-    spec: Vec<String>,
-    /// Whether a `spec` package generates a spec, which needs rustdoc.
-    spec_generates: bool,
     shards: u64,
 }
 
@@ -134,7 +126,6 @@ fn build(
     base: Option<&str>,
     labels: Vec<String>,
     mut pins: Pins,
-    spec: Vec<String>,
     shards: u64,
 ) -> Result<Plan, String> {
     let rust = root
@@ -175,8 +166,6 @@ fn build(
         changed,
         pins,
         reused: BTreeSet::new(),
-        spec_generates: spec_generates(&spec),
-        spec,
         shards,
     };
     plan.check_names()?;
@@ -348,31 +337,32 @@ impl Plan {
         Ok(())
     }
 
-    /// The lanes of the build job, one machine each so they run side by side.
-    /// A lane with nothing to build is left out.
-    fn build_lanes(&self) -> Vec<&'static str> {
-        let rust = self.rust.as_ref();
-        let mut lanes = Vec::new();
-        if rust.is_some_and(|r| !r.packages.is_empty()) {
-            lanes.push("bench");
-        }
-        if !self.spec.is_empty() {
-            lanes.push("routes");
-        }
-        if rust.is_some_and(|r| !r.docs_packages.is_empty()) || self.spec_generates {
-            lanes.push("rustdoc");
-        }
-        lanes
+    /// Whether the gate has bench executables to build ahead of its legs.
+    fn builds_bench(&self) -> bool {
+        self.rust.as_ref().is_some_and(|r| !r.packages.is_empty())
     }
 
-    /// The legs the Rust gate runs as: `I/N` each, or one with no shard.
-    fn shard_legs(&self) -> Vec<String> {
+    /// Whether the docs check has rustdoc JSON to build ahead of it.
+    fn builds_rustdoc(&self) -> bool {
+        self.rust
+            .as_ref()
+            .is_some_and(|r| !r.docs_packages.is_empty())
+    }
+
+    /// The legs the Rust gate runs as, each with its `I/N` shard and the
+    /// `I-of-N` form that names its artifacts; one leg with neither when
+    /// there is no shard.
+    fn shard_legs(&self) -> Value {
         if self.shards <= 1 {
-            return vec![String::new()];
+            return json!({ "include": [{ "shard": "", "slug": "" }] });
         }
-        (1..=self.shards)
-            .map(|i| format!("{i}/{}", self.shards))
-            .collect()
+        let legs: Vec<Value> = (1..=self.shards)
+            .map(|i| {
+                let n = self.shards;
+                json!({ "shard": format!("{i}/{n}"), "slug": format!("{i}-of-{n}") })
+            })
+            .collect();
+        json!({ "include": legs })
     }
 
     /// `key=value` lines for `$GITHUB_OUTPUT`. The matrix holds only the
@@ -389,11 +379,8 @@ impl Plan {
             .map(|r| r.packages.join(" "))
             .unwrap_or_default();
         let tests = self.test_matrix();
-        let lanes = self.build_lanes();
-        let build_matrix =
-            json!({ "include": lanes.iter().map(|l| json!({ "lane": l })).collect::<Vec<_>>() });
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nbuild={}\nbuild_matrix={build_matrix}\nshards={}\nruns_on={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nbuild_bench={}\nbuild_rustdoc={}\nshards={}\nruns_on={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -403,22 +390,12 @@ impl Plan {
             !tests["include"].as_array().is_none_or(Vec::is_empty),
             self.test_all(),
             self.test_expect(),
-            !lanes.is_empty(),
-            serde_json::to_string(&self.shard_legs()).unwrap_or_default(),
+            self.builds_bench(),
+            self.builds_rustdoc(),
+            self.shard_legs(),
             self.ci.runs_on_json(),
         )
     }
-}
-
-/// Whether any `PKG[:TARGET]` names a package with a generate-mode spec.
-fn spec_generates(spec: &[String]) -> bool {
-    spec.iter().any(|entry| {
-        let pkg = entry.split_once(':').map_or(entry.as_str(), |(pkg, _)| pkg);
-        invoke::pkg_dir(pkg)
-            .ok()
-            .and_then(|dir| spec_config::load(&dir).ok())
-            .is_some_and(|cfg| cfg.generates())
-    })
 }
 
 /// Each project's name: its ecosystem, plus its directory when another
@@ -489,57 +466,52 @@ mod tests {
                 ..Pins::default()
             },
             reused: BTreeSet::new(),
-            spec: Vec::new(),
-            spec_generates: false,
             shards: 1,
         }
     }
 
     #[test]
-    fn the_build_job_has_a_lane_for_each_thing_the_plan_needs_built() {
+    fn the_build_jobs_follow_what_the_plan_needs_built() {
         let mut p = plan(Some(&["a"]), vec![]);
-        assert_eq!(p.build_lanes(), ["bench"]);
+        assert!(
+            p.outputs()
+                .contains("build_bench=true\nbuild_rustdoc=false\n")
+        );
         p.rust.as_mut().unwrap().docs_packages = vec!["a".into()];
-        assert_eq!(p.build_lanes(), ["bench", "rustdoc"]);
-        p.spec = vec!["server:routes".into()];
-        assert_eq!(p.build_lanes(), ["bench", "routes", "rustdoc"]);
-        p.rust.as_mut().unwrap().docs_packages.clear();
-        assert_eq!(p.build_lanes(), ["bench", "routes"]);
-        p.spec_generates = true;
-        assert_eq!(p.build_lanes(), ["bench", "routes", "rustdoc"]);
-        assert!(plan(None, vec![]).build_lanes().is_empty());
-    }
-
-    #[test]
-    fn a_plan_with_nothing_to_build_has_no_build_job() {
+        assert!(
+            p.outputs()
+                .contains("build_bench=true\nbuild_rustdoc=true\n")
+        );
         let out = plan(Some(&[]), vec![]).outputs();
         assert!(
-            out.contains("build=false\nbuild_matrix={\"include\":[]}\n"),
+            out.contains("build_bench=false\nbuild_rustdoc=false\n"),
             "{out}"
         );
-        let out = plan(Some(&["a"]), vec![]).outputs();
-        assert!(
-            out.contains("build=true\nbuild_matrix={\"include\":[{\"lane\":\"bench\"}]}\n"),
-            "{out}"
-        );
+        assert!(plan(None, vec![]).outputs().contains("build_bench=false\n"));
     }
 
     #[test]
     fn the_gate_runs_as_one_leg_or_one_per_shard() {
         let mut p = plan(Some(&["a"]), vec![]);
-        assert_eq!(p.shard_legs(), [""]);
-        assert!(p.outputs().contains("shards=[\"\"]\n"));
+        assert_eq!(
+            p.shard_legs(),
+            json!({ "include": [{ "shard": "", "slug": "" }] })
+        );
         p.shards = 3;
-        assert_eq!(p.shard_legs(), ["1/3", "2/3", "3/3"]);
-        assert!(p.outputs().contains("shards=[\"1/3\",\"2/3\",\"3/3\"]\n"));
+        assert_eq!(
+            p.shard_legs()["include"][1],
+            json!({ "shard": "2/3", "slug": "2-of-3" })
+        );
+        assert!(
+            p.outputs()
+                .contains("shards={\"include\":[{\"shard\":\"1/3\",\"slug\":\"1-of-3\"}")
+        );
     }
 
     #[test]
-    fn spec_and_shard_flags_are_parsed() {
+    fn the_shard_flag_is_parsed() {
         let argv = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let a = parse_args(&argv(&["--spec", "a b:routes", "--shard", "3"])).unwrap();
-        assert_eq!(a.spec, ["a", "b:routes"]);
-        assert_eq!(a.shards, 3);
+        assert_eq!(parse_args(&argv(&["--shard", "3"])).unwrap().shards, 3);
         assert_eq!(parse_args(&argv(&[])).unwrap().shards, 1);
         assert!(parse_args(&argv(&["--shard", "0"])).is_err());
         assert!(parse_args(&argv(&["--shard", "many"])).is_err());
@@ -658,7 +630,7 @@ mod tests {
         assert_eq!(p.test_expect(), "test-gradle test-node");
         assert!(
             p.outputs()
-                .contains("test_expect=test-gradle test-node\nbuild=")
+                .contains("test_expect=test-gradle test-node\nbuild_bench=")
         );
     }
 
