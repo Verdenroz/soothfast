@@ -516,11 +516,18 @@ runs:
         SHARD: ${{ inputs.shard }}
         COMMENT: ${{ inputs.comment }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
+    - name: Name the triage artifact
+      if: steps.gate.outputs.failed == 'true'
+      id: triage
+      shell: bash
+      env:
+        SHARD: ${{ inputs.shard }}
+      run: echo "name=soothfast-triage${SHARD:+-shard-${SHARD%/*}-of-${SHARD#*/}}" >>"$GITHUB_OUTPUT"
     - name: Upload triage artifacts
       if: steps.gate.outputs.failed == 'true'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: soothfast-triage
+        name: ${{ steps.triage.outputs.name }}
         path: .soothfast/triage/
         if-no-files-found: ignore
     - name: Fail on a regression

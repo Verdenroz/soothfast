@@ -276,6 +276,8 @@ struct Live<'a> {
     /// Where the entries this run needs are copied to, when asked.
     stage: Option<&'a Path>,
     shards: u64,
+    /// Whether the gate may reuse a stored merge-base run.
+    reuse_base: bool,
     memo: &'a Memo,
 }
 
@@ -333,7 +335,9 @@ impl Live<'_> {
                 shard,
                 ..one.clone()
             };
-            Runs::new(&stamp, &common, env.clone()).reference_file(&self.base_sha)
+            Runs::new(&stamp, &common, env.clone())
+                .reusable_reference(self.reuse_base, &self.base_sha)
+                .map(|(path, _)| path)
         };
         let legs: Vec<Option<Shard>> = match self.shards {
             0 | 1 => vec![None],
@@ -581,14 +585,19 @@ fn execute(steps: &[Step], live: &Live) -> Vec<Outcome> {
             .filter(|s| s.action == Action::Build && side_of(s) == Some(side))
             .map(|s| s.item.pkg().to_string())
             .collect();
-        // `--features` names one package's features, so across several cargo
-        // wants `pkg/feature`; those builds are left to the one-by-one pass.
+        // The gate warms its builds the same way: one invocation overlaps the
+        // packages' critical paths, which one-by-one builds serialize. Each
+        // package is then built alone below, so a stored executable never
+        // depends on this pass; `--features` names one package's features,
+        // so with it that pass is skipped.
         if !missing.is_empty() && live.common.features.is_none() {
             let (dir, target_dir) = live.tree(side);
             let label = format!("cargo bench build {side:?}");
-            let _ = invoke::timed(&label, || {
+            if let Err(e) = invoke::timed(&label, || {
                 invoke::prebuild_benches(&missing, live.common, dir, target_dir)
-            });
+            }) {
+                eprintln!("prebuild: the joint build failed ({e}); building each alone");
+            }
         }
     }
     steps
@@ -719,6 +728,7 @@ pub fn run(args: &[String]) -> i32 {
         base_sha: base_sha.clone(),
         stage: wanted.stage.as_deref(),
         shards: wanted.shards,
+        reuse_base: wanted.reuse_base,
         memo: &memo,
     };
     let steps = select(&wanted, &live);
@@ -800,6 +810,7 @@ fn base_side(head: &Live, wanted: &Wanted, refname: &str) -> Result<Vec<(Step, O
             base_sha: head.base_sha.clone(),
             stage: head.stage,
             shards: head.shards,
+            reuse_base: head.reuse_base,
             memo: head.memo,
         };
         let wanted = Wanted {

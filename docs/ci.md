@@ -377,8 +377,8 @@ Every job that gates, checks docs or runs `spec` commands used to compile for
 itself on a cold runner, and many of them compiled the same crates in
 parallel. `run.yml` now compiles once. After `plan`, two build jobs run on
 separate machines: `Build (bench)` and `Build (rustdoc)`. The gate waits for
-the first only and the docs check for the second only, so the gate never waits
-for a nightly rustdoc build.
+the first only, so it never waits for a nightly rustdoc build. The docs check
+waits for the second and for the gate, since it reads the gate's baseline.
 
 | Lane | Builds | Into |
 |---|---|---|
@@ -391,7 +391,8 @@ builds no `routes` lane. A job is skipped when its lane has nothing to build,
 and each lane reads its store first and builds only what is missing. The
 `bench` lane leaves the merge-base alone for the reason the gate does: if the
 run cache holds a run for it, the gate reuses that run and never builds the
-executable. When a HEAD bench executable fails to build the merge-base side is
+executable. That run is keyed by the CPU model, so a leg on a different one finds none
+and builds the merge-base itself: a miss, not a wrong answer. When a HEAD bench executable fails to build the merge-base side is
 not built, and a rustdoc or routes failure does not stop it. A workspace crate
 whose rustdoc fails to build for a generated spec is reported and dropped, as
 `spec gen` does. Each lane prints what it built against what it found, and

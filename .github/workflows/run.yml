@@ -756,7 +756,7 @@ jobs:
         shell: bash
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
-          SHARDED: ${{ github.event_name == 'pull_request' && inputs.shard > 1 }}
+          SHARDED: ${{ github.event_name == 'pull_request' && inputs.shard > 1 && needs.plan.outputs.packages != '' }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"

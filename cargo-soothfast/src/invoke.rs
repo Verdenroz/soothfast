@@ -433,10 +433,16 @@ pub fn prebuild_benches(
     if names.is_empty() {
         return Ok(());
     }
-    bench_build_command(common, dir, target_dir, Build::Measure, &names)?
+    let status = bench_build_command(common, dir, target_dir, Build::Measure, &names)?
         .args(["--no-run"])
         .status()?;
-    Ok(())
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "cargo bench --no-run exited {status}"
+        )))
+    }
 }
 
 /// The ids of the bench binary's items that `shard` owns, listed once per

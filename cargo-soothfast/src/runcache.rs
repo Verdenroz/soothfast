@@ -68,9 +68,14 @@ impl<'a> Runs<'a> {
         self.reference_source(id, measured_from).map(|(_, doc)| doc)
     }
 
-    /// The file [`Runs::load_reference`] reads for `id`.
-    pub fn reference_file(&self, id: &str) -> Option<PathBuf> {
-        self.reference_source(id, id).map(|(path, _)| path)
+    /// The run and its file that a gate with `reuse` takes in place of
+    /// measuring the merge-base at `base_sha`. The gate and `prebuild` both
+    /// ask here, so they agree on whether the merge-base needs building.
+    pub fn reusable_reference(&self, reuse: bool, base_sha: &str) -> Option<(PathBuf, Value)> {
+        if !reuse || base_sha.is_empty() {
+            return None;
+        }
+        self.reference_source(base_sha, base_sha)
     }
 
     fn reference_source(&self, id: &str, measured_from: &str) -> Option<(PathBuf, Value)> {

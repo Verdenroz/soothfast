@@ -149,14 +149,20 @@ impl Record {
     /// verdict wins, tails and reuse add up, and shards run side by side so
     /// the slowest sets the time.
     fn absorb(&mut self, other: Record) {
-        self.verdict = self.verdict.min(other.verdict);
-        if !other.tail.is_empty() {
-            if !self.tail.is_empty() {
-                self.tail.push('\n');
+        // The output of a worse verdict replaces that of a better one, so a
+        // regressed section shows its regression; equals are kept together.
+        match other.verdict.cmp(&self.verdict) {
+            std::cmp::Ordering::Less => self.tail = other.tail,
+            std::cmp::Ordering::Equal if !other.tail.is_empty() => {
+                if !self.tail.is_empty() {
+                    self.tail.push('\n');
+                }
+                self.tail.push_str(&other.tail);
+                self.tail = tail(&self.tail);
             }
-            self.tail.push_str(&other.tail);
-            self.tail = tail(&self.tail);
+            _ => {}
         }
+        self.verdict = self.verdict.min(other.verdict);
         self.reuse = match (self.reuse, other.reuse) {
             (Some(a), Some(b)) => Some(Reuse {
                 covered: a.covered + b.covered,
@@ -447,7 +453,13 @@ fn read_records(dir: &Path) -> Vec<Record> {
 fn fold(records: Vec<Record>) -> Vec<Record> {
     let mut by_name: BTreeMap<String, Record> = BTreeMap::new();
     for mut rec in records {
-        let name = rec.name.split('#').next().unwrap_or_default().to_string();
+        let (name, shard) = match rec.name.split_once('#') {
+            Some((name, shard)) => (name.to_string(), Some(shard.to_string())),
+            None => (rec.name.clone(), None),
+        };
+        if let (Some(shard), false) = (shard, rec.tail.is_empty()) {
+            rec.tail = format!("-- shard {shard} --\n{}", rec.tail);
+        }
         rec.name.clone_from(&name);
         match by_name.get_mut(&name) {
             Some(seen) => seen.absorb(rec),
@@ -710,6 +722,20 @@ mod tests {
     }
 
     #[test]
+    fn shard_tails_keep_their_shard_and_a_regression_is_not_buried() {
+        let folded = fold(vec![
+            rec("core#1/2", Verdict::Pass, "fine"),
+            rec("core#2/2", Verdict::Regressed, "slower"),
+        ]);
+        assert_eq!(folded[0].tail, "-- shard 2/2 --\nslower");
+        let both = fold(vec![
+            rec("core#1/2", Verdict::Pass, "a"),
+            rec("core#2/2", Verdict::Pass, "b"),
+        ]);
+        assert_eq!(both[0].tail, "-- shard 1/2 --\na\n-- shard 2/2 --\nb");
+    }
+
+    #[test]
     fn an_oversized_body_loses_passing_output_first() {
         let big = "x".repeat(40_000);
         let records = [
@@ -748,7 +774,7 @@ mod tests {
         assert_eq!(folded.len(), 2);
         let core = &folded[0];
         assert_eq!(core.verdict, Verdict::Regressed);
-        assert_eq!(core.tail, "a\nb");
+        assert_eq!(core.tail, "b");
         assert_eq!(core.reuse, reuse(4, 6, 2));
         assert_eq!(core.seconds, 30);
     }
