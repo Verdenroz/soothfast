@@ -277,6 +277,11 @@ installed on is refused.</p>
 <tr><td><code>rustdoc-cache</code></td><td><code>false</code></td><td>Restore and save <code>.soothfast/rustdoc</code> for a job that runs <code>spec</code> or <code>docs</code> commands. A hit skips the nightly rustdoc build; see <a href="#rustdoc-cache">Rustdoc cache</a>.</td></tr>
 <tr><td><code>bin-cache</code></td><td><code>false</code></td><td>Restore <code>.soothfast/bins</code>, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See <a href="#bench-executable-cache">Bench executable cache</a>.</td></tr>
 <tr><td><code>cache-suffix</code></td><td>none</td><td>Tells apart the legs of a job matrix that share a job name, so each keeps its own <code>rustdoc-cache</code> and <code>bin-cache</code>.</td></tr>
+<tr><td><code>prebuild</code></td><td>none</td><td>Lanes (<code>bench</code>, <code>routes</code>, <code>rustdoc</code>, space-separated) to build into the stores in place of the gate (see <a href="#one-build">One build</a>).</td></tr>
+<tr><td><code>prebuild-docs</code></td><td>none</td><td>Packages whose rustdoc JSON <code>docs check</code> reads. Alone, it builds the <code>rustdoc</code> lane.</td></tr>
+<tr><td><code>prebuild-spec</code></td><td>none</td><td><code>PKG</code> or <code>PKG:TARGET</code> that <code>spec</code> commands run on. Alone, it builds the <code>routes</code> lane, and the <code>rustdoc</code> lane for a package whose spec is generated.</td></tr>
+<tr><td><code>prebuild-shards</code></td><td>none</td><td>The <code>shard</code> count of the legs that read the stores, so a merge-base whose run every leg has stored is not built.</td></tr>
+<tr><td><code>prebuild-stage</code></td><td>none</td><td>A directory to copy just the entries the lanes built or found into, for a job to upload.</td></tr>
 </tbody>
 </table></div>
 <p>Outputs are <code>version</code> and <code>cache-hit</code>.</p>
@@ -430,6 +435,84 @@ fails naming the tool:</p>
 </ul>
 <p><code>step-security/harden-runner</code> is the first step of every job; it targets
 hosted runners and its network audit may not apply on yours.</p>
+<h2 id="one-build">One build<a class="anchor" href="#one-build" aria-label="Link to this section">#</a></h2>
+<p>Every job that gates, checks docs or runs <code>spec</code> commands used to compile for
+itself on a cold runner, and many of them compiled the same crates in
+parallel. <code>run.yml</code> now compiles once. After <code>plan</code>, two build jobs run on
+separate machines: <code>Build (bench)</code> and <code>Build (rustdoc)</code>. The gate waits for
+the first only, so it never waits for a nightly rustdoc build. The docs check
+waits for the second and for the gate, since it reads the gate's baseline.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Lane</th><th>Builds</th><th>Into</th></tr></thead>
+<tbody>
+<tr><td><code>bench</code></td><td>HEAD's bench executable of each gated package, its link map, and the merge-base's executable and map when the run cache holds no run for the merge-base</td><td><code>.soothfast/bins</code></td></tr>
+<tr><td><code>routes</code></td><td>The dev-profile executable behind <code>spec check</code>, for each package named in <code>prebuild-spec</code></td><td><code>.soothfast/bins</code></td></tr>
+<tr><td><code>rustdoc</code></td><td>Rustdoc JSON for the docs package and, for each <code>prebuild-spec</code> package that generates a spec, for it and the workspace crates its types come from</td><td><code>.soothfast/rustdoc</code></td></tr>
+</tbody>
+</table></div>
+<p><code>run.yml</code> builds the <code>bench</code> and <code>rustdoc</code> lanes. It has no <code>spec</code> job, so it
+builds no <code>routes</code> lane. A job is skipped when its lane has nothing to build,
+and each lane reads its store first and builds only what is missing. The
+<code>bench</code> lane leaves the merge-base alone for the reason the gate does: if the
+run cache holds a run for it, the gate reuses that run and never builds the
+executable. That run is keyed by the CPU model, so a leg on a different one finds none
+and builds the merge-base itself: a miss, not a wrong answer. When a HEAD bench executable fails to build the merge-base side is
+not built, and a rustdoc or routes failure does not stop it. A workspace crate
+whose rustdoc fails to build for a generated spec is reported and dropped, as
+<code>spec gen</code> does. Each lane prints what it built against what it found, and
+<code>SOOTHFAST_TIMINGS=1</code> times every build.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>prebuild: stored   bench executable core (head)
+prebuild: built    bench executable server (head)
+prebuild: skipped  bench executable core (merge-base)
+prebuild: 1 built, 1 skipped, 1 stored
+</code></pre></figure>
+<p>Each job uploads <code>soothfast-store-bench</code> or <code>soothfast-store-rustdoc</code> as a tar
+(an artifact drops file modes, a tar keeps them), kept one day. They hold only the entries the lane built or found (<code>prebuild-stage</code>): the
+executables with their digests and link-map extents, and the rustdoc JSON,
+not the rest of a restored cache. The Rust gate, every shard of it, downloads
+the bench artifact into <code>.soothfast/</code> and the docs check the rustdoc artifact,
+and each finds a hit for everything it reads and compiles nothing. The tests,
+and the gates and tests of the other ecosystems, do not wait for either build.</p>
+<p>A job that runs when its build job failed finds nothing to download and
+compiles for itself, so a compile error still shows up in that job's output
+and in the verdict. The docs job also keeps the <a href="#rustdoc-cache">Rustdoc cache</a>
+as a fallback, so a store that misses costs no more than before.</p>
+<p>A hit needs the reading job to be the same machine setup as the building one.
+The key names the checkout path, the target directory, <code>CARGO_HOME</code>, <code>rustc
+-vV</code> and the build variables (<code>RUSTFLAGS</code>, <code>CARGO_INCREMENTAL</code>, and the
+<code>CARGO_PROFILE_</code>, <code>CARGO_BUILD_</code> and <code>CARGO_TARGET_</code> families). The path
+cannot be made relative: compiled code carries it, so a binary built at
+another path is not the same binary. GitHub-hosted runners use one workspace
+path per repository for every job. The reading jobs set up the toolchain and
+<code>rust-cache</code> the way the build jobs do, since those steps export some of the
+variables. A runner pool with a path per job misses every time, and the jobs
+then compile as before.</p>
+<h3 id="sharding">Sharding<a class="anchor" href="#sharding" aria-label="Link to this section">#</a></h3>
+<p><code>shard: 3</code> on the <code>run.yml</code> call splits the Rust gate into three legs, each
+gating the items its <code>I/N</code> shard owns. Each leg reads the prebuilt
+executables of both sides, so measuring is all it does:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">yaml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>jobs:
+  soothfast:
+    uses: Verdenroz/soothfast/.github/workflows/run.yml@&lt;tag-or-sha&gt;
+    with:
+      soothfast_ref: &lt;tag-or-sha&gt;
+      shard: 3
+</code></pre></figure>
+<p>The legs record <code>soothfast-result-rust-shard-&lt;i&gt;-of-&lt;n&gt;</code> and the verdict folds them
+into one section for the package. A pull request's shards cannot save the
+<code>head</code> baseline, which holds every item, so on a pull request with <code>shard</code>
+above 1 the docs check reports "claims not evaluated: sharded gate saves no
+measurement" and checks binds and examples only. A default-branch push records every item
+in its first leg and saves the baseline as before; the other legs are
+skipped on a push, since they would only set up.</p>
+<p><code>cargo soothfast prebuild</code> runs the same lanes by hand: <code>-p PKG</code> for bench
+packages, <code>--against-ref REF</code> for the merge-base, <code>--docs PKG</code>, <code>--spec
+PKG[:TARGET]</code>, <code>--only bench|routes|rustdoc</code>, <code>--stage DIR</code> and <code>--shards N</code>.</p>
+<p>A spec job of the caller's builds its own lane with the action:
+<code>prebuild-spec: PKG:TARGET</code> alone runs the <code>routes</code> lane (and <code>rustdoc</code> for a
+generated spec) in place of the gate, and <code>prebuild-docs: PKG</code> alone runs
+<code>rustdoc</code>. A later job downloads the staged directory into <code>.soothfast/</code> before
+<code>spec check</code>. A <code>spec</code> job inside <code>run.yml</code> is a follow-up.</p>
 <h2 id="one-verdict">One verdict<a class="anchor" href="#one-verdict" aria-label="Link to this section">#</a></h2>
 <p>The reusable <code>run.yml</code> workflow gives a pull request one soothfast comment and
 one check, however many projects or shards it gates. Every gate job, the test
@@ -458,9 +541,13 @@ callers that want it as a separate job or a matrix over packages:</p>
       pull-requests: write
     uses: Verdenroz/soothfast/.github/workflows/soothfast-gate.yml@&lt;tag-or-sha&gt;
     with:
+      soothfast_ref: &lt;tag-or-sha&gt;
       package: mylib
 </code></pre></figure>
-<p><code>cli-artifact</code> names an artifact holding a prebuilt CLI at
+<p><code>soothfast_ref</code> is the same tag or commit as in the <code>uses:</code> line, which the
+workflow cannot read for itself. Left empty, the scripts come from the commit
+GitHub reports for the workflow, and from the default branch with a warning
+when it reports none. <code>cli-artifact</code> names an artifact holding a prebuilt CLI at
 <code>bin/cargo-soothfast</code> from earlier in the same run; without it the workflow
 installs the release matching your <code>Cargo.lock</code>.</p>
 
@@ -494,6 +581,10 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l2" href="#bringing-your-own-token">Bringing your own token</a></li>
   
     <li><a class="toc-l2" href="#self-hosted-runners">Self-hosted runners</a></li>
+  
+    <li><a class="toc-l2" href="#one-build">One build</a></li>
+  
+    <li><a class="toc-l3" href="#sharding">Sharding</a></li>
   
     <li><a class="toc-l2" href="#one-verdict">One verdict</a></li>
   
