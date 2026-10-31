@@ -22,7 +22,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
@@ -131,6 +131,18 @@ fn command_text(program: &str, args: &[&str], bin: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Print `message` on stderr the first time `key` is seen.
+pub(super) fn note_once(key: String, message: &str) {
+    static NOTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let first = NOTED
+        .get_or_init(Default::default)
+        .lock()
+        .is_ok_and(|mut seen| seen.insert(key));
+    if first {
+        eprintln!("{message}");
+    }
+}
+
 /// The requested functions of one bench binary, hashed.
 pub struct Binary {
     hashes: HashMap<String, u64>,
@@ -160,17 +172,13 @@ impl Binary {
         let tls = tls_digest(&sections, &image)?;
         let relro = relro_range(&image);
         if relro.is_none() {
-            static NOTED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
-            let first = NOTED
-                .get_or_init(Default::default)
-                .lock()
-                .is_ok_and(|mut seen| seen.insert(bin.to_path_buf()));
-            if first {
-                eprintln!(
+            note_once(
+                format!("relro {}", bin.display()),
+                &format!(
                     "codekey: no PT_GNU_RELRO segment in {}; relocated data counts as writable",
                     bin.display()
-                );
-            }
+                ),
+            );
         }
         let sections = addressable(seal(sections, relro));
         let markers = parse_markers(&listing, &sections);
@@ -456,6 +464,14 @@ mod tests {
             let wanted = functions(&bin);
             let text = std::fs::read_to_string(&map).expect("the linker wrote a map");
             let inputs = crate::linkmap::parse(&text, "").expect("the map parses");
+            let headers = command_text("objdump", &["-h"], &bin).unwrap();
+            let image = std::fs::read(&bin).unwrap();
+            let sections = addressable(seal(parse_sections(&headers), relro_range(&image)));
+            assert_eq!(
+                identity::check_inputs(&sections, &inputs),
+                Ok(()),
+                "{linker}"
+            );
             for (mapped, inputs) in [("no map", &[][..]), ("map", &inputs[..])] {
                 let binary = Binary::open(&bin, &wanted, inputs);
                 unhashed.extend(

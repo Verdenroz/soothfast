@@ -15,10 +15,16 @@ pub(super) struct Section {
     pub(super) code: bool,
     pub(super) contents: bool,
     pub(super) tls: bool,
-    /// Data the program can change after the loader is done with it.
-    pub(super) writable: bool,
-    /// Data the loader makes read-only once it has relocated it (`RELRO`).
-    pub(super) sealed: bool,
+    pub(super) access: Access,
+}
+
+/// Who can change a section's contents once the program runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Access {
+    ReadOnly,
+    /// Read-only once the loader has relocated it (`RELRO`).
+    Sealed,
+    Writable,
 }
 
 impl Section {
@@ -97,8 +103,11 @@ pub(super) fn parse_sections(listing: &str) -> Vec<Section> {
             code: h.flags.contains("CODE"),
             contents: h.flags.contains("CONTENTS"),
             tls: h.flags.contains("THREAD_LOCAL"),
-            writable: !h.flags.contains("READONLY") && !h.flags.contains("CODE"),
-            sealed: false,
+            access: if h.flags.contains("READONLY") || h.flags.contains("CODE") {
+                Access::ReadOnly
+            } else {
+                Access::Writable
+            },
         })
         .collect()
 }
@@ -138,8 +147,10 @@ pub(super) fn seal(sections: Vec<Section>, relro: Option<(u64, u64)>) -> Vec<Sec
         .map(|s| {
             let inside = s.vma >= start && s.vma + s.size <= start + size;
             Section {
-                writable: s.writable && !inside,
-                sealed: s.sealed || (s.writable && inside),
+                access: match s.access {
+                    Access::Writable if inside => Access::Sealed,
+                    access => access,
+                },
                 ..s
             }
         })

@@ -663,6 +663,46 @@ fn a_return_reads_the_return_registers() {
 }
 
 #[test]
+fn a_return_reads_every_register_llvm_may_return_in() {
+    for base in ["rax", "rcx", "rdx", "r8"] {
+        let lines = [
+            format!("lea    0x100d(%rip),%{base}        # 2010 <anon>"),
+            format!("movslq (%{base},%rsi,4),%r9"),
+            format!("add    %{base},%r9"),
+            "ret".to_string(),
+        ];
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        assert!(prove_data(&lines).pointers.is_empty(), "{base}");
+    }
+}
+
+#[test]
+fn an_instruction_with_hidden_effects_touches_the_registers_it_changes() {
+    let widening = [LEA_SI, LOAD_SI, "imul   %r8", ADD_SI, RET];
+    assert!(prove_data(&widening).pointers.is_empty());
+    let base_in_rdx = [
+        "lea    0x100d(%rip),%rdx        # 2010 <anon>",
+        "movslq (%rdx,%rsi,4),%rax",
+        "add    %rdx,%rax",
+        "imul   %rcx",
+        "mov    %eax,%edx",
+        "jmp    *0x156545(%rip)        # 4000 <_DYNAMIC+0xa40>",
+    ];
+    assert!(prove_data(&base_in_rdx).pointers.is_empty());
+}
+
+#[test]
+fn an_add_of_narrow_registers_is_no_offset_table() {
+    let lines = [
+        "lea    0x100d(%rip),%r9        # 2010 <anon>",
+        "movslq (%r9,%rcx,4),%r8",
+        "add    %r9d,%r8d",
+        RET,
+    ];
+    assert!(prove_data(&lines).pointers.is_empty());
+}
+
+#[test]
 fn a_tail_jump_with_the_base_still_in_place_is_no_proof() {
     let lines = [
         "lea    0x100d(%rip),%rcx        # 2010 <anon>",
@@ -783,12 +823,13 @@ fn a_jump_table_and_a_name_table_through_one_register_are_both_proven() {
         "lea    0x100d(%rip),%rcx        # 2020 <names>",
         LOAD,
         ADD,
+        "mov    $0x0,%ecx",
         RET,
     ];
     let instrs = code(&jump_then_names);
     let proven = prove(
         &instrs,
-        (0x1000, at(8)),
+        (0x1000, at(9)),
         &|tables| {
             tables
                 .iter()

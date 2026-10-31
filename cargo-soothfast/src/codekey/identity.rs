@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use super::elf::{Section, Symbol, in_data, section_index};
+use super::elf::{Access, Section, Symbol, in_data, section_index};
 use super::resolve::{Node, Place, Resolver};
 use super::strip_llvm;
 use crate::linkmap::Extent;
@@ -57,7 +57,7 @@ pub(super) fn check_inputs(sections: &[Section], inputs: &[Extent]) -> Result<()
                 e.vma
             ));
         };
-        if s.writable && !e.name.is_empty() && !names.insert(e.name.as_str()) {
+        if s.access == Access::Writable && !e.name.is_empty() && !names.insert(e.name.as_str()) {
             return Err(format!("two writable inputs are named {}", e.name));
         }
     }
@@ -74,7 +74,7 @@ impl Resolver<'_> {
     /// named by the unique labels at its address, and only then.
     pub(super) fn identity(&self, node: Node, off: u64) -> Option<String> {
         let (section, _, size) = self.extent(node)?;
-        if !self.sections[section].writable || size == 0 {
+        if self.sections[section].access != Access::Writable || size == 0 {
             return Some(String::new());
         }
         let name = match node {

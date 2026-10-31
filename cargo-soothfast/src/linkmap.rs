@@ -207,7 +207,7 @@ fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
         })
     };
     let mut extents = Vec::new();
-    let mut named = false;
+    let mut wrapped = false;
     let mut pending = false;
     let mut section = "";
     let mut output = "";
@@ -217,10 +217,10 @@ fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
         let nested = line.starts_with(' ');
         let numbers = |a: &str, b: &str| hex(a).is_some() && hex(b).is_some();
         let was_pending = std::mem::take(&mut pending);
-        let was_named = std::mem::take(&mut named);
+        let was_wrapped = std::mem::take(&mut wrapped);
         match f[..] {
             [name] if nested && !name.starts_with('*') => {
-                named = true;
+                wrapped = true;
                 section = name;
             }
             [name] if !nested => {
@@ -231,7 +231,7 @@ fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
                 extents
                     .extend(extent(addr, size, name, after_columns(line, 3)).filter(|_| in_memory));
             }
-            [addr, size, ..] if was_named => {
+            [addr, size, ..] if was_wrapped => {
                 extents.extend(
                     extent(addr, size, section, after_columns(line, 2)).filter(|_| in_memory),
                 );
@@ -298,7 +298,7 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     // Cargo answers a repeated build as fresh without relinking, and writes no
     // map then. A path it has not seen forces the link.
     let kept = maps.join(format!("{digest}.map"));
-    let forced = maps.join(format!("{digest}.{}.map", std::process::id()));
+    let forced = maps.join(format!("{digest}.forced.map"));
     let mut linked = None;
     for map in [kept.clone(), forced.clone()] {
         let Some(built) = invoke::build_link_map(common, bin.dir, bin.target_dir, &map) else {
@@ -347,6 +347,15 @@ fn cached(maps: &Path, digest: &str, entry: Option<&Path>) -> Option<Vec<Extent>
             })?;
     if restored && std::fs::write(&stored, &text).is_ok() {
         runcache::prune_oldest(maps, KEEP);
+    }
+    let stale = |entry| {
+        binstore::read_sidecar(entry, "extents").is_none_or(|text| decode(&text).is_empty())
+    };
+    if let Some(entry) = entry
+        && !restored
+        && stale(entry)
+    {
+        binstore::replace_sidecar(entry, "extents", &text);
     }
     Some(extents)
 }
@@ -709,6 +718,24 @@ Linker script and memory map
     fn extents_round_trip_through_their_stored_form() {
         let extents = vec![at(0x2e0, 0x1c, "a.o:.data"), at(0xcf18, 7, "b.o:.bss.x")];
         assert_eq!(decode(&encode(&extents)), extents);
+    }
+
+    #[test]
+    fn a_local_hit_gives_a_stored_binary_without_a_sidecar_one() {
+        let root = std::env::temp_dir().join(format!("soothfast-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (maps, bins) = (root.join("maps"), root.join("bins"));
+        std::fs::create_dir_all(&maps).unwrap();
+        std::fs::create_dir_all(&bins).unwrap();
+        let entry = bins.join("k-d.bin");
+        std::fs::write(&entry, "binary").unwrap();
+        let extents = vec![at(0x2e0, 0x1c, "a.o:.data")];
+        std::fs::write(maps.join("abc.extents"), encode(&extents)).unwrap();
+        assert_eq!(binstore::read_sidecar(&entry, "extents"), None);
+        assert_eq!(cached(&maps, "abc", Some(&entry)), Some(extents.clone()));
+        let kept = binstore::read_sidecar(&entry, "extents").unwrap();
+        assert_eq!(decode(&kept), extents);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

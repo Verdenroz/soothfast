@@ -538,10 +538,12 @@ fn completes(after: &[(u64, Ins)], base: &str, word: &str) -> Option<usize> {
 /// with only plain instructions that touch none of the three registers in
 /// between, and `%rB` fully overwritten by a plain instruction after the add
 /// and before anything that could read it. A `ret` counts as an overwrite when
-/// `%rB` is a caller-saved register that is not a return register (SysV
-/// returns in `rax` and `rdx`); a call, a jump and anything else do not. Then
-/// the raw offset in `%rW` dies in the add, and nothing else sees the table's
-/// address. Returns the `lea` (an index into `leas`) and the add.
+/// `%rB` is `rsi`, `rdi`, `r9`, `r10` or `r11`: caller-saved and not a
+/// register LLVM may return in (`rax`, `rdx`, `rcx`, `r8`); a call, a jump and
+/// anything else do not. An instruction counts as touching the registers it
+/// names and those it changes without naming them. Then the raw offset in
+/// `%rW` dies in the add, and nothing else sees the table's address. Returns
+/// the `lea` (an index into `leas`) and the add.
 fn offset_table(
     parsed: &[(u64, Ins)],
     leas: &[Lea],
@@ -554,7 +556,8 @@ fn offset_table(
         .operands
         .first()
         .and_then(|o| scaled_index(o))?;
-    let touches = |ins: &Ins, regs: &[&str]| regs.iter().any(|r| mentions(ins, r));
+    let touches =
+        |ins: &Ins, regs: &[&str]| regs.iter().any(|r| mentions(ins, r)) || disturbs(ins, regs);
     let mut lea = None;
     for j in (load.saturating_sub(WINDOW)..load).rev() {
         if let Some(k) = leas.iter().position(|l| l.at == j && l.dest == base) {
@@ -570,7 +573,7 @@ fn offset_table(
     for (k, (_, ins)) in parsed.iter().enumerate().skip(load + 1).take(WINDOW) {
         let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
         let sums = ins.mnemonic == "add"
-            && ins.operands.iter().all(|o| o.starts_with("%r"))
+            && ins.operands.iter().all(|o| is_64(o))
             && regs.as_slice() == [Some(base.to_string()), Some(word.to_string())];
         if sums {
             add = Some(k);
@@ -585,7 +588,7 @@ fn offset_table(
         if overwrites(ins, base) || (is_return(ins) && is_dead_at_return(base)) {
             return Some((lea?, add));
         }
-        if !plain(ins) || mentions(ins, base) {
+        if !plain(ins) || touches(ins, &[base]) {
             return None;
         }
     }
@@ -596,9 +599,10 @@ fn is_return(ins: &Ins) -> bool {
     matches!(ins.mnemonic, "ret" | "retq") && ins.operands.is_empty()
 }
 
-/// Whether register family `reg` is caller-saved and not a return register.
+/// Whether register family `reg` is caller-saved and not one LLVM returns a
+/// 64-bit value in.
 fn is_dead_at_return(reg: &str) -> bool {
-    CALLER_SAVED.contains(&reg) && !matches!(reg, "a" | "d")
+    matches!(reg, "si" | "di" | "r9" | "r10" | "r11")
 }
 
 /// The `(%rA,%rI,4)` index register of a memory operand.
@@ -653,9 +657,14 @@ fn overwrites(ins: &Ins, reg: &str) -> bool {
     let writes_all = ins.mnemonic.starts_with("mov") || ins.mnemonic == "lea";
     writes_all
         && plain(ins)
-        && family(dest).as_deref() == Some(reg)
+        && matches!(writes(ins), Writes::Reg(fs) if fs == [reg])
         && is_full(dest)
         && !names(source, reg)
+}
+
+/// Whether register operand `name` is a 64-bit name.
+fn is_64(name: &str) -> bool {
+    name.starts_with("%r") && is_full(name) && !name.ends_with('d')
 }
 
 /// Whether register operand `name` is a 64 or 32 bit name, either of which
