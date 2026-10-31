@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.5.0)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### 🔧 Internal
+
+- Skip crates already published in a release rerun (#315)
+
+
 ## 0.5.0 - 2026-10-30
 
 <!-- soothfast:notes -->
