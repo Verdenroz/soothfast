@@ -11,7 +11,8 @@
 //!
 //! A unit is left to the base build when it sits on a unit the merge-base
 //! already built itself: one name can cover two builds rustc tells apart
-//! ([`crate::unitgraph`]).
+//! ([`crate::unitgraph`]). Each copy is recorded in the profile dir, so a
+//! later seed knows a unit it copied from one the merge-base built.
 //!
 //! Cargo's newer layout has no `.fingerprint/` or `deps/`: a unit lives whole
 //! in `build/<pkg>/<hash>/`, and that directory is what is copied.
@@ -41,50 +42,163 @@ pub struct Seeded {
     /// Units left for the base build to compile, each with why it could not
     /// be copied.
     pub skipped: Vec<String>,
+    /// Package directories of HEAD that could not be listed.
+    pub unreadable: Vec<String>,
 }
 
 /// Copy the units in profile dir `head` that belong to no package in
 /// `members` into profile dir `base`, skipping units `base` already has.
 pub fn seed(head: &Path, base: &Path, members: &BTreeSet<String>) -> io::Result<Seeded> {
+    let record = read_record(base);
     let mut seeded = Seeded::default();
-    seed_flat(head, base, members, &mut seeded)?;
-    seed_nested(head, base, members, &mut seeded)?;
+    let mut copied = Vec::new();
+    for layout in [Layout::Flat, Layout::Nested] {
+        seed_layout(
+            layout,
+            head,
+            base,
+            members,
+            &record,
+            &mut seeded,
+            &mut copied,
+        )?;
+    }
+    append_record(base, &copied);
     Ok(seeded)
 }
 
-/// The layout with `.fingerprint/`, `build/` and `deps/` side by side.
-fn seed_flat(
+#[derive(Clone, Copy)]
+enum Layout {
+    /// `.fingerprint/`, `build/` and `deps/` side by side.
+    Flat,
+    /// One `build/<pkg>/<hash>/` directory per unit.
+    Nested,
+}
+
+fn seed_layout(
+    layout: Layout,
     head: &Path,
     base: &Path,
     members: &BTreeSet<String>,
+    record: &BTreeMap<String, String>,
     seeded: &mut Seeded,
+    copied: &mut Vec<(String, String)>,
 ) -> io::Result<()> {
-    let Ok(fingerprints) = fs::read_dir(head.join(".fingerprint")) else {
+    let head_dirs = unit_dirs(layout, head, &mut seeded.unreadable);
+    let base_dirs = unit_dirs(layout, base, &mut Vec::new());
+    let candidates: Vec<String> = head_dirs
+        .keys()
+        .filter(|name| !base_dirs.contains_key(*name) && !members.contains(package(layout, name)))
+        .cloned()
+        .collect();
+    if candidates.is_empty() {
         return Ok(());
-    };
-    let mut units: BTreeMap<String, (String, Vec<PathBuf>)> = BTreeMap::new();
-    for entry in fingerprints {
-        let name = entry?.file_name().to_string_lossy().into_owned();
-        if let Some((pkg, hash)) = split_unit(&name)
-            && !members.contains(pkg)
-            && fs::symlink_metadata(base.join(".fingerprint").join(&name)).is_err()
-        {
-            units.insert(hash.to_string(), (name, Vec::new()));
-        }
     }
-    let candidates: Vec<String> = units.values().map(|(name, _)| name.clone()).collect();
-    let blocked = unitgraph::blocked(
-        &flat_units(&head.join(".fingerprint")),
-        &flat_units(&base.join(".fingerprint")),
-        &candidates,
-    );
-    units.retain(|_, (name, _)| !blocked.contains_key(name));
+    let head_graph = graph(&head_dirs);
+    let blocked = unitgraph::blocked(&head_graph, &graph(&base_dirs), record, &candidates);
     seeded
         .skipped
         .extend(blocked.iter().map(|(name, why)| format!("{name}: {why}")));
-    if units.is_empty() {
-        return Ok(());
+    let copy: Vec<String> = candidates
+        .into_iter()
+        .filter(|name| !blocked.contains_key(name))
+        .collect();
+    let results = match layout {
+        Layout::Flat => copy_flat(head, base, &copy)?,
+        Layout::Nested => copy
+            .iter()
+            .map(|unit| {
+                let rel = Path::new("build").join(unit);
+                (unit.clone(), copy_unit(&head.join(&rel), &base.join(&rel)))
+            })
+            .collect(),
+    };
+    for (name, result) in results {
+        match result {
+            Ok(bytes) => {
+                seeded.units += 1;
+                seeded.bytes += bytes;
+                copied.push((name.clone(), head_graph[&name].key()));
+                seeded.names.push(name);
+            }
+            Err(e) => seeded.skipped.push(format!("{name}: {e}")),
+        }
     }
+    Ok(())
+}
+
+/// The package a unit belongs to.
+fn package(layout: Layout, name: &str) -> &str {
+    match layout {
+        Layout::Flat => split_unit(name).map_or(name, |(pkg, _)| pkg),
+        Layout::Nested => name.split('/').next().unwrap_or(name),
+    }
+}
+
+/// Each unit of `profile` in `layout`, by name, with its fingerprint dir.
+fn unit_dirs(
+    layout: Layout,
+    profile: &Path,
+    unreadable: &mut Vec<String>,
+) -> BTreeMap<String, PathBuf> {
+    let mut out = BTreeMap::new();
+    match layout {
+        Layout::Flat => {
+            let Ok(entries) = fs::read_dir(profile.join(".fingerprint")) else {
+                return out;
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if split_unit(&name).is_some() {
+                    out.insert(name, entry.path());
+                }
+            }
+        }
+        Layout::Nested => {
+            let Ok(pkgs) = fs::read_dir(profile.join("build")) else {
+                return out;
+            };
+            for pkg in pkgs.flatten() {
+                let name = pkg.file_name().to_string_lossy().into_owned();
+                if split_unit(&name).is_some() || !pkg.path().is_dir() {
+                    continue;
+                }
+                let units = match fs::read_dir(pkg.path()) {
+                    Ok(units) => units,
+                    Err(e) => {
+                        unreadable.push(format!("{name}: {e}"));
+                        continue;
+                    }
+                };
+                for unit in units.flatten() {
+                    let hash = unit.file_name().to_string_lossy().into_owned();
+                    if is_hash(&hash) {
+                        out.insert(format!("{name}/{hash}"), unit.path().join("fingerprint"));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn graph(dirs: &BTreeMap<String, PathBuf>) -> BTreeMap<String, Unit> {
+    dirs.iter()
+        .map(|(name, dir)| (name.clone(), unitgraph::read(dir)))
+        .collect()
+}
+
+/// Copy flat units: each one's `build/` and `deps/` files, then its
+/// fingerprint.
+fn copy_flat(
+    head: &Path,
+    base: &Path,
+    names: &[String],
+) -> io::Result<Vec<(String, io::Result<u64>)>> {
+    let mut units: BTreeMap<&str, (&str, Vec<PathBuf>)> = names
+        .iter()
+        .filter_map(|name| split_unit(name).map(|(_, hash)| (hash, (name.as_str(), Vec::new()))))
+        .collect();
     for dir in ["build", "deps"] {
         let Ok(entries) = fs::read_dir(head.join(dir)) else {
             continue;
@@ -101,123 +215,16 @@ fn seed_flat(
     }
     // A unit's fingerprint goes last: a unit whose copy fails or is cut short
     // has none, so cargo rebuilds it instead of trusting a partial copy.
-    for (fingerprint, mut files) in units.into_values() {
-        files.push(Path::new(".fingerprint").join(&fingerprint));
-        let copied = files.iter().try_fold(0, |bytes, rel| {
-            Ok::<_, io::Error>(bytes + copy_tree(&head.join(rel), &base.join(rel))?)
-        });
-        match copied {
-            Ok(bytes) => {
-                seeded.units += 1;
-                seeded.bytes += bytes;
-                seeded.names.push(fingerprint);
-            }
-            Err(e) => seeded.skipped.push(format!("{fingerprint}: {e}")),
-        }
-    }
-    Ok(())
-}
-
-/// The layout with one `build/<pkg>/<hash>/` directory per unit.
-fn seed_nested(
-    head: &Path,
-    base: &Path,
-    members: &BTreeSet<String>,
-    seeded: &mut Seeded,
-) -> io::Result<()> {
-    let Ok(pkgs) = fs::read_dir(head.join("build")) else {
-        return Ok(());
-    };
-    let mut candidates = Vec::new();
-    for pkg in pkgs {
-        let pkg = match pkg {
-            Ok(pkg) => pkg,
-            Err(e) => {
-                seeded.skipped.push(format!("build: {e}"));
-                continue;
-            }
-        };
-        let name = pkg.file_name().to_string_lossy().into_owned();
-        if split_unit(&name).is_some() || members.contains(&name) || !pkg.path().is_dir() {
-            continue;
-        }
-        let units = match fs::read_dir(pkg.path()) {
-            Ok(units) => units,
-            Err(e) => {
-                seeded.skipped.push(format!("{name}: {e}"));
-                continue;
-            }
-        };
-        for unit in units {
-            let unit = match unit {
-                Ok(unit) => unit,
-                Err(e) => {
-                    seeded.skipped.push(format!("{name}: {e}"));
-                    continue;
-                }
-            };
-            let hash = unit.file_name().to_string_lossy().into_owned();
-            let rel = Path::new("build").join(&name).join(&hash);
-            if is_hash(&hash) && fs::symlink_metadata(base.join(&rel)).is_err() {
-                candidates.push(format!("{name}/{hash}"));
-            }
-        }
-    }
-    let blocked = unitgraph::blocked(&nested_units(head), &nested_units(base), &candidates);
-    for unit in candidates {
-        if let Some(why) = blocked.get(&unit) {
-            seeded.skipped.push(format!("{unit}: {why}"));
-            continue;
-        }
-        let rel = Path::new("build").join(&unit);
-        match copy_unit(&head.join(&rel), &base.join(&rel)) {
-            Ok(bytes) => {
-                seeded.units += 1;
-                seeded.bytes += bytes;
-                seeded.names.push(unit);
-            }
-            Err(e) => seeded.skipped.push(format!("{unit}: {e}")),
-        }
-    }
-    Ok(())
-}
-
-/// Every unit under `.fingerprint/`, by its directory name.
-fn flat_units(fingerprints: &Path) -> BTreeMap<String, Unit> {
-    let Ok(entries) = fs::read_dir(fingerprints) else {
-        return BTreeMap::new();
-    };
-    entries
-        .flatten()
-        .map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            (name, unitgraph::read(&e.path()))
+    Ok(units
+        .into_values()
+        .map(|(fingerprint, mut files)| {
+            files.push(Path::new(".fingerprint").join(fingerprint));
+            let copied = files.iter().try_fold(0, |bytes, rel| {
+                Ok::<_, io::Error>(bytes + copy_tree(&head.join(rel), &base.join(rel))?)
+            });
+            (fingerprint.to_string(), copied)
         })
-        .collect()
-}
-
-/// Every `build/<pkg>/<hash>/` unit of `profile`, as `<pkg>/<hash>`.
-fn nested_units(profile: &Path) -> BTreeMap<String, Unit> {
-    let mut out = BTreeMap::new();
-    let Ok(pkgs) = fs::read_dir(profile.join("build")) else {
-        return out;
-    };
-    for pkg in pkgs.flatten() {
-        let name = pkg.file_name().to_string_lossy().into_owned();
-        let Ok(units) = fs::read_dir(pkg.path()) else {
-            continue;
-        };
-        for unit in units.flatten() {
-            let hash = unit.file_name().to_string_lossy().into_owned();
-            if is_hash(&hash) {
-                out.insert(
-                    format!("{name}/{hash}"),
-                    unitgraph::read(&unit.path().join("fingerprint")),
-                );
-            }
-        }
-    }
-    out
+        .collect())
 }
 
 /// Copy a unit directory with its `fingerprint` last, for the reason a flat
@@ -254,10 +261,6 @@ pub fn seed_worktree(wt: &Path, wt_target: &Path) {
         &members,
     ) {
         Ok(s) => {
-            let _ = fs::write(
-                wt_target.join("release").join(SEEDED),
-                s.names.iter().map(|n| format!("{n}\n")).collect::<String>(),
-            );
             if s.units > 0 {
                 println!(
                     "gate: seeded {} dependency units ({:.1} MiB) from HEAD's target dir in {:.1}s",
@@ -272,6 +275,12 @@ pub fn seed_worktree(wt: &Path, wt_target: &Path) {
                     s.skipped.len()
                 );
             }
+            if let Some(first) = s.unreadable.first() {
+                println!(
+                    "gate: could not list {} package dirs, first {first}",
+                    s.unreadable.len()
+                );
+            }
         }
         Err(e) => println!(
             "gate: could not seed the merge-base target dir ({e}); its dependencies build cold"
@@ -279,54 +288,68 @@ pub fn seed_worktree(wt: &Path, wt_target: &Path) {
     }
 }
 
-/// Where [`seed_worktree`] lists the units it copied, for [`report`].
+/// The record in a profile dir of every unit a seed copied into it, each
+/// with the key of HEAD's copy, in runs that each start with a `run` line.
 const SEEDED: &str = ".soothfast-seeded";
 
-/// After a failed merge-base build, name what the seed put in its target dir.
-/// `SOOTHFAST_DEBUG_SEED=1` also lists the harness artifacts there.
-pub fn report(wt_target: &Path) {
-    let profile = wt_target.join("release");
-    if let Ok(list) = fs::read_to_string(profile.join(SEEDED)) {
-        for unit in list.lines() {
-            eprintln!("gate: seeded unit {unit}");
-        }
-    }
-    if std::env::var_os("SOOTHFAST_DEBUG_SEED").is_some_and(|v| v == "1") {
-        for line in harness_artifacts(&profile) {
-            eprintln!("gate: seed debug {line}");
-        }
-    }
+/// How many seeded units [`report`] names before it only counts.
+const REPORTED_UNITS: usize = 20;
+
+/// The units the record holds, at the key each was last seeded under.
+fn read_record(profile: &Path) -> BTreeMap<String, String> {
+    fs::read_to_string(profile.join(SEEDED))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .filter(|(name, _)| *name != "run")
+        .map(|(name, key)| (name.to_string(), key.to_string()))
+        .collect()
 }
 
-/// `deps/libsoothfast*` and `.fingerprint/soothfast-*` in `profile`, each
-/// with its size and mtime in seconds since the epoch.
-fn harness_artifacts(profile: &Path) -> Vec<String> {
-    let mut out = Vec::new();
-    for (dir, prefix) in [("deps", "libsoothfast"), (".fingerprint", "soothfast-")] {
-        let Ok(entries) = fs::read_dir(profile.join(dir)) else {
-            out.push(format!("{dir}: unreadable"));
-            continue;
-        };
-        let mut names: Vec<_> = entries
-            .flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
-            .collect();
-        names.sort_by_key(|e| e.file_name());
-        for entry in names {
-            let Ok(meta) = entry.metadata() else { continue };
-            let mtime = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_secs());
-            out.push(format!(
-                "{dir}/{} {} bytes mtime {mtime}",
-                entry.file_name().to_string_lossy(),
-                meta.len()
-            ));
+fn append_record(profile: &Path, copied: &[(String, String)]) {
+    use std::io::Write;
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let mut text = format!("run {started}\n");
+    for (name, key) in copied {
+        text.push_str(&format!("{name} {key}\n"));
+    }
+    let _ = fs::create_dir_all(profile);
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(profile.join(SEEDED))
+        .and_then(|mut f| f.write_all(text.as_bytes()));
+}
+
+/// The units the latest seed copied into `profile`.
+fn latest_run(profile: &Path) -> Vec<String> {
+    let text = fs::read_to_string(profile.join(SEEDED)).unwrap_or_default();
+    let mut units = Vec::new();
+    for line in text.lines() {
+        match line.split_once(' ') {
+            Some(("run", _)) => units.clear(),
+            Some((name, _)) => units.push(name.to_string()),
+            None => {}
         }
     }
-    out
+    units
+}
+
+/// After a failed merge-base build, name what this run's seed copied into
+/// its target dir.
+pub fn report(wt_target: &Path) {
+    let units = latest_run(&wt_target.join("release"));
+    for unit in units.iter().take(REPORTED_UNITS) {
+        eprintln!("gate: seeded unit {unit}");
+    }
+    if units.len() > REPORTED_UNITS {
+        eprintln!(
+            "gate: and {} more seeded units",
+            units.len() - REPORTED_UNITS
+        );
+    }
 }
 
 /// `name-<16 hex>` into the name and the unit hash.
@@ -366,323 +389,4 @@ fn copy_tree(src: &Path, dst: &Path) -> io::Result<u64> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-    use std::process::Command;
-
-    #[test]
-    fn splits_unit_names() {
-        assert_eq!(
-            split_unit("serde_json-0123456789abcdef"),
-            Some(("serde_json", "0123456789abcdef"))
-        );
-        assert_eq!(
-            split_unit("aws-lc-sys-0123456789abcdef"),
-            Some(("aws-lc-sys", "0123456789abcdef"))
-        );
-        assert_eq!(split_unit("build-script-build"), None);
-        assert_eq!(split_unit("nohash"), None);
-    }
-
-    fn profile_dir(root: &Path, units: &[(&str, &[&str])]) {
-        for (unit, files) in units {
-            fs::create_dir_all(root.join(".fingerprint").join(unit)).unwrap();
-            fs::write(root.join(".fingerprint").join(unit).join("lib"), unit).unwrap();
-            for file in *files {
-                let path = root.join(file);
-                fs::create_dir_all(path.parent().unwrap()).unwrap();
-                fs::write(path, unit).unwrap();
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_unit_that_cannot_be_copied_is_skipped_without_its_fingerprint() {
-        let root = std::env::temp_dir().join(format!("soothfast-seed-skip-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let (head, base) = (root.join("head"), root.join("base"));
-        profile_dir(
-            &head,
-            &[
-                (
-                    "good-0123456789abcdef",
-                    &["deps/libgood-0123456789abcdef.rlib"],
-                ),
-                (
-                    "bad-fedcba9876543210",
-                    &["build/bad-fedcba9876543210/out/a"],
-                ),
-            ],
-        );
-        std::os::unix::fs::symlink("a", head.join("build/bad-fedcba9876543210/out/l")).unwrap();
-
-        let seeded = seed(&head, &base, &BTreeSet::new()).unwrap();
-        assert_eq!(seeded.units, 1);
-        assert_eq!(seeded.skipped.len(), 1, "{:?}", seeded.skipped);
-        assert!(base.join(".fingerprint/good-0123456789abcdef").exists());
-        assert!(!base.join(".fingerprint/bad-fedcba9876543210").exists());
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn the_per_package_layout_seeds_dependencies_but_not_members() {
-        let root = std::env::temp_dir().join(format!("soothfast-seed-nest-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let (head, base) = (root.join("head"), root.join("base"));
-        for unit in ["serde/0123456789abcdef", "app/fedcba9876543210"] {
-            for sub in ["out/x", "fingerprint/lib"] {
-                let path = head.join("build").join(unit).join(sub);
-                fs::create_dir_all(path.parent().unwrap()).unwrap();
-                fs::write(path, unit).unwrap();
-            }
-        }
-        let members = BTreeSet::from(["app".to_string()]);
-        let seeded = seed(&head, &base, &members).unwrap();
-        assert_eq!((seeded.units, seeded.skipped.len()), (1, 0), "{seeded:?}");
-        assert!(
-            base.join("build/serde/0123456789abcdef/fingerprint/lib")
-                .exists()
-        );
-        assert!(base.join("build/serde/0123456789abcdef/out/x").exists());
-        assert!(!base.join("build/app").exists());
-        assert_eq!(seed(&head, &base, &members).unwrap().units, 0);
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn an_unreadable_package_directory_is_skipped_not_fatal() {
-        use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("soothfast-seed-deny-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let (head, base) = (root.join("head"), root.join("base"));
-        for unit in ["locked/0123456789abcdef", "open/fedcba9876543210"] {
-            let path = head.join("build").join(unit).join("out/x");
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, unit).unwrap();
-        }
-        let locked = head.join("build/locked");
-        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
-
-        let seeded = seed(&head, &base, &BTreeSet::new()).unwrap();
-        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
-        let readable = fs::read_dir(&locked).is_ok();
-        assert_eq!(seeded.units, 1);
-        assert_eq!(seeded.skipped.len(), 1, "{seeded:?}");
-        assert!(readable);
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn read_only_files_seed_and_reseed() {
-        use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("soothfast-seed-ro-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let (head, base) = (root.join("head"), root.join("base"));
-        let file = "build/ro-0123456789abcdef/out/gen.rs";
-        profile_dir(&head, &[("ro-0123456789abcdef", &[file])]);
-        fs::set_permissions(head.join(file), fs::Permissions::from_mode(0o444)).unwrap();
-
-        assert_eq!(seed(&head, &base, &BTreeSet::new()).unwrap().units, 1);
-        fs::remove_dir_all(base.join(".fingerprint")).unwrap();
-        let again = seed(&head, &base, &BTreeSet::new()).unwrap();
-        assert_eq!((again.units, again.skipped.len()), (1, 0), "{again:?}");
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    /// The version this workspace's `Cargo.lock` holds for `name`, which an
-    /// `--offline` build can resolve because the workspace build fetched it.
-    fn locked(name: &str) -> String {
-        let lock =
-            fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../Cargo.lock")).unwrap();
-        let entry = format!("name = \"{name}\"\nversion = \"");
-        let start = lock.find(&entry).unwrap() + entry.len();
-        lock[start..].split('"').next().unwrap().to_string()
-    }
-
-    fn write_workspace(root: &Path, deps: &str, body: &str) {
-        let files = [
-            (
-                "Cargo.toml",
-                "[workspace]\nmembers = [\"m\"]\nresolver = \"2\"\n".to_string(),
-            ),
-            (
-                "m/Cargo.toml",
-                format!(
-                    "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n{deps}"
-                ),
-            ),
-            ("m/src/lib.rs", body.to_string()),
-        ];
-        for (path, text) in files {
-            let path = root.join(path);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, text).unwrap();
-        }
-    }
-
-    /// `cargo build --release` in `root`; each unit's (name, fresh).
-    fn build(root: &Path, target: &Path) -> Vec<(String, bool)> {
-        let out = Command::new("cargo")
-            .args(["build", "--release", "--offline", "--message-format=json"])
-            .current_dir(root)
-            .env("CARGO_TARGET_DIR", target)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        crate::invoke::cargo_messages(&out.stdout)
-            .filter(|m| m["reason"] == "compiler-artifact")
-            .map(|m| {
-                let name = m["target"]["name"].as_str().unwrap_or_default().to_string();
-                (name, m["fresh"].as_bool().unwrap_or(false))
-            })
-            .collect()
-    }
-
-    fn tree(dir: &Path, out: &mut BTreeMap<PathBuf, (u64, std::time::SystemTime)>) {
-        for entry in fs::read_dir(dir).unwrap() {
-            let entry = entry.unwrap();
-            let meta = fs::symlink_metadata(entry.path()).unwrap();
-            if meta.is_dir() {
-                tree(&entry.path(), out);
-            } else {
-                let bytes = fs::read(entry.path()).unwrap_or_default();
-                let hash = soothfast_registry::fnv1a(&bytes);
-                out.insert(entry.path(), (hash ^ meta.len(), meta.modified().unwrap()));
-            }
-        }
-    }
-
-    /// The rustc invocation `cargo build -v` printed for crate `name`.
-    fn rustc_args(verbose: &str, name: &str) -> Vec<String> {
-        let line = verbose
-            .lines()
-            .find(|l| l.contains(&format!("--crate-name {name} ")))
-            .unwrap();
-        let cmd = &line[line.find('`').unwrap() + 1..line.rfind('`').unwrap()];
-        let (mut args, mut word, mut quoted) = (Vec::new(), String::new(), false);
-        for c in cmd.chars() {
-            match c {
-                '\'' => quoted = !quoted,
-                ' ' if !quoted => args.push(std::mem::take(&mut word)),
-                c => word.push(c),
-            }
-        }
-        args.push(word);
-        args.retain(|a| !a.is_empty());
-        args
-    }
-
-    /// Rebuild `name`'s unit in place under another `-C metadata`: the same
-    /// unit and fingerprint, a different crate hash, as two trees can build.
-    fn rebuild_under_other_metadata(verbose: &str, name: &str, deps: &Path) {
-        let args: Vec<String> = rustc_args(verbose, name)
-            .into_iter()
-            .map(|a| match a.strip_prefix("metadata=") {
-                Some(_) => "metadata=00000000000000ff".to_string(),
-                None => a,
-            })
-            .collect();
-        let outputs: Vec<(PathBuf, std::time::SystemTime)> = fs::read_dir(deps)
-            .unwrap()
-            .flatten()
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with(&format!("lib{name}-"))
-            })
-            .map(|e| (e.path(), e.metadata().unwrap().modified().unwrap()))
-            .collect();
-        let out = Command::new(&args[0]).args(&args[1..]).output().unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        for (path, mtime) in outputs {
-            fs::File::open(path).unwrap().set_modified(mtime).unwrap();
-        }
-    }
-
-    #[test]
-    fn a_unit_built_on_a_dependency_the_base_built_itself_is_not_seeded() {
-        let root =
-            std::env::temp_dir().join(format!("soothfast-seed-mixed-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let (head, base) = (root.join("head"), root.join("base"));
-        let (head_t, base_t) = (root.join("head-target"), root.join("base-target"));
-        let pin = |name: &str| format!("{name} = \"={}\"\n", locked(name));
-        let uses = "pub fn f() -> bool { aho_corasick::AhoCorasick::new([\"a\"]).is_ok() }\n";
-        let both = format!("{}{}", pin("memchr"), pin("aho-corasick"));
-        write_workspace(&head, &both, uses);
-        write_workspace(&base, &pin("memchr"), "pub fn f() -> u8 { 2 }\n");
-
-        let out = Command::new("cargo")
-            .args(["build", "--release", "--offline", "-v"])
-            .current_dir(&base)
-            .env("CARGO_TARGET_DIR", &base_t)
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-        let verbose = String::from_utf8_lossy(&out.stderr);
-        rebuild_under_other_metadata(&verbose, "memchr", &base_t.join("release/deps"));
-        write_workspace(&base, &both, uses);
-        build(&head, &head_t);
-
-        let members = BTreeSet::from(["m".to_string()]);
-        let seeded = seed(&head_t.join("release"), &base_t.join("release"), &members).unwrap();
-        let units = build(&base, &base_t);
-        let fresh = |name: &str| units.iter().find(|(n, _)| n == name).map(|(_, f)| *f);
-        assert_eq!(fresh("aho_corasick"), Some(false), "{units:?}");
-        assert!(
-            seeded
-                .skipped
-                .iter()
-                .any(|s| s.starts_with("aho-corasick-")),
-            "{seeded:?}"
-        );
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn base_build_reuses_seeded_dependencies_and_leaves_head_alone() {
-        let root = std::env::temp_dir().join(format!("soothfast-seed-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let (head, base) = (root.join("head"), root.join("base"));
-        let (head_t, base_t) = (root.join("head-target"), root.join("base-target"));
-        let pin = |name: &str| format!("{name} = \"={}\"\n", locked(name));
-        let shared = format!("{}{}", pin("itoa"), pin("libc"));
-        write_workspace(&head, &shared, "pub fn f() -> u8 { 1 }\n");
-        write_workspace(
-            &base,
-            &format!("{shared}{}", pin("memchr")),
-            "pub fn f() -> u8 { 2 }\n",
-        );
-
-        build(&head, &head_t);
-        let mut before = BTreeMap::new();
-        tree(&head_t, &mut before);
-
-        let members = BTreeSet::from(["m".to_string()]);
-        let seeded = seed(&head_t.join("release"), &base_t.join("release"), &members).unwrap();
-        assert!(seeded.units >= 2, "{seeded:?}");
-        let units = build(&base, &base_t);
-        let fresh = |name: &str| units.iter().find(|(n, _)| n == name).map(|(_, f)| *f);
-        assert_eq!(fresh("itoa"), Some(true), "{units:?}");
-        assert_eq!(fresh("libc"), Some(true), "{units:?}");
-        assert_eq!(fresh("memchr"), Some(false), "only base depends on it");
-        assert_eq!(fresh("m"), Some(false), "a member is never seeded");
-
-        let mut after = BTreeMap::new();
-        tree(&head_t, &mut after);
-        assert_eq!(before, after, "the base build changed HEAD's target dir");
-        let _ = fs::remove_dir_all(&root);
-    }
-}
+mod tests;

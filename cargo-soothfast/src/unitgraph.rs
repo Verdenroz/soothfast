@@ -9,7 +9,10 @@
 //! merge-base build unable to find the crate at all.
 //!
 //! The graph comes from cargo's fingerprints: the hash file of a unit names
-//! it, and its JSON lists each dependency by that same hash.
+//! it, and the JSON of a compile lists each dependency by that same hash. Only
+//! the edges rustc checks a crate hash on are kept: a compile's library and
+//! proc-macro dependencies. A build script's own compile and its run link
+//! nothing a later compile reads by crate hash.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -17,11 +20,24 @@ use std::path::Path;
 
 use serde_json::Value;
 
-/// One unit's fingerprint: its own hashes and those of its dependencies.
+/// One unit's fingerprint: its own hashes and the crate-hash-checked
+/// dependencies of its compile.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Unit {
     own: Vec<u64>,
     deps: Vec<u64>,
+}
+
+impl Unit {
+    /// Its own hashes as the seed record writes them.
+    pub fn key(&self) -> String {
+        let mut own = self.own.clone();
+        own.sort_unstable();
+        own.iter()
+            .map(|h| format!("{h:016x}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 }
 
 /// Read the fingerprint directory of one unit. Files cargo has not written
@@ -33,19 +49,33 @@ pub fn read(dir: &Path) -> Unit {
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
+        let kind = if let Some(stem) = name.strip_suffix(".json") {
+            if stem.starts_with("build-script-") || stem.starts_with("run-build-script-") {
+                continue;
+            }
+            Kind::Compile
+        } else if name.starts_with("dep-")
+            || name.starts_with("output-")
+            || name == "invoked.timestamp"
+        {
+            continue;
+        } else {
+            Kind::Hash
+        };
         let Ok(text) = fs::read_to_string(entry.path()) else {
             continue;
         };
-        if name.ends_with(".json") {
-            unit.deps.extend(dependency_hashes(&text));
-        } else if !name.starts_with("dep-")
-            && !name.starts_with("output-")
-            && name != "invoked.timestamp"
-        {
-            unit.own.extend(own_hash(&text));
+        match kind {
+            Kind::Compile => unit.deps.extend(checked_dependencies(&text)),
+            Kind::Hash => unit.own.extend(own_hash(&text)),
         }
     }
     unit
+}
+
+enum Kind {
+    Compile,
+    Hash,
 }
 
 /// Cargo writes a fingerprint hash as the hex of its little-endian bytes.
@@ -57,8 +87,9 @@ fn own_hash(text: &str) -> Option<u64> {
     u64::from_str_radix(text, 16).ok().map(u64::swap_bytes)
 }
 
-/// Each `deps` entry is `[package, crate name, public, fingerprint hash]`.
-fn dependency_hashes(text: &str) -> Vec<u64> {
+/// Each `deps` entry is `[package, crate name, public, fingerprint hash]`. The
+/// edge to the package's build-script run is named after the script target.
+fn checked_dependencies(text: &str) -> Vec<u64> {
     let Ok(json) = serde_json::from_str::<Value>(text) else {
         return Vec::new();
     };
@@ -66,28 +97,41 @@ fn dependency_hashes(text: &str) -> Vec<u64> {
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|d| {
+            !d[1]
+                .as_str()
+                .is_some_and(|n| n.starts_with("build_script_"))
+        })
         .filter_map(|d| d[3].as_u64())
         .collect()
 }
 
 /// The `candidates` (units of `head` that `base` lacks) a seed must leave for
-/// the base build, each with why: it depends, directly or not, on a unit
-/// `base` built itself, or a unit of `base` was built against it.
+/// the base build, each with why. `seeded` maps a unit an earlier seed copied
+/// into `base` to the key HEAD's copy had; a unit of `base` that is not there
+/// under its current key is the merge-base's own build.
 pub fn blocked(
     head: &BTreeMap<String, Unit>,
     base: &BTreeMap<String, Unit>,
+    seeded: &BTreeMap<String, String>,
     candidates: &[String],
 ) -> BTreeMap<String, String> {
-    let by_hash: BTreeMap<u64, &str> = head
+    let own: BTreeSet<&str> = base
         .iter()
-        .flat_map(|(name, unit)| unit.own.iter().map(move |h| (*h, name.as_str())))
+        .filter(|(name, unit)| seeded.get(*name) != Some(&unit.key()))
+        .map(|(name, _)| name.as_str())
         .collect();
-    let base_needs: BTreeSet<u64> = base.values().flat_map(|u| u.deps.iter().copied()).collect();
     let graph = Graph {
         head,
         base,
-        by_hash,
-        base_needs,
+        own_needs: base
+            .iter()
+            .filter(|(name, _)| own.contains(name.as_str()))
+            .flat_map(|(_, u)| u.deps.iter().copied())
+            .collect(),
+        own,
+        head_by_hash: by_hash(head),
+        base_by_hash: by_hash(base),
     };
     let mut memo = BTreeMap::new();
     candidates
@@ -100,11 +144,22 @@ pub fn blocked(
         .collect()
 }
 
+fn by_hash(units: &BTreeMap<String, Unit>) -> BTreeMap<u64, &str> {
+    units
+        .iter()
+        .flat_map(|(name, unit)| unit.own.iter().map(move |h| (*h, name.as_str())))
+        .collect()
+}
+
 struct Graph<'a> {
     head: &'a BTreeMap<String, Unit>,
     base: &'a BTreeMap<String, Unit>,
-    by_hash: BTreeMap<u64, &'a str>,
-    base_needs: BTreeSet<u64>,
+    /// Units of `base` it built itself rather than took from a seed.
+    own: BTreeSet<&'a str>,
+    /// Every hash those units were compiled against.
+    own_needs: BTreeSet<u64>,
+    head_by_hash: BTreeMap<u64, &'a str>,
+    base_by_hash: BTreeMap<u64, &'a str>,
 }
 
 impl Graph<'_> {
@@ -119,20 +174,31 @@ impl Graph<'_> {
 
     fn find(&self, name: &str, memo: &mut BTreeMap<String, Option<String>>) -> Option<String> {
         let unit = self.head.get(name)?;
-        for dep in unit.deps.iter().filter_map(|h| self.by_hash.get(h)) {
-            if self.base.contains_key(*dep) {
-                return Some(format!(
-                    "depends on {dep}, which the merge-base built itself"
-                ));
-            }
-            if let Some(why) = self.conflict(dep, memo) {
+        for hash in &unit.deps {
+            if let Some(why) = self.dependency(*hash, memo) {
                 return Some(why);
             }
         }
         unit.own
             .iter()
-            .any(|h| self.base_needs.contains(h))
+            .any(|h| self.own_needs.contains(h))
             .then(|| format!("the merge-base built its own dependents of {name}"))
+    }
+
+    fn dependency(&self, hash: u64, memo: &mut BTreeMap<String, Option<String>>) -> Option<String> {
+        let built_by_base = |dep: &str| {
+            self.own
+                .contains(dep)
+                .then(|| format!("depends on {dep}, which the merge-base built itself"))
+        };
+        match (self.head_by_hash.get(&hash), self.base_by_hash.get(&hash)) {
+            (Some(dep), _) if self.base.contains_key(*dep) => built_by_base(dep),
+            (Some(dep), _) => self.conflict(dep, memo),
+            (None, Some(dep)) => built_by_base(dep),
+            (None, None) => Some(format!(
+                "depends on fingerprint {hash:016x}, which neither target dir holds"
+            )),
+        }
     }
 }
 
@@ -147,25 +213,35 @@ mod tests {
         }
     }
 
+    fn units(list: &[(&str, Unit)]) -> BTreeMap<String, Unit> {
+        list.iter()
+            .map(|(n, u)| (n.to_string(), u.clone()))
+            .collect()
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|n| n.to_string()).collect()
+    }
+
     #[test]
     fn a_fingerprint_hash_reads_as_cargo_writes_it() {
         assert_eq!(own_hash("8748516213b072d9\n"), Some(15668779650875738247));
         assert_eq!(own_hash("nothex"), None);
-        let json = r#"{"deps":[[13973934561794393430,"linkme",false,15668779650875738247]]}"#;
-        assert_eq!(dependency_hashes(json), [15668779650875738247]);
+        let json = r#"{"deps":[[1,"linkme",false,15668779650875738247],[2,"build_script_build",false,7]]}"#;
+        assert_eq!(checked_dependencies(json), [15668779650875738247]);
     }
 
     #[test]
     fn a_unit_built_on_the_merge_bases_own_dependency_is_blocked_with_its_dependents() {
-        let head = BTreeMap::from([
-            ("linkme-a".to_string(), unit(1, &[])),
-            ("registry-b".to_string(), unit(2, &[1])),
-            ("facade-c".to_string(), unit(3, &[2])),
-            ("itoa-d".to_string(), unit(4, &[])),
+        let head = units(&[
+            ("linkme-a", unit(1, &[])),
+            ("registry-b", unit(2, &[1])),
+            ("facade-c", unit(3, &[2])),
+            ("itoa-d", unit(4, &[])),
         ]);
-        let base = BTreeMap::from([("linkme-a".to_string(), unit(1, &[]))]);
-        let candidates = ["registry-b", "facade-c", "itoa-d"].map(String::from);
-        let blocked = blocked(&head, &base, &candidates);
+        let base = units(&[("linkme-a", unit(1, &[]))]);
+        let candidates = names(&["registry-b", "facade-c", "itoa-d"]);
+        let blocked = blocked(&head, &base, &BTreeMap::new(), &candidates);
         assert_eq!(
             blocked.keys().collect::<Vec<_>>(),
             ["facade-c", "registry-b"]
@@ -174,20 +250,63 @@ mod tests {
     }
 
     #[test]
+    fn a_dependency_an_earlier_seed_copied_does_not_block() {
+        let head = units(&[("linkme-a", unit(1, &[])), ("registry-b", unit(2, &[1]))]);
+        let base = units(&[("linkme-a", unit(1, &[]))]);
+        let seeded = BTreeMap::from([("linkme-a".to_string(), unit(1, &[]).key())]);
+        let candidates = names(&["registry-b"]);
+        assert!(blocked(&head, &base, &seeded, &candidates).is_empty());
+        let rebuilt = units(&[("linkme-a", unit(9, &[]))]);
+        assert!(blocked(&head, &rebuilt, &seeded, &candidates).contains_key("registry-b"));
+    }
+
+    #[test]
+    fn a_dependency_head_rebuilt_in_place_is_resolved_or_blocks() {
+        let head = units(&[("d-a", unit(5, &[])), ("c-b", unit(2, &[1]))]);
+        let candidates = names(&["c-b"]);
+        let base_built = units(&[("d-a", unit(1, &[]))]);
+        let why = blocked(&head, &base_built, &BTreeMap::new(), &candidates);
+        assert!(why["c-b"].contains("d-a"), "{why:?}");
+        let why = blocked(&head, &BTreeMap::new(), &BTreeMap::new(), &candidates);
+        assert!(why["c-b"].contains("neither target dir"), "{why:?}");
+    }
+
+    #[test]
     fn a_unit_the_merge_base_was_built_against_is_left_to_it() {
-        let head = BTreeMap::from([("libc-a".to_string(), unit(1, &[]))]);
-        let base = BTreeMap::from([("measure-b".to_string(), unit(2, &[1]))]);
-        let blocked = blocked(&head, &base, &["libc-a".to_string()]);
-        assert!(blocked.contains_key("libc-a"), "{blocked:?}");
+        let head = units(&[("libc-a", unit(1, &[]))]);
+        let base = units(&[("measure-b", unit(2, &[1]))]);
+        let candidates = names(&["libc-a"]);
+        assert!(blocked(&head, &base, &BTreeMap::new(), &candidates).contains_key("libc-a"));
+        let seeded = BTreeMap::from([("measure-b".to_string(), unit(2, &[1]).key())]);
+        assert!(blocked(&head, &base, &seeded, &candidates).is_empty());
     }
 
     #[test]
     fn a_cold_merge_base_blocks_nothing() {
-        let head = BTreeMap::from([
-            ("linkme-a".to_string(), unit(1, &[])),
-            ("registry-b".to_string(), unit(2, &[1])),
-        ]);
-        let candidates = ["linkme-a", "registry-b"].map(String::from);
-        assert!(blocked(&head, &BTreeMap::new(), &candidates).is_empty());
+        let head = units(&[("linkme-a", unit(1, &[])), ("registry-b", unit(2, &[1]))]);
+        let candidates = names(&["linkme-a", "registry-b"]);
+        assert!(blocked(&head, &BTreeMap::new(), &BTreeMap::new(), &candidates).is_empty());
+    }
+
+    #[test]
+    fn a_build_script_edge_is_not_followed() {
+        let dir = std::env::temp_dir().join(format!("soothfast-unitgraph-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("lib-x"), "0100000000000000").unwrap();
+        fs::write(
+            dir.join("lib-x.json"),
+            r#"{"deps":[[1,"y",false,2],[1,"build_script_build",false,3]]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("run-build-script-build-script-build.json"),
+            r#"{"deps":[[1,"z",false,4]]}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("dep-lib-x"), "binary").unwrap();
+        let read = read(&dir);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(read, unit(1, &[2]));
     }
 }
