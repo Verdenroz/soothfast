@@ -125,10 +125,12 @@ jobs:
           JAVA: ${{ inputs.java }}
           NODE: ${{ inputs.node }}
           SHARD: ${{ inputs.shard }}
+          # A push records every item in its first leg; the others would only set up.
+          FIRST_ONLY: ${{ github.event_name != 'pull_request' && 'true' || '' }}
           SETTLED: ${{ runner.temp }}/settled
         run: |
           cargo soothfast plan --github --java "$JAVA" --node "$NODE" \
-            --shard "$SHARD" \
+            --shard "$SHARD" ${FIRST_ONLY:+--first-shard-only} \
             --results "$SETTLED" \
             ${BASE_REF:+--base "origin/$BASE_REF"} ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
       - name: Upload the results of tests that need no job
@@ -438,8 +440,7 @@ jobs:
   gate-rust:
     name: Gate${{ matrix.shard != '' && format(' ({0})', matrix.shard) || '' }}
     needs: [plan, build-bench]
-    # A push records every item in its first leg; the others would only set up.
-    if: ${{ !cancelled() && needs.plan.result == 'success' && github.event_name != 'schedule' && needs.plan.outputs.packages != '' && (github.event_name == 'pull_request' || matrix.shard == '' || startsWith(matrix.shard, '1/')) }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && github.event_name != 'schedule' && needs.plan.outputs.packages != '' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     environment: soothfast-bot
     permissions:

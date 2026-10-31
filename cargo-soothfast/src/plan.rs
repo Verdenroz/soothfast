@@ -25,6 +25,8 @@ struct Args {
     pins: Pins,
     /// Legs the Rust gate is split into.
     shards: u64,
+    /// Run only the first shard, which records every item for the others.
+    first_shard_only: bool,
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
@@ -36,6 +38,10 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
     while let Some(a) = it.next() {
         if a == "--github" {
             out.github = true;
+            continue;
+        }
+        if a == "--first-shard-only" {
+            out.first_shard_only = true;
             continue;
         }
         let value = it
@@ -80,6 +86,7 @@ pub fn run(args: &[String]) -> i32 {
         args.labels,
         args.pins,
         args.shards,
+        args.first_shard_only,
     ) {
         Ok(plan) => plan,
         Err(e) => return err(&e),
@@ -111,6 +118,7 @@ struct Plan {
     /// Names of the tests a stored pass already covers.
     reused: BTreeSet<String>,
     shards: u64,
+    first_shard_only: bool,
 }
 
 /// One project's tests, or one suite's, and whether the change reaches them.
@@ -127,6 +135,7 @@ fn build(
     labels: Vec<String>,
     mut pins: Pins,
     shards: u64,
+    first_shard_only: bool,
 ) -> Result<Plan, String> {
     let rust = root
         .join("Cargo.toml")
@@ -167,6 +176,7 @@ fn build(
         pins,
         reused: BTreeSet::new(),
         shards,
+        first_shard_only,
     };
     plan.check_names()?;
     plan.reused = plan.stored_passes(root)?;
@@ -356,7 +366,12 @@ impl Plan {
         if self.shards <= 1 {
             return json!({ "include": [{ "shard": "", "slug": "" }] });
         }
-        let legs: Vec<Value> = (1..=self.shards)
+        let last = if self.first_shard_only {
+            1
+        } else {
+            self.shards
+        };
+        let legs: Vec<Value> = (1..=last)
             .map(|i| {
                 let n = self.shards;
                 json!({ "shard": format!("{i}/{n}"), "slug": format!("{i}-of-{n}") })
@@ -467,6 +482,7 @@ mod tests {
             },
             reused: BTreeSet::new(),
             shards: 1,
+            first_shard_only: false,
         }
     }
 
@@ -505,6 +521,22 @@ mod tests {
         assert!(
             p.outputs()
                 .contains("shards={\"include\":[{\"shard\":\"1/3\",\"slug\":\"1-of-3\"}")
+        );
+    }
+
+    #[test]
+    fn a_push_keeps_only_the_first_shard() {
+        let mut p = plan(Some(&["a"]), vec![]);
+        p.shards = 3;
+        p.first_shard_only = true;
+        assert_eq!(
+            p.shard_legs(),
+            json!({ "include": [{ "shard": "1/3", "slug": "1-of-3" }] })
+        );
+        assert!(
+            parse_args(&["--first-shard-only".to_string()])
+                .unwrap()
+                .first_shard_only
         );
     }
 
