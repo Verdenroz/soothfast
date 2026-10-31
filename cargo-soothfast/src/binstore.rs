@@ -19,11 +19,12 @@ use crate::store::{self, Inputs};
 pub(crate) const MAX_BYTES: u64 = 1 << 29;
 
 /// Variables a bench build depends on beyond the ones every compile does.
-pub const ENV_NAMES: [&str; 5] = [
+/// `RUSTUP_TOOLCHAIN` is left out: only `cargo soothfast` sets it, and the
+/// `rustc -vV` in the key already names the toolchain it picks.
+pub const ENV_NAMES: [&str; 4] = [
     "RUSTC",
     "RUSTC_WRAPPER",
     "RUSTC_WORKSPACE_WRAPPER",
-    "RUSTUP_TOOLCHAIN",
     "CARGO_INCREMENTAL",
 ];
 
@@ -95,14 +96,18 @@ pub fn store(
     started: SystemTime,
     exe: &Path,
     group: &str,
-) -> Option<PathBuf> {
-    if key_now.as_deref() != Some(key) || load(dir, key, root).is_some() {
-        return None;
+) -> Result<PathBuf, Skip> {
+    if key_now.as_deref() != Some(key) {
+        return Err(Skip::TreeChanged);
     }
-    let entry = store::insert(dir, key, root, inputs, started, exe, "bin")?;
+    if load(dir, key, root).is_some() {
+        return Err(Skip::Present);
+    }
+    let entry =
+        store::insert(dir, key, root, inputs, started, exe, "bin").ok_or(Skip::NotWritten)?;
     let born = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .ok()?
+        .map_err(|_| Skip::NotWritten)?
         .as_nanos();
     store::write_atomic(
         &dir.join(format!("{key}.group")),
@@ -111,7 +116,29 @@ pub fn store(
     store::write_atomic(&link(exe), entry.as_os_str().as_encoded_bytes());
     keep_newest(dir);
     store::prune(dir, MAX_BYTES);
-    Some(entry)
+    Ok(entry)
+}
+
+/// Why [`store`] kept nothing.
+#[derive(Debug, PartialEq)]
+pub enum Skip {
+    TreeChanged,
+    /// An entry for the key is already there.
+    Present,
+    NotWritten,
+}
+
+impl Skip {
+    /// The reason in a sentence, or `None` when nothing is wrong.
+    pub fn why(&self) -> Option<&'static str> {
+        match self {
+            Skip::TreeChanged => Some("the tree changed during the build"),
+            Skip::Present => None,
+            Skip::NotWritten => {
+                Some("an input changed during the build or the entry could not be written")
+            }
+        }
+    }
 }
 
 /// Remove every executable but the newest of its group, with the files kept
@@ -350,7 +377,8 @@ mod tests {
             future,
             &exe,
             "g",
-        );
+        )
+        .unwrap();
         let hit = store::lookup(&dir, "k", &repo.0, "bin").unwrap();
         assert_eq!(std::fs::read(&hit).unwrap(), bytes);
         let mode = std::fs::metadata(&hit).unwrap().permissions().mode();
@@ -371,7 +399,7 @@ mod tests {
         let wrong = Some("other".into());
         assert_eq!(
             store(&dir, "k", wrong, &repo.0, &read, future, &exe, "g"),
-            None
+            Err(Skip::TreeChanged)
         );
         assert_eq!(load(&dir, "k", &repo.0), None);
     }

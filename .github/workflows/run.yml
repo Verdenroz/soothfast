@@ -30,6 +30,11 @@ on:
         required: false
         type: string
         default: "22"
+      shard:
+        description: "Legs the Rust gate is split into; each builds nothing and measures its share of the items"
+        required: false
+        type: number
+        default: 1
 
 permissions: {}
 
@@ -63,6 +68,7 @@ jobs:
       test_projects: ${{ steps.plan.outputs.test_projects }}
       test_all: ${{ steps.plan.outputs.test_all }}
       test_expect: ${{ steps.plan.outputs.test_expect }}
+      shards: ${{ steps.plan.outputs.shards }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -116,9 +122,13 @@ jobs:
           LABELS: ${{ steps.labels.outputs.labels }}
           JAVA: ${{ inputs.java }}
           NODE: ${{ inputs.node }}
+          SHARD: ${{ inputs.shard }}
+          # A push records every item in its first leg; the others would only set up.
+          FIRST_ONLY: ${{ github.event_name != 'pull_request' && 'true' || '' }}
           SETTLED: ${{ runner.temp }}/settled
         run: |
           cargo soothfast plan --github --java "$JAVA" --node "$NODE" \
+            --shard "$SHARD" ${FIRST_ONLY:+--first-shard-only} \
             --results "$SETTLED" \
             ${BASE_REF:+--base "origin/$BASE_REF"} ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
       - name: Upload the results of tests that need no job
@@ -127,6 +137,117 @@ jobs:
           name: soothfast-result-test-settled
           path: ${{ runner.temp }}/settled
           if-no-files-found: ignore
+
+  # Builds the bench and rustdoc stores on their own machines, so the gate and the docs check compile nothing.
+  # Toolchain and cache setup match the reading jobs, since the variables they export are in the store keys.
+  build-bench:
+    name: Build (bench)
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.packages != ''
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: bench
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
+      - uses: ./.soothfast-action
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: "false"
+          prebuild: bench
+          prebuild-shards: ${{ inputs.shard }}
+          prebuild-stage: ${{ runner.temp }}/store
+          bin-cache: "true"
+      - name: Pack the stores
+        if: always()
+        run: if [ -d "$RUNNER_TEMP/store" ]; then tar -C "$RUNNER_TEMP/store" -cf "$RUNNER_TEMP/store.tar" .; fi
+      - name: Upload the stores
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-store-bench
+          path: ${{ runner.temp }}/store.tar
+          if-no-files-found: ignore
+          retention-days: 1
+          compression-level: 1
+
+  build-rustdoc:
+    name: Build (rustdoc)
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.docs_package != ''
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: rustdoc
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
+      - uses: ./.soothfast-action
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: "false"
+          prebuild: rustdoc
+          prebuild-docs: ${{ needs.plan.outputs.docs_package }}
+          prebuild-stage: ${{ runner.temp }}/store
+          rustdoc-cache: "true"
+      - name: Pack the stores
+        if: always()
+        run: if [ -d "$RUNNER_TEMP/store" ]; then tar -C "$RUNNER_TEMP/store" -cf "$RUNNER_TEMP/store.tar" .; fi
+      - name: Upload the stores
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-store-rustdoc
+          path: ${{ runner.temp }}/store.tar
+          if-no-files-found: ignore
+          retention-days: 1
+          compression-level: 1
 
   test:
     name: Test
@@ -316,15 +437,18 @@ jobs:
           key: soothfast-tests-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   gate-rust:
-    name: Gate
-    needs: plan
-    if: github.event_name != 'schedule' && needs.plan.outputs.packages != ''
+    name: Gate${{ matrix.shard != '' && format(' ({0})', matrix.shard) || '' }}
+    needs: [plan, build-bench]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && github.event_name != 'schedule' && needs.plan.outputs.packages != '' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     environment: soothfast-bot
     permissions:
       contents: read
       pull-requests: write
       id-token: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.shards) }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -346,24 +470,45 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
+      # The build jobs save the target cache; this job compiles nothing on a store hit.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: bench
+          save-if: "false"
       - id: soothfast
         uses: ./.soothfast-action/action/install
+      # A failed build leaves nothing to download, and this job then compiles
+      # for itself and reports the error in its own output.
+      - name: Download the built stores
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: soothfast-store-bench
+          path: ${{ runner.temp }}/store-in
+      # A tar keeps the executables' modes, which an artifact drops.
+      - name: Unpack the built stores
+        run: |
+          if [ -f "$RUNNER_TEMP/store-in/store.tar" ]; then
+            mkdir -p .soothfast
+            tar -xf "$RUNNER_TEMP/store-in/store.tar" -C .soothfast
+          fi
       - uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
           changelog: ${{ inputs.bot && 'true' || 'false' }}
           comment: "false"
+          shard: ${{ matrix.shard }}
+          # A pull request's shard saves the baseline of its own items, which the docs job merges.
           save-baseline: head
-          bin-cache: "true"
-          # Only the changelog regeneration on a default-branch push builds rustdoc.
+          # The build job owns the executables; only the changelog
+          # regeneration on a default-branch push builds rustdoc here.
           rustdoc-cache: ${{ inputs.bot && github.event_name == 'push' && 'true' || 'false' }}
       - name: Upload the gate results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-rust
+          name: soothfast-result-rust${{ matrix.shard != '' && format('-shard-{0}', matrix.slug) || '' }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
       # The docs job reads claims from this instead of measuring again. A
@@ -372,11 +517,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-baseline
+          name: soothfast-baseline${{ matrix.shard != '' && github.event_name == 'pull_request' && format('-shard-{0}', matrix.slug) || '' }}
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
-      # A pull request that leaves the bench binaries unchanged saves none,
-      # so the docs job falls back to the default branch's measurement.
+      # A gate whose binaries match its reference saves that reference's stored run, so every push saves one.
+      # A pull request whose gate cannot save any reads the merge-base's measurement saved here.
       - name: Keep the default-branch measurement
         if: github.event_name == 'push' && hashFiles('.soothfast/baselines/head.json') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -495,7 +640,7 @@ jobs:
 
   docs:
     name: Docs check
-    needs: [plan, gate-rust]
+    needs: [plan, build-rustdoc, gate-rust]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.plan.outputs.docs == 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
@@ -507,6 +652,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
@@ -523,48 +669,25 @@ jobs:
           toolchain: nightly
       - if: needs.plan.outputs.docs_package != ''
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: rustdoc
+          save-if: "false"
       - id: soothfast
         uses: ./.soothfast-action/action/install
-      # The same restore, save and merge the action's `rustdoc-cache` runs.
-      - name: Name the rustdoc cache
+      # A failed rustdoc build leaves nothing to download, and the docs check then builds the JSON itself.
+      - name: Download the built stores
         if: needs.plan.outputs.docs_package != ''
-        id: rustdoc-key
-        env:
-          RUNNER_OS_NAME: ${{ runner.os }}
-          RUNNER_ARCH_NAME: ${{ runner.arch }}
-        run: echo "prefix=soothfast-rustdoc-${GITHUB_JOB}--${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}" >>"$GITHUB_OUTPUT"
-      - name: Restore this branch's rustdoc JSON
-        if: needs.plan.outputs.docs_package != '' && github.event_name == 'pull_request'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: .soothfast/rustdoc
-          key: ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-
-      - name: Set the branch's rustdoc JSON aside
-        if: needs.plan.outputs.docs_package != '' && github.event_name == 'pull_request'
-        run: |
-          if [ -d .soothfast/rustdoc ]; then
-            mkdir -p .soothfast-rustdoc-branch
-            mv .soothfast/rustdoc .soothfast-rustdoc-branch/rustdoc
-          fi
-      - name: Restore and save rustdoc JSON
+          name: soothfast-store-rustdoc
+          path: ${{ runner.temp }}/store-in
+      - name: Unpack the built stores
         if: needs.plan.outputs.docs_package != ''
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .soothfast/rustdoc
-          key: ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
-            ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.event.repository.default_branch }}-
-      - name: Merge the branch's rustdoc JSON
-        if: needs.plan.outputs.docs_package != '' && github.event_name == 'pull_request'
-        env:
-          CLI: ${{ steps.soothfast.outputs.bin }}
         run: |
-          if [ -d .soothfast-rustdoc-branch ]; then
-            "$CLI" cache merge --from .soothfast-rustdoc-branch
-            rm -rf .soothfast-rustdoc-branch
+          if [ -f "$RUNNER_TEMP/store-in/store.tar" ]; then
+            mkdir -p .soothfast
+            tar -xf "$RUNNER_TEMP/store-in/store.tar" -C .soothfast
           fi
       - name: Download the head measurement
         continue-on-error: true
@@ -572,17 +695,55 @@ jobs:
         with:
           name: soothfast-baseline
           path: .soothfast/baselines
-      - name: Restore the default-branch measurement
-        if: hashFiles('.soothfast/baselines/head.json') == ''
+      # Each shard of a pull request saved the baseline of its own items.
+      - name: Download the shard measurements
+        if: github.event_name == 'pull_request' && inputs.shard > 1
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: soothfast-baseline-shard-*
+          path: .soothfast/shard-baselines
+      # All shards merge into the measurement, none means the binaries were unchanged,
+      # and some leave the claims unevaluated.
+      - name: Merge the shard measurements
+        if: github.event_name == 'pull_request' && inputs.shard > 1
+        id: shards
+        shell: bash
+        env:
+          SHARDS: ${{ inputs.shard }}
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: |
+          mapfile -t files < <(find .soothfast/shard-baselines -name head.json 2>/dev/null | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "complete=none" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          rc=0
+          cargo soothfast baseline merge --into head --expect "$SHARDS" --packages "$PACKAGES" "${files[@]}" || rc=$?
+          case "$rc" in
+            0) echo "complete=all" >>"$GITHUB_OUTPUT" ;;
+            3)
+              echo "::warning::${#files[@]} of $SHARDS shard measurements arrived; claims not evaluated"
+              echo "complete=partial" >>"$GITHUB_OUTPUT"
+              ;;
+            *) exit "$rc" ;;
+          esac
+      # Unchanged binaries make the merge-base's measurement the pull request's, named as the gate names it.
+      - name: Name the merge-base
+        if: github.event_name == 'pull_request'
+        id: base
+        run: echo "sha=$(.soothfast-action/action/merge-base.sh)" >>"$GITHUB_OUTPUT"
+      - name: Restore the merge-base measurement
+        if: hashFiles('.soothfast/baselines/head.json') == '' && steps.shards.outputs.complete != 'partial'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .soothfast/baselines/head.json
-          key: soothfast-baseline-${{ github.event.pull_request.base.sha || github.sha }}
-          restore-keys: soothfast-baseline-
+          key: soothfast-baseline-${{ steps.base.outputs.sha || github.sha }}
       - name: Check the docs
         shell: bash
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
@@ -593,7 +754,7 @@ jobs:
           if [ -f .soothfast/baselines/head.json ]; then
             args+=(--baseline head)
           else
-            echo "::warning::claims not evaluated: no measurement"
+            echo "::warning::claims not evaluated: no measurement for the merge-base ${BASE_SHA:-of this run}"
             echo "claims not evaluated: no measurement" >> "$RESULT"
             args+=(--skip-claims)
           fi
@@ -663,6 +824,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
           EXPECT_RUST: ${{ needs.plan.outputs.packages }}
+          EXPECT_SHARDS: ${{ join(fromJSON(needs.plan.outputs.shards).include.*.shard, ' ') }}
           EXPECT_IMPORT: ${{ join(fromJSON(needs.plan.outputs.matrix).include.*.name, ' ') }}
           EXPECT_DOCS: ${{ needs.plan.outputs.docs == 'true' && 'docs' || '' }}
           EXPECT_TEST: ${{ needs.plan.outputs.test == 'true' && 'test-rust' || '' }} ${{ needs.plan.outputs.test_expect }}

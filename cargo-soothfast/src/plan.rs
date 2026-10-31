@@ -23,14 +23,25 @@ struct Args {
     labels: Vec<String>,
     results: Option<PathBuf>,
     pins: Pins,
+    /// Legs the Rust gate is split into.
+    shards: u64,
+    /// Run only the first shard, which records every item for the others.
+    first_shard_only: bool,
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
-    let mut out = Args::default();
+    let mut out = Args {
+        shards: 1,
+        ..Args::default()
+    };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         if a == "--github" {
             out.github = true;
+            continue;
+        }
+        if a == "--first-shard-only" {
+            out.first_shard_only = true;
             continue;
         }
         let value = it
@@ -47,6 +58,14 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
                     .collect()
             }
             "--results" => out.results = Some(PathBuf::from(value)),
+            "--shard" => match value.parse() {
+                Ok(n) if n >= 1 => out.shards = n,
+                _ => {
+                    return Err(format!(
+                        "--shard wants a count of at least 1, got {value:?}"
+                    ));
+                }
+            },
             "--java" => out.pins.java = Some(value),
             "--node" => out.pins.node = Some(value),
             other => return Err(format!("unknown plan arg {other:?}")),
@@ -61,7 +80,14 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     let root = invoke::project_root();
-    let plan = match build(&root, args.base.as_deref(), args.labels, args.pins) {
+    let plan = match build(
+        &root,
+        args.base.as_deref(),
+        args.labels,
+        args.pins,
+        args.shards,
+        args.first_shard_only,
+    ) {
         Ok(plan) => plan,
         Err(e) => return err(&e),
     };
@@ -91,6 +117,8 @@ struct Plan {
     pins: Pins,
     /// Names of the tests a stored pass already covers.
     reused: BTreeSet<String>,
+    shards: u64,
+    first_shard_only: bool,
 }
 
 /// One project's tests, or one suite's, and whether the change reaches them.
@@ -106,6 +134,8 @@ fn build(
     base: Option<&str>,
     labels: Vec<String>,
     mut pins: Pins,
+    shards: u64,
+    first_shard_only: bool,
 ) -> Result<Plan, String> {
     let rust = root
         .join("Cargo.toml")
@@ -145,6 +175,8 @@ fn build(
         changed,
         pins,
         reused: BTreeSet::new(),
+        shards,
+        first_shard_only,
     };
     plan.check_names()?;
     plan.reused = plan.stored_passes(root)?;
@@ -315,6 +347,27 @@ impl Plan {
         Ok(())
     }
 
+    /// The legs the Rust gate runs as, each with its `I/N` shard and the
+    /// `I-of-N` form that names its artifacts; one leg with neither when
+    /// there is no shard.
+    fn shard_legs(&self) -> Value {
+        if self.shards <= 1 {
+            return json!({ "include": [{ "shard": "", "slug": "" }] });
+        }
+        let last = if self.first_shard_only {
+            1
+        } else {
+            self.shards
+        };
+        let legs: Vec<Value> = (1..=last)
+            .map(|i| {
+                let n = self.shards;
+                json!({ "shard": format!("{i}/{n}"), "slug": format!("{i}-of-{n}") })
+            })
+            .collect();
+        json!({ "include": legs })
+    }
+
     /// `key=value` lines for `$GITHUB_OUTPUT`. The matrix holds only the
     /// non-Rust projects: the cargo workspace gates through its own job.
     fn outputs(&self) -> String {
@@ -330,7 +383,7 @@ impl Plan {
             .unwrap_or_default();
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nruns_on={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -340,6 +393,7 @@ impl Plan {
             !tests["include"].as_array().is_none_or(Vec::is_empty),
             self.test_all(),
             self.test_expect(),
+            self.shard_legs(),
             self.ci.runs_on_json(),
         )
     }
@@ -413,7 +467,52 @@ mod tests {
                 ..Pins::default()
             },
             reused: BTreeSet::new(),
+            shards: 1,
+            first_shard_only: false,
         }
+    }
+
+    #[test]
+    fn the_gate_runs_as_one_leg_or_one_per_shard() {
+        let mut p = plan(Some(&["a"]), vec![]);
+        assert_eq!(
+            p.shard_legs(),
+            json!({ "include": [{ "shard": "", "slug": "" }] })
+        );
+        p.shards = 3;
+        assert_eq!(
+            p.shard_legs()["include"][1],
+            json!({ "shard": "2/3", "slug": "2-of-3" })
+        );
+        assert!(
+            p.outputs()
+                .contains("shards={\"include\":[{\"shard\":\"1/3\",\"slug\":\"1-of-3\"}")
+        );
+    }
+
+    #[test]
+    fn a_push_keeps_only_the_first_shard() {
+        let mut p = plan(Some(&["a"]), vec![]);
+        p.shards = 3;
+        p.first_shard_only = true;
+        assert_eq!(
+            p.shard_legs(),
+            json!({ "include": [{ "shard": "1/3", "slug": "1-of-3" }] })
+        );
+        assert!(
+            parse_args(&["--first-shard-only".to_string()])
+                .unwrap()
+                .first_shard_only
+        );
+    }
+
+    #[test]
+    fn the_shard_flag_is_parsed() {
+        let argv = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(parse_args(&argv(&["--shard", "3"])).unwrap().shards, 3);
+        assert_eq!(parse_args(&argv(&[])).unwrap().shards, 1);
+        assert!(parse_args(&argv(&["--shard", "0"])).is_err());
+        assert!(parse_args(&argv(&["--shard", "many"])).is_err());
     }
 
     #[test]
@@ -529,7 +628,7 @@ mod tests {
         assert_eq!(p.test_expect(), "test-gradle test-node");
         assert!(
             p.outputs()
-                .contains("test_expect=test-gradle test-node\nruns_on=")
+                .contains("test_expect=test-gradle test-node\nshards=")
         );
     }
 

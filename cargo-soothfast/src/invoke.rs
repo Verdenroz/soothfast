@@ -911,7 +911,7 @@ impl SaveScope {
     pub fn of(common: &CommonArgs) -> SaveScope {
         if common.backend.as_deref() == Some("buildcost") {
             SaveScope::Buildcost(common.pkg.clone())
-        } else if common.filter.is_some() {
+        } else if common.filter.is_some() || common.shard.is_some() {
             SaveScope::BenchFiltered
         } else {
             SaveScope::BenchFull(common.pkg.clone())
@@ -924,7 +924,7 @@ pub fn id_pkg(id: &str) -> &str {
     id.split("::").next().unwrap_or(id)
 }
 
-fn is_imported(item: &Value) -> bool {
+pub(crate) fn is_imported(item: &Value) -> bool {
     item["imported"].is_string()
 }
 
@@ -1003,9 +1003,11 @@ pub fn save_baseline_in(
     }
     doc["assertions"] = Value::Array(assertions);
 
-    let path = baseline_path(root, name);
-    std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
-    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
+    if let Some(list) = doc.get_mut("unmeasured").and_then(Value::as_array_mut) {
+        let saved: Vec<&str> = run.items.keys().map(|id| id_pkg(id)).collect();
+        list.retain(|p| p.as_str().is_none_or(|p| !saved.contains(&p)));
+    }
+    let path = write_baseline_in(root, name, &doc)?;
     prune_absorbed_accepts(root, run);
     Ok(path)
 }
@@ -1025,6 +1027,56 @@ fn prune_absorbed_accepts(root: &Path, run: &Run) {
             println!("soothfast-gate.lock: {id} absorbed into the new baseline, entry removed");
         }
     }
+}
+
+/// Write `doc` as the named baseline under the workspace root.
+pub fn write_baseline(name: &str, doc: &Value) -> io::Result<PathBuf> {
+    write_baseline_in(&workspace_root()?, name, doc)
+}
+
+/// Write `doc` as the named baseline under `root`.
+pub fn write_baseline_in(root: &Path, name: &str, doc: &Value) -> io::Result<PathBuf> {
+    let path = baseline_path(root, name);
+    std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
+    std::fs::write(&path, serde_json::to_string_pretty(doc)?)?;
+    Ok(path)
+}
+
+/// Note in the baseline `name` that `pkg` has no measurement in it, so a
+/// claim about its items is reported as not evaluated and not as a failure.
+pub fn mark_unmeasured(name: &str, pkg: &str) -> io::Result<PathBuf> {
+    let root = workspace_root()?;
+    let mut doc =
+        load_baseline_in(&root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+    let pkg = pkg.replace('-', "_");
+    let mut list: Vec<String> = doc["unmeasured"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.as_str().map(String::from))
+        .collect();
+    if !list.contains(&pkg) {
+        list.push(pkg);
+    }
+    doc["unmeasured"] = json!(list);
+    write_baseline_in(&root, name, &doc)
+}
+
+/// Whether the baseline `name` under `root` already holds bench items of
+/// `pkg`, or any when no package is named. A shard saving into it would leave
+/// those items half old.
+pub fn baseline_holds_in(root: &Path, name: &str, pkg: Option<&str>) -> bool {
+    let Ok(Some(doc)) = load_baseline_in(root, name) else {
+        return baseline_path(root, name).exists();
+    };
+    let pkg = pkg.map(|p| p.replace('-', "_"));
+    doc["items"].as_object().is_some_and(|items| {
+        items.iter().any(|(id, item)| {
+            !is_imported(item)
+                && !id.starts_with("buildcost::")
+                && pkg.as_deref().is_none_or(|p| id_pkg(id) == p)
+        })
+    })
 }
 
 /// Load a named baseline, if present.
@@ -1284,6 +1336,17 @@ pub fn rustdoc_json_in(
         rustdocstore::store(&key, store_key(), &root, &inputs, started, &json_path);
     }
     Ok((doc, root))
+}
+
+/// The store key `rustdoc_json_in` looks `pkg` up under in the workspace.
+pub fn rustdoc_key(pkg: &str, features: Option<&str>, visibility: Visibility) -> Option<String> {
+    let root = workspace_root().ok()?;
+    rustdoc_store_key(pkg, None, &root, features, visibility, &rustdoc_toolchain())
+}
+
+/// Whether the store holds the rustdoc JSON under `key`.
+pub fn rustdoc_holds(key: &str) -> bool {
+    workspace_root().is_ok_and(|root| rustdocstore::holds(key, &root))
 }
 
 /// `cargo rustdoc` for `pkg`, recording what it read in `dep_info` when given.
@@ -1936,10 +1999,42 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, Shard,
-        forget_missing_worktree_in, git_in, harness_mismatches, run_from_items_value,
-        run_to_items_value, saved_items,
+        CommonArgs, Guest, HostEnv, ItemMetrics, Reused, Run, SaveScope, Shard, baseline_holds_in,
+        forget_missing_worktree_in, git_in, harness_mismatches, load_baseline_in,
+        run_from_items_value, run_to_items_value, saved_items, write_baseline_in,
     };
+    use serde_json::json;
+
+    #[test]
+    fn a_sharded_baseline_takes_one_package_after_another_but_not_one_twice() {
+        let root =
+            std::env::temp_dir().join(format!("soothfast-shard-pkgs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let save = |id: &str| {
+            let mut doc = load_baseline_in(&root, "head")
+                .unwrap()
+                .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+            doc["items"][id] = json!({ "ir": 1 });
+            write_baseline_in(&root, "head", &doc).unwrap();
+        };
+        assert!(!baseline_holds_in(&root, "head", Some("a")));
+        save("a::x");
+        assert!(!baseline_holds_in(&root, "head", Some("b-pkg")));
+        save("b_pkg::y");
+        assert!(baseline_holds_in(&root, "head", Some("a")));
+        assert!(baseline_holds_in(&root, "head", Some("b-pkg")));
+        assert!(baseline_holds_in(&root, "head", None));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_sharded_run_saves_without_replacing_its_scope() {
+        let common = CommonArgs {
+            shard: Some(Shard { index: 1, count: 3 }),
+            ..CommonArgs::default()
+        };
+        assert!(matches!(SaveScope::of(&common), SaveScope::BenchFiltered));
+    }
 
     #[test]
     fn only_our_missing_worktree_is_forgotten() {

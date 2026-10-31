@@ -8,6 +8,7 @@
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod agreement;
+mod baseline;
 mod benchexe;
 mod binstore;
 mod buildcost;
@@ -36,6 +37,7 @@ mod jumptable;
 mod linkmap;
 mod mcp;
 mod plan;
+mod prebuild;
 mod project_surface;
 mod report;
 mod runcache;
@@ -83,6 +85,10 @@ commands:
            acts on pull request labels as soothfast-bot; --labels creates
            soothfast:merge, soothfast:update, soothfast:perf-accepted and
            do-not-merge with gh)
+  baseline merge --into NAME [--expect N] [--packages \"A B\"] FILE...
+           (merges the partial baselines of a sharded gate into one; with
+           --expect, fails unless exactly N files are given, and with
+           --packages, replaces those packages and fails if one has no items)
   cache    merge --from DIR
            (folds a restored .soothfast cache layout in DIR into this
            project's: items keep the entries of both, runs and link maps are
@@ -91,6 +97,14 @@ commands:
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
            --github prints $GITHUB_OUTPUT lines)
+  prebuild [-p PKG]... [--features F] [--against-ref REF] [--no-reuse-base]
+           [--docs PKG]... [--spec PKG[:TARGET]]... [--only bench|routes|rustdoc]...
+           (builds into the stores what a later job reads and nothing else:
+           HEAD's bench executables and link maps for the -p packages, the
+           merge-base's too unless the run cache holds its run, the routes
+           executables of the --spec packages and rustdoc JSON for --docs
+           and for the --spec packages that generate a spec; prints what
+           it built against what was already stored)
   import   --from jmh|pyperf|pytest-benchmark|vitest FILE [--prefix P]
            (--save-baseline NAME | --out FILE)
            (turns another harness's benchmark results into walltime items
@@ -210,6 +224,8 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "measure" => cmd_measure(rest),
         "init" => init::run(rest),
         "plan" => plan::run(rest),
+        "prebuild" => prebuild::run(rest),
+        "baseline" => baseline::run(rest),
         "cache" => cache::run(rest),
         "import" => import::run(rest),
         "gate" => gate::run(rest),

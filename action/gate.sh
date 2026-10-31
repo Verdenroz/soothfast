@@ -37,7 +37,9 @@ mkdir -p "$out_dir"
     SECONDS=0
     "$CLI" gate -p "$pkg" --against-ref "origin/${BASE_REF}" "${features[@]}" "${save[@]}" "${shard[@]}" 2>&1 | tee "$out" >&2 || rc=$?
     if [ "${COMMENT:-true}" = false ]; then
-      "$CLI" verdict record --name "$pkg" --kind rust --exit "$rc" --output "$out" \
+      name=$pkg
+      [ -n "${SHARD:-}" ] && name="${pkg}#${SHARD}"
+      "$CLI" verdict record --name "$name" --kind rust --exit "$rc" --output "$out" \
         --seconds "$SECONDS" --out "${RUNNER_TEMP}/soothfast-results/${pkg}.json"
     fi
     case "$rc" in

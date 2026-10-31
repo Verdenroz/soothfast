@@ -1,0 +1,18 @@
+paths:
+  # Word splitting in these scripts is deliberate.
+  .github/workflows/ci.yml:
+    ignore:
+      - 'shellcheck reported issue in this script: SC2086:info:'
+  .github/workflows/release.yml:
+    ignore:
+      - 'shellcheck reported issue in this script: SC2086:info:'
+  .github/workflows/run.yml:
+    ignore:
+      - 'shellcheck reported issue in this script: SC2086:info:'
+      - 'shellcheck reported issue in this script: SC2012:info:'
+  # The single quotes hold a literal backtick fence.
+  .github/workflows/soothfast-gate.yml:
+    ignore:
+      - 'shellcheck reported issue in this script: SC2016:info:'
+      # A real property of a called workflow that actionlint's context table lacks.
+      - 'property "job_workflow_sha" is not defined'
