@@ -187,7 +187,9 @@ since only a job in the environment can obtain a bot token.</p>
 waits for a human.</p>
 <h2 id="what-the-step-does">What the step does<a class="anchor" href="#what-the-step-does" aria-label="Link to this section">#</a></h2>
 <p>Every run installs <code>cargo-soothfast</code> pinned to the <code>soothfast</code> version in
-your <code>Cargo.lock</code>, cached across runs. Pin the action to a release no newer
+your <code>Cargo.lock</code>, cached across runs. The binary is downloaded from the
+GitHub release and checked against its <code>SHA256SUMS</code>; if that fails the step
+warns and falls back to <code>cargo-binstall</code>. Pin the action to a release no newer
 than that version: the scripts pass flags the CLI at the action's ref
 understands. Runs that have nothing to do (a push to another branch, a pull
 request with <code>gate: false</code>) stop there. Otherwise the checkout is unshallowed
