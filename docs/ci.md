@@ -498,6 +498,7 @@ jobs:
 ```
 
 `soothfast_ref` is the same tag or commit as in the `uses:` line, which the
-workflow cannot read for itself. `cli-artifact` names an artifact holding a prebuilt CLI at
+workflow cannot read for itself. Left empty, the action scripts come from the
+default branch and the run warns. `cli-artifact` names an artifact holding a prebuilt CLI at
 `bin/cargo-soothfast` from earlier in the same run; without it the workflow
 installs the release matching your `Cargo.lock`.
