@@ -18,6 +18,10 @@
 
 - Store the items of identical bench binaries (#317)
 
+### 🔧 Internal
+
+- Cache Gradle and Maven dependencies (#319)
+
 
 ## 0.5.0 - 2026-10-30
 
