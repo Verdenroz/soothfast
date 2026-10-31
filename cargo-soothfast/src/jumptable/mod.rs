@@ -16,9 +16,8 @@
 //! path to the load defines it the same way (see [`prove`]). Any other shape
 //! is no proof, and the caller hashes the bytes.
 //!
-//! The same load and add with no jump after them read a table of offsets to
-//! data, such as the names an enum's `Debug` impl picks from. Its words move
-//! whenever the data does, and are proven the same way.
+//! A table of offsets to data, such as the names an enum's `Debug` impl picks
+//! from, is proven by the stricter shape in [`offset_table`].
 
 use std::collections::{HashMap, HashSet};
 
@@ -538,9 +537,11 @@ fn completes(after: &[(u64, Ins)], base: &str, word: &str) -> Option<usize> {
 ///
 /// with only plain instructions that touch none of the three registers in
 /// between, and `%rB` fully overwritten by a plain instruction after the add
-/// and before anything that could read it. Then the raw offset in `%rW` dies
-/// in the add, and nothing else sees the table's address. Returns the `lea`
-/// (an index into `leas`) and the add.
+/// and before anything that could read it. A `ret` counts as an overwrite when
+/// `%rB` is a caller-saved register that is not a return register (SysV
+/// returns in `rax` and `rdx`); a call, a jump and anything else do not. Then
+/// the raw offset in `%rW` dies in the add, and nothing else sees the table's
+/// address. Returns the `lea` (an index into `leas`) and the add.
 fn offset_table(
     parsed: &[(u64, Ins)],
     leas: &[Lea],
@@ -582,7 +583,7 @@ fn offset_table(
     }
     let add = add?;
     for ins in parsed[add + 1..].iter().take(REACH).map(|(_, i)| i) {
-        if overwrites(ins, base) {
+        if overwrites(ins, base) || (is_return(ins) && is_dead_at_return(base)) {
             return Some((lea?, add));
         }
         if !plain(ins) || mentions(ins, base) {
@@ -590,6 +591,15 @@ fn offset_table(
         }
     }
     None
+}
+
+fn is_return(ins: &Ins) -> bool {
+    matches!(ins.mnemonic, "ret" | "retq") && ins.operands.is_empty()
+}
+
+/// Whether register family `reg` is caller-saved and not a return register.
+fn is_dead_at_return(reg: &str) -> bool {
+    CALLER_SAVED.contains(&reg) && !matches!(reg, "a" | "d")
 }
 
 /// The `(%rA,%rI,4)` index register of a memory operand.

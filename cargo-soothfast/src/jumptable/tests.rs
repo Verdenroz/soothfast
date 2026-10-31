@@ -567,8 +567,31 @@ fn two_exits_through_one_register_are_judged_together() {
     assert_eq!(prove_in(&lines).len(), 1);
 }
 
-/// Every table of offsets to data names the address `0x3000`.
-fn prove_data(lines: &[&str]) -> Proven {
+/// An image whose table input is read-only (or not, with `None`), and where
+/// every table of offsets to data names the address `0x3000`.
+struct Data {
+    input: Option<(u64, u64)>,
+}
+
+impl Exits for Data {
+    fn branch_leaves(&self, _: u64) -> bool {
+        false
+    }
+
+    fn slot_leaves(&self, _: u64) -> bool {
+        true
+    }
+
+    fn rust(&self) -> bool {
+        true
+    }
+
+    fn data_table(&self, _: u64) -> Option<(u64, u64)> {
+        self.input
+    }
+}
+
+fn prove_data_in(lines: &[&str], input: Option<(u64, u64)>) -> Proven {
     let instrs = code(lines);
     let last = instrs.last().map(|(a, _)| *a).unwrap_or(0);
     prove(
@@ -576,10 +599,29 @@ fn prove_data(lines: &[&str]) -> Proven {
         (0x1000, last + 4),
         &|tables| tables.iter().map(|t| (*t, vec![last])).collect(),
         &|tables| tables.iter().map(|t| (*t, vec![0x3000])).collect(),
-        &RUST,
+        &Data { input },
     )
 }
 
+fn prove_data(lines: &[&str]) -> Proven {
+    prove_data_in(lines, Some((0x2010, 0x2020)))
+}
+
+const LOAD_SI: &str = "movslq (%rsi,%rcx,4),%rax";
+const ADD_SI: &str = "add    %rsi,%rax";
+
+/// `StandardHeader::as_str`.
+const AS_STR: [&str; 7] = [
+    "movzbl %dil,%ecx",
+    "lea    0x100d(%rip),%rax        # 2000 <lengths>",
+    "mov    (%rax,%rcx,8),%rdx",
+    LEA_SI,
+    LOAD_SI,
+    ADD_SI,
+    RET,
+];
+
+/// An enum's `Debug::fmt`.
 const KIND_FMT: [&str; 10] = [
     "mov    %rsi,%rax",
     "mov    (%rdi),%rcx",
@@ -593,102 +635,119 @@ const KIND_FMT: [&str; 10] = [
     "jmp    *0x156545(%rip)        # 4000 <_DYNAMIC+0xa40>",
 ];
 
-#[test]
-fn a_load_and_add_with_no_jump_proves_a_table_of_offsets_to_data() {
-    let proven = prove_data(&KIND_FMT);
+fn proven_once(proven: &Proven, lea: u64) {
     assert!(proven.proofs.is_empty());
-    assert_eq!(
-        proven.pointers,
-        [Proof {
-            lea: at(5),
-            table: 0x2010
-        }]
-    );
+    assert_eq!(proven.pointers, [Proof { lea, table: 0x2010 }]);
     assert_eq!(proven.targets[&0x2010], [0x3000]);
 }
 
 #[test]
-fn a_write_to_the_base_before_the_load_leaves_a_table_of_offsets_unproven() {
-    let mut lines = KIND_FMT.to_vec();
-    lines.insert(6, "mov    %rbx,%rdi");
+fn the_base_overwritten_before_a_tail_call_proves_a_table_of_offsets() {
+    proven_once(&prove_data(&KIND_FMT), at(5));
+}
+
+#[test]
+fn a_return_ends_the_life_of_a_base_that_is_not_a_return_register() {
+    proven_once(&prove_data(&AS_STR), at(3));
+}
+
+#[test]
+fn a_return_reads_the_return_registers() {
+    let lines = [
+        "lea    0x100d(%rip),%rax        # 2010 <anon>",
+        "movslq (%rax,%rcx,4),%rdx",
+        "add    %rax,%rdx",
+        RET,
+    ];
     assert!(prove_data(&lines).pointers.is_empty());
 }
 
 #[test]
-fn a_table_read_as_offsets_and_as_jumps_is_a_jump_table() {
-    let proven = prove_data(&[LEA, LOAD, ADD, JMP, LEA, LOAD, ADD, RET]);
-    assert!(proven.pointers.is_empty());
-    assert_eq!(proven.proofs.len(), 2);
+fn a_tail_jump_with_the_base_still_in_place_is_no_proof() {
+    let lines = [
+        "lea    0x100d(%rip),%rcx        # 2010 <anon>",
+        "movslq (%rcx,%r14,4),%rax",
+        "add    %rcx,%rax",
+        "mov    %rsi,%rdi",
+        "mov    %rax,%rsi",
+        "add    $0x28,%rsp",
+        "jmp    *0x156545(%rip)        # 4000 <_DYNAMIC+0xa40>",
+    ];
+    assert!(prove_data(&lines).pointers.is_empty());
 }
 
 #[test]
-fn a_sequence_that_could_be_a_jump_is_no_data_table() {
-    let sum_written = [LEA, LOAD, ADD, "inc    %rax", JMP, RET];
-    let copied = [LEA, LOAD, ADD, "mov    %rax,%rdx", "jmp    *%rdx", RET];
-    let mut runs_out = vec![LEA, LOAD, ADD];
-    runs_out.extend(["nop"; 40]);
-    let mut far_jump = runs_out.clone();
-    far_jump.extend([JMP, RET]);
-    for lines in [sum_written.to_vec(), copied.to_vec(), runs_out, far_jump] {
-        let proven = prove_data(&lines);
-        assert!(proven.pointers.is_empty() && proven.proofs.is_empty());
+fn a_second_reference_to_the_table_is_no_proof() {
+    let mut lines = AS_STR.to_vec();
+    lines.insert(1, "lea    0x100d(%rip),%rdx        # 2014 <anon+4>");
+    assert!(prove_data(&lines).pointers.is_empty());
+}
+
+#[test]
+fn a_table_in_writable_or_sealed_data_is_no_proof() {
+    assert!(prove_data_in(&AS_STR, None).pointers.is_empty());
+}
+
+#[test]
+fn a_write_to_a_register_of_the_read_in_between_is_no_proof() {
+    for between in ["mov    $0x1,%ecx", "mov    %rsi,%rdx", "mov    %rax,%rdx"] {
+        let mut before_load = AS_STR.to_vec();
+        before_load.insert(4, between);
+        assert!(prove_data(&before_load).pointers.is_empty(), "{between}");
+        let mut before_add = AS_STR.to_vec();
+        before_add.insert(5, between);
+        assert!(prove_data(&before_add).pointers.is_empty(), "{between}");
     }
-    let mut far_add = vec![LEA, LOAD];
-    far_add.extend(["nop"; 40]);
-    far_add.extend([ADD, RET]);
-    assert!(prove_data(&far_add).pointers.is_empty());
-    let guarded = [
-        "mov    0x8(%rdi),%rsi",
-        LEA,
-        LOAD,
-        ADD,
-        "ja     1018 <f+0x18>",
-        "jmp    *%rsi",
+    let mut elsewhere = AS_STR.to_vec();
+    elsewhere.insert(5, "mov    %r8,%r9");
+    proven_once(&prove_data(&elsewhere), at(3));
+}
+
+#[test]
+fn a_read_of_the_base_after_the_add_is_no_proof() {
+    let lines = [
+        LEA_SI,
+        LOAD_SI,
+        ADD_SI,
+        "mov    (%rsi),%rdx",
+        "mov    %rax,%rsi",
         RET,
     ];
-    assert!(prove_data(&guarded).pointers.is_empty());
-    let branch = [LEA, LOAD, ADD, "jmp    1010 <f+0x10>", "nop", "nop", RET];
-    assert!(prove_data(&branch).pointers.is_empty());
-    let loaded = "mov    0x8(%rdi),%rbp";
-    let jump = "jmp    *%rbp";
-    let call = "call   2000 <g>";
-    let caller_saved = [loaded, LEA, LOAD, ADD, call, jump, RET];
-    assert_eq!(prove_data(&caller_saved).pointers.len(), 1);
-    let callee_saved = [
-        loaded,
-        "lea    0x100d(%rip),%rbx        # 2010 <anon>",
-        "movslq (%rbx,%rax,4),%rcx",
-        "add    %rcx,%rbx",
-        call,
-        jump,
-        RET,
-    ];
-    assert!(prove_data(&callee_saved).pointers.is_empty());
-    let into_base = [LEA, LOAD, "add    %rax,%rcx", "mov    (%rcx),%rdx", RET];
+    assert!(prove_data(&lines).pointers.is_empty());
+}
+
+#[test]
+fn a_call_or_a_partial_write_does_not_end_the_base() {
+    for after in ["call   2000 <g>", "mov    %al,%sil", "nop"] {
+        let lines = [LEA_SI, LOAD_SI, ADD_SI, after, "mov    %rax,%rsi", RET];
+        assert!(prove_data(&lines).pointers.is_empty(), "{after}");
+    }
+    let whole = [LEA_SI, LOAD_SI, ADD_SI, "mov    %eax,%esi", RET];
+    proven_once(&prove_data(&whole), at(0));
+}
+
+#[test]
+fn code_that_ends_before_the_base_does_is_no_proof() {
+    assert!(prove_data(&[LEA_SI, LOAD_SI, ADD_SI]).pointers.is_empty());
+    let mut long = vec![LEA_SI, LOAD_SI, ADD_SI];
+    long.extend(["mov    %rax,0x8(%rsp)"; 70]);
+    long.extend(["mov    %rax,%rsi", RET]);
+    assert!(prove_data(&long).pointers.is_empty());
+}
+
+#[test]
+fn an_add_into_the_base_or_a_second_load_is_no_proof() {
+    let into_base = [LEA_SI, LOAD_SI, "add    %rax,%rsi", "mov    $0x0,%esi", RET];
     assert!(prove_data(&into_base).pointers.is_empty());
     let differences = [
-        LEA,
-        LOAD,
-        "movslq 0x4(%rcx,%rax,4),%rdx",
-        ADD,
+        LEA_SI,
+        LOAD_SI,
+        "movslq 0x4(%rsi,%rcx,4),%rdx",
+        ADD_SI,
         "sub    %rax,%rdx",
         RET,
     ];
     assert!(prove_data(&differences).pointers.is_empty());
-    let used = [LEA, LOAD, ADD, "mov    (%rax),%rax", RET];
-    assert_eq!(prove_data(&used).pointers.len(), 1);
-    let mut overwritten = vec![LEA, LOAD, ADD, "mov    (%rax),%rax"];
-    overwritten.extend(["nop"; 600]);
-    overwritten.push(RET);
-    assert_eq!(prove_data(&overwritten).pointers.len(), 1);
-    let mut endless = vec![LEA, LOAD, ADD];
-    endless.extend(["mov    %rax,0x8(%rsp)"; 600]);
-    endless.push(RET);
-    assert!(prove_data(&endless).pointers.is_empty());
-    let mut stored = vec![LEA, LOAD, ADD];
-    stored.extend(["mov    %rax,0x8(%rsp)"; 40]);
-    stored.push(RET);
-    assert_eq!(prove_data(&stored).pointers.len(), 1);
 }
 
 #[test]
@@ -708,9 +767,10 @@ fn an_add_of_a_third_register_is_no_table_read() {
 }
 
 #[test]
-fn a_call_through_another_register_leaves_a_data_table_alone() {
-    let proven = prove_data(&[LEA, LOAD, ADD, "call   *%rdx", RET]);
-    assert_eq!(proven.pointers.len(), 1);
+fn a_table_read_as_offsets_and_as_jumps_is_a_jump_table() {
+    let proven = prove_data(&[LEA, LOAD, ADD, JMP, LEA, LOAD, ADD, RET]);
+    assert!(proven.pointers.is_empty());
+    assert_eq!(proven.proofs.len(), 2);
 }
 
 #[test]

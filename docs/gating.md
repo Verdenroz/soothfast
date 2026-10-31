@@ -370,11 +370,17 @@ hold only words that land inside the function, measured from the nearest
 proven base before them. Anything else hashes as bytes. This reads x86-64
 assembly only; on other architectures every table hashes as bytes.
 
-The same load and add with no jump after them read a table of offsets to
-data, such as the names an enum's `Debug` impl picks from or a header name
-table. Its words move whenever the strings do. Proven the same way, it is
+A table of offsets to data, such as the names an enum's `Debug` impl picks
+from or a header name table, moves its words whenever the strings do. It is
 hashed as the data each word names, so an edit elsewhere that shifts the
-strings leaves the function's key alone. A word must land inside a sized
+strings leaves the function's key alone, only where the function reads it
+through exactly `lea T(%rip),%rB; movslq (%rB,%rI,4),%rW; add %rB,%rW`. Only
+plain moves and arithmetic that touch none of the three registers may sit
+between them. After the add, `%rB` must be fully overwritten by a plain move
+before anything that could read it, where a `ret` counts as an overwrite when
+`%rB` is caller-saved and not a return register (`rax`, `rdx`); a call, a jump
+or any other instruction does not. The table's input must be read-only and
+not sealed, and nothing else in the function may take an address in it. A word must land inside a sized
 symbol or a link-map input. One past the end of either, the address of a
 zero-sized static, or only the section around it leaves the table as bytes.
 Without a link map a zero-sized static's address is keyed by the whole section

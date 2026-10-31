@@ -165,7 +165,7 @@ pub(super) fn table_operand(body: &str, hash: u64, off: u64) -> Option<String> {
 mod tests {
     use crate::codekey::elf::Marker;
     use crate::codekey::fixture::{
-        BAR, FN_SYMBOLS, Fixture, OBJECTS, READ_ONLY, WRITABLE, bar, object_sections,
+        BAR, FN_SYMBOLS, Fixture, OBJECTS, READ_ONLY, SECTIONS, WRITABLE, bar, object_sections,
     };
     use crate::linkmap::Extent;
     use std::collections::HashMap;
@@ -365,6 +365,32 @@ mod tests {
         };
         assert!(hash(0x2008).is_some());
         assert_ne!(hash(0x2008), hash(0x2010));
+    }
+
+    #[test]
+    fn a_table_in_writable_or_sealed_data_stays_raw() {
+        let writable = SECTIONS.replace("READONLY, DATA", "DATA");
+        let hash = |string: u64, writable_table: bool, sealed: bool| {
+            let string = Extent {
+                vma: string,
+                size: 8,
+                ..Extent::default()
+            };
+            let mut fixture = Fixture::default()
+                .symbols(FN_SYMBOLS)
+                .inputs(&[table_input(), string.clone()]);
+            if writable_table {
+                fixture = fixture.sections(&writable);
+            }
+            if sealed {
+                fixture = fixture.relro(0x2000, 0x20);
+            }
+            one_word(string.vma, fixture)
+        };
+        assert_eq!(hash(0x2008, false, false), hash(0x2010, false, false));
+        assert_eq!(hash(0x2008, true, false), None);
+        assert!(hash(0x2008, true, true).is_some());
+        assert_ne!(hash(0x2008, true, true), hash(0x2010, true, true));
     }
 
     #[test]
