@@ -18,6 +18,7 @@ use crate::headrun::{
 use crate::import;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::itemreuse::{Bin, Reuse};
+use crate::runcache::Runs;
 use crate::workspace;
 
 /// Deterministic counters gate tight.
@@ -1031,10 +1032,7 @@ fn measure_ref_interleaved(
     // even for an invocation that declined to trust an existing one.
     let base_known = !base_sha.is_empty();
 
-    if reuse
-        && base_known
-        && let Some(doc) = runs.load_reference(&base_sha, &base_sha)
-    {
+    if let Some(doc) = stored_reference(&runs, reuse, &base_sha) {
         println!("gate: reusing the measured merge-base {base_sha}");
         let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
             Some((head, from)) => {
@@ -1283,6 +1281,15 @@ fn measure_ref_interleaved(
         short_circuited: false,
         harness,
     }))
+}
+
+/// The run stored for the merge-base commit, which the gate reuses in place
+/// of building and measuring that side.
+pub(crate) fn stored_reference(runs: &Runs, reuse: bool, base_sha: &str) -> Option<Value> {
+    if !reuse || base_sha.is_empty() {
+        return None;
+    }
+    runs.load_reference(base_sha, base_sha)
 }
 
 /// Where a stored reference remembers that its harness could not be pinned,

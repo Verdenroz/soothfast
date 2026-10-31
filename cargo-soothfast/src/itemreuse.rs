@@ -39,6 +39,11 @@ impl<'a> Bin<'a> {
     }
 }
 
+/// Whether a per-item plan reads link maps, given what HEAD's binary resolves.
+pub fn reads_maps(env: Option<&invoke::HostEnv>, common: &CommonArgs) -> bool {
+    !common.no_item_cache && env.is_some_and(|e| e.gating_backend == "callgrind" && e.item_reuse)
+}
+
 /// What a callgrind measurement may take from the store: per binary, the
 /// items whose executed code a stored entry covers there, and the items left
 /// to run.

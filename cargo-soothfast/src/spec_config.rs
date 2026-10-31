@@ -144,6 +144,11 @@ impl SpecConfig {
         names
     }
 
+    /// Whether any entry is generated from the code, which needs rustdoc.
+    pub fn generates(&self) -> bool {
+        self.generating().next().is_some()
+    }
+
     fn generating(&self) -> impl Iterator<Item = &SpecEntry> {
         self.entries.iter().filter(|e| e.mode == Mode::Generate)
     }

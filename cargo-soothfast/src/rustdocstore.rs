@@ -45,6 +45,12 @@ pub fn load(key: &str, root: &Path) -> Option<Value> {
     load_from(&runcache::state_dir("rustdoc")?, key, root)
 }
 
+/// Whether a document is stored under `key` and its inputs still hold.
+pub fn holds(key: &str, root: &Path) -> bool {
+    runcache::state_dir("rustdoc")
+        .is_some_and(|dir| store::lookup(&dir, key, root, "json").is_some())
+}
+
 /// Keep the JSON rustdoc wrote at `json` for a build that started at
 /// `started`, unless the tree was edited meanwhile: `key` must still be the
 /// key the tree computes (`key_now`), and no input may be newer than the build.
