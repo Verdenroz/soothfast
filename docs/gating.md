@@ -339,6 +339,13 @@ hold only words that land inside the function, measured from the nearest
 proven base before them. Anything else hashes as bytes. This reads x86-64
 assembly only; on other architectures every table hashes as bytes.
 
+The same load and add with no jump after them read a table of offsets to
+data, such as the names an enum's `Debug` impl picks from or a header name
+table. Its words move whenever the strings do. Proven the same way, it is
+hashed as the data each word names, so an edit elsewhere that shifts the
+strings leaves the function's key alone. A word that names nothing the
+resolver can place leaves the table as bytes.
+
 `__stop_SEC` symbols that the linker defines are named, and the section they
 end is hashed, but the section that happens to follow is not: a pointer one
 past the end is never dereferenced.

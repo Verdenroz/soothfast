@@ -102,7 +102,7 @@ impl<'a> Resolver<'a> {
 
     /// `hint` is the symbol objdump printed next to the address, used only
     /// for code that has no sized symbol (PLT stubs) and GOT slots.
-    fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
+    pub(super) fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
         let section = self.section_at(addr)?;
         let code = self.sections[section].code;
         if let Some(i) = self.symbol_at(addr)
@@ -287,7 +287,7 @@ impl<'a> Resolver<'a> {
         self.describe(addr, hint)
     }
 
-    fn describe(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
+    pub(super) fn describe(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
         Some(match self.place(addr, hint)? {
             Place::Code(name) => name,
             Place::Bounded(name, node) => format!("{name}:{:016x}", self.root_hash(node)?),

@@ -15,6 +15,10 @@
 //! The base register may be loaded earlier in the function, provided every
 //! path to the load defines it the same way (see [`prove`]). Any other shape
 //! is no proof, and the caller hashes the bytes.
+//!
+//! The same load and add with no jump after them read a table of offsets to
+//! data, such as the names an enum's `Debug` impl picks from. Its words move
+//! whenever the data does, and are proven the same way.
 
 use std::collections::{HashMap, HashSet};
 
@@ -25,11 +29,12 @@ pub struct Proof {
     pub table: u64,
 }
 
-/// What [`prove`] found: the proven bases, and for every table whose words
-/// decoded, the places in the function it jumps to.
+/// What [`prove`] found: the proven bases of jump tables and of data tables,
+/// and for every table whose words decoded, the places they name.
 #[derive(Default)]
 pub struct Proven {
     pub proofs: Vec<Proof>,
+    pub pointers: Vec<Proof>,
     pub targets: HashMap<u64, Vec<u64>>,
 }
 
@@ -290,23 +295,27 @@ pub trait Exits {
 }
 
 /// A table read as `movslq (%rA,%rI,4),%rB; add; jmp *%rD`, from one `lea`.
+/// A `pointer` table ends at the add, whose sum is the address of data.
 struct Candidate {
     table: u64,
     base: String,
     load: usize,
     jmp: usize,
+    pointer: bool,
 }
 
 /// Every table `instrs` (one function, in order, spanning `span`) reads in
 /// the proven way.
 ///
 /// `decode` takes candidate table addresses and returns the places in the
-/// function each one jumps to, for those whose words decode. The proof is a
-/// control-flow graph of the function, in which a table jump has an edge to
-/// each place its table names:
+/// function each one jumps to, for those whose words decode. `pointers` does
+/// the same for the tables that end at the add, giving the address each word
+/// names. The proof is a control-flow graph of the function, in which a table
+/// jump has an edge to each place its table names:
 ///
-/// - the load, add and `jmp *` sit in one basic block, with no write between
-///   to the registers that carry the word or the sum;
+/// - the load, add and `jmp *` (for a data table, the load and add) sit in
+///   one basic block, with no write between to the registers that carry the
+///   word or the sum;
 /// - every definition of the base register that reaches the load is a `lea`
 ///   of the same table, along every path from the function's entry. A call
 ///   keeps the callee-saved registers and clobbers the rest; an instruction
@@ -331,6 +340,7 @@ pub fn prove(
     instrs: &[(u64, String)],
     span: (u64, u64),
     decode: &Decoder,
+    pointers: &Decoder,
     exits: &dyn Exits,
 ) -> Proven {
     let Some(parsed) = instrs
@@ -348,10 +358,8 @@ pub fn prove(
     let leas = rip_leas(&parsed);
     let mut active = candidates(&parsed, &leas);
     loop {
-        let mut tables: Vec<u64> = active.iter().map(|c| c.table).collect();
-        tables.sort_unstable();
-        tables.dedup();
-        let targets = decode(&tables);
+        let mut targets = decode(&tables_of(&active, false));
+        targets.extend(pointers(&tables_of(&active, true)));
         active.retain(|c| targets.contains_key(&c.table));
         if active.is_empty() {
             return Proven::default();
@@ -366,17 +374,34 @@ pub fn prove(
         active.retain(|c| graph.reads_table(&parsed, c, &leas));
         if active.len() == before {
             let proven: HashSet<u64> = active.iter().map(|c| c.table).collect();
-            let proofs = leas
+            let data: HashSet<u64> = tables_of(&active, true).into_iter().collect();
+            let (data_proofs, proofs) = leas
                 .iter()
                 .filter(|l| proven.contains(&l.table))
                 .map(|l| Proof {
                     lea: parsed[l.at].0,
                     table: l.table,
                 })
-                .collect();
-            return Proven { proofs, targets };
+                .partition(|p| data.contains(&p.table));
+            return Proven {
+                proofs,
+                pointers: data_proofs,
+                targets,
+            };
         }
     }
+}
+
+/// The distinct tables of the jump candidates, or of the data ones.
+fn tables_of(active: &[Candidate], pointer: bool) -> Vec<u64> {
+    let mut tables: Vec<u64> = active
+        .iter()
+        .filter(|c| c.pointer == pointer)
+        .map(|c| c.table)
+        .collect();
+    tables.sort_unstable();
+    tables.dedup();
+    tables
 }
 
 struct Lea {
@@ -416,10 +441,14 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
             continue;
         }
         let after = &parsed[load + 1..(load + 1 + WINDOW).min(parsed.len())];
-        let Some(jmp) = completes(after, &base, &word) else {
-            continue;
+        let (end, pointer) = match completes(after, &base, &word) {
+            Some(jmp) => (jmp, false),
+            None => match adds(after, &base, &word) {
+                Some((add, _)) => (add, true),
+                None => continue,
+            },
         };
-        let jmp = load + 1 + jmp;
+        let jmp = load + 1 + end;
         for table in leas.iter().filter(|l| l.dest == base).map(|l| l.table) {
             if !found
                 .iter()
@@ -430,10 +459,17 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
                     base: base.clone(),
                     load,
                     jmp,
+                    pointer,
                 });
             }
         }
     }
+    let jumped: HashSet<u64> = found
+        .iter()
+        .filter(|c| !c.pointer)
+        .map(|c| c.table)
+        .collect();
+    found.retain(|c| !c.pointer || !jumped.contains(&c.table));
     found
 }
 
@@ -441,36 +477,40 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
 /// word and jumps through the result, with no write to the word, the base or
 /// the sum before then.
 fn completes(after: &[(u64, Ins)], base: &str, word: &str) -> Option<usize> {
-    let mut sum: Option<String> = None;
+    let (add, total) = adds(after, base, word)?;
+    for (i, (_, ins)) in after.iter().enumerate().skip(add + 1) {
+        let through = ins.mnemonic == "jmp"
+            && ins.operands.len() == 1
+            && ins.operands[0]
+                .strip_prefix('*')
+                .and_then(family)
+                .as_deref()
+                == Some(total.as_str());
+        if through {
+            return Some(i);
+        }
+        if ends_block(ins) || disturbs(ins, &[&total]) {
+            return None;
+        }
+    }
+    None
+}
+
+/// The index of the `add` of the base to the word in `after`, and the
+/// register that takes the sum, with no write to the base or the word before
+/// it.
+fn adds(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, String)> {
     for (i, (_, ins)) in after.iter().enumerate() {
-        match &sum {
-            None => {
-                let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
-                let adds = ins.mnemonic == "add"
-                    && regs.len() == 2
-                    && regs.iter().flatten().any(|f| f == base)
-                    && regs.iter().flatten().any(|f| f == word);
-                if adds {
-                    sum = regs[1].clone();
-                } else if ends_block(ins) || disturbs(ins, &[base, word]) {
-                    return None;
-                }
-            }
-            Some(total) => {
-                let through = ins.mnemonic == "jmp"
-                    && ins.operands.len() == 1
-                    && ins.operands[0]
-                        .strip_prefix('*')
-                        .and_then(family)
-                        .as_deref()
-                        == Some(total);
-                if through {
-                    return Some(i);
-                }
-                if ends_block(ins) || disturbs(ins, &[total]) {
-                    return None;
-                }
-            }
+        let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
+        let sums = ins.mnemonic == "add"
+            && regs.len() == 2
+            && regs.iter().flatten().any(|f| f == base)
+            && regs.iter().flatten().any(|f| f == word);
+        if sums && let Some(total) = &regs[1] {
+            return Some((i, total.clone()));
+        }
+        if ends_block(ins) || disturbs(ins, &[base, word]) {
+            return None;
         }
     }
     None

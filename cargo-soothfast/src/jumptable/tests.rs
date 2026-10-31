@@ -54,6 +54,7 @@ fn prove_world(lines: &[&str], world: &World) -> Vec<Proof> {
         &instrs,
         span,
         &|tables| tables.iter().map(|t| (*t, vec![last])).collect(),
+        &|_| HashMap::new(),
         world,
     )
     .proofs
@@ -269,6 +270,7 @@ fn a_loop_back_edge_that_keeps_the_lea_dominant_proves() {
         &instrs,
         (0x1000, 0x1020),
         &|tables| tables.iter().map(|t| (*t, vec![at(4), at(6)])).collect(),
+        &|_| HashMap::new(),
         &RUST,
     )
     .proofs;
@@ -559,4 +561,58 @@ fn two_exits_through_one_register_are_judged_together() {
         "jmp    *%rdx",
     ];
     assert_eq!(prove_in(&lines).len(), 1);
+}
+
+/// Every table of offsets to data names the address `0x3000`.
+fn prove_data(lines: &[&str]) -> Proven {
+    let instrs = code(lines);
+    let last = instrs.last().map(|(a, _)| *a).unwrap_or(0);
+    prove(
+        &instrs,
+        (0x1000, last + 4),
+        &|tables| tables.iter().map(|t| (*t, vec![last])).collect(),
+        &|tables| tables.iter().map(|t| (*t, vec![0x3000])).collect(),
+        &RUST,
+    )
+}
+
+const KIND_FMT: [&str; 10] = [
+    "mov    %rsi,%rax",
+    "mov    (%rdi),%rcx",
+    "movzbl (%rcx),%ecx",
+    "lea    -0xec5528(%rip),%rdx        # 2000 <anon.a+0x18d0>",
+    "mov    (%rdx,%rcx,8),%rdx",
+    "lea    -0xec54db(%rip),%rdi        # 2010 <anon.a+0x1928>",
+    "movslq (%rdi,%rcx,4),%rsi",
+    "add    %rdi,%rsi",
+    "mov    %rax,%rdi",
+    "jmp    *0x156545(%rip)        # 4000 <_DYNAMIC+0xa40>",
+];
+
+#[test]
+fn a_load_and_add_with_no_jump_proves_a_table_of_offsets_to_data() {
+    let proven = prove_data(&KIND_FMT);
+    assert!(proven.proofs.is_empty());
+    assert_eq!(
+        proven.pointers,
+        [Proof {
+            lea: at(5),
+            table: 0x2010
+        }]
+    );
+    assert_eq!(proven.targets[&0x2010], [0x3000]);
+}
+
+#[test]
+fn a_write_to_the_base_before_the_load_leaves_a_table_of_offsets_unproven() {
+    let mut lines = KIND_FMT.to_vec();
+    lines.insert(6, "mov    %rbx,%rdi");
+    assert!(prove_data(&lines).pointers.is_empty());
+}
+
+#[test]
+fn a_table_read_as_offsets_and_as_jumps_is_a_jump_table() {
+    let proven = prove_data(&[LEA, LOAD, ADD, JMP, LEA, LOAD, ADD, RET]);
+    assert!(proven.pointers.is_empty());
+    assert_eq!(proven.proofs.len(), 2);
 }

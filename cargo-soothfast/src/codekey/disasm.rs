@@ -41,13 +41,15 @@ impl Span {
             &self.instrs,
             (self.start, self.end),
             &|tables| resolver.table_targets(tables, self.start, self.end),
+            &|tables| resolver.pointer_targets(tables),
             &FunctionExits {
                 resolver,
                 span: (self.start, self.end),
                 rust: self.names.first().is_some_and(|n| is_rust_symbol(n)),
             },
         );
-        let tables = resolver.decode_tables(&proven, self.start);
+        let mut tables = resolver.decode_tables(&proven, self.start);
+        tables.extend(resolver.decode_pointers(&proven));
         self.normalize(resolver, &tables);
     }
 
