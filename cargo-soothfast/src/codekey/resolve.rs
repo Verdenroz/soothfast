@@ -1,11 +1,14 @@
 //! Addresses turned into names and content that do not move with the layout.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
 use soothfast_registry::fnv1a;
 
+use super::elf::section_index;
 use super::elf::{Marker, Reloc, Section, Symbol, Target};
-use super::strip_llvm;
+use super::identity::{check_inputs, duplicated};
+use super::{note_once, strip_llvm};
 use crate::jumptable;
 use crate::linkmap::Extent;
 
@@ -48,7 +51,12 @@ pub(super) struct Resolver<'a> {
     pub(super) markers: &'a HashMap<u64, Marker>,
     pub(super) inputs: &'a [Extent],
     pub(super) image: &'a [u8],
-    pub(super) roots: HashMap<Node, Option<u64>>,
+    roots: RefCell<HashMap<Node, Option<u64>>>,
+    pub(super) described: RefCell<HashMap<u64, Option<String>>>,
+    /// Unsized names at data addresses.
+    pub(super) labels: &'a HashMap<u64, Vec<String>>,
+    /// Names that more than one data symbol or label of the binary has.
+    pub(super) duplicated: HashSet<String>,
 }
 
 impl<'a> Resolver<'a> {
@@ -57,38 +65,42 @@ impl<'a> Resolver<'a> {
         symbols: &'a [Symbol],
         relocs: &'a [Reloc],
         markers: &'a HashMap<u64, Marker>,
+        labels: &'a HashMap<u64, Vec<String>>,
         inputs: &'a [Extent],
         image: &'a [u8],
     ) -> Resolver<'a> {
+        let inputs = match check_inputs(sections, inputs) {
+            Ok(()) => inputs,
+            Err(why) => {
+                note_once(
+                    format!("map {why}"),
+                    &format!("codekey: link map ignored: {why}"),
+                );
+                &[]
+            }
+        };
         Resolver {
+            duplicated: duplicated(sections, symbols, labels),
             sections,
             symbols,
             relocs,
             markers,
+            labels,
             inputs,
             image,
-            roots: HashMap::new(),
+            roots: RefCell::default(),
+            described: RefCell::default(),
         }
     }
 
-    /// The section holding `addr`, else the one empty section that starts
-    /// exactly there (`__TMC_END__` lands on `.tm_clone_table`).
     pub(super) fn section_at(&self, addr: u64) -> Option<usize> {
-        let after = self.sections.partition_point(|s| s.vma <= addr);
-        let before = &self.sections[..after];
-        if let Some(i) = before.iter().rposition(|s| s.size > 0)
-            && before[i].contains(addr)
-        {
-            return Some(i);
-        }
-        let mut empty = before
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.size == 0 && s.vma == addr);
-        match (empty.next(), empty.next()) {
-            (Some((i, _)), None) => Some(i),
-            _ => None,
-        }
+        section_index(self.sections, addr)
+    }
+
+    /// The sized symbol holding `addr`, when it is defined in `section`.
+    pub(super) fn in_symbol(&self, addr: u64, section: usize) -> Option<usize> {
+        self.symbol_at(addr)
+            .filter(|&i| self.section_at(self.symbols[i].addr) == Some(section))
     }
 
     pub(super) fn symbol_at(&self, addr: u64) -> Option<usize> {
@@ -102,12 +114,10 @@ impl<'a> Resolver<'a> {
 
     /// `hint` is the symbol objdump printed next to the address, used only
     /// for code that has no sized symbol (PLT stubs) and GOT slots.
-    fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
+    pub(super) fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
         let section = self.section_at(addr)?;
         let code = self.sections[section].code;
-        if let Some(i) = self.symbol_at(addr)
-            && self.section_at(self.symbols[i].addr) == Some(section)
-        {
+        if let Some(i) = self.in_symbol(addr, section) {
             let off = addr - self.symbols[i].addr;
             return Some(if code {
                 Place::Code(format!("{}+{off:x}", strip_llvm(&self.symbols[i].name)))
@@ -116,15 +126,25 @@ impl<'a> Resolver<'a> {
             });
         }
         match self.markers.get(&addr) {
-            Some(Marker::Opaque(name)) => return Some(Place::Code(name.clone())),
+            // A zero-sized static shares its address with the object after it.
+            // Without a map, or with an input there, both go into the key.
+            Some(Marker::Opaque(name))
+                if !self.inputs.is_empty() && self.input_at(addr).is_none() =>
+            {
+                return Some(Place::Code(name.clone()));
+            }
             Some(Marker::End { name, section }) => {
                 return Some(Place::Bounded(name.clone(), Node::Section(*section)));
             }
-            None => {}
+            Some(Marker::Opaque(_)) | None => {}
         }
         if code {
             return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
         }
+        let zst = match self.markers.get(&addr) {
+            Some(Marker::Opaque(name)) => format!("@{name}"),
+            _ => String::new(),
+        };
         let slot = hint.filter(|h| h.ends_with("$got")).unwrap_or_default();
         let (node, start) = match self.input_at(addr) {
             Some(i) if self.inputs[i].entry > 0 => {
@@ -137,7 +157,7 @@ impl<'a> Resolver<'a> {
                 .end_of(addr, section)
                 .unwrap_or((Node::Section(section), self.sections[section].vma)),
         };
-        Some(Place::Data(node, addr - start, slot.to_string()))
+        Some(Place::Data(node, addr - start, format!("{slot}{zst}")))
     }
 
     /// The node of `section` that ends exactly at `addr`, which nothing
@@ -181,7 +201,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Section, address and size of a node.
-    fn extent(&self, node: Node) -> Option<(usize, u64, u64)> {
+    pub(super) fn extent(&self, node: Node) -> Option<(usize, u64, u64)> {
         match node {
             Node::Symbol(i) => {
                 let s = &self.symbols[i];
@@ -230,7 +250,10 @@ impl<'a> Resolver<'a> {
                 Target::Relative(to) => match self.place(*to, None)? {
                     Place::Code(name) => (name, None),
                     Place::Bounded(name, next) => (format!("{name}("), Some(next)),
-                    Place::Data(next, off, _) => (format!("+{off:x}("), Some(next)),
+                    Place::Data(next, off, _) => (
+                        format!("+{off:x}{}(", self.identity(next, off)?),
+                        Some(next),
+                    ),
                 },
             };
             walk.out.extend(text.bytes());
@@ -261,17 +284,17 @@ impl<'a> Resolver<'a> {
 
     /// Hash of everything reachable from `node`. Memoized per root only: a
     /// node reached inside another root's walk saw that walk's visit order.
-    fn root_hash(&mut self, node: Node) -> Option<u64> {
-        if let Some(h) = self.roots.get(&node) {
+    fn root_hash(&self, node: Node) -> Option<u64> {
+        if let Some(h) = self.roots.borrow().get(&node) {
             return *h;
         }
         let mut walk = Walk::default();
         let h = self.walk(node, &mut walk).map(|_| fnv1a(&walk.out));
-        self.roots.insert(node, h);
+        self.roots.borrow_mut().insert(node, h);
         h
     }
 
-    fn resolve(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
+    fn resolve(&self, addr: u64, hint: Option<&str>) -> Option<String> {
         // A GOT entry reads as its relocation target. Elsewhere a relocated
         // address starts an object (a vtable) read past its first slot.
         let in_got = self
@@ -287,8 +310,12 @@ impl<'a> Resolver<'a> {
         self.describe(addr, hint)
     }
 
-    fn describe(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
-        Some(match self.place(addr, hint)? {
+    fn describe(&self, addr: u64, hint: Option<&str>) -> Option<String> {
+        self.show(self.place(addr, hint)?)
+    }
+
+    pub(super) fn show(&self, place: Place) -> Option<String> {
+        Some(match place {
             Place::Code(name) => name,
             Place::Bounded(name, node) => format!("{name}:{:016x}", self.root_hash(node)?),
             Place::Data(node, off, slot) => {
@@ -296,13 +323,17 @@ impl<'a> Resolver<'a> {
                     Node::Symbol(_) | Node::Input(_) | Node::Entry(..) => "data",
                     Node::Section(i) => &self.sections[i].name,
                 };
-                format!("{label}:{:016x}+{off:x}{slot}", self.root_hash(node)?)
+                let hash = self.root_hash(node)?;
+                format!(
+                    "{label}:{hash:016x}{}+{off:x}{slot}",
+                    self.identity(node, off)?
+                )
             }
         })
     }
 
     /// One disassembled instruction (address column already removed).
-    pub(super) fn normalize(&mut self, body: &str) -> Option<String> {
+    pub(super) fn normalize(&self, body: &str) -> Option<String> {
         if let Some((head, tail)) = body.rsplit_once("# ") {
             let (addr, hint) = split_target(tail)?;
             let target = self.resolve(addr, hint)?;
@@ -502,6 +533,7 @@ mod tests {
             vma: 0x2008,
             size: 8,
             entry: 0,
+            ..Extent::default()
         }];
         assert_eq!(hash(&input, 0x2018), hash(&input, 0x201c));
         assert_ne!(hash(&input, 0x2008), hash(&input, 0x2009));
@@ -527,6 +559,7 @@ mod tests {
             vma: 0x2008,
             size: 8,
             entry: 0,
+            ..Extent::default()
         };
         assert!(hash(std::slice::from_ref(&ends_here), 0x2018).is_some());
         assert_ne!(
@@ -542,6 +575,7 @@ mod tests {
             vma: 0x2010,
             size: 8,
             entry: 0,
+            ..Extent::default()
         };
         let both = [ends_here, starts_here];
         assert_ne!(hash(&both, 0x2010), hash(&both, 0x201c));
@@ -568,6 +602,7 @@ mod tests {
             vma: 0x2008,
             size: 16,
             entry: 8,
+            ..Extent::default()
         }];
         let hash = |byte: usize| {
             let mut image = image(7, 1);
@@ -587,6 +622,7 @@ mod tests {
             vma: 0x2008,
             size: 16,
             entry: 8,
+            ..Extent::default()
         }];
         let fixture = Fixture::default().wanted(&[BAR]).inputs(&pool);
         let hash = |byte: usize| {
@@ -596,6 +632,40 @@ mod tests {
         };
         assert_eq!(hash(0x2010), hash(0x2017));
         assert_ne!(hash(0x2008), hash(0x2009));
+    }
+
+    #[test]
+    fn a_zero_sized_static_does_not_hide_an_input_that_starts_at_its_address() {
+        let dis = UNNAMED.replace("2008 <anon>", "2008 <zst>");
+        let hash = |inputs: &[Extent], byte: usize| {
+            let mut image = image(7, 1);
+            image[byte] = 9;
+            let markers = HashMap::from([(0x2008, Marker::Opaque("zst:Z".into()))]);
+            let fixture = Fixture::default()
+                .symbols(FN_SYMBOLS)
+                .inputs(inputs)
+                .markers(markers)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&image, &dis))
+        };
+        let string = [Extent {
+            vma: 0x2008,
+            size: 8,
+            ..Extent::default()
+        }];
+        assert!(hash(&string, 0x2008).is_some());
+        assert_ne!(hash(&string, 0x2008), hash(&string, 0x2009));
+        assert_ne!(hash(&[], 0x2010), hash(&[], 0x2011));
+        let named = |name: &str| {
+            let markers = HashMap::from([(0x2008, Marker::Opaque(name.into()))]);
+            let fixture = Fixture::default()
+                .symbols(FN_SYMBOLS)
+                .inputs(&string)
+                .markers(markers)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&image(7, 1), &dis))
+        };
+        assert_ne!(named("zst:Z"), named("zst:Y"));
     }
 
     #[test]
@@ -621,6 +691,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
                 .sections(sections)
                 .symbols(FN_SYMBOLS)
                 .relocs("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x0000000000002010")
+                .relro(0x2000, 8)
                 .wanted(&[BAR])
                 .markers(markers)
         };
@@ -637,7 +708,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
         assert_eq!(hash(&stops, 0x2018, 1), hash(&stops, 0x2018, 2));
         assert_ne!(hash(&stops, 0x2009, 1), hash(&stops, 0x2009, 2));
         let none = fixture(HashMap::new());
-        assert_ne!(hash(&none, 0x2018, 1), hash(&none, 0x2018, 2));
+        assert_eq!(hash(&none, 0x2018, 1), None);
     }
 
     const LAZY_SECTIONS: &str = "\

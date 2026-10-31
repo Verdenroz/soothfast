@@ -15,6 +15,9 @@
 //! The base register may be loaded earlier in the function, provided every
 //! path to the load defines it the same way (see [`prove`]). Any other shape
 //! is no proof, and the caller hashes the bytes.
+//!
+//! A table of offsets to data, such as the names an enum's `Debug` impl picks
+//! from, is proven by the stricter shape in [`offset_table`].
 
 use std::collections::{HashMap, HashSet};
 
@@ -25,16 +28,21 @@ pub struct Proof {
     pub table: u64,
 }
 
-/// What [`prove`] found: the proven bases, and for every table whose words
-/// decoded, the places in the function it jumps to.
+/// What [`prove`] found: the proven bases of jump tables and of data tables,
+/// and for every table whose words decoded, the places they name.
 #[derive(Default)]
 pub struct Proven {
     pub proofs: Vec<Proof>,
+    pub pointers: Vec<Proof>,
     pub targets: HashMap<u64, Vec<u64>>,
 }
 
 /// How far past a `lea` the rest of the pattern may sit.
 const WINDOW: usize = 32;
+
+/// How far past an offset table's add the base register is followed to its
+/// overwrite.
+const REACH: usize = 64;
 
 struct Ins<'a> {
     mnemonic: &'a str,
@@ -275,6 +283,9 @@ fn is_unwind_resume(ins: &Ins) -> bool {
 
 const CALLER_SAVED: &[&str] = &["a", "c", "d", "si", "di", "r8", "r9", "r10", "r11"];
 
+/// The registers LLVM may return a 64-bit value in.
+const RETURNS: &[&str] = &["a", "d", "c", "r8"];
+
 /// Where each candidate table jumps to, for those whose words decode.
 pub type Decoder<'a> = dyn Fn(&[u64]) -> HashMap<u64, Vec<u64>> + 'a;
 
@@ -287,26 +298,34 @@ pub trait Exits {
     fn slot_leaves(&self, slot: u64) -> bool;
     /// Whether this function is Rust, which has no computed goto.
     fn rust(&self) -> bool;
+    /// The address range of the input holding the table at `table`, when it
+    /// is read-only data the loader does not touch.
+    fn data_table(&self, table: u64) -> Option<(u64, u64)>;
 }
 
 /// A table read as `movslq (%rA,%rI,4),%rB; add; jmp *%rD`, from one `lea`.
+/// A `pointer` table ends at the add, whose sum is the address of data.
 struct Candidate {
     table: u64,
     base: String,
     load: usize,
-    jmp: usize,
+    /// The `jmp *`, or for a `pointer` table the add.
+    end: usize,
+    pointer: bool,
 }
 
 /// Every table `instrs` (one function, in order, spanning `span`) reads in
 /// the proven way.
 ///
 /// `decode` takes candidate table addresses and returns the places in the
-/// function each one jumps to, for those whose words decode. The proof is a
-/// control-flow graph of the function, in which a table jump has an edge to
-/// each place its table names:
+/// function each one jumps to, for those whose words decode. `pointers` does
+/// the same for the tables that end at the add, giving the address each word
+/// names. The proof is a control-flow graph of the function, in which a table
+/// jump has an edge to each place its table names:
 ///
-/// - the load, add and `jmp *` sit in one basic block, with no write between
-///   to the registers that carry the word or the sum;
+/// - the load, add and `jmp *` (for a data table, the load and add) sit in
+///   one basic block, with no write between to the registers that carry the
+///   word or the sum;
 /// - every definition of the base register that reaches the load is a `lea`
 ///   of the same table, along every path from the function's entry. A call
 ///   keeps the callee-saved registers and clobbers the rest; an instruction
@@ -331,6 +350,7 @@ pub fn prove(
     instrs: &[(u64, String)],
     span: (u64, u64),
     decode: &Decoder,
+    pointers: &Decoder,
     exits: &dyn Exits,
 ) -> Proven {
     let Some(parsed) = instrs
@@ -346,13 +366,21 @@ pub fn prove(
         .map(|(i, (a, _))| (*a, i))
         .collect();
     let leas = rip_leas(&parsed);
-    let mut active = candidates(&parsed, &leas);
+    let mut active = candidates(&parsed, &leas, exits.rust());
+    active.retain(|c| {
+        !c.pointer
+            || exits
+                .data_table(c.table)
+                .is_some_and(|(lo, hi)| references(&parsed, lo, hi) == 1)
+    });
     loop {
-        let mut tables: Vec<u64> = active.iter().map(|c| c.table).collect();
-        tables.sort_unstable();
-        tables.dedup();
-        let targets = decode(&tables);
-        active.retain(|c| targets.contains_key(&c.table));
+        let jumps = decode(&tables_of(&active, false));
+        let jumped: HashSet<u64> = jumps.keys().copied().collect();
+        let mut data = tables_of(&active, true);
+        data.retain(|t| !jumped.contains(t));
+        let mut targets = pointers(&data);
+        targets.extend(jumps);
+        active.retain(|c| targets.contains_key(&c.table) && c.pointer != jumped.contains(&c.table));
         if active.is_empty() {
             return Proven::default();
         }
@@ -366,17 +394,34 @@ pub fn prove(
         active.retain(|c| graph.reads_table(&parsed, c, &leas));
         if active.len() == before {
             let proven: HashSet<u64> = active.iter().map(|c| c.table).collect();
-            let proofs = leas
+            let data: HashSet<u64> = tables_of(&active, true).into_iter().collect();
+            let (data_proofs, proofs) = leas
                 .iter()
                 .filter(|l| proven.contains(&l.table))
                 .map(|l| Proof {
                     lea: parsed[l.at].0,
                     table: l.table,
                 })
-                .collect();
-            return Proven { proofs, targets };
+                .partition(|p| data.contains(&p.table));
+            return Proven {
+                proofs,
+                pointers: data_proofs,
+                targets,
+            };
         }
     }
+}
+
+/// The distinct tables of the jump candidates, or of the data ones.
+fn tables_of(active: &[Candidate], pointer: bool) -> Vec<u64> {
+    let mut tables: Vec<u64> = active
+        .iter()
+        .filter(|c| c.pointer == pointer)
+        .map(|c| c.table)
+        .collect();
+    tables.sort_unstable();
+    tables.dedup();
+    tables
 }
 
 struct Lea {
@@ -401,10 +446,11 @@ fn rip_leas(parsed: &[(u64, Ins)]) -> Vec<Lea> {
         .collect()
 }
 
-/// Loads through a table base, each followed in its block by the add and the
-/// jump that complete the pattern, for every table the base register is
-/// loaded with somewhere in the function.
-fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
+/// Loads through a table base: each followed in its block by the add and the
+/// jump of a jump table, for every table the base register is loaded with
+/// somewhere in the function, or laid out as an offset table (see
+/// [`offset_table`]).
+fn candidates(parsed: &[(u64, Ins)], leas: &[Lea], rust: bool) -> Vec<Candidate> {
     let mut found = Vec::new();
     for (load, (_, ins)) in parsed.iter().enumerate() {
         let base = ins.operands.first().and_then(|o| scaled_base(o));
@@ -412,26 +458,34 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
         let (Some(base), Some(word)) = (base, word) else {
             continue;
         };
-        if !matches!(ins.mnemonic, "movslq" | "movsxd") {
+        if !matches!(ins.mnemonic, "movslq" | "movsxd") || word == base {
             continue;
         }
         let after = &parsed[load + 1..(load + 1 + WINDOW).min(parsed.len())];
-        let Some(jmp) = completes(after, &base, &word) else {
-            continue;
-        };
-        let jmp = load + 1 + jmp;
-        for table in leas.iter().filter(|l| l.dest == base).map(|l| l.table) {
-            if !found
-                .iter()
-                .any(|c: &Candidate| c.load == load && c.table == table)
-            {
-                found.push(Candidate {
-                    table,
-                    base: base.clone(),
-                    load,
-                    jmp,
-                });
+        if let Some(jmp) = completes(after, &base, &word) {
+            let jmp = load + 1 + jmp;
+            for table in leas.iter().filter(|l| l.dest == base).map(|l| l.table) {
+                if !found
+                    .iter()
+                    .any(|c: &Candidate| c.load == load && c.table == table)
+                {
+                    found.push(Candidate {
+                        table,
+                        base: base.clone(),
+                        load,
+                        end: jmp,
+                        pointer: false,
+                    });
+                }
             }
+        } else if let Some((lea, add)) = offset_table(parsed, leas, load, &base, &word, rust) {
+            found.push(Candidate {
+                table: leas[lea].table,
+                base,
+                load,
+                end: add,
+                pointer: true,
+            });
         }
     }
     found
@@ -463,17 +517,185 @@ fn completes(after: &[(u64, Ins)], base: &str, word: &str) -> Option<usize> {
                         .strip_prefix('*')
                         .and_then(family)
                         .as_deref()
-                        == Some(total);
+                        == Some(total.as_str());
                 if through {
                     return Some(i);
                 }
-                if ends_block(ins) || disturbs(ins, &[total]) {
+                if ends_block(ins) || disturbs(ins, &[total.as_str()]) {
                     return None;
                 }
             }
         }
     }
     None
+}
+
+/// A table of offsets to data, read by exactly this shape and no other:
+///
+/// ```text
+/// lea    T(%rip),%rB
+/// movslq (%rB,%rI,4),%rW
+/// add    %rB,%rW
+/// ```
+///
+/// with only plain instructions that touch none of the three registers in
+/// between, and `%rB` fully overwritten by a plain instruction after the add
+/// and before anything that could read it. In a Rust function a `ret` counts
+/// as an overwrite when `%rB` is caller-saved and not in [`RETURNS`]; a call,
+/// a jump and anything else do not. The chain is of 64-bit registers, and a
+/// plain instruction has no register effects beyond its operands. Then the
+/// raw offset in `%rW` dies in the add, and nothing else sees the table's
+/// address. Returns the `lea` (an index into `leas`) and the add.
+fn offset_table(
+    parsed: &[(u64, Ins)],
+    leas: &[Lea],
+    load: usize,
+    base: &str,
+    word: &str,
+    rust: bool,
+) -> Option<(usize, usize)> {
+    if !parsed[load].1.operands.get(1).is_some_and(|d| is_64(d)) {
+        return None;
+    }
+    let index = parsed[load]
+        .1
+        .operands
+        .first()
+        .and_then(|o| scaled_index(o))?;
+    let touches = |ins: &Ins, regs: &[&str]| regs.iter().any(|r| mentions(ins, r));
+    let mut lea = None;
+    for j in (load.saturating_sub(WINDOW)..load).rev() {
+        if let Some(k) = leas.iter().position(|l| l.at == j && l.dest == base) {
+            let wide = parsed[j].1.operands.get(1).is_some_and(|d| is_64(d));
+            lea = wide.then_some(k);
+            break;
+        }
+        let ins = &parsed[j].1;
+        if !plain(ins) || touches(ins, &[base, word, &index]) {
+            return None;
+        }
+    }
+    let mut add = None;
+    for (k, (_, ins)) in parsed.iter().enumerate().skip(load + 1).take(WINDOW) {
+        let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
+        let sums = ins.mnemonic == "add"
+            && ins.operands.iter().all(|o| is_64(o))
+            && regs.as_slice() == [Some(base.to_string()), Some(word.to_string())];
+        if sums {
+            add = Some(k);
+            break;
+        }
+        if !plain(ins) || touches(ins, &[base, word, &index]) {
+            return None;
+        }
+    }
+    let add = add?;
+    for ins in parsed[add + 1..].iter().take(REACH).map(|(_, i)| i) {
+        if overwrites(ins, base) || (rust && is_return(ins) && is_dead_at_return(base)) {
+            return Some((lea?, add));
+        }
+        if !plain(ins) || touches(ins, &[base]) {
+            return None;
+        }
+    }
+    None
+}
+
+fn is_return(ins: &Ins) -> bool {
+    matches!(ins.mnemonic, "ret" | "retq") && ins.operands.is_empty()
+}
+
+/// Whether register family `reg` is caller-saved and not in [`RETURNS`].
+fn is_dead_at_return(reg: &str) -> bool {
+    CALLER_SAVED.contains(&reg) && !RETURNS.contains(&reg)
+}
+
+/// The `(%rA,%rI,4)` index register of a memory operand.
+fn scaled_index(operand: &str) -> Option<String> {
+    let inner = operand.strip_suffix(",4)")?.rsplit_once('(')?.1;
+    family(inner.split_once(',')?.1)
+}
+
+/// Whether `operand` names register family `reg`.
+fn names(operand: &str, reg: &str) -> bool {
+    operand.split('%').skip(1).any(|rest| {
+        let name: String = rest
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect();
+        family(&format!("%{name}")).as_deref() == Some(reg)
+    })
+}
+
+/// Whether `ins` names register family `reg` in any operand.
+fn mentions(ins: &Ins, reg: &str) -> bool {
+    ins.operands.iter().any(|operand| names(operand, reg))
+}
+
+/// An instruction with explicit operands and no effect on registers beyond
+/// them: a move or an arithmetic or logic operation, not a one-operand
+/// multiply, a string operation, a jump, a call or anything else.
+fn plain(ins: &Ins) -> bool {
+    const ARITHMETIC: &[&str] = &[
+        "add", "sub", "and", "or", "xor", "shl", "shr", "sar", "cmp", "test", "imul", "inc", "dec",
+        "neg", "not", "lea",
+    ];
+    let mnemonic = ins.mnemonic;
+    let known = mnemonic.starts_with("mov")
+        || ARITHMETIC
+            .iter()
+            .any(|m| mnemonic == *m || (mnemonic.len() == m.len() + 1 && mnemonic.starts_with(m)));
+    known
+        && implicit_writes(mnemonic, ins.operands.len()).is_none()
+        && !ins.operands.is_empty()
+        && ins
+            .operands
+            .iter()
+            .all(|o| !o.contains(':') && !o.starts_with('*'))
+}
+
+/// Whether `ins` replaces all 64 bits of register family `reg` with a value
+/// that does not use it.
+fn overwrites(ins: &Ins, reg: &str) -> bool {
+    let [source, dest] = ins.operands[..] else {
+        return false;
+    };
+    let writes_all = ins.mnemonic.starts_with("mov") || ins.mnemonic == "lea";
+    writes_all
+        && plain(ins)
+        && family(dest).as_deref() == Some(reg)
+        && is_full(dest)
+        && !names(source, reg)
+}
+
+/// Whether register operand `name` is a 64-bit name.
+fn is_64(name: &str) -> bool {
+    name.starts_with("%r") && is_full(name) && !name.ends_with('d')
+}
+
+/// Whether register operand `name` is a 64 or 32 bit name, either of which
+/// writes the whole register.
+fn is_full(name: &str) -> bool {
+    let n = name.trim_start_matches('%');
+    let legacy = ["ax", "bx", "cx", "dx", "si", "di", "bp", "sp"];
+    match (n.strip_prefix('r'), n.strip_prefix('e')) {
+        (Some(rest), _) if legacy.contains(&rest) => true,
+        (_, Some(rest)) if legacy.contains(&rest) => true,
+        (Some(rest), _) => {
+            let digits = rest.strip_suffix('d').unwrap_or(rest);
+            !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+        }
+        _ => false,
+    }
+}
+
+/// How many instructions of `parsed` take an address in `lo..hi`.
+fn references(parsed: &[(u64, Ins)], lo: u64, hi: u64) -> usize {
+    parsed
+        .iter()
+        .filter_map(|(_, ins)| address_of(ins.comment?))
+        .filter(|a| (lo..hi).contains(a))
+        .count()
 }
 
 /// The control-flow graph of one function.
@@ -527,7 +749,8 @@ impl Graph {
                     Some(_) => return None,
                     None if unconditional
                         && through_slot(ins).is_some_and(|a| exits.slot_leaves(a)) => {}
-                    None if unconditional => match active.iter().find(|c| c.jmp == i) {
+                    None if unconditional => match active.iter().find(|c| !c.pointer && c.end == i)
+                    {
                         Some(c) => {
                             for t in targets.get(&c.table)? {
                                 let to = *at.get(t)?;
@@ -592,7 +815,7 @@ impl Graph {
     /// Whether the candidate's load, add and jump share a block, and the
     /// base register holds its table at the load along every path.
     fn reads_table(&self, parsed: &[(u64, Ins)], c: &Candidate, leas: &[Lea]) -> bool {
-        if self.leader[c.load + 1..=c.jmp].iter().any(|&l| l) {
+        if self.leader[c.load + 1..=c.end].iter().any(|&l| l) {
             return false;
         }
         let mut good = vec![false; parsed.len()];

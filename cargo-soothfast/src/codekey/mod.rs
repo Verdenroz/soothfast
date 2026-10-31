@@ -14,11 +14,12 @@ mod elf;
 mod exits;
 #[cfg(test)]
 mod fixture;
+mod identity;
 mod resolve;
 mod tables;
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::BufReader;
 use std::path::Path;
@@ -30,7 +31,10 @@ use soothfast_registry::fnv1a;
 use crate::linkmap::Extent;
 use disasm::hash_functions;
 pub(crate) use elf::section_headers;
-use elf::{addressable, parse_markers, parse_relocs, parse_sections, parse_symbols, tls_digest};
+use elf::{
+    addressable, is_pie_elf64, parse_labels, parse_markers, parse_relocs, parse_sections,
+    parse_symbols, relro_range, seal, tls_digest,
+};
 use resolve::Resolver;
 
 /// Stands for the bench binary in a stored function set, so two builds at
@@ -127,6 +131,18 @@ fn command_text(program: &str, args: &[&str], bin: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Print `message` on stderr the first time `key` is seen.
+fn note_once(key: String, message: &str) {
+    static NOTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let first = NOTED
+        .get_or_init(Default::default)
+        .lock()
+        .is_ok_and(|mut seen| seen.insert(key));
+    if first {
+        eprintln!("{message}");
+    }
+}
+
 /// The requested functions of one bench binary, hashed.
 pub struct Binary {
     hashes: HashMap<String, u64>,
@@ -149,15 +165,33 @@ impl Binary {
         // Fails on a binary with no dynamic section, which has no relocations.
         let relocs = parse_relocs(&command_text("objdump", &["-R"], bin).unwrap_or_default());
         let image = std::fs::read(bin).ok()?;
-        // Only a position-independent image (ET_DYN) names every address it
-        // uses rip-relative; a fixed-address one hides data in immediates.
-        if image.get(..4) != Some(b"\x7fELF") || image.get(16..18) != Some(&[3, 0]) {
+        // A fixed-address image hides data in immediates.
+        if !is_pie_elf64(&image) {
             return None;
         }
         let tls = tls_digest(&sections, &image)?;
-        let sections = addressable(sections);
+        let relro = relro_range(&image);
+        if relro.is_none() {
+            note_once(
+                format!("relro {}", bin.display()),
+                &format!(
+                    "codekey: no PT_GNU_RELRO segment in {}; relocated data counts as writable",
+                    bin.display()
+                ),
+            );
+        }
+        let sections = addressable(seal(sections, relro));
         let markers = parse_markers(&listing, &sections);
-        let mut resolver = Resolver::new(&sections, &symbols, &relocs, &markers, inputs, &image);
+        let data_labels = parse_labels(&listing, &sections);
+        let resolver = Resolver::new(
+            &sections,
+            &symbols,
+            &relocs,
+            &markers,
+            &data_labels,
+            inputs,
+            &image,
+        );
         let mut child = Command::new("objdump")
             .args(["-d", "--no-show-raw-insn"])
             .arg(bin)
@@ -167,7 +201,7 @@ impl Binary {
             .ok()?;
         let stdout = child.stdout.take()?;
         let mut labels = HashMap::new();
-        let hashes = hash_functions(&mut resolver, wanted, BufReader::new(stdout), &mut labels);
+        let hashes = hash_functions(&resolver, wanted, BufReader::new(stdout), &mut labels);
         child.wait().ok()?.success().then_some(Binary {
             hashes,
             labels,
@@ -407,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn every_function_of_a_tiny_c_binary_hashes_under_each_linker() {
+    fn every_function_of_a_tiny_c_binary_hashes_under_each_linker_with_and_without_a_map() {
         let dir = scratch("c");
         let src = dir.join("t.c");
         std::fs::write(&src, "int main(void){return 0;}\n").unwrap();
@@ -415,9 +449,11 @@ mod tests {
         let mut unhashed = Vec::new();
         for linker in ["bfd", "lld", "mold"] {
             let bin = dir.join(linker);
+            let map = dir.join(format!("{linker}.map"));
             let linked = Command::new("cc")
                 .args(["-pie", "-O1", &format!("-fuse-ld={linker}"), "-o"])
                 .arg(&bin)
+                .arg(format!("-Wl,-Map={}", map.display()))
                 .arg(&src)
                 .output()
                 .is_ok_and(|o| o.status.success());
@@ -426,16 +462,74 @@ mod tests {
             }
             built += 1;
             let wanted = functions(&bin);
-            let binary = Binary::open(&bin, &wanted, &[]);
-            unhashed.extend(
-                wanted
-                    .into_iter()
-                    .filter(|n| !binary.as_ref().is_some_and(|b| b.hashes.contains_key(n)))
-                    .map(|n| format!("{linker}: {n}")),
+            let text = std::fs::read_to_string(&map).expect("the linker wrote a map");
+            let inputs = crate::linkmap::parse(&text, "").expect("the map parses");
+            let headers = command_text("objdump", &["-h"], &bin).unwrap();
+            let image = std::fs::read(&bin).unwrap();
+            let sections = addressable(seal(parse_sections(&headers), relro_range(&image)));
+            assert_eq!(
+                identity::check_inputs(&sections, &inputs),
+                Ok(()),
+                "{linker}"
             );
+            for (mapped, inputs) in [("no map", &[][..]), ("map", &inputs[..])] {
+                let binary = Binary::open(&bin, &wanted, inputs);
+                unhashed.extend(
+                    wanted
+                        .iter()
+                        .filter(|n| !binary.as_ref().is_some_and(|b| b.hashes.contains_key(*n)))
+                        .map(|n| format!("{linker} {mapped}: {n}")),
+                );
+            }
         }
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(built > 0, "no linker built a binary");
         assert!(unhashed.is_empty(), "unhashed: {unhashed:?}");
+    }
+
+    #[test]
+    fn two_statics_of_one_name_in_one_output_section_are_told_apart_or_unhashed() {
+        let dir = scratch("cfg");
+        let source = |reader: &str| {
+            format!(
+                "__attribute__((section(\".rodata.cfg\"))) static int cfg = 0;\n__attribute__((noinline)) int {reader}(void) {{ return cfg; }}\n"
+            )
+        };
+        std::fs::write(
+            dir.join("c1.c"),
+            source("r1") + "int main(void) { return r1(); }\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("c2.c"), source("r2")).unwrap();
+        let wanted = BTreeSet::from(["r1".to_string(), "r2".to_string()]);
+        let mut built = 0;
+        for linker in ["bfd", "lld", "mold"] {
+            let bin = dir.join(linker);
+            let map = dir.join(format!("{linker}.map"));
+            let linked = Command::new("cc")
+                .args(["-pie", "-O1", &format!("-fuse-ld={linker}"), "-o"])
+                .arg(&bin)
+                .arg(format!("-Wl,-Map={}", map.display()))
+                .arg(dir.join("c1.c"))
+                .arg(dir.join("c2.c"))
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !linked {
+                continue;
+            }
+            built += 1;
+            let text = std::fs::read_to_string(&map).expect("the linker wrote a map");
+            let inputs = crate::linkmap::parse(&text, "").expect("the map parses");
+            for (named, inputs) in [("map", &inputs[..]), ("no map", &[][..])] {
+                let binary = Binary::open(&bin, &wanted, inputs).expect("opens");
+                let (one, two) = (binary.hashes.get("r1"), binary.hashes.get("r2"));
+                assert!(
+                    one != two || one.is_none(),
+                    "{linker} {named}: {one:?} {two:?}"
+                );
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(built > 0, "no linker built a binary");
     }
 }

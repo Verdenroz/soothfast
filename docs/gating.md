@@ -296,10 +296,14 @@ not rebuilt and the measured binary is not touched. The CLI checks that the
 two have the same loaded-section digest before it trusts the map, and keeps
 the map and its extents under `.soothfast/maps/`, named by that digest, so a
 map is never read for another binary. lld, mold and GNU ld maps are read. A
-map that cannot be built or read is a miss, not a guess:
+map whose inputs overlap, leave their section or share a writable name is
+ignored, with a note on stderr saying which, and acts as no map. Inputs that
+share an object and a section name, as the elements of a distributed slice do,
+are numbered in address order. A map that
+cannot be built or read is a miss, not a guess:
 
 ```console
-gate: no link map for <binary> (unrecognized map format); unnamed constants hash as whole sections
+gate: no link map for <binary> (unrecognized map format); unnamed constants hash as whole sections, and code that reads a duplicate-named local static or writable data with no symbol or label is left unhashed
 ```
 
 A reference outside every input section falls back to the whole output
@@ -311,6 +315,36 @@ into its entries, so a reference hashes only the entry it falls in. That
 assumes code never reads across two entries through one reference, which
 holds because LLVM gives each pool constant its own label and the linker
 merges whole entries. String pools (`.rodata.str*`) stay one object.
+
+A writable object (`.data`, `.bss`) is told from another by its symbol name,
+or by the link map's object and section for one with no symbol, as well as
+by its bytes: two zeroed statics hold the same bytes, and code that reads
+one is not code that reads the other. A symbol whose name no other data
+symbol or label of the binary has is its own identity. Two that share a name
+(C `static`s of the same name in two files) are told apart by the input
+section each is defined in and their offset in it. An input is named by the
+object's path below the profile directory (`target/[triple/]release`) and its
+archive member, so `a/util.o` and `b/util.o` differ. Inputs that share an
+object and a section name are numbered in address order, so every input name
+is unique and a check for a repeated one is only a guard. Code
+symbols do not count towards a duplicate. Inputs of sections that are not in
+memory (`.debug_*`, `.comment`) are left out of the extents, since their
+offsets overlap real addresses. A duplicated name whose input has no name
+leaves the function unhashed. A new static of the same name
+elsewhere makes both duplicates, which costs a miss until the link map names
+them and never a wrong hit. Read-only data, and data the loader seals after
+relocation (the `PT_GNU_RELRO` range, read from the program headers), is
+keyed by its bytes alone; a binary with no such range prints a line saying
+so (once per binary, on stderr) and treats relocated data as writable. Data in a writable section with no
+symbol or input around it is named by the labels `nm` lists at its address
+without a size (`__dso_handle`, `__TMC_END__`), provided their names are
+unique in the binary, and is keyed with the whole section so reads on either
+side of the label stay covered. Without a link map, a function that reads a
+duplicate-named local static, or writable data with neither a symbol nor
+such a label, is left unhashed. The object part of an input section's name
+follows the compiler's code generation units, which can move on an unrelated
+edit. That costs a miss and never a wrong hit, which is why the symbol name
+is used whenever it is unique.
 
 A jump table stores code offsets as 32-bit integers, so its bytes change
 whenever code moves. Where the instructions prove how a table is read, it is
@@ -338,6 +372,26 @@ nothing known for the rest. Alignment padding is not code anyone enters. The inp
 hold only words that land inside the function, measured from the nearest
 proven base before them. Anything else hashes as bytes. This reads x86-64
 assembly only; on other architectures every table hashes as bytes.
+
+A table of offsets to data, such as the names an enum's `Debug` impl picks
+from or a header name table, moves its words whenever the strings do. It is
+hashed as the data each word names, so an edit elsewhere that shifts the
+strings leaves the function's key alone, only where the function reads it
+through exactly `lea T(%rip),%rB; movslq (%rB,%rI,4),%rW; add %rB,%rW`. Only
+plain moves and arithmetic that touch none of the three registers may sit
+between them. After the add, `%rB` must be fully overwritten by a plain move
+before anything that could read it, where in a Rust function a `ret` counts as
+an overwrite when `%rB` is `rsi`, `rdi`, `r9`, `r10` or `r11`, the caller-saved
+registers LLVM never returns a 64-bit value in (`RETURNS` in the source:
+`rax`, `rdx`, `rcx`, `r8`); a call, a jump or any other instruction does not.
+The three registers and the `lea` are 64-bit names, and the instructions
+between have no register effects beyond their operands, so a one-operand
+`imul` is not one of them. The table's input must be read-only and
+not sealed, and nothing else in the function may take an address in it. A word must land inside a sized
+symbol or a link-map input. One past the end of either, the address of a
+zero-sized static, or only the section around it leaves the table as bytes.
+Without a link map a zero-sized static's address is keyed by the whole section
+around it, which is sound and costs hits; a gate normally has a map.
 
 `__stop_SEC` symbols that the linker defines are named, and the section they
 end is hashed, but the section that happens to follow is not: a pointer one

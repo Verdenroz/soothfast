@@ -5,7 +5,8 @@ use std::io::Cursor;
 
 use super::disasm::hash_functions;
 use super::elf::{
-    Marker, Reloc, Section, Symbol, addressable, parse_relocs, parse_sections, parse_symbols,
+    Marker, Reloc, Section, Symbol, addressable, parse_labels, parse_relocs, parse_sections,
+    parse_symbols, seal,
 };
 use super::resolve::Resolver;
 use crate::linkmap::Extent;
@@ -41,6 +42,31 @@ pub const DIS: &str = "\
     1017:\tret
 ";
 
+pub const OBJECTS: &str = "\
+0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
+0000000000003000 0000000000000008 D one
+0000000000003008 0000000000000008 D two
+";
+
+/// A function, a table at `0x2000`, and two 8-byte objects at `0x3000` in a
+/// section with `flags`.
+pub fn object_sections(flags: &str) -> String {
+    format!(
+        "\
+Idx Name          Size      VMA               LMA               File off  Algn
+  0 .text         00000100  0000000000001000  0000000000001000  00001000  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  1 .rodata       00000020  0000000000002000  0000000000002000  00002000  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  2 .objects      00000010  0000000000003000  0000000000003000  00003000  2**3
+                  {flags}
+"
+    )
+}
+
+pub const WRITABLE: &str = "CONTENTS, ALLOC, LOAD, DATA";
+pub const READ_ONLY: &str = "CONTENTS, ALLOC, LOAD, READONLY, DATA";
+
 pub fn image(constant: u8, rest: u8) -> Vec<u8> {
     let mut image = vec![0; 0x3000];
     image[0x2000..0x2008].fill(constant);
@@ -64,6 +90,7 @@ pub struct Fixture {
     symbols: Vec<Symbol>,
     relocs: Vec<Reloc>,
     markers: HashMap<u64, Marker>,
+    labels: HashMap<u64, Vec<String>>,
     inputs: Vec<Extent>,
     wanted: BTreeSet<String>,
 }
@@ -75,6 +102,7 @@ impl Default for Fixture {
             symbols: parse_symbols(SYMBOLS),
             relocs: Vec::new(),
             markers: HashMap::new(),
+            labels: HashMap::new(),
             inputs: Vec::new(),
             wanted: [BAR, BAZ].map(String::from).into(),
         }
@@ -99,6 +127,20 @@ impl Fixture {
     pub fn relocs(self, listing: &str) -> Fixture {
         Fixture {
             relocs: parse_relocs(listing),
+            ..self
+        }
+    }
+
+    pub fn labels(self, listing: &str) -> Fixture {
+        Fixture {
+            labels: parse_labels(listing, &self.sections),
+            ..self
+        }
+    }
+
+    pub fn relro(self, start: u64, size: u64) -> Fixture {
+        Fixture {
+            sections: seal(self.sections, Some((start, size))),
             ..self
         }
     }
@@ -131,17 +173,18 @@ impl Fixture {
         image: &[u8],
         dis: &str,
     ) -> (HashMap<String, u64>, HashMap<String, String>) {
-        let mut resolver = Resolver::new(
+        let resolver = Resolver::new(
             &self.sections,
             &self.symbols,
             &self.relocs,
             &self.markers,
+            &self.labels,
             &self.inputs,
             image,
         );
         let mut labels = HashMap::new();
         let hashes = hash_functions(
-            &mut resolver,
+            &resolver,
             &self.wanted,
             Cursor::new(dis.as_bytes()),
             &mut labels,

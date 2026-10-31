@@ -33,6 +33,10 @@ impl Exits for World {
     fn rust(&self) -> bool {
         self.rust
     }
+
+    fn data_table(&self, table: u64) -> Option<(u64, u64)> {
+        Some((table, table + 0x10))
+    }
 }
 
 const RUST: World = World {
@@ -54,6 +58,7 @@ fn prove_world(lines: &[&str], world: &World) -> Vec<Proof> {
         &instrs,
         span,
         &|tables| tables.iter().map(|t| (*t, vec![last])).collect(),
+        &|_| HashMap::new(),
         world,
     )
     .proofs
@@ -269,6 +274,7 @@ fn a_loop_back_edge_that_keeps_the_lea_dominant_proves() {
         &instrs,
         (0x1000, 0x1020),
         &|tables| tables.iter().map(|t| (*t, vec![at(4), at(6)])).collect(),
+        &|_| HashMap::new(),
         &RUST,
     )
     .proofs;
@@ -559,4 +565,314 @@ fn two_exits_through_one_register_are_judged_together() {
         "jmp    *%rdx",
     ];
     assert_eq!(prove_in(&lines).len(), 1);
+}
+
+/// An image whose table input is read-only (or not, with `None`), and where
+/// every table of offsets to data names the address `0x3000`.
+struct Data {
+    input: Option<(u64, u64)>,
+    rust: bool,
+}
+
+impl Exits for Data {
+    fn branch_leaves(&self, _: u64) -> bool {
+        false
+    }
+
+    fn slot_leaves(&self, _: u64) -> bool {
+        true
+    }
+
+    fn rust(&self) -> bool {
+        self.rust
+    }
+
+    fn data_table(&self, _: u64) -> Option<(u64, u64)> {
+        self.input
+    }
+}
+
+fn prove_data_in(lines: &[&str], input: Option<(u64, u64)>) -> Proven {
+    prove_data_for(lines, input, true)
+}
+
+fn prove_data_for(lines: &[&str], input: Option<(u64, u64)>, rust: bool) -> Proven {
+    let instrs = code(lines);
+    let last = instrs.last().map(|(a, _)| *a).unwrap_or(0);
+    prove(
+        &instrs,
+        (0x1000, last + 4),
+        &|tables| tables.iter().map(|t| (*t, vec![last])).collect(),
+        &|tables| tables.iter().map(|t| (*t, vec![0x3000])).collect(),
+        &Data { input, rust },
+    )
+}
+
+fn prove_data(lines: &[&str]) -> Proven {
+    prove_data_in(lines, Some((0x2010, 0x2020)))
+}
+
+const LOAD_SI: &str = "movslq (%rsi,%rcx,4),%rax";
+const ADD_SI: &str = "add    %rsi,%rax";
+
+/// `StandardHeader::as_str`.
+const AS_STR: [&str; 7] = [
+    "movzbl %dil,%ecx",
+    "lea    0x100d(%rip),%rax        # 2000 <lengths>",
+    "mov    (%rax,%rcx,8),%rdx",
+    LEA_SI,
+    LOAD_SI,
+    ADD_SI,
+    RET,
+];
+
+/// An enum's `Debug::fmt`.
+const KIND_FMT: [&str; 10] = [
+    "mov    %rsi,%rax",
+    "mov    (%rdi),%rcx",
+    "movzbl (%rcx),%ecx",
+    "lea    -0xec5528(%rip),%rdx        # 2000 <anon.a+0x18d0>",
+    "mov    (%rdx,%rcx,8),%rdx",
+    "lea    -0xec54db(%rip),%rdi        # 2010 <anon.a+0x1928>",
+    "movslq (%rdi,%rcx,4),%rsi",
+    "add    %rdi,%rsi",
+    "mov    %rax,%rdi",
+    "jmp    *0x156545(%rip)        # 4000 <_DYNAMIC+0xa40>",
+];
+
+fn proven_once(proven: &Proven, lea: u64) {
+    assert!(proven.proofs.is_empty());
+    assert_eq!(proven.pointers, [Proof { lea, table: 0x2010 }]);
+    assert_eq!(proven.targets[&0x2010], [0x3000]);
+}
+
+#[test]
+fn the_base_overwritten_before_a_tail_call_proves_a_table_of_offsets() {
+    proven_once(&prove_data(&KIND_FMT), at(5));
+}
+
+#[test]
+fn a_return_ends_the_life_of_a_base_that_is_not_a_return_register() {
+    proven_once(&prove_data(&AS_STR), at(3));
+}
+
+#[test]
+fn a_return_ends_a_base_only_where_the_calling_convention_is_known() {
+    let c = prove_data_for(&AS_STR, Some((0x2010, 0x2020)), false);
+    assert!(c.pointers.is_empty());
+}
+
+#[test]
+fn the_whole_chain_is_of_64_bit_registers() {
+    let narrow_word = [LEA_SI, "movsxd (%rsi,%rcx,4),%eax", ADD_SI, RET];
+    assert!(prove_data(&narrow_word).pointers.is_empty());
+    let narrow_base = [
+        "lea    0x100d(%rip),%ebx        # 2010 <anon>",
+        "movslq (%rbx,%rcx,4),%rax",
+        "add    %rbx,%rax",
+        "mov    $0x0,%ebx",
+        RET,
+    ];
+    assert!(prove_data(&narrow_base).pointers.is_empty());
+}
+
+#[test]
+fn a_return_reads_the_return_registers() {
+    let lines = [
+        "lea    0x100d(%rip),%rax        # 2010 <anon>",
+        "movslq (%rax,%rcx,4),%rdx",
+        "add    %rax,%rdx",
+        RET,
+    ];
+    assert!(prove_data(&lines).pointers.is_empty());
+}
+
+#[test]
+fn a_return_reads_every_register_llvm_may_return_in() {
+    for base in ["rax", "rcx", "rdx", "r8"] {
+        let lines = [
+            format!("lea    0x100d(%rip),%{base}        # 2010 <anon>"),
+            format!("movslq (%{base},%rsi,4),%r9"),
+            format!("add    %{base},%r9"),
+            "ret".to_string(),
+        ];
+        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        assert!(prove_data(&lines).pointers.is_empty(), "{base}");
+    }
+}
+
+#[test]
+fn an_instruction_with_hidden_effects_touches_the_registers_it_changes() {
+    let widening = [LEA_SI, LOAD_SI, "imul   %r8", ADD_SI, RET];
+    assert!(prove_data(&widening).pointers.is_empty());
+    let base_in_rdx = [
+        "lea    0x100d(%rip),%rdx        # 2010 <anon>",
+        "movslq (%rdx,%rsi,4),%rax",
+        "add    %rdx,%rax",
+        "imul   %rcx",
+        "mov    %eax,%edx",
+        "jmp    *0x156545(%rip)        # 4000 <_DYNAMIC+0xa40>",
+    ];
+    assert!(prove_data(&base_in_rdx).pointers.is_empty());
+}
+
+#[test]
+fn an_add_of_narrow_registers_is_no_offset_table() {
+    let lines = [
+        "lea    0x100d(%rip),%r9        # 2010 <anon>",
+        "movslq (%r9,%rcx,4),%r8",
+        "add    %r9d,%r8d",
+        RET,
+    ];
+    assert!(prove_data(&lines).pointers.is_empty());
+}
+
+#[test]
+fn a_tail_jump_with_the_base_still_in_place_is_no_proof() {
+    let lines = [
+        "lea    0x100d(%rip),%rcx        # 2010 <anon>",
+        "movslq (%rcx,%r14,4),%rax",
+        "add    %rcx,%rax",
+        "mov    %rsi,%rdi",
+        "mov    %rax,%rsi",
+        "add    $0x28,%rsp",
+        "jmp    *0x156545(%rip)        # 4000 <_DYNAMIC+0xa40>",
+    ];
+    assert!(prove_data(&lines).pointers.is_empty());
+}
+
+#[test]
+fn a_second_reference_to_the_table_is_no_proof() {
+    let mut lines = AS_STR.to_vec();
+    lines.insert(1, "lea    0x100d(%rip),%rdx        # 2014 <anon+4>");
+    assert!(prove_data(&lines).pointers.is_empty());
+}
+
+#[test]
+fn a_table_in_writable_or_sealed_data_is_no_proof() {
+    assert!(prove_data_in(&AS_STR, None).pointers.is_empty());
+}
+
+#[test]
+fn a_write_to_a_register_of_the_read_in_between_is_no_proof() {
+    for between in ["mov    $0x1,%ecx", "mov    %rsi,%rdx", "mov    %rax,%rdx"] {
+        let mut before_load = AS_STR.to_vec();
+        before_load.insert(4, between);
+        assert!(prove_data(&before_load).pointers.is_empty(), "{between}");
+        let mut before_add = AS_STR.to_vec();
+        before_add.insert(5, between);
+        assert!(prove_data(&before_add).pointers.is_empty(), "{between}");
+    }
+    let mut elsewhere = AS_STR.to_vec();
+    elsewhere.insert(5, "mov    %r8,%r9");
+    proven_once(&prove_data(&elsewhere), at(3));
+}
+
+#[test]
+fn a_read_of_the_base_after_the_add_is_no_proof() {
+    let lines = [
+        LEA_SI,
+        LOAD_SI,
+        ADD_SI,
+        "mov    (%rsi),%rdx",
+        "mov    %rax,%rsi",
+        RET,
+    ];
+    assert!(prove_data(&lines).pointers.is_empty());
+}
+
+#[test]
+fn a_call_or_a_partial_write_does_not_end_the_base() {
+    for after in ["call   2000 <g>", "mov    %al,%sil", "nop"] {
+        let lines = [LEA_SI, LOAD_SI, ADD_SI, after, "mov    %rax,%rsi", RET];
+        assert!(prove_data(&lines).pointers.is_empty(), "{after}");
+    }
+    let whole = [LEA_SI, LOAD_SI, ADD_SI, "mov    %eax,%esi", RET];
+    proven_once(&prove_data(&whole), at(0));
+}
+
+#[test]
+fn code_that_ends_before_the_base_does_is_no_proof() {
+    assert!(prove_data(&[LEA_SI, LOAD_SI, ADD_SI]).pointers.is_empty());
+    let mut long = vec![LEA_SI, LOAD_SI, ADD_SI];
+    long.extend(["mov    %rax,0x8(%rsp)"; 70]);
+    long.extend(["mov    %rax,%rsi", RET]);
+    assert!(prove_data(&long).pointers.is_empty());
+}
+
+#[test]
+fn an_add_into_the_base_or_a_second_load_is_no_proof() {
+    let into_base = [LEA_SI, LOAD_SI, "add    %rax,%rsi", "mov    $0x0,%esi", RET];
+    assert!(prove_data(&into_base).pointers.is_empty());
+    let differences = [
+        LEA_SI,
+        LOAD_SI,
+        "movslq 0x4(%rsi,%rcx,4),%rdx",
+        ADD_SI,
+        "sub    %rax,%rdx",
+        RET,
+    ];
+    assert!(prove_data(&differences).pointers.is_empty());
+}
+
+#[test]
+fn a_load_into_the_base_register_is_no_table_read() {
+    let load = "movslq (%rcx,%rax,4),%rcx";
+    let add = "add    %rdx,%rcx";
+    assert!(prove_in(&[LEA, load, add, "jmp    *%rcx", RET]).is_empty());
+    let proven = prove_data(&[LEA, load, add, RET]);
+    assert!(proven.pointers.is_empty() && proven.proofs.is_empty());
+}
+
+#[test]
+fn an_add_of_a_third_register_is_no_table_read() {
+    assert!(prove_in(&[LEA, LOAD, "add    %rdx,%rax", JMP, RET]).is_empty());
+    let proven = prove_data(&[LEA, LOAD, "add    %rdx,%rax", RET]);
+    assert!(proven.pointers.is_empty());
+}
+
+#[test]
+fn a_table_read_as_offsets_and_as_jumps_is_a_jump_table() {
+    let proven = prove_data(&[LEA, LOAD, ADD, JMP, LEA, LOAD, ADD, RET]);
+    assert!(proven.pointers.is_empty());
+    assert_eq!(proven.proofs.len(), 2);
+}
+
+#[test]
+fn a_jump_table_and_a_name_table_through_one_register_are_both_proven() {
+    let jump_then_names = [
+        LEA,
+        LOAD,
+        ADD,
+        JMP,
+        "lea    0x100d(%rip),%rcx        # 2020 <names>",
+        LOAD,
+        ADD,
+        "mov    $0x0,%ecx",
+        RET,
+    ];
+    let instrs = code(&jump_then_names);
+    let proven = prove(
+        &instrs,
+        (0x1000, at(9)),
+        &|tables| {
+            tables
+                .iter()
+                .filter(|t| **t == 0x2010)
+                .map(|t| (*t, vec![at(4)]))
+                .collect()
+        },
+        &|tables| {
+            tables
+                .iter()
+                .filter(|t| **t == 0x2020)
+                .map(|t| (*t, vec![0x3000]))
+                .collect()
+        },
+        &RUST,
+    );
+    assert_eq!(proven.proofs.len(), 1);
+    assert_eq!(proven.proofs[0].table, 0x2010);
+    assert_eq!(proven.pointers.len(), 1);
+    assert_eq!(proven.pointers[0].table, 0x2020);
 }

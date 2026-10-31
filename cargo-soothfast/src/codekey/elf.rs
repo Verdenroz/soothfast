@@ -15,6 +15,16 @@ pub(super) struct Section {
     pub(super) code: bool,
     pub(super) contents: bool,
     pub(super) tls: bool,
+    pub(super) access: Access,
+}
+
+/// Who can change a section's contents once the program runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Access {
+    ReadOnly,
+    /// Read-only once the loader has relocated it (`RELRO`).
+    Sealed,
+    Writable,
 }
 
 impl Section {
@@ -93,6 +103,56 @@ pub(super) fn parse_sections(listing: &str) -> Vec<Section> {
             code: h.flags.contains("CODE"),
             contents: h.flags.contains("CONTENTS"),
             tls: h.flags.contains("THREAD_LOCAL"),
+            access: if h.flags.contains("READONLY") || h.flags.contains("CODE") {
+                Access::ReadOnly
+            } else {
+                Access::Writable
+            },
+        })
+        .collect()
+}
+
+/// Whether `image` is a position-independent little-endian ELF64 file: only
+/// that names every address it uses rip-relative, and only that the program
+/// header reader below understands.
+pub(super) fn is_pie_elf64(image: &[u8]) -> bool {
+    image.get(..4) == Some(b"\x7fELF")
+        && image.get(4..6) == Some(&[2, 1])
+        && image.get(16..18) == Some(&[3, 0])
+}
+
+/// The start and size of the `PT_GNU_RELRO` segment in a little-endian ELF64
+/// image, which the loader makes read-only once it has relocated it.
+pub(super) fn relro_range(image: &[u8]) -> Option<(u64, u64)> {
+    const PT_GNU_RELRO: u64 = 0x6474_e552;
+    let word = |at: usize, len: usize| -> Option<u64> {
+        let bytes = image.get(at..)?.get(..len)?;
+        Some(bytes.iter().rev().fold(0, |n, &b| n << 8 | u64::from(b)))
+    };
+    let (offset, size, count) = (word(0x20, 8)?, word(0x36, 2)?, word(0x38, 2)?);
+    (0..count).find_map(|i| {
+        let at = usize::try_from(offset.saturating_add(i * size)).ok()?;
+        (word(at, 4)? == PT_GNU_RELRO).then_some(())?;
+        Some((word(at + 0x10, 8)?, word(at + 0x28, 8)?))
+    })
+}
+
+/// `sections` with those wholly inside the `relro` range no longer writable.
+pub(super) fn seal(sections: Vec<Section>, relro: Option<(u64, u64)>) -> Vec<Section> {
+    let Some((start, size)) = relro else {
+        return sections;
+    };
+    sections
+        .into_iter()
+        .map(|s| {
+            let inside = s.vma >= start && s.vma + s.size <= start + size;
+            Section {
+                access: match s.access {
+                    Access::Writable if inside => Access::Sealed,
+                    access => access,
+                },
+                ..s
+            }
         })
         .collect()
 }
@@ -127,6 +187,64 @@ pub(super) fn parse_symbols(listing: &str) -> Vec<Symbol> {
     symbols
 }
 
+/// The `(address, type letter, name)` of each symbol `nm -S` lists without a
+/// size.
+fn unsized_symbols(listing: &str) -> impl Iterator<Item = (u64, &str, &str)> {
+    listing.lines().filter_map(|line| {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        let (addr, kind, name) = match f[..] {
+            [addr, kind, name] => (addr, kind, name),
+            [addr, size, kind, name] if u64::from_str_radix(size, 16) == Ok(0) => {
+                (addr, kind, name)
+            }
+            _ => return None,
+        };
+        Some((u64::from_str_radix(addr, 16).ok()?, kind, name))
+    })
+}
+
+/// The section holding `addr`, else the one empty section that starts exactly
+/// there (`__TMC_END__` lands on `.tm_clone_table`). `sections` are ordered by
+/// address.
+pub(super) fn section_index(sections: &[Section], addr: u64) -> Option<usize> {
+    let after = sections.partition_point(|s| s.vma <= addr);
+    let before = &sections[..after];
+    if let Some(i) = before.iter().rposition(|s| s.size > 0)
+        && before[i].contains(addr)
+    {
+        return Some(i);
+    }
+    let mut empty = before
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.size == 0 && s.vma == addr);
+    match (empty.next(), empty.next()) {
+        (Some((i, _)), None) => Some(i),
+        _ => None,
+    }
+}
+
+/// Whether `addr` falls in a section of data.
+pub(super) fn in_data(sections: &[Section], addr: u64) -> bool {
+    section_index(sections, addr).is_some_and(|i| !sections[i].code)
+}
+
+/// The names `nm` lists without a size at an address in a data section, by
+/// address: `__dso_handle`, `__TMC_END__` and other labels the linker and the
+/// C runtime define. Absolute symbols are values, not addresses.
+pub(super) fn parse_labels(listing: &str, sections: &[Section]) -> HashMap<u64, Vec<String>> {
+    let mut labels: HashMap<u64, Vec<String>> = HashMap::new();
+    for (addr, kind, name) in unsized_symbols(listing) {
+        if !kind.eq_ignore_ascii_case("a") && in_data(sections, addr) {
+            labels
+                .entry(addr)
+                .or_default()
+                .push(strip_llvm(name).into_owned());
+        }
+    }
+    labels
+}
+
 /// An address that names no data to hash.
 #[derive(Debug, PartialEq)]
 pub(super) enum Marker {
@@ -145,18 +263,9 @@ pub(super) enum Marker {
 ///
 /// A sized symbol at the same address is resolved first and wins.
 pub(super) fn parse_markers(listing: &str, sections: &[Section]) -> HashMap<u64, Marker> {
-    let mut named: Vec<(u64, String)> = listing
-        .lines()
-        .filter_map(|line| {
-            let f: Vec<&str> = line.split_whitespace().collect();
-            let (addr, name) = match f[..] {
-                [addr, _, name] => (addr, name),
-                [addr, size, _, name] if u64::from_str_radix(size, 16) == Ok(0) => (addr, name),
-                _ => return None,
-            };
-            let addr = u64::from_str_radix(addr, 16).ok()?;
-            let in_data = sections.iter().any(|s| !s.code && s.contains(addr));
-            if !in_data {
+    let mut named: Vec<(u64, String)> = unsized_symbols(listing)
+        .filter_map(|(addr, _, name)| {
+            if !in_data(sections, addr) {
                 return None;
             }
             if name.starts_with("__stop_") {
@@ -224,6 +333,59 @@ pub(super) fn parse_relocs(listing: &str) -> Vec<Reloc> {
 mod tests {
     use super::*;
     use crate::codekey::fixture::{SECTIONS, loaded};
+
+    #[test]
+    fn labels_are_unsized_names_at_data_addresses() {
+        let listing = "\
+0000000000001040 0000000000000010 t _ZN3foo4code17h1E
+0000000000001100 T _etext
+0000000000001050 t code_label
+0000000000002008 d __dso_handle
+0000000000002010 0000000000000000 d __TMC_END__
+0000000000002018 A absolute_value
+0000000000002008 D data_start
+";
+        let labels = parse_labels(listing, &loaded(SECTIONS));
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[&0x2008], ["__dso_handle", "data_start"]);
+        assert_eq!(labels[&0x2010], ["__TMC_END__"]);
+    }
+
+    fn elf_with_segments(kinds: &[u32]) -> Vec<u8> {
+        let mut image = vec![0; 64 + 56 * kinds.len()];
+        image[0x20..0x28].copy_from_slice(&64u64.to_le_bytes());
+        image[0x36..0x38].copy_from_slice(&56u16.to_le_bytes());
+        image[0x38..0x3a].copy_from_slice(&(kinds.len() as u16).to_le_bytes());
+        for (i, kind) in kinds.iter().enumerate() {
+            let at = 64 + 56 * i;
+            image[at..at + 4].copy_from_slice(&kind.to_le_bytes());
+            image[at + 0x10..at + 0x18].copy_from_slice(&(0x2730 + i as u64).to_le_bytes());
+            image[at + 0x28..at + 0x30].copy_from_slice(&0x8d0u64.to_le_bytes());
+        }
+        image
+    }
+
+    #[test]
+    fn only_a_little_endian_elf64_pie_is_read() {
+        let mut header = vec![0; 64];
+        header[..4].copy_from_slice(b"\x7fELF");
+        header[4..6].copy_from_slice(&[2, 1]);
+        header[16..18].copy_from_slice(&[3, 0]);
+        assert!(is_pie_elf64(&header));
+        for (at, byte) in [(4, 1), (5, 2), (16, 2)] {
+            let mut other = header.clone();
+            other[at] = byte;
+            assert!(!is_pie_elf64(&other));
+        }
+    }
+
+    #[test]
+    fn the_relro_segment_is_read_from_the_program_headers() {
+        let image = elf_with_segments(&[1, 0x6474_e552]);
+        assert_eq!(relro_range(&image), Some((0x2731, 0x8d0)));
+        assert_eq!(relro_range(&elf_with_segments(&[1, 6])), None);
+        assert_eq!(relro_range(&[0; 16]), None);
+    }
 
     #[test]
     fn a_rust_data_symbol_without_a_size_is_zero_sized() {
