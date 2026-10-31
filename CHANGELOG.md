@@ -10,6 +10,10 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### ✨ Features
+
+- Build once and fan out the stores in CI (#325)
+
 ### 🐛 Fixes
 
 - Download the release binary directly in the action (#324)
