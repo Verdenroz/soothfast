@@ -112,6 +112,13 @@ impl Kind {
     }
 }
 
+/// Whether two `.gitignore` lines name the same root entry, so `/.soothfast`
+/// and `.soothfast/` count as one.
+fn same_ignore(a: &str, b: &str) -> bool {
+    let bare = |l: &str| l.trim().trim_matches('/').to_string();
+    bare(a) == bare(b)
+}
+
 #[derive(Debug)]
 struct Scaffold {
     path: PathBuf,
@@ -135,7 +142,7 @@ impl Scaffold {
             Kind::Seed => State::Current,
             Kind::Whole if text == self.content => State::Current,
             Kind::Whole => State::Differs,
-            Kind::Line if text.lines().any(|l| l.trim() == self.content) => State::Current,
+            Kind::Line if text.lines().any(|l| same_ignore(l, &self.content)) => State::Current,
             Kind::Line => State::Differs,
             Kind::Section if parse_projects(text) == parse_projects(&self.content) => {
                 State::Current
@@ -1367,6 +1374,23 @@ cmd = "npm test"
             std::fs::read_to_string(root.join(".gitignore")).unwrap(),
             "target\n.soothfast/\n"
         );
+    }
+
+    #[test]
+    fn any_root_form_of_the_ignore_line_counts_as_present() {
+        let line = Scaffold {
+            path: ".gitignore".into(),
+            kind: Kind::Line,
+            content: ".soothfast/".into(),
+        };
+        for form in [".soothfast", ".soothfast/", "/.soothfast", "/.soothfast/"] {
+            assert_eq!(
+                line.state(Some(&format!("target\n{form}\n"))),
+                State::Current
+            );
+        }
+        assert_eq!(line.state(Some("target\n")), State::Differs);
+        assert_eq!(line.state(Some("sub/.soothfast/\n")), State::Differs);
     }
 
     fn whole(path: &str, content: &str) -> Scaffold {
