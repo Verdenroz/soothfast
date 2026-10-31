@@ -162,7 +162,8 @@ installed on is refused.
 | `bin-cache` | `false` | Restore `.soothfast/bins`, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See [Bench executable cache](#bench-executable-cache). |
 | `cache-suffix` | none | Tells apart the legs of a job matrix that share a job name, so each keeps its own `rustdoc-cache` and `bin-cache`. |
 | `prebuild` | none | Lanes (`bench`, `routes`, `rustdoc`, space-separated) to build into the stores in place of the gate (see [One build](#one-build)). |
-| `prebuild-docs` | none | Packages whose rustdoc JSON `docs check` reads. Alone, it builds the `rustdoc` lane. |
+| `prebuild-docs` | none | Packages whose rustdoc JSON `docs check` reads. Alone, it builds the `rustdoc` lane. They are built only when the docs bind a Rust item, as `docs check` builds them. |
+| `prebuild-docs-paths` | none | The PATHS `docs check` is given, which decide whether it binds a Rust item. Empty means the `[docs] paths` scope. |
 | `prebuild-spec` | none | `PKG` or `PKG:TARGET` that `spec` commands run on. Alone, it builds the `routes` lane, and the `rustdoc` lane for a package whose spec is generated. |
 | `prebuild-shards` | none | The `shard` count of the legs that read the stores, so a merge-base whose run every leg has stored is not built. |
 | `prebuild-stage` | none | A directory to copy just the entries the lanes built or found into, for a job to upload. |
@@ -383,6 +384,8 @@ parallel. `run.yml` now compiles once. After `plan`, two build jobs run on
 separate machines: `Build (bench)` and `Build (rustdoc)`. The gate waits for
 the first only, so it never waits for a nightly rustdoc build. The docs check
 waits for the second and for the gate, since it reads the gate's baseline.
+When the docs bind no Rust item, `docs check` builds no rustdoc, so neither
+`Build (rustdoc)` nor a nightly toolchain runs at all.
 
 | Lane | Builds | Into |
 |---|---|---|

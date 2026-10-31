@@ -9,11 +9,11 @@ use serde_json::{Value, json};
 use crate::init::ci::Ci;
 use crate::init::ecosystem::{Project, Suite, slug};
 use crate::init::{self, RustPlan};
-use crate::invoke;
 use crate::test::project::{
     Pins, TEST_ALL_LABEL, Verdict, changed_since, covered, suites_for, target_for, toolchain_for,
     touches, write_result,
 };
+use crate::{docs, invoke};
 
 /// What the command line asked for beyond `--github`.
 #[derive(Default)]
@@ -109,6 +109,8 @@ struct Plan {
     projects: Vec<Project>,
     ci: Ci,
     docs: bool,
+    /// Whether `docs check` builds rustdoc, so needs a nightly at all.
+    docs_binds_rust: bool,
     suites: Vec<Suite>,
     /// Labels a writer applied to the pull request.
     labels: Vec<String>,
@@ -147,6 +149,7 @@ fn build(
         Some(rust) => !rust.docs_packages.is_empty(),
         None => !projects.is_empty() && init::has_markers(root),
     };
+    let docs_binds_rust = docs_binds_rust(root, rust.as_ref());
     let suites = init::suites(root)?;
     if let Some(suite) = suites
         .iter()
@@ -170,6 +173,7 @@ fn build(
         projects,
         ci,
         docs,
+        docs_binds_rust,
         suites,
         labels,
         changed,
@@ -181,6 +185,17 @@ fn build(
     plan.check_names()?;
     plan.reused = plan.stored_passes(root)?;
     Ok(plan)
+}
+
+/// Whether `docs check` would build rustdoc JSON for the `[docs] package`s.
+fn docs_binds_rust(root: &Path, rust: Option<&RustPlan>) -> bool {
+    if rust.is_none_or(|r| r.docs_packages.is_empty()) {
+        return false;
+    }
+    docs::binds_rust_at(root.to_path_buf(), &[]).unwrap_or_else(|e| {
+        eprintln!("plan: could not scan the docs ({e}); planning rustdoc anyway");
+        true
+    })
 }
 
 impl Plan {
@@ -383,12 +398,13 @@ impl Plan {
             .unwrap_or_default();
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
             self.rust.is_some() && self.ci.runs_test(),
             self.docs,
+            self.docs_binds_rust,
             tests,
             !tests["include"].as_array().is_none_or(Vec::is_empty),
             self.test_all(),
@@ -459,6 +475,7 @@ mod tests {
             projects,
             ci: Ci::default(),
             docs: false,
+            docs_binds_rust: false,
             suites: Vec::new(),
             labels: Vec::new(),
             changed: None,
@@ -734,5 +751,32 @@ mod tests {
             project(Ecosystem::Node, "web"),
         ];
         assert_eq!(names(&projects), ["python-root", "python-plugin-x", "node"]);
+    }
+
+    #[test]
+    fn rustdoc_is_planned_only_for_docs_that_bind_rust() {
+        let dir = std::env::temp_dir().join(format!("soothfast-plan-binds-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let readme = |bind: &str| {
+            let text = format!("<!-- soothfast:bind {bind} -->\nx.\n<!-- /soothfast:bind -->\n");
+            std::fs::write(dir.join("README.md"), text).unwrap();
+        };
+        let rust = |docs: &[&str]| RustPlan {
+            packages: Vec::new(),
+            docs_packages: docs.iter().map(|d| d.to_string()).collect(),
+        };
+        readme("src/util.py#parse");
+        assert!(!docs_binds_rust(&dir, Some(&rust(&["scry"]))));
+        readme("scry::run");
+        assert!(docs_binds_rust(&dir, Some(&rust(&["scry"]))));
+        assert!(!docs_binds_rust(&dir, Some(&rust(&[]))));
+        assert!(!docs_binds_rust(&dir, None));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut p = plan(Some(&["a"]), vec![]);
+        assert!(p.outputs().contains("\ndocs_binds_rust=false\n"));
+        p.docs_binds_rust = true;
+        assert!(p.outputs().contains("\ndocs_binds_rust=true\n"));
     }
 }
