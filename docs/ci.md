@@ -360,6 +360,8 @@ Per-project gate jobs:
   `astral-sh/setup-uv`, so the runner needs nothing preinstalled. A Gradle
   project's own `./gradlew` downloads Gradle, and Python itself comes from
   `uv`.
+- Gradle and Maven dependencies, and the Gradle wrapper, are cached by
+  `actions/setup-java`, keyed on the project's build files.
 
 `step-security/harden-runner` is the first step of every job; it targets
 hosted runners and its network audit may not apply on yours.
