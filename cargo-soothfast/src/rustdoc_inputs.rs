@@ -168,13 +168,21 @@ fn dep_info_beside(artifact: &Path) -> PathBuf {
     artifact.with_file_name(format!("{stem}.d"))
 }
 
+/// What a build script printed: `output` beside its `out` directory, or
+/// `run/stdout` in cargo's per-package layout.
+fn build_script_output(out_dir: &Path) -> Option<String> {
+    ["output", "run/stdout"]
+        .iter()
+        .find_map(|name| std::fs::read_to_string(out_dir.with_file_name(name)).ok())
+}
+
 /// A build script's `rerun-if-changed` paths (for workspace packages, which
 /// are relative to the package) and every package's `rerun-if-env-changed`.
 fn add_build_script(inputs: &mut Inputs, root: &Path, package_dir: Option<&PathBuf>, msg: &Value) {
     let Some(out_dir) = msg["out_dir"].as_str().map(Path::new) else {
         return;
     };
-    let Ok(output) = std::fs::read_to_string(out_dir.with_file_name("output")) else {
+    let Some(output) = build_script_output(out_dir) else {
         return;
     };
     for line in output.lines() {
@@ -313,6 +321,24 @@ mod tests {
         let unread = walk(&mut inputs, &root, stdout.as_bytes());
         assert_eq!(unread.len(), 1);
         assert!(unread[0].starts_with("app (bin): no dep-info beside "));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_build_script_run_in_the_per_package_layout_names_its_inputs() {
+        let root = temp("run");
+        let unit = root.join("target/debug/build/dep/9f8e");
+        std::fs::create_dir_all(unit.join("run")).unwrap();
+        std::fs::write(
+            unit.join("run/stdout"),
+            "cargo:rerun-if-changed=schema/api.json\ncargo:rerun-if-env-changed=DEP_TOKEN\n",
+        )
+        .unwrap();
+        let mut inputs = Inputs::default();
+        let msg = json!({"out_dir": unit.join("out")});
+        add_build_script(&mut inputs, &root, Some(&root.join("dep")), &msg);
+        assert!(inputs.files.contains("dep/schema/api.json"));
+        assert!(inputs.env.contains("DEP_TOKEN"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
