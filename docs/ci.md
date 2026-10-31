@@ -445,13 +445,15 @@ jobs:
 The legs record `soothfast-result-rust-shard-<i>-of-<n>` and the verdict folds them
 into one section for the package. On a pull request each leg also uploads the
 baseline of its items as `soothfast-baseline-shard-<i>-of-<n>`, and the docs
-check merges them with `cargo soothfast baseline merge` before it evaluates
-claims. If only some arrive it reports "claims not evaluated". If none arrive
+check merges them with `cargo soothfast baseline merge`, replacing every
+gated package, before it evaluates claims. If only some arrive it reports "claims not evaluated". If none arrive
 the bench binaries were unchanged, and it reads the measurement saved for the
 commit the gate compares against (the merge-base of the checked-out merge
 commit and the base branch, so the base tip), evaluating no claims when that is
-missing. Every default-branch push saves one, carrying the previous push's
-measurement when its binaries are identical. A default-branch push records every item
+missing, with a warning that names the merge-base. A default-branch push saves
+one, carrying the measurement of the commit it gated against when a passing
+gate found identical binaries (it leaves `.soothfast/identical/<pkg>` naming
+that commit). A default-branch push records every item
 in its first leg and saves the baseline as before; the other legs are
 skipped on a push, since they would only set up.
 

@@ -170,7 +170,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: bench
+          shared-key: bench
       - id: soothfast
         uses: ./.soothfast-action/action/install
       - uses: ./.soothfast-action
@@ -224,7 +224,7 @@ jobs:
           toolchain: nightly
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: rustdoc
+          shared-key: rustdoc
       - id: soothfast
         uses: ./.soothfast-action/action/install
       - uses: ./.soothfast-action
@@ -473,6 +473,7 @@ jobs:
       # The build jobs save the target cache; this job compiles nothing on a store hit.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          shared-key: bench
           save-if: "false"
       - id: soothfast
         uses: ./.soothfast-action/action/install
@@ -519,13 +520,26 @@ jobs:
           name: soothfast-baseline${{ matrix.shard != '' && github.event_name == 'pull_request' && format('-shard-{0}', matrix.slug) || '' }}
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
-      # Binaries identical to the previous push's mean its measurement stands; carry it to this commit.
-      - name: Carry the previous measurement
+      # A passing gate that matched the binaries of its reference leaves that commit's sha behind; carry its measurement.
+      - name: Find the measurement to carry
         if: github.event_name == 'push' && hashFiles('.soothfast/baselines/head.json') == ''
+        id: carry
+        env:
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: |
+          sha=""
+          for pkg in $PACKAGES; do
+            one=$(cat ".soothfast/identical/$pkg" 2>/dev/null || true)
+            if [ -z "$one" ] || { [ -n "$sha" ] && [ "$sha" != "$one" ]; }; then sha=""; break; fi
+            sha=$one
+          done
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+      - name: Carry the previous measurement
+        if: steps.carry.outputs.sha != ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .soothfast/baselines/head.json
-          key: soothfast-baseline-${{ github.event.before }}
+          key: soothfast-baseline-${{ steps.carry.outputs.sha }}
       # A pull request that leaves the bench binaries unchanged saves none,
       # so the docs job reads the merge-base's measurement saved here.
       - name: Keep the default-branch measurement
@@ -676,6 +690,7 @@ jobs:
       - if: needs.plan.outputs.docs_package != ''
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          shared-key: rustdoc
           save-if: "false"
       - id: soothfast
         uses: ./.soothfast-action/action/install
@@ -716,6 +731,7 @@ jobs:
         shell: bash
         env:
           SHARDS: ${{ inputs.shard }}
+          PACKAGES: ${{ needs.plan.outputs.packages }}
         run: |
           mapfile -t files < <(find .soothfast/shard-baselines -name head.json 2>/dev/null | sort)
           if [ "${#files[@]}" -eq 0 ]; then
@@ -723,7 +739,7 @@ jobs:
             exit 0
           fi
           rc=0
-          cargo soothfast baseline merge --into head --expect "$SHARDS" "${files[@]}" || rc=$?
+          cargo soothfast baseline merge --into head --expect "$SHARDS" --packages "$PACKAGES" "${files[@]}" || rc=$?
           case "$rc" in
             0) echo "complete=all" >>"$GITHUB_OUTPUT" ;;
             3)
@@ -747,6 +763,7 @@ jobs:
         shell: bash
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
@@ -757,7 +774,7 @@ jobs:
           if [ -f .soothfast/baselines/head.json ]; then
             args+=(--baseline head)
           else
-            echo "::warning::claims not evaluated: no measurement"
+            echo "::warning::claims not evaluated: no measurement for the merge-base ${BASE_SHA:-of this run}"
             echo "claims not evaluated: no measurement" >> "$RESULT"
             args+=(--skip-claims)
           fi
@@ -827,6 +844,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GH_TOKEN: ${{ github.token }}
           EXPECT_RUST: ${{ needs.plan.outputs.packages }}
+          EXPECT_SHARDS: ${{ join(fromJSON(needs.plan.outputs.shards).include.*.shard, ' ') }}
           EXPECT_IMPORT: ${{ join(fromJSON(needs.plan.outputs.matrix).include.*.name, ' ') }}
           EXPECT_DOCS: ${{ needs.plan.outputs.docs == 'true' && 'docs' || '' }}
           EXPECT_TEST: ${{ needs.plan.outputs.test == 'true' && 'test-rust' || '' }} ${{ needs.plan.outputs.test_expect }}

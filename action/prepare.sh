@@ -4,7 +4,7 @@
 # callgrind fallback, and the rustdoc toolchain when anything regenerates.
 # A default-branch push with the gate on records a reference run.
 # Inputs: GATE REGEN LABELS CACHE (true|false) SHARD PACKAGES RUSTDOC_TOOLCHAIN
-# GH_TOKEN (also authenticates the fetches).
+# GH_TOKEN (also authenticates the fetches), RUSTDOC_LANE (true|false, optional).
 # Outputs: on_default_branch, default_branch, packages, sweep (act on labels),
 # records (this leg records the reference), reference (the commit whose
 # recorded runs the gate compares against) and cache_runs.
@@ -21,6 +21,12 @@ need() {
 }
 
 need cargo
+
+# Rustdoc JSON comes from the pinned toolchain, whatever else the run does.
+install_rustdoc_toolchain() {
+  rustup toolchain install "$RUSTDOC_TOOLCHAIN" --profile minimal
+  echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$RUSTDOC_TOOLCHAIN" >>"$GITHUB_ENV"
+}
 if command -v jq >/dev/null; then
   default=$(jq -r .repository.default_branch "$GITHUB_EVENT_PATH")
 else
@@ -52,6 +58,7 @@ regenerating=false
 [ "${GITHUB_EVENT_NAME:-}" != pull_request ] && [ "$on_default" = true ] && [ "$REGEN" = true ] && regenerating=true
 if [ "$gating" = false ] && [ "$recording" = false ] && [ "$regenerating" = false ]; then
   echo "packages=" >>"$GITHUB_OUTPUT"
+  [ "${RUSTDOC_LANE:-false}" = true ] && install_rustdoc_toolchain
   exit 0
 fi
 
@@ -106,7 +113,6 @@ if [ "$(uname -s)" = Linux ] && ! command -v valgrind >/dev/null && command -v a
   fi
 fi
 
-if [ "$regenerating" = true ]; then
-  rustup toolchain install "$RUSTDOC_TOOLCHAIN" --profile minimal
-  echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$RUSTDOC_TOOLCHAIN" >>"$GITHUB_ENV"
+if [ "$regenerating" = true ] || [ "${RUSTDOC_LANE:-false}" = true ]; then
+  install_rustdoc_toolchain
 fi

@@ -315,6 +315,7 @@ runs:
         CACHE: ${{ inputs.cache == 'true' && (steps.lanes.outputs.active == 'false' || steps.lanes.outputs.bench == 'true') }}
         SHARD: ${{ inputs.shard }}
         GH_TOKEN: ${{ inputs.token }}
+        RUSTDOC_LANE: ${{ contains(steps.lanes.outputs.lanes, 'rustdoc') || contains(steps.lanes.outputs.lanes, 'routes') }}
       run: "$GITHUB_ACTION_PATH/action/prepare.sh"
     - name: Name the runs cache
       if: steps.prepare.outputs.cache_runs == 'true'
