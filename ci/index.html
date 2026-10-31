@@ -278,7 +278,9 @@ installed on is refused.</p>
 <tr><td><code>bin-cache</code></td><td><code>false</code></td><td>Restore <code>.soothfast/bins</code>, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See <a href="#bench-executable-cache">Bench executable cache</a>.</td></tr>
 <tr><td><code>cache-suffix</code></td><td>none</td><td>Tells apart the legs of a job matrix that share a job name, so each keeps its own <code>rustdoc-cache</code> and <code>bin-cache</code>.</td></tr>
 <tr><td><code>prebuild</code></td><td>none</td><td>Lanes (<code>bench</code>, <code>routes</code>, <code>rustdoc</code>, space-separated) to build into the stores in place of the gate (see <a href="#one-build">One build</a>).</td></tr>
-<tr><td><code>prebuild-docs</code></td><td>none</td><td>Packages whose rustdoc JSON <code>docs check</code> reads. Alone, it builds the <code>rustdoc</code> lane.</td></tr>
+<tr><td><code>prebuild-docs</code></td><td>none</td><td>Packages whose rustdoc JSON <code>docs check</code> reads. Alone, it builds the <code>rustdoc</code> lane. They are built only when the docs bind a Rust item, as <code>docs check</code> builds them.</td></tr>
+<tr><td><code>prebuild-docs-paths</code></td><td>none</td><td>The PATHS <code>docs check</code> is given, one per line, which decide whether it binds a Rust item. Empty means the <code>[docs] paths</code> scope.</td></tr>
+<tr><td><code>prebuild-docs-features</code></td><td>none</td><td>The <code>--features</code> <code>docs check</code> is given, which key the docs package's rustdoc JSON. Empty means none, since <code>docs check</code> never reads <code>features</code>.</td></tr>
 <tr><td><code>prebuild-spec</code></td><td>none</td><td><code>PKG</code> or <code>PKG:TARGET</code> that <code>spec</code> commands run on. Alone, it builds the <code>routes</code> lane, and the <code>rustdoc</code> lane for a package whose spec is generated.</td></tr>
 <tr><td><code>prebuild-shards</code></td><td>none</td><td>The <code>shard</code> count of the legs that read the stores, so a merge-base whose run every leg has stored is not built.</td></tr>
 <tr><td><code>prebuild-stage</code></td><td>none</td><td>A directory to copy just the entries the lanes built or found into, for a job to upload.</td></tr>
@@ -443,7 +445,9 @@ itself on a cold runner, and many of them compiled the same crates in
 parallel. <code>run.yml</code> now compiles once. After <code>plan</code>, two build jobs run on
 separate machines: <code>Build (bench)</code> and <code>Build (rustdoc)</code>. The gate waits for
 the first only, so it never waits for a nightly rustdoc build. The docs check
-waits for the second and for the gate, since it reads the gate's baseline.</p>
+waits for the second and for the gate, since it reads the gate's baseline.
+When the docs bind no Rust item, <code>docs check</code> builds no rustdoc, so neither
+<code>Build (rustdoc)</code> nor a nightly toolchain runs at all.</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Lane</th><th>Builds</th><th>Into</th></tr></thead>
 <tbody>
