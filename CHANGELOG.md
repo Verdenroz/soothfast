@@ -10,9 +10,13 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
-### 🔧 Internal
+### ✨ Features
 
-- Skip crates already published in a release rerun (#315)
+- Print a diff for init --check drift (#318)
+
+### 🐛 Fixes
+
+- Store the items of identical bench binaries (#317)
 
 
 ## 0.5.0 - 2026-10-30
