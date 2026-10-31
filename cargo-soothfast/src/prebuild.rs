@@ -69,6 +69,26 @@ impl Item {
     }
 }
 
+impl Item {
+    /// The item without what does not tell two requests for it apart.
+    fn identity(&self) -> Item {
+        match self {
+            Item::Rustdoc {
+                pkg,
+                private,
+                features,
+                ..
+            } => Item::Rustdoc {
+                pkg: pkg.clone(),
+                private: *private,
+                features: features.clone(),
+                aux: false,
+            },
+            other => other.clone(),
+        }
+    }
+}
+
 impl fmt::Display for Item {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -182,12 +202,26 @@ fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
             items.extend(aux.iter().map(|pkg| rustdoc(pkg, true, None, true)));
         }
     }
-    let mut seen = BTreeSet::new();
-    items
-        .into_iter()
-        .filter(|item| seen.insert(item.clone()))
-        .map(|item| step(item, state))
-        .collect()
+    // One item per crate, visibility and features; it is an aux crate only if
+    // every requester wanted it as one.
+    let mut seen: BTreeMap<Item, usize> = BTreeMap::new();
+    let mut unique: Vec<Item> = Vec::new();
+    for item in items {
+        match seen.get(&item.identity()) {
+            Some(&at) => {
+                if let (Item::Rustdoc { aux, .. }, Item::Rustdoc { aux: wanted, .. }) =
+                    (&mut unique[at], &item)
+                {
+                    *aux &= *wanted;
+                }
+            }
+            None => {
+                seen.insert(item.identity(), unique.len());
+                unique.push(item);
+            }
+        }
+    }
+    unique.into_iter().map(|item| step(item, state)).collect()
 }
 
 /// The steps for the merge-base's tree. A package whose merge-base run is
@@ -291,12 +325,12 @@ impl Live<'_> {
             .borrow()
             .get(pkg)
             .and_then(|h| h.env.clone());
-        let files = |shard: Option<Shard>| {
+        let file = |shard: Option<Shard>| {
             let common = CommonArgs {
                 shard,
                 ..one.clone()
             };
-            Runs::new(&stamp, &common, env.clone()).reference_files(&self.base_sha)
+            Runs::new(&stamp, &common, env.clone()).reference_file(&self.base_sha)
         };
         let legs: Vec<Option<Shard>> = match self.shards {
             0 | 1 => vec![None],
@@ -306,11 +340,7 @@ impl Live<'_> {
         };
         let mut all = Vec::new();
         for leg in legs {
-            let found = files(leg);
-            if found.is_empty() {
-                return None;
-            }
-            all.extend(found);
+            all.push(file(leg)?);
         }
         all.sort();
         all.dedup();
@@ -1036,6 +1066,29 @@ mod tests {
             ["k1-d.bin", "k1-d.bin.extents", "k1.group", "k1.manifest"]
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_crate_wanted_whole_by_one_spec_and_as_aux_by_another_is_not_aux() {
+        let fake = Fake {
+            generated: BTreeMap::from([
+                ("a".to_string(), vec!["b".to_string()]),
+                ("b".to_string(), Vec::new()),
+            ]),
+            ..Fake::default()
+        };
+        let spec = |pkg: &str| SpecPackage {
+            pkg: pkg.into(),
+            target: "soothfast".into(),
+        };
+        let wanted = Wanted {
+            lanes: BTreeSet::from([Lane::Rustdoc]),
+            docs: Vec::new(),
+            spec: vec![spec("a"), spec("b")],
+            ..wanted()
+        };
+        let items: Vec<_> = select(&wanted, &fake).into_iter().map(|s| s.item).collect();
+        assert_eq!(items, [docs("a", true), docs("b", true)]);
     }
 
     #[test]
