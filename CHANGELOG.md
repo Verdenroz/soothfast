@@ -16,6 +16,7 @@
 
 ### 🐛 Fixes
 
+- Hash offset tables by the data they name (#327)
 - Download the release binary directly in the action (#324)
 
 
