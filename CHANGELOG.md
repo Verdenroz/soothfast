@@ -1,13 +1,24 @@
 # Changelog
 
-## Unreleased (draft vs v0.5.0)
+## 0.5.1 - 2026-10-31
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+A gate whose head and merge-base bench binaries are identical now measures
+that binary once under callgrind for the items no stored measurement covers,
+and stores them, so the next push that changes code starts warm instead of
+measuring every item on both sides. A repeat of such a gate measures nothing.
+`init --check` prints a diff of what it would write for each file that has
+drifted. The reusable workflow caches Gradle and Maven dependencies.
+
+### Upgrade notes
+
+- The first gate on identical binaries after upgrading runs one callgrind
+  pass over the items nothing has stored yet. `--no-item-cache` keeps the
+  cheap walltime pass.
+- `init` now reports an unreadable or non-UTF-8 file it manages and leaves it
+  alone, where it used to treat it as empty and overwrite it.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
