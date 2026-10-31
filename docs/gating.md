@@ -318,14 +318,14 @@ by its bytes: two zeroed statics hold the same bytes, and code that reads
 one is not code that reads the other. A symbol whose name no other data
 symbol or label of the binary has is its own identity. Two that share a name
 (C `static`s of the same name in two files) are told apart by the input
-section each is defined in, named by the object's path below the target
-directory and its archive member, so `a/util.o` and `b/util.o` differ. Code
+section each is defined in, named by the object's path below the profile
+directory (`target/[triple/]release`) and its archive member, so `a/util.o` and `b/util.o` differ. Code
 symbols do not count towards a duplicate. A new static of the same name
 elsewhere makes both duplicates, which costs a miss until the link map names
 them and never a wrong hit. Read-only data, and data the loader seals after
 relocation (the `PT_GNU_RELRO` range, read from the program headers), is
 keyed by its bytes alone; a binary with no such range prints a line saying
-so and treats relocated data as writable. Data in a writable section with no
+so (once, on stderr) and treats relocated data as writable. Data in a writable section with no
 symbol or input around it is named by the labels `nm` lists at its address
 without a size (`__dso_handle`, `__TMC_END__`), provided their names are
 unique in the binary, and is keyed with the whole section so reads on either

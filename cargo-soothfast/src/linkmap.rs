@@ -12,7 +12,7 @@
 //! extents read from it are kept under `.soothfast/maps/`, named by the
 //! digest of the binary they describe, so they are never read for another.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::binstore;
 use crate::headrun::binary_digest;
@@ -32,23 +32,32 @@ pub struct Extent {
     /// (`.rodata.cstN`), else 0.
     pub entry: u64,
     /// `object:section`, which names the same input in another link of the
-    /// same code. The object is its path below the target directory, with
+    /// same code. The object is its path below the profile directory, with
     /// the archive member when it has one.
     pub name: String,
 }
 
 fn named(path: &str, section: &str, root: &str) -> String {
-    let path = path
-        .trim()
-        .split('/')
-        .filter(|part| !is_rustc_temp(part))
-        .collect::<Vec<_>>()
-        .join("/");
-    let path = match path.strip_prefix(root) {
-        Some(below) if !root.is_empty() => below.trim_start_matches('/'),
-        _ => &path,
-    };
-    format!("{path}:{section}")
+    let path = PathBuf::from(
+        path.trim()
+            .split('/')
+            .filter(|part| !is_rustc_temp(part))
+            .collect::<Vec<_>>()
+            .join("/"),
+    );
+    let below = path.strip_prefix(root).unwrap_or(&path);
+    format!("{}:{section}", below.display())
+}
+
+/// The profile directory (`target/[triple/]release`) of a bench executable.
+/// Objects are named below it, so the checkout and the target triple drop out.
+fn root_of(exe: &Path) -> String {
+    exe.parent()
+        .and_then(Path::parent)
+        .map(|dir| std::path::absolute(dir).unwrap_or(dir.to_path_buf()))
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// The directory rustc copies the libraries into to link: `rustc` and six
@@ -205,27 +214,25 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     if let Some(extents) = cached(&maps, digest, entry.as_deref()) {
         return Ok(extents);
     }
-    // Kept, not removed: cargo answers a repeated map build as fresh without
-    // relinking, so the map from the first link is the only one there is.
-    // When that one is gone, a map path cargo has not seen forces the link.
+    // Kept, not removed: cargo answers a repeated build as fresh without
+    // relinking. If the kept map is gone, a path cargo has not seen forces it.
     let kept = maps.join(format!("{digest}.map"));
     let forced = maps.join(format!("{digest}.{}.map", std::process::id()));
-    let (built, text) = [kept, forced]
-        .iter()
-        .find_map(|map| {
-            let built = invoke::build_link_map(common, bin.dir, bin.target_dir, map)?;
-            Some((built, std::fs::read_to_string(map).ok()?))
-        })
-        .ok_or("the map build failed")?;
+    let mut linked = None;
+    for map in [kept, forced] {
+        let Some(built) = invoke::build_link_map(common, bin.dir, bin.target_dir, &map) else {
+            break;
+        };
+        if let Ok(text) = std::fs::read_to_string(&map) {
+            linked = Some((built, text));
+            break;
+        }
+    }
+    let (built, text) = linked.ok_or("the map build failed")?;
     if binary_digest(&built).as_deref() != Some(digest) {
         return Err("the map build links different code".into());
     }
-    let root = bin
-        .target_dir
-        .or_else(|| bin.exe.ancestors().nth(3))
-        .map(|dir| std::path::absolute(dir).unwrap_or(dir.to_path_buf()))
-        .unwrap_or_default();
-    let extents = parse(&text, &root.to_string_lossy()).ok_or("unrecognized map format")?;
+    let extents = parse(&text, &root_of(bin.exe)).ok_or("unrecognized map format")?;
     let encoded = encode(&extents);
     if std::fs::write(maps.join(format!("{digest}.extents")), &encoded).is_ok() {
         runcache::prune_oldest(&maps, KEEP);
@@ -353,6 +360,50 @@ Linker script and memory map
             name("rustcAbC123"),
             "release/deps/libfoo.rlib(bar.o):.bss.x"
         );
+    }
+
+    #[test]
+    fn a_root_matches_whole_directories_only() {
+        let map = "\
+             VMA              LMA     Size Align Out     In      Symbol
+            1000             1000        4     1         /w/tmp/util.o:(.bss.x)
+            1004             1004        4     1         /w/t/util.o:(.bss.x)
+";
+        let names: Vec<String> = parse(map, "/w/t")
+            .expect("parsed")
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["/w/tmp/util.o:.bss.x", "util.o:.bss.x"]);
+    }
+
+    #[test]
+    fn a_triple_layout_and_a_worktree_layout_name_an_input_alike() {
+        let map = |object: &str| {
+            format!(
+                "             VMA              LMA     Size Align Out     In      Symbol\n            1000             1000        4     1         {object}:(.bss.x)\n"
+            )
+        };
+        let name = |exe: &str, object: &str| {
+            parse(&map(object), &root_of(Path::new(exe))).expect("parsed")[0]
+                .name
+                .clone()
+        };
+        let head = name(
+            "/w/target/x86_64-unknown-linux-gnu/release/deps/bench-1",
+            "/w/target/x86_64-unknown-linux-gnu/release/deps/libfoo.rlib(bar.o)",
+        );
+        let base = name(
+            "/tmp/wt/target/x86_64-unknown-linux-gnu/release/deps/bench-1",
+            "/tmp/wt/target/x86_64-unknown-linux-gnu/release/deps/libfoo.rlib(bar.o)",
+        );
+        let host = name(
+            "/tmp/wt/target/release/deps/bench-1",
+            "/tmp/wt/target/release/deps/libfoo.rlib(bar.o)",
+        );
+        assert_eq!(head, "deps/libfoo.rlib(bar.o):.bss.x");
+        assert_eq!(head, base);
+        assert_eq!(head, host);
     }
 
     #[test]

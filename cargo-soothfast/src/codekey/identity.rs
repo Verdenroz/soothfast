@@ -58,7 +58,7 @@ impl Resolver<'_> {
             }
             Node::Input(i) => self.inputs[i].name.clone(),
             Node::Section(i) => self.labelled(self.sections[i].vma + off),
-            Node::Entry(..) => String::new(),
+            Node::Entry(..) => return None,
         };
         (!name.is_empty()).then(|| format!("@{name}"))
     }
@@ -77,23 +77,24 @@ impl Resolver<'_> {
         names.join(",")
     }
 
-    /// What a table word naming `addr` hashes as, worked out once: `None`
-    /// unless it lands on one object (code, a symbol, a link-map input or a
-    /// pool entry) and not only on the section around it.
+    /// Where `addr` is if it lands on one object (code, a symbol, a link-map
+    /// input or a pool entry) and not only on the section around it.
+    pub(super) fn object_at(&self, addr: u64) -> Option<Place> {
+        self.place(addr, None).filter(|p| {
+            matches!(
+                p,
+                Place::Code(_)
+                    | Place::Data(Node::Symbol(_) | Node::Input(_) | Node::Entry(..), ..)
+            )
+        })
+    }
+
+    /// What a table word naming `addr` hashes as, worked out once.
     pub(super) fn described(&self, addr: u64) -> Option<String> {
         if let Some(text) = self.described.borrow().get(&addr) {
             return text.clone();
         }
-        let text = self
-            .place(addr, None)
-            .filter(|p| {
-                matches!(
-                    p,
-                    Place::Code(_)
-                        | Place::Data(Node::Symbol(_) | Node::Input(_) | Node::Entry(..), ..)
-                )
-            })
-            .and_then(|p| self.show(p));
+        let text = self.object_at(addr).and_then(|p| self.show(p));
         self.described.borrow_mut().insert(addr, text.clone());
         text
     }

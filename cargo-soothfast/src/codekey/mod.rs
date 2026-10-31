@@ -24,7 +24,7 @@ use std::fmt::Write as _;
 use std::io::BufReader;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
 
 use soothfast_registry::fnv1a;
 
@@ -159,18 +159,27 @@ impl Binary {
             return None;
         }
         let tls = tls_digest(&sections, &image)?;
-        let relro = command_text("objdump", &["-p"], bin).and_then(|text| relro_range(&text));
+        let relro = relro_range(&image);
         if relro.is_none() {
-            println!(
-                "codekey: no PT_GNU_RELRO range in {} (objdump -p failed or lists none); relocated data counts as writable",
-                bin.display()
-            );
+            static NOTED: Once = Once::new();
+            NOTED.call_once(|| {
+                eprintln!(
+                    "codekey: no PT_GNU_RELRO segment in {}; relocated data counts as writable",
+                    bin.display()
+                );
+            });
         }
         let sections = addressable(seal(sections, relro));
         let markers = parse_markers(&listing, &sections);
-        let labels = parse_labels(&listing, &sections);
+        let data_labels = parse_labels(&listing, &sections);
         let resolver = Resolver::new(
-            &sections, &symbols, &relocs, &markers, &labels, inputs, &image,
+            &sections,
+            &symbols,
+            &relocs,
+            &markers,
+            &data_labels,
+            inputs,
+            &image,
         );
         let mut child = Command::new("objdump")
             .args(["-d", "--no-show-raw-insn"])

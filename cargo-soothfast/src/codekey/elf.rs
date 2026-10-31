@@ -100,22 +100,20 @@ pub(super) fn parse_sections(listing: &str) -> Vec<Section> {
         .collect()
 }
 
-/// The start and size of the `PT_GNU_RELRO` segment in an `objdump -p`
-/// listing, which the loader makes read-only once it has relocated it.
-pub(super) fn relro_range(headers: &str) -> Option<(u64, u64)> {
-    let lines: Vec<&str> = headers.lines().collect();
-    let at = lines
-        .iter()
-        .position(|l| l.trim_start().starts_with("RELRO"))?;
-    let field = |line: &str, key: &str| {
-        let mut words = line.split_whitespace().skip_while(|w| *w != key);
-        let value = words.nth(1)?;
-        u64::from_str_radix(value.strip_prefix("0x")?, 16).ok()
+/// The start and size of the `PT_GNU_RELRO` segment in a little-endian ELF64
+/// image, which the loader makes read-only once it has relocated it.
+pub(super) fn relro_range(image: &[u8]) -> Option<(u64, u64)> {
+    const PT_GNU_RELRO: u64 = 0x6474_e552;
+    let word = |at: usize, len: usize| -> Option<u64> {
+        let bytes = image.get(at..)?.get(..len)?;
+        Some(bytes.iter().rev().fold(0, |n, &b| n << 8 | u64::from(b)))
     };
-    Some((
-        field(lines[at], "vaddr")?,
-        field(lines.get(at + 1)?, "memsz")?,
-    ))
+    let (offset, size, count) = (word(0x20, 8)?, word(0x36, 2)?, word(0x38, 2)?);
+    (0..count).find_map(|i| {
+        let at = usize::try_from(offset.saturating_add(i * size)).ok()?;
+        (word(at, 4)? == PT_GNU_RELRO).then_some(())?;
+        Some((word(at + 0x10, 8)?, word(at + 0x28, 8)?))
+    })
 }
 
 /// `sections` with those wholly inside the `relro` range no longer writable.
@@ -311,16 +309,26 @@ mod tests {
         assert_eq!(labels[&0x2010], ["__TMC_END__"]);
     }
 
+    fn elf_with_segments(kinds: &[u32]) -> Vec<u8> {
+        let mut image = vec![0; 64 + 56 * kinds.len()];
+        image[0x20..0x28].copy_from_slice(&64u64.to_le_bytes());
+        image[0x36..0x38].copy_from_slice(&56u16.to_le_bytes());
+        image[0x38..0x3a].copy_from_slice(&(kinds.len() as u16).to_le_bytes());
+        for (i, kind) in kinds.iter().enumerate() {
+            let at = 64 + 56 * i;
+            image[at..at + 4].copy_from_slice(&kind.to_le_bytes());
+            image[at + 0x10..at + 0x18].copy_from_slice(&(0x2730 + i as u64).to_le_bytes());
+            image[at + 0x28..at + 0x30].copy_from_slice(&0x8d0u64.to_le_bytes());
+        }
+        image
+    }
+
     #[test]
     fn the_relro_segment_is_read_from_the_program_headers() {
-        let headers = "\
-    LOAD off    0x0000000000000000 vaddr 0x0000000000000000 paddr 0x0000000000000000 align 2**12
-         filesz 0x0000000000000578 memsz 0x0000000000000578 flags r--
-   RELRO off    0x0000000000000730 vaddr 0x0000000000002730 paddr 0x0000000000002730 align 2**0
-         filesz 0x0000000000000198 memsz 0x00000000000008d0 flags r--
-";
-        assert_eq!(relro_range(headers), Some((0x2730, 0x8d0)));
-        assert_eq!(relro_range("    LOAD off 0x0 vaddr 0x0\n"), None);
+        let image = elf_with_segments(&[1, 0x6474_e552]);
+        assert_eq!(relro_range(&image), Some((0x2731, 0x8d0)));
+        assert_eq!(relro_range(&elf_with_segments(&[1, 6])), None);
+        assert_eq!(relro_range(&[0; 16]), None);
     }
 
     #[test]
