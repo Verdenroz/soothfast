@@ -14,6 +14,7 @@ use crate::{invoke, workspace};
 pub mod ci;
 mod detect;
 pub(crate) mod ecosystem;
+mod textdiff;
 
 use ci::Ci;
 use ecosystem::{
@@ -126,8 +127,8 @@ enum State {
 }
 
 impl Scaffold {
-    fn state(&self, root: &Path) -> State {
-        let Ok(text) = std::fs::read_to_string(root.join(&self.path)) else {
+    fn state(&self, text: Option<&str>) -> State {
+        let Some(text) = text else {
             return State::Missing;
         };
         match self.kind {
@@ -136,21 +137,20 @@ impl Scaffold {
             Kind::Whole => State::Differs,
             Kind::Line if text.lines().any(|l| l.trim() == self.content) => State::Current,
             Kind::Line => State::Differs,
-            Kind::Section if parse_projects(&text) == parse_projects(&self.content) => {
+            Kind::Section if parse_projects(text) == parse_projects(&self.content) => {
                 State::Current
             }
             Kind::Section => State::Differs,
-            Kind::Runner if labels(&text) == labels(&self.content) => State::Current,
-            Kind::TestCi if test_ci(&text) == test_ci(&self.content) => State::Current,
-            Kind::Docs if docs(&text) == docs(&self.content) => State::Current,
+            Kind::Runner if labels(text) == labels(&self.content) => State::Current,
+            Kind::TestCi if test_ci(text) == test_ci(&self.content) => State::Current,
+            Kind::Docs if docs(text) == docs(&self.content) => State::Current,
             Kind::Runner | Kind::TestCi | Kind::Docs => State::Differs,
         }
     }
 
     /// Whether the file still saves projects as an `[init]` or
     /// `[[init.project]]` table.
-    fn holds_legacy(&self, root: &Path) -> bool {
-        let text = std::fs::read_to_string(root.join(&self.path)).unwrap_or_default();
+    fn holds_legacy(&self, text: &str) -> bool {
         self.kind == Kind::Section
             && text.lines().any(|l| {
                 matches!(
@@ -160,46 +160,80 @@ impl Scaffold {
             })
     }
 
-    fn write(&self, root: &Path) -> std::io::Result<()> {
-        let path = root.join(&self.path);
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
+    /// The file as `init` leaves it, given what it holds now.
+    fn updated(&self, current: &str) -> String {
         match self.kind {
             Kind::Line => {
-                let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+                let mut text = current.to_string();
                 if !text.is_empty() && !text.ends_with('\n') {
                     text.push('\n');
                 }
                 text.push_str(&self.content);
                 text.push('\n');
-                std::fs::write(path, text)
+                text
             }
-            Kind::TestCi => {
-                let text = std::fs::read_to_string(&path).unwrap_or_default();
-                std::fs::write(path, with_key(&text, "test", "ci", "ci = false"))
-            }
+            Kind::TestCi => with_key(current, "test", "ci", "ci = false"),
             Kind::Docs => {
-                let text = std::fs::read_to_string(&path).unwrap_or_default();
                 let line = self
                     .content
                     .lines()
                     .find(|l| l.starts_with("package"))
                     .unwrap_or_default();
-                std::fs::write(path, with_key(&text, "docs", "package", line))
+                with_key(current, "docs", "package", line)
             }
             Kind::Section | Kind::Runner => {
-                let text = std::fs::read_to_string(&path).unwrap_or_default();
-                let mut text = without_tables(&text, self.kind.tables());
+                let mut text = without_tables(current, self.kind.tables());
                 if !text.is_empty() {
                     text.push('\n');
                 }
                 text.push_str(&self.content);
-                std::fs::write(path, text)
+                text
             }
-            Kind::Whole | Kind::Seed => std::fs::write(path, &self.content),
+            Kind::Whole | Kind::Seed => self.content.clone(),
         }
     }
+
+    /// Write the file as `init` leaves it, given what it holds now, and
+    /// return that text.
+    fn write(&self, root: &Path, current: &str) -> std::io::Result<String> {
+        let path = root.join(&self.path);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let text = self.updated(current);
+        std::fs::write(path, &text)?;
+        Ok(text)
+    }
+}
+
+/// What the file at `path` holds, `None` when it does not exist. Any other
+/// failure, such as text that is not UTF-8, is an error: the file is there
+/// and must not be taken for an empty one.
+fn read_text(root: &Path, path: &Path) -> Result<Option<String>, String> {
+    match std::fs::read_to_string(root.join(path)) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// What `init` would change in one file, as a unified diff: every scaffold
+/// that targets it, applied in turn.
+fn path_diff(scaffolds: &[&Scaffold], current: &str) -> String {
+    let mut text = current.to_string();
+    for f in scaffolds {
+        if f.state(Some(current)) != State::Current {
+            text = f.updated(&text);
+        }
+    }
+    let by = if scaffolds.iter().any(|f| f.kind == Kind::Whole) {
+        "init --force"
+    } else {
+        "init"
+    };
+    let path = scaffolds[0].path.display();
+    let hunks = textdiff::unified(current, &text);
+    format!("--- {path} (current)\n+++ {path} ({by} would write)\n{hunks}")
 }
 
 fn labels(text: &str) -> Result<Option<Vec<String>>, String> {
@@ -623,8 +657,22 @@ fn rust_meta(root: &Path, bench: &[String], check: bool) -> Result<Value, String
 }
 
 fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
+    let mut texts: BTreeMap<&Path, Result<Option<String>, String>> = BTreeMap::new();
+    for f in files {
+        texts
+            .entry(&f.path)
+            .or_insert_with(|| read_text(root, &f.path));
+    }
+    let current = |texts: &BTreeMap<&Path, Result<Option<String>, String>>, f: &Scaffold| {
+        texts[f.path.as_path()].as_ref().ok().cloned()
+    };
+    let writing = !check
+        && files
+            .iter()
+            .any(|f| current(&texts, f).is_some_and(|t| f.state(t.as_deref()) != State::Current));
     let mut drift = 0;
-    let writing = !check && files.iter().any(|f| f.state(root) != State::Current);
+    let mut unreadable = BTreeSet::new();
+    let mut drifted: Vec<&Path> = Vec::new();
     for f in files {
         let path = match f.kind {
             Kind::Section => format!("{} [[project]]", f.path.display()),
@@ -633,8 +681,18 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
             Kind::Docs => format!("{} [docs] package", f.path.display()),
             _ => f.path.display().to_string(),
         };
-        let state = match f.state(root) {
-            State::Current if writing && f.holds_legacy(root) => State::Differs,
+        let Some(text) = current(&texts, f) else {
+            if unreadable.insert(&f.path)
+                && let Err(e) = &texts[f.path.as_path()]
+            {
+                eprintln!("error    {}: {e}; left as is", f.path.display());
+            }
+            continue;
+        };
+        let state = match f.state(text.as_deref()) {
+            State::Current if writing && text.as_deref().is_some_and(|t| f.holds_legacy(t)) => {
+                State::Differs
+            }
             state => state,
         };
         match (state, check) {
@@ -647,22 +705,34 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
                     "differs"
                 };
                 println!("{what:<8} {path}");
+                if state == State::Differs && !drifted.contains(&f.path.as_path()) {
+                    drifted.push(&f.path);
+                }
             }
             (State::Differs, false) if f.kind == Kind::Whole && !force => {
                 drift += 1;
                 println!("differs  {path} (left as is; --force rewrites it)");
             }
-            (_, false) => match f.write(root) {
-                Ok(()) => println!("wrote    {path}"),
+            (_, false) => match f.write(root, text.as_deref().unwrap_or_default()) {
+                Ok(written) => {
+                    println!("wrote    {path}");
+                    texts.insert(&f.path, Ok(Some(written)));
+                }
                 Err(e) => return err(&format!("cannot write {path}: {e}")),
             },
+        }
+    }
+    for path in drifted {
+        let scaffolds: Vec<&Scaffold> = files.iter().filter(|f| f.path == path).collect();
+        if let Ok(Some(text)) = &texts[path] {
+            print!("{}", path_diff(&scaffolds, text));
         }
     }
     if check && drift > 0 {
         println!("init: {drift} file(s) drifted from `cargo soothfast init`; run it to update");
         return 1;
     }
-    i32::from(drift > 0)
+    i32::from(drift > 0 || !unreadable.is_empty())
 }
 
 fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
@@ -1208,16 +1278,96 @@ mod tests {
             content: ".soothfast/".into(),
         };
         std::fs::write(root.join(".gitignore"), "target").unwrap();
-        assert_eq!(seed.state(&root), State::Missing);
-        assert_eq!(line.state(&root), State::Differs);
-        seed.write(&root).unwrap();
-        line.write(&root).unwrap();
+        let held = |f: &Scaffold| read_text(&root, &f.path).unwrap();
+        assert_eq!(seed.state(held(&seed).as_deref()), State::Missing);
+        assert_eq!(line.state(held(&line).as_deref()), State::Differs);
+        seed.write(&root, "").unwrap();
+        line.write(&root, "target").unwrap();
         std::fs::write(root.join("s.toml"), "edited").unwrap();
-        assert_eq!(seed.state(&root), State::Current);
-        assert_eq!(line.state(&root), State::Current);
+        assert_eq!(seed.state(held(&seed).as_deref()), State::Current);
+        assert_eq!(line.state(held(&line).as_deref()), State::Current);
         assert_eq!(
             std::fs::read_to_string(root.join(".gitignore")).unwrap(),
             "target\n.soothfast/\n"
+        );
+    }
+
+    fn whole(path: &str, content: &str) -> Scaffold {
+        Scaffold {
+            path: path.into(),
+            kind: Kind::Whole,
+            content: content.into(),
+        }
+    }
+
+    #[test]
+    fn a_drifted_pin_shows_as_a_changed_line() {
+        let root = scratch("diff-pin");
+        let workflow = whole(
+            "ci.yml",
+            "jobs:\n  gate:\n    uses: acme/soothfast@v1\n    with: {}\n",
+        );
+        let held = "jobs:\n  gate:\n    uses: acme/soothfast@v0\n    with: {}\n";
+        std::fs::write(root.join("ci.yml"), held).unwrap();
+        assert_eq!(
+            path_diff(&[&workflow], held),
+            "--- ci.yml (current)\n+++ ci.yml (init --force would write)\n\
+             @@ -1,4 +1,4 @@\n jobs:\n   gate:\n-    uses: acme/soothfast@v0\n\
+             +    uses: acme/soothfast@v1\n     with: {}\n"
+        );
+        assert_eq!(report(&root, &[workflow], true, false), 1);
+    }
+
+    #[test]
+    fn a_missing_ignore_line_shows_as_an_added_line() {
+        let ignore = Scaffold {
+            path: ".gitignore".into(),
+            kind: Kind::Line,
+            content: ".soothfast/".into(),
+        };
+        assert_eq!(
+            path_diff(&[&ignore], "target\n"),
+            "--- .gitignore (current)\n+++ .gitignore (init would write)\n\
+             @@ -1,1 +1,2 @@\n target\n+.soothfast/\n"
+        );
+    }
+
+    #[test]
+    fn scaffolds_sharing_a_file_show_one_diff_of_what_init_writes() {
+        let toml = |kind, content: &str| Scaffold {
+            path: "soothfast.toml".into(),
+            kind,
+            content: content.into(),
+        };
+        let runner = toml(Kind::Runner, "[runner]\nlabels = [\"big\"]\n");
+        let section = toml(Kind::Section, "[[project]]\ndir = \".\"\n");
+        let held = "[gate]\nwalltime = \"hard\"\n";
+        let diff = path_diff(&[&runner, &section], held);
+        assert_eq!(diff.matches("--- soothfast.toml").count(), 1);
+        assert!(diff.contains("+[runner]") && diff.contains("+[[project]]"));
+        assert!(diff.contains("+labels = [\"big\"]") && diff.contains("+dir = \".\""));
+    }
+
+    #[test]
+    fn a_file_that_is_not_text_is_reported_and_left_alone() {
+        let root = scratch("not-utf8");
+        std::fs::write(root.join(".gitignore"), [0xff, 0xfe, b'\n']).unwrap();
+        let ignore = Scaffold {
+            path: ".gitignore".into(),
+            kind: Kind::Line,
+            content: ".soothfast/".into(),
+        };
+        assert!(read_text(&root, &ignore.path).is_err());
+        assert_eq!(report(&root, &[ignore], true, false), 1);
+        let ignore = Scaffold {
+            path: ".gitignore".into(),
+            kind: Kind::Line,
+            content: ".soothfast/".into(),
+        };
+        assert_eq!(report(&root, &[ignore], false, false), 1);
+        assert_eq!(
+            std::fs::read(root.join(".gitignore")).unwrap(),
+            [0xff, 0xfe, b'\n']
         );
     }
 
