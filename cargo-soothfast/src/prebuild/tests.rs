@@ -1,5 +1,6 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use super::select::{
     Action, Item, Lane, Side, SpecPackage, State, Step, Wanted, select, select_base,
@@ -15,6 +16,7 @@ struct Fake {
     generated: BTreeMap<String, Vec<String>>,
     no_rust_binds: bool,
     looked_up: RefCell<Vec<Item>>,
+    scanned: Cell<usize>,
 }
 
 impl State for Fake {
@@ -31,7 +33,8 @@ impl State for Fake {
         self.generated.get(pkg).cloned()
     }
 
-    fn docs_bind_rust(&self) -> bool {
+    fn docs_bind_rust(&self, _: &[PathBuf]) -> bool {
+        self.scanned.set(self.scanned.get() + 1);
         !self.no_rust_binds
     }
 }
@@ -79,6 +82,7 @@ fn wanted() -> Wanted {
         }],
         features: None,
         docs_features: None,
+        docs_paths: Vec::new(),
         against_ref: Some("origin/main".into()),
         reuse_base: true,
         stage: None,
@@ -233,23 +237,6 @@ fn staging_copies_the_resolved_entry_and_what_belongs_to_it() {
         ["k1-d.bin", "k1-d.bin.extents", "k1.group", "k1.manifest"]
     );
     std::fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn the_docs_lane_keys_rustdoc_with_the_features_docs_check_uses() {
-    let wanted = Wanted {
-        lanes: BTreeSet::from([Lane::Rustdoc]),
-        docs_features: Some("full".into()),
-        ..wanted()
-    };
-    let items: Vec<_> = select(&wanted, &Fake::default())
-        .into_iter()
-        .map(|s| s.item)
-        .collect();
-    assert!(matches!(
-        &items[0],
-        Item::Rustdoc { features: Some(f), private: false, .. } if f == "full"
-    ));
 }
 
 #[test]
@@ -430,49 +417,75 @@ fn a_docs_package_without_rust_binds_is_skipped_and_never_keyed() {
 }
 
 #[test]
-fn a_docs_package_with_rust_binds_is_built_under_the_key_docs_check_reads() {
-    let fake = Fake::default();
-    let wanted = Wanted {
-        docs_features: Some("full".into()),
-        ..rustdoc_lane(&["scry"])
-    };
-    let checked = Item::Rustdoc {
-        pkg: "scry".into(),
-        private: false,
-        features: Some("full".into()),
-        aux: false,
-    };
-    assert_eq!(
-        actions(&select(&wanted, &fake)),
-        [(&checked, &Action::Build)]
-    );
-    assert_eq!(*fake.looked_up.borrow(), [checked]);
+fn a_docs_package_is_keyed_as_docs_check_looks_it_up() {
+    let cases = [
+        (&["--features", "bench-gate"][..], None),
+        (&["--docs-features", "full"][..], Some("full")),
+    ];
+    for (flags, checked) in cases {
+        let mut list = vec!["--only", "rustdoc", "--docs", "scry"];
+        list.extend(flags);
+        let wanted = parse(&argv(&list)).unwrap().wanted;
+        let fake = Fake::default();
+        let steps = select(&wanted, &fake);
+        assert_eq!(steps[0].action, Action::Build);
+        assert_eq!(
+            live::request(&steps[0].item),
+            Some(crate::docs::surface_request(checked)),
+            "{flags:?}"
+        );
+        assert_eq!(*fake.looked_up.borrow(), [steps[0].item.clone()]);
+    }
 }
 
 #[test]
-fn a_lib_or_cdylib_docs_package_is_built_as_before() {
-    let steps = select(&rustdoc_lane(&["core", "plugin"]), &Fake::default());
-    assert_eq!(
-        actions(&steps),
-        [
-            (&docs("core", false), &Action::Build),
-            (&docs("plugin", false), &Action::Build),
-        ]
-    );
-}
-
-#[test]
-fn a_spec_package_is_built_whatever_the_docs_bind() {
+fn a_spec_package_is_built_when_the_docs_bind_no_rust() {
     let fake = Fake {
         generated: BTreeMap::from([("server".to_string(), vec!["core".to_string()])]),
         no_rust_binds: true,
         ..Fake::default()
     };
     assert_eq!(
-        actions(&select(&rustdoc_lane(&[]), &fake)),
+        actions(&select(&rustdoc_lane(&["scry"]), &fake)),
         [
+            (&docs("scry", false), &Action::Covered),
             (&docs("server", true), &Action::Build),
             (&aux_docs("core"), &Action::Build),
         ]
     );
+}
+
+#[test]
+fn docs_paths_and_features_are_parsed_apart_from_the_gate() {
+    let w = parse(&argv(&[
+        "--docs-paths",
+        "README.md",
+        "guide",
+        "--features",
+        "bench-gate",
+        "--docs",
+        "scry",
+    ]))
+    .unwrap()
+    .wanted;
+    assert_eq!(
+        w.docs_paths,
+        [PathBuf::from("README.md"), PathBuf::from("guide")]
+    );
+    assert_eq!(w.docs, ["scry"]);
+    assert_eq!(w.docs_features, None);
+}
+
+#[test]
+fn the_docs_are_not_scanned_without_the_rustdoc_lane() {
+    let fake = Fake {
+        no_rust_binds: true,
+        ..Fake::default()
+    };
+    let wanted = Wanted {
+        lanes: BTreeSet::from([Lane::Bench]),
+        ..wanted()
+    };
+    select(&wanted, &fake);
+    assert_eq!(fake.scanned.get(), 0);
 }

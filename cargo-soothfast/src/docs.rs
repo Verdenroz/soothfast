@@ -341,10 +341,15 @@ fn scan_at(a: &DocsArgs, root: PathBuf) -> Result<Scanned, String> {
     Ok(Scanned { root, docs })
 }
 
-/// Whether the docs `docs check` scans at `root` by default bind a Rust item,
-/// which is when it builds rustdoc JSON for its packages.
-pub(crate) fn binds_rust_at(root: PathBuf) -> Result<bool, String> {
-    Ok(binds_rust(&scan_at(&DocsArgs::default(), root)?))
+/// Whether the docs `docs check` scans at `root` bind a Rust item, which is
+/// when it builds rustdoc JSON for its packages. Empty `paths` scans the
+/// `[docs] paths` scope, as `docs check` does without PATHS.
+pub(crate) fn binds_rust_at(root: PathBuf, paths: &[PathBuf]) -> Result<bool, String> {
+    let a = DocsArgs {
+        paths: paths.to_vec(),
+        ..DocsArgs::default()
+    };
+    Ok(binds_rust(&scan_at(&a, root)?))
 }
 
 fn binds_rust(scanned: &Scanned) -> bool {
@@ -377,10 +382,16 @@ fn surfaces_for_binds(
         .collect()
 }
 
+/// The features and visibility `docs check` documents a package with, given
+/// its `--features`.
+pub(crate) fn surface_request(features: Option<&str>) -> (Option<&str>, invoke::Visibility) {
+    (features, invoke::Visibility::Public)
+}
+
 fn build_surface(a: &DocsArgs, pkg: &str) -> Result<(surface::Surface, Value, PathBuf), String> {
+    let (features, visibility) = surface_request(a.features.as_deref());
     let (doc, root) =
-        invoke::rustdoc_json_in(pkg, None, a.features.as_deref(), invoke::Visibility::Public)
-            .map_err(|e| e.to_string())?;
+        invoke::rustdoc_json_in(pkg, None, features, visibility).map_err(|e| e.to_string())?;
     Ok((surface::from_rustdoc(&doc, &root), doc, root))
 }
 
@@ -1181,7 +1192,8 @@ mod tests {
             "<!-- soothfast:bind demo::parse -->\nparse.\n<!-- /soothfast:bind -->\n",
         )
         .unwrap();
-        assert!(super::binds_rust_at(dir).unwrap());
+        assert!(super::binds_rust_at(dir.clone(), &[]).unwrap());
+        assert!(!super::binds_rust_at(dir, &[std::path::PathBuf::from("README.md")]).unwrap());
     }
 
     #[test]
@@ -1189,7 +1201,7 @@ mod tests {
         let dir = project_without_cargo("surface");
         let a = DocsArgs::default();
         let scanned = scan_at(&a, dir.clone()).unwrap();
-        assert!(!super::binds_rust_at(dir).unwrap());
+        assert!(!super::binds_rust_at(dir, &[]).unwrap());
         assert!(super::surfaces_for_binds(&a, &scanned).unwrap().is_empty());
         assert_eq!(
             docs_binds::classify(&scanned.docs[0].1.binds[0].item),

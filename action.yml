@@ -197,6 +197,12 @@ inputs:
     description: Space-separated packages whose rustdoc JSON `docs check` reads. Builds the `rustdoc` lane.
     required: false
     default: ""
+  prebuild-docs-paths:
+    description: >-
+      Space-separated PATHS `docs check` is given, which decide whether it
+      builds rustdoc at all. Empty means the `[docs] paths` scope.
+    required: false
+    default: ""
   prebuild-spec:
     description: >-
       Space-separated `PKG` or `PKG:TARGET` that `spec` commands run on.
@@ -505,6 +511,7 @@ runs:
         EVENT: ${{ github.event_name }}
         ON_DEFAULT: ${{ steps.prepare.outputs.on_default_branch }}
         DOCS: ${{ inputs.prebuild-docs }}
+        DOCS_PATHS: ${{ inputs.prebuild-docs-paths }}
         SPEC: ${{ inputs.prebuild-spec }}
       run: "$GITHUB_ACTION_PATH/action/prebuild.sh"
 
