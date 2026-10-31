@@ -1,4 +1,4 @@
-//! `cargo soothfast baseline merge --into NAME [--expect N] FILE...`: fold the
+//! `cargo soothfast baseline merge --into NAME [--expect N] [--packages P...] FILE...`: fold the
 //! partial baselines a sharded gate saved, one per shard, into one baseline.
 
 use std::path::{Path, PathBuf};
@@ -40,18 +40,23 @@ impl From<String> for Failure {
 }
 
 fn merge_args(args: &[String]) -> Result<PathBuf, Failure> {
-    const USAGE: &str = "usage: baseline merge --into NAME [--expect N] FILE...";
+    const USAGE: &str =
+        "usage: baseline merge --into NAME [--expect N] [--packages \"A B\"] FILE...";
     let (Some("merge"), rest) = (
         args.first().map(String::as_str),
         args.get(1..).unwrap_or(&[]),
     ) else {
         return Err(USAGE.to_string().into());
     };
-    let (mut into, mut expect, mut files) = (None, None, Vec::new());
+    let (mut into, mut expect, mut files, mut packages) = (None, None, Vec::new(), Vec::new());
     let mut it = rest.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--into" => into = it.next().cloned(),
+            "--packages" => {
+                let list = it.next().ok_or("--packages needs a list".to_string())?;
+                packages.extend(list.split_whitespace().map(|p| p.replace('-', "_")));
+            }
             "--expect" => {
                 expect = Some(
                     it.next()
@@ -82,7 +87,7 @@ fn merge_args(args: &[String]) -> Result<PathBuf, Failure> {
         })
         .collect::<Result<Vec<Value>, String>>()?;
     let existing = invoke::load_baseline(&into).map_err(|e| e.to_string())?;
-    let merged = merge(&docs, existing);
+    let merged = merge(&docs, existing, &packages).map_err(Failure::Missing)?;
     Ok(invoke::write_baseline(&into, &merged).map_err(|e| e.to_string())?)
 }
 
@@ -91,15 +96,23 @@ fn merge_args(args: &[String]) -> Result<PathBuf, Failure> {
 /// out, and `existing` keeps its imported and `buildcost::` items. Shards own
 /// disjoint items; the scalar fields take the newest or the noisiest, the
 /// most cautious reading of any shard.
-pub fn merge(docs: &[Value], existing: Option<Value>) -> Value {
+pub fn merge(
+    docs: &[Value],
+    existing: Option<Value>,
+    packages: &[String],
+) -> Result<Value, String> {
     let mut out = existing.unwrap_or_else(|| json!({ "version": 1 }));
-    let covered: Vec<String> = docs
+    let mut covered: Vec<String> = docs
         .iter()
         .filter_map(|d| d["items"].as_object())
         .flatten()
         .filter(|(k, v)| !is_kept(k, v))
         .map(|(k, _)| invoke::id_pkg(k).to_string())
         .collect();
+    if let Some(missing) = packages.iter().find(|p| !covered.contains(p)) {
+        return Err(format!("no shard measured any item of {missing}"));
+    }
+    covered.extend(packages.iter().cloned());
     let mut items = out["items"].as_object().cloned().unwrap_or_default();
     items.retain(|k, v| is_kept(k, v) || !covered.iter().any(|p| p == invoke::id_pkg(k)));
     let mut assertions: Vec<Value> = out["assertions"].as_array().cloned().unwrap_or_default();
@@ -128,7 +141,7 @@ pub fn merge(docs: &[Value], existing: Option<Value>) -> Value {
     }
     out["items"] = Value::Object(items);
     out["assertions"] = Value::Array(assertions);
-    out
+    Ok(out)
 }
 
 /// Imported and `buildcost::` items belong to other runs, not to the bench
@@ -161,7 +174,9 @@ mod tests {
         let merged = merge(
             &[shard(&["a::x", "a::y"], 0.5, 10), shard(&["a::z"], 2.0, 30)],
             None,
-        );
+            &[],
+        )
+        .unwrap();
         assert_eq!(ids(&merged), ["a::x", "a::y", "a::z"]);
         assert_eq!(merged["noise_pct"], json!(2.0));
         assert_eq!(merged["created_unix"], json!(30));
@@ -181,7 +196,7 @@ mod tests {
             },
             "assertions": [{ "id": "a::gone", "ok": true }, { "id": "b::other", "ok": true }],
         });
-        let merged = merge(&[shard(&["a::x"], 1.0, 5)], Some(existing));
+        let merged = merge(&[shard(&["a::x"], 1.0, 5)], Some(existing), &[]).unwrap();
         assert_eq!(
             ids(&merged),
             ["a::x", "b::other", "buildcost::a::x", "imp::old"]
@@ -193,6 +208,16 @@ mod tests {
             .map(|a| a["id"].as_str().unwrap())
             .collect();
         assert_eq!(kept, ["b::other", "a::x"]);
+    }
+
+    #[test]
+    fn a_listed_package_is_replaced_and_must_have_been_measured() {
+        let existing = json!({ "items": { "b::stale": { "ir": 1 }, "a::old": { "ir": 1 } } });
+        let shards = [shard(&["a::x"], 1.0, 5)];
+        let err = merge(&shards, Some(existing.clone()), &["b".to_string()]).unwrap_err();
+        assert_eq!(err, "no shard measured any item of b");
+        let merged = merge(&shards, Some(existing), &["a".to_string()]).unwrap();
+        assert_eq!(ids(&merged), ["a::x", "b::stale"]);
     }
 
     #[test]

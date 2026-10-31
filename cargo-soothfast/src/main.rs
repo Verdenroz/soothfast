@@ -85,9 +85,10 @@ commands:
            acts on pull request labels as soothfast-bot; --labels creates
            soothfast:merge, soothfast:update, soothfast:perf-accepted and
            do-not-merge with gh)
-  baseline merge --into NAME [--expect N] FILE...
+  baseline merge --into NAME [--expect N] [--packages \"A B\"] FILE...
            (merges the partial baselines of a sharded gate into one; with
-           --expect, fails unless exactly N files are given)
+           --expect, fails unless exactly N files are given, and with
+           --packages, replaces those packages and fails if one has no items)
   cache    merge --from DIR
            (folds a restored .soothfast cache layout in DIR into this
            project's: items keep the entries of both, runs and link maps are

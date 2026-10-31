@@ -415,8 +415,9 @@ its own key, for a rerun.
 baseline, and one gate run can do that for several packages in turn. It refuses
 a baseline that already holds items of the package, since the shard would
 leave them half old. `cargo soothfast baseline merge --into NAME --expect N
-FILE...` folds the N shard baselines into one, replaces the items of the
-packages they cover, and fails if fewer arrive. Each leg builds both sides itself unless the stores hold
+--packages "A B" FILE...` folds the N shard baselines into one, replaces the
+items of the packages they cover and the listed ones, and fails if fewer
+arrive or a listed package has no items. Each leg builds both sides itself unless the stores hold
 them; `shard:` on the [reusable workflow](ci.md#one-build) builds them once
 and gives every leg a hit.
 
