@@ -228,7 +228,7 @@ pub fn cheap_key_skipping(
 
     let mut files: BTreeSet<PathBuf> = tracked_files(root, &rels)?
         .into_iter()
-        .filter(|f| !f.starts_with(".soothfast") && !f.starts_with(".github") && !skip(f))
+        .filter(|f| !is_scratch(f) && !f.starts_with(".github") && !skip(f))
         .collect();
     files.extend(ROOT_FILES.iter().map(PathBuf::from));
 
@@ -241,6 +241,14 @@ pub fn cheap_key_skipping(
         input.push_str(&format!("{}\u{1}{token}\n", file.display()));
     }
     Some(format!("{:016x}", fnv1a(input.as_bytes())))
+}
+
+/// Whether `file` lies under a top-level `.soothfast*` path: the store and
+/// the directories the CI action makes in the workspace while a job runs.
+fn is_scratch(file: &Path) -> bool {
+    file.components()
+        .next()
+        .is_some_and(|c| c.as_os_str().to_string_lossy().starts_with(".soothfast"))
 }
 
 /// Files under `rels` that git tracks or would add, so uncommitted edits are
@@ -497,6 +505,8 @@ mod tests {
         let dirs = [repo.0.clone()];
         let root_package = cheap_key(&repo.0, &dirs, "h", &[]).unwrap();
         repo.write(".soothfast/rustdoc/entry.json", "{}");
+        repo.write(".soothfast-action/Cargo.toml", "[package]\n");
+        repo.write(".soothfast-branch/runs/a.json", "{}");
         repo.write(".github/workflows/ci.yml", "on: push\n");
         assert_eq!(root_package, cheap_key(&repo.0, &dirs, "h", &[]).unwrap());
         repo.write("README.md", "edited again\n");

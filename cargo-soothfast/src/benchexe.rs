@@ -509,6 +509,28 @@ mod tests {
     }
 
     #[test]
+    fn a_scratch_directory_made_during_the_build_does_not_stop_the_store() {
+        let repo = Repo::new("exe-scratch");
+        let store = repo.store_dir();
+        repo.write(".gitignore", "/target\n");
+        let mut plan = plan(&repo, store);
+        plan.crate_dirs = vec![repo.0.clone()];
+        plan.key = plan.key_now().unwrap();
+        for expected in [1, 0] {
+            let builds = Cell::new(0);
+            resolve(Some(&plan), || {
+                builds.set(builds.get() + 1);
+                repo.write(".soothfast-action/Cargo.toml", "[package]\n");
+                repo.write(".soothfast-branch/runs/a.json", "{}");
+                Some(fake_build(&repo, b"one"))
+            })
+            .unwrap();
+            assert_eq!(builds.get(), expected);
+        }
+        assert!(plan.load().is_some());
+    }
+
+    #[test]
     fn a_build_without_readable_dep_info_is_not_stored() {
         let repo = Repo::new("exe-nodep");
         let store = repo.store_dir();
