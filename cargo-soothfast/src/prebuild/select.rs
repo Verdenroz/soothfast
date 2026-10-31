@@ -89,7 +89,7 @@ impl fmt::Display for Item {
 pub(super) enum Action {
     Build,
     Stored,
-    /// Nothing is needed: the gate would not build it.
+    /// Nothing is needed: its consumer would not build it.
     Covered,
 }
 
@@ -113,9 +113,11 @@ pub(super) struct Wanted {
     pub(super) docs: Vec<String>,
     pub(super) spec: Vec<SpecPackage>,
     pub(super) features: Option<String>,
-    /// The `--features` the caller gave, which is all `docs check` uses: it
-    /// never reads the `[gate]` table.
+    /// The `--features` `docs check` is given: `--docs-features`, never the
+    /// gate's own.
     pub(super) docs_features: Option<String>,
+    /// The PATHS `docs check` is given; empty means the `[docs] paths` scope.
+    pub(super) docs_paths: Vec<PathBuf>,
     pub(super) against_ref: Option<String>,
     pub(super) reuse_base: bool,
     pub(super) stage: Option<PathBuf>,
@@ -133,6 +135,9 @@ pub(super) trait State {
     /// The workspace crates to document with `pkg`, or `None` when none of
     /// its specs is generated from the code.
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>>;
+    /// Whether the docs `docs check` scans under `paths` bind a Rust item,
+    /// the one case in which it builds rustdoc JSON for its packages.
+    fn docs_bind_rust(&self, paths: &[PathBuf]) -> bool;
 }
 
 pub(super) fn step(item: Item, state: &impl State) -> Step {
@@ -200,7 +205,19 @@ pub(super) fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
             }
         }
     }
-    unique.into_iter().map(|item| step(item, state)).collect()
+    let unbound = wanted.lanes.contains(&Lane::Rustdoc)
+        && !wanted.docs.is_empty()
+        && !state.docs_bind_rust(&wanted.docs_paths);
+    unique
+        .into_iter()
+        .map(|item| match item {
+            Item::Rustdoc { private: false, .. } if unbound => Step {
+                item,
+                action: Action::Covered,
+            },
+            item => step(item, state),
+        })
+        .collect()
 }
 
 /// The steps for the merge-base's tree. A package whose merge-base run is

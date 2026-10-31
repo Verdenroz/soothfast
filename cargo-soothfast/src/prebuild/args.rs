@@ -50,16 +50,27 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
         spec: Vec::new(),
         features: None,
         docs_features: None,
+        docs_paths: Vec::new(),
         against_ref: None,
         reuse_base: true,
         stage: None,
         shards: 1,
     };
-    let mut it = args.iter();
+    let mut it = args.iter().peekable();
     while let Some(a) = it.next() {
         match a.as_str() {
             "-p" | "--package" => wanted.packages.push(take(&mut it, a)?),
             "--docs" => wanted.docs.push(take(&mut it, a)?),
+            "--docs-features" => wanted.docs_features = Some(take(&mut it, a)?),
+            "--docs-paths" => {
+                let given = wanted.docs_paths.len();
+                while let Some(path) = it.next_if(|p| !p.starts_with('-')) {
+                    wanted.docs_paths.push(PathBuf::from(path));
+                }
+                if wanted.docs_paths.len() == given {
+                    return Err(format!("{a} needs a value"));
+                }
+            }
             "--spec" => wanted.spec.push(spec_package(&take(&mut it, a)?)),
             "--against-ref" => wanted.against_ref = Some(take(&mut it, a)?),
             "--no-reuse-base" => wanted.reuse_base = false,
@@ -79,7 +90,6 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
             }
         }
     }
-    wanted.docs_features = common.features.clone();
     gate_config::apply(&mut common)?;
     wanted.features = common.features.clone();
     wanted.lanes = if lanes.is_empty() {

@@ -136,7 +136,9 @@ pub(super) fn execute(steps: &[Step], live: &Live) -> Vec<Outcome> {
         .iter()
         .map(|s| {
             if s.action == Action::Covered {
-                live.stage_reference(s.item.pkg());
+                if matches!(s.item, Item::Bench { .. }) {
+                    live.stage_reference(s.item.pkg());
+                }
                 return Outcome::Covered;
             }
             let wants_build = s.action == Action::Build || side_of(s).is_some();

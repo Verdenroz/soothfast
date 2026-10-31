@@ -148,6 +148,15 @@ fn base_side(head: &Live, wanted: &Wanted, refname: &str) -> Result<Vec<(Step, O
     })
 }
 
+fn described(item: &Item, outcome: &Outcome) -> String {
+    match (item, outcome) {
+        (Item::Rustdoc { pkg, .. }, Outcome::Covered) => {
+            format!("rustdoc json {pkg} (no Rust binds)")
+        }
+        (item, _) => item.to_string(),
+    }
+}
+
 /// Print what happened to each step and a total. A merge-base side that did
 /// not build is no failure here: the gate reports it with its own output.
 fn finish(report: &[(Step, Outcome)]) -> i32 {
@@ -162,7 +171,7 @@ fn finish(report: &[(Step, Outcome)]) -> i32 {
             Outcome::Failed(_) => "FAILED",
         };
         *counts.entry(label).or_insert(0) += 1;
-        println!("prebuild: {label:<8} {}", step.item);
+        println!("prebuild: {label:<8} {}", described(&step.item, outcome));
         if let Outcome::Failed(why) = outcome {
             eprintln!("prebuild: {why}");
             failed |= !matches!(

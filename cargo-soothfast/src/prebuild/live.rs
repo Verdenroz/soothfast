@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use super::select::{Item, Side, State};
 use crate::invoke::{self, Build, CommonArgs, HostEnv, Shard, Visibility};
 use crate::runcache::Runs;
-use crate::{benchexe, buildstamp, spec_config, spec_gen};
+use crate::{benchexe, buildstamp, docs, spec_config, spec_gen};
 
 pub(super) struct Tree {
     pub(super) wt: PathBuf,
@@ -175,5 +175,12 @@ impl State for Live<'_> {
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>> {
         let cfg = spec_config::generating(pkg)?;
         Some(spec_gen::aux_crates(pkg, None, &cfg))
+    }
+
+    fn docs_bind_rust(&self, paths: &[PathBuf]) -> bool {
+        docs::binds_rust_at(invoke::project_root(), paths).unwrap_or_else(|e| {
+            println!("prebuild: could not scan the docs ({e}); building rustdoc anyway");
+            true
+        })
     }
 }
