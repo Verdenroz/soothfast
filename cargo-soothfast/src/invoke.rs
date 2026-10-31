@@ -1262,7 +1262,7 @@ pub fn rustdoc_json_in(
         built = build(None)?;
     }
     let failed = |built: &Built| {
-        let hint = if lacks_toolchain(&built.stderr) {
+        let hint = if lacks_toolchain(&built.stderr, &toolchain) {
             format!(" (is the {toolchain} toolchain installed?)")
         } else {
             String::new()
@@ -1347,13 +1347,29 @@ fn rejects_tracking_flags(stderr: &str) -> bool {
             && (e.contains("unrecognized option") || e.contains("unexpected argument")))
 }
 
-/// Whether a `cargo +TOOLCHAIN` failure says the toolchain itself is absent,
-/// from rustup or from a `cargo` that is no rustup proxy.
-fn lacks_toolchain(stderr: &str) -> bool {
-    let e = stderr.to_lowercase();
-    (e.contains("toolchain") && (e.contains("is not installed") || e.contains("not installable")))
-        || e.contains("no release found")
-        || e.contains("no such command: `+")
+/// Whether a `cargo +TOOLCHAIN` failure says `toolchain` itself is absent or
+/// could not be fetched, from rustup or from a `cargo` that is no rustup proxy.
+/// A missing component of an installed toolchain is not that.
+fn lacks_toolchain(stderr: &str, toolchain: &str) -> bool {
+    let tc = toolchain.to_lowercase();
+    stderr.lines().map(str::to_lowercase).any(|l| {
+        let named_missing = l.find(&tc).is_some_and(|at| {
+            let rest = &l[at + tc.len()..];
+            rest.contains("is not installed") || rest.contains("is not installable")
+        });
+        let fetch_failed = [
+            "could not download",
+            "failed to install",
+            "error downloading",
+        ]
+        .iter()
+        .any(|p| l.contains(p));
+        !l.contains("component")
+            && (named_missing
+                || fetch_failed
+                || l.contains(&format!("no release found for '{tc}"))
+                || l.contains(&format!("no such command: `+{tc}")))
+    })
 }
 
 struct Built {
@@ -2362,17 +2378,30 @@ optional = true
 
     #[test]
     fn only_a_missing_toolchain_is_blamed_on_the_toolchain() {
+        let tc = "nightly-2026-08-07";
         let missing = [
             "error: toolchain 'nightly-2026-08-07-x86_64-unknown-linux-gnu' is not installed",
-            "error: no release found for 'nightly-1999-01-01'",
+            "error: 'nightly-2026-08-07' is not installed\nhelp: run `rustup toolchain install`",
+            "error: toolchain 'nightly-2026-08-07' is not installable",
+            "error: no release found for 'nightly-2026-08-07'",
             "error: no such command: `+nightly-2026-08-07`",
+            "info: syncing channel updates for 'nightly-2026-08-07'\n\
+             error: could not download file from 'https://static.rust-lang.org/dist/x.toml'",
+            "error: failed to install toolchain 'nightly-2026-08-07'",
         ];
         for stderr in missing {
-            assert!(super::lacks_toolchain(stderr), "{stderr}");
+            assert!(super::lacks_toolchain(stderr, tc), "{stderr}");
         }
-        assert!(!super::lacks_toolchain(
-            "error: no library targets found in package `tool`"
-        ));
+        let elsewhere = [
+            "error: no library targets found in package `tool`",
+            "error: 'rustdoc' is not installed for the toolchain 'nightly-2026-08-07'",
+            "error: component 'rust-src' for toolchain 'nightly-2026-08-07' is not installed",
+            "error: component download failed for rust-docs-x86_64-unknown-linux-gnu",
+            "error: toolchain 'stable' is not installed",
+        ];
+        for stderr in elsewhere {
+            assert!(!super::lacks_toolchain(stderr, tc), "{stderr}");
+        }
     }
 
     #[test]

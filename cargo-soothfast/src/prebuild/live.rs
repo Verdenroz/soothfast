@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use super::select::{Item, Side, State};
 use crate::invoke::{self, Build, CommonArgs, HostEnv, Shard, Visibility};
 use crate::runcache::Runs;
-use crate::{benchexe, buildstamp, spec_config, spec_gen, workspace};
+use crate::{benchexe, buildstamp, docs, spec_config, spec_gen};
 
 pub(super) struct Tree {
     pub(super) wt: PathBuf,
@@ -177,7 +177,8 @@ impl State for Live<'_> {
         Some(spec_gen::aux_crates(pkg, None, &cfg))
     }
 
-    fn has_library(&self, pkg: &str) -> bool {
-        workspace::has_library(pkg, None).unwrap_or(true)
+    /// Docs that fail to scan are built for anyway; `docs check` reports the scan.
+    fn docs_bind_rust(&self) -> bool {
+        docs::binds_rust_at(invoke::project_root()).unwrap_or(true)
     }
 }

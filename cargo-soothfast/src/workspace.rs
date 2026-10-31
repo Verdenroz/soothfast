@@ -52,22 +52,6 @@ pub fn members(dir: Option<&Path>) -> io::Result<Vec<String>> {
     Ok(names)
 }
 
-/// Whether `pkg` in the tree at `dir` has a library target, the only one
-/// `cargo rustdoc --lib` documents.
-pub fn has_library(pkg: &str, dir: Option<&Path>) -> io::Result<bool> {
-    Ok(library_in(&metadata(dir, true)?, pkg))
-}
-
-/// The lookup itself, over metadata already in hand.
-pub(crate) fn library_in(meta: &Value, pkg: &str) -> bool {
-    meta["packages"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|p| p["name"].as_str() == Some(pkg))
-        .any(has_lib_target)
-}
-
 /// Workspace members `pkg` depends on, transitively, in name order.
 ///
 /// Only members with a plain library target qualify: a proc-macro crate's

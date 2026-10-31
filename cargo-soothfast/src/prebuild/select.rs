@@ -133,9 +133,9 @@ pub(super) trait State {
     /// The workspace crates to document with `pkg`, or `None` when none of
     /// its specs is generated from the code.
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>>;
-    /// Whether `pkg` has the library target the rustdoc of every consumer
-    /// documents.
-    fn has_library(&self, pkg: &str) -> bool;
+    /// Whether the docs `docs check` scans bind a Rust item, the one case in
+    /// which it builds rustdoc JSON for its packages.
+    fn docs_bind_rust(&self) -> bool;
 }
 
 pub(super) fn step(item: Item, state: &impl State) -> Step {
@@ -203,10 +203,11 @@ pub(super) fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
             }
         }
     }
+    let unbound = !wanted.docs.is_empty() && !state.docs_bind_rust();
     unique
         .into_iter()
         .map(|item| match item {
-            Item::Rustdoc { ref pkg, .. } if !state.has_library(pkg) => Step {
+            Item::Rustdoc { private: false, .. } if unbound => Step {
                 item,
                 action: Action::Covered,
             },
