@@ -475,7 +475,7 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
 /// and `true` when the sum then ends its life: the block ends, or an
 /// instruction writes the sum register or a call clobbers it, with no register
 /// jump before. `None` when nothing adds them within [`WINDOW`], one of them is
-/// written first, a conditional branch or a register jump follows that is not
+/// written first, a branch to an address or a register jump follows that is not
 /// through the sum or is further than [`WINDOW`], or [`REACH`] runs out.
 fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool)> {
     let mut sum: Option<(usize, String)> = None;
@@ -506,10 +506,16 @@ fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool
             return Some((i, false));
         }
         let register_jump = ins.mnemonic == "jmp" && through_loaded_register(ins);
-        if register_jump || (is_jump(ins.mnemonic) && ins.mnemonic != "jmp") {
+        if register_jump || direct_target(ins).is_some() {
             return None;
         }
-        if ends_block(ins) || disturbs(ins, &[total.as_str()]) {
+        let call = ins.mnemonic.starts_with("call");
+        let clobbered = if call {
+            CALLER_SAVED.contains(&total.as_str())
+        } else {
+            disturbs(ins, &[total.as_str()])
+        };
+        if ends_block(ins) || clobbered {
             return Some((*add, true));
         }
         if i >= REACH {

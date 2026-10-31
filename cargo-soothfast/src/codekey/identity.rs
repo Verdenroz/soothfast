@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use super::elf::{Section, Symbol, in_data};
+use super::elf::{Section, Symbol, in_data, section_index};
 use super::resolve::{Node, Place, Resolver};
 use super::strip_llvm;
 
@@ -81,7 +81,7 @@ impl Resolver<'_> {
     /// link-map input, and not past the end of one, on a marker or only on
     /// the section around it.
     pub(super) fn object_at(&self, addr: u64) -> Option<Place> {
-        let section = self.section_at(addr)?;
+        let section = section_index(self.sections, addr)?;
         let named = self.in_symbol(addr, section).is_some();
         let inside = self.input_at(addr).is_some() && !self.sections[section].code;
         if named || (inside && !self.markers.contains_key(&addr)) {

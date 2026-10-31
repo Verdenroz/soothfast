@@ -370,6 +370,8 @@ hashed as the data each word names, so an edit elsewhere that shifts the
 strings leaves the function's key alone. A word must land inside a sized
 symbol or a link-map input. One past the end of either, the address of a
 zero-sized static, or only the section around it leaves the table as bytes.
+Without a link map a zero-sized static's address is keyed by the whole section
+around it, which is sound and costs hits; a gate normally has a map.
 
 `__stop_SEC` symbols that the linker defines are named, and the section they
 end is hashed, but the section that happens to follow is not: a pointer one

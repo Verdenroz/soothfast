@@ -32,8 +32,8 @@ use crate::linkmap::Extent;
 use disasm::hash_functions;
 pub(crate) use elf::section_headers;
 use elf::{
-    addressable, parse_labels, parse_markers, parse_relocs, parse_sections, parse_symbols,
-    relro_range, seal, tls_digest,
+    addressable, is_pie_elf64, parse_labels, parse_markers, parse_relocs, parse_sections,
+    parse_symbols, relro_range, seal, tls_digest,
 };
 use resolve::Resolver;
 
@@ -153,9 +153,8 @@ impl Binary {
         // Fails on a binary with no dynamic section, which has no relocations.
         let relocs = parse_relocs(&command_text("objdump", &["-R"], bin).unwrap_or_default());
         let image = std::fs::read(bin).ok()?;
-        // Only a position-independent image (ET_DYN) names every address it
-        // uses rip-relative; a fixed-address one hides data in immediates.
-        if image.get(..4) != Some(b"\x7fELF") || image.get(16..18) != Some(&[3, 0]) {
+        // A fixed-address image hides data in immediates.
+        if !is_pie_elf64(&image) {
             return None;
         }
         let tls = tls_digest(&sections, &image)?;

@@ -1,6 +1,6 @@
 //! Where a function's jumps out of its own span go, for the jump-table proof.
 
-use super::elf::{Symbol, Target};
+use super::elf::{Symbol, Target, section_index};
 use super::is_fragment;
 use super::resolve::Resolver;
 use crate::jumptable::Exits;
@@ -65,7 +65,7 @@ impl Resolver<'_> {
 
     /// Whether `addr` is a stub in the procedure linkage table.
     fn in_plt(&self, addr: u64) -> bool {
-        self.section_at(addr)
+        section_index(self.sections, addr)
             .is_some_and(|i| self.sections[i].name.starts_with(".plt"))
     }
 }

@@ -643,6 +643,23 @@ fn a_sequence_that_could_be_a_jump_is_no_data_table() {
         RET,
     ];
     assert!(prove_data(&guarded).pointers.is_empty());
+    let branch = [LEA, LOAD, ADD, "jmp    1010 <f+0x10>", "nop", "nop", RET];
+    assert!(prove_data(&branch).pointers.is_empty());
+    let loaded = "mov    0x8(%rdi),%rbp";
+    let jump = "jmp    *%rbp";
+    let call = "call   2000 <g>";
+    let caller_saved = [loaded, LEA, LOAD, ADD, call, jump, RET];
+    assert_eq!(prove_data(&caller_saved).pointers.len(), 1);
+    let callee_saved = [
+        loaded,
+        "lea    0x100d(%rip),%rbx        # 2010 <anon>",
+        "movslq (%rbx,%rax,4),%rcx",
+        "add    %rcx,%rbx",
+        call,
+        jump,
+        RET,
+    ];
+    assert!(prove_data(&callee_saved).pointers.is_empty());
     let used = [LEA, LOAD, ADD, "mov    (%rax),%rax", RET];
     assert_eq!(prove_data(&used).pointers.len(), 1);
     let mut overwritten = vec![LEA, LOAD, ADD, "mov    (%rax),%rax"];

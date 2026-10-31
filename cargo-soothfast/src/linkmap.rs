@@ -33,7 +33,8 @@ pub struct Extent {
     pub entry: u64,
     /// `object:section`, which names the same input in another link of the
     /// same code. The object is its path below the profile directory, with
-    /// the archive member when it has one.
+    /// the archive member when it has one. Empty for code and read-only data,
+    /// which are told apart by their bytes.
     pub name: String,
 }
 
@@ -47,6 +48,14 @@ fn named(path: &str, section: &str, root: &str) -> String {
     );
     let below = path.strip_prefix(root).unwrap_or(&path);
     format!("{}:{section}", below.display())
+}
+
+/// Output sections whose inputs are not named.
+fn is_read_only(output: &str) -> bool {
+    matches!(
+        output,
+        ".text" | ".rodata" | ".eh_frame" | ".gcc_except_table" | ".init" | ".fini" | ".plt"
+    )
 }
 
 /// The profile directory (`target/[triple/]release`) of a bench executable.
@@ -86,7 +95,8 @@ fn entry_size(section: &str) -> u64 {
 
 /// The extents of the input sections in `text`, read as an lld, mold or GNU ld
 /// map, their objects named below `root` (a path outside it stays whole).
-/// `None` for any other format.
+/// Only inputs of writable output sections are named. `None` for any other
+/// format.
 pub fn parse(text: &str, root: &str) -> Option<Vec<Extent>> {
     let header = text.lines().next()?;
     let mut extents = if header.contains("VMA") && header.contains("LMA") {
@@ -108,43 +118,63 @@ pub fn parse(text: &str, root: &str) -> Option<Vec<Extent>> {
 /// size. An input section is a row whose last column reads `file:(section)`.
 fn parse_columns(text: &str, vma_radix: u32, size_radix: u32, root: &str) -> Vec<Extent> {
     let lma = size_radix == 16;
-    text.lines()
-        .filter(|line| line.ends_with(')') && line.contains(":("))
-        .filter_map(|line| {
-            let mut f = line.split_whitespace();
-            let vma = f.next()?;
-            let vma = u64::from_str_radix(vma.strip_prefix("0x").unwrap_or(vma), vma_radix).ok()?;
-            if lma {
-                f.next()?;
-            }
-            let size = u64::from_str_radix(f.next()?, size_radix).ok()?;
-            let (path, section) = after_columns(line, if lma { 4 } else { 3 }).rsplit_once(":(")?;
-            let section = section.strip_suffix(')')?;
-            Some(Extent {
-                vma,
-                size,
-                entry: entry_size(section),
-                name: named(path, section, root),
-            })
+    let columns = if lma { 4 } else { 3 };
+    let input = |line: &str, output: &str| {
+        let mut f = line.split_whitespace();
+        let vma = f.next()?;
+        let vma = u64::from_str_radix(vma.strip_prefix("0x").unwrap_or(vma), vma_radix).ok()?;
+        if lma {
+            f.next()?;
+        }
+        let size = u64::from_str_radix(f.next()?, size_radix).ok()?;
+        let (path, section) = after_columns(line, columns).rsplit_once(":(")?;
+        let section = section.strip_suffix(')')?;
+        Some(Extent {
+            vma,
+            size,
+            entry: entry_size(section),
+            name: if is_read_only(output) {
+                String::new()
+            } else {
+                named(path, section, root)
+            },
         })
-        .collect()
+    };
+    let mut extents = Vec::new();
+    let mut output = "";
+    for line in text.lines() {
+        if line.ends_with(')') && line.contains(":(") {
+            extents.extend(input(line, output));
+            continue;
+        }
+        let name = after_columns(line, columns).trim();
+        if name.starts_with('.') && !name.contains(char::is_whitespace) {
+            output = name;
+        }
+    }
+    extents
 }
 
 /// GNU ld lists `.section 0xADDR 0xSIZE file` under an output section, with
 /// the numbers on the next line when the name is long.
 fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
     let hex = |s: &str| u64::from_str_radix(s.strip_prefix("0x")?, 16).ok();
-    let extent = |addr: &str, size: &str, section: &str, path: &str| {
+    let extent = |addr: &str, size: &str, section: &str, path: &str, output: &str| {
         Some(Extent {
             vma: hex(addr)?,
             size: hex(size)?,
             entry: entry_size(section),
-            name: named(path, section, root),
+            name: if is_read_only(output) {
+                String::new()
+            } else {
+                named(path, section, root)
+            },
         })
     };
     let mut extents = Vec::new();
     let mut named = false;
     let mut section = "";
+    let mut output = "";
     for line in text.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
         let nested = line.starts_with(' ');
@@ -155,11 +185,15 @@ fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
             }
             [name, addr, size, ..] if nested && name.starts_with('.') => {
                 named = false;
-                extents.extend(extent(addr, size, name, after_columns(line, 3)));
+                extents.extend(extent(addr, size, name, after_columns(line, 3), output));
             }
             [addr, size, ..] if named => {
                 named = false;
-                extents.extend(extent(addr, size, section, after_columns(line, 2)));
+                extents.extend(extent(addr, size, section, after_columns(line, 2), output));
+            }
+            [name, ..] if !nested && name.starts_with('.') => {
+                named = false;
+                output = name;
             }
             _ => named = false,
         }
@@ -214,12 +248,12 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     if let Some(extents) = cached(&maps, digest, entry.as_deref()) {
         return Ok(extents);
     }
-    // Kept, not removed: cargo answers a repeated build as fresh without
-    // relinking. If the kept map is gone, a path cargo has not seen forces it.
+    // Cargo answers a repeated build as fresh without relinking, and writes no
+    // map then. A path it has not seen forces the link.
     let kept = maps.join(format!("{digest}.map"));
     let forced = maps.join(format!("{digest}.{}.map", std::process::id()));
     let mut linked = None;
-    for map in [kept, forced.clone()] {
+    for map in [kept.clone(), forced.clone()] {
         let Some(built) = invoke::build_link_map(common, bin.dir, bin.target_dir, &map) else {
             break;
         };
@@ -228,15 +262,16 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
             break;
         }
     }
+    let _ = std::fs::remove_file(&kept);
     let _ = std::fs::remove_file(&forced);
     let (built, text) = linked.ok_or("the map build failed")?;
     if binary_digest(&built).as_deref() != Some(digest) {
         return Err("the map build links different code".into());
     }
-    let extents = parse(&text, &root_of(bin.exe)).ok_or("unrecognized map format")?;
+    let extents = parse(&text, &root_of(&built)).ok_or("unrecognized map format")?;
     let encoded = encode(&extents);
     if std::fs::write(maps.join(format!("{digest}.extents")), &encoded).is_ok() {
-        prune(&maps);
+        runcache::prune_oldest(&maps, KEEP);
     }
     if let Some(entry) = &entry {
         binstore::write_sidecar(entry, "extents", &encoded);
@@ -244,42 +279,28 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     Ok(extents)
 }
 
-/// Drop the oldest extents and the oldest maps past [`KEEP`] of each, so a
-/// map outlives the extents made from it.
-fn prune(maps: &Path) {
-    let Ok(entries) = std::fs::read_dir(maps) else {
-        return;
-    };
-    let (extents, kept): (Vec<_>, Vec<_>) = entries
-        .flatten()
-        .filter_map(runcache::modified)
-        .partition(|(_, path)| path.extension().is_some_and(|e| e == "extents"));
-    runcache::drop_oldest(extents, KEEP);
-    runcache::drop_oldest(kept, KEEP);
-}
-
 /// The extents already worked out for the binary with `digest`, from `maps`
 /// or from the binary store's `entry` for it. One found only in the entry is put back in `maps`.
 fn cached(maps: &Path, digest: &str, entry: Option<&Path>) -> Option<Vec<Extent>> {
     let stored = maps.join(format!("{digest}.extents"));
-    let text = match std::fs::read_to_string(&stored) {
-        Ok(text) => text,
-        Err(_) => {
-            let text = binstore::read_sidecar(entry?, "extents")?;
-            if std::fs::write(&stored, &text).is_ok() {
-                prune(maps);
-            }
-            text
-        }
+    let local = std::fs::read_to_string(&stored)
+        .ok()
+        .map(|text| (text, false));
+    let sidecar = || {
+        let text = binstore::read_sidecar(entry?, "extents")?;
+        Some((text, true))
     };
-    let extents = decode(&text);
-    if extents.is_empty() {
-        return None;
+    let (text, restored) = local
+        .into_iter()
+        .chain(sidecar())
+        .find(|(text, _)| !decode(text).is_empty())?;
+    if restored && std::fs::write(&stored, &text).is_ok() {
+        runcache::prune_oldest(maps, KEEP);
     }
     if let Some(entry) = entry {
         binstore::write_sidecar(entry, "extents", &text);
     }
-    Some(extents)
+    Some(decode(&text))
 }
 
 #[cfg(test)]
@@ -343,23 +364,49 @@ Linker script and memory map
             parse(LLD, "").expect("parsed"),
             [
                 at(0x2e0, 0x1c, "<internal>:.interp"),
-                pool(0xce40, 0xd8, 8, "<internal>:.rodata.cst8"),
-                at(0xcf18, 7, "/w/target/deps/bench-1.o:.rodata..Lanon.1.0"),
-                at(0xcf64, 0x11, "/w path/deps/bench-1.o:.rodata..Lanon.1.1"),
-                pool(0xcf90, 0x10, 8, "<internal>:.rodata.cst8")
+                pool(0xce40, 0xd8, 8, ""),
+                at(0xcf18, 7, ""),
+                at(0xcf64, 0x11, ""),
+                pool(0xcf90, 0x10, 8, "")
             ]
         );
     }
 
     #[test]
-    fn objects_are_named_below_the_target_directory() {
-        let names: Vec<String> = parse(LLD, "/w/target")
+    fn only_inputs_of_writable_output_sections_are_named() {
+        let map = "\
+             VMA              LMA     Size Align Out     In      Symbol
+            1000             1000       10     1 .rodata
+            1000             1000        8     1         /w/t/release/deps/a.o:(.rodata.x)
+            2000             2000       10     1 .data
+            2000             2000        8     1         /w/t/release/deps/a.o:(.data.y)
+";
+        let names: Vec<String> = parse(map, "/w/t/release")
             .expect("parsed")
             .into_iter()
             .map(|e| e.name)
             .collect();
-        assert!(names.contains(&"deps/bench-1.o:.rodata..Lanon.1.0".to_string()));
-        assert!(names.contains(&"/w path/deps/bench-1.o:.rodata..Lanon.1.1".to_string()));
+        assert_eq!(names, ["", "deps/a.o:.data.y"]);
+    }
+
+    #[test]
+    fn a_stored_executable_does_not_move_the_root() {
+        let built = Path::new("/w/target/release/deps/bench-1");
+        let stored = Path::new("/w/.soothfast/bins/key-digest.bin");
+        assert_eq!(root_of(built), "/w/target/release");
+        assert_ne!(root_of(stored), root_of(built));
+    }
+
+    #[test]
+    fn objects_are_named_below_the_target_directory() {
+        let map = LLD.replace(".rodata", ".data");
+        let names: Vec<String> = parse(&map, "/w/target")
+            .expect("parsed")
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert!(names.contains(&"deps/bench-1.o:.data..Lanon.1.0".to_string()));
+        assert!(names.contains(&"/w path/deps/bench-1.o:.data..Lanon.1.1".to_string()));
     }
 
     #[test]
@@ -459,9 +506,9 @@ Linker script and memory map
         assert_eq!(
             parse(MOLD, "").expect("parsed"),
             [
-                at(0xd850, 1, "m.cgu.0.rcgu.o:.rodata..Lanon.1"),
-                at(0xd851, 20, "m.cgu.0.rcgu.o:.rodata..Lanon.2"),
-                pool(0xd868, 16, 16, "<internal>:.rodata.cst16")
+                at(0xd850, 1, ""),
+                at(0xd851, 20, ""),
+                pool(0xd868, 16, 16, "")
             ]
         );
     }
@@ -471,10 +518,10 @@ Linker script and memory map
         assert_eq!(
             parse(GNU, "").expect("parsed"),
             [
-                at(0x2000, 4, "/usr/lib/crt1.o:.rodata"),
-                at(0x2008, 0x10, "foo.o:.rodata.foo"),
-                at(0x2018, 0x18, "bar.o:.rodata._ZN3bar17h0123456789abcdefE"),
-                pool(0x2030, 0x20, 16, "baz.o:.rodata.cst16"),
+                at(0x2000, 4, ""),
+                at(0x2008, 0x10, ""),
+                at(0x2018, 0x18, ""),
+                pool(0x2030, 0x20, 16, ""),
                 at(0x4000, 8, "/w path/deps/a b.o:.bss.counter"),
                 at(
                     0x4008,
@@ -498,24 +545,23 @@ Linker script and memory map
     }
 
     #[test]
-    fn pruning_keeps_the_newest_maps_and_extents_each() {
-        let dir = std::env::temp_dir().join(format!("soothfast-prune-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        for n in 0..KEEP + 6 {
-            std::fs::write(dir.join(format!("m{n}.map")), "").unwrap();
-        }
-        std::fs::write(dir.join("only.extents"), "").unwrap();
-        prune(&dir);
-        let count = |ext: &str| {
-            std::fs::read_dir(&dir)
-                .unwrap()
-                .flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == ext))
-                .count()
-        };
-        assert_eq!((count("map"), count("extents")), (KEEP, 1));
-        let _ = std::fs::remove_dir_all(&dir);
+    fn an_old_extents_file_falls_through_to_the_stored_binary() {
+        let root = std::env::temp_dir().join(format!("soothfast-sidecar-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (maps, bins) = (root.join("maps"), root.join("bins"));
+        std::fs::create_dir_all(&maps).unwrap();
+        std::fs::create_dir_all(&bins).unwrap();
+        let entry = bins.join("k-d.bin");
+        std::fs::write(&entry, "binary").unwrap();
+        std::fs::write(maps.join("abc.extents"), "2e0 1c 0\n").unwrap();
+        let extents = vec![at(0x2e0, 0x1c, "a.o:.data")];
+        binstore::write_sidecar(&entry, "extents", &encode(&extents));
+        assert_eq!(cached(&maps, "abc", Some(&entry)), Some(extents.clone()));
+        assert_eq!(
+            decode(&std::fs::read_to_string(maps.join("abc.extents")).unwrap()),
+            extents
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

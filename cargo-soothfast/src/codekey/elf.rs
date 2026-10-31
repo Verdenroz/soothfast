@@ -100,6 +100,15 @@ pub(super) fn parse_sections(listing: &str) -> Vec<Section> {
         .collect()
 }
 
+/// Whether `image` is a position-independent little-endian ELF64 file: only
+/// that names every address it uses rip-relative, and only that the program
+/// header reader below understands.
+pub(super) fn is_pie_elf64(image: &[u8]) -> bool {
+    image.get(..4) == Some(b"\x7fELF")
+        && image.get(4..6) == Some(&[2, 1])
+        && image.get(16..18) == Some(&[3, 0])
+}
+
 /// The start and size of the `PT_GNU_RELRO` segment in a little-endian ELF64
 /// image, which the loader makes read-only once it has relocated it.
 pub(super) fn relro_range(image: &[u8]) -> Option<(u64, u64)> {
@@ -336,6 +345,20 @@ mod tests {
             image[at + 0x28..at + 0x30].copy_from_slice(&0x8d0u64.to_le_bytes());
         }
         image
+    }
+
+    #[test]
+    fn only_a_little_endian_elf64_pie_is_read() {
+        let mut header = vec![0; 64];
+        header[..4].copy_from_slice(b"\x7fELF");
+        header[4..6].copy_from_slice(&[2, 1]);
+        header[16..18].copy_from_slice(&[3, 0]);
+        assert!(is_pie_elf64(&header));
+        for (at, byte) in [(4, 1), (5, 2), (16, 2)] {
+            let mut other = header.clone();
+            other[at] = byte;
+            assert!(!is_pie_elf64(&other));
+        }
     }
 
     #[test]
