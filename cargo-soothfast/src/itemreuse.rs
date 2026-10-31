@@ -49,23 +49,27 @@ pub struct Reuse {
     measured_on: Value,
     /// Each binary measured, with its link-map extents.
     sides: Vec<(PathBuf, Vec<Extent>)>,
+    /// Hashes the executed functions of a binary; [`Binary::open`] outside tests.
+    open: fn(&Path, &BTreeSet<String>, &[Extent]) -> Option<Binary>,
 }
 
 impl Reuse {
     /// Plan the measurement of `bins` (HEAD's binary, then the merge-base's
     /// when gating). `None`, with the reason printed where the user can act
-    /// on it, when per-item reuse does not apply. A `recording` run reuses
-    /// nothing and measures in full, but its plan still stores what it measures.
+    /// on it, when per-item reuse does not apply; `otherwise` says what the
+    /// caller does then. A `recording` run reuses nothing and measures in
+    /// full, but its plan still stores what it measures.
     pub fn plan(
         cmd: &str,
         common: &CommonArgs,
         runs: &Runs,
         bins: &[Bin],
         recording: bool,
+        otherwise: &str,
     ) -> Option<Reuse> {
         let env = runs.env().filter(|e| e.gating_backend == "callgrind")?;
         if common.no_item_cache {
-            println!("{cmd}: per-item reuse off (--no-item-cache); measuring in full");
+            println!("{cmd}: per-item reuse off (--no-item-cache); {otherwise}");
             return None;
         }
         let backend = common.backend.as_deref();
@@ -107,16 +111,7 @@ impl Reuse {
                 })
                 .collect::<Option<_>>()?;
             let (hits, misses) = items.reusable(&listed, &sides);
-            let todo: Vec<Vec<String>> = listed
-                .iter()
-                .zip(&hits)
-                .map(|(l, hit)| {
-                    l.keys()
-                        .filter(|id| !hit.contains_key(*id))
-                        .cloned()
-                        .collect()
-                })
-                .collect();
+            let todo = pending(&listed, &hits);
             let why = misses.to_string();
             let why = if why.is_empty() {
                 why
@@ -132,23 +127,34 @@ impl Reuse {
             todo,
             measured_on: runcache::measured_on(env),
             sides,
+            open: Binary::open,
         })
     }
 
     /// HEAD's run alone: planned for `head` and measured with
-    /// [`Reuse::run_alone`], else measured in full with `measure`.
+    /// [`Reuse::run_alone`], else measured with `unplanned` args (none for a
+    /// full measurement). The flag says whether the plan was used.
+    #[allow(clippy::too_many_arguments)]
     pub fn measure_head(
         cmd: &str,
         common: &CommonArgs,
         runs: &Runs,
         head: Option<Bin>,
         recording: bool,
+        unplanned: &[&str],
         stamp: impl FnOnce() -> BuildStamp,
         measure: impl FnOnce(&[&str]) -> Result<Run, String>,
-    ) -> Result<Run, String> {
-        match head.and_then(|bin| Reuse::plan(cmd, common, runs, &[bin], recording)) {
-            Some(reuse) => reuse.run_alone(stamp, measure),
-            None => measure(&[]),
+    ) -> Result<(Run, bool), String> {
+        let otherwise = if unplanned.is_empty() {
+            "measuring in full"
+        } else {
+            "taking the cheap pass"
+        };
+        let plan =
+            head.and_then(|bin| Reuse::plan(cmd, common, runs, &[bin], recording, otherwise));
+        match plan {
+            Some(reuse) => Ok((reuse.run_alone(stamp, measure)?, true)),
+            None => Ok((measure(unplanned)?, false)),
         }
     }
 
@@ -230,7 +236,7 @@ impl Reuse {
             .map(|(id, f)| (id, codekey::portable(bin, f)))
             .collect();
         let wanted = codekey::exe_symbols(functions.values().flatten());
-        let Some(binary) = Binary::open(bin, &wanted, inputs) else {
+        let Some(binary) = (self.open)(bin, &wanted, inputs) else {
             return;
         };
         for (id, functions) in functions {
@@ -263,6 +269,23 @@ impl Reuse {
     }
 }
 
+/// Per binary, the listed items no hit covers.
+fn pending(
+    listed: &[BTreeMap<String, String>],
+    hits: &[BTreeMap<String, Entry>],
+) -> Vec<Vec<String>> {
+    listed
+        .iter()
+        .zip(hits)
+        .map(|(l, hit)| {
+            l.keys()
+                .filter(|id| !hit.contains_key(*id))
+                .cloned()
+                .collect()
+        })
+        .collect()
+}
+
 /// The plan line: how many items each binary reuses and how many it measures.
 fn reuse_summary(listed: &[BTreeMap<String, String>], todo: &[Vec<String>]) -> String {
     let all: BTreeSet<&String> = listed.iter().flat_map(|l| l.keys()).collect();
@@ -289,6 +312,79 @@ fn reuse_summary(listed: &[BTreeMap<String, String>], todo: &[Vec<String>]) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::invoke::ItemMetrics;
+
+    /// Reads a stand-in binary: one `symbol=hash` per line.
+    fn fake_open(bin: &Path, _: &BTreeSet<String>, _: &[Extent]) -> Option<Binary> {
+        let text = std::fs::read_to_string(bin).ok()?;
+        let hashes = text
+            .lines()
+            .filter_map(|l| l.split_once('='))
+            .map(|(sym, hash)| (sym.to_string(), hash.parse().unwrap()))
+            .collect();
+        Some(Binary::with_hashes(hashes))
+    }
+
+    /// One lone-binary pass over `ids`, `code` being the stand-in binary,
+    /// against the store in `dir`. Returns the ids the mock backend was asked
+    /// to measure and the finished run.
+    fn lone_pass(dir: &Path, code: &str, ids: &[&str]) -> (Vec<String>, Run) {
+        let bin = dir.join("bench");
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(&bin, code).unwrap();
+        let listed = [listed(ids)];
+        let wanted = todo(ids);
+        let items = Items::at(dir.join("scope"));
+        let binary = fake_open(&bin, &BTreeSet::new(), &[]).unwrap();
+        let (hits, _) = items.reusable_in(&wanted, &items.load(&wanted), &listed, &[binary]);
+        let reuse = Reuse {
+            todo: pending(&listed, &hits),
+            hits,
+            items,
+            measured_on: Value::Null,
+            sides: vec![(bin.clone(), Vec::new())],
+            open: fake_open,
+        };
+        let mut measured = Vec::new();
+        let run = reuse
+            .run_alone(BuildStamp::fixture, |args| {
+                measured = match args {
+                    [] => todo(ids),
+                    _ => args
+                        .iter()
+                        .skip(1)
+                        .step_by(2)
+                        .map(|a| a.to_string())
+                        .collect(),
+                };
+                let item = |id: &String| {
+                    let metrics = ItemMetrics {
+                        fingerprint: "fp".into(),
+                        ir: Some(7),
+                        ..Default::default()
+                    };
+                    (id.clone(), metrics)
+                };
+                let called = |id: &String| {
+                    let function = (bin.display().to_string(), format!("f_{id}"));
+                    (id.clone(), vec![function])
+                };
+                Ok(Run {
+                    items: measured.iter().map(item).collect(),
+                    executed: measured.iter().map(called).collect(),
+                    ..Default::default()
+                })
+            })
+            .expect("mock backend");
+        (measured, run)
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-reuse-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
 
     fn listed(ids: &[&str]) -> BTreeMap<String, String> {
         ids.iter()
@@ -317,5 +413,36 @@ mod tests {
             line,
             "items a stored measurement covers: head 1/2, base 2/2, measuring 1"
         );
+    }
+
+    #[test]
+    fn identical_binaries_with_an_empty_store_measure_and_store_every_item() {
+        let dir = scratch("empty");
+        let (measured, run) = lone_pass(&dir, "f_a=1\nf_b=1\n", &["a", "b"]);
+        assert_eq!(measured, ["a", "b"]);
+        assert_eq!(run.items.len(), 2);
+        let stored = Items::at(dir.join("scope")).load(&todo(&["a", "b"]));
+        assert!(stored.wanted().contains("f_a") && stored.wanted().contains("f_b"));
+    }
+
+    #[test]
+    fn a_second_identical_run_measures_nothing_and_still_has_every_item() {
+        let dir = scratch("repeat");
+        lone_pass(&dir, "f_a=1\nf_b=1\n", &["a", "b"]);
+        let (measured, run) = lone_pass(&dir, "f_a=1\nf_b=1\n", &["a", "b"]);
+        assert!(measured.is_empty());
+        assert_eq!(run.items.len(), 2);
+        assert_eq!(run.items["a"].ir, Some(7));
+        assert!(run.items["a"].reused.is_some());
+    }
+
+    #[test]
+    fn a_following_run_with_one_changed_item_measures_only_that_item() {
+        let dir = scratch("changed");
+        lone_pass(&dir, "f_a=1\nf_b=1\n", &["a", "b"]);
+        let (measured, run) = lone_pass(&dir, "f_a=1\nf_b=2\n", &["a", "b"]);
+        assert_eq!(measured, ["b"]);
+        assert!(run.items["a"].reused.is_some());
+        assert!(run.items["b"].reused.is_none());
     }
 }

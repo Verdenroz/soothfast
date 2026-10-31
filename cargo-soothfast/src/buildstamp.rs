@@ -25,6 +25,18 @@ pub struct BuildStamp {
     pub rustflags: String,
 }
 
+#[cfg(test)]
+impl BuildStamp {
+    pub fn fixture() -> BuildStamp {
+        BuildStamp {
+            rustc: "1.88.0".into(),
+            codegen_units: "1".into(),
+            profiles: "a".into(),
+            rustflags: "b".into(),
+        }
+    }
+}
+
 impl BuildStamp {
     fn fields(&self) -> [(&'static str, &str); 4] {
         [

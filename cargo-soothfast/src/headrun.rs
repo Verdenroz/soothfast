@@ -80,9 +80,11 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
         &runs,
         head,
         gate::recording(),
+        &[],
         || stamp.clone(),
         |args| run_head(common, args, stamp.clone()),
-    )?;
+    )?
+    .0;
     let settled = settle("measure", "this run", &run, || {
         run_head(common, RECOUNT, stamp.clone()).ok()
     });
