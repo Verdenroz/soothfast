@@ -24,8 +24,7 @@ need cargo
 
 # Rustdoc JSON comes from the pinned toolchain, whatever else the run does.
 install_rustdoc_toolchain() {
-  rustup toolchain install "$RUSTDOC_TOOLCHAIN" --profile minimal
-  echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$RUSTDOC_TOOLCHAIN" >>"$GITHUB_ENV"
+  "$(dirname "$0")/rustdoc-toolchain.sh"
 }
 if command -v jq >/dev/null; then
   default=$(jq -r .repository.default_branch "$GITHUB_EVENT_PATH")
@@ -92,7 +91,7 @@ fi
 if [ "$gating" = true ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
   git rev-parse --verify --quiet "refs/remotes/origin/${GITHUB_BASE_REF}^{commit}" >/dev/null ||
     fetch origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
-  reference=$("$(dirname "$0")/merge-base.sh")
+  reference=$(git merge-base HEAD "origin/${GITHUB_BASE_REF}")
 elif [ "$recording" = true ] && git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
   reference=$(git rev-parse 'HEAD^')
 fi

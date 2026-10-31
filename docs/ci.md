@@ -138,7 +138,7 @@ installed on is refused.
 | `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes. |
 | `spec` | none | Space-separated packages whose `mode = "generate"` specs to regenerate. |
 | `features` | none | Cargo features for the gate, the baseline measurement, and spec generation. A bench target with `required-features` needs them here. |
-| `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. A failing gate saves nothing. One whose bench binaries are identical on both sides saves the run stored for those binaries, or lists the package as unmeasured when none is stored. A job reading the baseline has to handle its absence. |
+| `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. A failing gate saves nothing, and neither does one whose bench binaries are identical on both sides, since that pass collects no gating counters. A job reading the baseline has to handle its absence. |
 | `changelog-packages` | `packages` | Packages whose API surface `report changelog` diffs. Set it when a crate without a bench target still ships an API. |
 | `changelog-features` | `features` | Features for `report changelog`, which decide what the API surface diff contains. Set it wider than `features` when gating under the full feature set is too heavy. |
 | `regen-run` | none | Shell run on the default branch after the built-in regeneration, for derived files the inputs above do not cover. `$SOOTHFAST` is the `cargo-soothfast` this step installed, so `"$SOOTHFAST" sdk gen -p mylib` works whether the CLI came from the install or from `binary`. Requires `regen-paths`. |
@@ -443,19 +443,9 @@ jobs:
 ```
 
 The legs record `soothfast-result-rust-shard-<i>-of-<n>` and the verdict folds them
-into one section for the package. On a pull request each leg also uploads the
-baseline of its items as `soothfast-baseline-shard-<i>-of-<n>`, and the docs
-check merges them with `cargo soothfast baseline merge`, replacing every
-gated package, before it evaluates claims. If only some arrive it reports "claims not evaluated". If none arrive,
-the gate saved nothing and the docs check reads the measurement saved for the
-commit the gate compares against (the merge-base of the checked-out merge
-commit and the base branch, so the base tip), evaluating no claims when that is
-missing, with a warning that names it. A gate whose bench binaries match its
-reference's saves the run stored for those binaries, so every gated package
-lands in `head.json`. When no run is stored for them the package is listed as
-`unmeasured` in the baseline, and `docs check` reports only that package's
-claims as "not evaluated: no measurement for <item>".
-A default-branch push records every item
+into one section for the package. A pull request's shards cannot save the
+`head` baseline, which holds every item, so the docs check reads the default
+branch's measurement for its claims. A default-branch push records every item
 in its first leg and saves the baseline as before; the other legs are
 skipped on a push, since they would only set up.
 

@@ -499,8 +499,9 @@ jobs:
           changelog: ${{ inputs.bot && 'true' || 'false' }}
           comment: "false"
           shard: ${{ matrix.shard }}
-          # A pull request's shard saves the baseline of its own items, which the docs job merges.
-          save-baseline: head
+          # A pull request's shard measures some items, and a baseline holds
+          # all of them. A push records every item in its first leg.
+          save-baseline: ${{ (matrix.shard == '' || github.event_name != 'pull_request') && 'head' || '' }}
           # The build job owns the executables; only the changelog
           # regeneration on a default-branch push builds rustdoc here.
           rustdoc-cache: ${{ inputs.bot && github.event_name == 'push' && 'true' || 'false' }}
@@ -517,11 +518,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-baseline${{ matrix.shard != '' && github.event_name == 'pull_request' && format('-shard-{0}', matrix.slug) || '' }}
+          name: soothfast-baseline
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
-      # A gate whose binaries match its reference saves that reference's stored run, so every push saves one.
-      # A pull request whose gate cannot save any reads the merge-base's measurement saved here.
+      # A pull request that leaves the bench binaries unchanged saves none,
+      # so the docs job falls back to the default branch's measurement.
       - name: Keep the default-branch measurement
         if: github.event_name == 'push' && hashFiles('.soothfast/baselines/head.json') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -652,7 +653,6 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-          fetch-depth: 0
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
@@ -674,6 +674,10 @@ jobs:
           save-if: "false"
       - id: soothfast
         uses: ./.soothfast-action/action/install
+      # The rustdoc store is keyed by this toolchain, so the check must use the one that built it.
+      - name: Install the pinned rustdoc toolchain
+        if: needs.plan.outputs.docs_package != ''
+        run: ./.soothfast-action/action/rustdoc-toolchain.sh
       # A failed rustdoc build leaves nothing to download, and the docs check then builds the JSON itself.
       - name: Download the built stores
         if: needs.plan.outputs.docs_package != ''
@@ -695,55 +699,17 @@ jobs:
         with:
           name: soothfast-baseline
           path: .soothfast/baselines
-      # Each shard of a pull request saved the baseline of its own items.
-      - name: Download the shard measurements
-        if: github.event_name == 'pull_request' && inputs.shard > 1
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: soothfast-baseline-shard-*
-          path: .soothfast/shard-baselines
-      # All shards merge into the measurement, none means the binaries were unchanged,
-      # and some leave the claims unevaluated.
-      - name: Merge the shard measurements
-        if: github.event_name == 'pull_request' && inputs.shard > 1
-        id: shards
-        shell: bash
-        env:
-          SHARDS: ${{ inputs.shard }}
-          PACKAGES: ${{ needs.plan.outputs.packages }}
-        run: |
-          mapfile -t files < <(find .soothfast/shard-baselines -name head.json 2>/dev/null | sort)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "complete=none" >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
-          rc=0
-          cargo soothfast baseline merge --into head --expect "$SHARDS" --packages "$PACKAGES" "${files[@]}" || rc=$?
-          case "$rc" in
-            0) echo "complete=all" >>"$GITHUB_OUTPUT" ;;
-            3)
-              echo "::warning::${#files[@]} of $SHARDS shard measurements arrived; claims not evaluated"
-              echo "complete=partial" >>"$GITHUB_OUTPUT"
-              ;;
-            *) exit "$rc" ;;
-          esac
-      # Unchanged binaries make the merge-base's measurement the pull request's, named as the gate names it.
-      - name: Name the merge-base
-        if: github.event_name == 'pull_request'
-        id: base
-        run: echo "sha=$(.soothfast-action/action/merge-base.sh)" >>"$GITHUB_OUTPUT"
-      - name: Restore the merge-base measurement
-        if: hashFiles('.soothfast/baselines/head.json') == '' && steps.shards.outputs.complete != 'partial'
+      - name: Restore the default-branch measurement
+        if: hashFiles('.soothfast/baselines/head.json') == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .soothfast/baselines/head.json
-          key: soothfast-baseline-${{ steps.base.outputs.sha || github.sha }}
+          key: soothfast-baseline-${{ github.event.pull_request.base.sha || github.sha }}
+          restore-keys: soothfast-baseline-
       - name: Check the docs
         shell: bash
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
-          BASE_SHA: ${{ steps.base.outputs.sha }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
@@ -754,7 +720,7 @@ jobs:
           if [ -f .soothfast/baselines/head.json ]; then
             args+=(--baseline head)
           else
-            echo "::warning::claims not evaluated: no measurement for the merge-base ${BASE_SHA:-of this run}"
+            echo "::warning::claims not evaluated: no measurement"
             echo "claims not evaluated: no measurement" >> "$RESULT"
             args+=(--skip-claims)
           fi
