@@ -1115,9 +1115,86 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::ecosystem::Tests;
+    use super::ecosystem::{Tests, parse_projects_tolerant};
     use super::*;
     use serde_json::json;
+
+    const SHARED_TOML: &str = r##"[site]
+name = "x"
+
+[site.theme]
+primary = "#336699"
+
+[[site.nav]]
+title = "Guide"
+pages = ["index.md"]
+
+[docs]
+paths = ["README.md"]
+package = "x"
+
+[[project]]
+dir = "web"
+ecosystem = "node"
+future_key = "ignored"
+
+[test]
+ci = false
+
+[gate]
+codegen-units = 4
+
+[changelog]
+features = "a"
+
+[[spec]]
+path = "api.yaml"
+
+[[sdk]]
+spec = "api.yaml"
+out = "sdk"
+package = "x"
+
+[[test.suite]]
+label = "e2e"
+project = "web"
+cmd = "npm test"
+"##;
+
+    #[test]
+    fn every_reader_ignores_the_tables_it_does_not_own() {
+        assert_eq!(
+            soothfast_site::config::parse(SHARED_TOML).unwrap().name,
+            "x"
+        );
+        assert_eq!(
+            crate::docs_config::parse(SHARED_TOML).unwrap().package,
+            Some(vec!["x".into()])
+        );
+        assert_eq!(Ci::parse(SHARED_TOML).unwrap().test, Some(false));
+        assert_eq!(parse_projects_tolerant(SHARED_TOML).unwrap().len(), 1);
+        assert_eq!(parse_suites(SHARED_TOML).unwrap().len(), 1);
+        assert_eq!(
+            crate::gate_config::parse(SHARED_TOML)
+                .unwrap()
+                .codegen_units
+                .as_deref(),
+            Some("4")
+        );
+        assert!(crate::changelog_config::parse(SHARED_TOML).is_ok());
+        assert_eq!(
+            crate::spec_config::parse(SHARED_TOML)
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
+        assert_eq!(
+            crate::sdk_config::parse(SHARED_TOML).unwrap().entries.len(),
+            1
+        );
+        assert!(crate::test::config::parse(SHARED_TOML).is_ok());
+    }
 
     fn ws(benched: &[&str], docs: Option<&str>) -> Workspace {
         Workspace {
