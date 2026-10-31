@@ -567,8 +567,7 @@ fn offset_table(
         }
     }
     let mut add = None;
-    for k in load + 1..(load + 1 + WINDOW).min(parsed.len()) {
-        let ins = &parsed[k].1;
+    for (k, (_, ins)) in parsed.iter().enumerate().skip(load + 1).take(WINDOW) {
         let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
         let sums = ins.mnemonic == "add"
             && ins.operands.iter().all(|o| o.starts_with("%r"))
