@@ -380,11 +380,13 @@ strings leaves the function's key alone, only where the function reads it
 through exactly `lea T(%rip),%rB; movslq (%rB,%rI,4),%rW; add %rB,%rW`. Only
 plain moves and arithmetic that touch none of the three registers may sit
 between them. After the add, `%rB` must be fully overwritten by a plain move
-before anything that could read it, where a `ret` counts as an overwrite when
-`%rB` is `rsi`, `rdi`, `r9`, `r10` or `r11`, the caller-saved registers LLVM
-never returns a 64-bit value in; a call, a jump or any other instruction does
-not. An instruction touches the registers it changes without naming them,
-such as a one-operand `imul`. The table's input must be read-only and
+before anything that could read it, where in a Rust function a `ret` counts as
+an overwrite when `%rB` is `rsi`, `rdi`, `r9`, `r10` or `r11`, the caller-saved
+registers LLVM never returns a 64-bit value in (`RETURNS` in the source:
+`rax`, `rdx`, `rcx`, `r8`); a call, a jump or any other instruction does not.
+The three registers and the `lea` are 64-bit names, and the instructions
+between have no register effects beyond their operands, so a one-operand
+`imul` is not one of them. The table's input must be read-only and
 not sealed, and nothing else in the function may take an address in it. A word must land inside a sized
 symbol or a link-map input. One past the end of either, the address of a
 zero-sized static, or only the section around it leaves the table as bytes.

@@ -132,7 +132,7 @@ fn command_text(program: &str, args: &[&str], bin: &Path) -> Option<String> {
 }
 
 /// Print `message` on stderr the first time `key` is seen.
-pub(super) fn note_once(key: String, message: &str) {
+fn note_once(key: String, message: &str) {
     static NOTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     let first = NOTED
         .get_or_init(Default::default)

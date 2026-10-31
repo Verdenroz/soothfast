@@ -283,6 +283,9 @@ fn is_unwind_resume(ins: &Ins) -> bool {
 
 const CALLER_SAVED: &[&str] = &["a", "c", "d", "si", "di", "r8", "r9", "r10", "r11"];
 
+/// The registers LLVM may return a 64-bit value in.
+const RETURNS: &[&str] = &["a", "d", "c", "r8"];
+
 /// Where each candidate table jumps to, for those whose words decode.
 pub type Decoder<'a> = dyn Fn(&[u64]) -> HashMap<u64, Vec<u64>> + 'a;
 
@@ -363,7 +366,7 @@ pub fn prove(
         .map(|(i, (a, _))| (*a, i))
         .collect();
     let leas = rip_leas(&parsed);
-    let mut active = candidates(&parsed, &leas);
+    let mut active = candidates(&parsed, &leas, exits.rust());
     active.retain(|c| {
         !c.pointer
             || exits
@@ -447,7 +450,7 @@ fn rip_leas(parsed: &[(u64, Ins)]) -> Vec<Lea> {
 /// jump of a jump table, for every table the base register is loaded with
 /// somewhere in the function, or laid out as an offset table (see
 /// [`offset_table`]).
-fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
+fn candidates(parsed: &[(u64, Ins)], leas: &[Lea], rust: bool) -> Vec<Candidate> {
     let mut found = Vec::new();
     for (load, (_, ins)) in parsed.iter().enumerate() {
         let base = ins.operands.first().and_then(|o| scaled_base(o));
@@ -475,7 +478,7 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
                     });
                 }
             }
-        } else if let Some((lea, add)) = offset_table(parsed, leas, load, &base, &word) {
+        } else if let Some((lea, add)) = offset_table(parsed, leas, load, &base, &word, rust) {
             found.push(Candidate {
                 table: leas[lea].table,
                 base,
@@ -537,31 +540,34 @@ fn completes(after: &[(u64, Ins)], base: &str, word: &str) -> Option<usize> {
 ///
 /// with only plain instructions that touch none of the three registers in
 /// between, and `%rB` fully overwritten by a plain instruction after the add
-/// and before anything that could read it. A `ret` counts as an overwrite when
-/// `%rB` is `rsi`, `rdi`, `r9`, `r10` or `r11`: caller-saved and not a
-/// register LLVM may return in (`rax`, `rdx`, `rcx`, `r8`); a call, a jump and
-/// anything else do not. An instruction counts as touching the registers it
-/// names and those it changes without naming them. Then the raw offset in
-/// `%rW` dies in the add, and nothing else sees the table's address. Returns
-/// the `lea` (an index into `leas`) and the add.
+/// and before anything that could read it. In a Rust function a `ret` counts
+/// as an overwrite when `%rB` is caller-saved and not in [`RETURNS`]; a call,
+/// a jump and anything else do not. The chain is of 64-bit registers, and a
+/// plain instruction has no register effects beyond its operands. Then the
+/// raw offset in `%rW` dies in the add, and nothing else sees the table's
+/// address. Returns the `lea` (an index into `leas`) and the add.
 fn offset_table(
     parsed: &[(u64, Ins)],
     leas: &[Lea],
     load: usize,
     base: &str,
     word: &str,
+    rust: bool,
 ) -> Option<(usize, usize)> {
+    if !parsed[load].1.operands.get(1).is_some_and(|d| is_64(d)) {
+        return None;
+    }
     let index = parsed[load]
         .1
         .operands
         .first()
         .and_then(|o| scaled_index(o))?;
-    let touches =
-        |ins: &Ins, regs: &[&str]| regs.iter().any(|r| mentions(ins, r)) || disturbs(ins, regs);
+    let touches = |ins: &Ins, regs: &[&str]| regs.iter().any(|r| mentions(ins, r));
     let mut lea = None;
     for j in (load.saturating_sub(WINDOW)..load).rev() {
         if let Some(k) = leas.iter().position(|l| l.at == j && l.dest == base) {
-            lea = Some(k);
+            let wide = parsed[j].1.operands.get(1).is_some_and(|d| is_64(d));
+            lea = wide.then_some(k);
             break;
         }
         let ins = &parsed[j].1;
@@ -585,7 +591,7 @@ fn offset_table(
     }
     let add = add?;
     for ins in parsed[add + 1..].iter().take(REACH).map(|(_, i)| i) {
-        if overwrites(ins, base) || (is_return(ins) && is_dead_at_return(base)) {
+        if overwrites(ins, base) || (rust && is_return(ins) && is_dead_at_return(base)) {
             return Some((lea?, add));
         }
         if !plain(ins) || touches(ins, &[base]) {
@@ -599,10 +605,9 @@ fn is_return(ins: &Ins) -> bool {
     matches!(ins.mnemonic, "ret" | "retq") && ins.operands.is_empty()
 }
 
-/// Whether register family `reg` is caller-saved and not one LLVM returns a
-/// 64-bit value in.
+/// Whether register family `reg` is caller-saved and not in [`RETURNS`].
 fn is_dead_at_return(reg: &str) -> bool {
-    matches!(reg, "si" | "di" | "r9" | "r10" | "r11")
+    CALLER_SAVED.contains(&reg) && !RETURNS.contains(&reg)
 }
 
 /// The `(%rA,%rI,4)` index register of a memory operand.
@@ -628,8 +633,8 @@ fn mentions(ins: &Ins, reg: &str) -> bool {
 }
 
 /// An instruction with explicit operands and no effect on registers beyond
-/// them: a move or an arithmetic or logic operation, not a string operation,
-/// a jump, a call or anything else.
+/// them: a move or an arithmetic or logic operation, not a one-operand
+/// multiply, a string operation, a jump, a call or anything else.
 fn plain(ins: &Ins) -> bool {
     const ARITHMETIC: &[&str] = &[
         "add", "sub", "and", "or", "xor", "shl", "shr", "sar", "cmp", "test", "imul", "inc", "dec",
@@ -641,6 +646,7 @@ fn plain(ins: &Ins) -> bool {
             .iter()
             .any(|m| mnemonic == *m || (mnemonic.len() == m.len() + 1 && mnemonic.starts_with(m)));
     known
+        && implicit_writes(mnemonic, ins.operands.len()).is_none()
         && !ins.operands.is_empty()
         && ins
             .operands
@@ -657,7 +663,7 @@ fn overwrites(ins: &Ins, reg: &str) -> bool {
     let writes_all = ins.mnemonic.starts_with("mov") || ins.mnemonic == "lea";
     writes_all
         && plain(ins)
-        && matches!(writes(ins), Writes::Reg(fs) if fs == [reg])
+        && family(dest).as_deref() == Some(reg)
         && is_full(dest)
         && !names(source, reg)
 }

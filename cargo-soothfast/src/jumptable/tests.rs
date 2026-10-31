@@ -571,6 +571,7 @@ fn two_exits_through_one_register_are_judged_together() {
 /// every table of offsets to data names the address `0x3000`.
 struct Data {
     input: Option<(u64, u64)>,
+    rust: bool,
 }
 
 impl Exits for Data {
@@ -583,7 +584,7 @@ impl Exits for Data {
     }
 
     fn rust(&self) -> bool {
-        true
+        self.rust
     }
 
     fn data_table(&self, _: u64) -> Option<(u64, u64)> {
@@ -592,6 +593,10 @@ impl Exits for Data {
 }
 
 fn prove_data_in(lines: &[&str], input: Option<(u64, u64)>) -> Proven {
+    prove_data_for(lines, input, true)
+}
+
+fn prove_data_for(lines: &[&str], input: Option<(u64, u64)>, rust: bool) -> Proven {
     let instrs = code(lines);
     let last = instrs.last().map(|(a, _)| *a).unwrap_or(0);
     prove(
@@ -599,7 +604,7 @@ fn prove_data_in(lines: &[&str], input: Option<(u64, u64)>) -> Proven {
         (0x1000, last + 4),
         &|tables| tables.iter().map(|t| (*t, vec![last])).collect(),
         &|tables| tables.iter().map(|t| (*t, vec![0x3000])).collect(),
-        &Data { input },
+        &Data { input, rust },
     )
 }
 
@@ -649,6 +654,26 @@ fn the_base_overwritten_before_a_tail_call_proves_a_table_of_offsets() {
 #[test]
 fn a_return_ends_the_life_of_a_base_that_is_not_a_return_register() {
     proven_once(&prove_data(&AS_STR), at(3));
+}
+
+#[test]
+fn a_return_ends_a_base_only_where_the_calling_convention_is_known() {
+    let c = prove_data_for(&AS_STR, Some((0x2010, 0x2020)), false);
+    assert!(c.pointers.is_empty());
+}
+
+#[test]
+fn the_whole_chain_is_of_64_bit_registers() {
+    let narrow_word = [LEA_SI, "movsxd (%rsi,%rcx,4),%eax", ADD_SI, RET];
+    assert!(prove_data(&narrow_word).pointers.is_empty());
+    let narrow_base = [
+        "lea    0x100d(%rip),%ebx        # 2010 <anon>",
+        "movslq (%rbx,%rcx,4),%rax",
+        "add    %rbx,%rax",
+        "mov    $0x0,%ebx",
+        RET,
+    ];
+    assert!(prove_data(&narrow_base).pointers.is_empty());
 }
 
 #[test]

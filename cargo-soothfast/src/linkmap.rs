@@ -298,7 +298,7 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     // Cargo answers a repeated build as fresh without relinking, and writes no
     // map then. A path it has not seen forces the link.
     let kept = maps.join(format!("{digest}.map"));
-    let forced = maps.join(format!("{digest}.forced.map"));
+    let forced = maps.join(format!("{digest}.{}.map", std::process::id()));
     let mut linked = None;
     for map in [kept.clone(), forced.clone()] {
         let Some(built) = invoke::build_link_map(common, bin.dir, bin.target_dir, &map) else {
@@ -327,7 +327,9 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
 }
 
 /// The extents already worked out for the binary with `digest`, from `maps`
-/// or from the binary store's `entry` for it. One found only in the entry is put back in `maps`.
+/// or from the binary store's `entry` for it. One found only in the entry is
+/// put back in `maps`; one found only in `maps` is given to the entry when the
+/// entry records that digest.
 fn cached(maps: &Path, digest: &str, entry: Option<&Path>) -> Option<Vec<Extent>> {
     let stored = maps.join(format!("{digest}.extents"));
     let local = std::fs::read_to_string(&stored)
@@ -348,11 +350,13 @@ fn cached(maps: &Path, digest: &str, entry: Option<&Path>) -> Option<Vec<Extent>
     if restored && std::fs::write(&stored, &text).is_ok() {
         runcache::prune_oldest(maps, KEEP);
     }
+    let same_binary = |entry| binstore::read_sidecar(entry, "digest").as_deref() == Some(digest);
     let stale = |entry| {
         binstore::read_sidecar(entry, "extents").is_none_or(|text| decode(&text).is_empty())
     };
     if let Some(entry) = entry
         && !restored
+        && same_binary(entry)
         && stale(entry)
     {
         binstore::replace_sidecar(entry, "extents", &text);
@@ -731,7 +735,11 @@ Linker script and memory map
         std::fs::write(&entry, "binary").unwrap();
         let extents = vec![at(0x2e0, 0x1c, "a.o:.data")];
         std::fs::write(maps.join("abc.extents"), encode(&extents)).unwrap();
+        binstore::write_sidecar(&entry, "digest", "other");
+        assert_eq!(cached(&maps, "abc", Some(&entry)), Some(extents.clone()));
         assert_eq!(binstore::read_sidecar(&entry, "extents"), None);
+        std::fs::remove_file(entry.with_file_name("k-d.bin.digest")).unwrap();
+        binstore::write_sidecar(&entry, "digest", "abc");
         assert_eq!(cached(&maps, "abc", Some(&entry)), Some(extents.clone()));
         let kept = binstore::read_sidecar(&entry, "extents").unwrap();
         assert_eq!(decode(&kept), extents);

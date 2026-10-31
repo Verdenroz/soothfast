@@ -249,7 +249,8 @@ mod tests {
     1003:\tlea    0x1ff6(%rip),%rdi        # 2000 <anon.0>
     100a:\tmovslq (%rdi,%rcx,4),%rsi
     100e:\tadd    %rdi,%rsi
-    1011:\tret
+    1011:\tmov    $0x0,%edi
+    1016:\tret
 ";
 
     /// The offsets table at `0x2000` naming two strings placed at `strings`,
