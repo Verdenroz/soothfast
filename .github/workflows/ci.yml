@@ -240,6 +240,7 @@ jobs:
       id-token: write # soothfast-bot comment token via the broker
     uses: ./.github/workflows/soothfast-gate.yml
     with:
+      soothfast_ref: ${{ github.sha }}
       package: ${{ matrix.package }}
       cli-artifact: cargo-soothfast-bin
 

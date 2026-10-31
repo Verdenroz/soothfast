@@ -493,9 +493,11 @@ jobs:
       pull-requests: write
     uses: Verdenroz/soothfast/.github/workflows/soothfast-gate.yml@<tag-or-sha>
     with:
+      soothfast_ref: <tag-or-sha>
       package: mylib
 ```
 
-`cli-artifact` names an artifact holding a prebuilt CLI at
+`soothfast_ref` is the same tag or commit as in the `uses:` line, which the
+workflow cannot read for itself. `cli-artifact` names an artifact holding a prebuilt CLI at
 `bin/cargo-soothfast` from earlier in the same run; without it the workflow
 installs the release matching your `Cargo.lock`.
