@@ -170,6 +170,18 @@ fresh generation of every test and example in memory, diffed against what is
 on disk. A stale `docs gen-tests` or `docs capture` run therefore fails CI
 just like a stale bind or a violated claim.
 
+## Which package
+
+`docs check`, `docs accept`, `docs capture`, `docs gen-tests`, `docs reference`,
+`docs diff` and `docs routes` take `-p PKG`. With no `-p`, they use `[docs]
+package` from `soothfast.toml` (a name or a list; a command that acts on one
+package takes the last name). An explicit `-p` wins.
+
+```toml ignore
+[docs]
+package = "my-core"
+```
+
 ## What gets scanned
 
 By default the docs commands read `README.md` and everything under `docs/`.

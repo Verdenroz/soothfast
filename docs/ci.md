@@ -171,6 +171,8 @@ and its dependencies under nightly. With `rustdoc-cache: "true"` the job
 keeps `.soothfast/rustdoc` between runs, and a command that finds the JSON
 it needs there skips cargo entirely. The reusable `run.yml` keeps it for its
 docs check, and for the changelog regeneration on a default-branch push.
+Set `[docs] package` in `soothfast.toml` and a `docs` command run without `-p`
+reads that package.
 
 Lookup has two levels. A key hashes the package, features, visibility, the
 `rustc -vV` of the rustdoc toolchain, the rustdoc format version, every
