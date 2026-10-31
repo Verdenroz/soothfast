@@ -280,8 +280,8 @@ impl<'a> Resolver<'a> {
     /// reading either gives different results: writable data is a place, so
     /// two zeroed statics are two objects. Read-only data is its bytes. A
     /// local symbol shares its name with others in other objects, so it also
-    /// takes its input section's name, unless a Rust hash already makes it
-    /// unique.
+    /// takes its input section's name, unless a compiler hash in the name
+    /// already makes it unique.
     fn identity(&self, node: Node) -> Option<String> {
         let (section, _, size) = self.extent(node)?;
         if !self.sections[section].writable || size == 0 {
@@ -291,7 +291,7 @@ impl<'a> Resolver<'a> {
             Node::Symbol(i) => {
                 let s = &self.symbols[i];
                 let name = strip_llvm(&s.name);
-                if s.local && !is_rust_symbol(&name) {
+                if s.local && !is_rust_symbol(&name) && !carries_hash(&name) {
                     format!("{name}@{}", self.inputs[self.input_at(s.addr)?].name)
                 } else {
                     name.into_owned()
@@ -383,6 +383,13 @@ impl<'a> Resolver<'a> {
         }
         Some(body.to_string())
     }
+}
+
+/// Whether `name` holds a run of 16 hex digits, as the compiler's hashes are.
+fn carries_hash(name: &str) -> bool {
+    name.as_bytes()
+        .split(|b| !b.is_ascii_hexdigit())
+        .any(|run| run.len() >= 16)
 }
 
 /// A jump or a call, whose direct target is an address to name.
@@ -796,6 +803,27 @@ Idx Name          Size      VMA               LMA               File off  Algn
         assert!(takes(&apart, "3000").is_some());
         assert_ne!(takes(&apart, "3000"), takes(&apart, "3008"));
         assert_eq!(takes(&[], "3000"), None);
+    }
+
+    #[test]
+    fn a_local_symbol_with_a_compiler_hash_in_its_name_needs_no_input() {
+        let symbols = "\
+0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
+0000000000003000 0000000000000008 d anon.0123456789abcdef0123456789abcdef.0
+0000000000003008 0000000000000008 d anon.0123456789abcdef0123456789abcdef.1
+";
+        let takes = |object: &str| {
+            let dis = format!(
+                "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # {object}\n    1007:\tret\n"
+            );
+            let fixture = Fixture::default()
+                .sections(&object_sections(WRITABLE))
+                .symbols(symbols)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&vec![0; 0x4000], &dis))
+        };
+        assert!(takes("3000 <a>").is_some());
+        assert_ne!(takes("3000 <a>"), takes("3008 <b>"));
     }
 
     #[test]

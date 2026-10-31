@@ -317,7 +317,8 @@ or by the link map's object and section for one with no symbol, as well as
 by its bytes: two zeroed statics hold the same bytes, and code that reads
 one is not code that reads the other. A local symbol (C `static`, a promoted
 local) also takes its input section's name, since another object may use the
-same name; a Rust symbol already carries a hash. Read-only data, and data
+same name; a Rust symbol, or any name with a compiler hash in it, is
+already unique. Read-only data, and data
 the loader seals after relocation (`.data.rel.ro`), is keyed by its bytes
 alone. A writable object that has neither a symbol nor a named input
 section, or a local symbol with no link map, leaves the function unhashed.
