@@ -347,18 +347,6 @@ impl Plan {
         Ok(())
     }
 
-    /// Whether the gate has bench executables to build ahead of its legs.
-    fn builds_bench(&self) -> bool {
-        self.rust.as_ref().is_some_and(|r| !r.packages.is_empty())
-    }
-
-    /// Whether the docs check has rustdoc JSON to build ahead of it.
-    fn builds_rustdoc(&self) -> bool {
-        self.rust
-            .as_ref()
-            .is_some_and(|r| !r.docs_packages.is_empty())
-    }
-
     /// The legs the Rust gate runs as, each with its `I/N` shard and the
     /// `I-of-N` form that names its artifacts; one leg with neither when
     /// there is no shard.
@@ -395,7 +383,7 @@ impl Plan {
             .unwrap_or_default();
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nbuild_bench={}\nbuild_rustdoc={}\nshards={}\nruns_on={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -405,8 +393,6 @@ impl Plan {
             !tests["include"].as_array().is_none_or(Vec::is_empty),
             self.test_all(),
             self.test_expect(),
-            self.builds_bench(),
-            self.builds_rustdoc(),
             self.shard_legs(),
             self.ci.runs_on_json(),
         )
@@ -484,26 +470,6 @@ mod tests {
             shards: 1,
             first_shard_only: false,
         }
-    }
-
-    #[test]
-    fn the_build_jobs_follow_what_the_plan_needs_built() {
-        let mut p = plan(Some(&["a"]), vec![]);
-        assert!(
-            p.outputs()
-                .contains("build_bench=true\nbuild_rustdoc=false\n")
-        );
-        p.rust.as_mut().unwrap().docs_packages = vec!["a".into()];
-        assert!(
-            p.outputs()
-                .contains("build_bench=true\nbuild_rustdoc=true\n")
-        );
-        let out = plan(Some(&[]), vec![]).outputs();
-        assert!(
-            out.contains("build_bench=false\nbuild_rustdoc=false\n"),
-            "{out}"
-        );
-        assert!(plan(None, vec![]).outputs().contains("build_bench=false\n"));
     }
 
     #[test]
@@ -662,7 +628,7 @@ mod tests {
         assert_eq!(p.test_expect(), "test-gradle test-node");
         assert!(
             p.outputs()
-                .contains("test_expect=test-gradle test-node\nbuild_bench=")
+                .contains("test_expect=test-gradle test-node\nshards=")
         );
     }
 

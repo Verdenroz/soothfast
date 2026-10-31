@@ -72,6 +72,18 @@ impl<'a> Runs<'a> {
         })
     }
 
+    /// Whether [`Runs::load_reference`] would find a run for `id`, without
+    /// reading it.
+    pub fn has_reference(&self, id: &str) -> bool {
+        let Some(env) = self.env.as_ref().filter(|_| !id.is_empty()) else {
+            return false;
+        };
+        let exists = |key: &str| dir().is_some_and(|d| d.join(format!("{key}.json")).is_file());
+        exists(&key(id, self.stamp, self.common, env))
+            || self.common.shard.is_some()
+                && exists(&key_with(id, self.stamp, self.common, env, None))
+    }
+
     /// The key every per-item entry of this invocation lives under: the
     /// conditions of a run, without the commit or the filter.
     pub fn item_scope(&self) -> Option<String> {

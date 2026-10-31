@@ -23,8 +23,8 @@ use crate::invoke::{self, Build, CommonArgs, HostEnv, Shard, Visibility};
 use crate::itemreuse::{self, Bin};
 use crate::runcache::Runs;
 use crate::{
-    benchexe, binstore, buildstamp, gate, gate_config, headrun, linkmap, runcache, seed,
-    spec_config, spec_gen, workspace,
+    benchexe, binstore, buildstamp, gate_config, headrun, linkmap, runcache, seed, spec_config,
+    spec_gen, workspace,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -239,8 +239,16 @@ struct Live<'a> {
     /// Where the entries this run needs are copied to, when asked.
     stage: Option<&'a Path>,
     shards: u64,
-    /// What HEAD's bench binaries resolved, kept for the merge-base side.
-    heads: &'a RefCell<BTreeMap<String, Head>>,
+    memo: &'a Memo,
+}
+
+/// What one run works out once and both sides read.
+#[derive(Default)]
+struct Memo {
+    /// What HEAD's bench binaries resolved.
+    heads: RefCell<BTreeMap<String, Head>>,
+    rustdoc_keys: RefCell<BTreeMap<Item, Option<String>>>,
+    references: RefCell<BTreeMap<String, bool>>,
 }
 
 struct Head {
@@ -257,6 +265,49 @@ impl Live<'_> {
                 .or_else(|| self.common.target.clone()),
             ..self.common.clone()
         }
+    }
+
+    /// Whether the run cache holds the merge-base run of `pkg` for the gate
+    /// leg, or for every leg when it is sharded.
+    fn find_reference(&self, pkg: &str) -> bool {
+        let one = self.one(pkg, None);
+        let stamp = buildstamp::capture(one.codegen_units_stamp().as_deref(), None);
+        let env = self
+            .memo
+            .heads
+            .borrow()
+            .get(pkg)
+            .and_then(|h| h.env.clone());
+        let loaded = |shard: Option<Shard>| {
+            let common = CommonArgs {
+                shard,
+                ..one.clone()
+            };
+            Runs::new(&stamp, &common, env.clone()).has_reference(&self.base_sha)
+        };
+        match self.shards {
+            0 | 1 => loaded(None),
+            count => (1..=count).all(|index| loaded(Some(Shard { index, count }))),
+        }
+    }
+
+    /// The store key of a rustdoc item, worked out once.
+    fn rustdoc_key(&self, item: &Item) -> Option<String> {
+        let Item::Rustdoc {
+            pkg,
+            private,
+            features,
+            ..
+        } = item
+        else {
+            return None;
+        };
+        self.memo
+            .rustdoc_keys
+            .borrow_mut()
+            .entry(item.clone())
+            .or_insert_with(|| invoke::rustdoc_key(pkg, features.as_deref(), visibility(*private)))
+            .clone()
     }
 
     fn tree(&self, side: Side) -> (Option<&Path>, Option<&Path>) {
@@ -285,31 +336,22 @@ impl State for Live<'_> {
             Item::Routes { pkg, target } => {
                 benchexe::is_stored(&self.one(pkg, Some(target)), None, None, Build::Discover)
             }
-            Item::Rustdoc {
-                pkg,
-                private,
-                features,
-                ..
-            } => invoke::rustdoc_stored(pkg, features.as_deref(), visibility(*private)),
+            Item::Rustdoc { .. } => self
+                .rustdoc_key(item)
+                .is_some_and(|key| invoke::rustdoc_holds(&key)),
         }
     }
 
     fn reference_stored(&self, pkg: &str) -> bool {
-        let one = self.one(pkg, None);
-        let stamp = buildstamp::capture(one.codegen_units_stamp().as_deref(), None);
-        let env = self.heads.borrow().get(pkg).and_then(|h| h.env.clone());
-        let loaded = |shard: Option<Shard>| {
-            let common = CommonArgs {
-                shard,
-                ..one.clone()
-            };
-            let runs = Runs::new(&stamp, &common, env.clone());
-            gate::stored_reference(&runs, true, &self.base_sha).is_some()
-        };
-        match self.shards {
-            0 | 1 => loaded(None),
-            count => (1..=count).all(|index| loaded(Some(Shard { index, count }))),
+        if let Some(known) = self.memo.references.borrow().get(pkg) {
+            return *known;
         }
+        let found = self.find_reference(pkg);
+        self.memo
+            .references
+            .borrow_mut()
+            .insert(pkg.to_string(), found);
+        found
     }
 
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>> {
@@ -318,65 +360,63 @@ impl State for Live<'_> {
     }
 }
 
-/// Copy the files of the store entry named `key` in `store` into `stage`.
-fn stage_entry(store: &Path, key: &str, stage: &Path) {
-    let Some(name) = store.file_name() else {
+/// Copy the entry `entry` of the store in `store` into `stage`, with the
+/// manifest and group of its `key` and the files kept beside it.
+fn stage_entry(store: &Path, entry: &Path, key: &str, stage: &Path) {
+    let (Some(name), Some(entry_name)) = (store.file_name(), entry.file_name()) else {
         return;
     };
     let to = stage.join(name);
-    let Ok(files) = std::fs::read_dir(store) else {
-        return;
-    };
     let _ = std::fs::create_dir_all(&to);
-    for file in files.flatten() {
-        if file.file_name().to_string_lossy().starts_with(key) {
-            let _ = std::fs::copy(file.path(), to.join(file.file_name()));
+    let beside = entry_name.to_string_lossy().into_owned();
+    for file in std::fs::read_dir(store).into_iter().flatten().flatten() {
+        let file_name = file.file_name();
+        let wanted = file_name == entry_name
+            || file_name
+                .to_string_lossy()
+                .starts_with(&format!("{beside}."))
+            || file_name == format!("{key}.manifest").as_str()
+            || file_name == format!("{key}.group").as_str();
+        if wanted {
+            let _ = std::fs::copy(file.path(), to.join(file_name));
         }
     }
 }
 
 /// The key of the entry holding `exe`, which is named `<key>-<digest>.bin`.
-fn executable_key(exe: &Path) -> Option<String> {
+fn executable_entry(exe: &Path) -> Option<(PathBuf, String)> {
     let entry = binstore::entry_of(exe)?;
-    let name = entry.file_name()?.to_str()?;
-    Some(name.split_once('-')?.0.to_string())
+    let key = entry.file_name()?.to_str()?.split_once('-')?.0.to_string();
+    Some((entry, key))
 }
 
 /// Copy what a later job reads for `item` into `stage`: its entry, the
 /// manifest naming its inputs, and the digest and extents kept beside it.
 fn stage_item(item: &Item, built: Option<PathBuf>, live: &Live, stage: &Path) {
-    match item {
-        Item::Bench { .. } => stage_from(
-            built.as_deref().and_then(executable_key),
-            binstore::dir(),
-            stage,
-        ),
-        Item::Routes { pkg, target } => {
-            let exe = built.or_else(|| {
-                benchexe::executable(&live.one(pkg, Some(target)), None, None, Build::Discover)
-            });
-            stage_from(
-                exe.as_deref().and_then(executable_key),
-                binstore::dir(),
-                stage,
-            );
+    let from_exe = |exe: Option<PathBuf>| {
+        if let (Some((entry, key)), Some(store)) =
+            (exe.as_deref().and_then(executable_entry), binstore::dir())
+        {
+            stage_entry(&store, &entry, &key, stage);
         }
-        Item::Rustdoc {
-            pkg,
-            private,
-            features,
-            ..
-        } => stage_from(
-            invoke::rustdoc_key(pkg, features.as_deref(), visibility(*private)),
-            runcache::state_dir("rustdoc"),
-            stage,
-        ),
-    }
-}
-
-fn stage_from(key: Option<String>, store: Option<PathBuf>, stage: &Path) {
-    if let (Some(key), Some(store)) = (key, store) {
-        stage_entry(&store, &key, stage);
+    };
+    match item {
+        Item::Bench { .. } => from_exe(built),
+        Item::Routes { pkg, target } => from_exe(built.or_else(|| {
+            benchexe::executable(&live.one(pkg, Some(target)), None, None, Build::Discover)
+        })),
+        Item::Rustdoc { .. } => {
+            let (Some(key), Some(store), Ok(root)) = (
+                live.rustdoc_key(item),
+                runcache::state_dir("rustdoc"),
+                invoke::workspace_root(),
+            ) else {
+                return;
+            };
+            if let Some(entry) = crate::store::lookup(&store, &key, &root, "json") {
+                stage_entry(&store, &entry, &key, stage);
+            }
+        }
     }
 }
 
@@ -422,9 +462,9 @@ fn build_item(step: &Step, live: &Live) -> Result<Option<PathBuf>, String> {
             // measures the one pass.
             let same_as_head = *side == Side::Base
                 && digest.is_some()
-                && live.heads.borrow().get(pkg).map(|h| &h.digest) == Some(&digest);
+                && live.memo.heads.borrow().get(pkg).map(|h| &h.digest) == Some(&digest);
             if *side == Side::Head {
-                live.heads.borrow_mut().insert(
+                live.memo.heads.borrow_mut().insert(
                     pkg.clone(),
                     Head {
                         digest,
@@ -597,7 +637,7 @@ pub fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
-    let heads = RefCell::new(BTreeMap::new());
+    let memo = Memo::default();
     let base_sha = wanted
         .against_ref
         .as_deref()
@@ -609,7 +649,7 @@ pub fn run(args: &[String]) -> i32 {
         base_sha: base_sha.clone(),
         stage: wanted.stage.as_deref(),
         shards: wanted.shards,
-        heads: &heads,
+        memo: &memo,
     };
     let steps = select(&wanted, &live);
     let outcomes = execute(&steps, &live);
@@ -689,7 +729,7 @@ fn base_side(head: &Live, wanted: &Wanted, refname: &str) -> Result<Vec<(Step, O
             base_sha: head.base_sha.clone(),
             stage: head.stage,
             shards: head.shards,
-            heads: head.heads,
+            memo: head.memo,
         };
         let wanted = Wanted {
             packages,
@@ -935,20 +975,30 @@ mod tests {
     }
 
     #[test]
-    fn staging_copies_the_files_of_one_key_only() {
+    fn staging_copies_the_resolved_entry_and_what_belongs_to_it() {
         let root = std::env::temp_dir().join(format!("soothfast-stage-{}", std::process::id()));
         let (store, stage) = (root.join("bins"), root.join("out"));
         std::fs::create_dir_all(&store).unwrap();
-        for name in ["k1-d.bin", "k1-d.bin.extents", "k1.manifest", "k2-d.bin"] {
+        for name in [
+            "k1-d.bin",
+            "k1-d.bin.extents",
+            "k1.manifest",
+            "k1.group",
+            "k1-old.bin",
+            "k2-d.bin",
+        ] {
             std::fs::write(store.join(name), name).unwrap();
         }
-        stage_entry(&store, "k1", &stage);
+        stage_entry(&store, &store.join("k1-d.bin"), "k1", &stage);
         let mut names: Vec<_> = std::fs::read_dir(stage.join("bins"))
             .unwrap()
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         names.sort();
-        assert_eq!(names, ["k1-d.bin", "k1-d.bin.extents", "k1.manifest"]);
+        assert_eq!(
+            names,
+            ["k1-d.bin", "k1-d.bin.extents", "k1.group", "k1.manifest"]
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

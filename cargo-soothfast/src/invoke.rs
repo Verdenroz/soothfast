@@ -924,7 +924,7 @@ pub fn id_pkg(id: &str) -> &str {
     id.split("::").next().unwrap_or(id)
 }
 
-fn is_imported(item: &Value) -> bool {
+pub(crate) fn is_imported(item: &Value) -> bool {
     item["imported"].is_string()
 }
 
@@ -1003,9 +1003,7 @@ pub fn save_baseline_in(
     }
     doc["assertions"] = Value::Array(assertions);
 
-    let path = baseline_path(root, name);
-    std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
-    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
+    let path = write_baseline_in(root, name, &doc)?;
     prune_absorbed_accepts(root, run);
     Ok(path)
 }
@@ -1029,10 +1027,20 @@ fn prune_absorbed_accepts(root: &Path, run: &Run) {
 
 /// Write `doc` as the named baseline under the workspace root.
 pub fn write_baseline(name: &str, doc: &Value) -> io::Result<PathBuf> {
-    let path = baseline_path(&workspace_root()?, name);
+    write_baseline_in(&workspace_root()?, name, doc)
+}
+
+/// Write `doc` as the named baseline under `root`.
+pub fn write_baseline_in(root: &Path, name: &str, doc: &Value) -> io::Result<PathBuf> {
+    let path = baseline_path(root, name);
     std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
     std::fs::write(&path, serde_json::to_string_pretty(doc)?)?;
     Ok(path)
+}
+
+/// Whether a baseline named `name` exists under `root`.
+pub fn baseline_exists_in(root: &Path, name: &str) -> bool {
+    baseline_path(root, name).exists()
 }
 
 /// Load a named baseline, if present.
@@ -1300,12 +1308,9 @@ pub fn rustdoc_key(pkg: &str, features: Option<&str>, visibility: Visibility) ->
     rustdoc_store_key(pkg, None, &root, features, visibility, &rustdoc_toolchain())
 }
 
-/// Whether `rustdoc_json_in` would be served from the store for `pkg`.
-pub fn rustdoc_stored(pkg: &str, features: Option<&str>, visibility: Visibility) -> bool {
-    let Ok(root) = workspace_root() else {
-        return false;
-    };
-    rustdoc_key(pkg, features, visibility).is_some_and(|key| rustdocstore::holds(&key, &root))
+/// Whether the store holds the rustdoc JSON under `key`.
+pub fn rustdoc_holds(key: &str) -> bool {
+    workspace_root().is_ok_and(|root| rustdocstore::holds(key, &root))
 }
 
 /// `cargo rustdoc` for `pkg`, recording what it read in `dep_info` when given.
