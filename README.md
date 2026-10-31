@@ -75,7 +75,7 @@ covered in the **[full guide](https://verdenroz.github.io/soothfast/)**.
 
 ```toml
 [dev-dependencies]
-soothfast = { version = "0.5.0", features = ["runner"] }
+soothfast = { version = "0.5.1", features = ["runner"] }
 
 [[bench]]
 name = "soothfast"
