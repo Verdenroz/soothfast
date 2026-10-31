@@ -159,7 +159,10 @@ installed on is refused.
 | `rustdoc-cache` | `false` | Restore and save `.soothfast/rustdoc` for a job that runs `spec` or `docs` commands. A hit skips the nightly rustdoc build; see [Rustdoc cache](#rustdoc-cache). |
 | `bin-cache` | `false` | Restore `.soothfast/bins`, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See [Bench executable cache](#bench-executable-cache). |
 | `cache-suffix` | none | Tells apart the legs of a job matrix that share a job name, so each keeps its own `rustdoc-cache` and `bin-cache`. |
-| `prebuild` | none | `bench`, `routes` or `rustdoc` to build that lane of the stores in place of the gate (see [One build](#one-build)). `prebuild-docs` and `prebuild-spec` name its packages. |
+| `prebuild` | none | Lanes (`bench`, `routes`, `rustdoc`, space-separated) to build into the stores in place of the gate (see [One build](#one-build)). |
+| `prebuild-docs` | none | Packages whose rustdoc JSON `docs check` reads. Alone, it builds the `rustdoc` lane. |
+| `prebuild-spec` | none | `PKG` or `PKG:TARGET` that `spec` commands run on. Alone, it builds the `routes` lane, and the `rustdoc` lane for a package whose spec is generated. |
+| `prebuild-stage` | none | A directory to copy just the entries the lanes built or found into, for a job to upload. |
 
 Outputs are `version` and `cache-hit`.
 
@@ -371,20 +374,27 @@ hosted runners and its network audit may not apply on yours.
 
 Every job that gates, checks docs or runs `spec` commands used to compile for
 itself on a cold runner, and many of them compiled the same crates in
-parallel. `run.yml` now compiles once. After `plan`, a `build` job runs one leg
-per lane that has something to build, on separate machines:
+parallel. `run.yml` now compiles once. After `plan`, two build jobs run on
+separate machines: `Build (bench)` and `Build (rustdoc)`. The gate waits for
+the first only and the docs check for the second only, so the gate never waits
+for a nightly rustdoc build.
 
 | Lane | Builds | Into |
 |---|---|---|
-| `bench` | HEAD's bench executable of each gated package, its link map, and the merge-base's executable and map when the run cache holds no run for the merge-base | `.soothfast/bins`, `.soothfast/maps` |
-| `routes` | The dev-profile executable behind `spec check`, for each package in the `spec` input | `.soothfast/bins` |
-| `rustdoc` | Rustdoc JSON for the docs package and, for each `spec` package that generates a spec, for it and the workspace crates its types come from | `.soothfast/rustdoc` |
+| `bench` | HEAD's bench executable of each gated package, its link map, and the merge-base's executable and map when the run cache holds no run for the merge-base | `.soothfast/bins` |
+| `routes` | The dev-profile executable behind `spec check`, for each package named in `prebuild-spec` | `.soothfast/bins` |
+| `rustdoc` | Rustdoc JSON for the docs package and, for each `prebuild-spec` package that generates a spec, for it and the workspace crates its types come from | `.soothfast/rustdoc` |
 
-A lane with nothing to build is left out, and each leg reads its store first
-and builds only what is missing. The `bench` lane leaves the merge-base alone
-for the reason the gate does: if the run cache holds a run for it, the gate
-reuses that run and never builds the executable. Each leg prints what it
-built against what it found, and `SOOTHFAST_TIMINGS=1` times every build.
+`run.yml` builds the `bench` and `rustdoc` lanes. It has no `spec` job, so it
+builds no `routes` lane. A job is skipped when its lane has nothing to build,
+and each lane reads its store first and builds only what is missing. The
+`bench` lane leaves the merge-base alone for the reason the gate does: if the
+run cache holds a run for it, the gate reuses that run and never builds the
+executable. When a HEAD bench executable fails to build the merge-base side is
+not built, and a rustdoc or routes failure does not stop it. A workspace crate
+whose rustdoc fails to build for a generated spec is reported and dropped, as
+`spec gen` does. Each lane prints what it built against what it found, and
+`SOOTHFAST_TIMINGS=1` times every build.
 
 ```text
 prebuild: stored   bench executable core (head)
@@ -393,14 +403,15 @@ prebuild: skipped  bench executable core (merge-base)
 prebuild: 1 built, 1 skipped, 1 stored
 ```
 
-Each leg uploads its stores as `soothfast-store-<lane>` (the executables, the
-link-map extents and the rustdoc JSON, kept one day). The Rust gate, every
-shard of it, and the docs check `need` the build job, download the artifacts
-into `.soothfast/` and find a hit for everything they read. They compile
-nothing. The tests, and the gates and tests of the other ecosystems, do not
-wait for the build job.
+Each job uploads `soothfast-store-bench` or `soothfast-store-rustdoc`, kept one
+day. They hold only the entries the lane built or found (`prebuild-stage`): the
+executables with their digests and link-map extents, and the rustdoc JSON,
+not the rest of a restored cache. The Rust gate, every shard of it, downloads
+the bench artifact into `.soothfast/` and the docs check the rustdoc artifact,
+and each finds a hit for everything it reads and compiles nothing. The tests,
+and the gates and tests of the other ecosystems, do not wait for either build.
 
-A job that runs when the build job failed finds nothing to download and
+A job that runs when its build job failed finds nothing to download and
 compiles for itself, so a compile error still shows up in that job's output
 and in the verdict.
 
@@ -411,7 +422,7 @@ The key names the checkout path, the target directory, `CARGO_HOME`, `rustc
 cannot be made relative: compiled code carries it, so a binary built at
 another path is not the same binary. GitHub-hosted runners use one workspace
 path per repository for every job. The reading jobs set up the toolchain and
-`rust-cache` the way the build legs do, since those steps export some of the
+`rust-cache` the way the build jobs do, since those steps export some of the
 variables. A runner pool with a path per job misses every time, and the jobs
 then compile as before.
 
@@ -430,22 +441,22 @@ jobs:
       shard: 3
 ```
 
-The legs record `soothfast-result-rust-shard-<n>` and the verdict folds them
+The legs record `soothfast-result-rust-shard-<i>-of-<n>` and the verdict folds them
 into one section for the package. A pull request's shards cannot save the
 `head` baseline, which holds every item, so the docs check reads the default
 branch's measurement for its claims. A default-branch push records every item
-in its first leg and saves the baseline as before.
+in its first leg and saves the baseline as before; the other legs are
+skipped on a push, since they would only set up.
 
 `cargo soothfast prebuild` runs the same lanes by hand: `-p PKG` for bench
 packages, `--against-ref REF` for the merge-base, `--docs PKG`, `--spec
-PKG[:TARGET]` and `--only bench|routes|rustdoc`. The `spec` input of `run.yml`
-names the packages for the `routes` and `rustdoc` lanes.
+PKG[:TARGET]`, `--only bench|routes|rustdoc` and `--stage DIR`.
 
-`run.yml` has no `spec` job yet. A spec job of the caller's can run
-`cargo soothfast prebuild --spec PKG:TARGET` itself before `spec check`, or
-download `soothfast-store-*` into `.soothfast/` after `needs:`-ing the caller's
-job, which finishes only when the whole run does. A `spec` job inside
-`run.yml`, needing just the build job, is a follow-up.
+A spec job of the caller's builds its own lane with the action:
+`prebuild-spec: PKG:TARGET` alone runs the `routes` lane (and `rustdoc` for a
+generated spec) in place of the gate, and `prebuild-docs: PKG` alone runs
+`rustdoc`. A later job downloads the staged directory into `.soothfast/` before
+`spec check`. A `spec` job inside `run.yml` is a follow-up.
 
 ## One verdict
 
