@@ -30,6 +30,16 @@ on:
         required: false
         type: string
         default: "22"
+      shard:
+        description: "Legs the Rust gate is split into; each builds nothing and measures its share of the items"
+        required: false
+        type: number
+        default: 1
+      spec:
+        description: "Space-separated PKG or PKG:TARGET the caller's spec jobs run on; the build job prebuilds their routes executables and rustdoc"
+        required: false
+        type: string
+        default: ""
 
 permissions: {}
 
@@ -63,6 +73,9 @@ jobs:
       test_projects: ${{ steps.plan.outputs.test_projects }}
       test_all: ${{ steps.plan.outputs.test_all }}
       test_expect: ${{ steps.plan.outputs.test_expect }}
+      build: ${{ steps.plan.outputs.build }}
+      build_matrix: ${{ steps.plan.outputs.build_matrix }}
+      shards: ${{ steps.plan.outputs.shards }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -116,9 +129,12 @@ jobs:
           LABELS: ${{ steps.labels.outputs.labels }}
           JAVA: ${{ inputs.java }}
           NODE: ${{ inputs.node }}
+          SHARD: ${{ inputs.shard }}
+          SPEC: ${{ inputs.spec }}
           SETTLED: ${{ runner.temp }}/settled
         run: |
           cargo soothfast plan --github --java "$JAVA" --node "$NODE" \
+            --shard "$SHARD" --spec "$SPEC" \
             --results "$SETTLED" \
             ${BASE_REF:+--base "origin/$BASE_REF"} ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
       - name: Upload the results of tests that need no job
@@ -127,6 +143,84 @@ jobs:
           name: soothfast-result-test-settled
           path: ${{ runner.temp }}/settled
           if-no-files-found: ignore
+
+  # Compiles what the gate, the docs check and the caller's spec jobs read, once
+  # per lane, into the executable and rustdoc stores. Those jobs download the
+  # stores and find a hit for everything, so none of them compiles. The lanes
+  # run side by side on separate machines; tests and the other ecosystems'
+  # gates do not wait for them. Every lane sets up the toolchain and cache the
+  # reading job does, since the variables those export are part of the keys.
+  build:
+    name: Build (${{ matrix.lane }})
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.build == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.build_matrix) }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ matrix.lane == 'rustdoc' && 'nightly' || 'stable' }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.lane }}
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
+      - uses: ./.soothfast-action
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: "false"
+          prebuild: ${{ matrix.lane }}
+          prebuild-docs: ${{ needs.plan.outputs.docs_package }}
+          prebuild-spec: ${{ inputs.spec }}
+          bin-cache: ${{ matrix.lane != 'rustdoc' && 'true' || 'false' }}
+          rustdoc-cache: ${{ matrix.lane == 'rustdoc' && 'true' || 'false' }}
+          cache-suffix: ${{ matrix.lane }}
+      # Only what a reading job uses: the maps are text beside the extents
+      # they are read into, and hundreds of MB.
+      - name: Stage the stores
+        if: always()
+        run: |
+          store="$RUNNER_TEMP/store"
+          mkdir -p "$store"
+          for dir in bins rustdoc; do
+            if [ -d ".soothfast/$dir" ]; then cp -a ".soothfast/$dir" "$store/"; fi
+          done
+          if [ -d .soothfast/maps ]; then
+            mkdir -p "$store/maps"
+            find .soothfast/maps -name '*.extents' -exec cp -t "$store/maps" {} +
+          fi
+      - name: Upload the stores
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-store-${{ matrix.lane }}
+          path: ${{ runner.temp }}/store
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 1
+          compression-level: 1
 
   test:
     name: Test
@@ -316,15 +410,19 @@ jobs:
           key: soothfast-tests-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   gate-rust:
-    name: Gate
-    needs: plan
-    if: github.event_name != 'schedule' && needs.plan.outputs.packages != ''
+    name: Gate${{ matrix.shard != '' && format(' ({0})', matrix.shard) || '' }}
+    needs: [plan, build]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && github.event_name != 'schedule' && needs.plan.outputs.packages != '' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     environment: soothfast-bot
     permissions:
       contents: read
       pull-requests: write
       id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -349,21 +447,33 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - id: soothfast
         uses: ./.soothfast-action/action/install
+      # A failed build leaves nothing to download, and this job then compiles
+      # for itself and reports the error in its own output.
+      - name: Download the built stores
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: soothfast-store-*
+          path: .soothfast
+          merge-multiple: true
       - uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
           changelog: ${{ inputs.bot && 'true' || 'false' }}
           comment: "false"
-          save-baseline: head
-          bin-cache: "true"
-          # Only the changelog regeneration on a default-branch push builds rustdoc.
+          shard: ${{ matrix.shard }}
+          # A pull request's shard measures some items, and a baseline holds
+          # all of them. A push records every item in its first leg.
+          save-baseline: ${{ (matrix.shard == '' || github.event_name != 'pull_request') && 'head' || '' }}
+          # The build job owns the executables; only the changelog
+          # regeneration on a default-branch push builds rustdoc here.
           rustdoc-cache: ${{ inputs.bot && github.event_name == 'push' && 'true' || 'false' }}
       - name: Upload the gate results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-rust
+          name: soothfast-result-rust${{ matrix.shard != '' && format('-shard-{0}', strategy.job-index) || '' }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
       # The docs job reads claims from this instead of measuring again. A
@@ -495,7 +605,7 @@ jobs:
 
   docs:
     name: Docs check
-    needs: [plan, gate-rust]
+    needs: [plan, build, gate-rust]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.plan.outputs.docs == 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
@@ -525,47 +635,17 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - id: soothfast
         uses: ./.soothfast-action/action/install
-      # The same restore, save and merge the action's `rustdoc-cache` runs.
-      - name: Name the rustdoc cache
+      # The build job's rustdoc lane holds the rustdoc cache now, so this job
+      # restores nothing of its own. A failed lane leaves nothing to download,
+      # and the docs check then builds the JSON itself.
+      - name: Download the built stores
         if: needs.plan.outputs.docs_package != ''
-        id: rustdoc-key
-        env:
-          RUNNER_OS_NAME: ${{ runner.os }}
-          RUNNER_ARCH_NAME: ${{ runner.arch }}
-        run: echo "prefix=soothfast-rustdoc-${GITHUB_JOB}--${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}" >>"$GITHUB_OUTPUT"
-      - name: Restore this branch's rustdoc JSON
-        if: needs.plan.outputs.docs_package != '' && github.event_name == 'pull_request'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: .soothfast/rustdoc
-          key: ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-
-      - name: Set the branch's rustdoc JSON aside
-        if: needs.plan.outputs.docs_package != '' && github.event_name == 'pull_request'
-        run: |
-          if [ -d .soothfast/rustdoc ]; then
-            mkdir -p .soothfast-rustdoc-branch
-            mv .soothfast/rustdoc .soothfast-rustdoc-branch/rustdoc
-          fi
-      - name: Restore and save rustdoc JSON
-        if: needs.plan.outputs.docs_package != ''
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .soothfast/rustdoc
-          key: ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
-            ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.event.repository.default_branch }}-
-      - name: Merge the branch's rustdoc JSON
-        if: needs.plan.outputs.docs_package != '' && github.event_name == 'pull_request'
-        env:
-          CLI: ${{ steps.soothfast.outputs.bin }}
-        run: |
-          if [ -d .soothfast-rustdoc-branch ]; then
-            "$CLI" cache merge --from .soothfast-rustdoc-branch
-            rm -rf .soothfast-rustdoc-branch
-          fi
+          pattern: soothfast-store-rustdoc
+          path: .soothfast
+          merge-multiple: true
       - name: Download the head measurement
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

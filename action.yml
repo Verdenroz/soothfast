@@ -132,9 +132,9 @@ inputs:
   shard:
     description: >-
       `I/N` to gate only the items shard I of N owns, for a job matrix that
-      splits a large measurement. Each leg still builds both sides; only the
-      measuring is split. Each shard posts its own comment. Empty gates every
-      item.
+      splits a large measurement. Each leg builds both sides unless the
+      stores hold them (see `prebuild`); the measuring is what is split. Each
+      shard posts its own comment. Empty gates every item.
     required: false
     default: ""
   comment:
@@ -181,6 +181,25 @@ inputs:
     description: >-
       Tells apart the legs of a job matrix that share a job name, so each
       keeps its own `rustdoc-cache` and `bin-cache`. Commas are replaced.
+    required: false
+    default: ""
+  prebuild:
+    description: >-
+      `bench`, `routes` or `rustdoc` to run `cargo soothfast prebuild` for
+      that lane in place of the gate, so the stores hold what a later job
+      reads. The cache inputs restore and save them as for a gate; the lane
+      decides which of them it needs. Empty runs the gate.
+    required: false
+    default: ""
+  prebuild-docs:
+    description: Space-separated packages whose rustdoc JSON the `rustdoc` lane builds for `docs check`.
+    required: false
+    default: ""
+  prebuild-spec:
+    description: >-
+      Space-separated `PKG` or `PKG:TARGET` the `routes` lane builds the
+      route listing of, and the `rustdoc` lane documents when it generates a
+      spec.
     required: false
     default: ""
 
@@ -258,7 +277,8 @@ runs:
         PACKAGES: ${{ inputs.packages }}
         RUSTDOC_TOOLCHAIN: ${{ inputs.rustdoc-toolchain }}
         LABELS: ${{ inputs.labels }}
-        CACHE: ${{ inputs.cache }}
+        # Only the bench lane decides whether the merge-base is built, from the runs.
+        CACHE: ${{ inputs.cache == 'true' && (inputs.prebuild == '' || inputs.prebuild == 'bench') }}
         SHARD: ${{ inputs.shard }}
         GH_TOKEN: ${{ inputs.token }}
       run: "$GITHUB_ACTION_PATH/action/prepare.sh"
@@ -428,8 +448,23 @@ runs:
       shell: bash
       run: echo "listing=$("$GITHUB_ACTION_PATH/action/listing.sh" .soothfast/bins)" >>"$GITHUB_OUTPUT"
 
+    - name: Build the stores
+      if: inputs.prebuild != ''
+      shell: bash
+      env:
+        CLI: ${{ steps.resolve.outputs.bin }}
+        LANE: ${{ inputs.prebuild }}
+        PACKAGES: ${{ steps.prepare.outputs.packages }}
+        FEATURES: ${{ inputs.features }}
+        BASE_REF: ${{ github.base_ref }}
+        EVENT: ${{ github.event_name }}
+        ON_DEFAULT: ${{ steps.prepare.outputs.on_default_branch }}
+        DOCS: ${{ inputs.prebuild-docs }}
+        SPEC: ${{ inputs.prebuild-spec }}
+      run: "$GITHUB_ACTION_PATH/action/prebuild.sh"
+
     - name: Gate against the base branch
-      if: github.event_name == 'pull_request' && inputs.gate == 'true'
+      if: github.event_name == 'pull_request' && inputs.gate == 'true' && inputs.prebuild == ''
       id: gate
       shell: bash
       env:
@@ -461,7 +496,7 @@ runs:
     - name: Record a reference run
       if: >-
         github.event_name == 'push' && steps.prepare.outputs.on_default_branch == 'true' && inputs.gate == 'true'
-        && steps.prepare.outputs.records == 'true'
+        && steps.prepare.outputs.records == 'true' && inputs.prebuild == ''
       shell: bash
       env:
         CLI: ${{ steps.resolve.outputs.bin }}
@@ -474,7 +509,7 @@ runs:
     # their own items, for a rerun of the same shard.
     - name: Save measured runs
       if: >-
-        always() && steps.prepare.outputs.cache_runs == 'true'
+        always() && steps.prepare.outputs.cache_runs == 'true' && inputs.prebuild == ''
         && (github.event_name == 'pull_request' || steps.prepare.outputs.records == 'true')
         && steps.runs.outputs.cache-matched-key != steps.save-key.outputs.key
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -522,7 +557,7 @@ runs:
       run: "$GITHUB_ACTION_PATH/action/sweep.sh"
 
     - name: Regenerate derived files
-      if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true'
+      if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true' && inputs.prebuild == ''
       id: regen
       shell: bash
       env:
