@@ -630,9 +630,8 @@ fn with_package(args: &[String], pkg: &str) -> Vec<String> {
 struct Resolved {
     reference: Value,
     current: Run,
-    /// The identical-binaries short circuit ran one pass, which skips the
-    /// gating counters unless it counts the items or records a reference, so
-    /// `current` is not baseline material.
+    /// The identical-binaries short circuit ran one pass that skipped the
+    /// gating counters, so `current` is not baseline material.
     short_circuited: bool,
     harness: invoke::HarnessSync,
 }
@@ -972,8 +971,11 @@ fn measure_ref_interleaved(
     const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
     enum Ref {
         NoBenchTarget,
-        /// The one pass, and whether it counted every item.
-        IdenticalBinaries(Result<Run, String>, bool),
+        /// The one pass, and whether it carries the gating counters.
+        IdenticalBinaries {
+            run: Result<Run, String>,
+            counted: bool,
+        },
         /// Reference served by binary identity rather than by commit.
         Cached(Value),
         /// The two full rounds, the timing-only pair unless walltime is
@@ -1009,16 +1011,21 @@ fn measure_ref_interleaved(
     let (head_dig, runs, head_exe) = headrun::probe("gate", common, &head_stamp);
     // HEAD alone, where the reference is already measured: items whose code
     // a stored measurement covers are spliced and the rest are measured.
+    let measure_head_with =
+        |exe: Option<&std::path::Path>, unplanned: &[&str]| -> Result<(Run, bool), String> {
+            Reuse::measure_head(
+                "gate",
+                common,
+                &runs,
+                exe.map(|exe| Bin::head(exe, head_dig.as_deref())),
+                recording(),
+                unplanned,
+                || buildstamp::capture(common.codegen_units_stamp().as_deref(), None),
+                |args| measure(None, args),
+            )
+        };
     let measure_head = |exe: Option<&std::path::Path>| -> Result<Run, String> {
-        Reuse::measure_head(
-            "gate",
-            common,
-            &runs,
-            exe.map(|exe| Bin::head(exe, head_dig.as_deref())),
-            recording(),
-            || buildstamp::capture(common.codegen_units_stamp().as_deref(), None),
-            |args| measure(None, args),
-        )
+        measure_head_with(exe, &[]).map(|(run, _)| run)
     };
     // Stored regardless of `reuse`: a fresh measurement is worth keeping
     // even for an invocation that declined to trust an existing one.
@@ -1097,44 +1104,33 @@ fn measure_ref_interleaved(
             println!(
                 "gate: bench binaries identical (code and data match) — no measurable change possible"
             );
-            // Under callgrind the one binary's items are measured once and
-            // stored, so a later push measures only the items it changes.
-            let counted = (reuse && by_binary.is_none())
-                .then(|| {
-                    let head = Bin::head(&d.head_exe, Some(&d.head));
-                    Reuse::plan("gate", common, &runs, &[head], recording())
-                })
-                .flatten();
-            let (run, record) = match &counted {
-                Some(plan) => {
-                    let stamp =
-                        || buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
-                    (plan.run_alone(stamp, |args| measure(None, args)), true)
-                }
-                None => {
-                    let record = by_binary.is_none() && recording();
-                    let args = identical_pass_args(common.backend.as_deref(), record);
-                    (measure(None, args), record)
-                }
-            };
+            let pass = identical_pass(
+                reuse,
+                by_binary.is_some(),
+                recording(),
+                common.backend.as_deref(),
+            );
+            let exe = pass.plan.then_some(d.head_exe.as_path());
+            let outcome = measure_head_with(exe, pass.args);
+            let counted = outcome
+                .as_ref()
+                .is_ok_and(|(_, planned)| pass.counted(*planned));
+            let run = outcome.map(|(run, _)| run);
             // Head shares that machine code, so a run of it is its
             // measurement too, and the next commit can reuse it from HEAD.
-            if let Some(doc) = identical_pass_cache(by_binary.as_ref(), run.as_ref().ok(), record) {
-                let settled = match (&by_binary, &run) {
-                    (None, Ok(pass)) => {
-                        settle("gate", "HEAD's run", pass, || measure(None, RECOUNT).ok())
-                    }
-                    _ => Settled::AsMeasured,
+            if let Ok(pass) = &run
+                && let Some(doc) = identical_pass_cache(by_binary.as_ref(), pass, counted)
+            {
+                let settled = if counted {
+                    settle("gate", "HEAD's run", pass, || measure(None, RECOUNT).ok())
+                } else {
+                    Settled::AsMeasured
                 };
                 if let Some(doc) = settled_doc(doc, &settled) {
                     cache_head_doc(&runs, &doc, head_dig.as_deref());
                 }
             }
-            return Ok((
-                Ref::IdenticalBinaries(run, counted.is_some()),
-                digests,
-                harness,
-            ));
+            return Ok((Ref::IdenticalBinaries { run, counted }, digests, harness));
         }
         if let Some(doc) = by_binary {
             println!("gate: reusing a run measured from the same merge-base binary");
@@ -1158,7 +1154,14 @@ fn measure_ref_interleaved(
                     target_dir: wt_target.as_deref(),
                     env: base_env.as_ref().and_then(|e| e.as_ref().ok()),
                 };
-                Reuse::plan("gate", common, &runs, &[head, base], recording())
+                Reuse::plan(
+                    "gate",
+                    common,
+                    &runs,
+                    &[head, base],
+                    recording(),
+                    "measuring in full",
+                )
             });
         let measure_side = |side: usize, extra: &[&str]| -> Result<Run, String> {
             let dir = (side == 1).then_some(wt);
@@ -1213,7 +1216,7 @@ fn measure_ref_interleaved(
         Ref::NoBenchTarget => return Ok(None),
         // One cheap pass serves as both sides: real items and assertions,
         // zero deltas by construction.
-        Ref::IdenticalBinaries(run, counted) => {
+        Ref::IdenticalBinaries { run, counted } => {
             let head = run?;
             return Ok(Some(Resolved {
                 reference: ref_doc(&head),
@@ -1338,13 +1341,46 @@ fn identical_pass_args(backend: Option<&str>, record: bool) -> &'static [&'stati
     }
 }
 
-/// What the identical-binaries branch keeps as HEAD's run: the run already
-/// stored for the binary, else a recording pass. A pass that skipped the gating
-/// counters must never be stored, or a later gate reusing it compares nothing.
-fn identical_pass_cache(stored: Option<&Value>, pass: Option<&Run>, record: bool) -> Option<Value> {
-    stored
-        .cloned()
-        .or_else(|| pass.filter(|_| record).map(ref_doc))
+/// How the identical-binaries branch takes its one pass: planned per item
+/// when `plan` (falling back to `args` when no plan applies), else with `args`.
+#[derive(Debug, PartialEq)]
+struct IdenticalPass {
+    plan: bool,
+    args: &'static [&'static str],
+}
+
+impl IdenticalPass {
+    /// Whether the pass carries the gating counters, `planned` saying the plan
+    /// was used. Only then is its run a baseline and a stored measurement.
+    fn counted(&self, planned: bool) -> bool {
+        planned || self.args.is_empty()
+    }
+}
+
+/// A run stored for the binary is carried forward by a plan too, which splices
+/// its items and their claims from the item store instead of measuring them.
+fn identical_pass(
+    reuse: bool,
+    stored: bool,
+    recording: bool,
+    backend: Option<&str>,
+) -> IdenticalPass {
+    IdenticalPass {
+        plan: reuse,
+        args: identical_pass_args(backend, !stored && recording),
+    }
+}
+
+/// What the identical-binaries branch keeps as HEAD's run: a pass that carries
+/// the gating counters, else the run already stored for the binary. A pass
+/// that skipped them must never be stored, or a later gate reusing it compares
+/// nothing.
+fn identical_pass_cache(stored: Option<&Value>, pass: &Run, counted: bool) -> Option<Value> {
+    if counted {
+        Some(ref_doc(pass))
+    } else {
+        stored.cloned()
+    }
 }
 
 /// The callgrind method the merge-base counts with, when it is not HEAD's.
@@ -1956,8 +1992,8 @@ fn partial(msg: &str) -> i32 {
 mod tests {
     use super::{
         CompareCtx, FailedMetric, GateArgs, SaveVerdict, combine_min, combine_rounds, compare,
-        identical_pass_args, identical_pass_cache, reuse_hint, round_duration, save_verdict,
-        walltime_limit,
+        identical_pass, identical_pass_args, identical_pass_cache, reuse_hint, round_duration,
+        save_verdict, walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
@@ -2359,20 +2395,55 @@ mod tests {
     }
 
     #[test]
-    fn only_a_recording_identical_pass_is_stored() {
+    fn only_a_counted_identical_pass_is_stored_afresh() {
         let pass = Run::default();
-        assert!(identical_pass_cache(None, Some(&pass), false).is_none());
-        assert!(identical_pass_cache(None, Some(&pass), true).is_some());
-        assert!(identical_pass_cache(None, None, true).is_none());
+        assert!(identical_pass_cache(None, &pass, false).is_none());
+        assert!(identical_pass_cache(None, &pass, true).is_some());
     }
 
     #[test]
-    fn a_stored_run_is_kept_whatever_the_pass() {
+    fn a_stored_run_is_kept_when_the_pass_is_not_counted() {
         let stored = json!({ "version": 1, "items": {} });
         assert_eq!(
-            identical_pass_cache(Some(&stored), Some(&Run::default()), false),
+            identical_pass_cache(Some(&stored), &Run::default(), false),
             Some(stored)
         );
+    }
+
+    #[test]
+    fn the_identical_branch_plans_whenever_reuse_is_on() {
+        for (stored, recording) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert!(identical_pass(true, stored, recording, None).plan);
+        }
+        assert!(!identical_pass(false, false, false, None).plan);
+    }
+
+    #[test]
+    fn a_plan_that_applies_counts_and_one_that_does_not_takes_the_cheap_pass() {
+        let pass = identical_pass(true, false, false, None);
+        assert!(pass.counted(true));
+        assert!(!pass.counted(false));
+        assert_eq!(pass.args, ["--skip-gating-counters"]);
+    }
+
+    #[test]
+    fn a_stored_run_keeps_the_cheap_fallback_even_when_recording() {
+        let pass = identical_pass(false, true, true, None);
+        assert_eq!(pass.args, ["--skip-gating-counters"]);
+        assert!(!pass.counted(false));
+    }
+
+    #[test]
+    fn a_recording_fallback_counts_and_is_baseline_material() {
+        let pass = identical_pass(false, false, true, Some("walltime"));
+        assert!(pass.args.is_empty());
+        assert!(pass.counted(false));
+    }
+
+    #[test]
+    fn a_counted_identical_run_saves_the_baseline() {
+        let counted = identical_pass(true, true, false, None).counted(true);
+        assert_eq!(save_verdict(0, !counted), SaveVerdict::Save);
     }
 
     #[test]

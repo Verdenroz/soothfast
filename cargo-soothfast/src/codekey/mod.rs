@@ -216,6 +216,15 @@ impl Binary {
         Some(format!("{:016x}", fnv1a(text.as_bytes())))
     }
 
+    /// Each bench-binary function of `functions` this binary has no hash for.
+    pub fn unhashed(&self, functions: &[(String, String)]) -> Vec<String> {
+        functions
+            .iter()
+            .filter(|(ob, sym)| ob == EXE && !self.hashes.contains_key(sym))
+            .map(|(ob, sym)| format!("{ob} {sym}"))
+            .collect()
+    }
+
     /// Each bench-binary function of `functions` whose hash here differs
     /// from `other`'s, and the thread-local image when it does.
     pub fn differences(&self, other: &Binary, functions: &[(String, String)]) -> Vec<String> {

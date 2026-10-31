@@ -25,12 +25,17 @@ second round re-measures only the timing-sensitive backends, and the
 per-metric minimum across a side's rounds is its comparison value. When the
 two sides' bench binaries have byte-identical loaded sections, code and
 data alike, no measurable change is possible and the gate short-circuits to a
-single pass whose assertions still run. Under callgrind that pass measures the
-one binary, and only the items no stored measurement covers; it stores them
-and the run, so the first identical run costs one side's items
-and a repeat costs none, and the next push that changes code measures only
-what it changed. `--no-reuse-base` or `--no-item-cache`, and any backend but
-callgrind, keep the cheap walltime pass, which stores nothing. This is
+single pass whose assertions still run. Under callgrind that pass plans the
+one binary per item: stored items are spliced in with their claims, only the
+rest are measured, and what is measured is stored along with the run. The
+first identical run, such as the first after an upgrade, therefore costs one
+callgrind pass over one side's items. A repeat finds every item stored and
+measures nothing, and the next push that changes code measures only what it
+changed. The pass carries the gating counters, so `--save-baseline` saves it.
+With `--no-reuse-base`, `--no-item-cache`, or a backend other than callgrind
+the gate takes the cheap walltime pass instead, which stores nothing and is
+not saved as a baseline. Under `SOOTHFAST_RECORD=1` that fallback keeps the
+counters and stores its run. This is
 what `make gate` runs against `origin/master` for
 every crate in `BENCH_CRATES`, and it is why merge-base gating has no
 baseline file that can go stale in version control.
@@ -236,6 +241,8 @@ To see why an item's code changed between the two sides of a gate, set
 lists the functions of its newest stored entry that hash differently in
 HEAD's and the merge-base's binaries, and the thread-local image when that
 differs.
+When both sides are one binary (identical bench binaries), it lists instead
+the functions of the newest entry that binary cannot hash.
 
 The whole-run keys above are tried first. Per-item reuse applies on the full
 measurement path and when `measure` finds no run stored for its binary. It
@@ -668,9 +675,10 @@ regression (lock contention, syscalls) past that ceiling still does.
 exactly as `measure --save-baseline` would, so a deploy pipeline that needs
 both a gate verdict and a fresh baseline pays for one measurement instead of
 two. A failing run is never saved — the baseline would ratify its own
-regression. The identical-binaries short circuit saves it when it counted
-the items under callgrind; its cheap walltime pass collects no gating
-counters, so that one skips the save and the previously saved baseline stays.
+regression. The identical-binaries short circuit saves it whenever its pass
+carried the gating counters: the per-item callgrind pass, or the fallback
+under `SOOTHFAST_RECORD=1`. The cheap walltime pass collects none, so it
+skips the save and the previously saved baseline stays.
 
 ## `--deps`: advisory, not a different check
 

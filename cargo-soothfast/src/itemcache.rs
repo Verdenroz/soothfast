@@ -100,9 +100,12 @@ pub struct Items {
 impl Items {
     /// The store for `scope` (see `Runs::item_scope`).
     pub fn open(scope: &str) -> Option<Items> {
-        Some(Items::at(runcache::state_dir("items")?.join(scope)))
+        Some(Items {
+            dir: runcache::state_dir("items")?.join(scope),
+        })
     }
 
+    #[cfg(test)]
     pub(crate) fn at(dir: PathBuf) -> Items {
         Items { dir }
     }
@@ -187,8 +190,12 @@ impl Items {
         listed: &[BTreeMap<String, String>],
         binaries: &[Binary],
     ) -> (Vec<BTreeMap<String, Entry>>, Misses) {
-        if let (Ok(want), [head, base]) = (std::env::var("SOOTHFAST_EXPLAIN"), binaries) {
-            explain(&want, ids, stored, head, base);
+        if let Ok(want) = std::env::var("SOOTHFAST_EXPLAIN") {
+            match binaries {
+                [head, base] => explain(&want, ids, stored, head, base),
+                [only] => explain_alone(&want, ids, stored, only),
+                _ => {}
+            }
         }
         let mut hits = vec![BTreeMap::new(); binaries.len()];
         let mut misses = Misses::default();
@@ -333,6 +340,24 @@ fn explain(want: &str, ids: &[String], stored: &Stored, head: &Binary, base: &Bi
     }
 }
 
+/// Print the functions of item `want`'s newest entry (every item for `all`)
+/// that `bin` cannot hash, the one reason a lone binary misses on code.
+fn explain_alone(want: &str, ids: &[String], stored: &Stored, bin: &Binary) {
+    for id in ids.iter().filter(|id| want == "all" || *id == want) {
+        let Some(entry) = stored.0.get(id).and_then(|e| e.first()) else {
+            continue;
+        };
+        let lines = bin.unhashed(&entry.functions);
+        if lines.is_empty() {
+            continue;
+        }
+        println!("explain {id}: functions of the newest entry this binary cannot hash");
+        for line in lines {
+            println!("explain   {line}");
+        }
+    }
+}
+
 /// Why no stored entry of an item stands for it in one binary, in the order
 /// the gate line reports them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -429,12 +454,7 @@ mod tests {
         use crate::invoke::{CommonArgs, HostEnv};
         use crate::runcache::Runs;
 
-        let stamp = BuildStamp {
-            rustc: "1.88.0".into(),
-            codegen_units: "1".into(),
-            profiles: "a".into(),
-            rustflags: "b".into(),
-        };
+        let stamp = BuildStamp::fixture();
         let common = CommonArgs::default();
         let scope = |method: &str| {
             let env = HostEnv {
