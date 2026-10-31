@@ -72,16 +72,21 @@ impl<'a> Runs<'a> {
         })
     }
 
-    /// Whether [`Runs::load_reference`] would find a run for `id`, without
-    /// reading it.
-    pub fn has_reference(&self, id: &str) -> bool {
+    /// The stored run files [`Runs::load_reference`] would read for `id`,
+    /// empty when it would find none.
+    pub fn reference_files(&self, id: &str) -> Vec<PathBuf> {
         let Some(env) = self.env.as_ref().filter(|_| !id.is_empty()) else {
-            return false;
+            return Vec::new();
         };
-        let exists = |key: &str| dir().is_some_and(|d| d.join(format!("{key}.json")).is_file());
-        exists(&key(id, self.stamp, self.common, env))
-            || self.common.shard.is_some()
-                && exists(&key_with(id, self.stamp, self.common, env, None))
+        let file = |key: String| dir().map(|d| d.join(format!("{key}.json")));
+        let own = file(key(id, self.stamp, self.common, env)).filter(|p| p.is_file());
+        let whole = || {
+            self.common
+                .shard
+                .and_then(|_| file(key_with(id, self.stamp, self.common, env, None)))
+                .filter(|p| p.is_file())
+        };
+        own.or_else(whole).into_iter().collect()
     }
 
     /// The key every per-item entry of this invocation lives under: the

@@ -248,7 +248,8 @@ struct Memo {
     /// What HEAD's bench binaries resolved.
     heads: RefCell<BTreeMap<String, Head>>,
     rustdoc_keys: RefCell<BTreeMap<Item, Option<String>>>,
-    references: RefCell<BTreeMap<String, bool>>,
+    /// The run files that cover a package's merge-base, when they do.
+    references: RefCell<BTreeMap<String, Option<Vec<PathBuf>>>>,
 }
 
 struct Head {
@@ -267,9 +268,21 @@ impl Live<'_> {
         }
     }
 
-    /// Whether the run cache holds the merge-base run of `pkg` for the gate
-    /// leg, or for every leg when it is sharded.
-    fn find_reference(&self, pkg: &str) -> bool {
+    /// The run files that cover the merge-base of `pkg` for every gate leg,
+    /// or `None` when some leg would not find one.
+    fn reference_files(&self, pkg: &str) -> Option<Vec<PathBuf>> {
+        if let Some(known) = self.memo.references.borrow().get(pkg) {
+            return known.clone();
+        }
+        let found = self.find_reference(pkg);
+        self.memo
+            .references
+            .borrow_mut()
+            .insert(pkg.to_string(), found.clone());
+        found
+    }
+
+    fn find_reference(&self, pkg: &str) -> Option<Vec<PathBuf>> {
         let one = self.one(pkg, None);
         let stamp = buildstamp::capture(one.codegen_units_stamp().as_deref(), None);
         let env = self
@@ -278,16 +291,44 @@ impl Live<'_> {
             .borrow()
             .get(pkg)
             .and_then(|h| h.env.clone());
-        let loaded = |shard: Option<Shard>| {
+        let files = |shard: Option<Shard>| {
             let common = CommonArgs {
                 shard,
                 ..one.clone()
             };
-            Runs::new(&stamp, &common, env.clone()).has_reference(&self.base_sha)
+            Runs::new(&stamp, &common, env.clone()).reference_files(&self.base_sha)
         };
-        match self.shards {
-            0 | 1 => loaded(None),
-            count => (1..=count).all(|index| loaded(Some(Shard { index, count }))),
+        let legs: Vec<Option<Shard>> = match self.shards {
+            0 | 1 => vec![None],
+            count => (1..=count)
+                .map(|index| Some(Shard { index, count }))
+                .collect(),
+        };
+        let mut all = Vec::new();
+        for leg in legs {
+            let found = files(leg);
+            if found.is_empty() {
+                return None;
+            }
+            all.extend(found);
+        }
+        all.sort();
+        all.dedup();
+        Some(all)
+    }
+
+    /// Hand the stored merge-base runs to the gate legs along with the
+    /// executables, so a leg finds the same runs this decision did.
+    fn stage_reference(&self, pkg: &str) {
+        let (Some(stage), Some(files)) = (self.stage, self.reference_files(pkg)) else {
+            return;
+        };
+        let to = stage.join("runs");
+        let _ = std::fs::create_dir_all(&to);
+        for file in files {
+            if let Some(name) = file.file_name() {
+                let _ = std::fs::copy(&file, to.join(name));
+            }
         }
     }
 
@@ -343,15 +384,7 @@ impl State for Live<'_> {
     }
 
     fn reference_stored(&self, pkg: &str) -> bool {
-        if let Some(known) = self.memo.references.borrow().get(pkg) {
-            return *known;
-        }
-        let found = self.find_reference(pkg);
-        self.memo
-            .references
-            .borrow_mut()
-            .insert(pkg.to_string(), found);
-        found
+        self.reference_files(pkg).is_some()
     }
 
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>> {
@@ -529,6 +562,7 @@ fn execute(steps: &[Step], live: &Live) -> Vec<Outcome> {
         .iter()
         .map(|s| {
             if s.action == Action::Covered {
+                live.stage_reference(s.item.pkg());
                 return Outcome::Covered;
             }
             let wants_build = s.action == Action::Build || side_of(s).is_some();
@@ -641,6 +675,7 @@ pub fn run(args: &[String]) -> i32 {
     let base_sha = wanted
         .against_ref
         .as_deref()
+        .filter(|_| wanted.lanes.contains(&Lane::Bench))
         .and_then(|r| invoke::git(&["merge-base", "HEAD", r]).ok())
         .unwrap_or_default();
     let live = Live {
@@ -702,6 +737,7 @@ fn base_side(head: &Live, wanted: &Wanted, refname: &str) -> Result<Vec<(Step, O
     if wanted.packages.is_empty()
         || (wanted.reuse_base && wanted.packages.iter().all(|p| head.reference_stored(p)))
     {
+        wanted.packages.iter().for_each(|p| head.stage_reference(p));
         return Ok(wanted
             .packages
             .iter()
