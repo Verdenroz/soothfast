@@ -618,6 +618,20 @@ fn a_table_read_as_offsets_and_as_jumps_is_a_jump_table() {
 }
 
 #[test]
+fn a_sequence_that_could_be_a_jump_is_no_data_table() {
+    let sum_written = [LEA, LOAD, ADD, "inc    %rax", JMP, RET];
+    let copied = [LEA, LOAD, ADD, "mov    %rax,%rdx", "jmp    *%rdx", RET];
+    let mut runs_out = vec![LEA, LOAD, ADD];
+    runs_out.extend(["nop"; 40]);
+    for lines in [sum_written.to_vec(), copied.to_vec(), runs_out] {
+        let proven = prove_data(&lines);
+        assert!(proven.pointers.is_empty() && proven.proofs.is_empty());
+    }
+    let used = [LEA, LOAD, ADD, "mov    (%rax),%rax", RET];
+    assert_eq!(prove_data(&used).pointers.len(), 1);
+}
+
+#[test]
 fn a_jump_table_and_a_name_table_through_one_register_are_both_proven() {
     let jump_then_names = [
         LEA,

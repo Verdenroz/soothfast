@@ -469,20 +469,22 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
 }
 
 /// Where `after` ends reading a table through `base` and `word`: the index of
-/// the `jmp *` through the sum of the two and `false`, or when no jump follows
-/// in the block, the index of the add and `true`. `None` when nothing adds
-/// them, or one of them is written first.
+/// the `jmp *` through the sum of the two and `false`, or the index of the add
+/// and `true` when the block then ends with no indirect jump through a
+/// register. `None` when nothing adds them, one of them is written first, a
+/// register jump follows that is not through the sum, or the window ends in
+/// the block: that is a jump table gone wrong or one not seen whole.
 fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool)> {
-    let mut sum: Option<(usize, String)> = None;
+    let mut sum: Option<(usize, String, bool)> = None;
     for (i, (_, ins)) in after.iter().enumerate() {
-        let Some((add, total)) = &sum else {
+        let Some((add, total, disturbed)) = &mut sum else {
             let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
             let adds = ins.mnemonic == "add"
                 && regs.len() == 2
                 && regs.iter().flatten().any(|f| f == base)
                 && regs.iter().flatten().any(|f| f == word);
             match regs.get(1).cloned().flatten() {
-                Some(total) if adds => sum = Some((i, total)),
+                Some(total) if adds => sum = Some((i, total, false)),
                 _ if ends_block(ins) || disturbs(ins, &[base, word]) => return None,
                 _ => {}
             }
@@ -495,14 +497,18 @@ fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool
                 .and_then(family)
                 .as_deref()
                 == Some(total.as_str());
-        if through {
+        if through && !*disturbed {
             return Some((i, false));
         }
-        if ends_block(ins) || disturbs(ins, &[total.as_str()]) {
+        if through_loaded_register(ins) {
+            return None;
+        }
+        if ends_block(ins) {
             return Some((*add, true));
         }
+        *disturbed |= disturbs(ins, &[total.as_str()]);
     }
-    sum.map(|(add, _)| (add, true))
+    None
 }
 
 /// The control-flow graph of one function.

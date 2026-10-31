@@ -32,6 +32,8 @@ pub(super) struct Symbol {
     pub(super) name: String,
     /// Code, by `nm`'s type letter (`T`, `t`, `W`, `w`).
     pub(super) func: bool,
+    /// Not visible to other objects, by `nm`'s lowercase type letter.
+    pub(super) local: bool,
 }
 
 /// One section of an `objdump -h` listing.
@@ -132,6 +134,8 @@ pub(super) fn parse_symbols(listing: &str) -> Vec<Symbol> {
                 size,
                 name: name.to_string(),
                 func: matches!(kind, "T" | "t" | "W" | "w"),
+                local: kind.starts_with(|c: char| c.is_ascii_lowercase())
+                    && !matches!(kind, "u" | "v" | "w"),
             })
         })
         .collect();

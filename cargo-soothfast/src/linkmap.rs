@@ -36,9 +36,18 @@ pub struct Extent {
     pub name: String,
 }
 
-fn named(object: &str, section: &str) -> String {
-    let object = object.rsplit(['/', ' ']).next().unwrap_or(object);
+/// `object:section`, the object being the last component of its path.
+fn named(path: &str, section: &str) -> String {
+    let object = path.trim().rsplit('/').next().unwrap_or_default();
     format!("{object}:{section}")
+}
+
+/// `line` after its first `columns` whitespace-separated fields.
+fn after_columns(line: &str, columns: usize) -> &str {
+    (0..columns).fold(line.trim_start(), |rest, _| {
+        rest.split_once(char::is_whitespace)
+            .map_or("", |(_, tail)| tail.trim_start())
+    })
 }
 
 /// `.rodata.cst8` holds 8-byte objects; other names are one object.
@@ -82,13 +91,13 @@ fn parse_columns(text: &str, vma_radix: u32, size_radix: u32) -> Vec<Extent> {
                 f.next()?;
             }
             let size = u64::from_str_radix(f.next()?, size_radix).ok()?;
-            let (object, section) = line.rsplit_once(":(")?;
+            let (path, section) = after_columns(line, if lma { 4 } else { 3 }).rsplit_once(":(")?;
             let section = section.strip_suffix(')')?;
             Some(Extent {
                 vma,
                 size,
                 entry: entry_size(section),
-                name: named(object, section),
+                name: named(path, section),
             })
         })
         .collect()
@@ -98,6 +107,14 @@ fn parse_columns(text: &str, vma_radix: u32, size_radix: u32) -> Vec<Extent> {
 /// the numbers on the next line when the name is long.
 fn parse_gnu(text: &str) -> Vec<Extent> {
     let hex = |s: &str| u64::from_str_radix(s.strip_prefix("0x")?, 16).ok();
+    let extent = |addr: &str, size: &str, section: &str, path: &str| {
+        Some(Extent {
+            vma: hex(addr)?,
+            size: hex(size)?,
+            entry: entry_size(section),
+            name: named(path, section),
+        })
+    };
     let mut extents = Vec::new();
     let mut named = false;
     let mut section = "";
@@ -109,31 +126,13 @@ fn parse_gnu(text: &str) -> Vec<Extent> {
                 named = true;
                 section = name;
             }
-            [name, addr, size, ref rest @ ..] if nested && name.starts_with('.') => {
+            [name, addr, size, ..] if nested && name.starts_with('.') => {
                 named = false;
-                if let (Some(vma), Some(size)) = (hex(addr), hex(size)) {
-                    let entry = entry_size(name);
-                    let name = self::named(rest.first().copied().unwrap_or(""), name);
-                    extents.push(Extent {
-                        vma,
-                        size,
-                        entry,
-                        name,
-                    });
-                }
+                extents.extend(extent(addr, size, name, after_columns(line, 3)));
             }
-            [addr, size, ref rest @ ..] if named => {
+            [addr, size, ..] if named => {
                 named = false;
-                if let (Some(vma), Some(size)) = (hex(addr), hex(size)) {
-                    let entry = entry_size(section);
-                    let name = self::named(rest.first().copied().unwrap_or(""), section);
-                    extents.push(Extent {
-                        vma,
-                        size,
-                        entry,
-                        name,
-                    });
-                }
+                extents.extend(extent(addr, size, section, after_columns(line, 2)));
             }
             _ => named = false,
         }
@@ -265,6 +264,10 @@ Linker script and memory map
  .rodata.cst16
                 0x0000000000002030       0x20 baz.o
 .data           0x0000000000003000        0x8
+.bss
+ .bss.counter   0x0000000000004000        0x8 /w path/deps/a b.o
+ .bss._ZN3baz17h0123456789abcdefE
+                0x0000000000004008        0x8 /w path/deps/baz.o
 ";
 
     fn at(vma: u64, size: u64, name: &str) -> Extent {
@@ -326,7 +329,9 @@ Linker script and memory map
                 at(0x2000, 4, "crt1.o:.rodata"),
                 at(0x2008, 0x10, "foo.o:.rodata.foo"),
                 at(0x2018, 0x18, "bar.o:.rodata._ZN3bar17h0123456789abcdefE"),
-                pool(0x2030, 0x20, 16, "baz.o:.rodata.cst16")
+                pool(0x2030, 0x20, 16, "baz.o:.rodata.cst16"),
+                at(0x4000, 8, "a b.o:.bss.counter"),
+                at(0x4008, 8, "baz.o:.bss._ZN3baz17h0123456789abcdefE")
             ]
         );
     }

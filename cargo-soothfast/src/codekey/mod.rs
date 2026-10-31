@@ -157,7 +157,7 @@ impl Binary {
         let tls = tls_digest(&sections, &image)?;
         let sections = addressable(sections);
         let markers = parse_markers(&listing, &sections);
-        let mut resolver = Resolver::new(&sections, &symbols, &relocs, &markers, inputs, &image);
+        let resolver = Resolver::new(&sections, &symbols, &relocs, &markers, inputs, &image);
         let mut child = Command::new("objdump")
             .args(["-d", "--no-show-raw-insn"])
             .arg(bin)
@@ -167,7 +167,7 @@ impl Binary {
             .ok()?;
         let stdout = child.stdout.take()?;
         let mut labels = HashMap::new();
-        let hashes = hash_functions(&mut resolver, wanted, BufReader::new(stdout), &mut labels);
+        let hashes = hash_functions(&resolver, wanted, BufReader::new(stdout), &mut labels);
         child.wait().ok()?.success().then_some(Binary {
             hashes,
             labels,
@@ -415,9 +415,11 @@ mod tests {
         let mut unhashed = Vec::new();
         for linker in ["bfd", "lld", "mold"] {
             let bin = dir.join(linker);
+            let map = dir.join(format!("{linker}.map"));
             let linked = Command::new("cc")
                 .args(["-pie", "-O1", &format!("-fuse-ld={linker}"), "-o"])
                 .arg(&bin)
+                .arg(format!("-Wl,-Map={}", map.display()))
                 .arg(&src)
                 .output()
                 .is_ok_and(|o| o.status.success());
@@ -426,7 +428,11 @@ mod tests {
             }
             built += 1;
             let wanted = functions(&bin);
-            let binary = Binary::open(&bin, &wanted, &[]);
+            let inputs = std::fs::read_to_string(&map)
+                .ok()
+                .and_then(|text| crate::linkmap::parse(&text))
+                .unwrap_or_default();
+            let binary = Binary::open(&bin, &wanted, &inputs);
             unhashed.extend(
                 wanted
                     .into_iter()

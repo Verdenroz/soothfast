@@ -36,7 +36,7 @@ impl Span {
 
     /// Normalize the instructions. A jump table the instructions prove (see
     /// `jumptable`) is hashed as the places in this function it jumps to.
-    fn read(&mut self, resolver: &mut Resolver) {
+    fn read(&mut self, resolver: &Resolver) {
         let proven = jumptable::prove(
             &self.instrs,
             (self.start, self.end),
@@ -53,7 +53,7 @@ impl Span {
     }
 
     /// Normalize the instructions, each `lea` in `tables` as its table.
-    fn normalize(&mut self, resolver: &mut Resolver, tables: &HashMap<u64, (u64, u64)>) {
+    fn normalize(&mut self, resolver: &Resolver, tables: &HashMap<u64, (u64, u64)>) {
         for (addr, body) in std::mem::take(&mut self.instrs) {
             let table = tables
                 .get(&addr)
@@ -82,7 +82,7 @@ impl Span {
 /// symbol table; it runs from its objdump label to the next one. `labels`
 /// receives the `at:` name of each wanted address.
 pub(super) fn hash_functions(
-    resolver: &mut Resolver,
+    resolver: &Resolver,
     wanted: &BTreeSet<String>,
     mut disassembly: impl BufRead,
     labels: &mut HashMap<String, String>,

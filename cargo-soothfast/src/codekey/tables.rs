@@ -79,7 +79,9 @@ impl Resolver<'_> {
     /// For each candidate table of offsets to data that decodes, the
     /// addresses it names, each of which resolves to something to hash.
     pub(super) fn pointer_targets(&self, tables: &[u64]) -> HashMap<u64, Vec<u64>> {
-        self.targets_of(tables, |target| self.describe(target, None).is_some())
+        self.targets_of(tables, |target| {
+            self.names_object(target) && self.described(target).is_some()
+        })
     }
 
     fn targets_of(&self, tables: &[u64], lands: impl Fn(u64) -> bool) -> HashMap<u64, Vec<u64>> {
@@ -102,7 +104,7 @@ impl Resolver<'_> {
     fn pointer_hash(&self, size: u64, words: &[u64]) -> Option<u64> {
         let mut text = format!("pointers {size}:");
         for &target in words {
-            text.push_str(&self.describe(target, None)?);
+            text.push_str(&self.described(target)?);
             text.push(',');
         }
         Some(fnv1a(text.as_bytes()))
@@ -251,8 +253,9 @@ mod tests {
 ";
 
     /// The offsets table at `0x2000` naming two strings placed at `strings`,
-    /// and with `stray` a third word naming an address nothing covers.
-    fn names(strings: [u64; 2], bytes: [u8; 2], stray: bool) -> Option<u64> {
+    /// and with `stray` a third word naming an address nothing covers. The
+    /// strings are link-map inputs only when `mapped`.
+    fn names(strings: [u64; 2], bytes: [u8; 2], stray: bool, mapped: bool) -> Option<u64> {
         let mut image = vec![0; 0x3000];
         let size = if stray { 12 } else { 8 };
         let mut inputs = vec![Extent {
@@ -264,11 +267,13 @@ mod tests {
             let word = (at - 0x2000) as i32;
             image[0x2000 + 4 * i..0x2004 + 4 * i].copy_from_slice(&word.to_le_bytes());
             image[at as usize..at as usize + 8].fill(byte);
-            inputs.push(Extent {
-                vma: at,
-                size: 8,
-                ..Extent::default()
-            });
+            if mapped {
+                inputs.push(Extent {
+                    vma: at,
+                    size: 8,
+                    ..Extent::default()
+                });
+            }
         }
         if stray {
             image[0x2008..0x200c].copy_from_slice(&0x5000i32.to_le_bytes());
@@ -283,18 +288,25 @@ mod tests {
 
     #[test]
     fn a_table_of_offsets_to_strings_hashes_the_strings_wherever_they_sit() {
-        let base = names([0x2008, 0x2010], [1, 2], false);
+        let base = names([0x2008, 0x2010], [1, 2], false, true);
         assert!(base.is_some());
-        assert_eq!(base, names([0x2010, 0x2018], [1, 2], false));
-        assert_ne!(base, names([0x2008, 0x2010], [1, 3], false));
-        assert_ne!(base, names([0x2008, 0x2010], [2, 1], false));
+        assert_eq!(base, names([0x2010, 0x2018], [1, 2], false, true));
+        assert_ne!(base, names([0x2008, 0x2010], [1, 3], false, true));
+        assert_ne!(base, names([0x2008, 0x2010], [2, 1], false, true));
     }
 
     #[test]
     fn a_table_with_a_word_naming_nothing_stays_raw() {
-        let base = names([0x2010, 0x2018], [1, 2], true);
+        let base = names([0x2010, 0x2018], [1, 2], true, true);
         assert!(base.is_some());
-        assert_ne!(base, names([0x2018, 0x2010], [1, 2], true));
+        assert_ne!(base, names([0x2018, 0x2010], [1, 2], true, true));
+    }
+
+    #[test]
+    fn a_table_naming_only_the_section_around_a_word_stays_raw() {
+        let base = names([0x2010, 0x2018], [1, 2], false, false);
+        assert!(base.is_some());
+        assert_ne!(base, names([0x2018, 0x2010], [1, 2], false, false));
     }
 
     #[test]

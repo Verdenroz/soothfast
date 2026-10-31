@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use soothfast_registry::fnv1a;
 
 use super::elf::{Marker, Reloc, Section, Symbol, Target};
-use super::strip_llvm;
+use super::{is_rust_symbol, strip_llvm};
 use crate::jumptable;
 use crate::linkmap::Extent;
 
@@ -50,6 +50,7 @@ pub(super) struct Resolver<'a> {
     pub(super) inputs: &'a [Extent],
     pub(super) image: &'a [u8],
     roots: RefCell<HashMap<Node, Option<u64>>>,
+    described: RefCell<HashMap<u64, Option<String>>>,
 }
 
 impl<'a> Resolver<'a> {
@@ -69,6 +70,7 @@ impl<'a> Resolver<'a> {
             inputs,
             image,
             roots: RefCell::default(),
+            described: RefCell::default(),
         }
     }
 
@@ -276,19 +278,51 @@ impl<'a> Resolver<'a> {
 
     /// What tells `node` from another object with the same bytes, when
     /// reading either gives different results: writable data is a place, so
-    /// two zeroed statics are two objects. Read-only data is its bytes.
+    /// two zeroed statics are two objects. Read-only data is its bytes. A
+    /// local symbol shares its name with others in other objects, so it also
+    /// takes its input section's name, unless a Rust hash already makes it
+    /// unique.
     fn identity(&self, node: Node) -> Option<String> {
-        let (section, ..) = self.extent(node)?;
-        if !self.sections[section].writable {
+        let (section, _, size) = self.extent(node)?;
+        if !self.sections[section].writable || size == 0 {
             return Some(String::new());
         }
         let name = match node {
-            Node::Symbol(i) => strip_llvm(&self.symbols[i].name).into_owned(),
+            Node::Symbol(i) => {
+                let s = &self.symbols[i];
+                let name = strip_llvm(&s.name);
+                if s.local && !is_rust_symbol(&name) {
+                    format!("{name}@{}", self.inputs[self.input_at(s.addr)?].name)
+                } else {
+                    name.into_owned()
+                }
+            }
             Node::Input(i) => self.inputs[i].name.clone(),
-            Node::Section(_) => return Some(String::new()),
-            Node::Entry(..) => String::new(),
+            Node::Section(_) | Node::Entry(..) => String::new(),
         };
         (!name.is_empty()).then(|| format!("@{name}"))
+    }
+
+    /// Whether `addr` lands on one object: code, a symbol, a link-map input
+    /// or a pool entry, and not only on the section around it.
+    pub(super) fn names_object(&self, addr: u64) -> bool {
+        matches!(
+            self.place(addr, None),
+            Some(
+                Place::Code(_)
+                    | Place::Data(Node::Symbol(_) | Node::Input(_) | Node::Entry(..), ..)
+            )
+        )
+    }
+
+    /// What a table word naming `addr` hashes as, worked out once.
+    pub(super) fn described(&self, addr: u64) -> Option<String> {
+        if let Some(text) = self.described.borrow().get(&addr) {
+            return text.clone();
+        }
+        let text = self.describe(addr, None);
+        self.described.borrow_mut().insert(addr, text.clone());
+        text
     }
 
     fn resolve(&self, addr: u64, hint: Option<&str>) -> Option<String> {
@@ -323,7 +357,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// One disassembled instruction (address column already removed).
-    pub(super) fn normalize(&mut self, body: &str) -> Option<String> {
+    pub(super) fn normalize(&self, body: &str) -> Option<String> {
         if let Some((head, tail)) = body.rsplit_once("# ") {
             let (addr, hint) = split_target(tail)?;
             let target = self.resolve(addr, hint)?;
@@ -638,7 +672,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
   2 linkme_x      00000008  0000000000002008  0000000000002008  00002008  2**3
                   CONTENTS, ALLOC, LOAD, DATA
   3 .after        00000020  0000000000002010  0000000000002010  00002010  2**3
-                  CONTENTS, ALLOC, LOAD, DATA
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
 ";
         let dis = "\
 0000000000001000 <_ZN3foo3bar17h1E>:
@@ -730,6 +764,56 @@ Idx Name          Size      VMA               LMA               File off  Algn
             takes(WRITABLE, "3000 <one>", ""),
             takes(WRITABLE, "3008 <two>", "")
         );
+    }
+
+    #[test]
+    fn local_symbols_of_one_name_in_two_objects_hash_apart() {
+        let symbols = "\
+0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
+0000000000003000 0000000000000008 d counter
+0000000000003008 0000000000000008 d counter
+";
+        let inputs = |first: &str, second: &str| {
+            [(0x3000, first), (0x3008, second)].map(|(vma, name)| Extent {
+                vma,
+                size: 8,
+                name: name.to_string(),
+                ..Extent::default()
+            })
+        };
+        let takes = |inputs: &[Extent], object: &str| {
+            let dis = format!(
+                "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # {object} <counter>\n    1007:\tret\n"
+            );
+            let fixture = Fixture::default()
+                .sections(&object_sections(WRITABLE))
+                .symbols(symbols)
+                .inputs(inputs)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&vec![0; 0x4000], &dis))
+        };
+        let apart = inputs("a.o:.data.counter", "b.o:.data.counter");
+        assert!(takes(&apart, "3000").is_some());
+        assert_ne!(takes(&apart, "3000"), takes(&apart, "3008"));
+        assert_eq!(takes(&[], "3000"), None);
+    }
+
+    #[test]
+    fn a_writable_section_with_no_symbol_or_input_leaves_the_function_unhashed() {
+        let takes = |flags: &str| {
+            let dis = "\
+0000000000001000 <_ZN3foo3bar17h1E>:
+    1000:\tlea    0x1000(%rip),%rax        # 3004 <inside>
+    1007:\tret
+";
+            let fixture = Fixture::default()
+                .sections(&object_sections(flags))
+                .symbols(FN_SYMBOLS)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&vec![0; 0x4000], dis))
+        };
+        assert!(takes(READ_ONLY).is_some());
+        assert_eq!(takes(WRITABLE), None);
     }
 
     #[test]

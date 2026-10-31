@@ -315,10 +315,15 @@ merges whole entries. String pools (`.rodata.str*`) stay one object.
 A writable object (`.data`, `.bss`) is told from another by its symbol name,
 or by the link map's object and section for one with no symbol, as well as
 by its bytes: two zeroed statics hold the same bytes, and code that reads
-one is not code that reads the other. Read-only data, and data the loader
-seals after relocation (`.data.rel.ro`), is keyed by its bytes alone. A
-writable object that has neither a symbol nor a named input section leaves
-the function unhashed.
+one is not code that reads the other. A local symbol (C `static`, a promoted
+local) also takes its input section's name, since another object may use the
+same name; a Rust symbol already carries a hash. Read-only data, and data
+the loader seals after relocation (`.data.rel.ro`), is keyed by its bytes
+alone. A writable object that has neither a symbol nor a named input
+section, or a local symbol with no link map, leaves the function unhashed.
+The object part of an input section's name follows the compiler's code
+generation units, which can move on an unrelated edit. That costs a miss and
+never a wrong hit, which is why the symbol name is used whenever there is one.
 
 A jump table stores code offsets as 32-bit integers, so its bytes change
 whenever code moves. Where the instructions prove how a table is read, it is
@@ -351,8 +356,9 @@ The same load and add with no jump after them read a table of offsets to
 data, such as the names an enum's `Debug` impl picks from or a header name
 table. Its words move whenever the strings do. Proven the same way, it is
 hashed as the data each word names, so an edit elsewhere that shifts the
-strings leaves the function's key alone. A word that names nothing the
-resolver can place leaves the table as bytes.
+strings leaves the function's key alone. A word that does not land on a
+symbol, a link-map input or a pool entry, only on the section around it,
+leaves the table as bytes.
 
 `__stop_SEC` symbols that the linker defines are named, and the section they
 end is hashed, but the section that happens to follow is not: a pointer one

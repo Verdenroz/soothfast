@@ -43,8 +43,8 @@ pub const DIS: &str = "\
 
 pub const OBJECTS: &str = "\
 0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
-0000000000003000 0000000000000008 d one
-0000000000003008 0000000000000008 d two
+0000000000003000 0000000000000008 D one
+0000000000003008 0000000000000008 D two
 ";
 
 /// A function, a table at `0x2000`, and two 8-byte objects at `0x3000` in a
@@ -156,7 +156,7 @@ impl Fixture {
         image: &[u8],
         dis: &str,
     ) -> (HashMap<String, u64>, HashMap<String, String>) {
-        let mut resolver = Resolver::new(
+        let resolver = Resolver::new(
             &self.sections,
             &self.symbols,
             &self.relocs,
@@ -166,7 +166,7 @@ impl Fixture {
         );
         let mut labels = HashMap::new();
         let hashes = hash_functions(
-            &mut resolver,
+            &resolver,
             &self.wanted,
             Cursor::new(dis.as_bytes()),
             &mut labels,
