@@ -87,7 +87,7 @@ fn merge_args(args: &[String]) -> Result<PathBuf, Failure> {
         })
         .collect::<Result<Vec<Value>, String>>()?;
     let existing = invoke::load_baseline(&into).map_err(|e| e.to_string())?;
-    let merged = merge(&docs, existing, &packages).map_err(Failure::Missing)?;
+    let merged = merge(&docs, existing, &packages)?;
     Ok(invoke::write_baseline(&into, &merged).map_err(|e| e.to_string())?)
 }
 
@@ -95,7 +95,10 @@ fn merge_args(args: &[String]) -> Result<PathBuf, Failure> {
 /// package they cover in `existing`, so an item that no longer exists drops
 /// out, and `existing` keeps its imported and `buildcost::` items. Shards own
 /// disjoint items; the scalar fields take the newest or the noisiest, the
-/// most cautious reading of any shard.
+/// most cautious reading of any shard. The shards' build stamp replaces the
+/// existing one, and they must agree on it. A listed package no shard
+/// measured, or one a shard reports as `unmeasured`, is noted as unmeasured
+/// and its stale items are dropped.
 pub fn merge(
     docs: &[Value],
     existing: Option<Value>,
@@ -109,10 +112,17 @@ pub fn merge(
         .filter(|(k, v)| !is_kept(k, v))
         .map(|(k, _)| invoke::id_pkg(k).to_string())
         .collect();
-    if let Some(missing) = packages.iter().find(|p| !covered.contains(p)) {
-        return Err(format!("no shard measured any item of {missing}"));
-    }
-    covered.extend(packages.iter().cloned());
+    let mut unmeasured: Vec<String> = docs
+        .iter()
+        .filter_map(|d| d["unmeasured"].as_array())
+        .flatten()
+        .filter_map(|p| p.as_str().map(String::from))
+        .chain(packages.iter().cloned())
+        .collect();
+    unmeasured.retain(|p| !covered.contains(p));
+    unmeasured.sort();
+    unmeasured.dedup();
+    covered.extend(unmeasured.iter().cloned());
     let mut items = out["items"].as_object().cloned().unwrap_or_default();
     items.retain(|k, v| is_kept(k, v) || !covered.iter().any(|p| p == invoke::id_pkg(k)));
     let mut assertions: Vec<Value> = out["assertions"].as_array().cloned().unwrap_or_default();
@@ -135,10 +145,15 @@ pub fn merge(
                 out[key] = doc[key].clone();
             }
         }
-        if out.get("build").is_none() && !doc["build"].is_null() {
-            out["build"] = doc["build"].clone();
-        }
     }
+    let mut stamps = docs.iter().map(|d| &d["build"]).filter(|b| !b.is_null());
+    if let Some(first) = stamps.next() {
+        if stamps.any(|other| other != first) {
+            return Err("the shards disagree on their build stamp".into());
+        }
+        out["build"] = first.clone();
+    }
+    out["unmeasured"] = json!(unmeasured);
     out["items"] = Value::Object(items);
     out["assertions"] = Value::Array(assertions);
     Ok(out)
@@ -211,13 +226,35 @@ mod tests {
     }
 
     #[test]
-    fn a_listed_package_is_replaced_and_must_have_been_measured() {
+    fn a_listed_package_nobody_measured_is_noted_unmeasured_and_loses_stale_items() {
         let existing = json!({ "items": { "b::stale": { "ir": 1 }, "a::old": { "ir": 1 } } });
         let shards = [shard(&["a::x"], 1.0, 5)];
-        let err = merge(&shards, Some(existing.clone()), &["b".to_string()]).unwrap_err();
-        assert_eq!(err, "no shard measured any item of b");
-        let merged = merge(&shards, Some(existing), &["a".to_string()]).unwrap();
-        assert_eq!(ids(&merged), ["a::x", "b::stale"]);
+        let merged = merge(&shards, Some(existing), &["a".to_string(), "b".to_string()]).unwrap();
+        assert_eq!(ids(&merged), ["a::x"]);
+        assert_eq!(merged["unmeasured"], json!(["b"]));
+    }
+
+    #[test]
+    fn a_shards_own_unmeasured_list_carries_into_the_merge() {
+        let mut one = shard(&["a::x"], 1.0, 5);
+        one["unmeasured"] = json!(["b", "a"]);
+        let merged = merge(&[one], None, &[]).unwrap();
+        assert_eq!(merged["unmeasured"], json!(["b"]));
+    }
+
+    #[test]
+    fn shards_with_different_build_stamps_do_not_merge() {
+        let mut other = shard(&["a::y"], 1.0, 5);
+        other["build"] = json!({ "id": "other" });
+        let err = merge(&[shard(&["a::x"], 1.0, 5), other], None, &[]).unwrap_err();
+        assert_eq!(err, "the shards disagree on their build stamp");
+    }
+
+    #[test]
+    fn the_shards_build_stamp_replaces_the_existing_one() {
+        let existing = json!({ "items": {}, "build": { "id": "old" } });
+        let merged = merge(&[shard(&["a::x"], 1.0, 5)], Some(existing), &[]).unwrap();
+        assert_eq!(merged["build"], json!({ "id": "b" }));
     }
 
     #[test]
