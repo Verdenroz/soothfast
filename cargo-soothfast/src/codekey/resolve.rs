@@ -2,6 +2,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 use soothfast_registry::fnv1a;
 
@@ -72,7 +73,14 @@ impl<'a> Resolver<'a> {
         let inputs = match check_inputs(sections, inputs) {
             Ok(()) => inputs,
             Err(why) => {
-                eprintln!("codekey: link map ignored: {why}");
+                static NOTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+                let first = NOTED
+                    .get_or_init(Default::default)
+                    .lock()
+                    .is_ok_and(|mut seen| seen.insert(why.clone()));
+                if first {
+                    eprintln!("codekey: link map ignored: {why}");
+                }
                 &[]
             }
         };

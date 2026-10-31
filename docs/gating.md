@@ -322,8 +322,11 @@ by its bytes: two zeroed statics hold the same bytes, and code that reads
 one is not code that reads the other. A symbol whose name no other data
 symbol or label of the binary has is its own identity. Two that share a name
 (C `static`s of the same name in two files) are told apart by the input
-section each is defined in, named by the object's path below the profile
-directory (`target/[triple/]release`) and its archive member, so `a/util.o` and `b/util.o` differ. Code
+section each is defined in and their offset in it. An input is named by the
+object's path below the profile directory (`target/[triple/]release`) and its
+archive member, so `a/util.o` and `b/util.o` differ. Inputs that share an
+object and a section name are numbered in address order, so every input name
+is unique and a check for a repeated one is only a guard. Code
 symbols do not count towards a duplicate. Inputs of sections that are not in
 memory (`.debug_*`, `.comment`) are left out of the extents, since their
 offsets overlap real addresses. A duplicated name whose input has no name

@@ -82,9 +82,9 @@ impl Resolver<'_> {
                 let s = &self.symbols[i];
                 let name = strip_llvm(&s.name);
                 if self.duplicated.contains(name.as_ref()) {
-                    let input = &self.inputs[self.input_at(s.addr)?].name;
-                    (!input.is_empty()).then_some(())?;
-                    format!("sym:{name}@in:{input}")
+                    let input = &self.inputs[self.input_at(s.addr)?];
+                    (!input.name.is_empty()).then_some(())?;
+                    format!("sym:{name}@in:{}+{:x}", input.name, s.addr - input.vma)
                 } else {
                     format!("sym:{name}")
                 }
@@ -185,6 +185,28 @@ mod tests {
         );
         let unnamed = [input(0x3000, 8, ""), input(0x3008, 8, "")];
         assert_eq!(check_inputs(&sections, &unnamed), Ok(()));
+    }
+
+    #[test]
+    fn same_named_statics_in_one_input_are_told_apart_by_offset() {
+        let symbols = "\
+0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
+0000000000003000 0000000000000004 d counter
+0000000000003004 0000000000000004 d counter
+";
+        let takes = |object: &str| {
+            let dis = format!(
+                "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # {object}\n    1007:\tret\n"
+            );
+            let fixture = Fixture::default()
+                .sections(&object_sections(WRITABLE))
+                .symbols(symbols)
+                .inputs(&[input(0x3000, 8, "a")])
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&vec![0; 0x4000], &dis))
+        };
+        assert!(takes("3000 <counter>").is_some());
+        assert_ne!(takes("3000 <counter>"), takes("3004 <counter>"));
     }
 
     #[test]

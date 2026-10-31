@@ -208,32 +208,41 @@ fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
     };
     let mut extents = Vec::new();
     let mut named = false;
+    let mut pending = false;
     let mut section = "";
+    let mut output = "";
     let mut in_memory = true;
     for line in text.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
         let nested = line.starts_with(' ');
+        let numbers = |a: &str, b: &str| hex(a).is_some() && hex(b).is_some();
+        let was_pending = std::mem::take(&mut pending);
+        let was_named = std::mem::take(&mut named);
         match f[..] {
-            [name] if nested && name.starts_with('.') => {
+            [name] if nested && !name.starts_with('*') => {
                 named = true;
                 section = name;
             }
-            [name, addr, size, ..] if nested && name.starts_with('.') => {
-                named = false;
+            [name] if !nested => {
+                pending = true;
+                output = name;
+            }
+            [name, addr, size, ..] if nested && !name.starts_with('*') && numbers(addr, size) => {
                 extents
                     .extend(extent(addr, size, name, after_columns(line, 3)).filter(|_| in_memory));
             }
-            [addr, size, ..] if named => {
-                named = false;
+            [addr, size, ..] if was_named => {
                 extents.extend(
                     extent(addr, size, section, after_columns(line, 2)).filter(|_| in_memory),
                 );
             }
-            [name, addr, size, ..] if !nested && hex(addr).is_some() && hex(size).is_some() => {
-                named = false;
+            [addr, size] if was_pending && numbers(addr, size) => {
+                in_memory = hex(addr) != Some(0) && !is_tls(output);
+            }
+            [name, addr, size, ..] if !nested && numbers(addr, size) => {
                 in_memory = hex(addr) != Some(0) && !is_tls(name);
             }
-            _ => named = false,
+            _ => {}
         }
     }
     extents
@@ -339,12 +348,6 @@ fn cached(maps: &Path, digest: &str, entry: Option<&Path>) -> Option<Vec<Extent>
     if restored && std::fs::write(&stored, &text).is_ok() {
         runcache::prune_oldest(maps, KEEP);
     }
-    if let Some(entry) = entry
-        && !restored
-        && binstore::read_sidecar(entry, "extents").as_deref() != Some(text.as_str())
-    {
-        binstore::replace_sidecar(entry, "extents", &text);
-    }
     Some(extents)
 }
 
@@ -438,6 +441,33 @@ Linker script and memory map
             .map(|e| e.name)
             .collect();
         assert_eq!(names, ["deps/a.o:.data.y", "deps/a.o:linkme_x"]);
+    }
+
+    #[test]
+    fn a_bfd_map_keeps_dotless_inputs_and_reads_wrapped_output_names() {
+        let map = [
+            "Linker script and memory map",
+            "",
+            ".data           0x0000000000003000        0x8",
+            " linkme_X       0x0000000000003000        0x4 a.o",
+            " .data.y        0x0000000000003004        0x4 a.o",
+            ".a_very_long_output_section_name",
+            "                0x0000000000000000       0x40",
+            " .a_very_long_input_section_name",
+            "                0x0000000000000010       0x40 a.o",
+            ".tbss",
+            "                0x0000000000004000        0x8",
+            " .tbss          0x0000000000004000        0x8 a.o",
+            "linkme_Y        0x0000000000005000        0x8",
+            " linkme_Y       0x0000000000005000        0x8 b.o",
+        ]
+        .join("\n");
+        let names: Vec<String> = parse(&map, "")
+            .expect("parsed")
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["a.o:linkme_X", "a.o:.data.y", "b.o:linkme_Y"]);
     }
 
     #[test]
