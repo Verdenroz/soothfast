@@ -64,6 +64,7 @@ jobs:
       packages: ${{ steps.plan.outputs.packages }}
       docs: ${{ steps.plan.outputs.docs }}
       docs_package: ${{ steps.plan.outputs.docs_package }}
+      docs_binds_rust: ${{ steps.plan.outputs.docs_binds_rust }}
       test_matrix: ${{ steps.plan.outputs.test_matrix }}
       test_projects: ${{ steps.plan.outputs.test_projects }}
       test_all: ${{ steps.plan.outputs.test_all }}
@@ -198,7 +199,7 @@ jobs:
   build-rustdoc:
     name: Build (rustdoc)
     needs: plan
-    if: github.event_name != 'schedule' && needs.plan.outputs.docs_package != ''
+    if: github.event_name != 'schedule' && needs.plan.outputs.docs_binds_rust != 'false'
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
       contents: read
@@ -673,15 +674,15 @@ jobs:
             Cargo.toml
           persist-credentials: false
       - id: pin
-        if: needs.plan.outputs.docs_package != ''
+        if: needs.plan.outputs.docs_binds_rust != 'false'
         run: echo "toolchain=$(./.soothfast-action/action/rustdoc-toolchain.sh --print)" >>"$GITHUB_OUTPUT"
-      - if: needs.plan.outputs.docs_package != ''
+      - if: needs.plan.outputs.docs_binds_rust != 'false'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ steps.pin.outputs.toolchain }}
       # A failed rustdoc build leaves nothing to download, and the docs check then builds the JSON itself.
       - name: Download the built stores
-        if: needs.plan.outputs.docs_package != ''
+        if: needs.plan.outputs.docs_binds_rust != 'false'
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -693,7 +694,7 @@ jobs:
       - name: Match the build job's environment
         if: steps.store.outputs.hit == 'true'
         run: echo "CARGO_INCREMENTAL=0" >>"$GITHUB_ENV"
-      - if: needs.plan.outputs.docs_package != '' && steps.store.outputs.hit != 'true'
+      - if: needs.plan.outputs.docs_binds_rust != 'false' && steps.store.outputs.hit != 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: rustdoc
@@ -702,18 +703,18 @@ jobs:
         uses: ./.soothfast-action/action/install
       # The rustdoc store is keyed by this toolchain, so the check must use the one that built it.
       - name: Install the pinned rustdoc toolchain
-        if: needs.plan.outputs.docs_package != ''
+        if: needs.plan.outputs.docs_binds_rust != 'false'
         run: ./.soothfast-action/action/rustdoc-toolchain.sh
       # The cache is the fallback for a store that misses or a failed rustdoc build.
       - name: Name the rustdoc cache
-        if: needs.plan.outputs.docs_package != ''
+        if: needs.plan.outputs.docs_binds_rust != 'false'
         id: rustdoc-key
         env:
           RUNNER_OS_NAME: ${{ runner.os }}
           RUNNER_ARCH_NAME: ${{ runner.arch }}
         run: echo "prefix=soothfast-rustdoc-${GITHUB_JOB}--${RUNNER_OS_NAME}-${RUNNER_ARCH_NAME}" >>"$GITHUB_OUTPUT"
       - name: Restore this branch's rustdoc JSON
-        if: needs.plan.outputs.docs_package != '' && github.event_name == 'pull_request'
+        if: needs.plan.outputs.docs_binds_rust != 'false' && github.event_name == 'pull_request'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .soothfast/rustdoc
@@ -721,14 +722,14 @@ jobs:
           restore-keys: |
             ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.ref_name }}-
       - name: Set the branch's rustdoc JSON aside
-        if: needs.plan.outputs.docs_package != '' && github.event_name == 'pull_request'
+        if: needs.plan.outputs.docs_binds_rust != 'false' && github.event_name == 'pull_request'
         run: |
           if [ -d .soothfast/rustdoc ]; then
             mkdir -p .soothfast-rustdoc-branch
             mv .soothfast/rustdoc .soothfast-rustdoc-branch/rustdoc
           fi
       - name: Restore and save rustdoc JSON
-        if: needs.plan.outputs.docs_package != ''
+        if: needs.plan.outputs.docs_binds_rust != 'false'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .soothfast/rustdoc
@@ -737,7 +738,7 @@ jobs:
             ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
             ${{ steps.rustdoc-key.outputs.prefix }}-${{ github.event.repository.default_branch }}-
       - name: Merge the branch's rustdoc JSON
-        if: needs.plan.outputs.docs_package != '' && github.event_name == 'pull_request'
+        if: needs.plan.outputs.docs_binds_rust != 'false' && github.event_name == 'pull_request'
         env:
           CLI: ${{ steps.soothfast.outputs.bin }}
         run: |
@@ -746,7 +747,7 @@ jobs:
             rm -rf .soothfast-rustdoc-branch
           fi
       - name: Unpack the built stores
-        if: needs.plan.outputs.docs_package != ''
+        if: needs.plan.outputs.docs_binds_rust != 'false'
         run: |
           if [ -f "$RUNNER_TEMP/store-in/store.tar" ]; then
             mkdir -p .soothfast

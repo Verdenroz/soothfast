@@ -1321,9 +1321,17 @@ pub fn rustdoc_json_in(
         built = build(None)?;
     }
     let failed = |built: &Built| {
+        let hint = match toolchain_trouble(&built.stderr, &toolchain) {
+            Some(ToolchainTrouble::Missing) => {
+                format!(" (is the {toolchain} toolchain installed?)")
+            }
+            Some(ToolchainTrouble::Components) => {
+                format!(" ({toolchain} could not be installed with its components)")
+            }
+            None => String::new(),
+        };
         io::Error::other(format!(
-            "cargo +{toolchain} rustdoc failed with {} \
-             (is the {toolchain} toolchain installed?)",
+            "cargo +{toolchain} rustdoc failed with {}{hint}",
             built.status
         ))
     };
@@ -1400,6 +1408,64 @@ fn rejects_tracking_flags(stderr: &str) -> bool {
     e.contains("invalid message format")
         || (e.contains("emit")
             && (e.contains("unrecognized option") || e.contains("unexpected argument")))
+}
+
+/// Why a `cargo +TOOLCHAIN` failure is the toolchain's fault rather than the
+/// documented crate's.
+#[derive(Debug, PartialEq)]
+enum ToolchainTrouble {
+    /// Absent, or rustup could not fetch it.
+    Missing,
+    /// rustup has the toolchain but not every component it must install with it.
+    Components,
+}
+
+/// What a `cargo +TOOLCHAIN` failure says is wrong with `toolchain`, from
+/// rustup or from a `cargo` that is no rustup proxy. A component missing from
+/// an installed toolchain is not its fault, and neither is a build script's
+/// error, whether cargo replays it under `--- stderr` or as `error: PKG@VER:`.
+fn toolchain_trouble(stderr: &str, toolchain: &str) -> Option<ToolchainTrouble> {
+    let tc = toolchain.to_lowercase();
+    let channel = tc.split_once('-').map_or(tc.as_str(), |(c, _)| c);
+    let quoted = format!("'{tc}");
+    let dist = format!("channel-rust-{channel}");
+    let unavailable = format!("is unavailable for download for channel {quoted}");
+    let no_release = format!("no release found for {quoted}");
+    let no_command = format!("no such command: `+{tc}");
+    let fetch = [
+        "could not download",
+        "failed to install",
+        "error downloading",
+    ];
+    let from_build_script = |l: &str| {
+        l.strip_prefix("error:")
+            .and_then(|rest| rest.split_whitespace().next())
+            .is_some_and(|word| word.ends_with(':') && word.contains('@'))
+    };
+    let named_missing = |l: &str| {
+        !l.contains("component")
+            && l.find(&quoted).is_some_and(|at| {
+                l[at + quoted.len()..]
+                    .split_once(' ')
+                    .is_some_and(|(word, after)| {
+                        word.ends_with('\'') && after.starts_with("is not install")
+                    })
+            })
+    };
+    let mut lines = stderr
+        .lines()
+        .map(|l| l.trim().to_lowercase())
+        .take_while(|l| !l.starts_with("--- stderr") && !l.starts_with("--- stdout"))
+        .filter(|l| l.starts_with("error:") && !from_build_script(l));
+    lines.find_map(|l| {
+        if l.contains(&unavailable) {
+            return Some(ToolchainTrouble::Components);
+        }
+        let fetch_failed =
+            fetch.iter().any(|p| l.contains(p)) && (l.contains(&quoted) || l.contains(&dist));
+        (named_missing(&l) || fetch_failed || l.contains(&no_release) || l.contains(&no_command))
+            .then_some(ToolchainTrouble::Missing)
+    })
 }
 
 struct Built {
@@ -2420,6 +2486,64 @@ optional = true
         assert!(shown[0].contains("E0463"), "{shown:?}");
         assert_eq!(shown.last(), Some(&"note 59"));
         assert_eq!(super::failure_excerpt("a\nb"), ["a", "b"]);
+    }
+
+    #[test]
+    fn only_a_missing_toolchain_is_blamed_on_the_toolchain() {
+        use super::ToolchainTrouble::{Components, Missing};
+        let tc = "nightly-2026-08-07";
+        let blamed = [
+            (
+                "error: toolchain 'nightly-2026-08-07-x86_64-unknown-linux-gnu' is not installed",
+                Missing,
+            ),
+            (
+                "error: 'nightly-2026-08-07' is not installed\nhelp: run `rustup toolchain install`",
+                Missing,
+            ),
+            (
+                "error: toolchain 'nightly-2026-08-07' is not installable",
+                Missing,
+            ),
+            ("error: no release found for 'nightly-2026-08-07'", Missing),
+            ("error: no such command: `+nightly-2026-08-07`", Missing),
+            (
+                "info: syncing channel updates for 'nightly-2026-08-07'\n\
+                 error: could not download file from \
+                 'https://static.rust-lang.org/dist/2026-08-07/channel-rust-nightly.toml.sha256'",
+                Missing,
+            ),
+            (
+                "error: failed to install toolchain 'nightly-2026-08-07'",
+                Missing,
+            ),
+            (
+                "error: component 'rust-docs-json' for target 'x86_64-unknown-linux-gnu' \
+                 is unavailable for download for channel 'nightly-2026-08-07'",
+                Components,
+            ),
+        ];
+        for (stderr, trouble) in blamed {
+            assert_eq!(
+                super::toolchain_trouble(stderr, tc),
+                Some(trouble),
+                "{stderr}"
+            );
+        }
+        let elsewhere = [
+            "error: no library targets found in package `tool`",
+            "error: 'rustdoc' is not installed for the toolchain 'nightly-2026-08-07'",
+            "error: 'cargo-clippy' is not installed for the toolchain \
+             'nightly-2026-08-07-x86_64-unknown-linux-gnu'",
+            "error: component download failed for rust-docs-x86_64-unknown-linux-gnu",
+            "error: toolchain 'stable' is not installed",
+            "error: failed to run custom build command for `foo-sys v0.1.0`\n\
+             --- stderr\n  error: error downloading libfoo for 'nightly-2026-08-07'",
+            "error: foo-sys@0.1.0: failed to install libfoo for 'nightly-2026-08-07'",
+        ];
+        for stderr in elsewhere {
+            assert_eq!(super::toolchain_trouble(stderr, tc), None, "{stderr}");
+        }
     }
 
     #[test]
