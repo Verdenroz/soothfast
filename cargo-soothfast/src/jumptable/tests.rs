@@ -623,12 +623,18 @@ fn a_sequence_that_could_be_a_jump_is_no_data_table() {
     let copied = [LEA, LOAD, ADD, "mov    %rax,%rdx", "jmp    *%rdx", RET];
     let mut runs_out = vec![LEA, LOAD, ADD];
     runs_out.extend(["nop"; 40]);
-    for lines in [sum_written.to_vec(), copied.to_vec(), runs_out] {
+    let mut far_jump = runs_out.clone();
+    far_jump.extend([JMP, RET]);
+    for lines in [sum_written.to_vec(), copied.to_vec(), runs_out, far_jump] {
         let proven = prove_data(&lines);
         assert!(proven.pointers.is_empty() && proven.proofs.is_empty());
     }
     let used = [LEA, LOAD, ADD, "mov    (%rax),%rax", RET];
     assert_eq!(prove_data(&used).pointers.len(), 1);
+    let mut stored = vec![LEA, LOAD, ADD];
+    stored.extend(["mov    %rax,0x8(%rsp)"; 40]);
+    stored.push(RET);
+    assert_eq!(prove_data(&stored).pointers.len(), 1);
 }
 
 #[test]

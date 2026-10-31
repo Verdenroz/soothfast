@@ -445,8 +445,7 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
         if !matches!(ins.mnemonic, "movslq" | "movsxd") {
             continue;
         }
-        let after = &parsed[load + 1..(load + 1 + WINDOW).min(parsed.len())];
-        let Some((end, pointer)) = read_end(after, &base, &word) else {
+        let Some((end, pointer)) = read_end(&parsed[load + 1..], &base, &word) else {
             continue;
         };
         let end = load + 1 + end;
@@ -472,8 +471,9 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
 /// the `jmp *` through the sum of the two and `false`, or the index of the add
 /// and `true` when the block then ends with no indirect jump through a
 /// register. `None` when nothing adds them, one of them is written first, a
-/// register jump follows that is not through the sum, or the window ends in
-/// the block: that is a jump table gone wrong or one not seen whole.
+/// register jump follows that is not through the sum or is further than
+/// [`WINDOW`], or the code ends inside the block: that is a jump table gone
+/// wrong or one not seen whole.
 fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool)> {
     let mut sum: Option<(usize, String, bool)> = None;
     for (i, (_, ins)) in after.iter().enumerate() {
@@ -497,7 +497,7 @@ fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool
                 .and_then(family)
                 .as_deref()
                 == Some(total.as_str());
-        if through && !*disturbed {
+        if through && !*disturbed && i < WINDOW {
             return Some((i, false));
         }
         if through_loaded_register(ins) {
