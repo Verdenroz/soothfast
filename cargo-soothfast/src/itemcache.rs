@@ -103,7 +103,7 @@ impl Items {
         Some(Items::at(runcache::state_dir("items")?.join(scope)))
     }
 
-    fn at(dir: PathBuf) -> Items {
+    pub(crate) fn at(dir: PathBuf) -> Items {
         Items { dir }
     }
 
@@ -177,13 +177,22 @@ impl Items {
         let Some(binaries) = binaries else {
             return (none(), Misses::all(Miss::Unreadable, ids.len()));
         };
-        if let (Ok(want), [head, base]) = (std::env::var("SOOTHFAST_EXPLAIN"), binaries.as_slice())
-        {
-            explain(&want, &ids, &stored, head, base);
+        self.reusable_in(&ids, &stored, listed, &binaries)
+    }
+
+    pub(crate) fn reusable_in(
+        &self,
+        ids: &[String],
+        stored: &Stored,
+        listed: &[BTreeMap<String, String>],
+        binaries: &[Binary],
+    ) -> (Vec<BTreeMap<String, Entry>>, Misses) {
+        if let (Ok(want), [head, base]) = (std::env::var("SOOTHFAST_EXPLAIN"), binaries) {
+            explain(&want, ids, stored, head, base);
         }
-        let mut hits = none();
+        let mut hits = vec![BTreeMap::new(); binaries.len()];
         let mut misses = Misses::default();
-        for id in &ids {
+        for id in ids {
             let mut first_miss = None;
             for ((bin, l), side) in binaries.iter().zip(listed).zip(hits.iter_mut()) {
                 match stored.lookup(bin, id, &l[id]) {

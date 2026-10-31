@@ -107,16 +107,7 @@ impl Reuse {
                 })
                 .collect::<Option<_>>()?;
             let (hits, misses) = items.reusable(&listed, &sides);
-            let todo: Vec<Vec<String>> = listed
-                .iter()
-                .zip(&hits)
-                .map(|(l, hit)| {
-                    l.keys()
-                        .filter(|id| !hit.contains_key(*id))
-                        .cloned()
-                        .collect()
-                })
-                .collect();
+            let todo = pending(&listed, &hits);
             let why = misses.to_string();
             let why = if why.is_empty() {
                 why
@@ -233,6 +224,15 @@ impl Reuse {
         let Some(binary) = Binary::open(bin, &wanted, inputs) else {
             return;
         };
+        self.keep(&binary, run, functions);
+    }
+
+    fn keep(
+        &self,
+        binary: &Binary,
+        run: &Run,
+        functions: BTreeMap<&String, Vec<(String, String)>>,
+    ) {
         for (id, functions) in functions {
             let Some(metrics) = run.items.get(id) else {
                 continue;
@@ -250,7 +250,7 @@ impl Reuse {
                 continue;
             }
             if let Some(entry) = Entry::measured(
-                &binary,
+                binary,
                 functions,
                 metrics.clone(),
                 assertions,
@@ -261,6 +261,23 @@ impl Reuse {
         }
         self.items.prune();
     }
+}
+
+/// Per binary, the listed items no hit covers.
+fn pending(
+    listed: &[BTreeMap<String, String>],
+    hits: &[BTreeMap<String, Entry>],
+) -> Vec<Vec<String>> {
+    listed
+        .iter()
+        .zip(hits)
+        .map(|(l, hit)| {
+            l.keys()
+                .filter(|id| !hit.contains_key(*id))
+                .cloned()
+                .collect()
+        })
+        .collect()
 }
 
 /// The plan line: how many items each binary reuses and how many it measures.
@@ -289,6 +306,78 @@ fn reuse_summary(listed: &[BTreeMap<String, String>], todo: &[Vec<String>]) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::invoke::ItemMetrics;
+
+    fn stamp() -> BuildStamp {
+        BuildStamp {
+            rustc: "1.88.0".into(),
+            codegen_units: "1".into(),
+            profiles: "a".into(),
+            rustflags: "b".into(),
+        }
+    }
+
+    fn lone_pass(dir: &Path, hashes: &[(&str, u64)], ids: &[&str]) -> (Vec<String>, Run) {
+        let binary =
+            || Binary::with_hashes(hashes.iter().map(|(f, h)| (f.to_string(), *h)).collect());
+        let listed = [listed(ids)];
+        let wanted = todo(ids);
+        let items = Items::at(dir.join("scope"));
+        let (hits, _) = items.reusable_in(&wanted, &items.load(&wanted), &listed, &[binary()]);
+        let reuse = Reuse {
+            todo: pending(&listed, &hits),
+            hits,
+            items,
+            measured_on: Value::Null,
+            sides: vec![(PathBuf::from("bench"), Vec::new())],
+        };
+        let mut measured = Vec::new();
+        let mut run = reuse
+            .measure_side(0, &[], stamp, |args| {
+                measured = match args {
+                    [] => todo(ids),
+                    _ => args
+                        .iter()
+                        .skip(1)
+                        .step_by(2)
+                        .map(|a| a.to_string())
+                        .collect(),
+                };
+                let item = |id: &String| {
+                    let metrics = ItemMetrics {
+                        fingerprint: "fp".into(),
+                        ir: Some(7),
+                        ..Default::default()
+                    };
+                    (id.clone(), metrics)
+                };
+                let called = |id: &String| {
+                    let function = (String::from("bench"), format!("f_{id}"));
+                    (id.clone(), vec![function])
+                };
+                Ok(Run {
+                    items: measured.iter().map(item).collect(),
+                    executed: measured.iter().map(called).collect(),
+                    ..Default::default()
+                })
+            })
+            .expect("mock backend");
+        let functions = run
+            .executed
+            .iter()
+            .map(|(id, f)| (id, codekey::portable(Path::new("bench"), f)))
+            .collect();
+        reuse.keep(&binary(), &run, functions);
+        reuse.splice(0, &mut run);
+        (measured, run)
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-reuse-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
 
     fn listed(ids: &[&str]) -> BTreeMap<String, String> {
         ids.iter()
@@ -317,5 +406,36 @@ mod tests {
             line,
             "items a stored measurement covers: head 1/2, base 2/2, measuring 1"
         );
+    }
+
+    #[test]
+    fn identical_binaries_with_an_empty_store_measure_and_store_every_item() {
+        let dir = scratch("empty");
+        let (measured, run) = lone_pass(&dir, &[("f_a", 1), ("f_b", 1)], &["a", "b"]);
+        assert_eq!(measured, ["a", "b"]);
+        assert_eq!(run.items.len(), 2);
+        let stored = Items::at(dir.join("scope")).load(&todo(&["a", "b"]));
+        assert!(stored.wanted().contains("f_a") && stored.wanted().contains("f_b"));
+    }
+
+    #[test]
+    fn a_second_identical_run_measures_nothing_and_still_has_every_item() {
+        let dir = scratch("repeat");
+        lone_pass(&dir, &[("f_a", 1), ("f_b", 1)], &["a", "b"]);
+        let (measured, run) = lone_pass(&dir, &[("f_a", 1), ("f_b", 1)], &["a", "b"]);
+        assert!(measured.is_empty());
+        assert_eq!(run.items.len(), 2);
+        assert_eq!(run.items["a"].ir, Some(7));
+        assert!(run.items["a"].reused.is_some());
+    }
+
+    #[test]
+    fn a_following_run_with_one_changed_item_measures_only_that_item() {
+        let dir = scratch("changed");
+        lone_pass(&dir, &[("f_a", 1), ("f_b", 1)], &["a", "b"]);
+        let (measured, run) = lone_pass(&dir, &[("f_a", 1), ("f_b", 2)], &["a", "b"]);
+        assert_eq!(measured, ["b"]);
+        assert!(run.items["a"].reused.is_some());
+        assert!(run.items["b"].reused.is_none());
     }
 }

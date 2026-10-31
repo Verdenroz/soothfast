@@ -25,7 +25,12 @@ second round re-measures only the timing-sensitive backends, and the
 per-metric minimum across a side's rounds is its comparison value. When the
 two sides' bench binaries have byte-identical loaded sections, code and
 data alike, no measurable change is possible and the gate short-circuits to a
-single cheap pass whose assertions still run. This is
+single pass whose assertions still run. Under callgrind that pass measures the
+one binary, and only the items no stored measurement covers; it stores them
+and the run, so the first identical run costs one side's items
+and a repeat costs none, and the next push that changes code measures only
+what it changed. `--no-reuse-base` or `--no-item-cache`, and any backend but
+callgrind, keep the cheap walltime pass, which stores nothing. This is
 what `make gate` runs against `origin/master` for
 every crate in `BENCH_CRATES`, and it is why merge-base gating has no
 baseline file that can go stale in version control.
@@ -663,9 +668,9 @@ regression (lock contention, syscalls) past that ceiling still does.
 exactly as `measure --save-baseline` would, so a deploy pipeline that needs
 both a gate verdict and a fresh baseline pays for one measurement instead of
 two. A failing run is never saved — the baseline would ratify its own
-regression — and the identical-binaries short circuit skips the save too:
-its single cheap pass collects no gating counters, and since the code did
-not change, the previously saved baseline is still the truth.
+regression. The identical-binaries short circuit saves it when it counted
+the items under callgrind; its cheap walltime pass collects no gating
+counters, so that one skips the save and the previously saved baseline stays.
 
 ## `--deps`: advisory, not a different check
 
