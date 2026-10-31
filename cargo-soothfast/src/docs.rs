@@ -37,12 +37,32 @@ struct DocsArgs {
 
 impl DocsArgs {
     /// Fill the packages from `[docs] package` when no `-p` was given.
-    fn use_configured(&mut self, configured: Option<Vec<String>>) {
-        if self.pkgs.is_empty() {
-            self.pkg = configured.iter().flatten().last().cloned();
-            self.pkgs = configured.unwrap_or_default();
+    fn use_configured(
+        &mut self,
+        configured: Option<Vec<String>>,
+        single: bool,
+    ) -> Result<(), String> {
+        if !self.pkgs.is_empty() {
+            return Ok(());
         }
+        let names = configured.unwrap_or_default();
+        if single && names.len() > 1 {
+            return Err(format!(
+                "[docs] package names {}; pass -p PKG to pick one",
+                names.join(", ")
+            ));
+        }
+        self.pkg = names.last().cloned();
+        self.pkgs = names;
+        Ok(())
     }
+}
+
+fn single_package(sub: &str) -> bool {
+    matches!(
+        sub,
+        "gen-tests" | "capture" | "diff" | "reference" | "routes"
+    )
 }
 
 fn takes_package(sub: &str) -> bool {
@@ -115,7 +135,11 @@ pub fn run(args: &[String]) -> i32 {
 
     if a.pkgs.is_empty() && takes_package(&sub) {
         match docs_config::load(&invoke::project_root()) {
-            Ok(cfg) => a.use_configured(cfg.package),
+            Ok(cfg) => {
+                if let Err(e) = a.use_configured(cfg.package, single_package(&sub)) {
+                    return err(&e);
+                }
+            }
             Err(e) => return err(&e),
         }
     }
@@ -880,16 +904,29 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
 mod tests {
     use super::{
         DocsArgs, accept_scanned, blocks_named_in, check_scanned, head_for_sniff, scan_at,
-        takes_package, unscanned_marker_files,
+        single_package, takes_package, unscanned_marker_files,
     };
     use crate::{docs_binds, invoke};
 
     #[test]
     fn configured_package_fills_in_when_no_p_is_given() {
         let mut a = DocsArgs::default();
-        a.use_configured(Some(vec!["a".into(), "b".into()]));
+        a.use_configured(Some(vec!["a".into(), "b".into()]), false)
+            .unwrap();
         assert_eq!(a.pkgs, ["a", "b"]);
-        assert_eq!(a.pkg.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn a_configured_list_is_an_error_for_a_single_package_command() {
+        let mut a = DocsArgs::default();
+        let e = a
+            .use_configured(Some(vec!["a".into(), "b".into()]), true)
+            .unwrap_err();
+        assert!(e.contains("a, b") && e.contains("-p"), "{e}");
+        let mut one = DocsArgs::default();
+        one.use_configured(Some(vec!["a".into()]), true).unwrap();
+        assert_eq!(one.pkg.as_deref(), Some("a"));
+        assert!(single_package("capture") && !single_package("check"));
     }
 
     #[test]
@@ -899,7 +936,7 @@ mod tests {
             pkgs: vec!["x".into()],
             ..DocsArgs::default()
         };
-        a.use_configured(Some(vec!["a".into()]));
+        a.use_configured(Some(vec!["a".into()]), true).unwrap();
         assert_eq!(a.pkgs, ["x"]);
         assert_eq!(a.pkg.as_deref(), Some("x"));
     }
@@ -907,7 +944,7 @@ mod tests {
     #[test]
     fn no_configured_package_leaves_the_args_empty() {
         let mut a = DocsArgs::default();
-        a.use_configured(None);
+        a.use_configured(None, true).unwrap();
         assert!(a.pkgs.is_empty() && a.pkg.is_none());
     }
 
