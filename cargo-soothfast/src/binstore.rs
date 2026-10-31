@@ -78,8 +78,28 @@ pub fn dir() -> Option<PathBuf> {
 /// The executable stored under `key` in `dir` whose inputs still hold what
 /// they did.
 pub fn load(dir: &Path, key: &str, root: &Path) -> Option<PathBuf> {
-    store::lookup(dir, key, root, "bin")
+    let entry = store::lookup(dir, key, root, "bin")?;
+    make_executable(&entry);
+    Some(entry)
 }
+
+/// Artifact upload and download drop file modes, so an entry that travelled
+/// between jobs arrives unable to run.
+#[cfg(unix)]
+fn make_executable(entry: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Ok(meta) = std::fs::metadata(entry) {
+        let mut perm = meta.permissions();
+        if perm.mode() & 0o111 != 0o111 {
+            perm.set_mode(perm.mode() | 0o755);
+            let _ = std::fs::set_permissions(entry, perm);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn make_executable(_: &Path) {}
 
 /// Keep the executable cargo wrote at `exe` for a build that started at
 /// `started`, unless the tree was edited meanwhile: `key` must still be the

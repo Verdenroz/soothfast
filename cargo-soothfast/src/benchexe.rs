@@ -161,11 +161,12 @@ impl Plan {
 
     fn keep(&self, cargo_stdout: &[u8], exe: &Path, started: SystemTime) {
         let pkg = &self.id.pkg;
-        let Some(inputs) = rustdoc_inputs::collect_build(&self.root, exe, cargo_stdout) else {
-            eprintln!(
-                "soothfast: {pkg} not stored: the dep-info of a workspace crate is unreadable"
-            );
-            return;
+        let inputs = match rustdoc_inputs::collect_build(&self.root, exe, cargo_stdout) {
+            Ok(inputs) => inputs,
+            Err(why) => {
+                eprintln!("soothfast: {pkg} not stored: dep-info unreadable: {why}");
+                return;
+            }
         };
         let key_now = self.key_now();
         if key_now.as_deref() != Some(&self.key) {
@@ -481,6 +482,29 @@ mod tests {
         repo.write("app/build.rs", "fn main() { println!(); }\n");
         let (_, builds) = resolve_counting(&self::plan(&repo, plan.store.clone()), &repo, b"y");
         assert_eq!(builds, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stored_entry_that_lost_its_mode_still_runs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let repo = Repo::new("exe-mode");
+        let plan = plan(&repo, repo.store_dir());
+        let script = b"#!/bin/sh\nexit 0\n";
+        let (stored, _) = resolve_counting(&plan, &repo, script);
+        assert!(!stored.starts_with(&plan.store));
+        let (entry, builds) = resolve_counting(&plan, &repo, b"never built");
+        assert_eq!(builds, 0);
+        std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let hit = plan.load().unwrap();
+        assert_eq!(hit, entry);
+        assert_ne!(
+            std::fs::metadata(&hit).unwrap().permissions().mode() & 0o111,
+            0
+        );
+        assert!(Command::new(&hit).status().unwrap().success());
     }
 
     #[test]
