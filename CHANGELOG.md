@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.5.2)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### 🐛 Fixes
+
+- Prebuild docs rustdoc only when docs check would (#334)
+
+
 ## 0.5.2 - 2026-10-31
 
 <!-- soothfast:notes -->
