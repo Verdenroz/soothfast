@@ -65,11 +65,29 @@ impl<'a> Runs<'a> {
     /// [`Runs::load`] for the reference side of a gate. A shard also takes the
     /// run of every item there, since compare reads only the items it owns.
     pub fn load_reference(&self, id: &str, measured_from: &str) -> Option<Value> {
-        self.load(id, measured_from).or_else(|| {
-            let env = self.env.as_ref()?;
-            let whole = key_with(id, self.stamp, self.common, env, None);
-            self.common.shard.and_then(|_| load(&whole, measured_from))
-        })
+        self.reference_source(id, measured_from).map(|(_, doc)| doc)
+    }
+
+    /// The run and its file that a gate with `reuse` takes in place of
+    /// measuring the merge-base at `base_sha`. The gate and `prebuild` both
+    /// ask here, so they agree on whether the merge-base needs building.
+    pub fn reusable_reference(&self, reuse: bool, base_sha: &str) -> Option<(PathBuf, Value)> {
+        if !reuse || base_sha.is_empty() {
+            return None;
+        }
+        self.reference_source(base_sha, base_sha)
+    }
+
+    fn reference_source(&self, id: &str, measured_from: &str) -> Option<(PathBuf, Value)> {
+        let env = self.env.as_ref().filter(|_| !id.is_empty())?;
+        let whole = self
+            .common
+            .shard
+            .map(|_| key_with(id, self.stamp, self.common, env, None));
+        [Some(key(id, self.stamp, self.common, env)), whole]
+            .into_iter()
+            .flatten()
+            .find_map(|key| Some((run_path(&key)?, load(&key, measured_from)?)))
     }
 
     /// The key every per-item entry of this invocation lives under: the
@@ -185,6 +203,10 @@ pub(crate) fn hashed(parts: &[String]) -> String {
 /// `bytes` hashed, as sixteen hex digits.
 pub(crate) fn hex_fnv(bytes: &[u8]) -> String {
     format!("{:016x}", soothfast_registry::fnv1a(bytes))
+}
+
+fn run_path(key: &str) -> Option<PathBuf> {
+    Some(dir()?.join(format!("{key}.json")))
 }
 
 fn load(key: &str, measured_from: &str) -> Option<Value> {

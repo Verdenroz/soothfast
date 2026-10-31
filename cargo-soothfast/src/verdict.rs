@@ -1,7 +1,7 @@
 //! `cargo soothfast verdict`: one result per gate job (`record`), folded into
 //! the single pull request comment and check (`merge`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -146,17 +146,24 @@ impl Record {
     }
 
     /// Folds another shard of the same project into this one: the worse
-    /// verdict wins, tails and reuse add up, and shards run side by side so
-    /// the slowest sets the time.
+    /// verdict wins and brings its own output (a worse record with none
+    /// leaves the existing output), equal verdicts' outputs are joined, reuse
+    /// adds up, and shards run side by side so the slowest sets the time.
     fn absorb(&mut self, other: Record) {
-        self.verdict = self.verdict.min(other.verdict);
-        if !other.tail.is_empty() {
-            if !self.tail.is_empty() {
-                self.tail.push('\n');
+        // The output of a worse verdict replaces that of a better one, so a
+        // regressed section shows its regression; equals are kept together.
+        match other.verdict.cmp(&self.verdict) {
+            std::cmp::Ordering::Less if !other.tail.is_empty() => self.tail = other.tail,
+            std::cmp::Ordering::Equal if !other.tail.is_empty() => {
+                if !self.tail.is_empty() {
+                    self.tail.push('\n');
+                }
+                self.tail.push_str(&other.tail);
+                self.tail = tail(&self.tail);
             }
-            self.tail.push_str(&other.tail);
-            self.tail = tail(&self.tail);
+            _ => {}
         }
+        self.verdict = self.verdict.min(other.verdict);
         self.reuse = match (self.reuse, other.reuse) {
             (Some(a), Some(b)) => Some(Reuse {
                 covered: a.covered + b.covered,
@@ -369,9 +376,11 @@ fn merge(args: &[String]) -> Result<i32, String> {
     }
     let dir = dir.ok_or("merge needs a results directory")?;
     let out = out.ok_or("merge needs --out")?;
-    let mut records = fold(read_records(&dir));
+    let raw = read_records(&dir);
+    let seen: BTreeSet<String> = raw.iter().map(|r| r.name.clone()).collect();
+    let mut records = fold(raw);
     for (name, kind) in expect {
-        if !records.iter().any(|r| r.name == name) {
+        if !seen.contains(&name) {
             records.push(errored(name, kind, "the job recorded no result".into()));
         }
     }
@@ -439,13 +448,24 @@ fn read_records(dir: &Path) -> Vec<Record> {
         .collect()
 }
 
+/// One record per name. A name with `#` after it (`pkg#1/3`, a shard) folds
+/// into the one before it, so shards share a section and each is still
+/// expected on its own.
 fn fold(records: Vec<Record>) -> Vec<Record> {
     let mut by_name: BTreeMap<String, Record> = BTreeMap::new();
-    for rec in records {
-        match by_name.get_mut(&rec.name) {
+    for mut rec in records {
+        let (name, shard) = match rec.name.split_once('#') {
+            Some((name, shard)) => (name.to_string(), Some(shard.to_string())),
+            None => (rec.name.clone(), None),
+        };
+        if let (Some(shard), false) = (shard, rec.tail.is_empty()) {
+            rec.tail = format!("-- shard {shard} --\n{}", rec.tail);
+        }
+        rec.name.clone_from(&name);
+        match by_name.get_mut(&name) {
             Some(seen) => seen.absorb(rec),
             None => {
-                by_name.insert(rec.name.clone(), rec);
+                by_name.insert(name, rec);
             }
         }
     }
@@ -703,6 +723,30 @@ mod tests {
     }
 
     #[test]
+    fn shard_tails_keep_their_shard_and_a_regression_is_not_buried() {
+        let folded = fold(vec![
+            rec("core#1/2", Verdict::Pass, "fine"),
+            rec("core#2/2", Verdict::Regressed, "slower"),
+        ]);
+        assert_eq!(folded[0].tail, "-- shard 2/2 --\nslower");
+        let both = fold(vec![
+            rec("core#1/2", Verdict::Pass, "a"),
+            rec("core#2/2", Verdict::Pass, "b"),
+        ]);
+        assert_eq!(both[0].tail, "-- shard 1/2 --\na\n-- shard 2/2 --\nb");
+    }
+
+    #[test]
+    fn a_worse_record_with_no_output_keeps_the_existing_output() {
+        let folded = fold(vec![
+            rec("core#1/2", Verdict::Pass, "fine"),
+            rec("core#2/2", Verdict::Regressed, ""),
+        ]);
+        assert_eq!(folded[0].verdict, Verdict::Regressed);
+        assert_eq!(folded[0].tail, "-- shard 1/2 --\nfine");
+    }
+
+    #[test]
     fn an_oversized_body_loses_passing_output_first() {
         let big = "x".repeat(40_000);
         let records = [
@@ -741,9 +785,38 @@ mod tests {
         assert_eq!(folded.len(), 2);
         let core = &folded[0];
         assert_eq!(core.verdict, Verdict::Regressed);
-        assert_eq!(core.tail, "a\nb");
+        assert_eq!(core.tail, "b");
         assert_eq!(core.reuse, reuse(4, 6, 2));
         assert_eq!(core.seconds, 30);
+    }
+
+    #[test]
+    fn a_shard_that_recorded_nothing_is_an_errored_section() {
+        let dir = std::env::temp_dir().join(format!("soothfast-shards-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let record = json!({
+            "name": "core#1/2", "kind": "rust", "verdict": "pass", "tail": "ok", "seconds": 3
+        });
+        fs::write(dir.join("one.json"), record.to_string()).unwrap();
+        let out = dir.join("body.md");
+        let args: Vec<String> = [
+            dir.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--expect",
+            "core#1/2:rust",
+            "--expect",
+            "core#2/2:rust",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(merge(&args), Ok(1));
+        let body = fs::read_to_string(&out).unwrap();
+        assert!(body.contains("core#2/2"), "{body}");
+        assert!(!body.contains("core#1/2"), "{body}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

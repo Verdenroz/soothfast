@@ -3,6 +3,14 @@ name: soothfast-gate
 on:
   workflow_call:
     inputs:
+      soothfast_ref:
+        description: >-
+          Commit, tag or branch of this repository the caller pins, matching
+          its `uses:` ref. Empty checks the action scripts out from the
+          default branch.
+        required: false
+        type: string
+        default: ""
       package:
         description: "Cargo package with the soothfast bench target"
         required: true
@@ -38,15 +46,19 @@ jobs:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
+      # An empty ref checks out the default branch, which may predate this workflow.
+      - name: Warn about an unpinned soothfast ref
+        if: inputs.soothfast_ref == '' && github.job_workflow_sha == ''
+        run: echo "::warning::soothfast_ref is empty, so the action scripts come from the default branch and may not match the version you pinned; pass soothfast_ref matching your uses ref"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           fetch-depth: 0 # merge-base needs history
-      # The action scripts at this workflow's own commit, whoever calls it.
+      # The action scripts at the ref the caller pins.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ inputs.soothfast_ref || github.job_workflow_sha }}
           path: .soothfast-action
           sparse-checkout: |
             action

@@ -433,10 +433,16 @@ pub fn prebuild_benches(
     if names.is_empty() {
         return Ok(());
     }
-    bench_build_command(common, dir, target_dir, Build::Measure, &names)?
+    let status = bench_build_command(common, dir, target_dir, Build::Measure, &names)?
         .args(["--no-run"])
         .status()?;
-    Ok(())
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "cargo bench --no-run exited {status}"
+        )))
+    }
 }
 
 /// The ids of the bench binary's items that `shard` owns, listed once per
@@ -1284,6 +1290,17 @@ pub fn rustdoc_json_in(
         rustdocstore::store(&key, store_key(), &root, &inputs, started, &json_path);
     }
     Ok((doc, root))
+}
+
+/// The store key `rustdoc_json_in` looks `pkg` up under in the workspace.
+pub fn rustdoc_key(pkg: &str, features: Option<&str>, visibility: Visibility) -> Option<String> {
+    let root = workspace_root().ok()?;
+    rustdoc_store_key(pkg, None, &root, features, visibility, &rustdoc_toolchain())
+}
+
+/// Whether the store holds the rustdoc JSON under `key`.
+pub fn rustdoc_holds(key: &str) -> bool {
+    workspace_root().is_ok_and(|root| rustdocstore::holds(key, &root))
 }
 
 /// `cargo rustdoc` for `pkg`, recording what it read in `dep_info` when given.

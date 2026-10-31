@@ -1031,10 +1031,7 @@ fn measure_ref_interleaved(
     // even for an invocation that declined to trust an existing one.
     let base_known = !base_sha.is_empty();
 
-    if reuse
-        && base_known
-        && let Some(doc) = runs.load_reference(&base_sha, &base_sha)
-    {
+    if let Some((_, doc)) = runs.reusable_reference(reuse, &base_sha) {
         println!("gate: reusing the measured merge-base {base_sha}");
         let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
             Some((head, from)) => {

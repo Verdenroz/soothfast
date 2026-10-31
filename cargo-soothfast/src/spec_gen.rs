@@ -129,22 +129,13 @@ pub(crate) fn rustdoc_for(
     Ok(doc)
 }
 
-/// Rustdoc JSON for the workspace crates whose types the package's routes
-/// can reach — the sibling crates a handler's parameters are typed by.
-///
-/// Best effort throughout: a missing nightly, a crate that fails to
-/// document, or a `workspace_crates` name that isn't a dependency all warn
-/// and drop that crate, leaving its types to resolve exactly as they did
-/// before (a reported gap and an open schema). A spec derived from most of
-/// the workspace beats no spec at all.
-///
-/// The package's own `--features` are deliberately not passed on: they name
-/// features of *that* package, and cargo rejects them for another.
-pub(crate) fn aux_rustdoc_for(
+/// The workspace crates whose types the package's routes can reach — the
+/// sibling crates a handler's parameters are typed by.
+pub(crate) fn aux_crates(
     pkg: &str,
     dir: Option<&Path>,
     cfg: &spec_config::SpecConfig,
-) -> Vec<Value> {
+) -> Vec<String> {
     if !cfg.workspace_types() {
         return Vec::new();
     }
@@ -165,12 +156,29 @@ pub(crate) fn aux_rustdoc_for(
              member {pkg} depends on — ignoring it"
         );
     }
-    let selected = available
+    available
         .into_iter()
-        .filter(|n| wanted.is_empty() || wanted.contains(n));
+        .filter(|n| wanted.is_empty() || wanted.contains(n))
+        .collect()
+}
 
+/// Rustdoc JSON for [`aux_crates`].
+///
+/// Best effort throughout: a missing nightly, a crate that fails to
+/// document, or a `workspace_crates` name that isn't a dependency all warn
+/// and drop that crate, leaving its types to resolve exactly as they did
+/// before (a reported gap and an open schema). A spec derived from most of
+/// the workspace beats no spec at all.
+///
+/// The package's own `--features` are deliberately not passed on: they name
+/// features of *that* package, and cargo rejects them for another.
+pub(crate) fn aux_rustdoc_for(
+    pkg: &str,
+    dir: Option<&Path>,
+    cfg: &spec_config::SpecConfig,
+) -> Vec<Value> {
     let mut docs = Vec::new();
-    for name in selected {
+    for name in aux_crates(pkg, dir, cfg) {
         match invoke::rustdoc_json_in(&name, dir, None, Visibility::Private) {
             Ok((doc, _)) => docs.push(doc),
             Err(e) => eprintln!(

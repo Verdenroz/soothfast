@@ -19,11 +19,12 @@ use crate::store::{self, Inputs};
 pub(crate) const MAX_BYTES: u64 = 1 << 29;
 
 /// Variables a bench build depends on beyond the ones every compile does.
-pub const ENV_NAMES: [&str; 5] = [
+/// `RUSTUP_TOOLCHAIN` is left out: only `cargo soothfast` sets it, and the
+/// `rustc -vV` in the key already names the toolchain it picks.
+pub const ENV_NAMES: [&str; 4] = [
     "RUSTC",
     "RUSTC_WRAPPER",
     "RUSTC_WORKSPACE_WRAPPER",
-    "RUSTUP_TOOLCHAIN",
     "CARGO_INCREMENTAL",
 ];
 
@@ -95,14 +96,18 @@ pub fn store(
     started: SystemTime,
     exe: &Path,
     group: &str,
-) -> Option<PathBuf> {
-    if key_now.as_deref() != Some(key) || load(dir, key, root).is_some() {
-        return None;
+) -> Result<PathBuf, Skip> {
+    if key_now.as_deref() != Some(key) {
+        return Err(Skip::TreeChanged);
     }
-    let entry = store::insert(dir, key, root, inputs, started, exe, "bin")?;
+    if load(dir, key, root).is_some() {
+        return Err(Skip::Present);
+    }
+    let entry =
+        store::insert(dir, key, root, inputs, started, exe, "bin").ok_or(Skip::NotWritten)?;
     let born = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .ok()?
+        .map_err(|_| Skip::NotWritten)?
         .as_nanos();
     store::write_atomic(
         &dir.join(format!("{key}.group")),
@@ -111,7 +116,29 @@ pub fn store(
     store::write_atomic(&link(exe), entry.as_os_str().as_encoded_bytes());
     keep_newest(dir);
     store::prune(dir, MAX_BYTES);
-    Some(entry)
+    Ok(entry)
+}
+
+/// Why [`store`] kept nothing.
+#[derive(Debug, PartialEq)]
+pub enum Skip {
+    TreeChanged,
+    /// An entry for the key is already there.
+    Present,
+    NotWritten,
+}
+
+impl Skip {
+    /// The reason in a sentence, or `None` when nothing is wrong.
+    pub fn why(&self) -> Option<&'static str> {
+        match self {
+            Skip::TreeChanged => Some("the tree changed during the build"),
+            Skip::Present => None,
+            Skip::NotWritten => {
+                Some("an input changed during the build or the entry could not be written")
+            }
+        }
+    }
 }
 
 /// Remove every executable but the newest of its group, with the files kept
@@ -153,6 +180,38 @@ pub fn keep_newest(dir: &Path) {
             let _ = std::fs::remove_file(entry);
         }
     }
+}
+
+/// The key an entry is named for: the part of `<key>-<digest>.<ext>` before
+/// the first dash.
+pub fn key_of(entry: &Path) -> Option<String> {
+    let name = entry.file_name()?.to_str()?;
+    name.split_once('-').map(|(key, _)| key.to_string())
+}
+
+/// The files of the store that belong to `entry`: itself, what is kept beside
+/// it (`<entry>.digest`, `<entry>.extents`) and the manifest and group of its
+/// key. An older entry of the same key is not among them.
+pub fn entry_files(entry: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(name), Some(key)) = (entry.parent(), entry.file_name(), key_of(entry))
+    else {
+        return Vec::new();
+    };
+    let beside = format!("{}.", name.to_string_lossy());
+    let own = [format!("{key}.manifest"), format!("{key}.group")];
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|file| {
+            let file_name = file.file_name();
+            let file_name = file_name.to_string_lossy();
+            file_name == name.to_string_lossy()
+                || file_name.starts_with(&beside)
+                || own.iter().any(|o| *o == file_name)
+        })
+        .map(|file| file.path())
+        .collect()
 }
 
 /// Whether `exe` lies in the store, so no build of it exists in a target
@@ -350,7 +409,8 @@ mod tests {
             future,
             &exe,
             "g",
-        );
+        )
+        .unwrap();
         let hit = store::lookup(&dir, "k", &repo.0, "bin").unwrap();
         assert_eq!(std::fs::read(&hit).unwrap(), bytes);
         let mode = std::fs::metadata(&hit).unwrap().permissions().mode();
@@ -371,7 +431,7 @@ mod tests {
         let wrong = Some("other".into());
         assert_eq!(
             store(&dir, "k", wrong, &repo.0, &read, future, &exe, "g"),
-            None
+            Err(Skip::TreeChanged)
         );
         assert_eq!(load(&dir, "k", &repo.0), None);
     }
@@ -391,6 +451,33 @@ mod tests {
             group,
         );
         entry.unwrap()
+    }
+
+    #[test]
+    fn an_entry_names_its_key_and_the_files_that_belong_to_it() {
+        let repo = Repo::new("bin-files");
+        let dir = repo.store_dir();
+        for name in [
+            "k1-d.bin",
+            "k1-d.bin.digest",
+            "k1.manifest",
+            "k1.group",
+            "k1-old.bin",
+            "k2-d.bin",
+        ] {
+            std::fs::write(dir.join(name), name).unwrap();
+        }
+        let entry = dir.join("k1-d.bin");
+        assert_eq!(key_of(&entry).as_deref(), Some("k1"));
+        let mut names: Vec<_> = entry_files(&entry)
+            .iter()
+            .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["k1-d.bin", "k1-d.bin.digest", "k1.group", "k1.manifest"]
+        );
     }
 
     #[test]

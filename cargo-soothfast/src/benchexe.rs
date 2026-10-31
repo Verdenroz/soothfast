@@ -160,18 +160,29 @@ impl Plan {
     }
 
     fn keep(&self, cargo_stdout: &[u8], exe: &Path, started: SystemTime) {
-        if let Some(inputs) = rustdoc_inputs::collect_build(&self.root, exe, cargo_stdout) {
-            binstore::store(
-                &self.store,
-                &self.key,
-                self.key_now(),
-                &self.root,
-                &inputs,
-                started,
-                exe,
-                &self.group(),
-            );
+        let inputs = match rustdoc_inputs::collect_build(&self.root, exe, cargo_stdout) {
+            Ok(inputs) => inputs,
+            Err(why) => return self.not_stored(&format!("dep-info unreadable: {why}")),
+        };
+        let kept = binstore::store(
+            &self.store,
+            &self.key,
+            self.key_now(),
+            &self.root,
+            &inputs,
+            started,
+            exe,
+            &self.group(),
+        );
+        if let Err(skip) = kept
+            && let Some(why) = skip.why()
+        {
+            self.not_stored(why);
         }
+    }
+
+    fn not_stored(&self, why: &str) {
+        note_once(&self.id.pkg, why);
     }
 
     /// `exe` run as `cargo bench` would, before any runner argument.
@@ -218,7 +229,9 @@ pub fn run_command(
     let plan = plan(common, dir, target_dir, build)?;
     let exe = match plan.load() {
         Some(exe) => exe,
-        None if fill => resolve(Some(&plan), || cargo_build(common, dir, target_dir, build))?,
+        None if fill => resolve(Some(&plan), || {
+            cargo_build(common, dir, target_dir, build).ok()
+        })?,
         None => return None,
     };
     plan.command(&exe)
@@ -243,12 +256,38 @@ pub fn executable(
     build: Build,
 ) -> Option<PathBuf> {
     let plan = plan(common, dir, target_dir, build);
+    if plan.is_none()
+        && let Some(pkg) = common.pkg.as_deref()
+    {
+        note_once(
+            pkg,
+            "the build cannot be keyed or a cargo runner is configured",
+        );
+    }
     let label = format!("bench executable {}", common.pkg.as_deref().unwrap_or(""));
-    invoke::timed(&label, || {
+    let failure = std::cell::RefCell::new(String::new());
+    let exe = invoke::timed(&label, || {
         resolve(plan.as_deref(), || {
             cargo_build(common, dir, target_dir, build)
+                .map_err(|stderr| *failure.borrow_mut() = stderr)
+                .ok()
         })
-    })
+    });
+    if exe.is_none() {
+        eprintln!("{}", failure.borrow());
+    }
+    exe
+}
+
+/// Say once per process why `pkg`'s executable is not kept.
+fn note_once(pkg: &str, why: &str) {
+    static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let line = format!("soothfast: {pkg} not stored: {why}");
+    let mut said = SAID.lock().unwrap_or_else(PoisonError::into_inner);
+    if !said.contains(&line) {
+        eprintln!("{line}");
+        said.push(line);
+    }
 }
 
 fn cargo_build(
@@ -256,16 +295,21 @@ fn cargo_build(
     dir: Option<&Path>,
     target_dir: Option<&Path>,
     build: Build,
-) -> Option<Built> {
+) -> Result<Built, String> {
     let target = common.target.as_deref().unwrap_or("soothfast");
     let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-    let mut cmd = invoke::bench_build_command(common, dir, target_dir, build, &pkgs).ok()?;
+    let mut cmd = invoke::bench_build_command(common, dir, target_dir, build, &pkgs)
+        .map_err(|e| e.to_string())?;
     cmd.args(["--no-run", "--message-format=json"]);
     cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::null());
-    let out = cmd.output().ok().filter(|o| o.status.success())?;
-    let exe = invoke::bench_artifact(&out.stdout, target)?;
-    Some(Built {
+    cmd.stderr(Stdio::piped());
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+    }
+    let exe = invoke::bench_artifact(&out.stdout, target)
+        .ok_or_else(|| "cargo named no bench executable".to_string())?;
+    Ok(Built {
         exe,
         cargo_stdout: out.stdout,
     })
@@ -328,7 +372,11 @@ mod tests {
     /// What `cargo bench --no-run` leaves for the app package: an executable,
     /// its dep-info and the message naming both.
     fn fake_build(repo: &Repo, bytes: &[u8]) -> Built {
-        let deps = repo.0.join("target/release/deps");
+        fake_build_in(repo, "release", bytes)
+    }
+
+    fn fake_build_in(repo: &Repo, profile_dir: &str, bytes: &[u8]) -> Built {
+        let deps = repo.0.join("target").join(profile_dir).join("deps");
         std::fs::create_dir_all(&deps).unwrap();
         let exe = deps.join("soothfast-1a2b");
         std::fs::write(&exe, bytes).unwrap();
@@ -456,6 +504,53 @@ mod tests {
         repo.write("app/build.rs", "fn main() { println!(); }\n");
         let (_, builds) = resolve_counting(&self::plan(&repo, plan.store.clone()), &repo, b"y");
         assert_eq!(builds, 1);
+    }
+
+    #[test]
+    fn a_dev_profile_routes_build_is_stored_apart_from_the_bench_one() {
+        let repo = Repo::new("exe-routes");
+        let store = repo.store_dir();
+        let bench = plan(&repo, store.clone());
+        let mut routes = plan(&repo, store);
+        routes.id.discover = true;
+        routes.codegen_units = None;
+        routes.key = routes.key_now().unwrap();
+        assert_ne!(routes.key, bench.key);
+        assert_ne!(routes.group(), bench.group());
+        for expected in [1, 0] {
+            let builds = Cell::new(0);
+            let exe = resolve(Some(&routes), || {
+                builds.set(builds.get() + 1);
+                Some(fake_build_in(&repo, "debug", b"routes"))
+            })
+            .unwrap();
+            assert_eq!(builds.get(), expected);
+            assert_eq!(std::fs::read(exe).unwrap(), b"routes");
+        }
+        assert!(routes.load().is_some());
+        assert!(bench.load().is_none());
+    }
+
+    #[test]
+    fn a_scratch_directory_made_during_the_build_does_not_stop_the_store() {
+        let repo = Repo::new("exe-scratch");
+        let store = repo.store_dir();
+        repo.write(".gitignore", "/target\n");
+        let mut plan = plan(&repo, store);
+        plan.crate_dirs = vec![repo.0.clone()];
+        plan.key = plan.key_now().unwrap();
+        for expected in [1, 0] {
+            let builds = Cell::new(0);
+            resolve(Some(&plan), || {
+                builds.set(builds.get() + 1);
+                repo.write(".soothfast-action/Cargo.toml", "[package]\n");
+                repo.write(".soothfast-branch/runs/a.json", "{}");
+                Some(fake_build(&repo, b"one"))
+            })
+            .unwrap();
+            assert_eq!(builds.get(), expected);
+        }
+        assert!(plan.load().is_some());
     }
 
     #[test]

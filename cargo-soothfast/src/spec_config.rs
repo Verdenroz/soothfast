@@ -144,9 +144,23 @@ impl SpecConfig {
         names
     }
 
+    /// Whether any entry is generated from the code, which needs rustdoc.
+    pub fn generates(&self) -> bool {
+        self.generating().next().is_some()
+    }
+
     fn generating(&self) -> impl Iterator<Item = &SpecEntry> {
         self.entries.iter().filter(|e| e.mode == Mode::Generate)
     }
+}
+
+/// The config of workspace package `pkg`, when any of its specs is generated
+/// from the code.
+pub fn generating(pkg: &str) -> Option<SpecConfig> {
+    crate::invoke::pkg_dir(pkg)
+        .ok()
+        .and_then(|dir| load(&dir).ok())
+        .filter(SpecConfig::generates)
 }
 
 /// Read `soothfast.toml` from a directory. An absent file is not an error —

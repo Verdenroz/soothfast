@@ -8,6 +8,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Value, json};
 use soothfast_site::toml::logical_lines;
@@ -114,13 +115,21 @@ pub fn compare(reference: &Value, current: &BuildStamp) -> Option<Mismatch> {
 
 /// `rustc -vV`, which names the compiler by release, commit and host.
 pub(crate) fn rustc_vv(dir: Option<&Path>) -> io::Result<String> {
+    static SEEN: Mutex<Vec<(Option<PathBuf>, String)>> = Mutex::new(Vec::new());
+    let at = dir.map(Path::to_path_buf);
+    let mut seen = SEEN.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, text)) = seen.iter().find(|(k, _)| *k == at) {
+        return Ok(text.clone());
+    }
     let mut cmd = Command::new("rustc");
     cmd.arg("-vV");
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
     let out = cmd.output()?;
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    seen.push((at, text.clone()));
+    Ok(text)
 }
 
 fn rustc_version(dir: Option<&Path>) -> String {
