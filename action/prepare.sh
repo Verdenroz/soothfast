@@ -85,7 +85,7 @@ fi
 if [ "$gating" = true ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
   git rev-parse --verify --quiet "refs/remotes/origin/${GITHUB_BASE_REF}^{commit}" >/dev/null ||
     fetch origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
-  reference=$(git merge-base HEAD "origin/${GITHUB_BASE_REF}")
+  reference=$("$(dirname "$0")/merge-base.sh")
 elif [ "$recording" = true ] && git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
   reference=$(git rev-parse 'HEAD^')
 fi

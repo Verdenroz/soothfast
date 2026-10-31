@@ -48,7 +48,7 @@ jobs:
           egress-policy: audit
       # An empty ref checks out the default branch, which may predate this workflow.
       - name: Warn about an unpinned soothfast ref
-        if: inputs.soothfast_ref == ''
+        if: inputs.soothfast_ref == '' && github.job_workflow_sha == ''
         run: echo "::warning::soothfast_ref is empty, so the action scripts come from the default branch and may not match the version you pinned; pass soothfast_ref matching your uses ref"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
-          ref: ${{ inputs.soothfast_ref }}
+          ref: ${{ inputs.soothfast_ref || github.job_workflow_sha }}
           path: .soothfast-action
           sparse-checkout: |
             action

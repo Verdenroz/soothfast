@@ -14,3 +14,5 @@ paths:
   .github/workflows/soothfast-gate.yml:
     ignore:
       - 'shellcheck reported issue in this script: SC2016:info:'
+      # A real property of a called workflow that actionlint's context table lacks.
+      - 'property "job_workflow_sha" is not defined'

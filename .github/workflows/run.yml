@@ -470,7 +470,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
+      # The build jobs save the target cache; this job compiles nothing on a store hit.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: "false"
       - id: soothfast
         uses: ./.soothfast-action/action/install
       # A failed build leaves nothing to download, and this job then compiles
@@ -516,6 +519,13 @@ jobs:
           name: soothfast-baseline${{ matrix.shard != '' && github.event_name == 'pull_request' && format('-shard-{0}', matrix.slug) || '' }}
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
+      # Binaries identical to the previous push's mean its measurement stands; carry it to this commit.
+      - name: Carry the previous measurement
+        if: github.event_name == 'push' && hashFiles('.soothfast/baselines/head.json') == ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .soothfast/baselines/head.json
+          key: soothfast-baseline-${{ github.event.before }}
       # A pull request that leaves the bench binaries unchanged saves none,
       # so the docs job reads the merge-base's measurement saved here.
       - name: Keep the default-branch measurement
@@ -665,6 +675,8 @@ jobs:
           toolchain: nightly
       - if: needs.plan.outputs.docs_package != ''
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: "false"
       - id: soothfast
         uses: ./.soothfast-action/action/install
       # A failed rustdoc build leaves nothing to download, and the docs check then builds the JSON itself.
@@ -720,14 +732,11 @@ jobs:
               ;;
             *) exit "$rc" ;;
           esac
-      # Unchanged binaries make the merge-base's measurement the pull request's; the branch tip may have moved past it.
+      # Unchanged binaries make the merge-base's measurement the pull request's, named as the gate names it.
       - name: Name the merge-base
         if: github.event_name == 'pull_request'
         id: base
-        env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          BASE_REF: ${{ github.base_ref }}
-        run: echo "sha=$(git merge-base "$HEAD_SHA" "origin/$BASE_REF")" >>"$GITHUB_OUTPUT"
+        run: echo "sha=$(.soothfast-action/action/merge-base.sh)" >>"$GITHUB_OUTPUT"
       - name: Restore the merge-base measurement
         if: hashFiles('.soothfast/baselines/head.json') == '' && steps.shards.outputs.complete != 'partial'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

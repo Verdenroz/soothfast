@@ -448,7 +448,10 @@ baseline of its items as `soothfast-baseline-shard-<i>-of-<n>`, and the docs
 check merges them with `cargo soothfast baseline merge` before it evaluates
 claims. If only some arrive it reports "claims not evaluated". If none arrive
 the bench binaries were unchanged, and it reads the measurement saved for the
-merge-base commit, evaluating no claims when that is missing. A default-branch push records every item
+commit the gate compares against (the merge-base of the checked-out merge
+commit and the base branch, so the base tip), evaluating no claims when that is
+missing. Every default-branch push saves one, carrying the previous push's
+measurement when its binaries are identical. A default-branch push records every item
 in its first leg and saves the baseline as before; the other legs are
 skipped on a push, since they would only set up.
 
@@ -502,7 +505,8 @@ jobs:
 ```
 
 `soothfast_ref` is the same tag or commit as in the `uses:` line, which the
-workflow cannot read for itself. Left empty, the action scripts come from the
-default branch and the run warns. `cli-artifact` names an artifact holding a prebuilt CLI at
+workflow cannot read for itself. Left empty, the scripts come from the commit
+GitHub reports for the workflow, and from the default branch with a warning
+when it reports none. `cli-artifact` names an artifact holding a prebuilt CLI at
 `bin/cargo-soothfast` from earlier in the same run; without it the workflow
 installs the release matching your `Cargo.lock`.
