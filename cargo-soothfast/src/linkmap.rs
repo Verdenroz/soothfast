@@ -14,6 +14,8 @@
 
 use std::path::{Path, PathBuf};
 
+use soothfast_registry::fnv1a;
+
 use crate::binstore;
 use crate::headrun::binary_digest;
 use crate::invoke::{self, CommonArgs};
@@ -33,7 +35,7 @@ pub struct Extent {
     pub entry: u64,
     /// `object:section`, which names the same input in another link of the
     /// same code. The object is its path below the profile directory, with
-    /// the archive member when it has one.
+    /// the archive member when it has one. The stored extents keep its hash.
     pub name: String,
 }
 
@@ -47,6 +49,18 @@ fn named(path: &str, section: &str, root: &str) -> String {
     );
     let below = path.strip_prefix(root).unwrap_or(&path);
     format!("{}:{section}", below.display())
+}
+
+/// `extents` with each name replaced by its hash, which names an input as well
+/// as the text does and is what the stored extents keep.
+fn hashed(extents: Vec<Extent>) -> Vec<Extent> {
+    extents
+        .into_iter()
+        .map(|e| Extent {
+            name: format!("{:016x}", fnv1a(e.name.as_bytes())),
+            ..e
+        })
+        .collect()
 }
 
 /// The profile directory (`target/[triple/]release`) of a bench executable.
@@ -260,7 +274,7 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     if binary_digest(&built).as_deref() != Some(digest) {
         return Err("the map build links different code".into());
     }
-    let extents = parse(&text, &root_of(&built)).ok_or("unrecognized map format")?;
+    let extents = hashed(parse(&text, &root_of(&built)).ok_or("unrecognized map format")?);
     let encoded = encode(&extents);
     if std::fs::write(maps.join(format!("{digest}.extents")), &encoded).is_ok() {
         runcache::prune_oldest(&maps, KEEP);
@@ -409,6 +423,22 @@ Linker script and memory map
             .map(|e| e.name)
             .collect();
         assert_eq!(names, ["a.o:.data.y"]);
+    }
+
+    #[test]
+    fn a_hashed_name_keeps_inputs_apart_in_sixteen_digits() {
+        let named = |name: &str| Extent {
+            name: name.to_string(),
+            ..Extent::default()
+        };
+        let out = hashed(vec![
+            named("a.o:.bss.x"),
+            named("b.o:.bss.x"),
+            named("a.o:.bss.x"),
+        ]);
+        assert_eq!(out[0].name, out[2].name);
+        assert_ne!(out[0].name, out[1].name);
+        assert_eq!(out[0].name.len(), 16);
     }
 
     #[test]
