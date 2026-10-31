@@ -424,6 +424,7 @@ fails naming the tool:</p>
 <p>Per-project gate jobs:</p>
 <ul>
 <li>Java for Gradle and Maven projects, Node for Node projects and <code>uv</code> for Python projects come from <code>actions/setup-java</code>, <code>actions/setup-node</code> and <code>astral-sh/setup-uv</code>, so the runner needs nothing preinstalled. A Gradle project's own <code>./gradlew</code> downloads Gradle, and Python itself comes from <code>uv</code>.</li>
+<li>Gradle and Maven dependencies, and the Gradle wrapper, are cached by <code>actions/setup-java</code>, keyed on the project's build files.</li>
 </ul>
 <p><code>step-security/harden-runner</code> is the first step of every job; it targets
 hosted runners and its network audit may not apply on yours.</p>
