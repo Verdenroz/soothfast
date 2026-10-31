@@ -1,7 +1,7 @@
 //! `cargo soothfast verdict`: one result per gate job (`record`), folded into
 //! the single pull request comment and check (`merge`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -369,9 +369,11 @@ fn merge(args: &[String]) -> Result<i32, String> {
     }
     let dir = dir.ok_or("merge needs a results directory")?;
     let out = out.ok_or("merge needs --out")?;
-    let mut records = fold(read_records(&dir));
+    let raw = read_records(&dir);
+    let seen: BTreeSet<String> = raw.iter().map(|r| r.name.clone()).collect();
+    let mut records = fold(raw);
     for (name, kind) in expect {
-        if !records.iter().any(|r| r.name == name) {
+        if !seen.contains(&name) {
             records.push(errored(name, kind, "the job recorded no result".into()));
         }
     }
@@ -439,13 +441,18 @@ fn read_records(dir: &Path) -> Vec<Record> {
         .collect()
 }
 
+/// One record per name. A name with `#` after it (`pkg#1/3`, a shard) folds
+/// into the one before it, so shards share a section and each is still
+/// expected on its own.
 fn fold(records: Vec<Record>) -> Vec<Record> {
     let mut by_name: BTreeMap<String, Record> = BTreeMap::new();
-    for rec in records {
-        match by_name.get_mut(&rec.name) {
+    for mut rec in records {
+        let name = rec.name.split('#').next().unwrap_or_default().to_string();
+        rec.name.clone_from(&name);
+        match by_name.get_mut(&name) {
             Some(seen) => seen.absorb(rec),
             None => {
-                by_name.insert(rec.name.clone(), rec);
+                by_name.insert(name, rec);
             }
         }
     }
@@ -744,6 +751,35 @@ mod tests {
         assert_eq!(core.tail, "a\nb");
         assert_eq!(core.reuse, reuse(4, 6, 2));
         assert_eq!(core.seconds, 30);
+    }
+
+    #[test]
+    fn a_shard_that_recorded_nothing_is_an_errored_section() {
+        let dir = std::env::temp_dir().join(format!("soothfast-shards-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let record = json!({
+            "name": "core#1/2", "kind": "rust", "verdict": "pass", "tail": "ok", "seconds": 3
+        });
+        fs::write(dir.join("one.json"), record.to_string()).unwrap();
+        let out = dir.join("body.md");
+        let args: Vec<String> = [
+            dir.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--expect",
+            "core#1/2:rust",
+            "--expect",
+            "core#2/2:rust",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(merge(&args), Ok(1));
+        let body = fs::read_to_string(&out).unwrap();
+        assert!(body.contains("core#2/2"), "{body}");
+        assert!(!body.contains("core#1/2"), "{body}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

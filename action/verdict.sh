@@ -3,17 +3,23 @@
 # status. Results are untrusted text; `verdict merge` neutralises the fences.
 # Inputs: CLI RESULTS PR_NUMBER GH_TOKEN GITHUB_REPOSITORY, BROKER and
 # EXPECT_RUST, EXPECT_IMPORT, EXPECT_DOCS, EXPECT_TEST (space-separated names
-# of the results each kind must have) (optional).
+# of the results each kind must have) and EXPECT_SHARDS (I/N of each Rust
+# gate leg, which expects every package once per leg) (optional).
 set -euo pipefail
 
 # shellcheck source=action/labels.sh
 source "$(dirname "$0")/labels.sh"
 
 expect=()
+read -ra shards <<<"${EXPECT_SHARDS:-}"
 for kind in rust import docs test; do
   names=EXPECT_${kind^^}
   for name in ${!names:-}; do
-    expect+=(--expect "${name}:${kind}")
+    if [ "$kind" = rust ] && [ "${#shards[@]}" -gt 0 ]; then
+      for shard in "${shards[@]}"; do expect+=(--expect "${name}#${shard}:${kind}"); done
+    else
+      expect+=(--expect "${name}:${kind}")
+    fi
   done
 done
 accepted=()
