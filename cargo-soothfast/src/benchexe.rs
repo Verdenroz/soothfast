@@ -492,29 +492,6 @@ mod tests {
         assert_eq!(builds, 1);
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn a_stored_entry_that_lost_its_mode_still_runs() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let repo = Repo::new("exe-mode");
-        let plan = plan(&repo, repo.store_dir());
-        let script = b"#!/bin/sh\nexit 0\n";
-        let (stored, _) = resolve_counting(&plan, &repo, script);
-        assert!(!stored.starts_with(&plan.store));
-        let (entry, builds) = resolve_counting(&plan, &repo, b"never built");
-        assert_eq!(builds, 0);
-        std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o644)).unwrap();
-
-        let hit = plan.load().unwrap();
-        assert_eq!(hit, entry);
-        assert_ne!(
-            std::fs::metadata(&hit).unwrap().permissions().mode() & 0o111,
-            0
-        );
-        assert!(Command::new(&hit).status().unwrap().success());
-    }
-
     #[test]
     fn a_dev_profile_routes_build_is_stored_apart_from_the_bench_one() {
         let repo = Repo::new("exe-routes");

@@ -495,6 +495,26 @@ mod tests {
     }
 
     #[test]
+    fn the_env_in_the_key_does_not_depend_on_how_the_cli_was_started() {
+        let vars = |extra: &[(&str, &str)]| {
+            let all = [("RUSTFLAGS", "-O"), ("CARGO_INCREMENTAL", "0")]
+                .iter()
+                .chain(extra)
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>();
+            select_env(all.into_iter(), &crate::binstore::ENV_NAMES)
+        };
+        let direct = vars(&[]);
+        let under_cargo = vars(&[
+            ("RUSTUP_TOOLCHAIN", "nightly-x86_64-unknown-linux-gnu"),
+            ("CARGO", "/x/cargo"),
+            ("CARGO_HOME", "/h/.cargo"),
+        ]);
+        assert_eq!(direct, under_cargo);
+        assert_eq!(direct.len(), 2);
+    }
+
+    #[test]
     fn the_key_ignores_files_outside_the_packages() {
         let repo = Repo::new("outside");
         let before = key(&repo, "h");
