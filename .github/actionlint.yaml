@@ -1,0 +1,7 @@
+paths:
+  .github/workflows/**/*.yml:
+    ignore:
+      # Word splitting and ls ordering in these scripts are deliberate.
+      - 'shellcheck reported issue in this script: SC(2086|2012|2016):info:'
+      # A reusable workflow's own commit; actionlint's context table predates it.
+      - 'property "job_workflow_sha" is not defined'
