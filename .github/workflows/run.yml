@@ -35,11 +35,6 @@ on:
         required: false
         type: number
         default: 1
-      spec:
-        description: "Space-separated PKG or PKG:TARGET the caller's spec jobs run on; the build job prebuilds their routes executables and rustdoc"
-        required: false
-        type: string
-        default: ""
 
 permissions: {}
 
@@ -73,8 +68,8 @@ jobs:
       test_projects: ${{ steps.plan.outputs.test_projects }}
       test_all: ${{ steps.plan.outputs.test_all }}
       test_expect: ${{ steps.plan.outputs.test_expect }}
-      build: ${{ steps.plan.outputs.build }}
-      build_matrix: ${{ steps.plan.outputs.build_matrix }}
+      build_bench: ${{ steps.plan.outputs.build_bench }}
+      build_rustdoc: ${{ steps.plan.outputs.build_rustdoc }}
       shards: ${{ steps.plan.outputs.shards }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -130,11 +125,10 @@ jobs:
           JAVA: ${{ inputs.java }}
           NODE: ${{ inputs.node }}
           SHARD: ${{ inputs.shard }}
-          SPEC: ${{ inputs.spec }}
           SETTLED: ${{ runner.temp }}/settled
         run: |
           cargo soothfast plan --github --java "$JAVA" --node "$NODE" \
-            --shard "$SHARD" --spec "$SPEC" \
+            --shard "$SHARD" \
             --results "$SETTLED" \
             ${BASE_REF:+--base "origin/$BASE_REF"} ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
       - name: Upload the results of tests that need no job
@@ -144,22 +138,19 @@ jobs:
           path: ${{ runner.temp }}/settled
           if-no-files-found: ignore
 
-  # Compiles what the gate, the docs check and the caller's spec jobs read, once
-  # per lane, into the executable and rustdoc stores. Those jobs download the
-  # stores and find a hit for everything, so none of them compiles. The lanes
-  # run side by side on separate machines; tests and the other ecosystems'
-  # gates do not wait for them. Every lane sets up the toolchain and cache the
-  # reading job does, since the variables those export are part of the keys.
-  build:
-    name: Build (${{ matrix.lane }})
+  # Compiles what the gate and the docs check read into the executable and
+  # rustdoc stores, on separate machines, so the jobs that read them find a
+  # hit for everything and compile nothing. The gate waits for the bench build
+  # only and the docs check for the rustdoc build only; tests and the other
+  # ecosystems' gates wait for neither. Each sets up the toolchain and cache
+  # the reading job does, since the variables those export are part of the keys.
+  build-bench:
+    name: Build (bench)
     needs: plan
-    if: github.event_name != 'schedule' && needs.plan.outputs.build == 'true'
+    if: github.event_name != 'schedule' && needs.plan.outputs.build_bench == 'true'
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.build_matrix) }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -180,10 +171,10 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
-          toolchain: ${{ matrix.lane == 'rustdoc' && 'nightly' || 'stable' }}
+          toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: ${{ matrix.lane }}
+          key: bench
       - id: soothfast
         uses: ./.soothfast-action/action/install
       - uses: ./.soothfast-action
@@ -191,31 +182,66 @@ jobs:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
           changelog: "false"
-          prebuild: ${{ matrix.lane }}
-          prebuild-docs: ${{ needs.plan.outputs.docs_package }}
-          prebuild-spec: ${{ inputs.spec }}
-          bin-cache: ${{ matrix.lane != 'rustdoc' && 'true' || 'false' }}
-          rustdoc-cache: ${{ matrix.lane == 'rustdoc' && 'true' || 'false' }}
-          cache-suffix: ${{ matrix.lane }}
-      # Only what a reading job uses: the maps are text beside the extents
-      # they are read into, and hundreds of MB.
-      - name: Stage the stores
-        if: always()
-        run: |
-          store="$RUNNER_TEMP/store"
-          mkdir -p "$store"
-          for dir in bins rustdoc; do
-            if [ -d ".soothfast/$dir" ]; then cp -a ".soothfast/$dir" "$store/"; fi
-          done
-          if [ -d .soothfast/maps ]; then
-            mkdir -p "$store/maps"
-            find .soothfast/maps -name '*.extents' -exec cp -t "$store/maps" {} +
-          fi
+          prebuild: bench
+          prebuild-stage: ${{ runner.temp }}/store
+          bin-cache: "true"
       - name: Upload the stores
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-store-${{ matrix.lane }}
+          name: soothfast-store-bench
+          path: ${{ runner.temp }}/store
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 1
+          compression-level: 1
+
+  build-rustdoc:
+    name: Build (rustdoc)
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.build_rustdoc == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: rustdoc
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
+      - uses: ./.soothfast-action
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: "false"
+          prebuild: rustdoc
+          prebuild-docs: ${{ needs.plan.outputs.docs_package }}
+          prebuild-stage: ${{ runner.temp }}/store
+          rustdoc-cache: "true"
+      - name: Upload the stores
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-store-rustdoc
           path: ${{ runner.temp }}/store
           include-hidden-files: true
           if-no-files-found: ignore
@@ -411,8 +437,9 @@ jobs:
 
   gate-rust:
     name: Gate${{ matrix.shard != '' && format(' ({0})', matrix.shard) || '' }}
-    needs: [plan, build]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && github.event_name != 'schedule' && needs.plan.outputs.packages != '' }}
+    needs: [plan, build-bench]
+    # A push records every item in its first leg; the others would only set up.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && github.event_name != 'schedule' && needs.plan.outputs.packages != '' && (github.event_name == 'pull_request' || matrix.shard == '' || startsWith(matrix.shard, '1/')) }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     environment: soothfast-bot
     permissions:
@@ -421,8 +448,7 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.shards) }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -453,9 +479,8 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: soothfast-store-*
+          name: soothfast-store-bench
           path: .soothfast
-          merge-multiple: true
       - uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
@@ -473,7 +498,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-rust${{ matrix.shard != '' && format('-shard-{0}', strategy.job-index) || '' }}
+          name: soothfast-result-rust${{ matrix.shard != '' && format('-shard-{0}', matrix.slug) || '' }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
       # The docs job reads claims from this instead of measuring again. A
@@ -605,7 +630,7 @@ jobs:
 
   docs:
     name: Docs check
-    needs: [plan, build, gate-rust]
+    needs: [plan, build-rustdoc, gate-rust]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.plan.outputs.docs == 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
@@ -643,9 +668,8 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: soothfast-store-rustdoc
+          name: soothfast-store-rustdoc
           path: .soothfast
-          merge-multiple: true
       - name: Download the head measurement
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

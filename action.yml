@@ -185,21 +185,27 @@ inputs:
     default: ""
   prebuild:
     description: >-
-      `bench`, `routes` or `rustdoc` to run `cargo soothfast prebuild` for
-      that lane in place of the gate, so the stores hold what a later job
-      reads. The cache inputs restore and save them as for a gate; the lane
-      decides which of them it needs. Empty runs the gate.
+      Lanes (`bench`, `routes`, `rustdoc`, space-separated) to build into the
+      stores with `cargo soothfast prebuild` in place of the gate, so a later
+      job reads them. `prebuild-spec` implies `routes` and `rustdoc`, and
+      `prebuild-docs` implies `rustdoc`, so those two alone are enough. The
+      cache inputs restore and save the stores as for a gate. Empty, with
+      neither of the others set, runs the gate.
     required: false
     default: ""
   prebuild-docs:
-    description: Space-separated packages whose rustdoc JSON the `rustdoc` lane builds for `docs check`.
+    description: Space-separated packages whose rustdoc JSON `docs check` reads. Builds the `rustdoc` lane.
     required: false
     default: ""
   prebuild-spec:
     description: >-
-      Space-separated `PKG` or `PKG:TARGET` the `routes` lane builds the
-      route listing of, and the `rustdoc` lane documents when it generates a
-      spec.
+      Space-separated `PKG` or `PKG:TARGET` that `spec` commands run on.
+      Builds the `routes` lane, and the `rustdoc` lane for a package whose
+      spec is generated.
+    required: false
+    default: ""
+  prebuild-stage:
+    description: Directory to copy the entries the lanes built or found into, for a job to upload. Empty copies nothing.
     required: false
     default: ""
 
@@ -268,17 +274,38 @@ runs:
           exit 1
         fi
 
+    - name: Choose the build lanes
+      id: lanes
+      shell: bash
+      env:
+        PREBUILD: ${{ inputs.prebuild }}
+        DOCS: ${{ inputs.prebuild-docs }}
+        SPEC: ${{ inputs.prebuild-spec }}
+      run: |
+        lanes=$PREBUILD
+        [ -n "$SPEC" ] && lanes="$lanes routes rustdoc"
+        [ -n "$DOCS" ] && lanes="$lanes rustdoc"
+        read -ra all <<<"$lanes"
+        lanes=$(printf '%s\n' "${all[@]}" | sort -u | paste -sd' ')
+        {
+          echo "lanes=$lanes"
+          echo "active=$([ -n "$lanes" ] && echo true || echo false)"
+          case " $lanes " in *" bench "*) echo bench=true ;; *) echo bench=false ;; esac
+        } >>"$GITHUB_OUTPUT"
+
     - name: Prepare
       id: prepare
       shell: bash
       env:
-        GATE: ${{ inputs.gate }}
+        # Only the bench lane gates, so the others skip the package search,
+        # the history fetch and the callgrind install.
+        GATE: ${{ inputs.gate == 'true' && (steps.lanes.outputs.active == 'false' || steps.lanes.outputs.bench == 'true') }}
         REGEN: ${{ inputs.changelog == 'true' || inputs.spec != '' || inputs.regen-run != '' }}
         PACKAGES: ${{ inputs.packages }}
         RUSTDOC_TOOLCHAIN: ${{ inputs.rustdoc-toolchain }}
         LABELS: ${{ inputs.labels }}
         # Only the bench lane decides whether the merge-base is built, from the runs.
-        CACHE: ${{ inputs.cache == 'true' && (inputs.prebuild == '' || inputs.prebuild == 'bench') }}
+        CACHE: ${{ inputs.cache == 'true' && (steps.lanes.outputs.active == 'false' || steps.lanes.outputs.bench == 'true') }}
         SHARD: ${{ inputs.shard }}
         GH_TOKEN: ${{ inputs.token }}
       run: "$GITHUB_ACTION_PATH/action/prepare.sh"
@@ -449,11 +476,12 @@ runs:
       run: echo "listing=$("$GITHUB_ACTION_PATH/action/listing.sh" .soothfast/bins)" >>"$GITHUB_OUTPUT"
 
     - name: Build the stores
-      if: inputs.prebuild != ''
+      if: steps.lanes.outputs.active == 'true'
       shell: bash
       env:
         CLI: ${{ steps.resolve.outputs.bin }}
-        LANE: ${{ inputs.prebuild }}
+        LANES: ${{ steps.lanes.outputs.lanes }}
+        STAGE: ${{ inputs.prebuild-stage }}
         PACKAGES: ${{ steps.prepare.outputs.packages }}
         FEATURES: ${{ inputs.features }}
         BASE_REF: ${{ github.base_ref }}
@@ -464,7 +492,7 @@ runs:
       run: "$GITHUB_ACTION_PATH/action/prebuild.sh"
 
     - name: Gate against the base branch
-      if: github.event_name == 'pull_request' && inputs.gate == 'true' && inputs.prebuild == ''
+      if: github.event_name == 'pull_request' && inputs.gate == 'true' && steps.lanes.outputs.active == 'false'
       id: gate
       shell: bash
       env:
@@ -496,7 +524,7 @@ runs:
     - name: Record a reference run
       if: >-
         github.event_name == 'push' && steps.prepare.outputs.on_default_branch == 'true' && inputs.gate == 'true'
-        && steps.prepare.outputs.records == 'true' && inputs.prebuild == ''
+        && steps.prepare.outputs.records == 'true' && steps.lanes.outputs.active == 'false'
       shell: bash
       env:
         CLI: ${{ steps.resolve.outputs.bin }}
@@ -509,7 +537,7 @@ runs:
     # their own items, for a rerun of the same shard.
     - name: Save measured runs
       if: >-
-        always() && steps.prepare.outputs.cache_runs == 'true' && inputs.prebuild == ''
+        always() && steps.prepare.outputs.cache_runs == 'true' && steps.lanes.outputs.active == 'false'
         && (github.event_name == 'pull_request' || steps.prepare.outputs.records == 'true')
         && steps.runs.outputs.cache-matched-key != steps.save-key.outputs.key
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -557,7 +585,7 @@ runs:
       run: "$GITHUB_ACTION_PATH/action/sweep.sh"
 
     - name: Regenerate derived files
-      if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true' && inputs.prebuild == ''
+      if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true' && steps.lanes.outputs.active == 'false'
       id: regen
       shell: bash
       env:

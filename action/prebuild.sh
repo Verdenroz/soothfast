@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Build one lane of the stores a later job reads: the bench executables of the
+# Build lanes of the stores a later job reads: the bench executables of the
 # gated packages and of the merge-base, the routes executables of the spec
 # packages, or rustdoc JSON. The merge-base is the pull request's base, or the
 # parent of a default-branch push, as the gate compares them.
-# Inputs: CLI LANE PACKAGES BASE_REF EVENT ON_DEFAULT, and FEATURES, DOCS and
-# SPEC (space-separated packages) (optional).
+# Inputs: CLI LANES (space-separated) PACKAGES BASE_REF EVENT ON_DEFAULT, and
+# FEATURES, DOCS and SPEC (space-separated packages), STAGE (optional).
 set -euo pipefail
 
-args=(--only "$LANE")
+args=()
+read -ra chosen <<<"$LANES"
+for lane in "${chosen[@]}"; do args+=(--only "$lane"); done
+[ -n "${STAGE:-}" ] && args+=(--stage "$STAGE")
 read -ra packages <<<"${PACKAGES:-}"
 for pkg in "${packages[@]}"; do args+=(-p "$pkg"); done
 read -ra docs <<<"${DOCS:-}"
