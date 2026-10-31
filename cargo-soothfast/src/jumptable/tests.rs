@@ -638,6 +638,28 @@ fn a_sequence_that_could_be_a_jump_is_no_data_table() {
 }
 
 #[test]
+fn a_load_into_the_base_register_is_no_table_read() {
+    let load = "movslq (%rcx,%rax,4),%rcx";
+    let add = "add    %rdx,%rcx";
+    assert!(prove_in(&[LEA, load, add, "jmp    *%rcx", RET]).is_empty());
+    let proven = prove_data(&[LEA, load, add, RET]);
+    assert!(proven.pointers.is_empty() && proven.proofs.is_empty());
+}
+
+#[test]
+fn an_add_of_a_third_register_is_no_table_read() {
+    assert!(prove_in(&[LEA, LOAD, "add    %rdx,%rax", JMP, RET]).is_empty());
+    let proven = prove_data(&[LEA, LOAD, "add    %rdx,%rax", RET]);
+    assert!(proven.pointers.is_empty());
+}
+
+#[test]
+fn a_call_through_another_register_leaves_a_data_table_alone() {
+    let proven = prove_data(&[LEA, LOAD, ADD, "call   *%rdx", RET]);
+    assert_eq!(proven.pointers.len(), 1);
+}
+
+#[test]
 fn a_jump_table_and_a_name_table_through_one_register_are_both_proven() {
     let jump_then_names = [
         LEA,

@@ -32,8 +32,6 @@ pub(super) struct Symbol {
     pub(super) name: String,
     /// Code, by `nm`'s type letter (`T`, `t`, `W`, `w`).
     pub(super) func: bool,
-    /// Not visible to other objects, by `nm`'s lowercase type letter.
-    pub(super) local: bool,
 }
 
 /// One section of an `objdump -h` listing.
@@ -97,18 +95,41 @@ pub(super) fn parse_sections(listing: &str) -> Vec<Section> {
             code: h.flags.contains("CODE"),
             contents: h.flags.contains("CONTENTS"),
             tls: h.flags.contains("THREAD_LOCAL"),
-            writable: !h.flags.contains("READONLY") && !h.flags.contains("CODE") && !sealed(h.name),
+            writable: !h.flags.contains("READONLY") && !h.flags.contains("CODE"),
         })
         .collect()
 }
 
-/// Sections the loader makes read-only once it has applied relocations.
-fn sealed(name: &str) -> bool {
-    name.starts_with(".data.rel.ro")
-        || matches!(
-            name,
-            ".got" | ".dynamic" | ".init_array" | ".fini_array" | ".preinit_array"
-        )
+/// The start and size of the `PT_GNU_RELRO` segment in an `objdump -p`
+/// listing, which the loader makes read-only once it has relocated it.
+pub(super) fn relro_range(headers: &str) -> Option<(u64, u64)> {
+    let lines: Vec<&str> = headers.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with("RELRO"))?;
+    let field = |line: &str, key: &str| {
+        let mut words = line.split_whitespace().skip_while(|w| *w != key);
+        let value = words.nth(1)?;
+        u64::from_str_radix(value.strip_prefix("0x")?, 16).ok()
+    };
+    Some((
+        field(lines[at], "vaddr")?,
+        field(lines.get(at + 1)?, "memsz")?,
+    ))
+}
+
+/// `sections` with those wholly inside the `relro` range no longer writable.
+pub(super) fn seal(sections: Vec<Section>, relro: Option<(u64, u64)>) -> Vec<Section> {
+    let Some((start, size)) = relro else {
+        return sections;
+    };
+    sections
+        .into_iter()
+        .map(|s| Section {
+            writable: s.writable && !(s.vma >= start && s.vma + s.size <= start + size),
+            ..s
+        })
+        .collect()
 }
 
 /// The sections an address can fall in, ordered by address. Thread-local
@@ -134,8 +155,6 @@ pub(super) fn parse_symbols(listing: &str) -> Vec<Symbol> {
                 size,
                 name: name.to_string(),
                 func: matches!(kind, "T" | "t" | "W" | "w"),
-                local: kind.starts_with(|c: char| c.is_ascii_lowercase())
-                    && !matches!(kind, "u" | "v" | "w"),
             })
         })
         .collect();
@@ -240,6 +259,18 @@ pub(super) fn parse_relocs(listing: &str) -> Vec<Reloc> {
 mod tests {
     use super::*;
     use crate::codekey::fixture::{SECTIONS, loaded};
+
+    #[test]
+    fn the_relro_segment_is_read_from_the_program_headers() {
+        let headers = "\
+    LOAD off    0x0000000000000000 vaddr 0x0000000000000000 paddr 0x0000000000000000 align 2**12
+         filesz 0x0000000000000578 memsz 0x0000000000000578 flags r--
+   RELRO off    0x0000000000000730 vaddr 0x0000000000002730 paddr 0x0000000000002730 align 2**0
+         filesz 0x0000000000000198 memsz 0x00000000000008d0 flags r--
+";
+        assert_eq!(relro_range(headers), Some((0x2730, 0x8d0)));
+        assert_eq!(relro_range("    LOAD off 0x0 vaddr 0x0\n"), None);
+    }
 
     #[test]
     fn a_rust_data_symbol_without_a_size_is_zero_sized() {

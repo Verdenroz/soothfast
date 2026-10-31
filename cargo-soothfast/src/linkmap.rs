@@ -172,7 +172,7 @@ pub fn extents(cmd: &str, common: &CommonArgs, bin: &Bin) -> Vec<Extent> {
         Ok(extents) => extents,
         Err(why) => {
             println!(
-                "{cmd}: no link map for {} ({why}); unnamed constants hash as whole sections",
+                "{cmd}: no link map for {} ({why}); unnamed constants hash as whole sections, and code that reads a duplicate-named local static or writable data with no symbol is left unhashed",
                 bin.exe.display()
             );
             Vec::new()

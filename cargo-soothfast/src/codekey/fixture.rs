@@ -5,7 +5,7 @@ use std::io::Cursor;
 
 use super::disasm::hash_functions;
 use super::elf::{
-    Marker, Reloc, Section, Symbol, addressable, parse_relocs, parse_sections, parse_symbols,
+    Marker, Reloc, Section, Symbol, addressable, parse_relocs, parse_sections, parse_symbols, seal,
 };
 use super::resolve::Resolver;
 use crate::linkmap::Extent;
@@ -124,6 +124,13 @@ impl Fixture {
     pub fn relocs(self, listing: &str) -> Fixture {
         Fixture {
             relocs: parse_relocs(listing),
+            ..self
+        }
+    }
+
+    pub fn relro(self, start: u64, size: u64) -> Fixture {
+        Fixture {
+            sections: seal(self.sections, Some((start, size))),
             ..self
         }
     }

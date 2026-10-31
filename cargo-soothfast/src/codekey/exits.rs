@@ -101,7 +101,6 @@ mod tests {
             size,
             name: name.to_string(),
             func,
-            local: false,
         }
     }
 

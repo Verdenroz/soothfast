@@ -79,9 +79,7 @@ impl Resolver<'_> {
     /// For each candidate table of offsets to data that decodes, the
     /// addresses it names, each of which resolves to something to hash.
     pub(super) fn pointer_targets(&self, tables: &[u64]) -> HashMap<u64, Vec<u64>> {
-        self.targets_of(tables, |target| {
-            self.names_object(target) && self.described(target).is_some()
-        })
+        self.targets_of(tables, |target| self.described(target).is_some())
     }
 
     fn targets_of(&self, tables: &[u64], lands: impl Fn(u64) -> bool) -> HashMap<u64, Vec<u64>> {

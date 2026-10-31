@@ -1,12 +1,12 @@
 //! Addresses turned into names and content that do not move with the layout.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use soothfast_registry::fnv1a;
 
 use super::elf::{Marker, Reloc, Section, Symbol, Target};
-use super::{is_rust_symbol, strip_llvm};
+use super::strip_llvm;
 use crate::jumptable;
 use crate::linkmap::Extent;
 
@@ -51,6 +51,8 @@ pub(super) struct Resolver<'a> {
     pub(super) image: &'a [u8],
     roots: RefCell<HashMap<Node, Option<u64>>>,
     described: RefCell<HashMap<u64, Option<String>>>,
+    /// Names that more than one symbol of the binary has.
+    duplicated: HashSet<String>,
 }
 
 impl<'a> Resolver<'a> {
@@ -62,7 +64,15 @@ impl<'a> Resolver<'a> {
         inputs: &'a [Extent],
         image: &'a [u8],
     ) -> Resolver<'a> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for s in symbols {
+            *counts.entry(strip_llvm(&s.name).into_owned()).or_default() += 1;
+        }
         Resolver {
+            duplicated: counts
+                .into_iter()
+                .filter_map(|(name, n)| (n > 1).then_some(name))
+                .collect(),
             sections,
             symbols,
             relocs,
@@ -105,7 +115,7 @@ impl<'a> Resolver<'a> {
 
     /// `hint` is the symbol objdump printed next to the address, used only
     /// for code that has no sized symbol (PLT stubs) and GOT slots.
-    pub(super) fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
+    fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
         let section = self.section_at(addr)?;
         let code = self.sections[section].code;
         if let Some(i) = self.symbol_at(addr)
@@ -279,9 +289,9 @@ impl<'a> Resolver<'a> {
     /// What tells `node` from another object with the same bytes, when
     /// reading either gives different results: writable data is a place, so
     /// two zeroed statics are two objects. Read-only data is its bytes. A
-    /// local symbol shares its name with others in other objects, so it also
-    /// takes its input section's name, unless a compiler hash in the name
-    /// already makes it unique.
+    /// symbol is its own name unless another symbol of the binary has it too
+    /// (statics of two files), when the input section it is defined in tells
+    /// them apart.
     fn identity(&self, node: Node) -> Option<String> {
         let (section, _, size) = self.extent(node)?;
         if !self.sections[section].writable || size == 0 {
@@ -291,7 +301,7 @@ impl<'a> Resolver<'a> {
             Node::Symbol(i) => {
                 let s = &self.symbols[i];
                 let name = strip_llvm(&s.name);
-                if s.local && !is_rust_symbol(&name) && !carries_hash(&name) {
+                if self.duplicated.contains(name.as_ref()) {
                     format!("{name}@{}", self.inputs[self.input_at(s.addr)?].name)
                 } else {
                     name.into_owned()
@@ -303,24 +313,23 @@ impl<'a> Resolver<'a> {
         (!name.is_empty()).then(|| format!("@{name}"))
     }
 
-    /// Whether `addr` lands on one object: code, a symbol, a link-map input
-    /// or a pool entry, and not only on the section around it.
-    pub(super) fn names_object(&self, addr: u64) -> bool {
-        matches!(
-            self.place(addr, None),
-            Some(
-                Place::Code(_)
-                    | Place::Data(Node::Symbol(_) | Node::Input(_) | Node::Entry(..), ..)
-            )
-        )
-    }
-
-    /// What a table word naming `addr` hashes as, worked out once.
+    /// What a table word naming `addr` hashes as, worked out once: `None`
+    /// unless it lands on one object (code, a symbol, a link-map input or a
+    /// pool entry) and not only on the section around it.
     pub(super) fn described(&self, addr: u64) -> Option<String> {
         if let Some(text) = self.described.borrow().get(&addr) {
             return text.clone();
         }
-        let text = self.describe(addr, None);
+        let text = self
+            .place(addr, None)
+            .filter(|p| {
+                matches!(
+                    p,
+                    Place::Code(_)
+                        | Place::Data(Node::Symbol(_) | Node::Input(_) | Node::Entry(..), ..)
+                )
+            })
+            .and_then(|p| self.show(p));
         self.described.borrow_mut().insert(addr, text.clone());
         text
     }
@@ -341,8 +350,12 @@ impl<'a> Resolver<'a> {
         self.describe(addr, hint)
     }
 
-    pub(super) fn describe(&self, addr: u64, hint: Option<&str>) -> Option<String> {
-        Some(match self.place(addr, hint)? {
+    fn describe(&self, addr: u64, hint: Option<&str>) -> Option<String> {
+        self.show(self.place(addr, hint)?)
+    }
+
+    fn show(&self, place: Place) -> Option<String> {
+        Some(match place {
             Place::Code(name) => name,
             Place::Bounded(name, node) => format!("{name}:{:016x}", self.root_hash(node)?),
             Place::Data(node, off, slot) => {
@@ -383,13 +396,6 @@ impl<'a> Resolver<'a> {
         }
         Some(body.to_string())
     }
-}
-
-/// Whether `name` holds a run of 16 hex digits, as the compiler's hashes are.
-fn carries_hash(name: &str) -> bool {
-    name.as_bytes()
-        .split(|b| !b.is_ascii_hexdigit())
-        .any(|run| run.len() >= 16)
 }
 
 /// A jump or a call, whose direct target is an address to name.
@@ -679,7 +685,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
   2 linkme_x      00000008  0000000000002008  0000000000002008  00002008  2**3
                   CONTENTS, ALLOC, LOAD, DATA
   3 .after        00000020  0000000000002010  0000000000002010  00002010  2**3
-                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+                  CONTENTS, ALLOC, LOAD, DATA
 ";
         let dis = "\
 0000000000001000 <_ZN3foo3bar17h1E>:
@@ -691,6 +697,7 @@ Idx Name          Size      VMA               LMA               File off  Algn
                 .sections(sections)
                 .symbols(FN_SYMBOLS)
                 .relocs("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x0000000000002010")
+                .relro(0x2000, 8)
                 .wanted(&[BAR])
                 .markers(markers)
         };
@@ -707,7 +714,55 @@ Idx Name          Size      VMA               LMA               File off  Algn
         assert_eq!(hash(&stops, 0x2018, 1), hash(&stops, 0x2018, 2));
         assert_ne!(hash(&stops, 0x2009, 1), hash(&stops, 0x2009, 2));
         let none = fixture(HashMap::new());
-        assert_ne!(hash(&none, 0x2018, 1), hash(&none, 0x2018, 2));
+        assert_eq!(hash(&none, 0x2018, 1), None);
+    }
+
+    #[test]
+    fn a_slot_pointing_at_writable_data_with_no_symbol_or_map_leaves_the_function_unhashed() {
+        let slot = |symbols: &str| {
+            let dis = "\
+0000000000001000 <_ZN3foo3bar17h1E>:
+    1000:\tlea    0x1000(%rip),%rax        # 2000 <slot>
+    1007:\tret
+";
+            let fixture = Fixture::default()
+                .sections(&object_sections(WRITABLE))
+                .symbols(symbols)
+                .relocs("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x0000000000003004")
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&vec![0; 0x4000], dis))
+        };
+        let slot_only = "\
+0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
+0000000000002000 0000000000000008 r slot
+";
+        assert_eq!(slot(slot_only), None);
+        let named = format!("{slot_only}0000000000003000 0000000000000010 D object\n");
+        assert!(slot(&named).is_some());
+    }
+
+    #[test]
+    fn a_relro_section_is_read_only_and_one_outside_it_is_not() {
+        let hash = |relro: Option<(u64, u64)>| {
+            let dis = "\
+0000000000001000 <_ZN3foo3bar17h1E>:
+    1000:\tlea    0x1000(%rip),%rax        # 3004 <inside>
+    1007:\tret
+";
+            let fixture = Fixture::default()
+                .sections(&object_sections(WRITABLE))
+                .symbols(FN_SYMBOLS)
+                .wanted(&[BAR]);
+            let fixture = match relro {
+                Some((start, size)) => fixture.relro(start, size),
+                None => fixture,
+            };
+            bar(&fixture.hashes(&vec![0; 0x4000], dis))
+        };
+        assert_eq!(hash(None), None);
+        assert_eq!(hash(Some((0x3000, 0x10))), hash(Some((0x2000, 0x2000))));
+        assert!(hash(Some((0x3000, 0x10))).is_some());
+        assert_eq!(hash(Some((0x3000, 0x8))), None);
     }
 
     const LAZY_SECTIONS: &str = "\
@@ -806,11 +861,11 @@ Idx Name          Size      VMA               LMA               File off  Algn
     }
 
     #[test]
-    fn a_local_symbol_with_a_compiler_hash_in_its_name_needs_no_input() {
+    fn a_local_symbol_with_a_name_of_its_own_needs_no_input() {
         let symbols = "\
 0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
-0000000000003000 0000000000000008 d anon.0123456789abcdef0123456789abcdef.0
-0000000000003008 0000000000000008 d anon.0123456789abcdef0123456789abcdef.1
+0000000000003000 0000000000000008 d completed.0
+0000000000003008 0000000000000008 d solo
 ";
         let takes = |object: &str| {
             let dis = format!(

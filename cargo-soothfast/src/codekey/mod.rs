@@ -30,7 +30,10 @@ use soothfast_registry::fnv1a;
 use crate::linkmap::Extent;
 use disasm::hash_functions;
 pub(crate) use elf::section_headers;
-use elf::{addressable, parse_markers, parse_relocs, parse_sections, parse_symbols, tls_digest};
+use elf::{
+    addressable, parse_markers, parse_relocs, parse_sections, parse_symbols, relro_range, seal,
+    tls_digest,
+};
 use resolve::Resolver;
 
 /// Stands for the bench binary in a stored function set, so two builds at
@@ -155,7 +158,8 @@ impl Binary {
             return None;
         }
         let tls = tls_digest(&sections, &image)?;
-        let sections = addressable(sections);
+        let relro = command_text("objdump", &["-p"], bin).and_then(|text| relro_range(&text));
+        let sections = addressable(seal(sections, relro));
         let markers = parse_markers(&listing, &sections);
         let resolver = Resolver::new(&sections, &symbols, &relocs, &markers, inputs, &image);
         let mut child = Command::new("objdump")

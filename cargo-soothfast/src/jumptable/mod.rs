@@ -442,7 +442,7 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
         let (Some(base), Some(word)) = (base, word) else {
             continue;
         };
-        if !matches!(ins.mnemonic, "movslq" | "movsxd") {
+        if !matches!(ins.mnemonic, "movslq" | "movsxd") || word == base {
             continue;
         }
         let Some((end, pointer)) = read_end(&parsed[load + 1..], &base, &word) else {
@@ -479,10 +479,10 @@ fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool
     for (i, (_, ins)) in after.iter().enumerate() {
         let Some((add, total, disturbed)) = &mut sum else {
             let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
-            let adds = ins.mnemonic == "add"
-                && regs.len() == 2
-                && regs.iter().flatten().any(|f| f == base)
-                && regs.iter().flatten().any(|f| f == word);
+            let pair = |a: &str, b: &str| {
+                regs.len() == 2 && regs[0].as_deref() == Some(a) && regs[1].as_deref() == Some(b)
+            };
+            let adds = ins.mnemonic == "add" && (pair(base, word) || pair(word, base));
             match regs.get(1).cloned().flatten() {
                 Some(total) if adds => sum = Some((i, total, false)),
                 _ if ends_block(ins) || disturbs(ins, &[base, word]) => return None,
@@ -500,7 +500,7 @@ fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool
         if through && !*disturbed && i < WINDOW {
             return Some((i, false));
         }
-        if through_loaded_register(ins) {
+        if ins.mnemonic == "jmp" && through_loaded_register(ins) {
             return None;
         }
         if ends_block(ins) {

@@ -299,7 +299,7 @@ map is never read for another binary. lld, mold and GNU ld maps are read. A
 map that cannot be built or read is a miss, not a guess:
 
 ```console
-gate: no link map for <binary> (unrecognized map format); unnamed constants hash as whole sections
+gate: no link map for <binary> (unrecognized map format); unnamed constants hash as whole sections, and code that reads a duplicate-named local static or writable data with no symbol is left unhashed
 ```
 
 A reference outside every input section falls back to the whole output
@@ -315,16 +315,17 @@ merges whole entries. String pools (`.rodata.str*`) stay one object.
 A writable object (`.data`, `.bss`) is told from another by its symbol name,
 or by the link map's object and section for one with no symbol, as well as
 by its bytes: two zeroed statics hold the same bytes, and code that reads
-one is not code that reads the other. A local symbol (C `static`, a promoted
-local) also takes its input section's name, since another object may use the
-same name; a Rust symbol, or any name with a compiler hash in it, is
-already unique. Read-only data, and data
-the loader seals after relocation (`.data.rel.ro`), is keyed by its bytes
-alone. A writable object that has neither a symbol nor a named input
-section, or a local symbol with no link map, leaves the function unhashed.
-The object part of an input section's name follows the compiler's code
-generation units, which can move on an unrelated edit. That costs a miss and
-never a wrong hit, which is why the symbol name is used whenever there is one.
+one is not code that reads the other. A symbol whose name no other symbol of
+the binary has is its own identity. Two that share a name (C `static`s of
+the same name in two files) are told apart by the input section each is
+defined in. Read-only data, and data the loader seals after relocation
+(the `PT_GNU_RELRO` range, read from the program headers), is keyed by its
+bytes alone. Without a link map, a function that reads a duplicate-named
+local static, or writable data with no symbol (`__dso_handle` and
+`__TMC_END__` are listed without a size), is left unhashed. The object part
+of an input section's name follows the compiler's code generation units,
+which can move on an unrelated edit. That costs a miss and never a wrong
+hit, which is why the symbol name is used whenever it is unique.
 
 A jump table stores code offsets as 32-bit integers, so its bytes change
 whenever code moves. Where the instructions prove how a table is read, it is
