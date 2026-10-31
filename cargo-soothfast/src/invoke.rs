@@ -362,7 +362,12 @@ fn debug_verbose_rebuild(common: &CommonArgs, dir: Option<&Path>, td: &Path, bui
         .iter()
         .position(|l| l.contains("resolving crate `soothfast`"))
         .unwrap_or(lines.len());
-    for line in lines.iter().skip(start).take(80) {
+    for line in lines
+        .iter()
+        .skip(start)
+        .filter(|l| !l.contains("loaded previously") && !l.contains("resolving crate `"))
+        .take(400)
+    {
         eprintln!("gate: seed debug rustc {line}");
     }
 }
