@@ -160,7 +160,17 @@ second round re-measures only the timing-sensitive backends, and the
 per-metric minimum across a side's rounds is its comparison value. When the
 two sides' bench binaries have byte-identical loaded sections, code and
 data alike, no measurable change is possible and the gate short-circuits to a
-single cheap pass whose assertions still run. This is
+single pass whose assertions still run. Under callgrind that pass plans the
+one binary per item: stored items are spliced in with their claims, only the
+rest are measured, and what is measured is stored along with the run. The
+first identical run, such as the first after an upgrade, therefore costs one
+callgrind pass over one side's items. A repeat finds every item stored and
+measures nothing, and the next push that changes code measures only what it
+changed. The pass carries the gating counters, so <code>--save-baseline</code> saves it.
+With <code>--no-reuse-base</code>, <code>--no-item-cache</code>, or a backend other than callgrind
+the gate takes the cheap walltime pass instead, which stores nothing and is
+not saved as a baseline. Under <code>SOOTHFAST_RECORD=1</code> that fallback keeps the
+counters and stores its run. This is
 what <code>make gate</code> runs against <code>origin/master</code> for
 every crate in <code>BENCH_CRATES</code>, and it is why merge-base gating has no
 baseline file that can go stale in version control.</p>
@@ -311,7 +321,9 @@ was not restored) and <code>binary unreadable</code>.</p>
 <code>SOOTHFAST_EXPLAIN=pkg::item</code> (or <code>all</code>) on the gate. For each such item it
 lists the functions of its newest stored entry that hash differently in
 HEAD's and the merge-base's binaries, and the thread-local image when that
-differs.</p>
+differs.
+When both sides are one binary (identical bench binaries), it lists instead
+the functions of the newest entry that binary cannot hash.</p>
 <p>The whole-run keys above are tried first. Per-item reuse applies on the full
 measurement path and when <code>measure</code> finds no run stored for its binary. It
 is a miss, never a guess, whenever anything cannot be resolved. An entry is
@@ -631,9 +643,10 @@ regression (lock contention, syscalls) past that ceiling still does.</p>
 exactly as <code>measure --save-baseline</code> would, so a deploy pipeline that needs
 both a gate verdict and a fresh baseline pays for one measurement instead of
 two. A failing run is never saved — the baseline would ratify its own
-regression — and the identical-binaries short circuit skips the save too:
-its single cheap pass collects no gating counters, and since the code did
-not change, the previously saved baseline is still the truth.</p>
+regression. The identical-binaries short circuit saves it whenever its pass
+carried the gating counters: the per-item callgrind pass, or the fallback
+under <code>SOOTHFAST_RECORD=1</code>. The cheap walltime pass collects none, so it
+skips the save and the previously saved baseline stays.</p>
 <h2 id="deps-advisory-not-a-different-check"><code>--deps</code>: advisory, not a different check<a class="anchor" href="#deps-advisory-not-a-different-check" aria-label="Link to this section">#</a></h2>
 <p><code>--deps</code> does not change what gets gated. It adds one warning: if any
 measured item's source fingerprint changed relative to the reference,
