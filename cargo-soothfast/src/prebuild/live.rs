@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use super::select::{Item, Side, State};
 use crate::invoke::{self, Build, CommonArgs, HostEnv, Shard, Visibility};
 use crate::runcache::Runs;
-use crate::{benchexe, buildstamp, spec_config, spec_gen};
+use crate::{benchexe, buildstamp, spec_config, spec_gen, workspace};
 
 pub(super) struct Tree {
     pub(super) wt: PathBuf,
@@ -175,5 +175,9 @@ impl State for Live<'_> {
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>> {
         let cfg = spec_config::generating(pkg)?;
         Some(spec_gen::aux_crates(pkg, None, &cfg))
+    }
+
+    fn has_library(&self, pkg: &str) -> bool {
+        workspace::has_library(pkg, None).unwrap_or(true)
     }
 }

@@ -89,7 +89,7 @@ impl fmt::Display for Item {
 pub(super) enum Action {
     Build,
     Stored,
-    /// Nothing is needed: the gate would not build it.
+    /// Nothing is needed: its consumer would not build it.
     Covered,
 }
 
@@ -133,6 +133,9 @@ pub(super) trait State {
     /// The workspace crates to document with `pkg`, or `None` when none of
     /// its specs is generated from the code.
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>>;
+    /// Whether `pkg` has the library target the rustdoc of every consumer
+    /// documents.
+    fn has_library(&self, pkg: &str) -> bool;
 }
 
 pub(super) fn step(item: Item, state: &impl State) -> Step {
@@ -200,7 +203,16 @@ pub(super) fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
             }
         }
     }
-    unique.into_iter().map(|item| step(item, state)).collect()
+    unique
+        .into_iter()
+        .map(|item| match item {
+            Item::Rustdoc { ref pkg, .. } if !state.has_library(pkg) => Step {
+                item,
+                action: Action::Covered,
+            },
+            item => step(item, state),
+        })
+        .collect()
 }
 
 /// The steps for the merge-base's tree. A package whose merge-base run is

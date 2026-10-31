@@ -136,7 +136,12 @@ pub(super) fn execute(steps: &[Step], live: &Live) -> Vec<Outcome> {
         .iter()
         .map(|s| {
             if s.action == Action::Covered {
-                live.stage_reference(s.item.pkg());
+                match &s.item {
+                    Item::Rustdoc { pkg, .. } => {
+                        println!("prebuild: {pkg} has no library target for rustdoc to document");
+                    }
+                    item => live.stage_reference(item.pkg()),
+                }
                 return Outcome::Covered;
             }
             let wants_build = s.action == Action::Build || side_of(s).is_some();

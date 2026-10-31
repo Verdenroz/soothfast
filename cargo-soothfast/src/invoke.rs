@@ -1262,9 +1262,13 @@ pub fn rustdoc_json_in(
         built = build(None)?;
     }
     let failed = |built: &Built| {
+        let hint = if lacks_toolchain(&built.stderr) {
+            format!(" (is the {toolchain} toolchain installed?)")
+        } else {
+            String::new()
+        };
         io::Error::other(format!(
-            "cargo +{toolchain} rustdoc failed with {} \
-             (is the {toolchain} toolchain installed?)",
+            "cargo +{toolchain} rustdoc failed with {}{hint}",
             built.status
         ))
     };
@@ -1341,6 +1345,15 @@ fn rejects_tracking_flags(stderr: &str) -> bool {
     e.contains("invalid message format")
         || (e.contains("emit")
             && (e.contains("unrecognized option") || e.contains("unexpected argument")))
+}
+
+/// Whether a `cargo +TOOLCHAIN` failure says the toolchain itself is absent,
+/// from rustup or from a `cargo` that is no rustup proxy.
+fn lacks_toolchain(stderr: &str) -> bool {
+    let e = stderr.to_lowercase();
+    (e.contains("toolchain") && (e.contains("is not installed") || e.contains("not installable")))
+        || e.contains("no release found")
+        || e.contains("no such command: `+")
 }
 
 struct Built {
@@ -2345,6 +2358,21 @@ optional = true
         let failed = "error[E0425]: cannot find value `x` in this scope\n\
                       Caused by: process didn't exit successfully: `rustdoc --emit=dep-info=x.d`";
         assert!(!super::rejects_tracking_flags(failed));
+    }
+
+    #[test]
+    fn only_a_missing_toolchain_is_blamed_on_the_toolchain() {
+        let missing = [
+            "error: toolchain 'nightly-2026-08-07-x86_64-unknown-linux-gnu' is not installed",
+            "error: no release found for 'nightly-1999-01-01'",
+            "error: no such command: `+nightly-2026-08-07`",
+        ];
+        for stderr in missing {
+            assert!(super::lacks_toolchain(stderr), "{stderr}");
+        }
+        assert!(!super::lacks_toolchain(
+            "error: no library targets found in package `tool`"
+        ));
     }
 
     #[test]

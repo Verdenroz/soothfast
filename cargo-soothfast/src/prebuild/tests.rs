@@ -12,6 +12,7 @@ struct Fake {
     stored: BTreeSet<Item>,
     references: BTreeSet<String>,
     generated: BTreeMap<String, Vec<String>>,
+    binaries: BTreeSet<String>,
 }
 
 impl State for Fake {
@@ -26,6 +27,56 @@ impl State for Fake {
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>> {
         self.generated.get(pkg).cloned()
     }
+
+    fn has_library(&self, pkg: &str) -> bool {
+        !self.binaries.contains(pkg)
+    }
+}
+
+/// A cargo workspace on disk, with the store lookups recorded.
+struct OnDisk {
+    dir: std::path::PathBuf,
+    looked_up: std::cell::RefCell<Vec<Item>>,
+}
+
+impl State for OnDisk {
+    fn stored(&self, item: &Item) -> bool {
+        self.looked_up.borrow_mut().push(item.clone());
+        false
+    }
+
+    fn reference_stored(&self, _: &str) -> bool {
+        false
+    }
+
+    fn generated_from(&self, _: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    fn has_library(&self, pkg: &str) -> bool {
+        crate::workspace::has_library(pkg, Some(&self.dir)).unwrap()
+    }
+}
+
+fn workspace_with_a_binary_only_member() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("soothfast-prebuild-bin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let member = |name: &str, file: &str, body: &str| {
+        let src = dir.join(name).join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let manifest =
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
+        std::fs::write(dir.join(name).join("Cargo.toml"), manifest).unwrap();
+        std::fs::write(src.join(file), body).unwrap();
+    };
+    member("core", "lib.rs", "pub fn f() {}\n");
+    member("tool", "main.rs", "fn main() {}\n");
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[workspace]\nresolver = \"2\"\nmembers = [\"core\", \"tool\"]\n",
+    )
+    .unwrap();
+    dir
 }
 
 fn bench(pkg: &str, side: Side) -> Item {
@@ -389,4 +440,49 @@ fn no_lane_named_means_every_lane() {
     assert_eq!(w.lanes.len(), 3);
     assert!(parse(&argv(&["--only", "everything"])).is_err());
     assert!(parse(&argv(&["--nope"])).is_err());
+}
+
+#[test]
+fn a_docs_package_with_only_a_binary_is_skipped_and_never_keyed() {
+    let state = OnDisk {
+        dir: workspace_with_a_binary_only_member(),
+        looked_up: Default::default(),
+    };
+    let wanted = Wanted {
+        lanes: BTreeSet::from([Lane::Rustdoc]),
+        docs: vec!["core".into(), "tool".into()],
+        spec: Vec::new(),
+        ..wanted()
+    };
+    let steps = select(&wanted, &state);
+    let _ = std::fs::remove_dir_all(&state.dir);
+    assert_eq!(
+        actions(&steps),
+        [
+            (&docs("core", false), &Action::Build),
+            (&docs("tool", false), &Action::Covered),
+        ]
+    );
+    assert_eq!(*state.looked_up.borrow(), [docs("core", false)]);
+}
+
+#[test]
+fn a_spec_package_with_only_a_binary_documents_its_crates_alone() {
+    let fake = Fake {
+        generated: BTreeMap::from([("server".to_string(), vec!["core".to_string()])]),
+        binaries: BTreeSet::from(["server".to_string()]),
+        ..Fake::default()
+    };
+    let wanted = Wanted {
+        lanes: BTreeSet::from([Lane::Rustdoc]),
+        docs: Vec::new(),
+        ..wanted()
+    };
+    assert_eq!(
+        actions(&select(&wanted, &fake)),
+        [
+            (&docs("server", true), &Action::Covered),
+            (&aux_docs("core"), &Action::Build),
+        ]
+    );
 }
