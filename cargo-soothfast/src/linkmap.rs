@@ -38,12 +38,25 @@ pub struct Extent {
 }
 
 fn named(path: &str, section: &str, root: &str) -> String {
-    let path = path.trim();
+    let path = path
+        .trim()
+        .split('/')
+        .filter(|part| !is_rustc_temp(part))
+        .collect::<Vec<_>>()
+        .join("/");
     let path = match path.strip_prefix(root) {
         Some(below) if !root.is_empty() => below.trim_start_matches('/'),
-        _ => path,
+        _ => &path,
     };
     format!("{path}:{section}")
+}
+
+/// The directory rustc copies the libraries into to link: `rustc` and six
+/// random characters. It names no object.
+fn is_rustc_temp(part: &str) -> bool {
+    part.strip_prefix("rustc").is_some_and(|random| {
+        random.len() == 6 && random.bytes().all(|b| b.is_ascii_alphanumeric())
+    })
 }
 
 /// `line` after its first `columns` whitespace-separated fields.
@@ -325,6 +338,21 @@ Linker script and memory map
             .collect();
         assert!(names.contains(&"deps/bench-1.o:.rodata..Lanon.1.0".to_string()));
         assert!(names.contains(&"/w path/deps/bench-1.o:.rodata..Lanon.1.1".to_string()));
+    }
+
+    #[test]
+    fn the_linkers_temporary_directory_is_not_part_of_an_objects_name() {
+        let map = |temp: &str| {
+            format!(
+                "             VMA              LMA     Size Align Out     In      Symbol\n            1000             1000        4     1         /w/t/release/deps/{temp}/libfoo.rlib(bar.o):(.bss.x)\n"
+            )
+        };
+        let name = |temp: &str| parse(&map(temp), "/w/t").expect("parsed")[0].name.clone();
+        assert_eq!(name("rustcAbC123"), name("rustcXyZ789"));
+        assert_eq!(
+            name("rustcAbC123"),
+            "release/deps/libfoo.rlib(bar.o):.bss.x"
+        );
     }
 
     #[test]
