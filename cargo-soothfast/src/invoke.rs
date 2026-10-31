@@ -336,42 +336,6 @@ fn report_base_failure(stderr: &str, target_dir: &Path) {
     crate::seed::report(target_dir);
 }
 
-/// Under `SOOTHFAST_DEBUG_SEED=1`, rebuild the failed bench verbosely and
-/// print the rustc lines and cargo's fingerprint decisions that name soothfast.
-fn debug_verbose_rebuild(common: &CommonArgs, dir: Option<&Path>, td: &Path, build: Build) {
-    if std::env::var_os("SOOTHFAST_DEBUG_SEED").is_none_or(|v| v != "1") {
-        return;
-    }
-    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-    let Ok(mut cmd) = bench_build_command(common, dir, Some(td), build, &pkgs) else {
-        return;
-    };
-    cmd.args(["--no-run", "-v"]);
-    cmd.env("CARGO_LOG", "cargo::core::compiler::fingerprint=info");
-    cmd.env("CARGO_TERM_COLOR", "never");
-    cmd.env("RUSTC_LOG", "rustc_metadata=info");
-    let Ok(out) = cmd.output() else { return };
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let lines: Vec<&str> = stderr.lines().collect();
-    for line in lines.iter().filter(|l| !l.contains("rustc_metadata")) {
-        if line.contains("soothfast") || line.contains("error") {
-            eprintln!("gate: seed debug cargo {line}");
-        }
-    }
-    let start = lines
-        .iter()
-        .position(|l| l.contains("resolving crate `soothfast`"))
-        .unwrap_or(lines.len());
-    for line in lines
-        .iter()
-        .skip(start)
-        .filter(|l| !l.contains("loaded previously") && !l.contains("resolving crate `"))
-        .take(400)
-    {
-        eprintln!("gate: seed debug rustc {line}");
-    }
-}
-
 fn run_records(
     common: &CommonArgs,
     extra: &[&str],
@@ -405,7 +369,6 @@ fn run_records(
         let stderr = String::from_utf8_lossy(&out.stderr);
         if let (Some(_), Some(td)) = (dir, target_dir) {
             report_base_failure(&stderr, td);
-            debug_verbose_rebuild(common, dir, td, build);
         }
         let reason = stderr
             .lines()
