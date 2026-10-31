@@ -349,11 +349,21 @@ fn debug_verbose_rebuild(common: &CommonArgs, dir: Option<&Path>, td: &Path, bui
     cmd.args(["--no-run", "-v"]);
     cmd.env("CARGO_LOG", "cargo::core::compiler::fingerprint=info");
     cmd.env("CARGO_TERM_COLOR", "never");
+    cmd.env("RUSTC_LOG", "rustc_metadata=info");
     let Ok(out) = cmd.output() else { return };
-    for line in String::from_utf8_lossy(&out.stderr).lines() {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    for line in lines.iter().filter(|l| !l.contains("rustc_metadata")) {
         if line.contains("soothfast") || line.contains("error") {
             eprintln!("gate: seed debug cargo {line}");
         }
+    }
+    let start = lines
+        .iter()
+        .position(|l| l.contains("resolving crate `soothfast`"))
+        .unwrap_or(lines.len());
+    for line in lines.iter().skip(start).take(80) {
+        eprintln!("gate: seed debug rustc {line}");
     }
 }
 
