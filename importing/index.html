@@ -319,7 +319,8 @@ the cargo workspace. <code>[runner] labels</code> is a list of runner labels (no
 means <code>ubuntu-latest</code>), and <code>ci = false</code> under <code>[test]</code> drops the cargo
 <code>test</code> job (the other <code>[test]</code> keys are unchanged). Init writes them only for
 <code>--runner-labels A,B</code> and <code>--no-test</code>. <code>[docs] package</code> (a name or a list)
-names the packages <code>docs check</code> reads; without it, init picks the workspace
+names the packages <code>docs check</code> reads, and the docs commands use it when
+given no <code>-p</code>; without it, init picks the workspace
 packages the markdown binds (<code>crate::path</code>) name, else the root package, and
 writes what it chose.</p>
 <p>A repo with only a cargo workspace keeps the workflow init has always

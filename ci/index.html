@@ -290,7 +290,9 @@ installed on is refused.</p>
 and its dependencies under nightly. With <code>rustdoc-cache: &quot;true&quot;</code> the job
 keeps <code>.soothfast/rustdoc</code> between runs, and a command that finds the JSON
 it needs there skips cargo entirely. The reusable <code>run.yml</code> keeps it for its
-docs check, and for the changelog regeneration on a default-branch push.</p>
+docs check, and for the changelog regeneration on a default-branch push.
+Set <code>[docs] package</code> in <code>soothfast.toml</code> and a <code>docs</code> command run without <code>-p</code>
+reads that package.</p>
 <p>Lookup has two levels. A key hashes the package, features, visibility, the
 <code>rustc -vV</code> of the rustdoc toolchain, the rustdoc format version, every
 <code>RUSTFLAGS</code>, <code>RUSTDOCFLAGS</code>, <code>CARGO_ENCODED_*</code>, <code>CARGO_BUILD_*</code>,
