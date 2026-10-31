@@ -44,6 +44,11 @@
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/item" }
     },
+    "unmeasured": {
+      "description": "Packages the gate could not save a measurement for, as `_`-normalized names. `docs check` reports a claim about their items as not evaluated rather than failed.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "assertions": {
       "description": "Verdicts of the runner's checked claims (alloc, p99, complexity), written alongside items so reports can show verified claims.",
       "type": "array",

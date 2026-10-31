@@ -91,6 +91,7 @@ fn a_saved_baseline_conforms_to_its_schema() {
     let name = format!("schema-drift-{}", std::process::id());
     let path = crate::invoke::save_baseline(&name, &full_run(), SaveScope::BenchFiltered).unwrap();
     let _cleanup = RemoveOnDrop(path.clone());
+    crate::invoke::mark_unmeasured(&name, "other-pkg").unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
     let baseline: Value = serde_json::from_str(&text).unwrap();
     assert_conforms("baseline.schema.json", &baseline);

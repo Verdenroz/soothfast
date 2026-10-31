@@ -1003,6 +1003,10 @@ pub fn save_baseline_in(
     }
     doc["assertions"] = Value::Array(assertions);
 
+    if let Some(list) = doc.get_mut("unmeasured").and_then(Value::as_array_mut) {
+        let saved: Vec<&str> = run.items.keys().map(|id| id_pkg(id)).collect();
+        list.retain(|p| p.as_str().is_none_or(|p| !saved.contains(&p)));
+    }
     let path = write_baseline_in(root, name, &doc)?;
     prune_absorbed_accepts(root, run);
     Ok(path)
@@ -1036,6 +1040,26 @@ pub fn write_baseline_in(root: &Path, name: &str, doc: &Value) -> io::Result<Pat
     std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
     std::fs::write(&path, serde_json::to_string_pretty(doc)?)?;
     Ok(path)
+}
+
+/// Note in the baseline `name` that `pkg` has no measurement in it, so a
+/// claim about its items is reported as not evaluated and not as a failure.
+pub fn mark_unmeasured(name: &str, pkg: &str) -> io::Result<PathBuf> {
+    let root = workspace_root()?;
+    let mut doc =
+        load_baseline_in(&root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+    let pkg = pkg.replace('-', "_");
+    let mut list: Vec<String> = doc["unmeasured"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.as_str().map(String::from))
+        .collect();
+    if !list.contains(&pkg) {
+        list.push(pkg);
+    }
+    doc["unmeasured"] = json!(list);
+    write_baseline_in(&root, name, &doc)
 }
 
 /// Whether the baseline `name` under `root` already holds bench items of
