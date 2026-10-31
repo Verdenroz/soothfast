@@ -10,6 +10,9 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### 🐛 Fixes
+
+- Download the release binary directly in the action (#324)
 
 
 ## 0.5.1 - 2026-10-31
