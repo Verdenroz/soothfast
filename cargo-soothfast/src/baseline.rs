@@ -1,11 +1,15 @@
 //! `cargo soothfast baseline merge --into NAME [--expect N] FILE...`: fold the
 //! partial baselines a sharded gate saved, one per shard, into one baseline.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
 use crate::invoke;
+
+/// Exit code for the wrong number of shard files, which a caller treats as
+/// missing shards and not as a failure.
+const MISSING: i32 = 3;
 
 pub fn run(args: &[String]) -> i32 {
     match merge_args(args) {
@@ -13,20 +17,35 @@ pub fn run(args: &[String]) -> i32 {
             println!("baseline saved: {}", path.display());
             0
         }
-        Err(e) => {
+        Err(Failure::Missing(e)) => {
+            eprintln!("baseline: {e}");
+            MISSING
+        }
+        Err(Failure::Other(e)) => {
             eprintln!("baseline: {e}");
             2
         }
     }
 }
 
-fn merge_args(args: &[String]) -> Result<std::path::PathBuf, String> {
+enum Failure {
+    Missing(String),
+    Other(String),
+}
+
+impl From<String> for Failure {
+    fn from(e: String) -> Self {
+        Failure::Other(e)
+    }
+}
+
+fn merge_args(args: &[String]) -> Result<PathBuf, Failure> {
     const USAGE: &str = "usage: baseline merge --into NAME [--expect N] FILE...";
     let (Some("merge"), rest) = (
         args.first().map(String::as_str),
         args.get(1..).unwrap_or(&[]),
     ) else {
-        return Err(USAGE.into());
+        return Err(USAGE.to_string().into());
     };
     let (mut into, mut expect, mut files) = (None, None, Vec::new());
     let mut it = rest.iter();
@@ -37,20 +56,23 @@ fn merge_args(args: &[String]) -> Result<std::path::PathBuf, String> {
                 expect = Some(
                     it.next()
                         .and_then(|n| n.parse::<usize>().ok())
-                        .ok_or("--expect needs a count")?,
+                        .ok_or("--expect needs a count".to_string())?,
                 )
             }
             file => files.push(file.to_string()),
         }
     }
-    let into = into.ok_or(USAGE)?;
+    let into = into.ok_or(USAGE.to_string())?;
     if let Some(n) = expect
         && files.len() != n
     {
-        return Err(format!(
+        return Err(Failure::Missing(format!(
             "expected {n} shard baselines, found {}",
             files.len()
-        ));
+        )));
+    }
+    if files.is_empty() {
+        return Err(USAGE.to_string().into());
     }
     let docs = files
         .iter()
@@ -59,26 +81,39 @@ fn merge_args(args: &[String]) -> Result<std::path::PathBuf, String> {
             serde_json::from_str(&text).map_err(|e| format!("{f}: {e}"))
         })
         .collect::<Result<Vec<Value>, String>>()?;
-    if docs.is_empty() {
-        return Err(USAGE.into());
-    }
-    invoke::write_baseline(&into, &merge(&docs)).map_err(|e| e.to_string())
+    let existing = invoke::load_baseline(&into).map_err(|e| e.to_string())?;
+    let merged = merge(&docs, existing);
+    Ok(invoke::write_baseline(&into, &merged).map_err(|e| e.to_string())?)
 }
 
-/// The union of the baselines' items and assertions. Shards own disjoint
-/// items, so no item is in two; the scalar fields take the newest or the
-/// noisiest, which is the most cautious reading of any shard.
-pub fn merge(docs: &[Value]) -> Value {
-    let mut out = json!({ "version": 1, "items": {}, "assertions": [] });
+/// The shards' baselines as one. They replace the bench items of every
+/// package they cover in `existing`, so an item that no longer exists drops
+/// out, and `existing` keeps its imported and `buildcost::` items. Shards own
+/// disjoint items; the scalar fields take the newest or the noisiest, the
+/// most cautious reading of any shard.
+pub fn merge(docs: &[Value], existing: Option<Value>) -> Value {
+    let mut out = existing.unwrap_or_else(|| json!({ "version": 1 }));
+    let covered: Vec<String> = docs
+        .iter()
+        .filter_map(|d| d["items"].as_object())
+        .flatten()
+        .filter(|(k, v)| !is_kept(k, v))
+        .map(|(k, _)| invoke::id_pkg(k).to_string())
+        .collect();
+    let mut items = out["items"].as_object().cloned().unwrap_or_default();
+    items.retain(|k, v| is_kept(k, v) || !covered.iter().any(|p| p == invoke::id_pkg(k)));
+    let mut assertions: Vec<Value> = out["assertions"].as_array().cloned().unwrap_or_default();
+    assertions.retain(|a| {
+        a["id"].as_str().is_none_or(|id| {
+            items.contains_key(id) || !covered.iter().any(|p| p == invoke::id_pkg(id))
+        })
+    });
     for doc in docs {
-        if let (Some(items), Some(out_items)) =
-            (doc["items"].as_object(), out["items"].as_object_mut())
-        {
-            out_items.extend(items.iter().map(|(k, v)| (k.clone(), v.clone())));
+        if let Some(shard_items) = doc["items"].as_object() {
+            items.extend(shard_items.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
-        if let Some(assertions) = doc["assertions"].as_array() {
-            let out_assertions = out["assertions"].as_array_mut().expect("built above");
-            out_assertions.extend(assertions.iter().cloned());
+        if let Some(shard_assertions) = doc["assertions"].as_array() {
+            assertions.extend(shard_assertions.iter().cloned());
         }
         for key in ["created_unix", "noise_pct"] {
             if let Some(v) = doc[key].as_f64()
@@ -91,7 +126,15 @@ pub fn merge(docs: &[Value]) -> Value {
             out["build"] = doc["build"].clone();
         }
     }
+    out["items"] = Value::Object(items);
+    out["assertions"] = Value::Array(assertions);
     out
+}
+
+/// Imported and `buildcost::` items belong to other runs, not to the bench
+/// items a shard measures.
+fn is_kept(id: &str, item: &Value) -> bool {
+    invoke::is_imported(item) || id.starts_with("buildcost::")
 }
 
 #[cfg(test)]
@@ -109,16 +152,17 @@ mod tests {
         })
     }
 
+    fn ids(doc: &Value) -> Vec<String> {
+        doc["items"].as_object().unwrap().keys().cloned().collect()
+    }
+
     #[test]
     fn shards_merge_into_one_baseline_holding_every_item() {
-        let merged = merge(&[shard(&["a::x", "a::y"], 0.5, 10), shard(&["a::z"], 2.0, 30)]);
-        let ids: Vec<_> = merged["items"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .cloned()
-            .collect();
-        assert_eq!(ids, ["a::x", "a::y", "a::z"]);
+        let merged = merge(
+            &[shard(&["a::x", "a::y"], 0.5, 10), shard(&["a::z"], 2.0, 30)],
+            None,
+        );
+        assert_eq!(ids(&merged), ["a::x", "a::y", "a::z"]);
         assert_eq!(merged["noise_pct"], json!(2.0));
         assert_eq!(merged["created_unix"], json!(30));
         assert_eq!(merged["build"], json!({ "id": "b" }));
@@ -126,14 +170,47 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_shard_is_an_error() {
+    fn a_merge_replaces_the_covered_packages_and_keeps_other_runs() {
+        let existing = json!({
+            "version": 1,
+            "items": {
+                "a::gone": { "ir": 9 },
+                "b::other": { "ir": 2 },
+                "buildcost::a::x": { "build_ms": 5 },
+                "imp::old": { "imported": "tool" },
+            },
+            "assertions": [{ "id": "a::gone", "ok": true }, { "id": "b::other", "ok": true }],
+        });
+        let merged = merge(&[shard(&["a::x"], 1.0, 5)], Some(existing));
+        assert_eq!(
+            ids(&merged),
+            ["a::x", "b::other", "buildcost::a::x", "imp::old"]
+        );
+        let kept: Vec<_> = merged["assertions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(kept, ["b::other", "a::x"]);
+    }
+
+    #[test]
+    fn a_missing_shard_has_its_own_failure() {
         let args: Vec<String> = [
             "merge", "--into", "head", "--expect", "3", "a.json", "b.json",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect();
-        let err = merge_args(&args).unwrap_err();
-        assert_eq!(err, "expected 3 shard baselines, found 2");
+        let Err(Failure::Missing(e)) = merge_args(&args) else {
+            panic!("a count mismatch is the missing-shards case");
+        };
+        assert_eq!(e, "expected 3 shard baselines, found 2");
+        let args: Vec<String> = ["merge", "--into", "head", "no-such.json"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(matches!(merge_args(&args), Err(Failure::Other(_))));
     }
 }

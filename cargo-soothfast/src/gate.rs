@@ -199,6 +199,14 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     if let Some(shard) = g.common.shard {
+        if let Some(name) = &g.save_baseline
+            && invoke::baseline_exists_in(&invoke::project_root(), name)
+        {
+            return err(&format!(
+                "--shard with --save-baseline {name:?}: that baseline exists, and a shard would leave it half old; \
+                 save into a fresh name and fold the shards in with `baseline merge`"
+            ));
+        }
         println!("gate: shard {shard}: gating the items it owns");
     }
 
