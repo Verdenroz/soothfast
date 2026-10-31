@@ -36,8 +36,6 @@ pub(super) fn link_map(
     linkmap::extents("prebuild", common, &bin);
 }
 
-/// Builds what `step` names. The executable of a bench or routes step, which
-/// staging then reads.
 /// Document `pkg`. A failure of an aux crate warns and drops it.
 fn build_rustdoc(
     pkg: &str,
@@ -55,6 +53,8 @@ fn build_rustdoc(
     }
 }
 
+/// Builds what `step` names. The executable of a bench or routes step, which
+/// staging then reads.
 pub(super) fn build_item(step: &Step, live: &Live) -> Result<Option<PathBuf>, String> {
     let missing = |pkg: &str| format!("{pkg}: the executable did not build");
     match &step.item {
@@ -98,8 +98,6 @@ pub(super) fn build_item(step: &Step, live: &Live) -> Result<Option<PathBuf>, St
     }
 }
 
-/// Run `steps`, building the benches of one side together first so cargo
-/// shares their dependency graph.
 fn side_of(step: &Step) -> Option<Side> {
     match &step.item {
         Item::Bench { side, .. } => Some(*side),
@@ -107,7 +105,9 @@ fn side_of(step: &Step) -> Option<Side> {
     }
 }
 
-/// Build the missing benches of each side in one cargo invocation.
+/// Build the missing benches of each side in one cargo invocation, as the gate
+/// does; each package is built alone after, so a stored executable never
+/// depends on this pass.
 fn warm(steps: &[Step], live: &Live) {
     for side in [Side::Head, Side::Base] {
         let missing: Vec<String> = steps
@@ -115,11 +115,7 @@ fn warm(steps: &[Step], live: &Live) {
             .filter(|s| s.action == Action::Build && side_of(s) == Some(side))
             .map(|s| s.item.pkg().to_string())
             .collect();
-        // The gate warms its builds the same way: one invocation overlaps the
-        // packages' critical paths, which one-by-one builds serialize. Each
-        // package is then built alone below, so a stored executable never
-        // depends on this pass; `--features` names one package's features,
-        // so with it that pass is skipped.
+        // `--features` names one package's features, so it skips this pass.
         if !missing.is_empty() && live.common.features.is_none() {
             let (dir, target_dir) = live.tree(side);
             let label = format!("cargo bench build {side:?}");
@@ -132,6 +128,8 @@ fn warm(steps: &[Step], live: &Live) {
     }
 }
 
+/// Run `steps`, building the benches of one side together first so cargo
+/// shares their dependency graph.
 pub(super) fn execute(steps: &[Step], live: &Live) -> Vec<Outcome> {
     warm(steps, live);
     steps

@@ -179,7 +179,7 @@ jobs:
           packages: ${{ needs.plan.outputs.packages }}
           changelog: "false"
           prebuild: bench
-          prebuild-shards: ${{ inputs.shard }}
+          prebuild-shards: ${{ github.event_name == 'pull_request' && inputs.shard || 1 }}
           prebuild-stage: ${{ runner.temp }}/store
           bin-cache: "true"
       - name: Pack the stores
@@ -472,13 +472,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
-      # The build jobs save the target cache; this job compiles nothing on a store hit.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: bench
-          save-if: "false"
-      - id: soothfast
-        uses: ./.soothfast-action/action/install
       # A failed build leaves nothing to download, and this job then compiles
       # for itself and reports the error in its own output.
       - name: Download the built stores
@@ -487,6 +480,20 @@ jobs:
         with:
           name: soothfast-store-bench
           path: ${{ runner.temp }}/store-in
+      - name: Check the built stores
+        id: store
+        run: echo "hit=$([ -f "$RUNNER_TEMP/store-in/store.tar" ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
+      # On a store hit nothing compiles, so only the variable rust-cache sets, which the store keys name, is kept.
+      - name: Match the build job's environment
+        if: steps.store.outputs.hit == 'true'
+        run: echo "CARGO_INCREMENTAL=0" >>"$GITHUB_ENV"
+      - if: steps.store.outputs.hit != 'true'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: bench
+          save-if: "false"
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
       # A tar keeps the executables' modes, which an artifact drops.
       - name: Unpack the built stores
         run: |
@@ -672,7 +679,21 @@ jobs:
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ steps.pin.outputs.toolchain }}
-      - if: needs.plan.outputs.docs_package != ''
+      # A failed rustdoc build leaves nothing to download, and the docs check then builds the JSON itself.
+      - name: Download the built stores
+        if: needs.plan.outputs.docs_package != ''
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: soothfast-store-rustdoc
+          path: ${{ runner.temp }}/store-in
+      - name: Check the built stores
+        id: store
+        run: echo "hit=$([ -f "$RUNNER_TEMP/store-in/store.tar" ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
+      - name: Match the build job's environment
+        if: steps.store.outputs.hit == 'true'
+        run: echo "CARGO_INCREMENTAL=0" >>"$GITHUB_ENV"
+      - if: needs.plan.outputs.docs_package != '' && steps.store.outputs.hit != 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: rustdoc
@@ -724,14 +745,6 @@ jobs:
             "$CLI" cache merge --from .soothfast-rustdoc-branch
             rm -rf .soothfast-rustdoc-branch
           fi
-      # A failed rustdoc build leaves nothing to download, and the docs check then builds the JSON itself.
-      - name: Download the built stores
-        if: needs.plan.outputs.docs_package != ''
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: soothfast-store-rustdoc
-          path: ${{ runner.temp }}/store-in
       - name: Unpack the built stores
         if: needs.plan.outputs.docs_package != ''
         run: |

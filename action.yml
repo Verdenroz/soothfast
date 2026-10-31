@@ -293,7 +293,7 @@ runs:
         [ -n "$SPEC" ] && lanes="$lanes routes rustdoc"
         [ -n "$DOCS" ] && lanes="$lanes rustdoc"
         read -ra all <<<"$lanes"
-        lanes=$(printf '%s\n' "${all[@]}" | sort -u | paste -sd' ')
+        lanes=$(printf '%s\n' "${all[@]}" | sort -u | paste -sd' ' -)
         {
           echo "lanes=$lanes"
           echo "active=$([ -n "$lanes" ] && echo true || echo false)"
@@ -585,14 +585,14 @@ runs:
         key: ${{ steps.bin-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
 
     - name: Mint a soothfast-bot token for labels
-      if: steps.prepare.outputs.sweep == 'true' && inputs.bot-token == ''
+      if: steps.prepare.outputs.sweep == 'true' && inputs.bot-token == '' && steps.lanes.outputs.active == 'false'
       id: sweep-bot
       shell: bash
       env:
         BROKER: ${{ inputs.broker }}
       run: "$GITHUB_ACTION_PATH/action/bot-token.sh"
     - name: Act on pull request labels
-      if: steps.prepare.outputs.sweep == 'true'
+      if: steps.prepare.outputs.sweep == 'true' && steps.lanes.outputs.active == 'false'
       shell: bash
       env:
         TOKEN: ${{ inputs.bot-token || steps.sweep-bot.outputs.token }}

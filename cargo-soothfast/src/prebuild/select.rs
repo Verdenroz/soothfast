@@ -45,9 +45,7 @@ impl Item {
             Item::Bench { pkg, .. } | Item::Routes { pkg, .. } | Item::Rustdoc { pkg, .. } => pkg,
         }
     }
-}
 
-impl Item {
     /// The item without what does not tell two requests for it apart.
     pub(super) fn identity(&self) -> Item {
         match self {

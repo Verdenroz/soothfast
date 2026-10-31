@@ -229,7 +229,9 @@ pub fn run_command(
     let plan = plan(common, dir, target_dir, build)?;
     let exe = match plan.load() {
         Some(exe) => exe,
-        None if fill => resolve(Some(&plan), || cargo_build(common, dir, target_dir, build))?,
+        None if fill => resolve(Some(&plan), || {
+            cargo_build(common, dir, target_dir, build).ok()
+        })?,
         None => return None,
     };
     plan.command(&exe)
@@ -263,11 +265,18 @@ pub fn executable(
         );
     }
     let label = format!("bench executable {}", common.pkg.as_deref().unwrap_or(""));
-    invoke::timed(&label, || {
+    let failure = std::cell::RefCell::new(String::new());
+    let exe = invoke::timed(&label, || {
         resolve(plan.as_deref(), || {
             cargo_build(common, dir, target_dir, build)
+                .map_err(|stderr| *failure.borrow_mut() = stderr)
+                .ok()
         })
-    })
+    });
+    if exe.is_none() {
+        eprintln!("{}", failure.borrow());
+    }
+    exe
 }
 
 /// Say once per process why `pkg`'s executable is not kept.
@@ -286,20 +295,21 @@ fn cargo_build(
     dir: Option<&Path>,
     target_dir: Option<&Path>,
     build: Build,
-) -> Option<Built> {
+) -> Result<Built, String> {
     let target = common.target.as_deref().unwrap_or("soothfast");
     let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-    let mut cmd = invoke::bench_build_command(common, dir, target_dir, build, &pkgs).ok()?;
+    let mut cmd = invoke::bench_build_command(common, dir, target_dir, build, &pkgs)
+        .map_err(|e| e.to_string())?;
     cmd.args(["--no-run", "--message-format=json"]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    let out = cmd.output().ok()?;
+    let out = cmd.output().map_err(|e| e.to_string())?;
     if !out.status.success() {
-        eprintln!("{}", String::from_utf8_lossy(&out.stderr));
-        return None;
+        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
     }
-    let exe = invoke::bench_artifact(&out.stdout, target)?;
-    Some(Built {
+    let exe = invoke::bench_artifact(&out.stdout, target)
+        .ok_or_else(|| "cargo named no bench executable".to_string())?;
+    Ok(Built {
         exe,
         cargo_stdout: out.stdout,
     })

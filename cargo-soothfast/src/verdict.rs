@@ -146,13 +146,14 @@ impl Record {
     }
 
     /// Folds another shard of the same project into this one: the worse
-    /// verdict wins, tails and reuse add up, and shards run side by side so
-    /// the slowest sets the time.
+    /// verdict wins and brings its own output (a worse record with none
+    /// leaves the existing output), equal verdicts' outputs are joined, reuse
+    /// adds up, and shards run side by side so the slowest sets the time.
     fn absorb(&mut self, other: Record) {
         // The output of a worse verdict replaces that of a better one, so a
         // regressed section shows its regression; equals are kept together.
         match other.verdict.cmp(&self.verdict) {
-            std::cmp::Ordering::Less => self.tail = other.tail,
+            std::cmp::Ordering::Less if !other.tail.is_empty() => self.tail = other.tail,
             std::cmp::Ordering::Equal if !other.tail.is_empty() => {
                 if !self.tail.is_empty() {
                     self.tail.push('\n');
@@ -733,6 +734,16 @@ mod tests {
             rec("core#2/2", Verdict::Pass, "b"),
         ]);
         assert_eq!(both[0].tail, "-- shard 1/2 --\na\n-- shard 2/2 --\nb");
+    }
+
+    #[test]
+    fn a_worse_record_with_no_output_keeps_the_existing_output() {
+        let folded = fold(vec![
+            rec("core#1/2", Verdict::Pass, "fine"),
+            rec("core#2/2", Verdict::Regressed, ""),
+        ]);
+        assert_eq!(folded[0].verdict, Verdict::Regressed);
+        assert_eq!(folded[0].tail, "-- shard 1/2 --\nfine");
     }
 
     #[test]

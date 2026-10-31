@@ -182,6 +182,38 @@ pub fn keep_newest(dir: &Path) {
     }
 }
 
+/// The key an entry is named for: the part of `<key>-<digest>.<ext>` before
+/// the first dash.
+pub fn key_of(entry: &Path) -> Option<String> {
+    let name = entry.file_name()?.to_str()?;
+    name.split_once('-').map(|(key, _)| key.to_string())
+}
+
+/// The files of the store that belong to `entry`: itself, what is kept beside
+/// it (`<entry>.digest`, `<entry>.extents`) and the manifest and group of its
+/// key. An older entry of the same key is not among them.
+pub fn entry_files(entry: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(name), Some(key)) = (entry.parent(), entry.file_name(), key_of(entry))
+    else {
+        return Vec::new();
+    };
+    let beside = format!("{}.", name.to_string_lossy());
+    let own = [format!("{key}.manifest"), format!("{key}.group")];
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|file| {
+            let file_name = file.file_name();
+            let file_name = file_name.to_string_lossy();
+            file_name == name.to_string_lossy()
+                || file_name.starts_with(&beside)
+                || own.iter().any(|o| *o == file_name)
+        })
+        .map(|file| file.path())
+        .collect()
+}
+
 /// Whether `exe` lies in the store, so no build of it exists in a target
 /// directory.
 pub fn holds(exe: &Path) -> bool {
@@ -419,6 +451,33 @@ mod tests {
             group,
         );
         entry.unwrap()
+    }
+
+    #[test]
+    fn an_entry_names_its_key_and_the_files_that_belong_to_it() {
+        let repo = Repo::new("bin-files");
+        let dir = repo.store_dir();
+        for name in [
+            "k1-d.bin",
+            "k1-d.bin.digest",
+            "k1.manifest",
+            "k1.group",
+            "k1-old.bin",
+            "k2-d.bin",
+        ] {
+            std::fs::write(dir.join(name), name).unwrap();
+        }
+        let entry = dir.join("k1-d.bin");
+        assert_eq!(key_of(&entry).as_deref(), Some("k1"));
+        let mut names: Vec<_> = entry_files(&entry)
+            .iter()
+            .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["k1-d.bin", "k1-d.bin.digest", "k1.group", "k1.manifest"]
+        );
     }
 
     #[test]

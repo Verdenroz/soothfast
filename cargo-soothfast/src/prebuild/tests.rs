@@ -214,7 +214,7 @@ fn staging_copies_the_resolved_entry_and_what_belongs_to_it() {
     ] {
         std::fs::write(store.join(name), name).unwrap();
     }
-    stage_entry(&store, &store.join("k1-d.bin"), "k1", &stage);
+    stage_entry(&store.join("k1-d.bin"), &stage);
     let mut names: Vec<_> = std::fs::read_dir(stage.join("bins"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())

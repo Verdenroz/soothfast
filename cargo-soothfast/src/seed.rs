@@ -111,7 +111,13 @@ fn seed_nested(
         return Ok(());
     };
     for pkg in pkgs {
-        let pkg = pkg?;
+        let pkg = match pkg {
+            Ok(pkg) => pkg,
+            Err(e) => {
+                seeded.skipped.push(format!("build: {e}"));
+                continue;
+            }
+        };
         let name = pkg.file_name().to_string_lossy().into_owned();
         if split_unit(&name).is_some() || members.contains(&name) || !pkg.path().is_dir() {
             continue;
@@ -124,7 +130,14 @@ fn seed_nested(
             }
         };
         for unit in units {
-            let hash = unit?.file_name().to_string_lossy().into_owned();
+            let unit = match unit {
+                Ok(unit) => unit,
+                Err(e) => {
+                    seeded.skipped.push(format!("{name}: {e}"));
+                    continue;
+                }
+            };
+            let hash = unit.file_name().to_string_lossy().into_owned();
             let rel = Path::new("build").join(&name).join(&hash);
             if !is_hash(&hash) || fs::symlink_metadata(base.join(&rel)).is_ok() {
                 continue;
