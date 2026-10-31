@@ -218,6 +218,7 @@ pub fn run(args: &[String]) -> i32 {
         current,
         short_circuited,
         harness,
+        identical_to,
     } = match resolve(&g, walltime_advisory) {
         Ok(Some(resolved)) => resolved,
         // Newly measured crate: nothing at the ref to regress against.
@@ -327,6 +328,10 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     write_gate_status(failures);
+    mark_identical(
+        g.common.pkg.as_deref(),
+        identical_to.as_deref().filter(|_| failures == 0),
+    );
     if let Some(name) = &g.save_baseline {
         match save_verdict(failures, short_circuited) {
             SaveVerdict::Save => {
@@ -640,6 +645,8 @@ struct Resolved {
     /// gating counters, so `current` is not baseline material.
     short_circuited: bool,
     harness: invoke::HarnessSync,
+    /// The commit whose bench binaries HEAD's match, when they do.
+    identical_to: Option<String>,
 }
 
 /// Measure or load both sides of a gate run as a [`Resolved`]. `Ok(None)`
@@ -672,6 +679,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
             baseline
         };
         return Ok(Some(Resolved {
+            identical_to: None,
             reference,
             current,
             short_circuited: false,
@@ -696,6 +704,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
             )
         })?;
     Ok(Some(Resolved {
+        identical_to: None,
         reference: baseline,
         current,
         short_circuited: false,
@@ -935,6 +944,24 @@ fn save_verdict(failures: u32, short_circuited: bool) -> SaveVerdict {
     }
 }
 
+/// Leave `.soothfast/identical/<pkg>` holding the commit whose bench binaries
+/// this run matched, or no file when it matched none or failed. A workflow
+/// reads it to carry that commit's measurement forward.
+fn mark_identical(pkg: Option<&str>, identical_to: Option<&str>) {
+    if let (Some(pkg), Ok(root)) = (pkg, invoke::workspace_root()) {
+        mark_identical_in(&root, pkg, identical_to);
+    }
+}
+
+fn mark_identical_in(root: &std::path::Path, pkg: &str, identical_to: Option<&str>) {
+    let path = root.join(".soothfast").join("identical").join(pkg);
+    let _ = std::fs::remove_file(&path);
+    if let Some(sha) = identical_to {
+        let _ = std::fs::create_dir_all(path.parent().expect("a marker has a directory"));
+        let _ = std::fs::write(path, sha);
+    }
+}
+
 /// Record the verdict for `report render` (badge) — best effort, never fatal.
 fn write_gate_status(failures: u32) {
     let Ok(root) = invoke::workspace_root() else {
@@ -955,6 +982,18 @@ fn write_gate_status(failures: u32) {
         dir.join("gate-status.json"),
         serde_json::to_string_pretty(&doc).unwrap_or_default(),
     );
+}
+
+/// A crate with no bench target at the merge-base: its own run stands in as
+/// the reference, so every delta is zero and the run is baseline material.
+fn newly_measured(head: Run, harness: invoke::HarnessSync) -> Resolved {
+    Resolved {
+        identical_to: None,
+        reference: ref_doc(&head),
+        current: head,
+        short_circuited: false,
+        harness,
+    }
 }
 
 /// Measure the merge-base with HEAD in a temp worktree, interleaving rounds
@@ -1056,6 +1095,7 @@ fn measure_ref_interleaved(
             reference: doc,
             current: head,
             short_circuited: false,
+            identical_to: None,
         }));
     }
 
@@ -1216,12 +1256,24 @@ fn measure_ref_interleaved(
     let (outcome, digests, harness) = outcome;
 
     let sides = match outcome {
-        Ref::NoBenchTarget => return Ok(None),
+        // HEAD alone, still measured and compared with itself so the run can
+        // be saved as a baseline.
+        Ref::NoBenchTarget => {
+            println!(
+                "gate: no bench target at {refname} for {} — newly measured, nothing to compare",
+                common.pkg.as_deref().unwrap_or("this package")
+            );
+            return Ok(Some(newly_measured(
+                measure_head(head_exe.as_deref())?,
+                harness,
+            )));
+        }
         // One cheap pass serves as both sides: real items and assertions,
         // zero deltas by construction.
         Ref::IdenticalBinaries { run, counted } => {
             let head = run?;
             return Ok(Some(Resolved {
+                identical_to: Some(base_sha.clone()),
                 reference: ref_doc(&head),
                 current: head,
                 short_circuited: !counted,
@@ -1240,6 +1292,7 @@ fn measure_ref_interleaved(
             };
             cache_head(&runs, &head, head_dig.as_deref(), &settled);
             return Ok(Some(Resolved {
+                identical_to: None,
                 reference: doc,
                 current: head,
                 short_circuited: false,
@@ -1281,6 +1334,7 @@ fn measure_ref_interleaved(
     }
     cache_head(&runs, &head, head_dig.as_deref(), &head_settled);
     Ok(Some(Resolved {
+        identical_to: None,
         reference,
         current: head,
         short_circuited: false,
@@ -2028,6 +2082,34 @@ mod tests {
 
     fn reference(item: Value) -> Value {
         json!({ "version": 1, "noise_pct": 0.20, "items": { "pkg::bt_base_to_htf_index": item } })
+    }
+
+    #[test]
+    fn a_marker_names_the_commit_a_passing_run_matched_and_is_cleared_otherwise() {
+        let root = std::env::temp_dir().join(format!("soothfast-marker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let file = root.join(".soothfast/identical/core");
+        super::mark_identical_in(&root, "core", Some("abc123"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "abc123");
+        super::mark_identical_in(&root, "core", None);
+        assert!(!file.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_newly_measured_crate_is_baseline_material() {
+        let resolved = super::newly_measured(
+            run_with(ItemMetrics::default()),
+            invoke::HarnessSync::default(),
+        );
+        assert!(!resolved.short_circuited);
+        assert!(resolved.reference["items"]["pkg::bt_base_to_htf_index"].is_object());
+        let (failures, _) = gate_failures(&resolved.reference, &resolved.current);
+        assert_eq!(failures, 0);
+        assert!(matches!(
+            save_verdict(failures, resolved.short_circuited),
+            SaveVerdict::Save
+        ));
     }
 
     fn run_with(m: ItemMetrics) -> Run {
