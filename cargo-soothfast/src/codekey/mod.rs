@@ -19,12 +19,12 @@ mod resolve;
 mod tables;
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, Once, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use soothfast_registry::fnv1a;
 
@@ -161,13 +161,17 @@ impl Binary {
         let tls = tls_digest(&sections, &image)?;
         let relro = relro_range(&image);
         if relro.is_none() {
-            static NOTED: Once = Once::new();
-            NOTED.call_once(|| {
+            static NOTED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+            let first = NOTED
+                .get_or_init(Default::default)
+                .lock()
+                .is_ok_and(|mut seen| seen.insert(bin.to_path_buf()));
+            if first {
                 eprintln!(
                     "codekey: no PT_GNU_RELRO segment in {}; relocated data counts as writable",
                     bin.display()
                 );
-            });
+            }
         }
         let sections = addressable(seal(sections, relro));
         let markers = parse_markers(&listing, &sections);

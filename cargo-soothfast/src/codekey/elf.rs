@@ -176,15 +176,30 @@ fn unsized_symbols(listing: &str) -> impl Iterator<Item = (u64, &str, &str)> {
     })
 }
 
-/// Whether `addr` falls in a section of data. `sections` are ordered by
+/// The section holding `addr`, else the one empty section that starts exactly
+/// there (`__TMC_END__` lands on `.tm_clone_table`). `sections` are ordered by
 /// address.
-pub(super) fn in_data(sections: &[Section], addr: u64) -> bool {
+pub(super) fn section_index(sections: &[Section], addr: u64) -> Option<usize> {
     let after = sections.partition_point(|s| s.vma <= addr);
-    sections[..after]
+    let before = &sections[..after];
+    if let Some(i) = before.iter().rposition(|s| s.size > 0)
+        && before[i].contains(addr)
+    {
+        return Some(i);
+    }
+    let mut empty = before
         .iter()
-        .rev()
-        .find(|s| s.size > 0)
-        .is_some_and(|s| !s.code && s.contains(addr))
+        .enumerate()
+        .filter(|(_, s)| s.size == 0 && s.vma == addr);
+    match (empty.next(), empty.next()) {
+        (Some((i, _)), None) => Some(i),
+        _ => None,
+    }
+}
+
+/// Whether `addr` falls in a section of data.
+pub(super) fn in_data(sections: &[Section], addr: u64) -> bool {
+    section_index(sections, addr).is_some_and(|i| !sections[i].code)
 }
 
 /// The names `nm` lists without a size at an address in a data section, by

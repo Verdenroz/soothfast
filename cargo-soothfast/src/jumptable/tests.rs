@@ -629,6 +629,20 @@ fn a_sequence_that_could_be_a_jump_is_no_data_table() {
         let proven = prove_data(&lines);
         assert!(proven.pointers.is_empty() && proven.proofs.is_empty());
     }
+    let mut far_add = vec![LEA, LOAD];
+    far_add.extend(["nop"; 40]);
+    far_add.extend([ADD, RET]);
+    assert!(prove_data(&far_add).pointers.is_empty());
+    let guarded = [
+        "mov    0x8(%rdi),%rsi",
+        LEA,
+        LOAD,
+        ADD,
+        "ja     1018 <f+0x18>",
+        "jmp    *%rsi",
+        RET,
+    ];
+    assert!(prove_data(&guarded).pointers.is_empty());
     let used = [LEA, LOAD, ADD, "mov    (%rax),%rax", RET];
     assert_eq!(prove_data(&used).pointers.len(), 1);
     let mut overwritten = vec![LEA, LOAD, ADD, "mov    (%rax),%rax"];

@@ -79,7 +79,7 @@ impl Resolver<'_> {
     /// For each candidate table of offsets to data that decodes, the
     /// addresses it names, each of which resolves to something to hash.
     pub(super) fn pointer_targets(&self, tables: &[u64]) -> HashMap<u64, Vec<u64>> {
-        self.targets_of(tables, |target| self.object_at(target).is_some())
+        self.targets_of(tables, |target| self.described(target).is_some())
     }
 
     fn targets_of(&self, tables: &[u64], lands: impl Fn(u64) -> bool) -> HashMap<u64, Vec<u64>> {
@@ -163,10 +163,12 @@ pub(super) fn table_operand(body: &str, hash: u64, off: u64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::codekey::elf::Marker;
     use crate::codekey::fixture::{
         BAR, FN_SYMBOLS, Fixture, OBJECTS, READ_ONLY, WRITABLE, bar, object_sections,
     };
     use crate::linkmap::Extent;
+    use std::collections::HashMap;
 
     /// A function switching through the table at `table`, whose words point
     /// at `targets` (addresses in the function), with `between` after the lea.
@@ -318,6 +320,70 @@ mod tests {
         };
         assert!(hash(0x2010).is_some());
         assert_ne!(hash(0x2010), hash(0x2018));
+    }
+
+    /// A one-word table at `0x2000` naming the address `target`.
+    fn one_word(target: u64, fixture: Fixture) -> Option<u64> {
+        let mut image = vec![0; 0x3000];
+        image[0x2000..0x2004].copy_from_slice(&((target - 0x2000) as i32).to_le_bytes());
+        bar(&fixture.wanted(&[BAR]).hashes(&image, NAMES))
+    }
+
+    fn table_input() -> Extent {
+        Extent {
+            vma: 0x2000,
+            size: 4,
+            ..Extent::default()
+        }
+    }
+
+    #[test]
+    fn a_word_one_past_a_sized_symbol_keeps_the_table_raw() {
+        let hash = |prev: u64| {
+            let symbols = format!("{FN_SYMBOLS}{prev:016x} 0000000000000008 r prev\n");
+            let fixture = Fixture::default()
+                .symbols(&symbols)
+                .inputs(&[table_input()]);
+            one_word(prev + 8, fixture)
+        };
+        assert!(hash(0x2008).is_some());
+        assert_ne!(hash(0x2008), hash(0x2010));
+    }
+
+    #[test]
+    fn a_word_one_past_an_input_keeps_the_table_raw() {
+        let hash = |prev: u64| {
+            let prev = Extent {
+                vma: prev,
+                size: 8,
+                ..Extent::default()
+            };
+            let fixture = Fixture::default()
+                .symbols(FN_SYMBOLS)
+                .inputs(&[table_input(), prev.clone()]);
+            one_word(prev.vma + 8, fixture)
+        };
+        assert!(hash(0x2008).is_some());
+        assert_ne!(hash(0x2008), hash(0x2010));
+    }
+
+    #[test]
+    fn a_word_at_a_zero_sized_static_keeps_the_table_raw() {
+        let hash = |at: u64| {
+            let string = Extent {
+                vma: at,
+                size: 8,
+                ..Extent::default()
+            };
+            let markers = HashMap::from([(at, Marker::Opaque("zst:Z".into()))]);
+            let fixture = Fixture::default()
+                .symbols(FN_SYMBOLS)
+                .inputs(&[table_input(), string])
+                .markers(markers);
+            one_word(at, fixture)
+        };
+        assert!(hash(0x2008).is_some());
+        assert_ne!(hash(0x2008), hash(0x2010));
     }
 
     #[test]

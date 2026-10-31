@@ -325,7 +325,7 @@ elsewhere makes both duplicates, which costs a miss until the link map names
 them and never a wrong hit. Read-only data, and data the loader seals after
 relocation (the `PT_GNU_RELRO` range, read from the program headers), is
 keyed by its bytes alone; a binary with no such range prints a line saying
-so (once, on stderr) and treats relocated data as writable. Data in a writable section with no
+so (once per binary, on stderr) and treats relocated data as writable. Data in a writable section with no
 symbol or input around it is named by the labels `nm` lists at its address
 without a size (`__dso_handle`, `__TMC_END__`), provided their names are
 unique in the binary, and is keyed with the whole section so reads on either
@@ -367,9 +367,9 @@ The same load and add with no jump after them read a table of offsets to
 data, such as the names an enum's `Debug` impl picks from or a header name
 table. Its words move whenever the strings do. Proven the same way, it is
 hashed as the data each word names, so an edit elsewhere that shifts the
-strings leaves the function's key alone. A word that does not land on a
-symbol, a link-map input or a pool entry, only on the section around it,
-leaves the table as bytes.
+strings leaves the function's key alone. A word must land inside a sized
+symbol or a link-map input. One past the end of either, the address of a
+zero-sized static, or only the section around it leaves the table as bytes.
 
 `__stop_SEC` symbols that the linker defines are named, and the section they
 end is hashed, but the section that happens to follow is not: a pointer one

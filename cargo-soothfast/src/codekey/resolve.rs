@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use soothfast_registry::fnv1a;
 
+use super::elf::section_index;
 use super::elf::{Marker, Reloc, Section, Symbol, Target};
 use super::identity::duplicated;
 use super::strip_llvm;
@@ -82,24 +83,14 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// The section holding `addr`, else the one empty section that starts
-    /// exactly there (`__TMC_END__` lands on `.tm_clone_table`).
     pub(super) fn section_at(&self, addr: u64) -> Option<usize> {
-        let after = self.sections.partition_point(|s| s.vma <= addr);
-        let before = &self.sections[..after];
-        if let Some(i) = before.iter().rposition(|s| s.size > 0)
-            && before[i].contains(addr)
-        {
-            return Some(i);
-        }
-        let mut empty = before
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.size == 0 && s.vma == addr);
-        match (empty.next(), empty.next()) {
-            (Some((i, _)), None) => Some(i),
-            _ => None,
-        }
+        section_index(self.sections, addr)
+    }
+
+    /// The sized symbol holding `addr`, when it is defined in `section`.
+    pub(super) fn in_symbol(&self, addr: u64, section: usize) -> Option<usize> {
+        self.symbol_at(addr)
+            .filter(|&i| self.section_at(self.symbols[i].addr) == Some(section))
     }
 
     pub(super) fn symbol_at(&self, addr: u64) -> Option<usize> {
@@ -116,9 +107,7 @@ impl<'a> Resolver<'a> {
     pub(super) fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
         let section = self.section_at(addr)?;
         let code = self.sections[section].code;
-        if let Some(i) = self.symbol_at(addr)
-            && self.section_at(self.symbols[i].addr) == Some(section)
-        {
+        if let Some(i) = self.in_symbol(addr, section) {
             let off = addr - self.symbols[i].addr;
             return Some(if code {
                 Place::Code(format!("{}+{off:x}", strip_llvm(&self.symbols[i].name)))
@@ -127,11 +116,17 @@ impl<'a> Resolver<'a> {
             });
         }
         match self.markers.get(&addr) {
-            Some(Marker::Opaque(name)) => return Some(Place::Code(name.clone())),
+            // A zero-sized static shares its address with the object after it.
+            // Without a map, or with an input there, that object may be meant.
+            Some(Marker::Opaque(name))
+                if !self.inputs.is_empty() && self.input_at(addr).is_none() =>
+            {
+                return Some(Place::Code(name.clone()));
+            }
             Some(Marker::End { name, section }) => {
                 return Some(Place::Bounded(name.clone(), Node::Section(*section)));
             }
-            None => {}
+            Some(Marker::Opaque(_)) | None => {}
         }
         if code {
             return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
@@ -623,6 +618,30 @@ mod tests {
         };
         assert_eq!(hash(0x2010), hash(0x2017));
         assert_ne!(hash(0x2008), hash(0x2009));
+    }
+
+    #[test]
+    fn a_zero_sized_static_does_not_hide_an_input_that_starts_at_its_address() {
+        let dis = UNNAMED.replace("2008 <anon>", "2008 <zst>");
+        let hash = |inputs: &[Extent], byte: usize| {
+            let mut image = image(7, 1);
+            image[byte] = 9;
+            let markers = HashMap::from([(0x2008, Marker::Opaque("zst:Z".into()))]);
+            let fixture = Fixture::default()
+                .symbols(FN_SYMBOLS)
+                .inputs(inputs)
+                .markers(markers)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&image, &dis))
+        };
+        let string = [Extent {
+            vma: 0x2008,
+            size: 8,
+            ..Extent::default()
+        }];
+        assert!(hash(&string, 0x2008).is_some());
+        assert_ne!(hash(&string, 0x2008), hash(&string, 0x2009));
+        assert_ne!(hash(&[], 0x2010), hash(&[], 0x2011));
     }
 
     #[test]

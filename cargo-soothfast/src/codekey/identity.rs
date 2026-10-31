@@ -77,16 +77,18 @@ impl Resolver<'_> {
         names.join(",")
     }
 
-    /// Where `addr` is if it lands on one object (code, a symbol, a link-map
-    /// input or a pool entry) and not only on the section around it.
+    /// Where `addr` is if it lands strictly inside a sized symbol or a
+    /// link-map input, and not past the end of one, on a marker or only on
+    /// the section around it.
     pub(super) fn object_at(&self, addr: u64) -> Option<Place> {
-        self.place(addr, None).filter(|p| {
-            matches!(
-                p,
-                Place::Code(_)
-                    | Place::Data(Node::Symbol(_) | Node::Input(_) | Node::Entry(..), ..)
-            )
-        })
+        let section = self.section_at(addr)?;
+        let named = self.in_symbol(addr, section).is_some();
+        let inside = self.input_at(addr).is_some() && !self.sections[section].code;
+        if named || (inside && !self.markers.contains_key(&addr)) {
+            self.place(addr, None)
+        } else {
+            None
+        }
     }
 
     /// What a table word naming `addr` hashes as, worked out once.

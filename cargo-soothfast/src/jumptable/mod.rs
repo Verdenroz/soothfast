@@ -474,9 +474,9 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
 /// the `jmp *` through the sum of the two and `false`, or the index of the add
 /// and `true` when the sum then ends its life: the block ends, or an
 /// instruction writes the sum register or a call clobbers it, with no register
-/// jump before. `None` when nothing adds them, one of them is written first, a
-/// register jump follows that is not through the sum or is further than
-/// [`WINDOW`], or [`REACH`] runs out inside the block.
+/// jump before. `None` when nothing adds them within [`WINDOW`], one of them is
+/// written first, a conditional branch or a register jump follows that is not
+/// through the sum or is further than [`WINDOW`], or [`REACH`] runs out.
 fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool)> {
     let mut sum: Option<(usize, String)> = None;
     for (i, (_, ins)) in after.iter().enumerate() {
@@ -487,8 +487,10 @@ fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool
             };
             let adds = ins.mnemonic == "add" && (pair(base, word) || pair(word, base));
             match regs.get(1).cloned().flatten() {
-                Some(total) if adds => sum = Some((i, total)),
-                _ if ends_block(ins) || disturbs(ins, &[base, word]) => return None,
+                Some(total) if adds && i < WINDOW => sum = Some((i, total)),
+                _ if i >= WINDOW || ends_block(ins) || disturbs(ins, &[base, word]) => {
+                    return None;
+                }
                 _ => {}
             }
             continue;
@@ -503,7 +505,8 @@ fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool
         if through && i < WINDOW {
             return Some((i, false));
         }
-        if ins.mnemonic == "jmp" && through_loaded_register(ins) {
+        let register_jump = ins.mnemonic == "jmp" && through_loaded_register(ins);
+        if register_jump || (is_jump(ins.mnemonic) && ins.mnemonic != "jmp") {
             return None;
         }
         if ends_block(ins) || disturbs(ins, &[total.as_str()]) {

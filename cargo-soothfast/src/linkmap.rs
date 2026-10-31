@@ -219,7 +219,7 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     let kept = maps.join(format!("{digest}.map"));
     let forced = maps.join(format!("{digest}.{}.map", std::process::id()));
     let mut linked = None;
-    for map in [kept, forced] {
+    for map in [kept, forced.clone()] {
         let Some(built) = invoke::build_link_map(common, bin.dir, bin.target_dir, &map) else {
             break;
         };
@@ -228,6 +228,7 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
             break;
         }
     }
+    let _ = std::fs::remove_file(&forced);
     let (built, text) = linked.ok_or("the map build failed")?;
     if binary_digest(&built).as_deref() != Some(digest) {
         return Err("the map build links different code".into());
@@ -235,12 +236,26 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
     let extents = parse(&text, &root_of(bin.exe)).ok_or("unrecognized map format")?;
     let encoded = encode(&extents);
     if std::fs::write(maps.join(format!("{digest}.extents")), &encoded).is_ok() {
-        runcache::prune_oldest(&maps, KEEP);
+        prune(&maps);
     }
     if let Some(entry) = &entry {
         binstore::write_sidecar(entry, "extents", &encoded);
     }
     Ok(extents)
+}
+
+/// Drop the oldest extents and the oldest maps past [`KEEP`] of each, so a
+/// map outlives the extents made from it.
+fn prune(maps: &Path) {
+    let Ok(entries) = std::fs::read_dir(maps) else {
+        return;
+    };
+    let (extents, kept): (Vec<_>, Vec<_>) = entries
+        .flatten()
+        .filter_map(runcache::modified)
+        .partition(|(_, path)| path.extension().is_some_and(|e| e == "extents"));
+    runcache::drop_oldest(extents, KEEP);
+    runcache::drop_oldest(kept, KEEP);
 }
 
 /// The extents already worked out for the binary with `digest`, from `maps`
@@ -252,7 +267,7 @@ fn cached(maps: &Path, digest: &str, entry: Option<&Path>) -> Option<Vec<Extent>
         Err(_) => {
             let text = binstore::read_sidecar(entry?, "extents")?;
             if std::fs::write(&stored, &text).is_ok() {
-                runcache::prune_oldest(maps, KEEP);
+                prune(maps);
             }
             text
         }
@@ -480,6 +495,27 @@ Linker script and memory map
     fn extents_round_trip_through_their_stored_form() {
         let extents = vec![at(0x2e0, 0x1c, "a.o:.data"), at(0xcf18, 7, "b.o:.bss.x")];
         assert_eq!(decode(&encode(&extents)), extents);
+    }
+
+    #[test]
+    fn pruning_keeps_the_newest_maps_and_extents_each() {
+        let dir = std::env::temp_dir().join(format!("soothfast-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in 0..KEEP + 6 {
+            std::fs::write(dir.join(format!("m{n}.map")), "").unwrap();
+        }
+        std::fs::write(dir.join("only.extents"), "").unwrap();
+        prune(&dir);
+        let count = |ext: &str| {
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == ext))
+                .count()
+        };
+        assert_eq!((count("map"), count("extents")), (KEEP, 1));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
