@@ -119,12 +119,20 @@ impl Live<'_> {
 
     /// The store key of a rustdoc item, worked out once.
     pub(super) fn rustdoc_key(&self, item: &Item) -> Option<String> {
-        let (features, visibility) = request(item)?;
+        let Item::Rustdoc {
+            pkg,
+            private,
+            features,
+            ..
+        } = item
+        else {
+            return None;
+        };
         self.memo
             .rustdoc_keys
             .borrow_mut()
             .entry(item.clone())
-            .or_insert_with(|| invoke::rustdoc_key(item.pkg(), features, visibility))
+            .or_insert_with(|| invoke::rustdoc_key(pkg, features.as_deref(), visibility(*private)))
             .clone()
     }
 
@@ -133,16 +141,6 @@ impl Live<'_> {
             (Some(t), Side::Base) => (Some(&t.wt), Some(&t.target)),
             _ => (None, None),
         }
-    }
-}
-
-/// The features and visibility a rustdoc item is keyed and built with.
-pub(super) fn request(item: &Item) -> Option<(Option<&str>, Visibility)> {
-    match item {
-        Item::Rustdoc {
-            private, features, ..
-        } => Some((features.as_deref(), visibility(*private))),
-        _ => None,
     }
 }
 

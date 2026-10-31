@@ -8,6 +8,7 @@ use super::select::{
 use super::stage::stage_entry;
 use super::*;
 use crate::gate_config;
+use crate::invoke::CommonArgs;
 
 #[derive(Default)]
 struct Fake {
@@ -418,24 +419,34 @@ fn a_docs_package_without_rust_binds_is_skipped_and_never_keyed() {
 
 #[test]
 fn a_docs_package_is_keyed_as_docs_check_looks_it_up() {
-    let cases = [
-        (&["--features", "bench-gate"][..], None),
-        (&["--docs-features", "full"][..], Some("full")),
-    ];
-    for (flags, checked) in cases {
-        let mut list = vec!["--only", "rustdoc", "--docs", "scry"];
-        list.extend(flags);
-        let wanted = parse(&argv(&list)).unwrap().wanted;
-        let fake = Fake::default();
-        let steps = select(&wanted, &fake);
-        assert_eq!(steps[0].action, Action::Build);
-        assert_eq!(
-            live::request(&steps[0].item),
-            Some(crate::docs::surface_request(checked)),
-            "{flags:?}"
-        );
-        assert_eq!(*fake.looked_up.borrow(), [steps[0].item.clone()]);
-    }
+    let pkg = "soothfast-registry";
+    let wanted = Wanted {
+        features: Some("bench-gate".into()),
+        ..rustdoc_lane(&[pkg])
+    };
+    let steps = select(&wanted, &Fake::default());
+    let Item::Rustdoc {
+        private, features, ..
+    } = &steps[0].item
+    else {
+        panic!("{}", steps[0].item);
+    };
+    assert_eq!((*private, features.as_deref()), (false, None));
+    let common = CommonArgs::default();
+    let memo = Memo::default();
+    let live = Live {
+        common: &common,
+        base: None,
+        base_sha: String::new(),
+        stage: None,
+        shards: 1,
+        reuse_base: true,
+        memo: &memo,
+    };
+    assert_eq!(
+        live.rustdoc_key(&steps[0].item),
+        invoke::rustdoc_key(pkg, None, invoke::Visibility::Public)
+    );
 }
 
 #[test]
@@ -453,6 +464,12 @@ fn a_spec_package_is_built_when_the_docs_bind_no_rust() {
             (&aux_docs("core"), &Action::Build),
         ]
     );
+}
+
+#[test]
+fn docs_paths_want_at_least_one_path() {
+    assert!(parse(&argv(&["--docs-paths"])).is_err());
+    assert!(parse(&argv(&["--docs-paths", "--docs", "scry"])).is_err());
 }
 
 #[test]

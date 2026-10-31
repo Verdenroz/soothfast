@@ -382,16 +382,10 @@ fn surfaces_for_binds(
         .collect()
 }
 
-/// The features and visibility `docs check` documents a package with, given
-/// its `--features`.
-pub(crate) fn surface_request(features: Option<&str>) -> (Option<&str>, invoke::Visibility) {
-    (features, invoke::Visibility::Public)
-}
-
 fn build_surface(a: &DocsArgs, pkg: &str) -> Result<(surface::Surface, Value, PathBuf), String> {
-    let (features, visibility) = surface_request(a.features.as_deref());
     let (doc, root) =
-        invoke::rustdoc_json_in(pkg, None, features, visibility).map_err(|e| e.to_string())?;
+        invoke::rustdoc_json_in(pkg, None, a.features.as_deref(), invoke::Visibility::Public)
+            .map_err(|e| e.to_string())?;
     Ok((surface::from_rustdoc(&doc, &root), doc, root))
 }
 

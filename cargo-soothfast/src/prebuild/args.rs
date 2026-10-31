@@ -63,8 +63,12 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
             "--docs" => wanted.docs.push(take(&mut it, a)?),
             "--docs-features" => wanted.docs_features = Some(take(&mut it, a)?),
             "--docs-paths" => {
+                let given = wanted.docs_paths.len();
                 while let Some(path) = it.next_if(|p| !p.starts_with('-')) {
                     wanted.docs_paths.push(PathBuf::from(path));
+                }
+                if wanted.docs_paths.len() == given {
+                    return Err(format!("{a} needs a value"));
                 }
             }
             "--spec" => wanted.spec.push(spec_package(&take(&mut it, a)?)),
