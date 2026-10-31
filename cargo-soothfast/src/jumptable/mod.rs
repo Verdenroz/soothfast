@@ -379,7 +379,10 @@ pub fn prove(
             return Proven::default();
         }
         let before = active.len();
-        active.retain(|c| graph.reads_table(&parsed, c, &leas));
+        active.retain(|c| {
+            graph.reads_table(&parsed, c, &leas)
+                && (!c.pointer || graph.read_once(&parsed, c, &leas))
+        });
         if active.len() == before {
             let proven: HashSet<u64> = active.iter().map(|c| c.table).collect();
             let data: HashSet<u64> = tables_of(&active, true).into_iter().collect();
@@ -472,7 +475,8 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
 
 /// Where `after` ends reading a table through `base` and `word`: the index of
 /// the `jmp *` through the sum of the two and `false`, or the index of the add
-/// and `true` when the sum then ends its life: the block ends, or an
+/// and `true` when the sum, in the word's own register so that the raw offset
+/// dies in the add, then ends its life: the block ends, or an
 /// instruction writes the sum register or a call clobbers it, with no register
 /// jump before. `None` when nothing adds them within [`WINDOW`], one of them is
 /// written first, a branch to an address or a register jump follows that is not
@@ -516,13 +520,37 @@ fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool
             disturbs(ins, &[total.as_str()])
         };
         if ends_block(ins) || clobbered {
-            return Some((*add, true));
+            return (total.as_str() == word).then_some((*add, true));
         }
         if i >= REACH {
             return None;
         }
     }
     None
+}
+
+/// Whether `ins` reads register family `reg`, rather than only overwriting it.
+fn reads_register(ins: &Ins, reg: &str) -> bool {
+    let mentions = |operand: &str| {
+        operand.split('%').skip(1).any(|rest| {
+            let name: String = rest
+                .chars()
+                .take_while(char::is_ascii_alphanumeric)
+                .collect();
+            family(&format!("%{name}")).as_deref() == Some(reg)
+        })
+    };
+    let Some((dest, sources)) = ins.operands.split_last() else {
+        return false;
+    };
+    if sources.iter().any(|o| mentions(o)) {
+        return true;
+    }
+    let overwrite = dest.starts_with('%')
+        && ["mov", "lea", "pop", "set"]
+            .iter()
+            .any(|m| ins.mnemonic.starts_with(m));
+    mentions(dest) && !overwrite
 }
 
 /// The control-flow graph of one function.
@@ -653,6 +681,57 @@ impl Graph {
             good[l.at] = true;
         }
         self.always_defined(parsed, &c.base, &good, c.load)
+    }
+
+    /// Whether nothing but the candidate's load and add reads a data table's
+    /// base register while it may still hold the table: any other read could
+    /// see a raw offset the hash of the objects it names leaves out.
+    fn read_once(&self, parsed: &[(u64, Ins)], c: &Candidate, leas: &[Lea]) -> bool {
+        let mut gens = vec![false; parsed.len()];
+        for l in leas
+            .iter()
+            .filter(|l| l.table == c.table && l.dest == c.base)
+        {
+            gens[l.at] = true;
+        }
+        let holds = self.may_hold(parsed, &c.base, &gens);
+        parsed.iter().enumerate().all(|(i, (_, ins))| {
+            i == c.load || i == c.end || !holds[i] || !reads_register(ins, &c.base)
+        })
+    }
+
+    /// For each instruction, whether `reg` may hold a value one of the `gens`
+    /// instructions defined on entering it. A landing pad may hold it whenever
+    /// any does.
+    fn may_hold(&self, parsed: &[(u64, Ins)], reg: &str, gens: &[bool]) -> Vec<bool> {
+        let mut holds = vec![false; parsed.len()];
+        let mut work = Vec::new();
+        let reach = |from: &[usize], holds: &mut Vec<bool>, work: &mut Vec<usize>| {
+            for &s in from {
+                if !holds[s] {
+                    holds[s] = true;
+                    work.push(s);
+                }
+            }
+        };
+        for (i, _) in gens.iter().enumerate().filter(|(_, g)| **g) {
+            reach(&self.succ[i], &mut holds, &mut work);
+        }
+        if gens.iter().any(|g| *g) {
+            reach(&self.orphans, &mut holds, &mut work);
+        }
+        while let Some(i) = work.pop() {
+            let ins = &parsed[i].1;
+            let kept = match writes(ins) {
+                Writes::Reg(fs) => !fs.iter().any(|f| f == reg),
+                Writes::Any => ins.mnemonic.starts_with("call") && !CALLER_SAVED.contains(&reg),
+                Writes::Nothing => true,
+            };
+            if kept || gens[i] {
+                reach(&self.succ[i], &mut holds, &mut work);
+            }
+        }
+        holds
     }
 
     /// Reaching definitions of register `reg` at instruction `at`: true when

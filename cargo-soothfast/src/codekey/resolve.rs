@@ -7,7 +7,7 @@ use soothfast_registry::fnv1a;
 
 use super::elf::section_index;
 use super::elf::{Marker, Reloc, Section, Symbol, Target};
-use super::identity::duplicated;
+use super::identity::{check_inputs, duplicated};
 use super::strip_llvm;
 use crate::jumptable;
 use crate::linkmap::Extent;
@@ -69,6 +69,13 @@ impl<'a> Resolver<'a> {
         inputs: &'a [Extent],
         image: &'a [u8],
     ) -> Resolver<'a> {
+        let inputs = match check_inputs(sections, inputs) {
+            Ok(()) => inputs,
+            Err(why) => {
+                eprintln!("codekey: link map ignored: {why}");
+                &[]
+            }
+        };
         Resolver {
             duplicated: duplicated(sections, symbols, labels),
             sections,
@@ -117,7 +124,7 @@ impl<'a> Resolver<'a> {
         }
         match self.markers.get(&addr) {
             // A zero-sized static shares its address with the object after it.
-            // Without a map, or with an input there, that object may be meant.
+            // Without a map, or with an input there, both go into the key.
             Some(Marker::Opaque(name))
                 if !self.inputs.is_empty() && self.input_at(addr).is_none() =>
             {
@@ -131,6 +138,10 @@ impl<'a> Resolver<'a> {
         if code {
             return hint.map(|h| Place::Code(strip_llvm(h).into_owned()));
         }
+        let zst = match self.markers.get(&addr) {
+            Some(Marker::Opaque(name)) => format!("@{name}"),
+            _ => String::new(),
+        };
         let slot = hint.filter(|h| h.ends_with("$got")).unwrap_or_default();
         let (node, start) = match self.input_at(addr) {
             Some(i) if self.inputs[i].entry > 0 => {
@@ -143,7 +154,7 @@ impl<'a> Resolver<'a> {
                 .end_of(addr, section)
                 .unwrap_or((Node::Section(section), self.sections[section].vma)),
         };
-        Some(Place::Data(node, addr - start, slot.to_string()))
+        Some(Place::Data(node, addr - start, format!("{slot}{zst}")))
     }
 
     /// The node of `section` that ends exactly at `addr`, which nothing
@@ -642,6 +653,16 @@ mod tests {
         assert!(hash(&string, 0x2008).is_some());
         assert_ne!(hash(&string, 0x2008), hash(&string, 0x2009));
         assert_ne!(hash(&[], 0x2010), hash(&[], 0x2011));
+        let named = |name: &str| {
+            let markers = HashMap::from([(0x2008, Marker::Opaque(name.into()))]);
+            let fixture = Fixture::default()
+                .symbols(FN_SYMBOLS)
+                .inputs(&string)
+                .markers(markers)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&image(7, 1), &dis))
+        };
+        assert_ne!(named("zst:Z"), named("zst:Y"));
     }
 
     #[test]

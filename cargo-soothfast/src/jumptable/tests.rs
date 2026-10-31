@@ -660,6 +660,17 @@ fn a_sequence_that_could_be_a_jump_is_no_data_table() {
         RET,
     ];
     assert!(prove_data(&callee_saved).pointers.is_empty());
+    let into_base = [LEA, LOAD, "add    %rax,%rcx", "mov    (%rcx),%rdx", RET];
+    assert!(prove_data(&into_base).pointers.is_empty());
+    let differences = [
+        LEA,
+        LOAD,
+        "movslq 0x4(%rcx,%rax,4),%rdx",
+        ADD,
+        "sub    %rax,%rdx",
+        RET,
+    ];
+    assert!(prove_data(&differences).pointers.is_empty());
     let used = [LEA, LOAD, ADD, "mov    (%rax),%rax", RET];
     assert_eq!(prove_data(&used).pointers.len(), 1);
     let mut overwritten = vec![LEA, LOAD, ADD, "mov    (%rax),%rax"];

@@ -4,9 +4,10 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use super::elf::{Section, Symbol, in_data};
+use super::elf::{Section, Symbol, in_data, section_index};
 use super::resolve::{Node, Place, Resolver};
 use super::strip_llvm;
+use crate::linkmap::Extent;
 
 /// The names that more than one data symbol or label of the binary has. Code
 /// symbols do not count, so a new function cannot change what a static is
@@ -33,6 +34,36 @@ pub(super) fn duplicated(
         .collect()
 }
 
+/// Whether `inputs` can be trusted to bound objects: in address order, each
+/// wholly inside one section, none overlapping another, and the names of the
+/// writable ones, the only names read, all different. `Err` says which
+/// failed; the map is then as good as none.
+pub(super) fn check_inputs(sections: &[Section], inputs: &[Extent]) -> Result<(), String> {
+    let mut names = HashSet::new();
+    for (i, e) in inputs.iter().enumerate() {
+        let end = e.vma + e.size;
+        if inputs.get(i + 1).is_some_and(|next| end > next.vma) {
+            return Err(format!(
+                "the input at {:#x} overlaps or is out of order",
+                e.vma
+            ));
+        }
+        let Some(s) = section_index(sections, e.vma)
+            .map(|k| &sections[k])
+            .filter(|s| s.contains(e.vma) && end <= s.vma + s.size)
+        else {
+            return Err(format!(
+                "the input at {:#x} is not inside one section",
+                e.vma
+            ));
+        };
+        if s.writable && !e.name.is_empty() && !names.insert(e.name.as_str()) {
+            return Err(format!("two writable inputs are named {}", e.name));
+        }
+    }
+    Ok(())
+}
+
 impl Resolver<'_> {
     /// What tells `node` from another object with the same bytes, when
     /// reading either gives different results: writable data is a place, so
@@ -53,16 +84,22 @@ impl Resolver<'_> {
                 if self.duplicated.contains(name.as_ref()) {
                     let input = &self.inputs[self.input_at(s.addr)?].name;
                     (!input.is_empty()).then_some(())?;
-                    format!("{name}@{input}")
+                    format!("sym:{name}@in:{input}")
                 } else {
-                    name.into_owned()
+                    format!("sym:{name}")
                 }
             }
-            Node::Input(i) => self.inputs[i].name.clone(),
-            Node::Section(i) => self.labelled(self.sections[i].vma + off),
+            Node::Input(i) => match self.inputs[i].name.as_str() {
+                "" => return None,
+                name => format!("in:{name}"),
+            },
+            Node::Section(i) => match self.labelled(self.sections[i].vma + off).as_str() {
+                "" => return None,
+                names => format!("lab:{names}"),
+            },
             Node::Entry(..) => return None,
         };
-        (!name.is_empty()).then(|| format!("@{name}"))
+        Some(format!("@{name}"))
     }
 
     /// The names of the labels at `addr` that no other symbol shares.
@@ -106,10 +143,64 @@ impl Resolver<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::check_inputs;
     use crate::codekey::fixture::{
         BAR, FN_SYMBOLS, Fixture, OBJECTS, READ_ONLY, WRITABLE, bar, object_sections,
     };
     use crate::linkmap::Extent;
+
+    fn input(vma: u64, size: u64, name: &str) -> Extent {
+        Extent {
+            vma,
+            size,
+            name: name.to_string(),
+            ..Extent::default()
+        }
+    }
+
+    #[test]
+    fn a_map_that_breaks_an_invariant_is_discarded() {
+        let sections = crate::codekey::fixture::loaded(&object_sections(WRITABLE));
+        let ok = [input(0x3000, 8, "a"), input(0x3008, 8, "b")];
+        assert_eq!(check_inputs(&sections, &ok), Ok(()));
+        let overlap = [input(0x3000, 8, "a"), input(0x3004, 8, "b")];
+        assert!(
+            check_inputs(&sections, &overlap)
+                .unwrap_err()
+                .contains("overlaps")
+        );
+        let outside = [input(0x300c, 8, "a")];
+        assert!(
+            check_inputs(&sections, &outside)
+                .unwrap_err()
+                .contains("not inside")
+        );
+        let nowhere = [input(0x9000, 8, "a")];
+        assert!(check_inputs(&sections, &nowhere).is_err());
+        let twins = [input(0x3000, 8, "a"), input(0x3008, 8, "a")];
+        assert!(
+            check_inputs(&sections, &twins)
+                .unwrap_err()
+                .contains("named")
+        );
+        let unnamed = [input(0x3000, 8, ""), input(0x3008, 8, "")];
+        assert_eq!(check_inputs(&sections, &unnamed), Ok(()));
+    }
+
+    #[test]
+    fn a_discarded_map_behaves_as_no_map() {
+        let takes = |inputs: &[Extent]| {
+            let dis = "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # 3000 <o>\n    1007:\tret\n";
+            let fixture = Fixture::default()
+                .sections(&object_sections(WRITABLE))
+                .symbols(FN_SYMBOLS)
+                .inputs(inputs)
+                .wanted(&[BAR]);
+            bar(&fixture.hashes(&vec![0; 0x4000], dis))
+        };
+        assert!(takes(&[input(0x3000, 8, "a"), input(0x3008, 8, "b")]).is_some());
+        assert_eq!(takes(&[input(0x3000, 8, "a"), input(0x3004, 8, "b")]), None);
+    }
 
     fn takes(flags: &str, object: &str, relocs: &str) -> Option<u64> {
         let dis = format!(

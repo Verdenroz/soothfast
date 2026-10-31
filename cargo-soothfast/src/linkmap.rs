@@ -48,7 +48,16 @@ fn named(path: &str, section: &str, root: &str) -> String {
             .join("/"),
     );
     let below = path.strip_prefix(root).unwrap_or(&path);
+    if below.as_os_str().is_empty() || section.is_empty() {
+        return String::new();
+    }
     format!("{}:{section}", below.display())
+}
+
+/// Thread-local output sections, whose addresses are a template that overlaps
+/// the sections after it.
+fn is_tls(output: &str) -> bool {
+    matches!(output, ".tdata" | ".tbss")
 }
 
 /// `extents` with each name replaced by its hash, which names an input as well
@@ -57,7 +66,10 @@ fn hashed(extents: Vec<Extent>) -> Vec<Extent> {
     extents
         .into_iter()
         .map(|e| Extent {
-            name: format!("{:016x}", fnv1a(e.name.as_bytes())),
+            name: match e.name.is_empty() {
+                true => e.name,
+                false => format!("{:016x}", fnv1a(e.name.as_bytes())),
+            },
             ..e
         })
         .collect()
@@ -155,7 +167,8 @@ fn parse_columns(text: &str, vma_radix: u32, size_radix: u32, root: &str) -> Vec
         }) && let Some(vma) = line.split_whitespace().next()
         {
             let vma = vma.strip_prefix("0x").unwrap_or(vma);
-            in_memory = u64::from_str_radix(vma, vma_radix) != Ok(0);
+            let output = after_columns(line, columns).split_whitespace().next();
+            in_memory = u64::from_str_radix(vma, vma_radix) != Ok(0) && !output.is_some_and(is_tls);
         }
     }
     extents
@@ -197,9 +210,9 @@ fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
                     extent(addr, size, section, after_columns(line, 2)).filter(|_| in_memory),
                 );
             }
-            [_, addr, size, ..] if !nested && hex(addr).is_some() && hex(size).is_some() => {
+            [name, addr, size, ..] if !nested && hex(addr).is_some() && hex(size).is_some() => {
                 named = false;
-                in_memory = hex(addr) != Some(0);
+                in_memory = hex(addr) != Some(0) && !is_tls(name);
             }
             _ => named = false,
         }
@@ -308,6 +321,7 @@ fn cached(maps: &Path, digest: &str, entry: Option<&Path>) -> Option<Vec<Extent>
         runcache::prune_oldest(maps, KEEP);
     }
     if let Some(entry) = entry
+        && !restored
         && binstore::read_sidecar(entry, "extents").as_deref() != Some(text.as_str())
     {
         binstore::replace_sidecar(entry, "extents", &text);
@@ -439,6 +453,33 @@ Linker script and memory map
         assert_eq!(out[0].name, out[2].name);
         assert_ne!(out[0].name, out[1].name);
         assert_eq!(out[0].name.len(), 16);
+        assert_eq!(hashed(vec![named("")])[0].name, "");
+    }
+
+    #[test]
+    fn a_degenerate_name_is_no_name() {
+        assert_eq!(named("", ".bss.x", ""), "");
+        assert_eq!(named("/w/t", ".bss.x", "/w/t"), "");
+        assert_eq!(named("/w/t/a.o", "", "/w/t"), "");
+        assert_eq!(named("/w/t/a.o", ".bss.x", "/w/t"), "a.o:.bss.x");
+    }
+
+    #[test]
+    fn thread_local_outputs_are_not_in_the_extents() {
+        let map = [
+            "             VMA              LMA     Size Align Out     In      Symbol",
+            "            1000             1000       10     1 .tbss",
+            "            1000             1000        8     1         /w/t/release/deps/a.o:(.tbss.x)",
+            "            1000             1000       10     1 .init_array",
+            "            1000             1000        8     1         /w/t/release/deps/a.o:(.init_array)",
+        ]
+        .join("\n");
+        let names: Vec<String> = parse(&map, "/w/t/release")
+            .expect("parsed")
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["deps/a.o:.init_array"]);
     }
 
     #[test]

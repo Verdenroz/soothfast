@@ -296,7 +296,9 @@ not rebuilt and the measured binary is not touched. The CLI checks that the
 two have the same loaded-section digest before it trusts the map, and keeps
 the map and its extents under `.soothfast/maps/`, named by that digest, so a
 map is never read for another binary. lld, mold and GNU ld maps are read. A
-map that cannot be built or read is a miss, not a guess:
+map whose inputs overlap, leave their section or share a writable name is
+ignored, with a note on stderr saying which, and acts as no map. A map that
+cannot be built or read is a miss, not a guess:
 
 ```console
 gate: no link map for <binary> (unrecognized map format); unnamed constants hash as whole sections, and code that reads a duplicate-named local static or writable data with no symbol or label is left unhashed
