@@ -16,8 +16,18 @@
 
 ### 🐛 Fixes
 
+- Config readers skip foreign tables (#328)
 - Hash offset tables by the data they name (#327)
 - Download the release binary directly in the action (#324)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-site
+CHANGED  soothfast_site::config::parse (body)
+```
 
 
 ## 0.5.1 - 2026-10-31
