@@ -300,7 +300,8 @@ struct Candidate {
     table: u64,
     base: String,
     load: usize,
-    jmp: usize,
+    /// The `jmp *`, or for a `pointer` table the add.
+    end: usize,
     pointer: bool,
 }
 
@@ -358,9 +359,13 @@ pub fn prove(
     let leas = rip_leas(&parsed);
     let mut active = candidates(&parsed, &leas);
     loop {
-        let mut targets = decode(&tables_of(&active, false));
-        targets.extend(pointers(&tables_of(&active, true)));
-        active.retain(|c| targets.contains_key(&c.table));
+        let jumps = decode(&tables_of(&active, false));
+        let jumped: HashSet<u64> = jumps.keys().copied().collect();
+        let mut data = tables_of(&active, true);
+        data.retain(|t| !jumped.contains(t));
+        let mut targets = pointers(&data);
+        targets.extend(jumps);
+        active.retain(|c| targets.contains_key(&c.table) && c.pointer != jumped.contains(&c.table));
         if active.is_empty() {
             return Proven::default();
         }
@@ -441,14 +446,10 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
             continue;
         }
         let after = &parsed[load + 1..(load + 1 + WINDOW).min(parsed.len())];
-        let (end, pointer) = match completes(after, &base, &word) {
-            Some(jmp) => (jmp, false),
-            None => match adds(after, &base, &word) {
-                Some((add, _)) => (add, true),
-                None => continue,
-            },
+        let Some((end, pointer)) = read_end(after, &base, &word) else {
+            continue;
         };
-        let jmp = load + 1 + end;
+        let end = load + 1 + end;
         for table in leas.iter().filter(|l| l.dest == base).map(|l| l.table) {
             if !found
                 .iter()
@@ -458,27 +459,35 @@ fn candidates(parsed: &[(u64, Ins)], leas: &[Lea]) -> Vec<Candidate> {
                     table,
                     base: base.clone(),
                     load,
-                    jmp,
+                    end,
                     pointer,
                 });
             }
         }
     }
-    let jumped: HashSet<u64> = found
-        .iter()
-        .filter(|c| !c.pointer)
-        .map(|c| c.table)
-        .collect();
-    found.retain(|c| !c.pointer || !jumped.contains(&c.table));
     found
 }
 
-/// The index of the `jmp *` through the sum, if `after` adds the base to the
-/// word and jumps through the result, with no write to the word, the base or
-/// the sum before then.
-fn completes(after: &[(u64, Ins)], base: &str, word: &str) -> Option<usize> {
-    let (add, total) = adds(after, base, word)?;
-    for (i, (_, ins)) in after.iter().enumerate().skip(add + 1) {
+/// Where `after` ends reading a table through `base` and `word`: the index of
+/// the `jmp *` through the sum of the two and `false`, or when no jump follows
+/// in the block, the index of the add and `true`. `None` when nothing adds
+/// them, or one of them is written first.
+fn read_end(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, bool)> {
+    let mut sum: Option<(usize, String)> = None;
+    for (i, (_, ins)) in after.iter().enumerate() {
+        let Some((add, total)) = &sum else {
+            let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
+            let adds = ins.mnemonic == "add"
+                && regs.len() == 2
+                && regs.iter().flatten().any(|f| f == base)
+                && regs.iter().flatten().any(|f| f == word);
+            match regs.get(1).cloned().flatten() {
+                Some(total) if adds => sum = Some((i, total)),
+                _ if ends_block(ins) || disturbs(ins, &[base, word]) => return None,
+                _ => {}
+            }
+            continue;
+        };
         let through = ins.mnemonic == "jmp"
             && ins.operands.len() == 1
             && ins.operands[0]
@@ -487,33 +496,13 @@ fn completes(after: &[(u64, Ins)], base: &str, word: &str) -> Option<usize> {
                 .as_deref()
                 == Some(total.as_str());
         if through {
-            return Some(i);
+            return Some((i, false));
         }
-        if ends_block(ins) || disturbs(ins, &[&total]) {
-            return None;
-        }
-    }
-    None
-}
-
-/// The index of the `add` of the base to the word in `after`, and the
-/// register that takes the sum, with no write to the base or the word before
-/// it.
-fn adds(after: &[(u64, Ins)], base: &str, word: &str) -> Option<(usize, String)> {
-    for (i, (_, ins)) in after.iter().enumerate() {
-        let regs: Vec<Option<String>> = ins.operands.iter().map(|o| family(o)).collect();
-        let sums = ins.mnemonic == "add"
-            && regs.len() == 2
-            && regs.iter().flatten().any(|f| f == base)
-            && regs.iter().flatten().any(|f| f == word);
-        if sums && let Some(total) = &regs[1] {
-            return Some((i, total.clone()));
-        }
-        if ends_block(ins) || disturbs(ins, &[base, word]) {
-            return None;
+        if ends_block(ins) || disturbs(ins, &[total.as_str()]) {
+            return Some((*add, true));
         }
     }
-    None
+    sum.map(|(add, _)| (add, true))
 }
 
 /// The control-flow graph of one function.
@@ -567,7 +556,8 @@ impl Graph {
                     Some(_) => return None,
                     None if unconditional
                         && through_slot(ins).is_some_and(|a| exits.slot_leaves(a)) => {}
-                    None if unconditional => match active.iter().find(|c| c.jmp == i) {
+                    None if unconditional => match active.iter().find(|c| !c.pointer && c.end == i)
+                    {
                         Some(c) => {
                             for t in targets.get(&c.table)? {
                                 let to = *at.get(t)?;
@@ -632,7 +622,7 @@ impl Graph {
     /// Whether the candidate's load, add and jump share a block, and the
     /// base register holds its table at the load along every path.
     fn reads_table(&self, parsed: &[(u64, Ins)], c: &Candidate, leas: &[Lea]) -> bool {
-        if self.leader[c.load + 1..=c.jmp].iter().any(|&l| l) {
+        if self.leader[c.load + 1..=c.end].iter().any(|&l| l) {
             return false;
         }
         let mut good = vec![false; parsed.len()];

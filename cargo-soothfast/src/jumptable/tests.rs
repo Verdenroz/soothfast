@@ -616,3 +616,41 @@ fn a_table_read_as_offsets_and_as_jumps_is_a_jump_table() {
     assert!(proven.pointers.is_empty());
     assert_eq!(proven.proofs.len(), 2);
 }
+
+#[test]
+fn a_jump_table_and_a_name_table_through_one_register_are_both_proven() {
+    let jump_then_names = [
+        LEA,
+        LOAD,
+        ADD,
+        JMP,
+        "lea    0x100d(%rip),%rcx        # 2020 <names>",
+        LOAD,
+        ADD,
+        RET,
+    ];
+    let instrs = code(&jump_then_names);
+    let proven = prove(
+        &instrs,
+        (0x1000, at(8)),
+        &|tables| {
+            tables
+                .iter()
+                .filter(|t| **t == 0x2010)
+                .map(|t| (*t, vec![at(4)]))
+                .collect()
+        },
+        &|tables| {
+            tables
+                .iter()
+                .filter(|t| **t == 0x2020)
+                .map(|t| (*t, vec![0x3000]))
+                .collect()
+        },
+        &RUST,
+    );
+    assert_eq!(proven.proofs.len(), 1);
+    assert_eq!(proven.proofs[0].table, 0x2010);
+    assert_eq!(proven.pointers.len(), 1);
+    assert_eq!(proven.pointers[0].table, 0x2020);
+}

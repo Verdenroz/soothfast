@@ -15,6 +15,8 @@ pub(super) struct Section {
     pub(super) code: bool,
     pub(super) contents: bool,
     pub(super) tls: bool,
+    /// Data the program can change after the loader is done with it.
+    pub(super) writable: bool,
 }
 
 impl Section {
@@ -93,8 +95,18 @@ pub(super) fn parse_sections(listing: &str) -> Vec<Section> {
             code: h.flags.contains("CODE"),
             contents: h.flags.contains("CONTENTS"),
             tls: h.flags.contains("THREAD_LOCAL"),
+            writable: !h.flags.contains("READONLY") && !h.flags.contains("CODE") && !sealed(h.name),
         })
         .collect()
+}
+
+/// Sections the loader makes read-only once it has applied relocations.
+fn sealed(name: &str) -> bool {
+    name.starts_with(".data.rel.ro")
+        || matches!(
+            name,
+            ".got" | ".dynamic" | ".init_array" | ".fini_array" | ".preinit_array"
+        )
 }
 
 /// The sections an address can fall in, ordered by address. Thread-local

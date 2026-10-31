@@ -24,13 +24,21 @@ use crate::runcache;
 pub(crate) const KEEP: usize = 64;
 
 /// One input section's place in the binary.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Extent {
     pub vma: u64,
     pub size: u64,
     /// Size of one object when the section is a pool of fixed-size constants
     /// (`.rodata.cstN`), else 0.
     pub entry: u64,
+    /// `object:section`, which names the same input in another link of the
+    /// same code.
+    pub name: String,
+}
+
+fn named(object: &str, section: &str) -> String {
+    let object = object.rsplit(['/', ' ']).next().unwrap_or(object);
+    format!("{object}:{section}")
 }
 
 /// `.rodata.cst8` holds 8-byte objects; other names are one object.
@@ -74,11 +82,13 @@ fn parse_columns(text: &str, vma_radix: u32, size_radix: u32) -> Vec<Extent> {
                 f.next()?;
             }
             let size = u64::from_str_radix(f.next()?, size_radix).ok()?;
-            let section = line.rsplit_once(":(")?.1.strip_suffix(')')?;
+            let (object, section) = line.rsplit_once(":(")?;
+            let section = section.strip_suffix(')')?;
             Some(Extent {
                 vma,
                 size,
                 entry: entry_size(section),
+                name: named(object, section),
             })
         })
         .collect()
@@ -99,18 +109,30 @@ fn parse_gnu(text: &str) -> Vec<Extent> {
                 named = true;
                 section = name;
             }
-            [name, addr, size, ..] if nested && name.starts_with('.') => {
+            [name, addr, size, ref rest @ ..] if nested && name.starts_with('.') => {
                 named = false;
                 if let (Some(vma), Some(size)) = (hex(addr), hex(size)) {
                     let entry = entry_size(name);
-                    extents.push(Extent { vma, size, entry });
+                    let name = self::named(rest.first().copied().unwrap_or(""), name);
+                    extents.push(Extent {
+                        vma,
+                        size,
+                        entry,
+                        name,
+                    });
                 }
             }
-            [addr, size, ..] if named => {
+            [addr, size, ref rest @ ..] if named => {
                 named = false;
                 if let (Some(vma), Some(size)) = (hex(addr), hex(size)) {
                     let entry = entry_size(section);
-                    extents.push(Extent { vma, size, entry });
+                    let name = self::named(rest.first().copied().unwrap_or(""), section);
+                    extents.push(Extent {
+                        vma,
+                        size,
+                        entry,
+                        name,
+                    });
                 }
             }
             _ => named = false,
@@ -122,21 +144,25 @@ fn parse_gnu(text: &str) -> Vec<Extent> {
 fn encode(extents: &[Extent]) -> String {
     extents
         .iter()
-        .map(|e| format!("{:x} {:x} {:x}\n", e.vma, e.size, e.entry))
+        .map(|e| format!("{:x} {:x} {:x} {}\n", e.vma, e.size, e.entry, e.name))
         .collect()
 }
 
+/// Empty for a stored form without names, which is read as no map at all.
 fn decode(text: &str) -> Vec<Extent> {
     text.lines()
-        .filter_map(|line| {
-            let mut f = line.split(' ').map(|n| u64::from_str_radix(n, 16).ok());
+        .map(|line| {
+            let mut f = line.splitn(4, ' ');
+            let mut number = || u64::from_str_radix(f.next()?, 16).ok();
             Some(Extent {
-                vma: f.next()??,
-                size: f.next()??,
-                entry: f.next()??,
+                vma: number()?,
+                size: number()?,
+                entry: number()?,
+                name: f.next()?.to_string(),
             })
         })
-        .collect()
+        .collect::<Option<_>>()
+        .unwrap_or_default()
 }
 
 /// The extents for the bench binary `bin`, built in its `dir` (HEAD's tree
@@ -241,16 +267,20 @@ Linker script and memory map
 .data           0x0000000000003000        0x8
 ";
 
-    fn at(vma: u64, size: u64) -> Extent {
+    fn at(vma: u64, size: u64, name: &str) -> Extent {
         Extent {
             vma,
             size,
             entry: 0,
+            name: name.to_string(),
         }
     }
 
-    fn pool(vma: u64, size: u64, entry: u64) -> Extent {
-        Extent { vma, size, entry }
+    fn pool(vma: u64, size: u64, entry: u64, name: &str) -> Extent {
+        Extent {
+            entry,
+            ..at(vma, size, name)
+        }
     }
 
     #[test]
@@ -258,11 +288,11 @@ Linker script and memory map
         assert_eq!(
             parse(LLD).expect("parsed"),
             [
-                at(0x2e0, 0x1c),
-                pool(0xce40, 0xd8, 8),
-                at(0xcf18, 7),
-                at(0xcf64, 0x11),
-                pool(0xcf90, 0x10, 8)
+                at(0x2e0, 0x1c, "<internal>:.interp"),
+                pool(0xce40, 0xd8, 8, "<internal>:.rodata.cst8"),
+                at(0xcf18, 7, "bench-1.o:.rodata..Lanon.1.0"),
+                at(0xcf64, 0x11, "bench-1.o:.rodata..Lanon.1.1"),
+                pool(0xcf90, 0x10, 8, "<internal>:.rodata.cst8")
             ]
         );
     }
@@ -280,7 +310,11 @@ Linker script and memory map
     fn a_mold_map_reads_its_hex_addresses_and_decimal_sizes() {
         assert_eq!(
             parse(MOLD).expect("parsed"),
-            [at(0xd850, 1), at(0xd851, 20), pool(0xd868, 16, 16)]
+            [
+                at(0xd850, 1, "m.cgu.0.rcgu.o:.rodata..Lanon.1"),
+                at(0xd851, 20, "m.cgu.0.rcgu.o:.rodata..Lanon.2"),
+                pool(0xd868, 16, 16, "<internal>:.rodata.cst16")
+            ]
         );
     }
 
@@ -289,10 +323,10 @@ Linker script and memory map
         assert_eq!(
             parse(GNU).expect("parsed"),
             [
-                at(0x2000, 4),
-                at(0x2008, 0x10),
-                at(0x2018, 0x18),
-                pool(0x2030, 0x20, 16)
+                at(0x2000, 4, "crt1.o:.rodata"),
+                at(0x2008, 0x10, "foo.o:.rodata.foo"),
+                at(0x2018, 0x18, "bar.o:.rodata._ZN3bar17h0123456789abcdefE"),
+                pool(0x2030, 0x20, 16, "baz.o:.rodata.cst16")
             ]
         );
     }
@@ -305,8 +339,13 @@ Linker script and memory map
 
     #[test]
     fn extents_round_trip_through_their_stored_form() {
-        let extents = vec![at(0x2e0, 0x1c), at(0xcf18, 7)];
+        let extents = vec![at(0x2e0, 0x1c, "a.o:.data"), at(0xcf18, 7, "b.o:.bss.x")];
         assert_eq!(decode(&encode(&extents)), extents);
+    }
+
+    #[test]
+    fn a_stored_form_without_names_is_no_map() {
+        assert_eq!(decode("2e0 1c 0\n"), []);
     }
 
     #[test]
@@ -320,7 +359,7 @@ Linker script and memory map
         std::fs::write(&entry, "binary").unwrap();
         assert_eq!(cached(&maps, "abc", Some(&entry)), None);
 
-        let extents = vec![at(0x2e0, 0x1c), at(0xcf18, 7)];
+        let extents = vec![at(0x2e0, 0x1c, "a.o:.data"), at(0xcf18, 7, "b.o:.bss.x")];
         binstore::write_sidecar(&entry, "extents", &encode(&extents));
         assert_eq!(cached(&maps, "abc", Some(&entry)), Some(extents.clone()));
         assert!(maps.join("abc.extents").exists());

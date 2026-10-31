@@ -8,31 +8,51 @@ use super::resolve::{Resolver, strip_rip_displacement};
 use crate::jumptable;
 
 impl Resolver<'_> {
-    /// For each proven `lea`, the hash of the jump table it takes and the
-    /// offset into its section. A table decodes when its whole input section
+    /// For each proven `lea`, the hash of the table it takes and the offset
+    /// into its section. A jump table decodes when its whole input section
     /// is words that, from the nearest proven base at or before them, land
-    /// inside the function; `prove` keeps the words of every table that does.
+    /// inside the function; a table of offsets to data, when each word names
+    /// something to hash. `prove` keeps the words of every table that does.
     /// Anything else stays raw bytes.
     pub(super) fn decode_tables(
         &self,
         proven: &jumptable::Proven,
         start: u64,
     ) -> HashMap<u64, (u64, u64)> {
-        let table_input = |table: u64| self.table_input(table);
+        let mut tables = self.decode(&proven.proofs, &proven.targets, |size, words| {
+            Some(table_hash(size, words, start))
+        });
+        tables.extend(
+            self.decode(&proven.pointers, &proven.targets, |size, words| {
+                self.pointer_hash(size, words)
+            }),
+        );
+        tables
+    }
+
+    fn decode(
+        &self,
+        proofs: &[jumptable::Proof],
+        targets: &HashMap<u64, Vec<u64>>,
+        hash: impl Fn(u64, &[u64]) -> Option<u64>,
+    ) -> HashMap<u64, (u64, u64)> {
         let mut tables = HashMap::new();
-        for (j, bases) in jumptable::group(proven.proofs.iter().map(|p| p.table), table_input) {
+        for (j, bases) in jumptable::group(proofs.iter().map(|p| p.table), |t| self.table_input(t))
+        {
             let Some(words) = bases
                 .iter()
-                .map(|b| proven.targets.get(b))
+                .map(|b| targets.get(b))
                 .collect::<Option<Vec<_>>>()
             else {
                 continue;
             };
-            let hash = self.table_hash(j, words.into_iter().flatten(), start);
-            for p in proven
-                .proofs
+            let words: Vec<u64> = words.into_iter().flatten().copied().collect();
+            let Some(hash) = hash(self.inputs[j].size, &words) else {
+                continue;
+            };
+            for p in proofs
                 .iter()
-                .filter(|p| table_input(p.table) == Some(j))
+                .filter(|p| bases.binary_search(&p.table).is_ok())
             {
                 tables.insert(p.lea, (hash, p.table - self.inputs[j].vma));
             }
@@ -44,37 +64,6 @@ impl Resolver<'_> {
     fn table_input(&self, table: u64) -> Option<usize> {
         self.input_at(table)
             .filter(|&j| self.inputs[j].entry == 0 && self.symbol_at(table).is_none())
-    }
-
-    /// For each proven `lea` of a table of offsets to data, the hash of the
-    /// table and the offset into its section. The table is hashed as the data
-    /// each word names, so it holds still while that data moves.
-    pub(super) fn decode_pointers(
-        &mut self,
-        proven: &jumptable::Proven,
-    ) -> HashMap<u64, (u64, u64)> {
-        let mut tables = HashMap::new();
-        let proofs = &proven.pointers;
-        for (j, bases) in jumptable::group(proofs.iter().map(|p| p.table), |t| self.table_input(t))
-        {
-            let Some(words) = bases
-                .iter()
-                .map(|b| proven.targets.get(b))
-                .collect::<Option<Vec<_>>>()
-            else {
-                continue;
-            };
-            let Some(hash) = self.pointer_hash(j, words.into_iter().flatten()) else {
-                continue;
-            };
-            for p in proofs
-                .iter()
-                .filter(|p| self.table_input(p.table) == Some(j))
-            {
-                tables.insert(p.lea, (hash, p.table - self.inputs[j].vma));
-            }
-        }
-        tables
     }
 
     /// For each candidate table that decodes, the addresses it jumps to.
@@ -90,7 +79,7 @@ impl Resolver<'_> {
     /// For each candidate table of offsets to data that decodes, the
     /// addresses it names, each of which resolves to something to hash.
     pub(super) fn pointer_targets(&self, tables: &[u64]) -> HashMap<u64, Vec<u64>> {
-        self.targets_of(tables, |target| self.place(target, None).is_some())
+        self.targets_of(tables, |target| self.describe(target, None).is_some())
     }
 
     fn targets_of(&self, tables: &[u64], lands: impl Fn(u64) -> bool) -> HashMap<u64, Vec<u64>> {
@@ -109,27 +98,9 @@ impl Resolver<'_> {
         targets
     }
 
-    /// Hash of the decoded words of input section `input`.
-    fn table_hash<'w>(
-        &self,
-        input: usize,
-        words: impl Iterator<Item = &'w u64>,
-        start: u64,
-    ) -> u64 {
-        let mut text = format!("{}:", self.inputs[input].size);
-        for target in words {
-            text.push_str(&format!("{:x},", target - start));
-        }
-        fnv1a(text.as_bytes())
-    }
-
-    /// Hash of the places the words of input section `input` name.
-    fn pointer_hash<'w>(
-        &mut self,
-        input: usize,
-        words: impl Iterator<Item = &'w u64>,
-    ) -> Option<u64> {
-        let mut text = format!("pointers {}:", self.inputs[input].size);
+    /// Hash of the places the words of a table of `size` bytes name.
+    fn pointer_hash(&self, size: u64, words: &[u64]) -> Option<u64> {
+        let mut text = format!("pointers {size}:");
         for &target in words {
             text.push_str(&self.describe(target, None)?);
             text.push(',');
@@ -172,6 +143,15 @@ impl Resolver<'_> {
     }
 }
 
+/// Hash of the decoded words of a jump table of `size` bytes.
+fn table_hash(size: u64, words: &[u64], start: u64) -> u64 {
+    let mut text = format!("{size}:");
+    for target in words {
+        text.push_str(&format!("{:x},", target - start));
+    }
+    fnv1a(text.as_bytes())
+}
+
 /// `lea T(%rip),%rA` with the table in place of its address.
 pub(super) fn table_operand(body: &str, hash: u64, off: u64) -> Option<String> {
     let (head, _) = body.rsplit_once("# ")?;
@@ -183,7 +163,9 @@ pub(super) fn table_operand(body: &str, hash: u64, off: u64) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::codekey::fixture::{BAR, FN_SYMBOLS, Fixture, bar};
+    use crate::codekey::fixture::{
+        BAR, FN_SYMBOLS, Fixture, OBJECTS, READ_ONLY, WRITABLE, bar, object_sections,
+    };
     use crate::linkmap::Extent;
 
     /// A function switching through the table at `table`, whose words point
@@ -214,6 +196,7 @@ mod tests {
             vma: extent.0,
             size: extent.1,
             entry: 0,
+            ..Extent::default()
         }];
         let fixture = Fixture::default()
             .symbols(FN_SYMBOLS)
@@ -267,13 +250,15 @@ mod tests {
     1011:\tret
 ";
 
-    /// The offsets table at `0x2000` naming two strings, placed at `strings`.
-    fn names(strings: [u64; 2], bytes: [u8; 2]) -> Option<u64> {
+    /// The offsets table at `0x2000` naming two strings placed at `strings`,
+    /// and with `stray` a third word naming an address nothing covers.
+    fn names(strings: [u64; 2], bytes: [u8; 2], stray: bool) -> Option<u64> {
         let mut image = vec![0; 0x3000];
+        let size = if stray { 12 } else { 8 };
         let mut inputs = vec![Extent {
             vma: 0x2000,
-            size: 8,
-            entry: 0,
+            size,
+            ..Extent::default()
         }];
         for (i, (at, byte)) in strings.into_iter().zip(bytes).enumerate() {
             let word = (at - 0x2000) as i32;
@@ -282,8 +267,11 @@ mod tests {
             inputs.push(Extent {
                 vma: at,
                 size: 8,
-                entry: 0,
+                ..Extent::default()
             });
+        }
+        if stray {
+            image[0x2008..0x200c].copy_from_slice(&0x5000i32.to_le_bytes());
         }
         inputs.sort_by_key(|e| e.vma);
         let fixture = Fixture::default()
@@ -295,31 +283,43 @@ mod tests {
 
     #[test]
     fn a_table_of_offsets_to_strings_hashes_the_strings_wherever_they_sit() {
-        let base = names([0x2008, 0x2010], [1, 2]);
+        let base = names([0x2008, 0x2010], [1, 2], false);
         assert!(base.is_some());
-        assert_eq!(base, names([0x2010, 0x2018], [1, 2]));
-        assert_ne!(base, names([0x2008, 0x2010], [1, 3]));
-        assert_ne!(base, names([0x2008, 0x2010], [2, 1]));
+        assert_eq!(base, names([0x2010, 0x2018], [1, 2], false));
+        assert_ne!(base, names([0x2008, 0x2010], [1, 3], false));
+        assert_ne!(base, names([0x2008, 0x2010], [2, 1], false));
     }
 
     #[test]
-    fn a_table_naming_an_unknown_place_stays_raw() {
-        let hash = |word: i32| {
-            let mut image = vec![0; 0x3000];
-            image[0x2000..0x2004].copy_from_slice(&word.to_le_bytes());
+    fn a_table_with_a_word_naming_nothing_stays_raw() {
+        let base = names([0x2010, 0x2018], [1, 2], true);
+        assert!(base.is_some());
+        assert_ne!(base, names([0x2018, 0x2010], [1, 2], true));
+    }
+
+    #[test]
+    fn a_table_naming_writable_objects_hashes_which_object_each_word_names() {
+        let hash = |flags: &str, second: u64| {
+            let mut image = vec![0; 0x4000];
+            for (i, at) in [0x3000u64, second].into_iter().enumerate() {
+                let word = (at - 0x2000) as i32;
+                image[0x2000 + 4 * i..0x2004 + 4 * i].copy_from_slice(&word.to_le_bytes());
+            }
             let inputs = [Extent {
                 vma: 0x2000,
-                size: 4,
-                entry: 0,
+                size: 8,
+                ..Extent::default()
             }];
             let fixture = Fixture::default()
-                .symbols(FN_SYMBOLS)
+                .sections(&object_sections(flags))
+                .symbols(OBJECTS)
                 .inputs(&inputs)
                 .wanted(&[BAR]);
             bar(&fixture.hashes(&image, NAMES))
         };
-        assert_ne!(hash(0x1000), hash(0x2000));
-        assert_ne!(hash(0x7000), hash(0x7010));
+        assert!(hash(WRITABLE, 0x3008).is_some());
+        assert_ne!(hash(WRITABLE, 0x3008), hash(WRITABLE, 0x3000));
+        assert_eq!(hash(READ_ONLY, 0x3008), hash(READ_ONLY, 0x3000));
     }
 
     #[test]

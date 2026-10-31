@@ -48,8 +48,7 @@ impl Span {
                 rust: self.names.first().is_some_and(|n| is_rust_symbol(n)),
             },
         );
-        let mut tables = resolver.decode_tables(&proven, self.start);
-        tables.extend(resolver.decode_pointers(&proven));
+        let tables = resolver.decode_tables(&proven, self.start);
         self.normalize(resolver, &tables);
     }
 

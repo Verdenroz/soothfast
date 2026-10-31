@@ -1,5 +1,6 @@
 //! Addresses turned into names and content that do not move with the layout.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use soothfast_registry::fnv1a;
@@ -48,7 +49,7 @@ pub(super) struct Resolver<'a> {
     pub(super) markers: &'a HashMap<u64, Marker>,
     pub(super) inputs: &'a [Extent],
     pub(super) image: &'a [u8],
-    pub(super) roots: HashMap<Node, Option<u64>>,
+    roots: RefCell<HashMap<Node, Option<u64>>>,
 }
 
 impl<'a> Resolver<'a> {
@@ -67,7 +68,7 @@ impl<'a> Resolver<'a> {
             markers,
             inputs,
             image,
-            roots: HashMap::new(),
+            roots: RefCell::default(),
         }
     }
 
@@ -230,7 +231,9 @@ impl<'a> Resolver<'a> {
                 Target::Relative(to) => match self.place(*to, None)? {
                     Place::Code(name) => (name, None),
                     Place::Bounded(name, next) => (format!("{name}("), Some(next)),
-                    Place::Data(next, off, _) => (format!("+{off:x}("), Some(next)),
+                    Place::Data(next, off, _) => {
+                        (format!("+{off:x}{}(", self.identity(next)?), Some(next))
+                    }
                 },
             };
             walk.out.extend(text.bytes());
@@ -261,17 +264,34 @@ impl<'a> Resolver<'a> {
 
     /// Hash of everything reachable from `node`. Memoized per root only: a
     /// node reached inside another root's walk saw that walk's visit order.
-    fn root_hash(&mut self, node: Node) -> Option<u64> {
-        if let Some(h) = self.roots.get(&node) {
+    fn root_hash(&self, node: Node) -> Option<u64> {
+        if let Some(h) = self.roots.borrow().get(&node) {
             return *h;
         }
         let mut walk = Walk::default();
         let h = self.walk(node, &mut walk).map(|_| fnv1a(&walk.out));
-        self.roots.insert(node, h);
+        self.roots.borrow_mut().insert(node, h);
         h
     }
 
-    fn resolve(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
+    /// What tells `node` from another object with the same bytes, when
+    /// reading either gives different results: writable data is a place, so
+    /// two zeroed statics are two objects. Read-only data is its bytes.
+    fn identity(&self, node: Node) -> Option<String> {
+        let (section, ..) = self.extent(node)?;
+        if !self.sections[section].writable {
+            return Some(String::new());
+        }
+        let name = match node {
+            Node::Symbol(i) => strip_llvm(&self.symbols[i].name).into_owned(),
+            Node::Input(i) => self.inputs[i].name.clone(),
+            Node::Section(_) => return Some(String::new()),
+            Node::Entry(..) => String::new(),
+        };
+        (!name.is_empty()).then(|| format!("@{name}"))
+    }
+
+    fn resolve(&self, addr: u64, hint: Option<&str>) -> Option<String> {
         // A GOT entry reads as its relocation target. Elsewhere a relocated
         // address starts an object (a vtable) read past its first slot.
         let in_got = self
@@ -287,7 +307,7 @@ impl<'a> Resolver<'a> {
         self.describe(addr, hint)
     }
 
-    pub(super) fn describe(&mut self, addr: u64, hint: Option<&str>) -> Option<String> {
+    pub(super) fn describe(&self, addr: u64, hint: Option<&str>) -> Option<String> {
         Some(match self.place(addr, hint)? {
             Place::Code(name) => name,
             Place::Bounded(name, node) => format!("{name}:{:016x}", self.root_hash(node)?),
@@ -296,7 +316,8 @@ impl<'a> Resolver<'a> {
                     Node::Symbol(_) | Node::Input(_) | Node::Entry(..) => "data",
                     Node::Section(i) => &self.sections[i].name,
                 };
-                format!("{label}:{:016x}+{off:x}{slot}", self.root_hash(node)?)
+                let hash = self.root_hash(node)?;
+                format!("{label}:{hash:016x}{}+{off:x}{slot}", self.identity(node)?)
             }
         })
     }
@@ -359,7 +380,10 @@ pub(super) fn strip_rip_displacement(operands: &str) -> String {
 mod tests {
     use super::*;
     use crate::codekey::elf::parse_markers;
-    use crate::codekey::fixture::{BAR, BAZ, DIS, FN_SYMBOLS, Fixture, bar, image, loaded};
+    use crate::codekey::fixture::{
+        BAR, BAZ, DIS, FN_SYMBOLS, Fixture, OBJECTS, READ_ONLY, WRITABLE, bar, image, loaded,
+        object_sections,
+    };
 
     #[test]
     fn a_reference_into_unsized_data_hashes_its_section() {
@@ -502,6 +526,7 @@ mod tests {
             vma: 0x2008,
             size: 8,
             entry: 0,
+            ..Extent::default()
         }];
         assert_eq!(hash(&input, 0x2018), hash(&input, 0x201c));
         assert_ne!(hash(&input, 0x2008), hash(&input, 0x2009));
@@ -527,6 +552,7 @@ mod tests {
             vma: 0x2008,
             size: 8,
             entry: 0,
+            ..Extent::default()
         };
         assert!(hash(std::slice::from_ref(&ends_here), 0x2018).is_some());
         assert_ne!(
@@ -542,6 +568,7 @@ mod tests {
             vma: 0x2010,
             size: 8,
             entry: 0,
+            ..Extent::default()
         };
         let both = [ends_here, starts_here];
         assert_ne!(hash(&both, 0x2010), hash(&both, 0x201c));
@@ -568,6 +595,7 @@ mod tests {
             vma: 0x2008,
             size: 16,
             entry: 8,
+            ..Extent::default()
         }];
         let hash = |byte: usize| {
             let mut image = image(7, 1);
@@ -587,6 +615,7 @@ mod tests {
             vma: 0x2008,
             size: 16,
             entry: 8,
+            ..Extent::default()
         }];
         let fixture = Fixture::default().wanted(&[BAR]).inputs(&pool);
         let hash = |byte: usize| {
@@ -678,6 +707,48 @@ Idx Name          Size      VMA               LMA               File off  Algn
         };
         assert!(hash(LAZY_DEREGISTER).is_some());
         assert_eq!(hash(&LAZY_DEREGISTER.replace("1c8e1b8", "1c8e1b9")), None);
+    }
+
+    fn takes(flags: &str, object: &str, relocs: &str) -> Option<u64> {
+        let dis = format!(
+            "0000000000001000 <_ZN3foo3bar17h1E>:\n    1000:\tlea    0x1000(%rip),%rax        # {object}\n    1007:\tret\n"
+        );
+        let fixture = Fixture::default()
+            .sections(&object_sections(flags))
+            .symbols(&format!(
+                "{OBJECTS}0000000000002000 0000000000000008 r slot\n"
+            ))
+            .relocs(relocs)
+            .wanted(&[BAR]);
+        bar(&fixture.hashes(&vec![0; 0x4000], &dis))
+    }
+
+    #[test]
+    fn two_writable_objects_with_the_same_bytes_hash_apart() {
+        assert!(takes(WRITABLE, "3000 <one>", "").is_some());
+        assert_ne!(
+            takes(WRITABLE, "3000 <one>", ""),
+            takes(WRITABLE, "3008 <two>", "")
+        );
+    }
+
+    #[test]
+    fn two_read_only_objects_with_the_same_bytes_hash_alike() {
+        assert!(takes(READ_ONLY, "3000 <one>", "").is_some());
+        assert_eq!(
+            takes(READ_ONLY, "3000 <one>", ""),
+            takes(READ_ONLY, "3008 <two>", "")
+        );
+    }
+
+    #[test]
+    fn a_pointer_to_a_writable_object_hashes_which_object() {
+        let slot = |to: u64| {
+            let relocs = format!("0000000000002000 R_X86_64_RELATIVE  *ABS*+0x{to:016x}");
+            takes(WRITABLE, "2000 <slot>", &relocs)
+        };
+        assert!(slot(0x3000).is_some());
+        assert_ne!(slot(0x3000), slot(0x3008));
     }
 
     #[test]

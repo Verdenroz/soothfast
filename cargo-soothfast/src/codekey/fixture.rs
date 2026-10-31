@@ -41,6 +41,31 @@ pub const DIS: &str = "\
     1017:\tret
 ";
 
+pub const OBJECTS: &str = "\
+0000000000001000 0000000000000020 T _ZN3foo3bar17h1E
+0000000000003000 0000000000000008 d one
+0000000000003008 0000000000000008 d two
+";
+
+/// A function, a table at `0x2000`, and two 8-byte objects at `0x3000` in a
+/// section with `flags`.
+pub fn object_sections(flags: &str) -> String {
+    format!(
+        "\
+Idx Name          Size      VMA               LMA               File off  Algn
+  0 .text         00000100  0000000000001000  0000000000001000  00001000  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, CODE
+  1 .rodata       00000020  0000000000002000  0000000000002000  00002000  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  2 .objects      00000010  0000000000003000  0000000000003000  00003000  2**3
+                  {flags}
+"
+    )
+}
+
+pub const WRITABLE: &str = "CONTENTS, ALLOC, LOAD, DATA";
+pub const READ_ONLY: &str = "CONTENTS, ALLOC, LOAD, READONLY, DATA";
+
 pub fn image(constant: u8, rest: u8) -> Vec<u8> {
     let mut image = vec![0; 0x3000];
     image[0x2000..0x2008].fill(constant);
