@@ -137,6 +137,9 @@ struct Wanted {
     docs: Vec<String>,
     spec: Vec<SpecPackage>,
     features: Option<String>,
+    /// The `--features` the caller gave, which is all `docs check` uses: it
+    /// never reads the `[gate]` table.
+    docs_features: Option<String>,
     against_ref: Option<String>,
     reuse_base: bool,
     stage: Option<PathBuf>,
@@ -192,7 +195,7 @@ fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
             wanted
                 .docs
                 .iter()
-                .map(|pkg| rustdoc(pkg, false, wanted.features.clone(), false)),
+                .map(|pkg| rustdoc(pkg, false, wanted.docs_features.clone(), false)),
         );
         for s in &wanted.spec {
             let Some(aux) = state.generated_from(&s.pkg) else {
@@ -638,6 +641,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         docs: Vec::new(),
         spec: Vec::new(),
         features: None,
+        docs_features: None,
         against_ref: None,
         reuse_base: true,
         stage: None,
@@ -683,6 +687,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
             }
         }
     }
+    wanted.docs_features = common.features.clone();
     gate_config::apply(&mut common)?;
     wanted.features = common.features.clone();
     wanted.lanes = if lanes.is_empty() {
@@ -912,6 +917,7 @@ mod tests {
                 target: "routes".into(),
             }],
             features: None,
+            docs_features: None,
             against_ref: Some("origin/main".into()),
             reuse_base: true,
             stage: None,
@@ -1072,7 +1078,7 @@ mod tests {
     fn the_docs_lane_keys_rustdoc_with_the_features_docs_check_uses() {
         let wanted = Wanted {
             lanes: BTreeSet::from([Lane::Rustdoc]),
-            features: Some("full".into()),
+            docs_features: Some("full".into()),
             ..wanted()
         };
         let items: Vec<_> = select(&wanted, &Fake::default())
@@ -1083,6 +1089,28 @@ mod tests {
             &items[0],
             Item::Rustdoc { features: Some(f), private: false, .. } if f == "full"
         ));
+    }
+
+    #[test]
+    fn a_gate_table_feature_keys_the_spec_rustdoc_but_not_the_docs_check_one() {
+        let gate = gate_config::parse("[gate]\nfeatures = \"bench-gate\"\n").unwrap();
+        let fake = Fake {
+            generated: BTreeMap::from([("server".to_string(), Vec::new())]),
+            ..Fake::default()
+        };
+        let wanted = Wanted {
+            lanes: BTreeSet::from([Lane::Rustdoc]),
+            features: gate.features,
+            ..wanted()
+        };
+        let features: Vec<_> = select(&wanted, &fake)
+            .into_iter()
+            .map(|s| match s.item {
+                Item::Rustdoc { features, .. } => features,
+                other => panic!("{other}"),
+            })
+            .collect();
+        assert_eq!(features, [None, Some("bench-gate".to_string())]);
     }
 
     #[test]
