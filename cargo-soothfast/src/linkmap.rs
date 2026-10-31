@@ -12,6 +12,7 @@
 //! extents read from it are kept under `.soothfast/maps/`, named by the
 //! digest of the binary they describe, so they are never read for another.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use soothfast_registry::fnv1a;
@@ -126,7 +127,25 @@ pub fn parse(text: &str, root: &str) -> Option<Vec<Extent>> {
     };
     extents.retain(|e| e.size > 0 && e.vma > 0);
     extents.sort_by_key(|e| e.vma);
+    number_repeats(&mut extents);
     (!extents.is_empty()).then_some(extents)
+}
+
+/// Tell inputs that share a name apart by their order in the binary: a
+/// distributed slice puts every element in a section of one name, in one
+/// object. Inserting an element renumbers the ones after it, which costs a
+/// miss.
+fn number_repeats(extents: &mut [Extent]) {
+    let mut count: HashMap<String, usize> = HashMap::new();
+    for e in extents.iter().filter(|e| !e.name.is_empty()) {
+        *count.entry(e.name.clone()).or_default() += 1;
+    }
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for e in extents.iter_mut().filter(|e| count.get(&e.name) > Some(&1)) {
+        let n = seen.entry(e.name.clone()).or_default();
+        e.name = format!("{}#{n}", e.name);
+        *n += 1;
+    }
 }
 
 /// lld writes `VMA LMA Size Align Out In Symbol` rows in bare hexadecimal;
@@ -390,10 +409,10 @@ Linker script and memory map
             parse(LLD, "").expect("parsed"),
             [
                 at(0x2e0, 0x1c, "<internal>:.interp"),
-                pool(0xce40, 0xd8, 8, "<internal>:.rodata.cst8"),
+                pool(0xce40, 0xd8, 8, "<internal>:.rodata.cst8#0"),
                 at(0xcf18, 7, "/w/target/deps/bench-1.o:.rodata..Lanon.1.0"),
                 at(0xcf64, 0x11, "/w path/deps/bench-1.o:.rodata..Lanon.1.1"),
-                pool(0xcf90, 0x10, 8, "<internal>:.rodata.cst8")
+                pool(0xcf90, 0x10, 8, "<internal>:.rodata.cst8#1")
             ]
         );
     }
@@ -454,6 +473,31 @@ Linker script and memory map
         assert_ne!(out[0].name, out[1].name);
         assert_eq!(out[0].name.len(), 16);
         assert_eq!(hashed(vec![named("")])[0].name, "");
+    }
+
+    #[test]
+    fn inputs_of_one_name_are_numbered_in_address_order() {
+        let map = [
+            "             VMA              LMA     Size Align Out     In      Symbol",
+            "            1000             1000       10     1 linkme_X",
+            "            1000             1000        8     1         /w/t/release/deps/a.o:(linkme_X)",
+            "            1008             1008        8     1         /w/t/release/deps/a.o:(linkme_X)",
+            "            2000             2000        8     1         /w/t/release/deps/a.o:(.data.y)",
+        ]
+        .join("\n");
+        let names: Vec<String> = parse(&map, "/w/t/release")
+            .expect("parsed")
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "deps/a.o:linkme_X#0",
+                "deps/a.o:linkme_X#1",
+                "deps/a.o:.data.y"
+            ]
+        );
     }
 
     #[test]
