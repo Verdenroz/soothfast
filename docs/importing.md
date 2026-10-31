@@ -243,11 +243,11 @@ nothing unless `--force` is given.
 
 The docs job waits for the cargo gate, which saves the head measurement as the
 `soothfast-baseline` artifact, and checks claims against it. A pull request
-that leaves the bench binaries unchanged saves none, so the job reads the
-measurement each default-branch push caches as `soothfast-baseline-<sha>`, for
-the pull request's merge-base commit. Only when that is missing does the check
-report "claims not evaluated: no measurement" as a notice, still checking binds
-and examples.
+that leaves the bench binaries unchanged saves none, so the job falls back to
+the default branch's measurement, which each default-branch push caches as
+`soothfast-baseline-<sha>` (the base commit's, else the nearest). Only when
+neither exists does the check report "claims not evaluated: no measurement" as
+a notice, still checking binds and examples.
 
 Each project's gate checks out the full history, runs the harness on the
 merge base in a `git worktree` and on HEAD, then runs `gate --import` with

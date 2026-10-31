@@ -35,20 +35,6 @@ struct DocsArgs {
     paths: Vec<PathBuf>,
 }
 
-/// The item of a "no measurement" error, when the baseline lists its package
-/// as unmeasured: a claim about it is not evaluated rather than failed.
-fn unmeasured_item(error: &str, baseline: &serde_json::Value) -> Option<String> {
-    let named = error.strip_prefix("no measurement for ")?;
-    let metric_path = named.split(" in baseline").next()?;
-    let item = metric_path.rsplitn(3, '.').nth(2)?;
-    let pkg = invoke::id_pkg(item);
-    baseline["unmeasured"]
-        .as_array()?
-        .iter()
-        .any(|p| p.as_str() == Some(pkg))
-        .then(|| item.to_string())
-}
-
 pub fn run(args: &[String]) -> i32 {
     let Some(sub) = args.first().cloned() else {
         eprintln!(
@@ -453,16 +439,10 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
                             cm.line, cm.expr
                         );
                     }
-                    Err(e) => match unmeasured_item(&e, &baseline) {
-                        Some(item) => println!(
-                            "skip  {file}:{} claim `{}` not evaluated: no measurement for {item}",
-                            cm.line, cm.expr
-                        ),
-                        None => {
-                            failures += 1;
-                            println!("FAIL  {file}:{} claim `{}`: {e}", cm.line, cm.expr);
-                        }
-                    },
+                    Err(e) => {
+                        failures += 1;
+                        println!("FAIL  {file}:{} claim `{}`: {e}", cm.line, cm.expr);
+                    }
                 }
             }
         }
@@ -874,23 +854,9 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_claim_about_an_unmeasured_package_is_not_evaluated_and_others_still_fail() {
-        let baseline = serde_json::json!({ "items": {}, "unmeasured": ["core"] });
-        let missing = |item: &str| {
-            format!("no measurement for {item}.walltime.median_ns in baseline — run `x`")
-        };
-        assert_eq!(
-            unmeasured_item(&missing("core::sort"), &baseline).as_deref(),
-            Some("core::sort")
-        );
-        assert_eq!(unmeasured_item(&missing("server::route"), &baseline), None);
-        assert_eq!(unmeasured_item("claim is malformed", &baseline), None);
-    }
-
     use super::{
         DocsArgs, accept_scanned, blocks_named_in, check_scanned, head_for_sniff, scan_at,
-        unmeasured_item, unscanned_marker_files,
+        unscanned_marker_files,
     };
     use crate::{docs_binds, invoke};
 

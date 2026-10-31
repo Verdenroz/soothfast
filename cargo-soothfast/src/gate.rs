@@ -18,7 +18,6 @@ use crate::headrun::{
 use crate::import;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::itemreuse::{Bin, Reuse};
-use crate::runcache::Runs;
 use crate::workspace;
 
 /// Deterministic counters gate tight.
@@ -199,13 +198,8 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     if let Some(shard) = g.common.shard {
-        if let Some(name) = &g.save_baseline
-            && invoke::baseline_holds_in(&invoke::project_root(), name, g.common.pkg.as_deref())
-        {
-            return err(&format!(
-                "--shard with --save-baseline {name:?}: that baseline already holds items of this package, and a shard would leave them half old; \
-                 save into a fresh name and fold the shards in with `baseline merge`"
-            ));
+        if g.save_baseline.is_some() {
+            return err("--save-baseline needs every item; a --shard run measures some");
         }
         println!("gate: shard {shard}: gating the items it owns");
     }
@@ -218,7 +212,7 @@ pub fn run(args: &[String]) -> i32 {
         current,
         short_circuited,
         harness,
-        saved,
+        new_crate,
     } = match resolve(&g, walltime_advisory) {
         Ok(resolved) => resolved,
         Err(e) => return err(&e),
@@ -310,41 +304,27 @@ pub fn run(args: &[String]) -> i32 {
 
     write_gate_status(failures);
     if let Some(name) = &g.save_baseline {
-        let scope = invoke::SaveScope::of(&g.common);
-        let to_save = match save_verdict(failures, short_circuited) {
-            SaveVerdict::Save => Some(&current),
+        match save_verdict(failures, short_circuited) {
+            _ if new_crate => println!(
+                "gate: not saving baseline {name:?} — the crate is newly measured, so the pass \
+                 compared HEAD with itself"
+            ),
+            SaveVerdict::Save => {
+                match invoke::save_baseline(name, &current, invoke::SaveScope::of(&g.common)) {
+                    Ok(path) => println!("baseline saved: {}", path.display()),
+                    Err(e) => {
+                        eprintln!("soothfast: failed to save baseline: {e}");
+                        return 1;
+                    }
+                }
+            }
             SaveVerdict::RefuseFailing => {
                 eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
-                None
             }
-            // Identical binaries make the run stored for them HEAD's own.
-            SaveVerdict::SkipShortCircuit => match &saved {
-                Some(run) => {
-                    println!(
-                        "gate: saving baseline {name:?} from the run stored for these binaries"
-                    );
-                    Some(run)
-                }
-                None => {
-                    println!(
-                        "gate: not saving baseline {name:?} — the pass skipped the gating counters \
-                         and no run is stored for these binaries; its claims go unevaluated"
-                    );
-                    if let Some(pkg) = g.common.pkg.as_deref() {
-                        let _ = invoke::mark_unmeasured(name, pkg);
-                    }
-                    None
-                }
-            },
-        };
-        if let Some(run) = to_save {
-            match invoke::save_baseline(name, run, scope) {
-                Ok(path) => println!("baseline saved: {}", path.display()),
-                Err(e) => {
-                    eprintln!("soothfast: failed to save baseline: {e}");
-                    return 1;
-                }
-            }
+            SaveVerdict::SkipShortCircuit => println!(
+                "gate: not saving baseline {name:?} — the short-circuit pass skipped the \
+                 gating counters, and unchanged code leaves the previous baseline valid"
+            ),
         }
     }
     if failures > 0 {
@@ -640,9 +620,9 @@ struct Resolved {
     /// gating counters, so `current` is not baseline material.
     short_circuited: bool,
     harness: invoke::HarnessSync,
-    /// What to save as a baseline when `current` is not baseline material: the
-    /// stored run of the identical binaries, with this pass's assertions.
-    saved: Option<Run>,
+    /// The crate has no bench target at the merge-base, so `reference` is
+    /// `current` itself and there is nothing to save as a baseline.
+    new_crate: bool,
 }
 
 /// Measure or load both sides of a gate run as a [`Resolved`].
@@ -673,7 +653,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Resolved, String> {
             baseline
         };
         return Ok(Resolved {
-            saved: None,
+            new_crate: false,
             reference,
             current,
             short_circuited: false,
@@ -698,7 +678,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Resolved, String> {
             )
         })?;
     Ok(Resolved {
-        saved: None,
+        new_crate: false,
         reference: baseline,
         current,
         short_circuited: false,
@@ -966,18 +946,6 @@ fn write_gate_status(failures: u32) {
     );
 }
 
-/// The run stored for identical binaries as a baseline run, carrying this
-/// pass's build stamp and assertions: identical machine code makes the stored
-/// numbers HEAD's own.
-fn stored_as_run(doc: &Value, pass: &Run) -> Run {
-    let mut run = invoke::run_from_items_value(&doc["items"]);
-    run.noise_pct = doc["noise_pct"].as_f64();
-    run.build.clone_from(&pass.build);
-    run.gating_backend.clone_from(&pass.gating_backend);
-    run.assertions.clone_from(&pass.assertions);
-    run
-}
-
 /// Whether the merge-base of `refname` has the bench target `pkg` is gated by.
 fn bench_target_at(common: &CommonArgs, refname: &str, pkg: &str) -> Result<bool, String> {
     let target = common.target.as_deref().unwrap_or("soothfast");
@@ -1004,10 +972,10 @@ fn report_assertions(
 }
 
 /// A crate with no bench target at the merge-base: its own run stands in as
-/// the reference, so every delta is zero and the run is baseline material.
+/// the reference, so every delta is zero and only its claims can fail.
 fn newly_measured(head: Run, harness: invoke::HarnessSync) -> Resolved {
     Resolved {
-        saved: None,
+        new_crate: true,
         reference: ref_doc(&head),
         current: head,
         short_circuited: false,
@@ -1037,10 +1005,8 @@ fn measure_ref_interleaved(
         NoBenchTarget,
         /// The one pass, and whether it carries the gating counters.
         IdenticalBinaries {
-            run: Box<Result<Run, String>>,
+            run: Result<Run, String>,
             counted: bool,
-            /// The run stored for these binaries, when the pass did not count.
-            stored: Option<Value>,
         },
         /// Reference served by binary identity rather than by commit.
         Cached(Value),
@@ -1097,7 +1063,10 @@ fn measure_ref_interleaved(
     // even for an invocation that declined to trust an existing one.
     let base_known = !base_sha.is_empty();
 
-    if let Some(doc) = stored_reference(&runs, reuse, &base_sha) {
+    if reuse
+        && base_known
+        && let Some(doc) = runs.load_reference(&base_sha, &base_sha)
+    {
         println!("gate: reusing the measured merge-base {base_sha}");
         let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
             Some((head, from)) => {
@@ -1116,7 +1085,7 @@ fn measure_ref_interleaved(
             reference: doc,
             current: head,
             short_circuited: false,
-            saved: None,
+            new_crate: false,
         });
     }
 
@@ -1194,16 +1163,7 @@ fn measure_ref_interleaved(
                     cache_head_doc(&runs, &doc, head_dig.as_deref());
                 }
             }
-            let stored = by_binary.filter(|_| !counted);
-            return Ok((
-                Ref::IdenticalBinaries {
-                    run: Box::new(run),
-                    counted,
-                    stored,
-                },
-                digests,
-                harness,
-            ));
+            return Ok((Ref::IdenticalBinaries { run, counted }, digests, harness));
         }
         if let Some(doc) = by_binary {
             println!("gate: reusing a run measured from the same merge-base binary");
@@ -1286,8 +1246,7 @@ fn measure_ref_interleaved(
     let (outcome, digests, harness) = outcome;
 
     let sides = match outcome {
-        // HEAD alone, still measured and compared with itself so the run can
-        // be saved as a baseline.
+        // HEAD alone, measured so its claims are checked and the run is cached.
         Ref::NoBenchTarget => {
             println!(
                 "gate: no bench target at {refname} for {} — newly measured, nothing to compare",
@@ -1300,15 +1259,10 @@ fn measure_ref_interleaved(
         }
         // One cheap pass serves as both sides: real items and assertions,
         // zero deltas by construction.
-        Ref::IdenticalBinaries {
-            run,
-            counted,
-            stored,
-        } => {
-            let head = (*run)?;
-            let saved = stored.map(|doc| stored_as_run(&doc, &head));
+        Ref::IdenticalBinaries { run, counted } => {
+            let head = run?;
             return Ok(Resolved {
-                saved,
+                new_crate: false,
                 reference: ref_doc(&head),
                 current: head,
                 short_circuited: !counted,
@@ -1327,7 +1281,7 @@ fn measure_ref_interleaved(
             };
             cache_head(&runs, &head, head_dig.as_deref(), &settled);
             return Ok(Resolved {
-                saved: None,
+                new_crate: false,
                 reference: doc,
                 current: head,
                 short_circuited: false,
@@ -1369,21 +1323,12 @@ fn measure_ref_interleaved(
     }
     cache_head(&runs, &head, head_dig.as_deref(), &head_settled);
     Ok(Resolved {
-        saved: None,
+        new_crate: false,
         reference,
         current: head,
         short_circuited: false,
         harness,
     })
-}
-
-/// The run stored for the merge-base commit, which the gate reuses in place
-/// of building and measuring that side.
-pub(crate) fn stored_reference(runs: &Runs, reuse: bool, base_sha: &str) -> Option<Value> {
-    if !reuse || base_sha.is_empty() {
-        return None;
-    }
-    runs.load_reference(base_sha, base_sha)
 }
 
 /// Where a stored reference remembers that its harness could not be pinned,
@@ -2120,19 +2065,15 @@ mod tests {
     }
 
     #[test]
-    fn a_newly_measured_crate_is_baseline_material() {
+    fn a_newly_measured_crate_compares_clean_against_itself_and_saves_nothing() {
         let resolved = super::newly_measured(
             run_with(ItemMetrics::default()),
             invoke::HarnessSync::default(),
         );
-        assert!(!resolved.short_circuited);
+        assert!(resolved.new_crate);
         assert!(resolved.reference["items"]["pkg::bt_base_to_htf_index"].is_object());
         let (failures, _) = gate_failures(&resolved.reference, &resolved.current);
         assert_eq!(failures, 0);
-        assert!(matches!(
-            save_verdict(failures, resolved.short_circuited),
-            SaveVerdict::Save
-        ));
     }
 
     #[test]
@@ -2154,27 +2095,6 @@ mod tests {
             save_verdict(regressions + claims, resolved.short_circuited),
             SaveVerdict::RefuseFailing
         ));
-    }
-
-    #[test]
-    fn identical_binaries_save_their_stored_run_with_this_passes_claims() {
-        let stored = json!({
-            "noise_pct": 0.5,
-            "items": { "pkg::a": { "perfcnt": { "instructions": 100 } } },
-        });
-        let mut pass = run_with(ItemMetrics::default());
-        pass.build = Some(buildstamp::BuildStamp::fixture());
-        pass.assertions.push(invoke::AssertionOutcome {
-            id: "pkg::a".into(),
-            kind: "alloc".into(),
-            ok: true,
-            detail: "0 == 0".into(),
-        });
-        let run = super::stored_as_run(&stored, &pass);
-        assert_eq!(run.items["pkg::a"].instructions, Some(100));
-        assert_eq!(run.noise_pct, Some(0.5));
-        assert_eq!(run.assertions.len(), 1);
-        assert!(run.build.is_some());
     }
 
     fn run_with(m: ItemMetrics) -> Run {
