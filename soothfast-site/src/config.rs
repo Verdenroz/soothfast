@@ -93,15 +93,11 @@ impl Default for SiteConfig {
     }
 }
 
-/// Tables belonging to the other consumers of the shared `soothfast.toml`.
-/// Rejecting these would make a spec- or SDK-configured repo unable to build
-/// its site at all.
-const FOREIGN_TABLES: [&str; 6] = ["spec", "sdk", "gate", "test", "changelog", "docs"];
-
+/// Every table outside `[site]` belongs to another reader of the shared
+/// `soothfast.toml`; rejecting one would stop a configured repo building its
+/// site.
 fn is_foreign(table: &[String]) -> bool {
-    table
-        .first()
-        .is_some_and(|t| FOREIGN_TABLES.contains(&t.as_str()))
+    table.first().is_none_or(|t| t != "site")
 }
 
 /// Parse `soothfast.toml` text into a config. Unknown keys under `[site]` are
@@ -118,12 +114,15 @@ pub fn parse(text: &str) -> Result<SiteConfig, String> {
         if let Some(inner) = line.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
             table = inner.split('.').map(|s| s.trim().to_string()).collect();
             foreign = is_foreign(&table);
+            if foreign {
+                continue;
+            }
             if table == ["site", "nav"] {
                 cfg.nav.push(NavGroup {
                     title: String::new(),
                     pages: Vec::new(),
                 });
-            } else if !foreign {
+            } else {
                 return Err(format!("line {lineno}: unknown array table [[{inner}]]"));
             }
             continue;
@@ -209,14 +208,20 @@ mod tests {
 
     #[test]
     fn tables_owned_by_other_engines_are_skipped() {
-        let text = "[site]\nname = \"x\"\n\n[gate]\ncodegen-units = 1\n\n[test]\nignore = [\"docs/**\"]\n\n[test.packages.\"finance-query\"]\nfiles = [\"src/**\"]\n\n[changelog]\npackages = [\"a\"]\n\n[docs]\npaths = [\"a\"]\n\n[[spec]]\npath = \"a\"\n\n[[sdk]]\nspec = \"a\"\n";
+        let text = "[site]\nname = \"x\"\n\n[[project]]\ndir = \".\"\necosystem = \"rust\"\n\n[gate]\ncodegen-units = 1\n\n[test]\nignore = [\"docs/**\"]\n\n[test.packages.\"finance-query\"]\nfiles = [\"src/**\"]\n\n[changelog]\npackages = [\"a\"]\n\n[docs]\npaths = [\"a\"]\n\n[[spec]]\npath = \"a\"\n\n[[sdk]]\nspec = \"a\"\n";
         let cfg = parse(text).expect("foreign tables must not break the site build");
         assert_eq!(cfg.name, "x");
     }
 
     #[test]
-    fn genuinely_unknown_tables_are_still_errors() {
-        assert!(parse("[site]\nname = \"x\"\n\n[nonsense]\nk = 1\n").is_err());
+    fn unknown_tables_under_site_are_still_errors() {
+        assert!(parse("[site]\nname = \"x\"\n\n[site.nonsense]\nk = 1\n").is_err());
+        assert!(parse("[[site.nonsense]]\nk = 1\n").is_err());
+    }
+
+    #[test]
+    fn unknown_keys_in_site_are_still_errors() {
+        assert!(parse("[site]\nnme = \"x\"\n\n[[project]]\ndir = \".\"\n").is_err());
     }
     use super::*;
 
@@ -262,7 +267,6 @@ pages = ["perf/summary.md"]
     #[test]
     fn rejects_unknown_keys_and_tables() {
         assert!(parse("[site]\nnmae = \"typo\"").is_err());
-        assert!(parse("[other]\nx = \"1\"").is_err());
         assert!(parse("[site]\nname = 42").is_err());
         assert!(parse("[[site.nav]]\npages = [\"a.md\"]").is_err()); // no title
     }

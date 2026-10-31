@@ -112,6 +112,13 @@ impl Kind {
     }
 }
 
+/// Whether two `.gitignore` lines name the same root entry, so `/.soothfast`
+/// and `.soothfast/` count as one.
+fn same_ignore(a: &str, b: &str) -> bool {
+    let bare = |l: &str| l.trim().trim_matches('/').to_string();
+    bare(a) == bare(b)
+}
+
 #[derive(Debug)]
 struct Scaffold {
     path: PathBuf,
@@ -135,7 +142,7 @@ impl Scaffold {
             Kind::Seed => State::Current,
             Kind::Whole if text == self.content => State::Current,
             Kind::Whole => State::Differs,
-            Kind::Line if text.lines().any(|l| l.trim() == self.content) => State::Current,
+            Kind::Line if text.lines().any(|l| same_ignore(l, &self.content)) => State::Current,
             Kind::Line => State::Differs,
             Kind::Section if parse_projects(text) == parse_projects(&self.content) => {
                 State::Current
@@ -1115,9 +1122,86 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::ecosystem::Tests;
+    use super::ecosystem::{Tests, parse_projects_tolerant};
     use super::*;
     use serde_json::json;
+
+    const SHARED_TOML: &str = r##"[site]
+name = "x"
+
+[site.theme]
+primary = "#336699"
+
+[[site.nav]]
+title = "Guide"
+pages = ["index.md"]
+
+[docs]
+paths = ["README.md"]
+package = "x"
+
+[[project]]
+dir = "web"
+ecosystem = "node"
+future_key = "ignored"
+
+[test]
+ci = false
+
+[gate]
+codegen-units = 4
+
+[changelog]
+features = "a"
+
+[[spec]]
+path = "api.yaml"
+
+[[sdk]]
+spec = "api.yaml"
+out = "sdk"
+package = "x"
+
+[[test.suite]]
+label = "e2e"
+project = "web"
+cmd = "npm test"
+"##;
+
+    #[test]
+    fn every_reader_ignores_the_tables_it_does_not_own() {
+        assert_eq!(
+            soothfast_site::config::parse(SHARED_TOML).unwrap().name,
+            "x"
+        );
+        assert_eq!(
+            crate::docs_config::parse(SHARED_TOML).unwrap().package,
+            Some(vec!["x".into()])
+        );
+        assert_eq!(Ci::parse(SHARED_TOML).unwrap().test, Some(false));
+        assert_eq!(parse_projects_tolerant(SHARED_TOML).unwrap().len(), 1);
+        assert_eq!(parse_suites(SHARED_TOML).unwrap().len(), 1);
+        assert_eq!(
+            crate::gate_config::parse(SHARED_TOML)
+                .unwrap()
+                .codegen_units
+                .as_deref(),
+            Some("4")
+        );
+        assert!(crate::changelog_config::parse(SHARED_TOML).is_ok());
+        assert_eq!(
+            crate::spec_config::parse(SHARED_TOML)
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
+        assert_eq!(
+            crate::sdk_config::parse(SHARED_TOML).unwrap().entries.len(),
+            1
+        );
+        assert!(crate::test::config::parse(SHARED_TOML).is_ok());
+    }
 
     fn ws(benched: &[&str], docs: Option<&str>) -> Workspace {
         Workspace {
@@ -1290,6 +1374,23 @@ mod tests {
             std::fs::read_to_string(root.join(".gitignore")).unwrap(),
             "target\n.soothfast/\n"
         );
+    }
+
+    #[test]
+    fn any_root_form_of_the_ignore_line_counts_as_present() {
+        let line = Scaffold {
+            path: ".gitignore".into(),
+            kind: Kind::Line,
+            content: ".soothfast/".into(),
+        };
+        for form in [".soothfast", ".soothfast/", "/.soothfast", "/.soothfast/"] {
+            assert_eq!(
+                line.state(Some(&format!("target\n{form}\n"))),
+                State::Current
+            );
+        }
+        assert_eq!(line.state(Some("target\n")), State::Differs);
+        assert_eq!(line.state(Some("sub/.soothfast/\n")), State::Differs);
     }
 
     fn whole(path: &str, content: &str) -> Scaffold {

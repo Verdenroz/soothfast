@@ -35,6 +35,43 @@ struct DocsArgs {
     paths: Vec<PathBuf>,
 }
 
+impl DocsArgs {
+    /// Fill the packages from `[docs] package` when no `-p` was given.
+    fn use_configured(
+        &mut self,
+        configured: Option<Vec<String>>,
+        single: bool,
+    ) -> Result<(), String> {
+        if !self.pkgs.is_empty() {
+            return Ok(());
+        }
+        let names = configured.unwrap_or_default();
+        if single && names.len() > 1 {
+            return Err(format!(
+                "[docs] package names {}; pass -p PKG to pick one",
+                names.join(", ")
+            ));
+        }
+        self.pkg = names.last().cloned();
+        self.pkgs = names;
+        Ok(())
+    }
+}
+
+fn single_package(sub: &str) -> bool {
+    matches!(
+        sub,
+        "gen-tests" | "capture" | "diff" | "reference" | "routes"
+    )
+}
+
+fn takes_package(sub: &str) -> bool {
+    matches!(
+        sub,
+        "check" | "accept" | "gen-tests" | "capture" | "diff" | "reference" | "routes"
+    )
+}
+
 pub fn run(args: &[String]) -> i32 {
     let Some(sub) = args.first().cloned() else {
         eprintln!(
@@ -96,6 +133,17 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
+    if a.pkgs.is_empty() && takes_package(&sub) {
+        match docs_config::load(&invoke::project_root()) {
+            Ok(cfg) => {
+                if let Err(e) = a.use_configured(cfg.package, single_package(&sub)) {
+                    return err(&e);
+                }
+            }
+            Err(e) => return err(&e),
+        }
+    }
+
     match sub.as_str() {
         "check" => check(&a),
         "accept" => accept(&a),
@@ -127,7 +175,7 @@ pub fn run(args: &[String]) -> i32 {
                 a.features.as_deref(),
                 a.target.as_deref(),
             ),
-            None => err("routes needs -p PKG"),
+            None => err("routes needs -p PKG or [docs] package"),
         },
         other => err(&format!("unknown docs subcommand {other:?}")),
     }
@@ -309,7 +357,7 @@ fn surfaces_for_binds(
         return Ok(Vec::new());
     }
     if a.pkgs.is_empty() {
-        return Err("this docs command needs -p PKG".into());
+        return Err("this docs command needs -p PKG or [docs] package".into());
     }
     a.pkgs
         .iter()
@@ -534,7 +582,7 @@ fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
 
 fn gen_tests(a: &DocsArgs) -> i32 {
     let Some(pkg) = a.pkg.clone() else {
-        return err("gen-tests needs -p PKG (where tests/examples are written)");
+        return err("gen-tests needs -p PKG or [docs] package (where tests/examples are written)");
     };
     let scanned = match scan_all(a) {
         Ok(s) => s,
@@ -570,7 +618,7 @@ fn gen_tests(a: &DocsArgs) -> i32 {
 
 fn capture(a: &DocsArgs) -> i32 {
     let Some(pkg) = a.pkg.clone() else {
-        return err("capture needs -p PKG");
+        return err("capture needs -p PKG or [docs] package");
     };
     let scanned = match scan_all(a) {
         Ok(s) => s,
@@ -787,7 +835,7 @@ impl CaptureRun {
 
 fn surface_diff(a: &DocsArgs) -> i32 {
     let Some(pkg) = a.pkg.clone() else {
-        return err("diff needs -p PKG");
+        return err("diff needs -p PKG or [docs] package");
     };
     let Some(refname) = a.against_ref.clone() else {
         return err("diff needs --against-ref REF");
@@ -828,7 +876,7 @@ fn surface_diff(a: &DocsArgs) -> i32 {
 
 fn reference_cmd(a: &DocsArgs) -> i32 {
     let Some(pkg) = a.pkg.clone() else {
-        return err("reference needs -p PKG");
+        return err("reference needs -p PKG or [docs] package");
     };
     let (surf, doc, root) = match build_surface(a, &pkg) {
         Ok(s) => s,
@@ -856,9 +904,63 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
 mod tests {
     use super::{
         DocsArgs, accept_scanned, blocks_named_in, check_scanned, head_for_sniff, scan_at,
-        unscanned_marker_files,
+        single_package, takes_package, unscanned_marker_files,
     };
     use crate::{docs_binds, invoke};
+
+    #[test]
+    fn configured_package_fills_in_when_no_p_is_given() {
+        let mut a = DocsArgs::default();
+        a.use_configured(Some(vec!["a".into(), "b".into()]), false)
+            .unwrap();
+        assert_eq!(a.pkgs, ["a", "b"]);
+    }
+
+    #[test]
+    fn a_configured_list_is_an_error_for_a_single_package_command() {
+        let mut a = DocsArgs::default();
+        let e = a
+            .use_configured(Some(vec!["a".into(), "b".into()]), true)
+            .unwrap_err();
+        assert!(e.contains("a, b") && e.contains("-p"), "{e}");
+        let mut one = DocsArgs::default();
+        one.use_configured(Some(vec!["a".into()]), true).unwrap();
+        assert_eq!(one.pkg.as_deref(), Some("a"));
+        assert!(single_package("capture") && !single_package("check"));
+    }
+
+    #[test]
+    fn explicit_p_wins_over_configured_package() {
+        let mut a = DocsArgs {
+            pkg: Some("x".into()),
+            pkgs: vec!["x".into()],
+            ..DocsArgs::default()
+        };
+        a.use_configured(Some(vec!["a".into()]), true).unwrap();
+        assert_eq!(a.pkgs, ["x"]);
+        assert_eq!(a.pkg.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn no_configured_package_leaves_the_args_empty() {
+        let mut a = DocsArgs::default();
+        a.use_configured(None, true).unwrap();
+        assert!(a.pkgs.is_empty() && a.pkg.is_none());
+    }
+
+    #[test]
+    fn site_commands_do_not_take_a_package() {
+        assert!(
+            ["check", "accept", "capture", "reference"]
+                .into_iter()
+                .all(takes_package)
+        );
+        assert!(
+            !["build", "serve", "gh-deploy"]
+                .into_iter()
+                .any(takes_package)
+        );
+    }
 
     #[test]
     fn compiler_errors_name_each_block_file_once() {

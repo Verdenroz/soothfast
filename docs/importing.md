@@ -212,7 +212,8 @@ the cargo workspace. `[runner] labels` is a list of runner labels (no table
 means `ubuntu-latest`), and `ci = false` under `[test]` drops the cargo
 `test` job (the other `[test]` keys are unchanged). Init writes them only for
 `--runner-labels A,B` and `--no-test`. `[docs] package` (a name or a list)
-names the packages `docs check` reads; without it, init picks the workspace
+names the packages `docs check` reads, and the docs commands use it when
+given no `-p`; without it, init picks the workspace
 packages the markdown binds (`crate::path`) name, else the root package, and
 writes what it chose.
 

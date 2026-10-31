@@ -1,7 +1,7 @@
 //! `cargo soothfast test`: run only the tests a change can affect.
 
 mod cargo;
-mod config;
+pub(crate) mod config;
 #[cfg(test)]
 mod fixture;
 mod key;
