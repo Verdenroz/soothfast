@@ -11,6 +11,8 @@
 //!
 //! `--only bench|routes|rustdoc` restricts the run to one lane, so the lanes
 //! can run on separate machines: each fills a different part of the stores.
+//! `--stage DIR` copies just the entries the run built or found, so the
+//! machine hands on those and not everything it restored.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -19,8 +21,8 @@ use std::path::{Path, PathBuf};
 use crate::invoke::{self, Build, CommonArgs, Visibility};
 use crate::itemreuse::{self, Bin};
 use crate::{
-    benchexe, buildstamp, gate, gate_config, headrun, linkmap, seed, spec_config, spec_gen,
-    workspace,
+    benchexe, binstore, buildstamp, gate, gate_config, headrun, linkmap, runcache, seed,
+    spec_config, spec_gen, workspace,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -51,6 +53,9 @@ enum Item {
         pkg: String,
         private: bool,
         features: Option<String>,
+        /// A workspace crate documented beside a spec's own package, whose
+        /// failure costs that crate's types their schemas and nothing else.
+        aux: bool,
     },
 }
 
@@ -112,6 +117,7 @@ struct Wanted {
     features: Option<String>,
     against_ref: Option<String>,
     reuse_base: bool,
+    stage: Option<PathBuf>,
 }
 
 /// What the stores and the run cache hold.
@@ -150,18 +156,25 @@ fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
         }));
     }
     if wanted.lanes.contains(&Lane::Rustdoc) {
-        let rustdoc = |pkg: &str, private: bool, features: Option<String>| Item::Rustdoc {
-            pkg: pkg.to_string(),
-            private,
-            features,
-        };
-        items.extend(wanted.docs.iter().map(|pkg| rustdoc(pkg, false, None)));
+        let rustdoc =
+            |pkg: &str, private: bool, features: Option<String>, aux: bool| Item::Rustdoc {
+                pkg: pkg.to_string(),
+                private,
+                features,
+                aux,
+            };
+        items.extend(
+            wanted
+                .docs
+                .iter()
+                .map(|pkg| rustdoc(pkg, false, None, false)),
+        );
         for s in &wanted.spec {
             let Some(aux) = state.generated_from(&s.pkg) else {
                 continue;
             };
-            items.push(rustdoc(&s.pkg, true, wanted.features.clone()));
-            items.extend(aux.iter().map(|pkg| rustdoc(pkg, true, None)));
+            items.push(rustdoc(&s.pkg, true, wanted.features.clone(), false));
+            items.extend(aux.iter().map(|pkg| rustdoc(pkg, true, None, true)));
         }
     }
     let mut seen = BTreeSet::new();
@@ -218,6 +231,8 @@ struct Live<'a> {
     common: &'a CommonArgs,
     base: Option<Tree>,
     base_sha: String,
+    /// Where the entries this run needs are copied to, when asked.
+    stage: Option<&'a Path>,
 }
 
 impl Live<'_> {
@@ -261,6 +276,7 @@ impl State for Live<'_> {
                 pkg,
                 private,
                 features,
+                ..
             } => invoke::rustdoc_stored(pkg, features.as_deref(), visibility(*private)),
         }
     }
@@ -273,19 +289,83 @@ impl State for Live<'_> {
     }
 
     fn generated_from(&self, pkg: &str) -> Option<Vec<String>> {
-        let cfg = invoke::pkg_dir(pkg)
-            .ok()
-            .and_then(|dir| spec_config::load(&dir).ok())?;
-        cfg.generates()
-            .then(|| spec_gen::aux_crates(pkg, None, &cfg))
+        let cfg = spec_config::generating(pkg)?;
+        Some(spec_gen::aux_crates(pkg, None, &cfg))
+    }
+}
+
+/// Copy the files of the store entry named `key` in `store` into `stage`.
+fn stage_entry(store: &Path, key: &str, stage: &Path) {
+    let Some(name) = store.file_name() else {
+        return;
+    };
+    let to = stage.join(name);
+    let Ok(files) = std::fs::read_dir(store) else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(&to);
+    for file in files.flatten() {
+        if file.file_name().to_string_lossy().starts_with(key) {
+            let _ = std::fs::copy(file.path(), to.join(file.file_name()));
+        }
+    }
+}
+
+/// The key of the entry holding `exe`, which is named `<key>-<digest>.bin`.
+fn executable_key(exe: &Path) -> Option<String> {
+    let entry = binstore::entry_of(exe)?;
+    let name = entry.file_name()?.to_str()?;
+    Some(name.split_once('-')?.0.to_string())
+}
+
+/// Copy what a later job reads for `item` into `stage`: its entry, the
+/// manifest naming its inputs, and the digest and extents kept beside it.
+fn stage_item(item: &Item, live: &Live, stage: &Path) {
+    match item {
+        Item::Bench { pkg, side } => {
+            let (dir, target_dir) = live.tree(*side);
+            let exe = benchexe::executable(&live.one(pkg, None), dir, target_dir, Build::Measure);
+            stage_from(
+                exe.as_deref().and_then(executable_key),
+                binstore::dir(),
+                stage,
+            );
+        }
+        Item::Routes { pkg, target } => {
+            let exe =
+                benchexe::executable(&live.one(pkg, Some(target)), None, None, Build::Discover);
+            stage_from(
+                exe.as_deref().and_then(executable_key),
+                binstore::dir(),
+                stage,
+            );
+        }
+        Item::Rustdoc {
+            pkg,
+            private,
+            features,
+            ..
+        } => stage_from(
+            invoke::rustdoc_key(pkg, features.as_deref(), visibility(*private)),
+            runcache::state_dir("rustdoc"),
+            stage,
+        ),
+    }
+}
+
+fn stage_from(key: Option<String>, store: Option<PathBuf>, stage: &Path) {
+    if let (Some(key), Some(store)) = (key, store) {
+        stage_entry(&store, &key, stage);
     }
 }
 
 /// Link the bench target a second time for its map, when the gate would read
 /// one for this binary.
 fn link_map(common: &CommonArgs, exe: &Path, dir: Option<&Path>, target_dir: Option<&Path>) {
-    let env = invoke::host_env(exe, common.backend.as_deref()).ok();
-    if !itemreuse::reads_maps(env.as_ref(), common) {
+    let Ok(env) = invoke::host_env(exe, common.backend.as_deref()) else {
+        return;
+    };
+    if !itemreuse::reads_maps(&env, common) {
         return;
     }
     let digest = headrun::binary_digest(exe);
@@ -294,7 +374,7 @@ fn link_map(common: &CommonArgs, exe: &Path, dir: Option<&Path>, target_dir: Opt
         digest: digest.as_deref(),
         dir,
         target_dir,
-        env: env.as_ref(),
+        env: Some(&env),
     };
     linkmap::extents("prebuild", common, &bin);
 }
@@ -335,9 +415,19 @@ fn build_item(
             pkg,
             private,
             features,
-        } => invoke::rustdoc_json_in(pkg, None, features.as_deref(), visibility(*private))
-            .map(drop)
-            .map_err(|e| format!("{pkg}: {e}")),
+            aux,
+        } => {
+            let built =
+                invoke::rustdoc_json_in(pkg, None, features.as_deref(), visibility(*private));
+            match built {
+                Ok(_) => Ok(()),
+                Err(e) if *aux => {
+                    eprintln!("prebuild: cannot document workspace crate {pkg} ({e}); dropped");
+                    Ok(())
+                }
+                Err(e) => Err(format!("{pkg}: {e}")),
+            }
+        }
     }
 }
 
@@ -377,6 +467,12 @@ fn execute(steps: &[Step], live: &Live, heads: &mut BTreeMap<String, String>) ->
             } else {
                 Ok(())
             };
+            if let Some(stage) = live.stage
+                && matches!(s.action, Action::Build | Action::Stored)
+                && built.is_ok()
+            {
+                stage_item(&s.item, live, stage);
+            }
             match built {
                 Err(e) => Outcome::Failed(e),
                 Ok(()) if s.action == Action::Stored => Outcome::Stored,
@@ -409,6 +505,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         features: None,
         against_ref: None,
         reuse_base: true,
+        stage: None,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -425,6 +522,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
             }
             "--against-ref" => wanted.against_ref = Some(take(&mut it, a)?),
             "--no-reuse-base" => wanted.reuse_base = false,
+            "--stage" => wanted.stage = Some(PathBuf::from(take(&mut it, a)?)),
             "--only" => {
                 lanes.insert(match take(&mut it, a)?.as_str() {
                     "bench" => Lane::Bench,
@@ -472,13 +570,17 @@ pub fn run(args: &[String]) -> i32 {
         common: &common,
         base: None,
         base_sha: base_sha.clone(),
+        stage: wanted.stage.as_deref(),
     };
     let steps = select(&wanted, &live);
     let outcomes = execute(&steps, &live, &mut heads);
     let mut report: Vec<(Step, Outcome)> = steps.into_iter().zip(outcomes).collect();
 
-    let ahead = report.iter().all(|(_, o)| !matches!(o, Outcome::Failed(_)));
-    if ahead
+    let head_built = head_benches_built(&report);
+    if !head_built {
+        println!("prebuild: no merge-base side: HEAD's bench executables did not all build");
+    }
+    if head_built
         && let Some(refname) = wanted
             .against_ref
             .as_deref()
@@ -490,6 +592,21 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
     finish(&report)
+}
+
+/// Whether no bench executable of HEAD failed to build. Only those stop the
+/// merge-base side, since the gate has nothing to compare without them.
+fn head_benches_built(report: &[(Step, Outcome)]) -> bool {
+    report.iter().all(|(step, outcome)| {
+        let head_bench = matches!(
+            step.item,
+            Item::Bench {
+                side: Side::Head,
+                ..
+            }
+        );
+        !(head_bench && matches!(outcome, Outcome::Failed(_)))
+    })
 }
 
 /// The merge-base's executables, built in its worktree the way the gate
@@ -520,6 +637,7 @@ fn base_side(
                 target,
             }),
             base_sha: base_sha.to_string(),
+            stage: wanted.stage.as_deref(),
         };
         let wanted = Wanted {
             packages,
@@ -613,6 +731,16 @@ mod tests {
             pkg: pkg.into(),
             private,
             features: None,
+            aux: false,
+        }
+    }
+
+    fn aux_docs(pkg: &str) -> Item {
+        Item::Rustdoc {
+            pkg: pkg.into(),
+            private: true,
+            features: None,
+            aux: true,
         }
     }
 
@@ -628,6 +756,7 @@ mod tests {
             features: None,
             against_ref: Some("origin/main".into()),
             reuse_base: true,
+            stage: None,
         }
     }
 
@@ -703,8 +832,8 @@ mod tests {
             [
                 docs("core", false),
                 docs("server", true),
-                docs("core", true),
-                docs("types", true),
+                aux_docs("core"),
+                aux_docs("types"),
             ]
         );
     }
@@ -728,12 +857,46 @@ mod tests {
             spec: vec![spec("a"), spec("b")],
             ..wanted()
         };
-        let shared = docs("shared", true);
+        let shared = aux_docs("shared");
         let count = select(&wanted, &fake)
             .iter()
             .filter(|s| s.item == shared)
             .count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn only_a_failed_head_bench_stops_the_merge_base_side() {
+        let failed = |item| {
+            (
+                Step {
+                    item,
+                    action: Action::Build,
+                },
+                Outcome::Failed("x".into()),
+            )
+        };
+        assert!(head_benches_built(&[failed(routes("server", "routes"))]));
+        assert!(head_benches_built(&[failed(docs("core", false))]));
+        assert!(!head_benches_built(&[failed(bench("core", Side::Head))]));
+    }
+
+    #[test]
+    fn staging_copies_the_files_of_one_key_only() {
+        let root = std::env::temp_dir().join(format!("soothfast-stage-{}", std::process::id()));
+        let (store, stage) = (root.join("bins"), root.join("out"));
+        std::fs::create_dir_all(&store).unwrap();
+        for name in ["k1-d.bin", "k1-d.bin.extents", "k1.manifest", "k2-d.bin"] {
+            std::fs::write(store.join(name), name).unwrap();
+        }
+        stage_entry(&store, "k1", &stage);
+        let mut names: Vec<_> = std::fs::read_dir(stage.join("bins"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["k1-d.bin", "k1-d.bin.extents", "k1.manifest"]);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

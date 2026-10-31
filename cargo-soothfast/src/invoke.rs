@@ -1286,13 +1286,18 @@ pub fn rustdoc_json_in(
     Ok((doc, root))
 }
 
+/// The store key `rustdoc_json_in` looks `pkg` up under in the workspace.
+pub fn rustdoc_key(pkg: &str, features: Option<&str>, visibility: Visibility) -> Option<String> {
+    let root = workspace_root().ok()?;
+    rustdoc_store_key(pkg, None, &root, features, visibility, &rustdoc_toolchain())
+}
+
 /// Whether `rustdoc_json_in` would be served from the store for `pkg`.
 pub fn rustdoc_stored(pkg: &str, features: Option<&str>, visibility: Visibility) -> bool {
     let Ok(root) = workspace_root() else {
         return false;
     };
-    rustdoc_store_key(pkg, None, &root, features, visibility, &rustdoc_toolchain())
-        .is_some_and(|key| rustdocstore::holds(&key, &root))
+    rustdoc_key(pkg, features, visibility).is_some_and(|key| rustdocstore::holds(&key, &root))
 }
 
 /// `cargo rustdoc` for `pkg`, recording what it read in `dep_info` when given.

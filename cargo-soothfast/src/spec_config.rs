@@ -154,6 +154,15 @@ impl SpecConfig {
     }
 }
 
+/// The config of workspace package `pkg`, when any of its specs is generated
+/// from the code.
+pub fn generating(pkg: &str) -> Option<SpecConfig> {
+    crate::invoke::pkg_dir(pkg)
+        .ok()
+        .and_then(|dir| load(&dir).ok())
+        .filter(SpecConfig::generates)
+}
+
 /// Read `soothfast.toml` from a directory. An absent file is not an error —
 /// it just means nothing is configured for generation.
 pub fn load(dir: &Path) -> Result<SpecConfig, String> {

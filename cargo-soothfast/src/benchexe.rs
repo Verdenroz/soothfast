@@ -160,16 +160,31 @@ impl Plan {
     }
 
     fn keep(&self, cargo_stdout: &[u8], exe: &Path, started: SystemTime) {
-        if let Some(inputs) = rustdoc_inputs::collect_build(&self.root, exe, cargo_stdout) {
-            binstore::store(
-                &self.store,
-                &self.key,
-                self.key_now(),
-                &self.root,
-                &inputs,
-                started,
-                exe,
-                &self.group(),
+        let pkg = &self.id.pkg;
+        let Some(inputs) = rustdoc_inputs::collect_build(&self.root, exe, cargo_stdout) else {
+            eprintln!(
+                "soothfast: {pkg} not stored: the dep-info of a workspace crate is unreadable"
+            );
+            return;
+        };
+        let key_now = self.key_now();
+        if key_now.as_deref() != Some(&self.key) {
+            eprintln!("soothfast: {pkg} not stored: the tree changed during the build");
+            return;
+        }
+        let kept = binstore::store(
+            &self.store,
+            &self.key,
+            key_now,
+            &self.root,
+            &inputs,
+            started,
+            exe,
+            &self.group(),
+        );
+        if kept.is_none() && self.load().is_none() {
+            eprintln!(
+                "soothfast: {pkg} not stored: an input changed during the build or the entry could not be written"
             );
         }
     }
@@ -243,6 +258,12 @@ pub fn executable(
     build: Build,
 ) -> Option<PathBuf> {
     let plan = plan(common, dir, target_dir, build);
+    if plan.is_none() {
+        eprintln!(
+            "soothfast: {} not stored: the build cannot be keyed or a cargo runner is configured",
+            common.pkg.as_deref().unwrap_or("")
+        );
+    }
     let label = format!("bench executable {}", common.pkg.as_deref().unwrap_or(""));
     invoke::timed(&label, || {
         resolve(plan.as_deref(), || {
@@ -328,7 +349,11 @@ mod tests {
     /// What `cargo bench --no-run` leaves for the app package: an executable,
     /// its dep-info and the message naming both.
     fn fake_build(repo: &Repo, bytes: &[u8]) -> Built {
-        let deps = repo.0.join("target/release/deps");
+        fake_build_in(repo, "release", bytes)
+    }
+
+    fn fake_build_in(repo: &Repo, profile_dir: &str, bytes: &[u8]) -> Built {
+        let deps = repo.0.join("target").join(profile_dir).join("deps");
         std::fs::create_dir_all(&deps).unwrap();
         let exe = deps.join("soothfast-1a2b");
         std::fs::write(&exe, bytes).unwrap();
@@ -456,6 +481,31 @@ mod tests {
         repo.write("app/build.rs", "fn main() { println!(); }\n");
         let (_, builds) = resolve_counting(&self::plan(&repo, plan.store.clone()), &repo, b"y");
         assert_eq!(builds, 1);
+    }
+
+    #[test]
+    fn a_dev_profile_routes_build_is_stored_apart_from_the_bench_one() {
+        let repo = Repo::new("exe-routes");
+        let store = repo.store_dir();
+        let bench = plan(&repo, store.clone());
+        let mut routes = plan(&repo, store);
+        routes.id.discover = true;
+        routes.codegen_units = None;
+        routes.key = routes.key_now().unwrap();
+        assert_ne!(routes.key, bench.key);
+        assert_ne!(routes.group(), bench.group());
+        for expected in [1, 0] {
+            let builds = Cell::new(0);
+            let exe = resolve(Some(&routes), || {
+                builds.set(builds.get() + 1);
+                Some(fake_build_in(&repo, "debug", b"routes"))
+            })
+            .unwrap();
+            assert_eq!(builds.get(), expected);
+            assert_eq!(std::fs::read(exe).unwrap(), b"routes");
+        }
+        assert!(routes.load().is_some());
+        assert!(bench.load().is_none());
     }
 
     #[test]

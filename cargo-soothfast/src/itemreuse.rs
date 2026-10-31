@@ -40,8 +40,16 @@ impl<'a> Bin<'a> {
 }
 
 /// Whether a per-item plan reads link maps, given what HEAD's binary resolves.
-pub fn reads_maps(env: Option<&invoke::HostEnv>, common: &CommonArgs) -> bool {
-    !common.no_item_cache && env.is_some_and(|e| e.gating_backend == "callgrind" && e.item_reuse)
+pub fn reads_maps(env: &invoke::HostEnv, common: &CommonArgs) -> bool {
+    !common.no_item_cache && env.gating_backend == "callgrind" && env.item_reuse
+}
+
+fn harness_lacks_id(cmd: &str) {
+    println!(
+        "{cmd}: per-item reuse disabled for this invocation: bench harness does not take --id (harness {}, CLI {})",
+        invoke::harness_versions(),
+        env!("CARGO_PKG_VERSION")
+    );
 }
 
 /// What a callgrind measurement may take from the store: per binary, the
@@ -78,17 +86,13 @@ impl Reuse {
             return None;
         }
         let backend = common.backend.as_deref();
-        let capable = env.item_reuse
+        let capable = reads_maps(env, common)
             && bins[1..].iter().all(|bin| match bin.env {
                 Some(env) => env.item_reuse,
                 None => invoke::host_env(bin.exe, backend).is_ok_and(|e| e.item_reuse),
             });
         if !capable {
-            println!(
-                "{cmd}: per-item reuse disabled for this invocation: bench harness does not take --id (harness {}, CLI {})",
-                invoke::harness_versions(),
-                env!("CARGO_PKG_VERSION")
-            );
+            harness_lacks_id(cmd);
             return None;
         }
         let sides: Vec<(PathBuf, Vec<Extent>)> = bins
