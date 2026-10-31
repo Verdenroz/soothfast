@@ -320,7 +320,10 @@ symbol or label of the binary has is its own identity. Two that share a name
 (C `static`s of the same name in two files) are told apart by the input
 section each is defined in, named by the object's path below the profile
 directory (`target/[triple/]release`) and its archive member, so `a/util.o` and `b/util.o` differ. Code
-symbols do not count towards a duplicate. A new static of the same name
+symbols do not count towards a duplicate. Inputs of sections that are not in
+memory (`.debug_*`, `.comment`) are left out of the extents, since their
+offsets overlap real addresses. A duplicated name whose input has no name
+leaves the function unhashed. A new static of the same name
 elsewhere makes both duplicates, which costs a miss until the link map names
 them and never a wrong hit. Read-only data, and data the loader seals after
 relocation (the `PT_GNU_RELRO` range, read from the program headers), is

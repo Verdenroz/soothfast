@@ -470,4 +470,50 @@ mod tests {
         assert!(built > 0, "no linker built a binary");
         assert!(unhashed.is_empty(), "unhashed: {unhashed:?}");
     }
+
+    #[test]
+    fn two_statics_of_one_name_in_one_output_section_are_told_apart_or_unhashed() {
+        let dir = scratch("cfg");
+        let source = |reader: &str| {
+            format!(
+                "__attribute__((section(\".rodata.cfg\"))) static int cfg = 0;\n__attribute__((noinline)) int {reader}(void) {{ return cfg; }}\n"
+            )
+        };
+        std::fs::write(
+            dir.join("c1.c"),
+            source("r1") + "int main(void) { return r1(); }\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("c2.c"), source("r2")).unwrap();
+        let wanted = BTreeSet::from(["r1".to_string(), "r2".to_string()]);
+        let mut built = 0;
+        for linker in ["bfd", "lld", "mold"] {
+            let bin = dir.join(linker);
+            let map = dir.join(format!("{linker}.map"));
+            let linked = Command::new("cc")
+                .args(["-pie", "-O1", &format!("-fuse-ld={linker}"), "-o"])
+                .arg(&bin)
+                .arg(format!("-Wl,-Map={}", map.display()))
+                .arg(dir.join("c1.c"))
+                .arg(dir.join("c2.c"))
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !linked {
+                continue;
+            }
+            built += 1;
+            let text = std::fs::read_to_string(&map).expect("the linker wrote a map");
+            let inputs = crate::linkmap::parse(&text, "").expect("the map parses");
+            for (named, inputs) in [("map", &inputs[..]), ("no map", &[][..])] {
+                let binary = Binary::open(&bin, &wanted, inputs).expect("opens");
+                let (one, two) = (binary.hashes.get("r1"), binary.hashes.get("r2"));
+                assert!(
+                    one != two || one.is_none(),
+                    "{linker} {named}: {one:?} {two:?}"
+                );
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(built > 0, "no linker built a binary");
+    }
 }

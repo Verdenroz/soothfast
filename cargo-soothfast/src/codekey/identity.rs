@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use super::elf::{Section, Symbol, in_data, section_index};
+use super::elf::{Section, Symbol, in_data};
 use super::resolve::{Node, Place, Resolver};
 use super::strip_llvm;
 
@@ -51,7 +51,9 @@ impl Resolver<'_> {
                 let s = &self.symbols[i];
                 let name = strip_llvm(&s.name);
                 if self.duplicated.contains(name.as_ref()) {
-                    format!("{name}@{}", self.inputs[self.input_at(s.addr)?].name)
+                    let input = &self.inputs[self.input_at(s.addr)?].name;
+                    (!input.is_empty()).then_some(())?;
+                    format!("{name}@{input}")
                 } else {
                     name.into_owned()
                 }
@@ -81,7 +83,7 @@ impl Resolver<'_> {
     /// link-map input, and not past the end of one, on a marker or only on
     /// the section around it.
     pub(super) fn object_at(&self, addr: u64) -> Option<Place> {
-        let section = section_index(self.sections, addr)?;
+        let section = self.section_at(addr)?;
         let named = self.in_symbol(addr, section).is_some();
         let inside = self.input_at(addr).is_some() && !self.sections[section].code;
         if named || (inside && !self.markers.contains_key(&addr)) {

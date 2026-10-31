@@ -83,10 +83,14 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    pub(super) fn section_at(&self, addr: u64) -> Option<usize> {
+        section_index(self.sections, addr)
+    }
+
     /// The sized symbol holding `addr`, when it is defined in `section`.
     pub(super) fn in_symbol(&self, addr: u64, section: usize) -> Option<usize> {
         self.symbol_at(addr)
-            .filter(|&i| section_index(self.sections, self.symbols[i].addr) == Some(section))
+            .filter(|&i| self.section_at(self.symbols[i].addr) == Some(section))
     }
 
     pub(super) fn symbol_at(&self, addr: u64) -> Option<usize> {
@@ -101,7 +105,7 @@ impl<'a> Resolver<'a> {
     /// `hint` is the symbol objdump printed next to the address, used only
     /// for code that has no sized symbol (PLT stubs) and GOT slots.
     pub(super) fn place(&self, addr: u64, hint: Option<&str>) -> Option<Place> {
-        let section = section_index(self.sections, addr)?;
+        let section = self.section_at(addr)?;
         let code = self.sections[section].code;
         if let Some(i) = self.in_symbol(addr, section) {
             let off = addr - self.symbols[i].addr;
@@ -146,7 +150,7 @@ impl<'a> Resolver<'a> {
     /// contains, and where it starts: a sized symbol, else an input section,
     /// else the last entry of a pool.
     fn end_of(&self, addr: u64, section: usize) -> Option<(Node, u64)> {
-        let in_section = |at: u64| section_index(self.sections, at) == Some(section);
+        let in_section = |at: u64| self.section_at(at) == Some(section);
         let i = self
             .symbols
             .partition_point(|s| s.addr < addr)
@@ -187,14 +191,14 @@ impl<'a> Resolver<'a> {
         match node {
             Node::Symbol(i) => {
                 let s = &self.symbols[i];
-                Some((section_index(self.sections, s.addr)?, s.addr, s.size))
+                Some((self.section_at(s.addr)?, s.addr, s.size))
             }
             Node::Section(i) => Some((i, self.sections[i].vma, self.sections[i].size)),
             Node::Input(i) => {
                 let e = &self.inputs[i];
-                Some((section_index(self.sections, e.vma)?, e.vma, e.size))
+                Some((self.section_at(e.vma)?, e.vma, e.size))
             }
-            Node::Entry(vma, size) => Some((section_index(self.sections, vma)?, vma, size)),
+            Node::Entry(vma, size) => Some((self.section_at(vma)?, vma, size)),
         }
     }
 
@@ -250,7 +254,7 @@ impl<'a> Resolver<'a> {
 
     /// Bytes of `size` at `addr` in the file image, for a section with contents.
     pub(super) fn read(&self, addr: u64, size: u64) -> Option<&[u8]> {
-        self.read_in(section_index(self.sections, addr)?, addr, size)
+        self.read_in(self.section_at(addr)?, addr, size)
     }
 
     /// Bytes of `size` at `addr`, read as part of `section`.
@@ -279,7 +283,8 @@ impl<'a> Resolver<'a> {
     fn resolve(&self, addr: u64, hint: Option<&str>) -> Option<String> {
         // A GOT entry reads as its relocation target. Elsewhere a relocated
         // address starts an object (a vtable) read past its first slot.
-        let in_got = section_index(self.sections, addr)
+        let in_got = self
+            .section_at(addr)
             .is_some_and(|i| self.sections[i].name.starts_with(".got"));
         if in_got && let Ok(i) = self.relocs.binary_search_by_key(&addr, |r| r.offset) {
             let value = match self.relocs[i].target.clone() {

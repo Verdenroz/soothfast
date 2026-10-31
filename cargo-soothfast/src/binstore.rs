@@ -209,12 +209,18 @@ pub fn read_sidecar(entry: &Path, ext: &str) -> Option<String> {
 }
 
 pub fn write_sidecar(entry: &Path, ext: &str, body: &str) {
-    let path = sidecar(entry, ext);
-    if path.exists() {
-        return;
+    if !sidecar(entry, ext).exists() {
+        replace_sidecar(entry, ext, body);
     }
+}
+
+/// Write the sidecar whether or not one is there.
+pub fn replace_sidecar(entry: &Path, ext: &str, body: &str) {
     if let Ok(meta) = std::fs::metadata(entry) {
-        store::write_atomic(&path, format!("{}\n{body}", meta.len()).as_bytes());
+        store::write_atomic(
+            &sidecar(entry, ext),
+            format!("{}\n{body}", meta.len()).as_bytes(),
+        );
     }
 }
 

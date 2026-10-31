@@ -33,8 +33,7 @@ pub struct Extent {
     pub entry: u64,
     /// `object:section`, which names the same input in another link of the
     /// same code. The object is its path below the profile directory, with
-    /// the archive member when it has one. Empty for code and read-only data,
-    /// which are told apart by their bytes.
+    /// the archive member when it has one.
     pub name: String,
 }
 
@@ -48,14 +47,6 @@ fn named(path: &str, section: &str, root: &str) -> String {
     );
     let below = path.strip_prefix(root).unwrap_or(&path);
     format!("{}:{section}", below.display())
-}
-
-/// Output sections whose inputs are not named.
-fn is_read_only(output: &str) -> bool {
-    matches!(
-        output,
-        ".text" | ".rodata" | ".eh_frame" | ".gcc_except_table" | ".init" | ".fini" | ".plt"
-    )
 }
 
 /// The profile directory (`target/[triple/]release`) of a bench executable.
@@ -95,8 +86,7 @@ fn entry_size(section: &str) -> u64 {
 
 /// The extents of the input sections in `text`, read as an lld, mold or GNU ld
 /// map, their objects named below `root` (a path outside it stays whole).
-/// Only inputs of writable output sections are named. `None` for any other
-/// format.
+/// Inputs outside memory are dropped. `None` for any other format.
 pub fn parse(text: &str, root: &str) -> Option<Vec<Extent>> {
     let header = text.lines().next()?;
     let mut extents = if header.contains("VMA") && header.contains("LMA") {
@@ -108,7 +98,7 @@ pub fn parse(text: &str, root: &str) -> Option<Vec<Extent>> {
     } else {
         return None;
     };
-    extents.retain(|e| e.size > 0);
+    extents.retain(|e| e.size > 0 && e.vma > 0);
     extents.sort_by_key(|e| e.vma);
     (!extents.is_empty()).then_some(extents)
 }
@@ -116,10 +106,13 @@ pub fn parse(text: &str, root: &str) -> Option<Vec<Extent>> {
 /// lld writes `VMA LMA Size Align Out In Symbol` rows in bare hexadecimal;
 /// mold writes `VMA Size Align Out In Symbol` with a `0x` VMA and a decimal
 /// size. An input section is a row whose last column reads `file:(section)`.
+/// An output section is a row with text in the `Out` column, and the inputs
+/// of one at address 0 (`.debug_*`, `.comment`) are not in memory.
 fn parse_columns(text: &str, vma_radix: u32, size_radix: u32, root: &str) -> Vec<Extent> {
     let lma = size_radix == 16;
     let columns = if lma { 4 } else { 3 };
-    let input = |line: &str, output: &str| {
+    let out_column = text.lines().next().and_then(|h| h.find("Out"));
+    let input = |line: &str| {
         let mut f = line.split_whitespace();
         let vma = f.next()?;
         let vma = u64::from_str_radix(vma.strip_prefix("0x").unwrap_or(vma), vma_radix).ok()?;
@@ -133,48 +126,44 @@ fn parse_columns(text: &str, vma_radix: u32, size_radix: u32, root: &str) -> Vec
             vma,
             size,
             entry: entry_size(section),
-            name: if is_read_only(output) {
-                String::new()
-            } else {
-                named(path, section, root)
-            },
+            name: named(path, section, root),
         })
     };
     let mut extents = Vec::new();
-    let mut output = "";
+    let mut in_memory = true;
     for line in text.lines() {
         if line.ends_with(')') && line.contains(":(") {
-            extents.extend(input(line, output));
-            continue;
-        }
-        let name = after_columns(line, columns).trim();
-        if name.starts_with('.') && !name.contains(char::is_whitespace) {
-            output = name;
+            extents.extend(input(line).filter(|_| in_memory));
+        } else if out_column.is_some_and(|at| {
+            line.as_bytes()
+                .get(at)
+                .is_some_and(|b| !b.is_ascii_whitespace())
+        }) && let Some(vma) = line.split_whitespace().next()
+        {
+            let vma = vma.strip_prefix("0x").unwrap_or(vma);
+            in_memory = u64::from_str_radix(vma, vma_radix) != Ok(0);
         }
     }
     extents
 }
 
 /// GNU ld lists `.section 0xADDR 0xSIZE file` under an output section, with
-/// the numbers on the next line when the name is long.
+/// the numbers on the next line when the name is long. An output section is
+/// an unindented row of a name, an address and a size.
 fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
     let hex = |s: &str| u64::from_str_radix(s.strip_prefix("0x")?, 16).ok();
-    let extent = |addr: &str, size: &str, section: &str, path: &str, output: &str| {
+    let extent = |addr: &str, size: &str, section: &str, path: &str| {
         Some(Extent {
             vma: hex(addr)?,
             size: hex(size)?,
             entry: entry_size(section),
-            name: if is_read_only(output) {
-                String::new()
-            } else {
-                named(path, section, root)
-            },
+            name: named(path, section, root),
         })
     };
     let mut extents = Vec::new();
     let mut named = false;
     let mut section = "";
-    let mut output = "";
+    let mut in_memory = true;
     for line in text.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
         let nested = line.starts_with(' ');
@@ -185,15 +174,18 @@ fn parse_gnu(text: &str, root: &str) -> Vec<Extent> {
             }
             [name, addr, size, ..] if nested && name.starts_with('.') => {
                 named = false;
-                extents.extend(extent(addr, size, name, after_columns(line, 3), output));
+                extents
+                    .extend(extent(addr, size, name, after_columns(line, 3)).filter(|_| in_memory));
             }
             [addr, size, ..] if named => {
                 named = false;
-                extents.extend(extent(addr, size, section, after_columns(line, 2), output));
+                extents.extend(
+                    extent(addr, size, section, after_columns(line, 2)).filter(|_| in_memory),
+                );
             }
-            [name, ..] if !nested && name.starts_with('.') => {
+            [_, addr, size, ..] if !nested && hex(addr).is_some() && hex(size).is_some() => {
                 named = false;
-                output = name;
+                in_memory = hex(addr) != Some(0);
             }
             _ => named = false,
         }
@@ -274,7 +266,7 @@ fn obtain(common: &CommonArgs, bin: &Bin) -> Result<Vec<Extent>, String> {
         runcache::prune_oldest(&maps, KEEP);
     }
     if let Some(entry) = &entry {
-        binstore::write_sidecar(entry, "extents", &encoded);
+        binstore::replace_sidecar(entry, "extents", &encoded);
     }
     Ok(extents)
 }
@@ -290,17 +282,23 @@ fn cached(maps: &Path, digest: &str, entry: Option<&Path>) -> Option<Vec<Extent>
         let text = binstore::read_sidecar(entry?, "extents")?;
         Some((text, true))
     };
-    let (text, restored) = local
-        .into_iter()
-        .chain(sidecar())
-        .find(|(text, _)| !decode(text).is_empty())?;
+    let (extents, text, restored) =
+        local
+            .into_iter()
+            .chain(sidecar())
+            .find_map(|(text, restored)| {
+                let extents = decode(&text);
+                (!extents.is_empty()).then_some((extents, text, restored))
+            })?;
     if restored && std::fs::write(&stored, &text).is_ok() {
         runcache::prune_oldest(maps, KEEP);
     }
-    if let Some(entry) = entry {
-        binstore::write_sidecar(entry, "extents", &text);
+    if let Some(entry) = entry
+        && binstore::read_sidecar(entry, "extents").as_deref() != Some(text.as_str())
+    {
+        binstore::replace_sidecar(entry, "extents", &text);
     }
-    Some(decode(&text))
+    Some(extents)
 }
 
 #[cfg(test)]
@@ -364,29 +362,53 @@ Linker script and memory map
             parse(LLD, "").expect("parsed"),
             [
                 at(0x2e0, 0x1c, "<internal>:.interp"),
-                pool(0xce40, 0xd8, 8, ""),
-                at(0xcf18, 7, ""),
-                at(0xcf64, 0x11, ""),
-                pool(0xcf90, 0x10, 8, "")
+                pool(0xce40, 0xd8, 8, "<internal>:.rodata.cst8"),
+                at(0xcf18, 7, "/w/target/deps/bench-1.o:.rodata..Lanon.1.0"),
+                at(0xcf64, 0x11, "/w path/deps/bench-1.o:.rodata..Lanon.1.1"),
+                pool(0xcf90, 0x10, 8, "<internal>:.rodata.cst8")
             ]
         );
     }
 
     #[test]
-    fn only_inputs_of_writable_output_sections_are_named() {
-        let map = "\
-             VMA              LMA     Size Align Out     In      Symbol
-            1000             1000       10     1 .rodata
-            1000             1000        8     1         /w/t/release/deps/a.o:(.rodata.x)
-            2000             2000       10     1 .data
-            2000             2000        8     1         /w/t/release/deps/a.o:(.data.y)
-";
-        let names: Vec<String> = parse(map, "/w/t/release")
+    fn inputs_outside_memory_are_dropped_and_dotless_outputs_are_outputs() {
+        let map = [
+            "             VMA              LMA     Size Align Out     In      Symbol",
+            "            1000             1000       10     1 .data",
+            "            1000             1000        8     1         /w/t/release/deps/a.o:(.data.y)",
+            "            1000             1000        0     1                 .Lsym",
+            "               0                0       40     1 .debug_info",
+            "              10               10       40     1         /w/t/release/deps/a.o:(.debug_info)",
+            "               0                0        8     1 .comment",
+            "              10               10        8     1         <internal>:(.comment)",
+            "            2000             2000       10     1 linkme_x",
+            "            2000             2000        8     1         /w/t/release/deps/a.o:(linkme_x)",
+        ]
+        .join("\n");
+        let names: Vec<String> = parse(&map, "/w/t/release")
             .expect("parsed")
             .into_iter()
             .map(|e| e.name)
             .collect();
-        assert_eq!(names, ["", "deps/a.o:.data.y"]);
+        assert_eq!(names, ["deps/a.o:.data.y", "deps/a.o:linkme_x"]);
+    }
+
+    #[test]
+    fn a_gnu_map_drops_inputs_of_outputs_at_address_zero() {
+        let map = "\
+Linker script and memory map
+
+.data           0x0000000000003000        0x8
+ .data.y        0x0000000000003000        0x8 a.o
+.debug_info     0x0000000000000000       0x40
+ .debug_info    0x0000000000000010       0x40 a.o
+";
+        let names: Vec<String> = parse(map, "")
+            .expect("parsed")
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["a.o:.data.y"]);
     }
 
     #[test]
@@ -506,9 +528,9 @@ Linker script and memory map
         assert_eq!(
             parse(MOLD, "").expect("parsed"),
             [
-                at(0xd850, 1, ""),
-                at(0xd851, 20, ""),
-                pool(0xd868, 16, 16, "")
+                at(0xd850, 1, "m.cgu.0.rcgu.o:.rodata..Lanon.1"),
+                at(0xd851, 20, "m.cgu.0.rcgu.o:.rodata..Lanon.2"),
+                pool(0xd868, 16, 16, "<internal>:.rodata.cst16")
             ]
         );
     }
@@ -518,10 +540,10 @@ Linker script and memory map
         assert_eq!(
             parse(GNU, "").expect("parsed"),
             [
-                at(0x2000, 4, ""),
-                at(0x2008, 0x10, ""),
-                at(0x2018, 0x18, ""),
-                pool(0x2030, 0x20, 16, ""),
+                at(0x2000, 4, "/usr/lib/crt1.o:.rodata"),
+                at(0x2008, 0x10, "foo.o:.rodata.foo"),
+                at(0x2018, 0x18, "bar.o:.rodata._ZN3bar17h0123456789abcdefE"),
+                pool(0x2030, 0x20, 16, "baz.o:.rodata.cst16"),
                 at(0x4000, 8, "/w path/deps/a b.o:.bss.counter"),
                 at(
                     0x4008,
