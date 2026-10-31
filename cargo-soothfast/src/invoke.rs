@@ -323,17 +323,60 @@ pub fn run_discovery(common: &CommonArgs, extra: &[&str]) -> io::Result<Vec<Valu
     run_discovery_in(common, extra, None)
 }
 
-/// Lines of a failed merge-base build's stderr to show: enough for rustc's
-/// notes under the first error, which name what it rejected.
-const BASE_STDERR_TAIL: usize = 40;
+/// Lines of a failed merge-base run's stderr shown from its first error:
+/// enough for rustc's notes under it, which name what it rejected.
+const BASE_ERROR_LINES: usize = 40;
+
+/// Lines shown from the end of that stderr when they fall past the window.
+const BASE_LAST_LINES: usize = 10;
 
 fn report_base_failure(stderr: &str, target_dir: &Path) {
-    let lines: Vec<&str> = stderr.lines().collect();
-    eprintln!("gate: the merge-base build failed; its last cargo output:");
-    for line in &lines[lines.len().saturating_sub(BASE_STDERR_TAIL)..] {
+    let built = stderr.contains("could not compile")
+        || stderr
+            .lines()
+            .any(|l| plain(l).trim_start().starts_with("error: failed to"));
+    if built {
+        eprintln!("gate: the merge-base build failed; cargo reported:");
+    } else {
+        eprintln!("gate: the merge-base bench run failed; it reported:");
+    }
+    for line in failure_excerpt(stderr) {
         eprintln!("  {line}");
     }
-    crate::seed::report(target_dir);
+    if built {
+        crate::seed::report(target_dir);
+    }
+}
+
+/// From the first line starting with `error`, then the last lines when they
+/// come after that window. Without an error line, the last lines alone.
+fn failure_excerpt(stderr: &str) -> Vec<&str> {
+    let lines: Vec<&str> = stderr.lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| plain(l).trim_start().starts_with("error"))
+        .unwrap_or(lines.len().saturating_sub(BASE_ERROR_LINES));
+    let end = (start + BASE_ERROR_LINES).min(lines.len());
+    let last = lines.len().saturating_sub(BASE_LAST_LINES).max(end);
+    lines[start..end]
+        .iter()
+        .chain(&lines[last..])
+        .copied()
+        .collect()
+}
+
+/// `line` without ANSI escape sequences.
+fn plain(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            chars.by_ref().find(|c| c.is_ascii_alphabetic());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn run_records(
@@ -2361,6 +2404,22 @@ optional = true
         let failed = "error[E0425]: cannot find value `x` in this scope\n\
                       Caused by: process didn't exit successfully: `rustdoc --emit=dep-info=x.d`";
         assert!(!super::rejects_tracking_flags(failed));
+    }
+
+    #[test]
+    fn a_failed_build_is_shown_from_its_first_error_and_its_last_lines() {
+        let mut lines: Vec<String> = (0..5).map(|i| format!("   Compiling c{i}")).collect();
+        lines.push("\u{1b}[1m\u{1b}[91merror[E0463]\u{1b}[0m: can't find crate".into());
+        lines.extend((0..60).map(|i| format!("note {i}")));
+        let stderr = lines.join("\n");
+        let shown = super::failure_excerpt(&stderr);
+        assert_eq!(
+            shown.len(),
+            super::BASE_ERROR_LINES + super::BASE_LAST_LINES
+        );
+        assert!(shown[0].contains("E0463"), "{shown:?}");
+        assert_eq!(shown.last(), Some(&"note 59"));
+        assert_eq!(super::failure_excerpt("a\nb"), ["a", "b"]);
     }
 
     #[test]
