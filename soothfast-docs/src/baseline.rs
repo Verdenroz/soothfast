@@ -1,16 +1,9 @@
 //! Reading one measured number out of a baseline. An id two packages both
-//! own has no number of its own: its numbers sit in the baseline's
-//! `ambiguous` side map, where readers that predate it never look. Every
-//! reader asks [`number`] so none of them reads either package's number as
-//! the id's.
+//! own (`owners` lists it under each) has no number of its own, so `items`
+//! holds none for it and a reader that predates this finds nothing. Every
+//! reader asks [`number`] so each one says why.
 
 use serde_json::Value;
-
-/// The side map of numbers an ambiguous id's packages saved:
-/// `{id: [{"package": P, "item": {..}} | {"owners": [..], "item": {..}}]}`,
-/// one element per saved number, by the package that wrote it, or by the
-/// packages that owned the id when nothing named the writer.
-pub const AMBIGUOUS_KEY: &str = "ambiguous";
 
 /// What a baseline holds for one metric of one item.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,30 +28,18 @@ pub fn number(baseline: &Value, id: &str, backend: &str, metric: &str) -> Number
     }
 }
 
-/// The packages that own `id` when `baseline`'s side map holds it; empty
-/// when it is not ambiguous.
+/// The packages that own `id` when more than one does; empty otherwise.
 pub fn ambiguous_packages(baseline: &Value, id: &str) -> Vec<String> {
-    let Some(saved) = baseline[AMBIGUOUS_KEY][id].as_array() else {
-        return Vec::new();
-    };
     let owners = baseline["owners"].as_object().into_iter().flatten();
-    let mut packages: Vec<String> = owners
+    let packages: Vec<String> = owners
         .filter(|(_, ids)| ids.as_array().into_iter().flatten().any(|i| i == id))
         .map(|(p, _)| p.clone())
         .collect();
-    if packages.len() < 2 {
-        let named = saved.iter().flat_map(|s| {
-            let owners = s["owners"].as_array().into_iter().flatten();
-            std::iter::once(&s["package"]).chain(owners)
-        });
-        packages.extend(named.filter_map(|p| p.as_str().map(str::to_string)));
-        packages.sort();
-        packages.dedup();
+    if packages.len() > 1 {
+        packages
+    } else {
+        Vec::new()
     }
-    if packages.is_empty() {
-        packages.push("more than one package".into());
-    }
-    packages
 }
 
 #[cfg(test)]
@@ -66,13 +47,16 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn an_ambiguous_id_has_no_number_even_when_one_is_left_in_items() {
-        let baseline = json!({
-            "items": { "util::hash": { "alloc": { "allocs": 3 } }, "a::x": { "alloc": { "allocs": 1 } } },
+    fn baseline() -> Value {
+        json!({
+            "items": { "a::x": { "alloc": { "allocs": 1 } } },
             "owners": { "a": ["util::hash", "a::x"], "b": ["util::hash"] },
-            "ambiguous": { "util::hash": [{ "package": "a", "item": {} }] },
-        });
+        })
+    }
+
+    #[test]
+    fn an_id_two_packages_own_is_ambiguous_and_one_owner_s_is_measured() {
+        let baseline = baseline();
         assert_eq!(
             number(&baseline, "util::hash", "alloc", "allocs"),
             Number::Ambiguous(vec!["a".into(), "b".into()])
@@ -85,24 +69,26 @@ mod tests {
             number(&baseline, "a::y", "alloc", "allocs"),
             Number::Missing
         );
-        let claim = crate::claims::parse("util::hash.alloc.allocs <= 9").unwrap();
-        let err = crate::claims::evaluate(&claim, &baseline).unwrap_err();
-        assert!(matches!(err, crate::claims::Unread::Ambiguous { .. }));
-        assert!(
-            err.to_string().contains("measured by both a and b"),
-            "{err}"
-        );
     }
 
     #[test]
-    fn the_side_map_names_the_packages_when_owners_do_not() {
-        let baseline = json!({ "items": {}, "ambiguous": { "util::hash": [
-            { "package": "a", "item": {} },
-            { "owners": ["a", "b"], "item": {} },
-        ] } });
-        assert_eq!(
-            ambiguous_packages(&baseline, "util::hash"),
-            ["a".to_string(), "b".to_string()]
-        );
+    fn a_claim_fails_as_ambiguous_whichever_operand_is() {
+        let baseline = baseline();
+        for expr in [
+            "util::hash.alloc.allocs <= 9",
+            "gone.alloc.allocs - util::hash.alloc.allocs <= 9",
+            "util::hash.alloc.allocs - gone.alloc.allocs <= 9",
+        ] {
+            let claim = crate::claims::parse(expr).unwrap();
+            let err = crate::claims::evaluate(&claim, &baseline).unwrap_err();
+            assert!(
+                matches!(err, crate::claims::Unread::Ambiguous { .. }),
+                "{expr}"
+            );
+            assert!(
+                err.to_string().contains("measured by both a and b"),
+                "{err}"
+            );
+        }
     }
 }

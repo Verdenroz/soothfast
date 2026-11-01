@@ -284,11 +284,6 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         };
         let mine = |id: &String| !theirs(id);
         gone.extend(e.items.iter().filter(|id| mine(id)).cloned());
-        let mut unvouched: BTreeSet<String> = e.items.iter().cloned().collect();
-        if whole {
-            unvouched.extend(owned_by(&doc, &e.package));
-        }
-        crate::ambiguity::forget(&mut doc, &e.package, &unvouched);
         if !whole {
             continue;
         }
@@ -307,7 +302,7 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         clear_entries(&mut doc, |p| packages.contains(&p));
     }
     append(&mut doc, entries).map_err(|e| e.to_string())?;
-    crate::ambiguity::settle(&mut doc, None, &Default::default());
+    crate::ambiguity::settle(&mut doc, &Default::default());
     invoke::write_baseline_in(root, name, &doc).map_err(|e| e.to_string())
 }
 
@@ -496,7 +491,9 @@ mod tests {
             let root = scratch(&format!("unmeasured-shared-id-{writer}"));
             let doc = json!({
                 "version": 1,
-                "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 8 }, "saved_by": writer } },
+                "items": { "util::hash": {
+                    "alloc": { "allocs": 1, "bytes": 8 }, "saved_by": writer, "pkg": "b",
+                } },
                 "owners": { "a": ["util::hash"], "b": ["util::hash"] },
             });
             invoke::write_baseline_in(&root, "head", &doc).unwrap();

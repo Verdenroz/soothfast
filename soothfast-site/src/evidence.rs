@@ -745,7 +745,6 @@ mod tests {
         let baseline = serde_json::json!({
             "items": { "util::hash": { "alloc": { "allocs": 0 } } },
             "owners": { "a": ["util::hash"], "b": ["util::hash"] },
-            "ambiguous": { "util::hash": [{ "package": "a", "item": {} }, { "package": "b", "item": {} }] },
         });
         let p = Evidence::new(baseline, lockfile::Binds::new());
         let md = "<!-- soothfast:claim util::hash.alloc.allocs <= 0 -->\n";

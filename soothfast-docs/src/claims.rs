@@ -174,7 +174,17 @@ impl std::fmt::Display for Unread {
 
 /// The measured value of the claim's item and, for a difference, of the item
 /// subtracted from it.
+/// An operand two packages own fails the claim as ambiguous, whichever side
+/// it is on and whatever the other side reads.
 pub fn values(claim: &Claim, baseline: &Value) -> Result<(f64, Option<f64>), Unread> {
+    let items = std::iter::once(&claim.item).chain(claim.minus.iter().map(|m| &m.item));
+    for item in items {
+        let packages = crate::baseline::ambiguous_packages(baseline, item);
+        if !packages.is_empty() {
+            let item = item.clone();
+            return Err(Unread::Ambiguous { item, packages });
+        }
+    }
     let first = measured(baseline, &claim.item, &claim.backend, &claim.metric)?;
     let second = match &claim.minus {
         Some(m) => Some(measured(baseline, &m.item, &m.backend, &m.metric)?),

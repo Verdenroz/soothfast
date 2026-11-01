@@ -419,21 +419,14 @@ fn a_linked_lib_runs_through_gate_save_merge_and_docs_check() {
 }
 
 #[test]
-fn a_file_s_set_aside_numbers_survive_the_merge_and_fail_their_claims() {
+fn a_merged_id_two_packages_own_has_no_number_and_fails_its_claims() {
     let doc = json!({
         "version": 1,
-        "items": {},
+        "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 0 } } },
         "owners": { "a": ["util::hash"], "b": ["util::hash"] },
-        "ambiguous": { "util::hash": [
-            { "package": "a", "item": { "alloc": { "allocs": 1, "bytes": 0 } } },
-            { "package": "b", "item": { "alloc": { "allocs": 2, "bytes": 0 } } },
-        ] },
     });
     let merged = merge(&[("head.json".into(), doc)], 1, &[]).unwrap();
-    assert_eq!(
-        merged["ambiguous"]["util::hash"].as_array().unwrap().len(),
-        2
-    );
+    assert!(merged["items"]["util::hash"].is_null());
     assert!(unmeasured::read(&merged).unwrap().is_empty());
     let reading = crate::docs_claims::Against::new(&merged)
         .unwrap()

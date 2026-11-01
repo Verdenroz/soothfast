@@ -1,33 +1,33 @@
 //! Ids two packages of one baseline both own. A lib's measured fn is
 //! linked into every dependent's bench binary, so each dependent's listing
-//! shows it. The package that registered it (the item's `pkg`) takes it
-//! from the others when it owns the id too, or when this run gated it and
-//! it listed the id. Otherwise, as for a feature-gated item or a lib with no
-//! bench target, each listing package keeps it, and the id is ambiguous:
-//! its numbers move out of `items` into the `ambiguous` side map, which
-//! readers that predate it never see. No number is ever thrown away while a
-//! package that may have written it still owns the id.
+//! shows it. The package that registered it (the item's `pkg`, from the
+//! listing of the binary that ran) takes it from the others when it owns
+//! the id too, or when this run gated it and it listed the id. Otherwise,
+//! as for two packages registering the same id, every listing package keeps
+//! it, and the id is ambiguous: `owners` names its packages and `items`
+//! holds no number for it, since nothing says whose it would be. Once one
+//! package alone owns it again, that package's next save measures it again.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::{Value, json};
-use soothfast_docs::baseline::AMBIGUOUS_KEY;
+use serde_json::Value;
 
+use crate::invoke::Run;
 use crate::unmeasured::OWNERS_KEY;
+
+/// Each package's ids its own code registered, as its saves' listings said.
+pub const REGISTERED_KEY: &str = "registered";
 
 /// The ids each package listed in this run, for the packages it gated.
 pub type Gated = BTreeMap<String, BTreeSet<String>>;
-
-/// Each owned id and the packages that own it.
-pub type Listers = BTreeMap<String, Vec<String>>;
 
 fn norm(pkg: &str) -> String {
     pkg.replace('-', "_")
 }
 
 /// Each owned id of `doc` and its owners.
-pub fn listers(doc: &Value) -> Listers {
-    let mut out = Listers::new();
+fn listers(doc: &Value) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (package, ids) in doc[OWNERS_KEY].as_object().into_iter().flatten() {
         let ids = ids
             .as_array()
@@ -41,59 +41,98 @@ pub fn listers(doc: &Value) -> Listers {
     out
 }
 
-/// Before `writer` writes `ids`' numbers into `doc`, set aside each number
-/// already there whose id another package owns, under the package that
-/// wrote it: the id's one other owner, or, with several, all of them.
-pub fn stash_before_write<'a>(
-    doc: &mut Value,
-    writer: &str,
-    ids: impl Iterator<Item = &'a String>,
-) {
-    let listers = listers(doc);
-    for id in ids {
-        let others: Vec<String> = (listers.get(id).into_iter().flatten())
-            .filter(|p| *p != writer)
-            .cloned()
-            .collect();
-        match others.as_slice() {
-            [] => {}
-            [only] => stash(doc, id, Some(only), &others),
-            _ => stash(doc, id, None, &others),
-        }
+/// Record in `doc` the ids of `run` that `pkg`'s own code registered: all
+/// of them for a `full` save, else added to those recorded before.
+pub fn record_registered(doc: &mut Value, pkg: &str, run: &Run, full: bool) {
+    let mut ids: BTreeSet<String> = if full {
+        BTreeSet::new()
+    } else {
+        let prior = doc[REGISTERED_KEY][pkg].as_array().into_iter().flatten();
+        prior
+            .filter_map(|i| i.as_str().map(str::to_string))
+            .collect()
+    };
+    let own = run
+        .items
+        .iter()
+        .filter(|(_, m)| m.pkg.as_deref().is_some_and(|p| norm(p) == norm(pkg)));
+    ids.extend(own.map(|(id, _)| id.clone()));
+    if !doc[REGISTERED_KEY].is_object() {
+        doc[REGISTERED_KEY] = serde_json::json!({});
     }
+    doc[REGISTERED_KEY][pkg] = serde_json::json!(ids);
 }
 
-/// Recompute `doc`'s ambiguous ids from its owners. `writer` is the package
-/// whose numbers `doc`'s items just took, if one did; `gated` what this
-/// run's gated packages listed.
-pub fn settle(doc: &mut Value, writer: Option<&str>, gated: &Gated) {
-    for (id, packages) in listers(doc).into_iter().filter(|(_, p)| p.len() > 1) {
-        let known = writer.filter(|w| packages.iter().any(|p| p == w));
-        stash(doc, &id, known, &packages);
-    }
-    for (id, packages) in listers(doc) {
-        let Some(registrar) = registrar(doc, &id).map(|r| norm(&r)) else {
-            continue;
+/// Whether `pkg` registered `id`, as `doc` records.
+fn registered(doc: &Value, pkg: &str, id: &str) -> bool {
+    let ids = doc[REGISTERED_KEY][pkg].as_array().into_iter().flatten();
+    ids.into_iter().any(|i| i == id)
+}
+
+/// Settle `doc`'s shared ids. One package that registered an id takes it
+/// from the other owners; with none recorded, the item's `pkg` does, when
+/// that package owns it or `gated` shows it listing it. Two packages that
+/// both registered it clash. The number of an id still owned by several
+/// packages is dropped, with its claims' verdicts.
+pub fn settle(doc: &mut Value, gated: &Gated) {
+    let mut listers = listers(doc);
+    for (id, packages) in listers.iter_mut().filter(|(_, p)| p.len() > 1) {
+        let selves: Vec<String> = (packages.iter())
+            .filter(|p| registered(doc, p, id))
+            .map(|p| norm(p))
+            .collect();
+        let registrar = match selves.as_slice() {
+            [only] => only.clone(),
+            [] => {
+                let Some(registrar) = doc["items"][id.as_str()]["pkg"].as_str().map(norm) else {
+                    continue;
+                };
+                let owns = packages.iter().any(|p| norm(p) == registrar)
+                    || (gated.iter()).any(|(p, ids)| norm(p) == registrar && ids.contains(id));
+                if !owns {
+                    continue;
+                }
+                registrar
+            }
+            _ => continue,
         };
-        let owns = packages.iter().any(|p| norm(p) == registrar)
-            || (gated.iter()).any(|(p, ids)| norm(p) == registrar && ids.contains(&id));
-        if owns {
-            for p in packages.iter().filter(|p| norm(p) != registrar) {
-                disown(doc, p, &id);
+        for p in packages.iter().filter(|p| norm(p) != registrar) {
+            if let Some(ids) = doc[OWNERS_KEY][p.as_str()].as_array_mut() {
+                ids.retain(|owned| owned != id.as_str());
             }
         }
+        packages.retain(|p| norm(p) == registrar);
     }
-    resolve(doc, &listers(doc));
+    let ambiguous: BTreeSet<&String> = (listers.iter())
+        .filter(|(_, p)| p.len() > 1)
+        .map(|(id, _)| id)
+        .collect();
+    if let Some(items) = doc.get_mut("items").and_then(Value::as_object_mut) {
+        items.retain(|id, v| v["imported"].is_string() || !ambiguous.contains(id));
+    }
+    if let Some(assertions) = doc.get_mut("assertions").and_then(Value::as_array_mut) {
+        assertions.retain(|a| {
+            a["id"]
+                .as_str()
+                .is_none_or(|id| !ambiguous.contains(&id.to_string()))
+        });
+    }
 }
 
-/// Drop `package`'s set-aside numbers of `ids`, which a failed gate of it no
-/// longer vouches for.
-pub fn forget(doc: &mut Value, package: &str, ids: &BTreeSet<String>) {
-    for id in ids {
-        if let Some(saved) = doc[AMBIGUOUS_KEY][id].as_array_mut() {
-            saved.retain(|s| s["package"] != package);
-        }
-    }
+/// The ids of `items` that `writer` is about to save but whose registering
+/// package already owns them in `doc`: that package's number stands.
+pub fn registered_elsewhere(doc: &Value, writer: &str, items: &Value) -> BTreeSet<String> {
+    let items = items.as_object().into_iter().flatten();
+    items
+        .filter_map(|(id, item)| {
+            let registrar = item["pkg"].as_str().filter(|r| norm(r) != norm(writer))?;
+            let owned = doc[OWNERS_KEY][registrar]
+                .as_array()?
+                .iter()
+                .any(|i| i == id.as_str());
+            owned.then(|| id.clone())
+        })
+        .collect()
 }
 
 /// Take out of the gate's `baseline` every item of `run` the baseline marks
@@ -114,96 +153,6 @@ pub fn unbaselined(baseline: &mut Value, run: &crate::invoke::Run) -> Vec<String
         ));
     }
     notes
-}
-
-/// Move `id`'s number, if a measured one, from `items` to the side map, as
-/// written by `writer`, or, when nothing names it, by one of `owners`.
-fn stash(doc: &mut Value, id: &str, writer: Option<&str>, owners: &[String]) {
-    if doc["items"][id]["imported"].is_string() {
-        return;
-    }
-    let Some(item) = doc["items"].as_object_mut().and_then(|m| m.remove(id)) else {
-        return;
-    };
-    let saved = match writer {
-        Some(package) => json!({ "package": package, "item": item }),
-        None => json!({ "owners": owners, "item": item }),
-    };
-    if !doc[AMBIGUOUS_KEY].is_object() {
-        doc[AMBIGUOUS_KEY] = json!({});
-    }
-    let slot = &mut doc[AMBIGUOUS_KEY][id];
-    if let Some(list) = slot.as_array_mut() {
-        if let Some(package) = writer {
-            list.retain(|s| s["package"] != package);
-        }
-        list.push(saved);
-    } else {
-        *slot = json!([saved]);
-    }
-}
-
-/// The package that registered `id`, as its number or a set-aside one says.
-fn registrar(doc: &Value, id: &str) -> Option<String> {
-    let set_aside = doc[AMBIGUOUS_KEY][id].as_array().into_iter().flatten();
-    std::iter::once(&doc["items"][id])
-        .chain(set_aside.map(|s| &s["item"]))
-        .find_map(|item| item["pkg"].as_str().map(str::to_string))
-}
-
-fn disown(doc: &mut Value, package: &str, id: &str) {
-    if let Some(ids) = doc[OWNERS_KEY][package].as_array_mut() {
-        ids.retain(|owned| owned != id);
-    }
-    if let Some(saved) = doc[AMBIGUOUS_KEY][id].as_array_mut() {
-        saved.retain(|s| s["package"] != package);
-    }
-}
-
-/// Whether set-aside number `saved` may be its writer's while `owners` own
-/// its id.
-fn vouched(saved: &Value, owners: &[String]) -> bool {
-    match saved["package"].as_str() {
-        Some(package) => owners.iter().any(|o| o == package),
-        None => (saved["owners"].as_array().into_iter().flatten())
-            .any(|p| owners.iter().any(|o| p == o)),
-    }
-}
-
-/// Keep a set-aside number only while a package that may have written it
-/// owns its id, and give an id one package owns again that package's number:
-/// the one it wrote, else one whose writer nothing names but it owned.
-fn resolve(doc: &mut Value, listers: &Listers) {
-    let Some(map) = doc.get_mut(AMBIGUOUS_KEY).and_then(Value::as_object_mut) else {
-        return;
-    };
-    let mut restored = Vec::new();
-    map.retain(|id, saved| {
-        let owners = listers.get(id).map(Vec::as_slice).unwrap_or_default();
-        let Some(saved) = saved.as_array_mut() else {
-            return false;
-        };
-        saved.retain(|s| vouched(s, owners));
-        if let [only] = owners {
-            let own = (saved.iter()).position(|s| s["package"] == only.as_str());
-            let pick = own.or_else(|| (saved.iter()).position(|s| s["package"].is_null()));
-            if let Some(i) = pick {
-                restored.push((id.clone(), saved.swap_remove(i)["item"].take()));
-            }
-            return false;
-        }
-        owners.len() > 1 && !saved.is_empty()
-    });
-    if map.is_empty()
-        && let Some(d) = doc.as_object_mut()
-    {
-        d.remove(AMBIGUOUS_KEY);
-    }
-    for (id, item) in restored {
-        if doc["items"][&id].is_null() {
-            doc["items"][&id] = item;
-        }
-    }
 }
 
 #[cfg(test)]

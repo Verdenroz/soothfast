@@ -173,16 +173,12 @@ fn measurements_for(state: &State, path: &str) -> Vec<String> {
             }
         }
     }
-    let ambiguous = state.baseline[baseline::AMBIGUOUS_KEY].as_object();
-    for (id, saved) in ambiguous.into_iter().flatten() {
-        let mut covers = saved.as_array().into_iter().flatten();
-        if id == path || covers.any(|s| s["item"]["covers"] == path) {
-            let packages = baseline::ambiguous_packages(&state.baseline, id);
-            facts.push(format!(
-                "no number: ambiguous between {} (as `{id}`)",
-                packages.join(", ")
-            ));
-        }
+    let packages = baseline::ambiguous_packages(&state.baseline, path);
+    if !packages.is_empty() {
+        facts.push(format!(
+            "no number: ambiguous between {} (as `{path}`)",
+            packages.join(", ")
+        ));
     }
     facts
 }

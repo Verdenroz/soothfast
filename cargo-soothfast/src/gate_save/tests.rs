@@ -409,9 +409,6 @@ fn a_save_of_an_id_another_package_owns_fails_its_claims_as_ambiguous() {
     save_ids(&root, &["soothfast::same"], scope).unwrap();
     assert!(kept(&root).is_empty());
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-    let side = doc["ambiguous"]["soothfast::same"].as_array().unwrap();
-    let writers: Vec<&Value> = side.iter().map(|s| &s["package"]).collect();
-    assert_eq!(writers, [&json!("a"), &json!("b")]);
     assert_eq!(unmeasured::owned_by(&doc, "a"), ["soothfast::same"]);
     assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::same"]);
     let Reading::Decided(Outcome::Failed(why)) =
@@ -424,12 +421,17 @@ fn a_save_of_an_id_another_package_owns_fails_its_claims_as_ambiguous() {
 }
 
 #[test]
-fn an_item_that_moved_keeps_its_number_through_both_packages_saves() {
+fn an_item_that_moved_gets_its_number_back_from_its_new_package_s_next_save() {
     let root = stale("moved-item", &[("a", &["soothfast::moved"])]);
-    let b = invoke::SaveScope::BenchFull(Some("b".into()));
-    save_ids(&root, &["soothfast::moved"], b).unwrap();
+    let b = || invoke::SaveScope::BenchFull(Some("b".into()));
+    save_ids(&root, &["soothfast::moved"], b()).unwrap();
     let a = invoke::SaveScope::BenchFull(Some("a".into()));
     save_ids(&root, &[], a).unwrap();
+    assert!(
+        kept(&root).is_empty(),
+        "a number two packages owned is gone"
+    );
+    save_ids(&root, &["soothfast::moved"], b()).unwrap();
     assert_eq!(kept(&root), ["soothfast::moved"]);
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
     assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::moved"]);

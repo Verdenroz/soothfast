@@ -124,27 +124,19 @@
       "type": "string"
     },
     "owners": {
-      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id the registering package (the item's `pkg`) owns belongs to it alone; an id two other packages both list is ambiguous. A failed package's old numbers are exactly these ids.",
+      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id the registering package (the item's `pkg`) owns belongs to it alone; an id two packages still both own is ambiguous and has no number in `items`. A failed package's old numbers are exactly these ids.",
       "type": "object",
       "additionalProperties": {
         "type": "array",
         "items": { "type": "string" }
       }
     },
-    "ambiguous": {
-      "description": "The numbers of each ambiguous id, kept out of `items` so a reader that predates this map finds no number: one element per saved number, by the package that wrote it, or by the packages that owned the id when nothing named the writer. An id one package owns again gets that package's number back in `items`, else one whose writer nothing named.",
+    "registered": {
+      "description": "Each package's ids its own code registered, from the `pkg` the listing of its bench binary gave. One registering package takes a shared id from the others; two that both registered it leave it ambiguous.",
       "type": "object",
       "additionalProperties": {
         "type": "array",
-        "items": {
-          "type": "object",
-          "required": ["item"],
-          "properties": {
-            "package": { "description": "Package that wrote the number.", "type": "string" },
-            "owners": { "description": "Packages that owned the id when nothing named the writer.", "type": "array", "items": { "type": "string" } },
-            "item": { "$ref": "#/$defs/item" }
-          }
-        }
+        "items": { "type": "string" }
       }
     },
     "listed": {

@@ -12,7 +12,6 @@ use serde_json::{Map, Value, json};
 use crate::invoke::{self, Shard};
 use crate::unmeasured::{self, Reason, Unmeasured};
 use crate::{ambiguity, gate_config, gate_save, import};
-use soothfast_docs::baseline::AMBIGUOUS_KEY;
 
 mod collect;
 
@@ -279,6 +278,7 @@ fn merge_on(
     let mut shards: BTreeMap<u64, Saved> = BTreeMap::new();
     let no_items = Map::new();
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut registered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (label, doc) in files {
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
@@ -329,23 +329,8 @@ fn merge_on(
             .take(label, doc, file_items)
             .map_err(MergeError::Corrupt)?;
         assertions.extend(doc["assertions"].as_array().into_iter().flatten().cloned());
-        for (package, ids) in doc[unmeasured::OWNERS_KEY]
-            .as_object()
-            .into_iter()
-            .flatten()
-        {
-            for id in ids
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-            {
-                owners
-                    .entry(package.clone())
-                    .or_default()
-                    .insert(id.to_string());
-            }
-        }
+        union(&mut owners, &doc[unmeasured::OWNERS_KEY]);
+        union(&mut registered, &doc[ambiguity::REGISTERED_KEY]);
         entries.extend(file_entries);
     }
     for pkg in packages {
@@ -379,17 +364,31 @@ fn merge_on(
             .unwrap_or(0)
     );
     out["items"] = Value::Object(collected.items);
-    if !collected.side.is_empty() {
-        out[AMBIGUOUS_KEY] = Value::Object(collected.side);
-    }
     out["assertions"] = Value::Array(assertions);
     out["unmeasured"] = entries.iter().map(Unmeasured::to_json).collect();
     if !owners.is_empty() {
         out[unmeasured::OWNERS_KEY] = json!(owners);
     }
+    if !registered.is_empty() {
+        out[ambiguity::REGISTERED_KEY] = json!(registered);
+    }
     let gated = gated_listing(packages, &shards);
-    ambiguity::settle(&mut out, None, &gated);
+    ambiguity::settle(&mut out, &gated);
     Ok(out)
+}
+
+/// Add a `{package: [ids]}` map of one file to `into`.
+fn union(into: &mut BTreeMap<String, BTreeSet<String>>, map: &Value) {
+    for (package, ids) in map.as_object().into_iter().flatten() {
+        let ids = ids
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str);
+        into.entry(package.clone())
+            .or_default()
+            .extend(ids.map(str::to_string));
+    }
 }
 
 /// What each of `packages` listed in the shards of this run.

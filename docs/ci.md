@@ -495,31 +495,32 @@ Which items belong to which package comes from each package's bench binary
 listing, recorded as `owners` in the baseline, never from an id's name: every
 bench file's ids start with the bench target's name. A lib's measured fn is
 linked into every dependent's bench binary, so each lists it. Each saved
-item's `pkg`, the package that registered it, comes from the listing of the
-binary that ran, never from a stored run or the item cache. That package
-takes the id from the others when it owns the id too, or when the run gated
-it and its listing showed the id; otherwise (a feature-gated item, a
-registrar CI does not gate, a lib with no bench target) every listing
-package keeps it. An id two packages then both own is ambiguous: its
-numbers move out of `items` to the `ambiguous` side map, each under the
-package that wrote it, or the owners when nothing names the writer, so an
-older reader finds no number, and every reader here reports it ambiguous
-instead of reading either one. A claim on it fails, the site shows a warn
-chip, and `gate --baseline` treats the item as having no baseline number.
-Every save and merge recomputes these, and an id one package owns again
-gets that package's number back; a number is dropped only once no package
-that may have written it owns the id. An entry covers
-only the ids it names. A failed package's old numbers are exactly the ids it
-owned and no other package owns, and its entry names those, or the ones its
-listing shows; with neither it names nothing, and a claim on an item no
-package owns fails, naming that gate failure as possibly related. A leg
-that uploaded nothing at all, from a setup failure or a cancel, gets a
-`no-measurement` entry instead, and an item no package owns reads under it:
-an unchanged claim is not evaluated and a new or edited one fails. A full
-save leaves alone any id another package owns. `baseline merge` refuses an
-id two merged files both hold, or a bench id none of its file's packages
-owns; imported and `buildcost::` ids, and a file from before `owners`,
-need no owner.
+item's `pkg`, the package that registered it, comes only from the listing of
+the binary that ran; with no listing, or none naming a package, it is
+unknown. A save records under `registered` the ids its own package
+registered. One owner that registered an id takes it from the others;
+with none recorded, the item's `pkg` takes it when that package owns it
+too, or when the run gated it and its listing showed the id. Otherwise
+(two packages registering the same id, a feature-gated item, a registrar
+CI does not gate, a lib with no bench target) every listing package keeps
+it, and the id is ambiguous: `owners` names both and `items` holds no
+number for it, so an older reader finds none and every reader here reports
+it ambiguous. A claim reading it fails, whichever operand it is, the site
+shows a warn chip, and `gate --baseline` treats the item as having no
+baseline number. Once one package alone owns the id again, that package's
+next save measures it again. An entry covers only the ids it names. A
+failed package's old numbers are exactly the ids it owned and no other
+package owns, or a shared id's number it saved itself, and its entry names
+those, or the ones its listing shows; with neither it names nothing, and a
+claim on an item no package owns fails, naming that gate failure as
+possibly related. A leg that uploaded nothing at all, from a setup failure
+or a cancel, gets a `no-measurement` entry instead, and an item its
+package owns reads under it: an unchanged claim is not evaluated and a new
+or edited one fails. An item no package owns, an import's among them,
+still fails. A full save leaves alone any id another package owns.
+`baseline merge` refuses an id two merged files both hold, or a bench id
+none of its file's packages owns; imported and `buildcost::` ids, and a
+file from before `owners`, need no owner.
 
 `--save-baseline`, on `gate` or `measure`, needs `-p` in a workspace with more
 than one bench package, and fails before measuring without it; with one

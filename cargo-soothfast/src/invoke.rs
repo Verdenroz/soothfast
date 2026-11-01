@@ -1113,18 +1113,12 @@ pub fn save_baseline_in(
     let mut doc =
         load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let prior = own_measured(&mut doc, &scope, run)?;
-    let writer = match &scope {
-        SaveScope::BenchFull(pkg) | SaveScope::BenchFiltered(pkg) => pkg.clone(),
-        _ => None,
+    let foreign = match &scope {
+        SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg)) => {
+            crate::ambiguity::registered_elsewhere(&doc, pkg, &new_items)
+        }
+        _ => BTreeSet::new(),
     };
-    if let Some(writer) = &writer {
-        let ids = new_items
-            .as_object()
-            .into_iter()
-            .flatten()
-            .map(|(id, _)| id);
-        crate::ambiguity::stash_before_write(&mut doc, writer, ids);
-    }
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1154,7 +1148,7 @@ pub fn save_baseline_in(
             }
             SaveScope::BenchFiltered(_) => {}
         }
-        for (k, v) in new_map {
+        for (k, v) in new_map.iter().filter(|(k, _)| !foreign.contains(*k)) {
             map.insert(k.clone(), v.clone());
         }
     }
@@ -1181,7 +1175,7 @@ pub fn save_baseline_in(
         crate::unmeasured::clear(&mut doc, pkg.as_deref());
     }
 
-    crate::ambiguity::settle(&mut doc, writer.as_deref(), &Default::default());
+    crate::ambiguity::settle(&mut doc, &Default::default());
     write_baseline_in(root, name, &doc)?;
     prune_absorbed_accepts(root, run);
     Ok(baseline_path(root, name))
@@ -1225,6 +1219,7 @@ fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTr
     let owned: Vec<String> = owned.into_iter().collect();
     let others = crate::unmeasured::owned_by_others(doc, pkg);
     crate::unmeasured::set_owners(doc, pkg, &owned);
+    crate::ambiguity::record_registered(doc, pkg, run, full);
     if !full {
         return Ok(BTreeSet::new());
     }
