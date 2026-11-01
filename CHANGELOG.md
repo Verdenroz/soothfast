@@ -12,6 +12,7 @@
 
 ### 🐛 Fixes
 
+- Keep seeds off the base's own dependencies (#336)
 - Prebuild docs rustdoc only when docs check would (#334)
 
 
