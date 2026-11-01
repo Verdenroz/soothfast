@@ -778,8 +778,8 @@ fn accept_cmd(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     harness_note(&harness);
-    if current.items.is_empty() {
-        return err("measured 0 items — check --filter / registry setup; refusing to accept");
+    if let Some(refusal) = nothing_measured(&current, &g.common) {
+        return err(refusal);
     }
     let root = match invoke::workspace_root() {
         Ok(r) => r,
@@ -995,6 +995,20 @@ fn write_gate_status(failures: u32) {
     );
 }
 
+/// `doc` narrowed to the items and claims `shard` owns, when there is one.
+fn narrowed(mut doc: Value, shard: Option<invoke::Shard>) -> Value {
+    let Some(shard) = shard else {
+        return doc;
+    };
+    if let Some(items) = doc.get_mut("items").and_then(Value::as_object_mut) {
+        items.retain(|id, _| shard.owns(id));
+    }
+    if let Some(claims) = doc.get_mut("assertions").and_then(Value::as_array_mut) {
+        claims.retain(|a| a["id"].as_str().is_none_or(|id| shard.owns(id)));
+    }
+    doc
+}
+
 /// Why a gate that measured nothing must not pass, unless it is a shard that
 /// owns no item now and still checks none it owned is gone.
 fn nothing_measured(current: &Run, common: &CommonArgs) -> Option<&'static str> {
@@ -1034,7 +1048,7 @@ fn newly_measured(
             Ok(None)
         }
         NewTarget::Empty => {
-            println!("gate: HEAD's new bench target registers no items yet, or cannot list them");
+            println!("gate: HEAD's new bench target registers no items yet");
             Ok(None)
         }
         NewTarget::Registers => {
@@ -1077,10 +1091,12 @@ fn measure_ref_interleaved(
     enum Ref {
         /// The merge-base has no bench target; whether HEAD has one.
         NoBenchTarget(bool),
-        /// The one pass, and whether it carries the gating counters.
+        /// The one pass, whether it carries the gating counters, and the
+        /// counted run stored for the identical binary.
         IdenticalBinaries {
             run: Result<Run, String>,
             counted: bool,
+            stored: Option<Box<Value>>,
         },
         /// Reference served by binary identity rather than by commit.
         Cached(Value),
@@ -1204,7 +1220,8 @@ fn measure_ref_interleaved(
         let by_binary = match (reuse, &digests) {
             (true, Some(d)) => runs.load_reference(&d.base, &base_sha),
             _ => None,
-        };
+        }
+        .map(|doc| narrowed(doc, common.shard));
 
         if let Some(d) = digests.as_ref().filter(|d| d.head == d.base) {
             println!(
@@ -1238,7 +1255,13 @@ fn measure_ref_interleaved(
                     None => {}
                 }
             }
-            return Ok((Ref::IdenticalBinaries { run, counted }, digests, harness));
+            let stored = by_binary.filter(|_| !counted).map(Box::new);
+            let identical = Ref::IdenticalBinaries {
+                run,
+                counted,
+                stored,
+            };
+            return Ok((identical, digests, harness));
         }
         if let Some(doc) = by_binary {
             println!("gate: reusing a run measured from the same merge-base binary");
@@ -1326,7 +1349,9 @@ fn measure_ref_interleaved(
             println!("gate: no bench target at {refname}");
             let head = match (at_head, &head_exe) {
                 (false, _) => NewTarget::Absent,
-                (true, Some(exe)) if invoke::list_items(exe, None).is_none_or(|l| l.is_empty()) => {
+                (true, Some(exe))
+                    if invoke::list_items(exe, None).is_some_and(|l| l.is_empty()) =>
+                {
                     NewTarget::Empty
                 }
                 (true, _) => NewTarget::Registers,
@@ -1350,8 +1375,15 @@ fn measure_ref_interleaved(
         }
         // One cheap pass serves as both sides: real items and assertions,
         // zero deltas by construction.
-        Ref::IdenticalBinaries { run, counted } => {
-            let head = run?;
+        Ref::IdenticalBinaries {
+            run,
+            counted,
+            stored,
+        } => {
+            let mut head = run?;
+            if let Some(stored) = &stored {
+                head.assertions = headrun::counted_verdicts(&head, stored);
+            }
             return Ok(Some(Resolved {
                 reference: ref_doc(&head),
                 current: head,
