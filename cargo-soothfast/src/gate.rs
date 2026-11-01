@@ -207,26 +207,29 @@ pub fn run(args: &[String]) -> i32 {
     let mut regressions = 0u32;
     let mut failing_ids: Vec<String> = Vec::new();
 
+    let resolved = match resolve(&g, walltime_advisory) {
+        Ok(Some(resolved)) => resolved,
+        // Nothing at the ref to regress against, so HEAD's own assertions
+        // decide, and a passing run is saved like any other.
+        Ok(None) => {
+            println!(
+                "gate: no bench target at {} for {} — newly measured, checking its own claims",
+                g.against_ref.as_deref().unwrap_or("?"),
+                g.common.pkg.as_deref().unwrap_or("this package")
+            );
+            match newly_measured(&g.common) {
+                Ok(resolved) => resolved,
+                Err(e) => return err(&e),
+            }
+        }
+        Err(e) => return err(&e),
+    };
     let Resolved {
         reference,
         current,
         short_circuited,
         harness,
-    } = match resolve(&g, walltime_advisory) {
-        Ok(Some(resolved)) => resolved,
-        // Newly measured crate: nothing at the ref to regress against.
-        // Passing is the honest answer; failing would make a crate's
-        // first bench permanently ungateable until it is already merged.
-        Ok(None) => {
-            println!(
-                "gate: no bench target at {} for {} — newly measured, nothing to compare",
-                g.against_ref.as_deref().unwrap_or("?"),
-                g.common.pkg.as_deref().unwrap_or("this package")
-            );
-            return 0;
-        }
-        Err(e) => return err(&e),
-    };
+    } = resolved;
     // A gate that measured nothing must never pass: a typo'd --filter, an
     // empty registry, or lost records would otherwise be permanently green.
     // A shard that owns nothing now still fails on any item it owned that is gone.
@@ -298,15 +301,7 @@ pub fn run(args: &[String]) -> i32 {
     // Checked claims from the runner. They hold HEAD against its own
     // declared numbers, so the reference harness has no say over them and
     // --allow-harness-change never reaches them.
-    let mut assertion_failures = 0u32;
-    for a in &current.assertions {
-        let verdict = if a.ok { "ok" } else { "FAIL" };
-        if !a.ok {
-            assertion_failures += 1;
-            failing_ids.push(a.id.clone());
-        }
-        println!("{verdict:<5} {} assert {}: {}", a.id, a.kind, a.detail);
-    }
+    let assertion_failures = assertion_failures(&current, &mut failing_ids);
 
     if harness_waiver(&harness, g.allow_harness_change, regressions) {
         println!(
@@ -322,23 +317,13 @@ pub fn run(args: &[String]) -> i32 {
 
     write_gate_status(failures);
     if let Some(name) = &g.save_baseline {
-        match save_verdict(failures, short_circuited) {
-            SaveVerdict::Save => {
-                match invoke::save_baseline(name, &current, invoke::SaveScope::of(&g.common)) {
-                    Ok(path) => println!("baseline saved: {}", path.display()),
-                    Err(e) => {
-                        eprintln!("soothfast: failed to save baseline: {e}");
-                        return 1;
-                    }
-                }
-            }
-            SaveVerdict::RefuseFailing => {
-                eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
-            }
-            SaveVerdict::SkipShortCircuit => println!(
-                "gate: not saving baseline {name:?} — the short-circuit pass skipped the \
-                 gating counters, and unchanged code leaves the previous baseline valid"
-            ),
+        let verdict = save_verdict(failures, short_circuited);
+        let saved = invoke::workspace_root()
+            .map_err(|e| e.to_string())
+            .and_then(|root| save_head(&root, name, &current, &g.common, verdict));
+        if let Err(e) = saved {
+            eprintln!("soothfast: failed to save baseline: {e}");
+            return 1;
         }
     }
     if failures > 0 {
@@ -919,6 +904,46 @@ enum SaveVerdict {
     SkipShortCircuit,
 }
 
+/// Print HEAD's checked claims and count the ones that failed.
+fn assertion_failures(current: &Run, failing_ids: &mut Vec<String>) -> u32 {
+    let mut failures = 0u32;
+    for a in &current.assertions {
+        let verdict = if a.ok { "ok" } else { "FAIL" };
+        if !a.ok {
+            failures += 1;
+            failing_ids.push(a.id.clone());
+        }
+        println!("{verdict:<5} {} assert {}: {}", a.id, a.kind, a.detail);
+    }
+    failures
+}
+
+/// Act on a `--save-baseline` request under `root` as `verdict` decides.
+fn save_head(
+    root: &std::path::Path,
+    name: &str,
+    current: &Run,
+    common: &CommonArgs,
+    verdict: SaveVerdict,
+) -> Result<(), String> {
+    match verdict {
+        SaveVerdict::Save => {
+            let scope = invoke::SaveScope::of(common);
+            let path =
+                invoke::save_baseline_in(root, name, current, scope).map_err(|e| e.to_string())?;
+            println!("baseline saved: {}", path.display());
+        }
+        SaveVerdict::RefuseFailing => {
+            eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
+        }
+        SaveVerdict::SkipShortCircuit => println!(
+            "gate: not saving baseline {name:?} — the short-circuit pass skipped the \
+             gating counters, and unchanged code leaves the previous baseline valid"
+        ),
+    }
+    Ok(())
+}
+
 fn save_verdict(failures: u32, short_circuited: bool) -> SaveVerdict {
     if failures > 0 {
         SaveVerdict::RefuseFailing
@@ -949,6 +974,46 @@ fn write_gate_status(failures: u32) {
         dir.join("gate-status.json"),
         serde_json::to_string_pretty(&doc).unwrap_or_default(),
     );
+}
+
+/// HEAD of a crate with no bench target at the merge-base. Cached only when
+/// its assertions hold: a cached run keeps none for a later gate to check.
+fn newly_measured(common: &CommonArgs) -> Result<Resolved, String> {
+    let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+    let head_stamp = stamp();
+    let (digest, runs, exe) = headrun::probe("gate", common, &head_stamp);
+    let measure = |extra: &[&str]| -> Result<Run, String> {
+        let records = invoke::run_bench(common, extra).map_err(|e| e.to_string())?;
+        let mut run = invoke::collect(&records);
+        run.build = Some(stamp());
+        Ok(run)
+    };
+    let head_bin = exe.as_deref().map(|exe| Bin::head(exe, digest.as_deref()));
+    let (head, _) = Reuse::measure_head(
+        "gate",
+        common,
+        &runs,
+        head_bin,
+        recording(),
+        &[],
+        stamp,
+        measure,
+    )?;
+    if head.assertions.iter().all(|a| a.ok) {
+        let settled = settle("gate", "HEAD's run", &head, || measure(RECOUNT).ok());
+        cache_head(&runs, &head, digest.as_deref(), &settled);
+    }
+    Ok(self_compared(head))
+}
+
+/// `head` as both sides of a comparison, so every delta is zero.
+fn self_compared(head: Run) -> Resolved {
+    Resolved {
+        reference: ref_doc(&head),
+        current: head,
+        short_circuited: false,
+        harness: invoke::HarnessSync::default(),
+    }
 }
 
 /// Measure the merge-base with HEAD in a temp worktree, interleaving rounds
@@ -2744,6 +2809,57 @@ mod tests {
     #[test]
     fn a_short_circuit_run_lacks_counters_and_is_skipped() {
         assert_eq!(save_verdict(0, true), SaveVerdict::SkipShortCircuit);
+    }
+
+    /// Gate a new crate whose one alloc claim holds or not, saving into `root`.
+    fn gate_new_crate(root: &std::path::Path, holds: bool) -> u32 {
+        let mut head = run_with(ItemMetrics {
+            allocs: Some(0),
+            bytes: Some(0),
+            ..ItemMetrics::default()
+        });
+        head.assertions.push(invoke::AssertionOutcome {
+            id: "pkg::bt_base_to_htf_index".into(),
+            kind: "alloc".into(),
+            ok: holds,
+            detail: "claimed 0".into(),
+        });
+        let resolved = super::self_compared(head);
+        let (regressions, _) = gate_failures(&resolved.reference, &resolved.current);
+        let failures = regressions + super::assertion_failures(&resolved.current, &mut Vec::new());
+        let common = CommonArgs {
+            pkg: Some("pkg".into()),
+            ..CommonArgs::default()
+        };
+        let verdict = save_verdict(failures, resolved.short_circuited);
+        super::save_head(root, "head", &resolved.current, &common, verdict).unwrap();
+        failures
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("soothfast-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    #[test]
+    fn a_passing_new_crate_saves_its_run() {
+        let root = scratch("new-crate-pass");
+        assert_eq!(gate_new_crate(&root, true), 0);
+        let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+        assert_eq!(
+            saved["items"]["pkg::bt_base_to_htf_index"]["alloc"]["allocs"],
+            0
+        );
+        assert_eq!(saved["assertions"][0]["ok"], true);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failing_new_crate_fails_the_gate_and_saves_nothing() {
+        let root = scratch("new-crate-fail");
+        assert_eq!(gate_new_crate(&root, false), 1);
+        assert!(invoke::load_baseline_in(&root, "head").unwrap().is_none());
     }
 
     #[test]
