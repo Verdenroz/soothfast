@@ -69,7 +69,7 @@ impl<'a> Runs<'a> {
         self.reference_source(id, measured_from).map(|(_, doc)| doc)
     }
 
-    /// The first stored run of `id` with callgrind counts for every one of
+    /// The first stored run of `id`, readable as HEAD's, with callgrind counts for every one of
     /// `expected`: under its own key, then the run taken without the shard,
     /// without the filter, and without either.
     pub fn load_covering(
@@ -89,7 +89,9 @@ impl<'a> Runs<'a> {
         }
         keys.iter()
             .filter_map(|key| load(key, measured_from))
-            .find(|doc| crate::headrun::counts_cover(doc, expected))
+            .find(|doc| {
+                crate::headrun::readable_as_head(doc) && crate::headrun::counts_cover(doc, expected)
+            })
     }
 
     /// The run and its file that a gate with `reuse` takes in place of
