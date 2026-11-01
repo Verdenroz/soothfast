@@ -13,6 +13,8 @@ use crate::invoke::{self, Shard};
 use crate::unmeasured::{self, Reason, Unmeasured};
 use crate::{gate_config, gate_save, import};
 
+mod plan;
+
 /// The shard a gate's baseline holds the items of, as `I/N`.
 const SHARD_KEY: &str = "shard";
 /// Every item each package's bench binary lists, whichever shard owns it.
@@ -82,10 +84,12 @@ pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("merge") => merge_cmd(&args[1..]),
         Some("mark") => mark_cmd(&args[1..]),
+        Some("plan") => plan::cmd(&args[1..]),
         _ => {
             eprintln!(
                 "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] FILE...\n       \
-                 cargo soothfast baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]"
+                 cargo soothfast baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]\n       \
+                 cargo soothfast baseline plan --out FILE -p PKG [--features F]"
             );
             2
         }
@@ -277,7 +281,22 @@ fn merge_on(
     let no_items = Map::new();
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut origin: BTreeMap<String, &str> = BTreeMap::new();
+    let mut planned: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (label, doc) in files {
+        if plan::is_plan(doc) {
+            for (pkg, ids) in doc["listed"].as_object().into_iter().flatten() {
+                let ids = ids
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str);
+                planned
+                    .entry(pkg.clone())
+                    .or_default()
+                    .extend(ids.map(str::to_string));
+            }
+            continue;
+        }
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
             None => &no_items,
@@ -351,7 +370,8 @@ fn merge_on(
     }
     for pkg in packages {
         if not_gated.is_none() || shards.values().any(|s| s.covers(pkg)) {
-            entries.extend(unaccounted(pkg, &shards, expect));
+            let plan = planned.get(pkg.as_str());
+            entries.extend(unaccounted(pkg, &shards, expect, plan));
         }
     }
     if let Some(ungated) = not_gated {
@@ -388,9 +408,14 @@ fn merge_on(
 }
 
 /// The entries for the shards of `pkg` that saved nothing of it. Their items
-/// are named from the other shards' listings and owners of `pkg`; with none
-/// to read, no item is.
-fn unaccounted(pkg: &str, shards: &BTreeMap<u64, Saved>, expect: u64) -> Vec<Unmeasured> {
+/// are named from the other shards' listings and owners of `pkg`, and from
+/// the `plan` the bench build listed; with none to read, no item is.
+fn unaccounted(
+    pkg: &str,
+    shards: &BTreeMap<u64, Saved>,
+    expect: u64,
+    plan: Option<&BTreeSet<String>>,
+) -> Vec<Unmeasured> {
     let missing: Vec<Shard> = (1..=expect)
         .map(|index| Shard {
             index,
@@ -409,7 +434,9 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, Saved>, expect: u64) -> Vec<Unm
                 .filter_map(|id| id.as_str().map(str::to_string))
                 .chain(unmeasured::owned_by(doc, pkg))
         })
+        .chain(plan.into_iter().flatten().cloned())
         .collect();
+    let unsaved = !shards.values().any(|saved| saved.covers(pkg));
     if known.is_empty() {
         let which = if expect == 1 {
             "the gate".to_string()
@@ -432,6 +459,10 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, Saved>, expect: u64) -> Vec<Unm
             });
             let (reason, detail) = match nameless {
                 Some(e) => (e.reason, format!("{} (shard {shard})", e.detail)),
+                None if unsaved => (
+                    Reason::NoMeasurement,
+                    format!("no leg saved a measurement of {pkg} (shard {shard}); its plan names the items"),
+                ),
                 None => (
                     Reason::ShardMissing,
                     format!("shard {shard} saved no measurement of {pkg}"),

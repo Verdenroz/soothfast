@@ -160,6 +160,9 @@ commands:
   baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]
            (marks PKG unmeasured for REASON, naming the items its bench binary
            lists when it builds; fails when it cannot list them)
+  baseline plan --out FILE -p PKG [--features F]
+           (adds PKG's bench listing to plan FILE, which the merge reads to
+           name the items of a leg that saved nothing)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE

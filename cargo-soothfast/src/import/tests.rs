@@ -403,10 +403,24 @@ fn the_workspace_package_names_are_read_once_and_clash_by_package_name() {
 
 #[test]
 fn the_failed_import_fallbacks_need_failed() {
+    let dir = crate::test::fixture::TempDir::new("import-guard");
+    std::fs::create_dir_all(&*dir).unwrap();
+    let results = dir.join("jmh.json");
+    std::fs::write(&results, JMH).unwrap();
+    let out = dir.join("out.json");
+    let (results, out) = (results.to_str().unwrap(), out.to_str().unwrap());
+    let base = ["--from", "jmh", results, "--out", out];
+    assert_eq!(
+        run(&base.map(String::from)),
+        0,
+        "the same import without the flag works"
+    );
     for flag in ["--base-results", "--prior-baseline"] {
-        let args: Vec<String> = ["--from", "jmh", "r.json", "--out", "o.json", flag, "x"]
-            .map(String::from)
-            .to_vec();
+        let args: Vec<String> = base
+            .iter()
+            .chain(&[flag, results])
+            .map(|a| a.to_string())
+            .collect();
         assert_eq!(run(&args), 2, "{flag}");
     }
 }

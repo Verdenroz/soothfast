@@ -280,7 +280,7 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         let others = owned_by_others(&doc, &e.package);
         let theirs = |id: &String| {
             let by = doc["items"][id]["saved_by"].as_str();
-            others.contains(id) && by.is_some_and(|by| by != e.package)
+            others.contains(id) && by.is_none_or(|by| by != e.package)
         };
         let mine = |id: &String| !theirs(id);
         gone.extend(e.items.iter().filter(|id| mine(id)).cloned());
@@ -486,13 +486,16 @@ mod tests {
 
     #[test]
     fn a_failed_package_keeps_a_shared_id_s_number_only_when_another_package_saved_it() {
-        for (writer, kept) in [("b", true), ("a", false)] {
+        for (writer, kept) in [("b", true), ("a", false), ("", true)] {
             let root = scratch(&format!("unmeasured-shared-id-{writer}"));
-            let doc = json!({
+            let mut doc = json!({
                 "version": 1,
-                "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 8 }, "saved_by": writer } },
+                "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 8 } } },
                 "owners": { "a": ["util::hash"], "b": ["util::hash"] },
             });
+            if !writer.is_empty() {
+                doc["items"]["util::hash"]["saved_by"] = json!(writer);
+            }
             invoke::write_baseline_in(&root, "head", &doc).unwrap();
             let failed = entry("a", Reason::GateFailed, "failed", &[], ids(&["util::hash"]));
             mark_in(&root, "head", &[failed], true).unwrap();

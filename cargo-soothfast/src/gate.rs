@@ -1512,7 +1512,7 @@ fn identical_pass_cache(
             items.retain(|id, _| shard.owns(id));
         }
         if let Some(assertions) = doc["assertions"].as_array_mut() {
-            assertions.retain(|a| a["id"].as_str().is_some_and(|id| shard.owns(id)));
+            assertions.retain(|a| a["id"].as_str().is_none_or(|id| shard.owns(id)));
         }
         if let Some(executed) = doc["executed"].as_object_mut() {
             executed.retain(|id, _| shard.owns(id));
@@ -2153,12 +2153,9 @@ fn errored(g: &GateArgs, exe: Option<&std::path::Path>, msg: &str) -> i32 {
     if let (Some(name), Ok(root)) = (&g.save_baseline, invoke::workspace_root())
         && g.common.backend.as_deref() != Some("buildcost")
     {
-        let built = exe.map(std::path::Path::to_path_buf).or_else(|| {
-            let stored = crate::benchexe::is_stored(&g.common, None, None, invoke::Build::Measure);
-            stored
-                .then(|| invoke::bench_executable(&g.common, None, None))
-                .flatten()
-        });
+        let built = exe
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| crate::benchexe::stored(&g.common, None, None, invoke::Build::Measure));
         let filter = g.common.filter.as_deref();
         let listed = built.and_then(|exe| invoke::listed_ids(&exe, filter));
         errored_at(&root, name, &g.common, listed.as_deref(), msg);

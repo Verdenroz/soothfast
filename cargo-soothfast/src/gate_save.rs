@@ -122,7 +122,8 @@ pub fn save_head(
     let (mut run, mut entries) = baseline_material(current, source, package);
     if let Some(shard) = common.shard {
         run.items.retain(|id, _| shard.owns(id));
-        run.assertions.retain(|a| shard.owns(&a.id));
+        run.assertions
+            .retain(|a| a.id.is_empty() || shard.owns(&a.id));
         for e in &mut entries {
             e.items.retain(|id| shard.owns(id));
         }

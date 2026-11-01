@@ -244,7 +244,17 @@ pub fn is_stored(
     target_dir: Option<&Path>,
     build: Build,
 ) -> bool {
-    plan(common, dir, target_dir, build).is_some_and(|plan| plan.load().is_some())
+    stored(common, dir, target_dir, build).is_some()
+}
+
+/// This build's executable, if the store holds it; nothing is built.
+pub fn stored(
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+) -> Option<PathBuf> {
+    plan(common, dir, target_dir, build).and_then(|plan| plan.load())
 }
 
 /// Path of the bench executable, from the store or else from
