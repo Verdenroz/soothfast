@@ -195,7 +195,7 @@ fn merge_cmd(args: &[String]) -> i32 {
             Err(e) => return fail(&format!("corrupt baseline {}: {e}", file.display())),
         }
     }
-    let imports = if reads_import_config(&docs, not_gated.is_some()) {
+    let imports = if not_gated.is_some() {
         match import::configured_prefixes(&invoke::project_root()) {
             Ok(prefixes) => prefixes,
             Err(e) => return fail(&format!("cannot read the import prefixes: {e}")),
@@ -220,12 +220,6 @@ fn merge_cmd(args: &[String]) -> i32 {
     }
     report(&into, docs.len(), &merged);
     0
-}
-
-/// Whether a merge of `docs` needs `soothfast.toml`'s import prefixes: only
-/// for an ungated event or an import file among them.
-fn reads_import_config(docs: &[(String, Value)], not_gated: bool) -> bool {
-    not_gated || docs.iter().any(|(_, doc)| !is_rust(doc))
 }
 
 fn report(into: &str, files: usize, merged: &Value) {

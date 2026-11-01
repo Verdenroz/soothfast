@@ -200,6 +200,8 @@ pub fn run(args: &[String]) -> i32 {
     let mut save = None;
     let mut out = None;
     let mut failed = false;
+    let mut base_results = None;
+    let mut prior = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let slot = match a.as_str() {
@@ -211,6 +213,8 @@ pub fn run(args: &[String]) -> i32 {
             "--prefix" => &mut prefix,
             "--save-baseline" => &mut save,
             "--out" => &mut out,
+            "--base-results" => &mut base_results,
+            "--prior-baseline" => &mut prior,
             other if !other.starts_with('-') && file.is_none() => {
                 file = Some(other.to_string());
                 continue;
@@ -232,7 +236,13 @@ pub fn run(args: &[String]) -> i32 {
         let Some(path) = &out else {
             return fail("import --failed writes a file; pass --out FILE");
         };
-        let written = failed::stub(&format, &file, prefix.as_deref()).and_then(|doc| {
+        let root = invoke::project_root();
+        let fallbacks = failed::Fallbacks {
+            base_results: base_results.as_deref(),
+            prior: prior.as_deref().map(|name| (root.as_path(), name)),
+        };
+        let stub = failed::stub(&format, &file, prefix.as_deref(), &fallbacks);
+        let written = stub.and_then(|doc| {
             let text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
             std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))
         });

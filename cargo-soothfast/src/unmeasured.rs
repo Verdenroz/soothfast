@@ -269,23 +269,21 @@ pub fn drop_items(doc: &mut Value, ids: &BTreeSet<String>) {
 /// each one's prior `owners` and the items its entry names are dropped from
 /// baseline `name` under `root`, and the entry's items become its owners.
 /// Without, as for a filtered gate, only the named items are dropped, and
-/// the package's other owners and numbers stay.
+/// the package's other owners and numbers stay. An id another package owns
+/// keeps its number either way.
 pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> Result<(), String> {
     let mut doc = invoke::load_baseline_in(root, name)
         .map_err(|e| e.to_string())?
         .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let mut gone: BTreeSet<String> = BTreeSet::new();
     for e in entries {
-        gone.extend(e.items.iter().cloned());
+        let others = owned_by_others(&doc, &e.package);
+        let mine = |id: &String| !others.contains(id);
+        gone.extend(e.items.iter().filter(|id| mine(id)).cloned());
         if !whole {
             continue;
         }
-        let others = owned_by_others(&doc, &e.package);
-        gone.extend(
-            owned_by(&doc, &e.package)
-                .into_iter()
-                .filter(|id| !others.contains(id)),
-        );
+        gone.extend(owned_by(&doc, &e.package).into_iter().filter(mine));
         if e.items.is_empty() {
             if let Some(owners) = doc.get_mut(OWNERS_KEY).and_then(Value::as_object_mut) {
                 owners.remove(&e.package);
@@ -479,6 +477,22 @@ mod tests {
         assert_eq!(marked["assertions"], json!([]));
         assert!(marked[OWNERS_KEY].get("a").is_none());
         assert_eq!(owned_by(&marked, "b"), ["soothfast::b_item"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_package_keeps_the_number_of_a_listed_id_another_package_owns() {
+        let root = scratch("unmeasured-shared-id");
+        let doc = json!({
+            "version": 1,
+            "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 8 } } },
+            "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+        });
+        invoke::write_baseline_in(&root, "head", &doc).unwrap();
+        let failed = entry("a", Reason::GateFailed, "failed", &[], ids(&["util::hash"]));
+        mark_in(&root, "head", &[failed], true).unwrap();
+        let marked = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+        assert_eq!(marked["items"]["util::hash"]["alloc"]["allocs"], 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -343,18 +343,3 @@ fn a_package_whose_listing_is_empty_is_accounted_for() {
     let merged = merge(&[("head.json".into(), doc)], 1, &packages()).unwrap();
     assert!(unmeasured::read(&merged).unwrap().is_empty());
 }
-
-#[test]
-fn a_rust_only_merge_reads_no_import_config() {
-    let rust = [(
-        "head.json".to_string(),
-        json!({ "items": {}, "owners": {} }),
-    )];
-    assert!(!reads_import_config(&rust, false));
-    assert!(reads_import_config(&rust, true));
-    let import = [(
-        "jmh.json".to_string(),
-        json!({ "imported": "jmh", "items": {} }),
-    )];
-    assert!(reads_import_config(&import, false));
-}

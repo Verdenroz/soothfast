@@ -492,7 +492,10 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
             .iter()
             .map(|(f, d, _)| (f.as_str(), d))
             .collect();
-        let files: Vec<&str> = docs.iter().map(|(f, _)| *f).collect();
+        let files: Vec<&str> = (docs.iter())
+            .filter(|(_, d)| !d.claims.is_empty())
+            .map(|(f, _)| *f)
+            .collect();
         let unchanged = || match &a.against_ref {
             Some(against) => docs_claims::unchanged_since(&scanned.root, against, &files),
             None => Ok(BTreeSet::new()),

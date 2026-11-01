@@ -328,11 +328,18 @@ pub fn run(args: &[String]) -> i32 {
                     .as_deref()
                     .and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
                 let listed = listed.as_deref();
-                save_head(root, name, &current, &head, &g.common, listed, failures)
+                save_head(
+                    root,
+                    name,
+                    &current,
+                    &head,
+                    &g.common,
+                    listed,
+                    assertion_failures,
+                )
             });
         if let Err(e) = saved {
-            eprintln!("soothfast: failed to save baseline: {e}");
-            return 1;
+            return err(&format!("failed to save baseline: {e}"));
         }
     }
     if failures > 0 {
@@ -1150,7 +1157,8 @@ fn measure_ref_interleaved(
             // Head shares that machine code, so a run of it is its
             // measurement too, and the next commit can reuse it from HEAD.
             if let Ok(pass) = &run
-                && let Some(doc) = identical_pass_cache(by_binary.as_ref(), pass, counted)
+                && let Some(doc) =
+                    identical_pass_cache(by_binary.as_ref(), pass, counted, common.shard)
             {
                 let settled = if counted {
                     settle("gate", "HEAD's run", pass, || measure(None, RECOUNT).ok())
@@ -1451,12 +1459,22 @@ fn identical_pass(
 /// the gating counters, else the run already stored for the binary. A pass
 /// that skipped them must never be stored, or a later gate reusing it compares
 /// nothing.
-fn identical_pass_cache(stored: Option<&Value>, pass: &Run, counted: bool) -> Option<Value> {
+/// Under a shard, the stored run is narrowed to the shard's own ids, since it
+/// is kept under the shard's HEAD key.
+fn identical_pass_cache(
+    stored: Option<&Value>,
+    pass: &Run,
+    counted: bool,
+    shard: Option<invoke::Shard>,
+) -> Option<Value> {
     if counted {
-        Some(ref_doc(pass))
-    } else {
-        stored.cloned()
+        return Some(ref_doc(pass));
     }
+    let mut doc = stored.cloned()?;
+    if let (Some(shard), Some(items)) = (shard, doc["items"].as_object_mut()) {
+        items.retain(|id, _| shard.owns(id));
+    }
+    Some(doc)
 }
 
 /// Whether an identical-binaries pass takes its counters from a stored run:
@@ -2091,10 +2109,7 @@ fn errored(g: &GateArgs, exe: Option<&std::path::Path>, msg: &str) -> i32 {
     if let (Some(name), Ok(root)) = (&g.save_baseline, invoke::workspace_root())
         && g.common.backend.as_deref() != Some("buildcost")
     {
-        let exe = exe
-            .map(std::path::Path::to_path_buf)
-            .or_else(|| invoke::bench_executable(&g.common, None, None));
-        let listed = exe.and_then(|exe| invoke::listed_ids(&exe, g.common.filter.as_deref()));
+        let listed = exe.and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
         errored_at(&root, name, &g.common, listed.as_deref(), msg);
     }
     err(msg)
@@ -2550,17 +2565,32 @@ mod tests {
     #[test]
     fn only_a_counted_identical_pass_is_stored_afresh() {
         let pass = Run::default();
-        assert!(identical_pass_cache(None, &pass, false).is_none());
-        assert!(identical_pass_cache(None, &pass, true).is_some());
+        assert!(identical_pass_cache(None, &pass, false, None).is_none());
+        assert!(identical_pass_cache(None, &pass, true, None).is_some());
     }
 
     #[test]
     fn a_stored_run_is_kept_when_the_pass_is_not_counted() {
         let stored = json!({ "version": 1, "items": {} });
         assert_eq!(
-            identical_pass_cache(Some(&stored), &Run::default(), false),
+            identical_pass_cache(Some(&stored), &Run::default(), false, None),
             Some(stored)
         );
+    }
+
+    #[test]
+    fn a_shard_keeps_only_its_own_ids_of_the_identical_binary_s_stored_run() {
+        let shard = invoke::Shard { index: 1, count: 2 };
+        let ids: Vec<String> = (0..8).map(|n| format!("pkg::f{n}")).collect();
+        let mut stored = json!({ "version": 1, "items": {} });
+        for id in &ids {
+            stored["items"][id] = json!({ "callgrind": { "ir": 1 } });
+        }
+        let kept =
+            identical_pass_cache(Some(&stored), &Run::default(), false, Some(shard)).unwrap();
+        let kept: Vec<&String> = kept["items"].as_object().unwrap().keys().collect();
+        assert!(!kept.is_empty() && kept.len() < ids.len());
+        assert!(kept.iter().all(|id| shard.owns(id)));
     }
 
     #[test]

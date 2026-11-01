@@ -94,7 +94,8 @@ fn a_saved_baseline_conforms_to_its_schema() {
     let _cleanup = RemoveOnDrop(path.clone());
     let text = std::fs::read_to_string(&path).unwrap();
     let baseline: Value = serde_json::from_str(&text).unwrap();
-    let import_stub = crate::import::failed::stub("jmh", "/nonexistent.json", None).unwrap();
+    let import_stub =
+        crate::import::failed::stub("jmh", "/nonexistent.json", None, &Default::default()).unwrap();
     assert_all_conform(
         "baseline.schema.json",
         &[baseline, shard_baseline(), import_stub],
