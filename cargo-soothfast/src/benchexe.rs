@@ -290,6 +290,26 @@ fn note_once(pkg: &str, why: &str) {
     }
 }
 
+/// Build the bench executable, or take the stored one, in a step of its own;
+/// `Err` carries cargo's stderr. The command runs it as [`run_command`] would,
+/// or is `None` when only `cargo bench` can run it.
+pub fn build_command(
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+) -> Result<Option<Command>, String> {
+    let plan = plan(common, dir, target_dir, build);
+    let failure = std::cell::RefCell::new(String::new());
+    let exe = resolve(plan.as_deref(), || {
+        cargo_build(common, dir, target_dir, build)
+            .map_err(|stderr| *failure.borrow_mut() = stderr)
+            .ok()
+    })
+    .ok_or_else(|| failure.into_inner())?;
+    Ok(plan.and_then(|plan| plan.command(&exe)))
+}
+
 fn cargo_build(
     common: &CommonArgs,
     dir: Option<&Path>,
@@ -297,13 +317,29 @@ fn cargo_build(
     build: Build,
 ) -> Result<Built, String> {
     let target = common.target.as_deref().unwrap_or("soothfast");
+    let mut cmd = no_run_command(common, dir, target_dir, build).map_err(|e| e.to_string())?;
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    built(out, target)
+}
+
+/// `cargo bench --no-run` for the bench target, with rustc's diagnostics
+/// rendered on stderr and cargo's messages on stdout.
+fn no_run_command(
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+) -> std::io::Result<Command> {
     let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-    let mut cmd = invoke::bench_build_command(common, dir, target_dir, build, &pkgs)
-        .map_err(|e| e.to_string())?;
-    cmd.args(["--no-run", "--message-format=json"]);
+    let mut cmd = invoke::bench_build_command(common, dir, target_dir, build, &pkgs)?;
+    cmd.args(["--no-run", "--message-format=json-render-diagnostics"]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    let out = cmd.output().map_err(|e| e.to_string())?;
+    Ok(cmd)
+}
+
+/// The executable a finished `cargo bench --no-run` names for `target`.
+fn built(out: std::process::Output, target: &str) -> Result<Built, String> {
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).into_owned());
     }
@@ -343,6 +379,40 @@ mod tests {
 
     use super::*;
     use crate::store::testing::Repo;
+
+    /// The build step over a bench `b` whose body is `main`, run without the
+    /// host's target, flags or wrapper.
+    fn build_bench(repo: &Repo, main: &str) -> Result<Built, String> {
+        repo.write(
+            "Cargo.toml",
+            "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [[bench]]\nname = \"b\"\nharness = false\n",
+        );
+        repo.write("src/lib.rs", "");
+        repo.write("benches/b.rs", main);
+        let common = CommonArgs {
+            pkg: Some("m".into()),
+            target: Some("b".into()),
+            ..CommonArgs::default()
+        };
+        let target = repo.0.join("target");
+        let mut cmd =
+            no_run_command(&common, Some(&repo.0), Some(&target), Build::Measure).unwrap();
+        for var in ["CARGO_BUILD_TARGET", "RUSTFLAGS", "RUSTC_WRAPPER"] {
+            cmd.env_remove(var);
+        }
+        built(cmd.output().unwrap(), "b")
+    }
+
+    #[test]
+    fn the_build_step_renders_a_failed_build_and_leaves_a_failing_run_to_the_run() {
+        let repo = Repo::new("build-step");
+        let stderr = build_bench(&repo, "fn main() { nope() }\n").err().unwrap();
+        assert!(stderr.contains("error[E0425]"), "{stderr}");
+        let built = build_bench(&repo, "fn main() { std::process::exit(3) }\n").unwrap();
+        let status = Command::new(&built.exe).status().unwrap();
+        assert_eq!(status.code(), Some(3));
+    }
 
     fn plan(repo: &Repo, store: PathBuf) -> Plan {
         let mut plan = Plan {

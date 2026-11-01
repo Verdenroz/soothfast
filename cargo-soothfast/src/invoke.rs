@@ -265,15 +265,27 @@ fn bench_command(
     build: Build,
 ) -> io::Result<Command> {
     let fill = matches!(build, Build::Discover);
-    let mut cmd = match benchexe::run_command(common, dir, target_dir, build, fill) {
+    let cmd = match benchexe::run_command(common, dir, target_dir, build, fill) {
         Some(cmd) => cmd,
-        None => {
-            let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-            let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs)?;
-            cmd.arg("--");
-            cmd
-        }
+        None => cargo_bench_command(common, dir, target_dir, build)?,
     };
+    Ok(with_runner_args(cmd, common, extra))
+}
+
+/// `cargo bench` for the bench target, up to the runner's arguments.
+fn cargo_bench_command(
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+) -> io::Result<Command> {
+    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+    let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs)?;
+    cmd.arg("--");
+    Ok(cmd)
+}
+
+fn with_runner_args(mut cmd: Command, common: &CommonArgs, extra: &[&str]) -> Command {
     if let Some(f) = &common.filter {
         cmd.args(["--filter", f]);
     }
@@ -284,7 +296,7 @@ fn bench_command(
         cmd.args(["--samples", s]);
     }
     cmd.args(extra);
-    Ok(cmd)
+    cmd
 }
 
 /// Run the bench binary with `--json` (optionally in another worktree) and
@@ -330,8 +342,8 @@ const BASE_ERROR_LINES: usize = 40;
 /// Lines shown from the end of that stderr when they fall past the window.
 const BASE_LAST_LINES: usize = 10;
 
-/// Report a failed merge-base `cargo bench`. Before cargo runs the bench
-/// binary it is the build that failed, which the seed may have caused.
+/// Report a failed merge-base bench: its build, which the seed may have
+/// caused, or its run.
 fn report_base_failure(stderr: &str, built: bool, target_dir: &Path) {
     if built {
         eprintln!("gate: the merge-base build failed; cargo reported:");
@@ -346,21 +358,13 @@ fn report_base_failure(stderr: &str, built: bool, target_dir: &Path) {
     }
 }
 
-/// Make cargo print its `Running` line whatever `[term]` or the environment
-/// say, so [`build_failed`] can tell a failed build from a failed run.
-fn show_running(cmd: &mut Command) {
-    cmd.env("CARGO_TERM_QUIET", "false");
-}
-
-/// Whether cargo stopped before running the bench binary, whose path ends in
-/// `exe` and a hash: plain output names it in parentheses, verbose output in
-/// backticks, either relative to the working directory or not.
-fn build_failed(stderr: &str, exe: &Path) -> bool {
-    let exe = exe.to_string_lossy();
-    !stderr.lines().any(|l| {
-        let line = crate::verdict::strip_ansi(l);
-        line.trim_start().starts_with("Running ") && line.contains(exe.as_ref())
-    })
+/// The one line that says why a bench failed: the excerpt's opening line.
+fn failure_reason(stderr: &str) -> &str {
+    stderr
+        .lines()
+        .find(|l| opens_failure(l))
+        .or_else(|| stderr.trim().lines().last())
+        .unwrap_or("no error output")
 }
 
 /// Whether `line` opens what a failure excerpt shows: an error, a panic, or
@@ -368,7 +372,8 @@ fn build_failed(stderr: &str, exe: &Path) -> bool {
 fn opens_failure(line: &str) -> bool {
     let line = crate::verdict::strip_ansi(line);
     let line = line.trim_start();
-    line.starts_with("error")
+    line.starts_with("error:")
+        || line.starts_with("error[")
         || (line.starts_with("soothfast runner:")
             && !line.starts_with("soothfast runner: warning:"))
         || (line.starts_with("thread '") && line.contains("' panicked"))
@@ -418,30 +423,36 @@ fn run_records(
     };
     args.extend(owned.iter().flat_map(|id| ["--id", id.as_str()]));
     let target = common.target.as_deref().unwrap_or("soothfast");
-    let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
+    let base = dir.and(target_dir);
+    let mut cmd = match base {
+        // The merge-base builds in a step of its own, so a failure is the
+        // build's or the run's and only a failed build can be the seed's.
+        Some(td) => match benchexe::build_command(common, dir, target_dir, build) {
+            Ok(Some(cmd)) => with_runner_args(cmd, common, &args),
+            Ok(None) => with_runner_args(
+                cargo_bench_command(common, dir, target_dir, build)?,
+                common,
+                &args,
+            ),
+            Err(stderr) => {
+                report_base_failure(&stderr, true, td);
+                return Err(io::Error::other(format!(
+                    "the bench did not build: {} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
+                    failure_reason(&stderr)
+                )));
+            }
+        },
+        None => bench_command(common, &args, dir, target_dir, build)?,
+    };
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    let via_cargo = cmd.get_program() == "cargo";
-    if via_cargo && dir.is_some() {
-        show_running(&mut cmd);
-    }
     let out = timed("cargo bench (build and run)", || cmd.output())?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        if let (Some(_), Some(td)) = (dir, target_dir) {
-            let profile = if matches!(build, Build::Discover) {
-                "debug"
-            } else {
-                "release"
-            };
-            let exe = Path::new(profile).join("deps").join(format!("{target}-"));
-            report_base_failure(&stderr, via_cargo && build_failed(&stderr, &exe), td);
+        if let Some(td) = base {
+            report_base_failure(&stderr, false, td);
         }
-        let reason = stderr
-            .lines()
-            .find(|l| l.contains("error"))
-            .or_else(|| stderr.trim().lines().last())
-            .unwrap_or("no error output");
+        let reason = failure_reason(&stderr);
         return Err(io::Error::other(format!(
             "cargo bench failed with {}: {reason} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
             out.status
@@ -2517,63 +2528,12 @@ optional = true
             "thread 'main' panicked at src/x.rs:1:1:"
         );
         let runner = "\x1b]8;;file://x\x1b\\link\x1b]8;;\x1b\\\n\
+                      errors: 0\n   Compiling thiserror v2.0.20\n\
                       soothfast runner: warning: slow\n  soothfast runner: no such item";
         assert_eq!(
             super::failure_excerpt(runner),
             ["  soothfast runner: no such item"]
         );
-    }
-
-    /// `cargo bench --bench b` over a bench whose body is `main`, in a fresh
-    /// workspace with `config` as its `.cargo/config.toml`, as the gate runs
-    /// it; its stderr and the bench executable's path prefix.
-    fn bench_stderr(
-        tag: &str,
-        main: &str,
-        config: &str,
-        env: &[(&str, &str)],
-    ) -> (String, std::path::PathBuf) {
-        let root =
-            std::env::temp_dir().join(format!("soothfast-bench-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let files = [
-            (
-                "Cargo.toml",
-                "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
-                 [[bench]]\nname = \"b\"\nharness = false\n",
-            ),
-            ("src/lib.rs", ""),
-            ("benches/b.rs", main),
-            (".cargo/config.toml", config),
-        ];
-        for (path, text) in files {
-            let path = root.join(path);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, text).unwrap();
-        }
-        let target = root.join("target");
-        let mut cmd = std::process::Command::new("cargo");
-        cmd.args(["bench", "--offline", "--bench", "b"])
-            .current_dir(&root)
-            .env("CARGO_TARGET_DIR", &target)
-            .envs(env.iter().copied());
-        super::show_running(&mut cmd);
-        let out = cmd.output().unwrap();
-        assert!(!out.status.success());
-        let exe = std::path::Path::new("release").join("deps").join("b-");
-        (String::from_utf8_lossy(&out.stderr).into_owned(), exe)
-    }
-
-    #[test]
-    fn a_failed_build_is_told_from_a_failed_run_quiet_or_verbose() {
-        let fails = "fn main() { std::process::exit(3) }\n";
-        let quiet = "[term]\nquiet = true\n";
-        let (stderr, exe) = bench_stderr("quiet", fails, quiet, &[]);
-        assert!(!super::build_failed(&stderr, &exe), "{stderr}");
-        let (stderr, exe) = bench_stderr("verbose", fails, "", &[("CARGO_TERM_VERBOSE", "true")]);
-        assert!(!super::build_failed(&stderr, &exe), "{stderr}");
-        let (stderr, exe) = bench_stderr("broken", "fn main() { nope() }\n", quiet, &[]);
-        assert!(super::build_failed(&stderr, &exe), "{stderr}");
     }
 
     #[test]

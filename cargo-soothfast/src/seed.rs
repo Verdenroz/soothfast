@@ -89,7 +89,7 @@ fn seed_layout(
     let (head_graph, base_graph) = (graph(&head_dirs), graph(&base_dirs));
     let touched = unitgraph::touching(&head_graph, &base_graph, &candidates);
     let names: Vec<&str> = touched.iter().map(String::as_str).collect();
-    let copies = copies(layout, head, base, &names);
+    let copies = copies(layout, head, base, &names, &mut seeded.unreadable);
     let blocked = unitgraph::blocked(&head_graph, &base_graph, &copies, &candidates);
     seeded
         .skipped
@@ -99,7 +99,7 @@ fn seed_layout(
         .filter(|name| !blocked.contains_key(name))
         .collect();
     let results = match layout {
-        Layout::Flat => copy_flat(head, base, &copy)?,
+        Layout::Flat => copy_flat(head, base, &copy, &mut seeded.unreadable),
         Layout::Nested => copy
             .iter()
             .map(|unit| {
@@ -201,8 +201,17 @@ type Outputs = BTreeSet<(PathBuf, u64, SystemTime)>;
 
 /// The units of `names` whose outputs in `base` match HEAD's in name, size
 /// and mtime: what a seed's copy leaves and any rebuild in place breaks.
-fn copies(layout: Layout, head: &Path, base: &Path, names: &[&str]) -> BTreeSet<String> {
-    let (head_out, base_out) = (outputs(layout, head, names), outputs(layout, base, names));
+fn copies(
+    layout: Layout,
+    head: &Path,
+    base: &Path,
+    names: &[&str],
+    unreadable: &mut Vec<String>,
+) -> BTreeSet<String> {
+    let (head_out, base_out) = (
+        outputs(layout, head, names, unreadable),
+        outputs(layout, base, names, unreadable),
+    );
     names
         .iter()
         .filter(|name| {
@@ -216,9 +225,14 @@ fn copies(layout: Layout, head: &Path, base: &Path, names: &[&str]) -> BTreeSet<
 
 /// The outputs of each of `names` in `profile`: a flat unit's `build/` and
 /// `deps/` entries, a nested unit's directory without its fingerprint.
-fn outputs(layout: Layout, profile: &Path, names: &[&str]) -> BTreeMap<String, Outputs> {
+fn outputs(
+    layout: Layout,
+    profile: &Path,
+    names: &[&str],
+    unreadable: &mut Vec<String>,
+) -> BTreeMap<String, Outputs> {
     let entries = match layout {
-        Layout::Flat => flat_entries(profile, names).unwrap_or_default(),
+        Layout::Flat => flat_entries(profile, names, unreadable),
         Layout::Nested => names
             .iter()
             .map(|name| {
@@ -248,7 +262,11 @@ fn outputs(layout: Layout, profile: &Path, names: &[&str]) -> BTreeMap<String, O
 
 /// The `build/` and `deps/` entries of each flat unit of `names`, by name;
 /// a unit with none maps to an empty list.
-fn flat_entries(profile: &Path, names: &[&str]) -> io::Result<BTreeMap<String, Vec<PathBuf>>> {
+fn flat_entries(
+    profile: &Path,
+    names: &[&str],
+    unreadable: &mut Vec<String>,
+) -> BTreeMap<String, Vec<PathBuf>> {
     let by_hash: BTreeMap<&str, &str> = names
         .iter()
         .filter_map(|name| split_unit(name).map(|(_, hash)| (hash, *name)))
@@ -262,7 +280,14 @@ fn flat_entries(profile: &Path, names: &[&str]) -> io::Result<BTreeMap<String, V
             continue;
         };
         for entry in entries {
-            let file = entry?.file_name().to_string_lossy().into_owned();
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    unreadable.push(format!("{dir}: {e}"));
+                    continue;
+                }
+            };
+            let file = entry.file_name().to_string_lossy().into_owned();
             let stem = file.split('.').next().unwrap_or(&file);
             if let Some((_, hash)) = split_unit(stem)
                 && let Some(name) = by_hash.get(hash)
@@ -272,7 +297,7 @@ fn flat_entries(profile: &Path, names: &[&str]) -> io::Result<BTreeMap<String, V
             }
         }
     }
-    Ok(out)
+    out
 }
 
 fn walk(profile: &Path, rel: &Path, files: &mut Outputs) {
@@ -304,11 +329,12 @@ fn copy_flat(
     head: &Path,
     base: &Path,
     names: &[String],
-) -> io::Result<Vec<(String, io::Result<u64>)>> {
+    unreadable: &mut Vec<String>,
+) -> Vec<(String, io::Result<u64>)> {
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
     // A unit's fingerprint goes last: a unit whose copy fails or is cut short
     // has none, so cargo rebuilds it instead of trusting a partial copy.
-    Ok(flat_entries(head, &names)?
+    flat_entries(head, &names, unreadable)
         .into_iter()
         .map(|(fingerprint, mut files)| {
             files.push(Path::new(".fingerprint").join(&fingerprint));
@@ -317,7 +343,7 @@ fn copy_flat(
             });
             (fingerprint, copied)
         })
-        .collect())
+        .collect()
 }
 
 /// Copy a unit directory with its `fingerprint` last, for the reason a flat
@@ -398,7 +424,7 @@ pub fn report(wt_target: &Path) {
             .into_keys()
             .filter_map(|name| head_dirs.get_key_value(&name).map(|(n, _)| n.as_str()))
             .collect();
-        units.extend(copies(layout, &head, &base, &shared));
+        units.extend(copies(layout, &head, &base, &shared, &mut Vec::new()));
     }
     for unit in units.iter().take(REPORTED_UNITS) {
         eprintln!("gate: seeded unit {unit}");
