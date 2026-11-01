@@ -110,7 +110,7 @@ pub fn record_registered(doc: &mut Value, pkg: &str, run: &Run, full: bool) {
     }
     if let Some(map) = doc[REGISTERED_KEY].as_object_mut() {
         map.retain(|p, _| norm(p) != key);
-        map.insert(pkg.to_string(), json!(ids));
+        map.insert(key, json!(ids));
     }
 }
 
@@ -140,7 +140,9 @@ pub fn settle(doc: &mut Value, gated: &Gated) {
         let registrar = match selves.as_slice() {
             [only] => only.clone(),
             [] => {
-                let Some(registrar) = doc["items"][id.as_str()]["pkg"].as_str().map(norm) else {
+                let item = doc["items"][id.as_str()]["pkg"].as_str();
+                let indexed = doc[AMBIGUOUS_KEY][id.as_str()]["pkg"].as_str();
+                let Some(registrar) = item.or(indexed).map(norm) else {
                     continue;
                 };
                 let listed = gated.get(&registrar).is_some_and(|ids| ids.contains(id));
@@ -189,9 +191,11 @@ fn index(doc: &mut Value, ambiguous: &BTreeMap<String, Vec<String>>) {
     let mut index = Map::new();
     for (id, packages) in ambiguous {
         let mut entry = json!({ "packages": packages });
-        let covers = doc["items"][id.as_str()]["covers"].as_str();
-        if let Some(covers) = covers.or(prior[id.as_str()]["covers"].as_str()) {
-            entry["covers"] = json!(covers);
+        for key in ["covers", "pkg"] {
+            let item = doc["items"][id.as_str()][key].as_str();
+            if let Some(v) = item.or(prior[id.as_str()][key].as_str()) {
+                entry[key] = json!(v);
+            }
         }
         index.insert(id.clone(), entry);
     }

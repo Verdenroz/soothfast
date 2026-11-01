@@ -4,7 +4,9 @@
 
 use serde_json::{Value, json};
 
-use soothfast_docs::baseline::AMBIGUOUS_KEY;
+use std::collections::BTreeSet;
+
+use soothfast_docs::baseline::{self, AMBIGUOUS_KEY};
 
 use crate::invoke::{self, CommonArgs};
 
@@ -125,14 +127,17 @@ fn append(args: &[String]) -> i32 {
 
 /// A trend point built from a saved baseline instead of a fresh measurement.
 /// Buildcost pseudo-items and other packages' entries are dropped so the
-/// point holds exactly what `trend append -p PKG` would have measured;
-/// imported items belong to no package and always stay.
+/// point holds exactly what `trend append -p PKG` would have measured: the
+/// items the baseline's `owners` give the package, and the ambiguous ids its
+/// index names it among. Imported items belong to no package and always stay.
 fn point_from_baseline(
     doc: &Value,
     pkg: Option<&str>,
     commit: &str,
     unix: u64,
 ) -> Result<Value, String> {
+    let owned: Option<BTreeSet<String>> =
+        pkg.map(|p| crate::unmeasured::owned_by(doc, p).into_iter().collect());
     let items: serde_json::Map<String, Value> = doc["items"]
         .as_object()
         .cloned()
@@ -140,25 +145,23 @@ fn point_from_baseline(
         .into_iter()
         .filter(|(id, _)| !id.starts_with("buildcost::"))
         .filter(|(id, item)| {
-            item["imported"].is_string()
-                || pkg.is_none_or(|p| invoke::id_pkg(id) == p.replace('-', "_").as_str())
+            item["imported"].is_string() || owned.as_ref().is_none_or(|o| o.contains(id))
         })
         .collect();
-    if items
-        .values()
-        .all(|item| pkg.is_some() && item["imported"].is_string())
-    {
+    let norm = crate::unmeasured::norm;
+    let ambiguous: serde_json::Map<String, Value> = baseline::ambiguous(doc)
+        .into_iter()
+        .filter(|a| pkg.is_none_or(|p| a.packages.iter().any(|q| norm(q) == norm(p))))
+        .map(|a| (a.id.to_string(), doc[AMBIGUOUS_KEY][a.id].clone()))
+        .collect();
+    let bench = items.values().any(|item| !item["imported"].is_string());
+    if pkg.is_some() && !bench && ambiguous.is_empty() {
         return Err(format!(
             "no bench items{} — measure into it first",
             pkg.map(|p| format!(" for package {p:?}"))
                 .unwrap_or_default()
         ));
     }
-    let ambiguous: serde_json::Map<String, Value> = (doc[AMBIGUOUS_KEY].as_object().into_iter())
-        .flatten()
-        .filter(|(_, v)| pkg.is_none_or(|p| owned_by(v, p)))
-        .map(|(id, v)| (id.clone(), v.clone()))
-        .collect();
     let mut point = json!({
         "unix": unix,
         "commit": commit,
@@ -169,14 +172,6 @@ fn point_from_baseline(
         point[AMBIGUOUS_KEY] = Value::Object(ambiguous);
     }
     Ok(point)
-}
-
-/// Whether `pkg` is one of the packages ambiguous index `entry` names.
-fn owned_by(entry: &Value, pkg: &str) -> bool {
-    let packages = entry["packages"].as_array().into_iter().flatten();
-    packages
-        .filter_map(Value::as_str)
-        .any(|p| crate::unmeasured::norm(p) == crate::unmeasured::norm(pkg))
 }
 
 fn render() -> i32 {
@@ -220,7 +215,7 @@ fn render() -> i32 {
     ids.dedup();
 
     if let Some(last) = points.last() {
-        for a in soothfast_docs::baseline::ambiguous(last) {
+        for a in baseline::ambiguous(last) {
             println!(
                 "{:<44} no number: ambiguous between {}",
                 a.id,
@@ -277,7 +272,11 @@ mod tests {
                 "buildcost::finance-query::default": {
                     "buildcost": { "build_ms": 12000, "size_bytes": 4096 }
                 }
-            }
+            },
+            "owners": {
+                "finance_query": ["finance_query::indicators::sma"],
+                "other_pkg": ["other_pkg::thing"],
+            },
         })
     }
 
@@ -322,6 +321,28 @@ mod tests {
     fn an_empty_slice_is_an_error_not_an_empty_point() {
         let err = point_from_baseline(&baseline(), Some("absent-pkg"), "c", 0).unwrap_err();
         assert!(err.contains("absent-pkg"), "unhelpful error: {err}");
+    }
+
+    #[test]
+    fn items_belong_to_the_package_that_owns_them_whatever_their_prefix() {
+        let mut doc = baseline();
+        doc["items"]["util::hash"] = json!({ "walltime": { "median_ns": 3.0 } });
+        doc["owners"]["finance_query"] = json!(["finance_query::indicators::sma", "util::hash"]);
+        let p = point_from_baseline(&doc, Some("finance-query"), "c", 0).unwrap();
+        assert!(p["items"]["util::hash"].is_object());
+        let other = point_from_baseline(&doc, Some("other_pkg"), "c", 0).unwrap();
+        assert!(other["items"].get("util::hash").is_none());
+    }
+
+    #[test]
+    fn a_package_whose_items_are_all_ambiguous_gets_a_point_of_them() {
+        let doc = json!({
+            "items": {},
+            "owners": { "a": ["a::x"], "b": ["a::x"] },
+            "ambiguous": { "a::x": { "packages": ["a", "b"] } },
+        });
+        let p = point_from_baseline(&doc, Some("a"), "c", 0).unwrap();
+        assert_eq!(p["ambiguous"]["a::x"]["packages"], json!(["a", "b"]));
     }
 
     #[test]

@@ -118,6 +118,17 @@ fn measured_facts(baseline: &Value) -> BTreeMap<String, String> {
             }
         }
     }
+    for (id, entry) in baseline["ambiguous"].as_object().into_iter().flatten() {
+        let target = entry["covers"]
+            .as_str()
+            .filter(|c| !c.is_empty())
+            .unwrap_or(id);
+        let packages = entry["packages"].as_array().into_iter().flatten();
+        let packages: Vec<&str> = packages.filter_map(Value::as_str).collect();
+        measured
+            .entry(target.to_string())
+            .or_insert_with(|| format!("no number: ambiguous between {}", packages.join(", ")));
+    }
     measured
 }
 
@@ -284,5 +295,18 @@ mod tests {
         e.kind = "module".to_string();
         let out = render("soothfast", &[e], &json!({}));
         assert!(!out.contains("registry"));
+    }
+
+    #[test]
+    fn an_ambiguous_id_is_a_fact_naming_its_packages() {
+        let baseline = serde_json::json!({
+            "items": {},
+            "ambiguous": { "util::hash": { "packages": ["a", "b"], "covers": "util::hash_bytes" } },
+        });
+        let facts = super::measured_facts(&baseline);
+        assert_eq!(
+            facts["util::hash_bytes"],
+            "no number: ambiguous between a, b"
+        );
     }
 }

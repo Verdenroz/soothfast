@@ -54,7 +54,7 @@ pub fn add(path: &Path, pkg: &str, ids: &[String]) -> Result<(), String> {
         Ok(text) => serde_json::from_str(&text).map_err(|e| e.to_string())?,
         Err(_) => json!({ "version": 1, PLAN_KEY: true, "listed": {} }),
     };
-    doc["listed"][pkg] = json!(ids);
+    doc["listed"][crate::unmeasured::norm(pkg)] = json!(ids);
     let text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     std::fs::write(path, text).map_err(|e| e.to_string())
 }
@@ -77,12 +77,7 @@ pub fn read(path: &Path) -> Result<Planned, String> {
     if !is_plan(&doc) {
         return Err("not a baseline plan file".into());
     }
-    let listed = doc["listed"].as_object().into_iter().flatten();
-    let ids = |v: &Value| -> BTreeSet<String> {
-        let ids = v.as_array().into_iter().flatten().filter_map(Value::as_str);
-        ids.map(str::to_string).collect()
-    };
-    Ok(listed.map(|(pkg, v)| (pkg.clone(), ids(v))).collect())
+    Ok(crate::unmeasured::by_package(&doc["listed"]))
 }
 
 /// Whether `doc` is a plan file.

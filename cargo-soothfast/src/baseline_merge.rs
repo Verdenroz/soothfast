@@ -21,7 +21,7 @@ mod plan;
 /// The shard a gate's baseline holds the items of, as `I/N`.
 const SHARD_KEY: &str = "shard";
 /// Every item each package's bench binary lists, whichever shard owns it.
-const LISTED_KEY: &str = "listed";
+pub const LISTED_KEY: &str = "listed";
 /// The import prefix of an import gate's file, which is no shard of the gate.
 pub const IMPORTED_KEY: &str = "imported";
 
@@ -58,7 +58,7 @@ pub fn stamp_shard_in(
     if !doc[LISTED_KEY].is_object() {
         doc[LISTED_KEY] = json!({});
     }
-    doc[LISTED_KEY][package] = json!(ids);
+    doc[LISTED_KEY][unmeasured::norm(package)] = json!(ids);
     invoke::write_baseline_in(root, name, &doc)
 }
 
@@ -289,6 +289,15 @@ fn merge_on(
     planned: &plan::Planned,
     not_gated: Option<&Ungated>,
 ) -> Result<Value, MergeError> {
+    let files: Vec<(String, Value)> = (files.iter())
+        .map(|(label, doc)| {
+            let mut doc = doc.clone();
+            unmeasured::normalize(&mut doc);
+            (label.clone(), doc)
+        })
+        .collect();
+    let packages: Vec<String> = packages.iter().map(|p| unmeasured::norm(p)).collect();
+    let packages = packages.as_slice();
     let corrupt = |label: &str, why: String| MergeError::Corrupt(format!("{label}: {why}"));
     let mut out = json!({ "version": 1 });
     let mut collected = collect::Collected::default();
@@ -299,7 +308,7 @@ fn merge_on(
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut registered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut ambiguous = Map::new();
-    for (label, doc) in files {
+    for (label, doc) in &files {
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
             None => &no_items,
@@ -413,15 +422,8 @@ fn merge_on(
 
 /// Add a `{package: [ids]}` map of one file to `into`.
 fn union(into: &mut BTreeMap<String, BTreeSet<String>>, map: &Value) {
-    for (package, ids) in map.as_object().into_iter().flatten() {
-        let ids = ids
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str);
-        into.entry(package.clone())
-            .or_default()
-            .extend(ids.map(str::to_string));
+    for (package, ids) in unmeasured::by_package(map) {
+        into.entry(package).or_default().extend(ids);
     }
 }
 
@@ -486,7 +488,7 @@ fn unaccounted(
         .into_iter()
         .map(|shard| {
             let nameless = shards.get(&shard.index).and_then(|saved| {
-                (saved.entries.iter()).find(|e| e.package == pkg && e.items.is_empty())
+                (saved.entries.iter()).find(|e| unmeasured::norm(&e.package) == pkg && e.items.is_empty())
             });
             let (reason, detail) = match nameless {
                 Some(e) => (e.reason, format!("{} (shard {shard})", e.detail)),
@@ -525,7 +527,8 @@ impl Saved<'_> {
         let named = |v: &Value| v.as_array().is_some_and(|ids| !ids.is_empty());
         self.doc[unmeasured::OWNERS_KEY][pkg].is_array()
             || named(&self.doc[LISTED_KEY][pkg])
-            || (self.entries.iter()).any(|e| e.package == pkg && !e.items.is_empty())
+            || (self.entries.iter())
+                .any(|e| unmeasured::norm(&e.package) == pkg && !e.items.is_empty())
     }
 }
 

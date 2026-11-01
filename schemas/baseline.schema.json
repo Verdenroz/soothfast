@@ -125,7 +125,7 @@
       "type": "string"
     },
     "owners": {
-      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id the registering package (the item's `pkg`) owns belongs to it alone; an id two packages still both own is ambiguous, absent from `items`, and listed under `ambiguous`. A failed package's old numbers are exactly these ids.",
+      "description": "Each package's items, keyed by the package name with `-` written as `_`, from its bench binary's listing (narrowed to the shard when sharded). An id the registering package (the item's `pkg`) owns belongs to it alone; an id two packages still both own is ambiguous, absent from `items`, and listed under `ambiguous`. A failed package's old numbers are exactly these ids.",
       "type": "object",
       "additionalProperties": {
         "type": "array",
@@ -133,14 +133,15 @@
       }
     },
     "ambiguous": {
-      "description": "Each id two packages still both own, which `items` holds nothing for: the packages that own it and the public path it covers, when known. Readers report such an id as ambiguous rather than unmeasured.",
+      "description": "Each id two packages still both own, which `items` holds nothing for: the packages that own it, and, when known, the public path it covers and the package that registered it, which a later settle can still hand it to. Readers report such an id as ambiguous rather than unmeasured.",
       "type": "object",
       "additionalProperties": {
         "type": "object",
         "required": ["packages"],
         "properties": {
           "packages": { "type": "array", "items": { "type": "string" } },
-          "covers": { "type": "string" }
+          "covers": { "type": "string" },
+          "pkg": { "type": "string" }
         },
         "additionalProperties": false
       }
@@ -154,7 +155,7 @@
       }
     },
     "listed": {
-      "description": "Every item id each package's bench binary lists, whichever shard owns it, keyed by package. Written beside `shard` so `baseline merge` can name the items of a shard that saved nothing.",
+      "description": "Every item id each package's bench binary lists, whichever shard owns it, keyed by package name with `-` written as `_`. Written beside `shard` so `baseline merge` can name the items of a shard that saved nothing.",
       "type": "object",
       "additionalProperties": {
         "type": "array",
@@ -184,7 +185,7 @@
           "type": "string"
         },
         "saved_by": {
-          "description": "Package whose save wrote the number, as given with `-p`. A failed gate of another package that lists the id leaves it.",
+          "description": "Package whose save wrote the number, as given with `-p`, with `-` written as `_`. A failed gate of another package that lists the id leaves it.",
           "type": "string"
         },
         "tolerance_pct": {

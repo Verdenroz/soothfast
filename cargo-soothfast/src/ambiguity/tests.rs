@@ -264,6 +264,7 @@ fn a_package_spelled_with_a_dash_is_the_one_spelled_with_an_underscore() {
         "owners": { "my-core": ["my_core::parse"], "app": ["my_core::parse"] },
         "registered": { "my_core": ["my_core::parse"] },
     });
+    unmeasured::normalize(&mut doc);
     let mut run = Run::default();
     let m = ItemMetrics {
         pkg: Some("my-core".into()),
@@ -274,5 +275,22 @@ fn a_package_spelled_with_a_dash_is_the_one_spelled_with_an_underscore() {
     assert_eq!(foreign(&doc, "app", &run).len(), 1);
     settle(&mut doc, &Gated::new());
     assert_eq!(unmeasured::owned_by(&doc, "my_core"), ["my_core::parse"]);
+    assert!(unmeasured::owned_by(&doc, "app").is_empty());
+}
+
+#[test]
+fn an_indexed_id_keeps_its_registrar_so_a_later_settle_resolves_it() {
+    let mut doc = json!({
+        "items": { "core::parse": { "pkg": "core", "covers": "core::parse" } },
+        "owners": { "app": ["core::parse"], "web": ["core::parse"] },
+    });
+    settle(&mut doc, &Gated::new());
+    assert_eq!(doc["ambiguous"]["core::parse"]["pkg"], "core");
+    let gated = Gated::from([(
+        "core".to_string(),
+        BTreeSet::from(["core::parse".to_string()]),
+    )]);
+    settle(&mut doc, &gated);
+    assert!(doc.get("ambiguous").is_none());
     assert!(unmeasured::owned_by(&doc, "app").is_empty());
 }

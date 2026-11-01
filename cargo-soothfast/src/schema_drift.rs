@@ -104,7 +104,7 @@ fn a_saved_baseline_conforms_to_its_schema() {
         crate::import::failed::stub("jmh", "/nonexistent.json", None, &Default::default()).unwrap();
     let mut shared = serde_json::json!({
         "version": 1,
-        "items": { "util::hash": { "covers": "util::hash_bytes" } },
+        "items": { "util::hash": { "covers": "util::hash_bytes", "pkg": "c" } },
         "owners": { "a": ["util::hash"], "b": ["util::hash"] },
     });
     crate::ambiguity::settle(&mut shared, &Default::default());

@@ -103,15 +103,25 @@ fn item_evidence(aliases: &[&String], baseline: &Value) -> String {
     let mut verified = String::new();
     let mut measured = String::new();
 
-    let Some(items) = baseline["items"].as_object() else {
-        return String::new();
-    };
-    for (id, m) in items {
-        let target = m["covers"].as_str().filter(|c| !c.is_empty()).unwrap_or(id);
-        if !aliases
+    let matches = |id: &str, covers: Option<&str>| {
+        let target = covers.filter(|c| !c.is_empty()).unwrap_or(id);
+        aliases
             .iter()
             .any(|p| target == p.as_str() || id == p.as_str())
-        {
+    };
+    for a in crate::baseline::ambiguous(baseline) {
+        if matches(a.id, a.covers) {
+            measured.push_str(&format!(
+                "<div class=\"ev-ledger\"><div class=\"ev-ledger-head\">measured as `{}`</div>\
+<div class=\"ev-row\"><span class=\"ev-metric\">no number</span>\
+<span class=\"ev-actual\">ambiguous between {}</span></div></div>",
+                escape(a.id),
+                escape(&a.packages.join(", ")),
+            ));
+        }
+    }
+    for (id, m) in baseline["items"].as_object().into_iter().flatten() {
+        if !matches(id, m["covers"].as_str()) {
             continue;
         }
 
@@ -208,5 +218,16 @@ mod tests {
     fn leaves_text_without_definitions_untouched() {
         let text = "Plain prose with [an inline link](https://example.com).\n";
         assert_eq!(resolve_reference_links(text), text);
+    }
+
+    #[test]
+    fn an_ambiguous_id_s_evidence_names_its_packages() {
+        let baseline = serde_json::json!({
+            "items": {},
+            "ambiguous": { "util::hash": { "packages": ["a", "b"], "covers": "util::hash_bytes" } },
+        });
+        let path = "util::hash_bytes".to_string();
+        let html = super::item_evidence(&[&path], &baseline);
+        assert!(html.contains("ambiguous between a, b"), "{html}");
     }
 }

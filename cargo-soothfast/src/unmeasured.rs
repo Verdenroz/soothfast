@@ -221,11 +221,37 @@ pub fn by_package(map: &Value) -> BTreeMap<String, BTreeSet<String>> {
     out
 }
 
+/// Spell every package key of `doc`'s `owners`, `registered` and `listed`,
+/// and every `saved_by`, as [`norm`] does, merging two spellings of one
+/// package. Writers spell them so already; this migrates older files.
+pub fn normalize(doc: &mut Value) {
+    let keys = [
+        OWNERS_KEY,
+        crate::ambiguity::REGISTERED_KEY,
+        crate::baseline_merge::LISTED_KEY,
+    ];
+    for key in keys {
+        let spelled = doc.get(key).and_then(Value::as_object);
+        if spelled.is_some_and(|m| m.keys().any(|p| *p != norm(p))) {
+            doc[key] = json!(by_package(&doc[key]));
+        }
+    }
+    let items = doc.get_mut("items").and_then(Value::as_object_mut);
+    for item in items.into_iter().flat_map(|m| m.values_mut()) {
+        if let Some(by) = item["saved_by"].as_str().filter(|by| *by != norm(by)) {
+            item["saved_by"] = json!(norm(by));
+        }
+    }
+}
+
 /// The items baseline `doc` says `package` owns.
 pub fn owned_by(doc: &Value, package: &str) -> Vec<String> {
-    let mut owners = by_package(&doc[OWNERS_KEY]);
-    let ids = owners.remove(&norm(package)).unwrap_or_default();
-    ids.into_iter().collect()
+    let ids = doc[OWNERS_KEY][norm(package)]
+        .as_array()
+        .into_iter()
+        .flatten();
+    ids.filter_map(|id| id.as_str().map(str::to_string))
+        .collect()
 }
 
 /// Record in `doc` that `package` owns `ids`.
@@ -233,7 +259,7 @@ pub fn set_owners(doc: &mut Value, package: &str, ids: &[String]) {
     if !doc[OWNERS_KEY].is_object() {
         doc[OWNERS_KEY] = json!({});
     }
-    doc[OWNERS_KEY][package] = json!(ids);
+    doc[OWNERS_KEY][norm(package)] = json!(ids);
 }
 
 /// Every item some package of baseline `doc` owns.
@@ -250,10 +276,11 @@ pub fn owned(doc: &Value) -> BTreeSet<String> {
 /// Every item a package of baseline `doc` other than `package` owns.
 pub fn owned_by_others(doc: &Value, package: &str) -> BTreeSet<String> {
     let package = norm(package);
-    let owners = by_package(&doc[OWNERS_KEY]).into_iter();
+    let owners = doc[OWNERS_KEY].as_object().into_iter().flatten();
     owners
-        .filter(|(p, _)| *p != package)
-        .flat_map(|(_, ids)| ids)
+        .filter(|(p, _)| **p != package)
+        .flat_map(|(_, ids)| ids.as_array().into_iter().flatten())
+        .filter_map(|id| id.as_str().map(str::to_string))
         .collect()
 }
 
@@ -298,9 +325,10 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
     let mut gone: BTreeSet<String> = BTreeSet::new();
     for e in entries {
         let others = owned_by_others(&doc, &e.package);
+        let package = norm(&e.package);
         let theirs = |id: &String| {
             let by = doc["items"][id]["saved_by"].as_str();
-            others.contains(id) && by.is_none_or(|by| by != e.package)
+            others.contains(id) && by.is_none_or(|by| by != package)
         };
         let mine = |id: &String| !theirs(id);
         gone.extend(e.items.iter().filter(|id| mine(id)).cloned());
@@ -310,7 +338,7 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         gone.extend(owned_by(&doc, &e.package).into_iter().filter(mine));
         if e.items.is_empty() {
             if let Some(owners) = doc.get_mut(OWNERS_KEY).and_then(Value::as_object_mut) {
-                owners.remove(&e.package);
+                owners.remove(&package);
             }
         } else {
             set_owners(&mut doc, &e.package, &e.items);
@@ -530,5 +558,20 @@ mod tests {
             );
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    #[test]
+    fn reading_merges_two_spellings_of_one_package() {
+        let mut doc = json!({
+            "items": { "a_b::x": { "saved_by": "a-b" } },
+            "owners": { "a-b": ["a_b::x"], "a_b": ["a_b::y"] },
+            "listed": { "a-b": ["a_b::x"] },
+        });
+        normalize(&mut doc);
+        assert_eq!(doc["owners"], json!({ "a_b": ["a_b::x", "a_b::y"] }));
+        assert_eq!(doc["listed"], json!({ "a_b": ["a_b::x"] }));
+        assert_eq!(doc["items"]["a_b::x"]["saved_by"], "a_b");
+        set_owners(&mut doc, "a-b", &["a_b::x".to_string()]);
+        assert_eq!(doc["owners"], json!({ "a_b": ["a_b::x"] }));
     }
 }

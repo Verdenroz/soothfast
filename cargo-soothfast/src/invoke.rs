@@ -1087,11 +1087,6 @@ impl SaveScope {
     }
 }
 
-/// First segment of a measured-item id (the package, `-` normalized to `_`).
-pub fn id_pkg(id: &str) -> &str {
-    id.split("::").next().unwrap_or(id)
-}
-
 fn is_imported(item: &Value) -> bool {
     item["imported"].is_string()
 }
@@ -1127,7 +1122,7 @@ pub fn save_baseline_in(
             .into_iter()
             .flat_map(|m| m.values_mut())
         {
-            item["saved_by"] = json!(pkg);
+            item["saved_by"] = json!(crate::unmeasured::norm(pkg));
         }
     }
     let measured = match &scope {
@@ -1193,7 +1188,11 @@ pub fn save_baseline_in(
 
     crate::ambiguity::settle(&mut doc, &Default::default());
     write_baseline_in(root, name, &doc)?;
-    prune_absorbed_accepts(root, run);
+    let unsaved: BTreeSet<String> = (run.items.keys())
+        .filter(|id| doc["items"][id.as_str()].is_null())
+        .cloned()
+        .collect();
+    prune_absorbed_accepts(root, &crate::ambiguity::without(run, &unsaved));
     Ok(baseline_path(root, name))
 }
 
@@ -1289,7 +1288,9 @@ pub fn load_baseline_in(root: &Path, name: &str) -> io::Result<Option<Value>> {
         return Ok(None);
     }
     let text = std::fs::read_to_string(path)?;
-    Ok(Some(serde_json::from_str(&text)?))
+    let mut doc = serde_json::from_str(&text)?;
+    crate::unmeasured::normalize(&mut doc);
+    Ok(Some(doc))
 }
 
 /// Directory of a workspace package (parent of its Cargo.toml).

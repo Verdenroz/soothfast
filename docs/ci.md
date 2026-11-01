@@ -518,7 +518,8 @@ with no numbers, the MCP server reports it by the path it covers, and
 `gate --baseline` and `--ratchet` report it as having no baseline number,
 naming the packages. Once one package alone owns the id again, that
 package's next save measures it again. Imported items belong to no
-package and are never ambiguous. An entry covers only the ids it names. A
+package and are never ambiguous. Package names are written with `-` as `_` in every
+key and `saved_by`, and a file using both spellings is merged when read. An entry covers only the ids it names. A
 failed package's old numbers are exactly the ids it owned and no other
 package owns, or a shared id's number it saved itself, and its entry names
 those, or the ones its listing shows; with neither it names nothing, and a
