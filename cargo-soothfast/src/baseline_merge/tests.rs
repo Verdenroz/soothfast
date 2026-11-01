@@ -2,9 +2,14 @@ use super::*;
 
 /// An id of package `core` that shard `index` of `count` owns.
 fn owned_by(index: u64, count: u64) -> String {
+    owned_under("core", index, count)
+}
+
+/// An id under crate name `prefix` that shard `index` of `count` owns.
+fn owned_under(prefix: &str, index: u64, count: u64) -> String {
     let shard = Shard { index, count };
     (0..)
-        .map(|n| format!("core::f{n}"))
+        .map(|n| format!("{prefix}::f{n}"))
         .find(|id| shard.owns(id))
         .unwrap()
 }
@@ -15,19 +20,50 @@ fn item() -> Value {
 
 /// Shard `index` of 3's baseline: its own item, listing every leg's.
 fn shard_file(index: u64) -> (String, Value) {
-    let listed: Vec<String> = (1..=3).map(|i| owned_by(i, 3)).collect();
+    shard_file_under("core", index)
+}
+
+/// [`shard_file`] for items under crate name `prefix`.
+fn shard_file_under(prefix: &str, index: u64) -> (String, Value) {
+    let listed: Vec<String> = (1..=3).map(|i| owned_under(prefix, i, 3)).collect();
     let mut doc = json!({
         "version": 1,
         "shard": format!("{index}/3"),
-        "listed": { "core": listed },
+        "listed": { prefix: listed },
         "items": {},
     });
-    doc["items"][owned_by(index, 3)] = item();
+    doc["items"][owned_under(prefix, index, 3)] = item();
     (format!("shard-{index}.json"), doc)
 }
 
-fn packages() -> Vec<String> {
-    vec!["core".to_string()]
+fn packages() -> Vec<BenchCrate> {
+    vec![BenchCrate {
+        package: "core".into(),
+        prefixes: vec!["core".into()],
+    }]
+}
+
+#[test]
+fn a_package_whose_lib_is_named_otherwise_is_accounted_for_by_the_lib_s_name() {
+    let files: Vec<_> = [1, 3]
+        .into_iter()
+        .map(|i| shard_file_under("wire", i))
+        .collect();
+    let server = [BenchCrate {
+        package: "my-server".into(),
+        prefixes: vec!["soothfast".into(), "wire".into()],
+    }];
+    let merged = merge(&files, 3, &server).unwrap();
+    let entries = unmeasured::read(&merged).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].reason, Reason::ShardMissing);
+    assert_eq!(entries[0].package, "my_server");
+    assert_eq!(entries[0].items, [owned_under("wire", 2, 3)]);
+    let complete: Vec<_> = (1..=3).map(|i| shard_file_under("wire", i)).collect();
+    assert_eq!(
+        merge(&complete, 3, &server).unwrap()["unmeasured"],
+        json!([])
+    );
 }
 
 #[test]

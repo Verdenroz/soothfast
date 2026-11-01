@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::invoke::{self, Shard};
 use crate::unmeasured::{self, Reason, Unmeasured};
+use crate::workspace::{self, BenchCrate};
 use crate::{gate_config, gate_save};
 
 /// The shard a gate's baseline holds the items of, as `I/N`.
@@ -82,7 +83,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("mark") => mark_cmd(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] FILE...\n       \
+                "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] [--bench NAME] [--not-gated EVENT] FILE...\n       \
                  cargo soothfast baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]"
             );
             2
@@ -148,6 +149,7 @@ fn merge_cmd(args: &[String]) -> i32 {
     let mut expect = 1u64;
     let mut packages = Vec::new();
     let mut not_gated = None;
+    let mut bench = "soothfast".to_string();
     let mut files = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -160,6 +162,10 @@ fn merge_cmd(args: &[String]) -> i32 {
             "--packages" => match it.next() {
                 Some(p) => packages = p.split_whitespace().map(str::to_string).collect(),
                 None => return fail("--packages needs a space-separated list"),
+            },
+            "--bench" => match it.next() {
+                Some(name) => bench = name.clone(),
+                None => return fail("--bench needs the bench target's name"),
             },
             "--not-gated" => match it.next() {
                 Some(event) => not_gated = Some(event.clone()),
@@ -182,7 +188,8 @@ fn merge_cmd(args: &[String]) -> i32 {
             Err(e) => return fail(&format!("corrupt baseline {}: {e}", file.display())),
         }
     }
-    let merged = match merge_on(&docs, expect, &packages, not_gated.as_deref()) {
+    let crates = workspace::bench_crates_named(&bench, &packages);
+    let merged = match merge_on(&docs, expect, &crates, not_gated.as_deref()) {
         Ok(doc) => doc,
         Err(MergeError::Corrupt(e)) => return fail(&e),
         Err(MergeError::Count(e)) => {
@@ -222,7 +229,11 @@ fn fail(msg: &str) -> i32 {
 /// One baseline from `files` (label, document) of a gate split into
 /// `expect` shards, accounting for every one of `packages`.
 #[cfg(test)]
-fn merge(files: &[(String, Value)], expect: u64, packages: &[String]) -> Result<Value, MergeError> {
+fn merge(
+    files: &[(String, Value)],
+    expect: u64,
+    packages: &[BenchCrate],
+) -> Result<Value, MergeError> {
     merge_on(files, expect, packages, None)
 }
 
@@ -232,7 +243,7 @@ fn merge(files: &[(String, Value)], expect: u64, packages: &[String]) -> Result<
 fn merge_on(
     files: &[(String, Value)],
     expect: u64,
-    packages: &[String],
+    packages: &[BenchCrate],
     not_gated: Option<&str>,
 ) -> Result<Value, MergeError> {
     let corrupt = |label: &str, why: String| MergeError::Corrupt(format!("{label}: {why}"));
@@ -292,19 +303,20 @@ fn merge_on(
         assertions.extend(doc["assertions"].as_array().into_iter().flatten().cloned());
         entries.extend(file_entries);
     }
-    for pkg in packages {
-        let pkg = pkg.replace('-', "_");
+    for c in packages {
         match not_gated {
-            Some(event) if !shards.values().any(|doc| covers(doc, &pkg)) => {
-                entries.push(Unmeasured {
-                    detail: format!("the cargo gate does not measure {pkg} on a {event} event"),
-                    package: pkg,
-                    reason: Reason::NotGatedOnEvent,
-                    all_items: true,
-                    ..Unmeasured::default()
-                })
-            }
-            _ => entries.extend(unaccounted(&pkg, &shards, expect)),
+            Some(event) if !shards.values().any(|doc| covers(doc, c)) => entries.push(Unmeasured {
+                detail: format!(
+                    "the cargo gate does not measure {} on a {event} event",
+                    c.package
+                ),
+                package: c.package.replace('-', "_"),
+                prefixes: c.prefixes.clone(),
+                reason: Reason::NotGatedOnEvent,
+                all_items: true,
+                ..Unmeasured::default()
+            }),
+            _ => entries.extend(unaccounted(c, &shards, expect)),
         }
     }
     out["created_unix"] = json!(
@@ -319,25 +331,31 @@ fn merge_on(
     Ok(out)
 }
 
-/// The entries for the shards of `pkg` that saved nothing of it. Their items
-/// are named from the other shards' listings; with none to read, no item is.
-fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Unmeasured> {
+/// The entries for the shards of crate `c` that saved nothing of it. Their
+/// items are named from the other shards' listings; with none to read, no
+/// item is.
+fn unaccounted(c: &BenchCrate, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Unmeasured> {
     let missing: Vec<Shard> = (1..=expect)
         .map(|index| Shard {
             index,
             count: expect,
         })
-        .filter(|s| !shards.get(&s.index).is_some_and(|doc| covers(doc, pkg)))
+        .filter(|s| !shards.get(&s.index).is_some_and(|doc| covers(doc, c)))
         .collect();
     if missing.is_empty() {
         return Vec::new();
     }
     let listed: BTreeSet<String> = shards
         .values()
-        .filter_map(|doc| doc[LISTED_KEY][pkg].as_array())
+        .flat_map(|doc| {
+            c.prefixes
+                .iter()
+                .filter_map(|p| doc[LISTED_KEY][p].as_array())
+        })
         .flatten()
         .filter_map(|id| id.as_str().map(str::to_string))
         .collect();
+    let package = c.package.replace('-', "_");
     if listed.is_empty() {
         let which = if expect == 1 {
             "the gate".to_string()
@@ -346,41 +364,38 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
             format!("shard {}", names.join(", "))
         };
         return vec![Unmeasured {
-            package: pkg.to_string(),
+            detail: format!("{which} saved no measurement of {}", c.package),
+            package,
+            prefixes: c.prefixes.clone(),
             reason: Reason::NoMeasurement,
-            detail: format!("{which} saved no measurement of {pkg}"),
-            items: Vec::new(),
-            metrics: Vec::new(),
-            all_items: false,
-            shard: None,
-            prefixes: Vec::new(),
+            ..Unmeasured::default()
         }];
     }
     missing
         .into_iter()
         .map(|shard| Unmeasured {
-            package: pkg.to_string(),
+            detail: format!("shard {shard} saved no measurement of {}", c.package),
+            package: package.clone(),
+            prefixes: c.prefixes.clone(),
             reason: Reason::ShardMissing,
-            detail: format!("shard {shard} saved no measurement of {pkg}"),
             items: listed.iter().filter(|id| shard.owns(id)).cloned().collect(),
-            metrics: Vec::new(),
-            all_items: false,
-            shard: None,
-            prefixes: Vec::new(),
+            ..Unmeasured::default()
         })
         .filter(|u| !u.items.is_empty())
         .collect()
 }
 
-/// Whether a gate's baseline accounts for `pkg`: it listed, measured or
-/// marked the package.
-fn covers(doc: &Value, pkg: &str) -> bool {
-    doc[LISTED_KEY].get(pkg).is_some()
+/// Whether a gate's baseline accounts for crate `c`: it listed, measured or
+/// marked one of the crate names its ids start with.
+fn covers(doc: &Value, c: &BenchCrate) -> bool {
+    let named = |id: &str| c.prefixes.iter().any(|p| invoke::id_pkg(id) == p);
+    let package = c.package.replace('-', "_");
+    c.prefixes.iter().any(|p| doc[LISTED_KEY].get(p).is_some())
         || items(doc).is_some_and(|m| {
             m.iter()
-                .any(|(id, v)| !v["imported"].is_string() && invoke::id_pkg(id) == pkg)
+                .any(|(id, v)| !v["imported"].is_string() && named(id))
         })
-        || unmeasured::read(doc).is_ok_and(|es| es.iter().any(|e| e.package == pkg))
+        || unmeasured::read(doc).is_ok_and(|es| es.iter().any(|e| e.package == package))
 }
 
 #[cfg(test)]

@@ -6,10 +6,11 @@
 //! has no source tree here, and documenting the whole dependency graph would
 //! cost a nightly rustdoc build per crate for types no route ever names.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
@@ -138,8 +139,44 @@ pub struct BenchCrate {
 }
 
 /// Every member with a bench target named `target`, in name order.
-pub fn bench_crates(target: &str, dir: Option<&Path>) -> io::Result<Vec<BenchCrate>> {
-    Ok(bench_crates_in(&metadata(dir, true)?, target))
+/// Read once per process and tree: a failed gate and the merge after it ask
+/// the same question.
+pub fn bench_crates(target: &str, dir: Option<&Path>) -> Result<Vec<BenchCrate>, String> {
+    type Key = (String, Option<std::path::PathBuf>);
+    type Memo = HashMap<Key, Result<Vec<BenchCrate>, String>>;
+    static CRATES: OnceLock<Mutex<Memo>> = OnceLock::new();
+    let key = (target.to_string(), dir.map(Path::to_path_buf));
+    let mut memo = CRATES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|e| e.to_string())?;
+    memo.entry(key)
+        .or_insert_with(|| {
+            metadata(dir, true)
+                .map(|meta| bench_crates_in(&meta, target))
+                .map_err(|e| e.to_string())
+        })
+        .clone()
+}
+
+/// The bench crates named `packages`, by package name. One the workspace
+/// cannot place, or every one when it cannot be read, keeps its own name,
+/// `-` written `_`, as the prefix.
+pub fn bench_crates_named(target: &str, packages: &[String]) -> Vec<BenchCrate> {
+    let known = bench_crates(target, None).unwrap_or_default();
+    packages
+        .iter()
+        .map(|pkg| {
+            known
+                .iter()
+                .find(|c| &c.package == pkg)
+                .cloned()
+                .unwrap_or_else(|| BenchCrate {
+                    package: pkg.clone(),
+                    prefixes: vec![pkg.replace('-', "_")],
+                })
+        })
+        .collect()
 }
 
 /// The lookup itself, over metadata already in hand.

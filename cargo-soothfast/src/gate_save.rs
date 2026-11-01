@@ -104,7 +104,7 @@ pub fn mark_package(
     ids: Option<&[String]>,
 ) -> Result<(), String> {
     let target = common.target.as_deref().unwrap_or("soothfast");
-    let crates = || workspace::bench_crates(target, None).map_err(|e| e.to_string());
+    let crates = || workspace::bench_crates(target, None);
     mark_package_with(root, name, common, reason, detail, ids, crates)
 }
 
