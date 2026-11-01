@@ -535,7 +535,8 @@ jobs:
   gate:
     name: Gate (${{ matrix.name }})
     needs: plan
-    if: github.event_name == 'pull_request' && needs.plan.outputs.projects == 'true'
+    # A push only records HEAD's numbers for its docs check, as the cargo gate does.
+    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.plan.outputs.projects == 'true'
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
       contents: read
@@ -591,6 +592,7 @@ jobs:
           FROM: ${{ matrix.from }}
           WALLTIME: ${{ matrix.walltime }}
           PREFIX: ${{ matrix.prefix }}
+          NAME: ${{ matrix.name }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         # The exit file stays 3 (errored) until the gate command itself
         # finishes, so a failing bench, npm or worktree step is never a
@@ -604,8 +606,14 @@ jobs:
             save() {
               mkdir -p "$RUNNER_TEMP/soothfast-baseline"
               cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} \
-                --out "$RUNNER_TEMP/soothfast-baseline/import.json"
+                --out "$RUNNER_TEMP/soothfast-baseline/import-$NAME.json"
             }
+            if [ -z "$BASE_REF" ]; then
+              bench .
+              save
+              echo 0 >"$RUNNER_TEMP/soothfast-exit"
+              exit 0
+            fi
             # Unique per run, so a worktree an earlier run left registered on a
             # persistent runner never collides.
             tree="$RUNNER_TEMP/soothfast-base-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -653,7 +661,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: soothfast-baseline-import-${{ matrix.name }}
-          path: ${{ runner.temp }}/soothfast-baseline/import.json
+          path: ${{ runner.temp }}/soothfast-baseline/import-${{ matrix.name }}.json
           if-no-files-found: ignore
 
   docs:
@@ -791,19 +799,14 @@ jobs:
           : > "$RESULT"
           shopt -s nullglob
           files=("$RUNNER_TEMP"/baselines/*/*.json)
+          merged=0
+          cargo soothfast baseline merge --into head --expect "$EXPECT" --packages "$PACKAGES" "${files[@]}" 2>&1 |
+            tee -a "$RESULT" || merged=$?
+          # A merge that failed still leaves binds and examples to check; the step fails either way.
+          if [ "$merged" -eq 0 ]; then args+=(--baseline head); else args+=(--skip-claims); fi
           rc=0
-          if [ -n "$PACKAGES" ] || [ "${#files[@]}" -gt 0 ]; then
-            cargo soothfast baseline merge --into head --expect "$EXPECT" --packages "$PACKAGES" "${files[@]}" 2>&1 |
-              tee -a "$RESULT" || rc=$?
-            args+=(--baseline head)
-          else
-            echo "::warning::claims not evaluated: no gate measures this repository"
-            echo "claims not evaluated: no gate measures this repository" >> "$RESULT"
-            args+=(--skip-claims)
-          fi
-          if [ "$rc" -eq 0 ]; then
-            cargo soothfast docs check "${args[@]}" 2>&1 | tee -a "$RESULT" || rc=$?
-          fi
+          cargo soothfast docs check "${args[@]}" 2>&1 | tee -a "$RESULT" || rc=$?
+          if [ "$merged" -ne 0 ]; then rc=$merged; fi
           echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
           exit "$rc"
       - name: Record the verdict

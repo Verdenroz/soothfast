@@ -257,10 +257,13 @@ imported gate measures walltime only, so each project gates hard; set its
 `walltime = "advisory"` if the runner is too noisy to trust. Each gate
 uploads its output as the `soothfast-result-<project>` artifact. A gate that
 did not fail also uploads HEAD's imported items as
-`soothfast-baseline-import-<project>`, which the docs job merges beside the
-cargo gate's, so a claim on a `jmh::` or `pytest::` item is checked against
-the numbers this pull request produced. A failing gate uploads none, and a
-claim on its items fails for want of a measurement.
+`soothfast-baseline-import-<project>` (the file `import-<project>.json`),
+which the docs job merges beside the cargo gate's, so a claim on a `jmh::` or
+`pytest::` item is checked against the numbers this pull request produced. A
+default-branch push runs the harness on HEAD alone and uploads the same file
+for its own docs check. A failing gate uploads none, and a claim on its
+items fails for want of a measurement. Two projects whose results share an
+item id fail the merge, which names both files.
 
 `docs check` and `docs accept` need no cargo project for `path#Symbol` binds
 (see [living docs](living-docs.md)).
