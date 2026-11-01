@@ -265,27 +265,15 @@ fn bench_command(
     build: Build,
 ) -> io::Result<Command> {
     let fill = matches!(build, Build::Discover);
-    let cmd = match benchexe::run_command(common, dir, target_dir, build, fill) {
+    let mut cmd = match benchexe::run_command(common, dir, target_dir, build, fill) {
         Some(cmd) => cmd,
-        None => cargo_bench_command(common, dir, target_dir, build)?,
+        None => {
+            let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
+            let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs)?;
+            cmd.arg("--");
+            cmd
+        }
     };
-    Ok(with_runner_args(cmd, common, extra))
-}
-
-/// `cargo bench` for the bench target, up to the runner's arguments.
-fn cargo_bench_command(
-    common: &CommonArgs,
-    dir: Option<&Path>,
-    target_dir: Option<&Path>,
-    build: Build,
-) -> io::Result<Command> {
-    let pkgs: Vec<&str> = common.pkg.as_deref().into_iter().collect();
-    let mut cmd = bench_build_command(common, dir, target_dir, build, &pkgs)?;
-    cmd.arg("--");
-    Ok(cmd)
-}
-
-fn with_runner_args(mut cmd: Command, common: &CommonArgs, extra: &[&str]) -> Command {
     if let Some(f) = &common.filter {
         cmd.args(["--filter", f]);
     }
@@ -296,7 +284,7 @@ fn with_runner_args(mut cmd: Command, common: &CommonArgs, extra: &[&str]) -> Co
         cmd.args(["--samples", s]);
     }
     cmd.args(extra);
-    cmd
+    Ok(cmd)
 }
 
 /// Run the bench binary with `--json` (optionally in another worktree) and
@@ -424,33 +412,47 @@ fn run_records(
     args.extend(owned.iter().flat_map(|id| ["--id", id.as_str()]));
     let target = common.target.as_deref().unwrap_or("soothfast");
     let base = dir.and(target_dir);
-    let mut cmd = match base {
-        // The merge-base builds in a step of its own, so a failure is the
-        // build's or the run's and only a failed build can be the seed's.
-        Some(td) => match benchexe::build_command(common, dir, target_dir, build) {
-            Ok(Some(cmd)) => with_runner_args(cmd, common, &args),
-            Ok(None) => with_runner_args(
-                cargo_bench_command(common, dir, target_dir, build)?,
-                common,
-                &args,
-            ),
-            Err(stderr) => {
+    // On a store miss the merge-base builds in a step of its own, so only a
+    // failed build, which the seed may have caused, gets the seed report.
+    if let Some(td) = base
+        && !benchexe::is_stored(common, dir, target_dir, build)
+    {
+        match timed("cargo bench build", || {
+            benchexe::build_only(common, dir, target_dir, build)
+        }) {
+            Ok(()) => {}
+            Err(benchexe::NoBuild::Failed(stderr)) => {
                 report_base_failure(&stderr, true, td);
                 return Err(io::Error::other(format!(
-                    "the bench did not build: {} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
+                    "the merge-base build failed: {} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
                     failure_reason(&stderr)
                 )));
             }
-        },
-        None => bench_command(common, &args, dir, target_dir, build)?,
-    };
+            Err(benchexe::NoBuild::Other(why)) => {
+                return Err(io::Error::other(format!(
+                    "the merge-base bench was not built: {why}"
+                )));
+            }
+        }
+    }
+    let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    let out = timed("cargo bench (build and run)", || cmd.output())?;
+    let label = if base.is_some() {
+        "cargo bench run"
+    } else {
+        "cargo bench (build and run)"
+    };
+    let out = timed(label, || cmd.output())?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if let Some(td) = base {
             report_base_failure(&stderr, false, td);
+            return Err(io::Error::other(format!(
+                "the merge-base bench run failed with {}: {}",
+                out.status,
+                failure_reason(&stderr)
+            )));
         }
         let reason = failure_reason(&stderr);
         return Err(io::Error::other(format!(

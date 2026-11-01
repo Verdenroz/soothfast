@@ -290,24 +290,36 @@ fn note_once(pkg: &str, why: &str) {
     }
 }
 
-/// Build the bench executable, or take the stored one, in a step of its own;
-/// `Err` carries cargo's stderr. The command runs it as [`run_command`] would,
-/// or is `None` when only `cargo bench` can run it.
-pub fn build_command(
+/// Why `cargo bench --no-run` left no bench executable.
+#[derive(Debug, PartialEq)]
+pub enum NoBuild {
+    /// Cargo exited non-zero; its stderr.
+    Failed(String),
+    /// Cargo could not be started or named no bench executable.
+    Other(String),
+}
+
+impl NoBuild {
+    fn text(self) -> String {
+        match self {
+            NoBuild::Failed(text) | NoBuild::Other(text) => text,
+        }
+    }
+}
+
+/// Build the bench executable with `cargo bench --no-run` and keep nothing,
+/// so the `cargo bench` that follows finds it fresh.
+pub fn build_only(
     common: &CommonArgs,
     dir: Option<&Path>,
     target_dir: Option<&Path>,
     build: Build,
-) -> Result<Option<Command>, String> {
-    let plan = plan(common, dir, target_dir, build);
-    let failure = std::cell::RefCell::new(String::new());
-    let exe = resolve(plan.as_deref(), || {
-        cargo_build(common, dir, target_dir, build)
-            .map_err(|stderr| *failure.borrow_mut() = stderr)
-            .ok()
-    })
-    .ok_or_else(|| failure.into_inner())?;
-    Ok(plan.and_then(|plan| plan.command(&exe)))
+) -> Result<(), NoBuild> {
+    let target = common.target.as_deref().unwrap_or("soothfast");
+    let mut cmd = no_run_command(common, dir, target_dir, build)
+        .map_err(|e| NoBuild::Other(e.to_string()))?;
+    let out = cmd.output().map_err(|e| NoBuild::Other(e.to_string()))?;
+    built(out, target).map(|_| ())
 }
 
 fn cargo_build(
@@ -319,7 +331,7 @@ fn cargo_build(
     let target = common.target.as_deref().unwrap_or("soothfast");
     let mut cmd = no_run_command(common, dir, target_dir, build).map_err(|e| e.to_string())?;
     let out = cmd.output().map_err(|e| e.to_string())?;
-    built(out, target)
+    built(out, target).map_err(NoBuild::text)
 }
 
 /// `cargo bench --no-run` for the bench target, with rustc's diagnostics
@@ -339,12 +351,14 @@ fn no_run_command(
 }
 
 /// The executable a finished `cargo bench --no-run` names for `target`.
-fn built(out: std::process::Output, target: &str) -> Result<Built, String> {
+fn built(out: std::process::Output, target: &str) -> Result<Built, NoBuild> {
     if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+        return Err(NoBuild::Failed(
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        ));
     }
     let exe = invoke::bench_artifact(&out.stdout, target)
-        .ok_or_else(|| "cargo named no bench executable".to_string())?;
+        .ok_or_else(|| NoBuild::Other("cargo named no bench executable".to_string()))?;
     Ok(Built {
         exe,
         cargo_stdout: out.stdout,
@@ -382,7 +396,7 @@ mod tests {
 
     /// The build step over a bench `b` whose body is `main`, run without the
     /// host's target, flags or wrapper.
-    fn build_bench(repo: &Repo, main: &str) -> Result<Built, String> {
+    fn build_bench(repo: &Repo, main: &str, bench: &str) -> Result<Built, NoBuild> {
         repo.write(
             "Cargo.toml",
             "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
@@ -401,15 +415,20 @@ mod tests {
         for var in ["CARGO_BUILD_TARGET", "RUSTFLAGS", "RUSTC_WRAPPER"] {
             cmd.env_remove(var);
         }
-        built(cmd.output().unwrap(), "b")
+        built(cmd.output().unwrap(), bench)
     }
 
     #[test]
     fn the_build_step_renders_a_failed_build_and_leaves_a_failing_run_to_the_run() {
         let repo = Repo::new("build-step");
-        let stderr = build_bench(&repo, "fn main() { nope() }\n").err().unwrap();
+        let Err(NoBuild::Failed(stderr)) = build_bench(&repo, "fn main() { nope() }\n", "b") else {
+            panic!("a bench that does not compile built");
+        };
         assert!(stderr.contains("error[E0425]"), "{stderr}");
-        let built = build_bench(&repo, "fn main() { std::process::exit(3) }\n").unwrap();
+        let exits = "fn main() { std::process::exit(3) }\n";
+        let other = build_bench(&repo, exits, "other").err();
+        assert!(matches!(other, Some(NoBuild::Other(_))), "{other:?}");
+        let built = build_bench(&repo, exits, "b").unwrap();
         let status = Command::new(&built.exe).status().unwrap();
         assert_eq!(status.code(), Some(3));
     }
