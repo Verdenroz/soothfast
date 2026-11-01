@@ -212,13 +212,21 @@ fn rustc_args(verbose: &str, name: &str) -> Vec<String> {
 }
 
 /// Rebuild `name`'s unit in place under another `-C metadata`: the same
-/// unit and fingerprint, a different crate hash, as two trees can build.
-fn rebuild_under_other_metadata(verbose: &str, name: &str, deps: &Path) {
+/// unit and fingerprint, a different crate hash, as two trees can build. The
+/// `verbose` build wrote to `built`; the rebuild writes to `deps`.
+fn rebuild_under_other_metadata(
+    verbose: &str,
+    name: &str,
+    built: &Path,
+    deps: &Path,
+    keep_mtimes: bool,
+) {
+    let (from, to) = (built.to_string_lossy(), deps.to_string_lossy());
     let args: Vec<String> = rustc_args(verbose, name)
         .into_iter()
         .map(|a| match a.strip_prefix("metadata=") {
             Some(_) => "metadata=00000000000000ff".to_string(),
-            None => a,
+            None => a.replace(from.as_ref(), to.as_ref()),
         })
         .collect();
     let outputs: Vec<(PathBuf, std::time::SystemTime)> = fs::read_dir(deps)
@@ -237,9 +245,21 @@ fn rebuild_under_other_metadata(verbose: &str, name: &str, deps: &Path) {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    for (path, mtime) in outputs {
+    for (path, mtime) in outputs.into_iter().filter(|_| keep_mtimes) {
         fs::File::open(path).unwrap().set_modified(mtime).unwrap();
     }
+}
+
+/// `cargo build --release -v` in `root`; what it printed to stderr.
+fn build_verbose(root: &Path, target: &Path) -> String {
+    let out = Command::new("cargo")
+        .args(["build", "--release", "--offline", "-v"])
+        .current_dir(root)
+        .env("CARGO_TARGET_DIR", target)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
 #[test]
@@ -254,15 +274,9 @@ fn a_unit_built_on_a_dependency_the_base_built_itself_is_not_seeded() {
     write_workspace(&head, &both, uses);
     write_workspace(&base, &pin("memchr"), "pub fn f() -> u8 { 2 }\n");
 
-    let out = Command::new("cargo")
-        .args(["build", "--release", "--offline", "-v"])
-        .current_dir(&base)
-        .env("CARGO_TARGET_DIR", &base_t)
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let verbose = String::from_utf8_lossy(&out.stderr);
-    rebuild_under_other_metadata(&verbose, "memchr", &base_t.join("release/deps"));
+    let verbose = build_verbose(&base, &base_t);
+    let deps = base_t.join("release/deps");
+    rebuild_under_other_metadata(&verbose, "memchr", &deps, &deps, true);
     write_workspace(&base, &both, uses);
     build(&head, &head_t);
 
@@ -345,9 +359,47 @@ fn a_unit_an_earlier_seed_copied_does_not_block_its_dependents() {
         second.names.iter().any(|n| n.starts_with("aho-corasick-")),
         "{second:?}"
     );
-    assert_eq!(latest_run(&base_p), second.names);
     let units = build(&base, &base_t);
     let fresh = |name: &str| units.iter().find(|(n, _)| n == name).map(|(_, f)| *f);
     assert_eq!(fresh("aho_corasick"), Some(true), "{units:?}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_seeded_unit_rebuilt_in_place_leaves_its_dependents_to_the_base() {
+    let root = std::env::temp_dir().join(format!("soothfast-seed-rebuilt-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let (head, base) = (root.join("head"), root.join("base"));
+    let (head_t, base_t) = (root.join("head-target"), root.join("base-target"));
+    let pin = |name: &str| format!("{name} = \"={}\"\n", locked(name));
+    write_workspace(&head, &pin("memchr"), "pub fn f() -> u8 { 1 }\n");
+    write_workspace(&base, &pin("memchr"), "pub fn f() -> u8 { 2 }\n");
+    let verbose = build_verbose(&head, &head_t);
+    let members = BTreeSet::from(["m".to_string()]);
+    let (head_p, base_p) = (head_t.join("release"), base_t.join("release"));
+    let first = seed(&head_p, &base_p, &members).unwrap();
+    assert!(
+        first.names.iter().any(|n| n.starts_with("memchr-")),
+        "{first:?}"
+    );
+    let (built, deps) = (head_p.join("deps"), base_p.join("deps"));
+    rebuild_under_other_metadata(&verbose, "memchr", &built, &deps, false);
+
+    let both = format!("{}{}", pin("memchr"), pin("aho-corasick"));
+    let uses = "pub fn f() -> bool { aho_corasick::AhoCorasick::new([\"a\"]).is_ok() }\n";
+    write_workspace(&head, &both, uses);
+    write_workspace(&base, &both, uses);
+    build(&head, &head_t);
+    let second = seed(&head_p, &base_p, &members).unwrap();
+    let units = build(&base, &base_t);
+    let fresh = |name: &str| units.iter().find(|(n, _)| n == name).map(|(_, f)| *f);
+    assert_eq!(fresh("aho_corasick"), Some(false), "{units:?}");
+    assert!(
+        second
+            .skipped
+            .iter()
+            .any(|s| s.starts_with("aho-corasick-")),
+        "{second:?}"
+    );
     let _ = fs::remove_dir_all(&root);
 }

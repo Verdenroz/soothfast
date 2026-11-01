@@ -330,11 +330,10 @@ const BASE_ERROR_LINES: usize = 40;
 /// Lines shown from the end of that stderr when they fall past the window.
 const BASE_LAST_LINES: usize = 10;
 
-fn report_base_failure(stderr: &str, target_dir: &Path) {
-    let built = stderr.contains("could not compile")
-        || stderr
-            .lines()
-            .any(|l| plain(l).trim_start().starts_with("error: failed to"));
+/// Report a failed merge-base `cargo bench`. Before cargo runs a bench
+/// binary it is the build that failed, which the seed may have caused.
+fn report_base_failure(stderr: &str, via_cargo: bool) {
+    let built = build_failed(stderr, via_cargo);
     if built {
         eprintln!("gate: the merge-base build failed; cargo reported:");
     } else {
@@ -344,39 +343,46 @@ fn report_base_failure(stderr: &str, target_dir: &Path) {
         eprintln!("  {line}");
     }
     if built {
-        crate::seed::report(target_dir);
+        crate::seed::report();
     }
 }
 
-/// From the first line starting with `error`, then the last lines when they
-/// come after that window. Without an error line, the last lines alone.
+/// Whether cargo stopped before running any bench binary.
+fn build_failed(stderr: &str, via_cargo: bool) -> bool {
+    via_cargo
+        && !stderr.lines().any(|l| {
+            crate::verdict::strip_ansi(l)
+                .trim_start()
+                .starts_with("Running ")
+        })
+}
+
+/// Whether `line` opens what a failure excerpt shows: an error, a panic, or
+/// the runner's own message.
+fn opens_failure(line: &str) -> bool {
+    let line = crate::verdict::strip_ansi(line);
+    line.starts_with("error")
+        || line.starts_with("soothfast runner:")
+        || (line.starts_with("thread '") && line.contains("' panicked"))
+}
+
+/// From the first line [`opens_failure`] matches, then the last lines, with
+/// `...` between when they are not adjacent. Without such a line, the last
+/// lines alone.
 fn failure_excerpt(stderr: &str) -> Vec<&str> {
     let lines: Vec<&str> = stderr.lines().collect();
     let start = lines
         .iter()
-        .position(|l| plain(l).trim_start().starts_with("error"))
+        .position(|l| opens_failure(l))
         .unwrap_or(lines.len().saturating_sub(BASE_ERROR_LINES));
     let end = (start + BASE_ERROR_LINES).min(lines.len());
     let last = lines.len().saturating_sub(BASE_LAST_LINES).max(end);
-    lines[start..end]
-        .iter()
-        .chain(&lines[last..])
-        .copied()
-        .collect()
-}
-
-/// `line` without ANSI escape sequences.
-fn plain(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            chars.by_ref().find(|c| c.is_ascii_alphabetic());
-        } else {
-            out.push(c);
-        }
+    let mut shown = lines[start..end].to_vec();
+    if last > end {
+        shown.push("...");
     }
-    out
+    shown.extend(&lines[last..]);
+    shown
 }
 
 fn run_records(
@@ -407,11 +413,12 @@ fn run_records(
     let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    let via_cargo = cmd.get_program() == "cargo";
     let out = timed("cargo bench (build and run)", || cmd.output())?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        if let (Some(_), Some(td)) = (dir, target_dir) {
-            report_base_failure(&stderr, td);
+        if dir.is_some() && target_dir.is_some() {
+            report_base_failure(&stderr, via_cargo);
         }
         let reason = stderr
             .lines()
@@ -2481,11 +2488,32 @@ optional = true
         let shown = super::failure_excerpt(&stderr);
         assert_eq!(
             shown.len(),
-            super::BASE_ERROR_LINES + super::BASE_LAST_LINES
+            super::BASE_ERROR_LINES + 1 + super::BASE_LAST_LINES
         );
         assert!(shown[0].contains("E0463"), "{shown:?}");
+        assert_eq!(shown[super::BASE_ERROR_LINES], "...");
         assert_eq!(shown.last(), Some(&"note 59"));
         assert_eq!(super::failure_excerpt("a\nb"), ["a", "b"]);
+        let panic = "warming up\nthread 'main' panicked at src/x.rs:1:1:\nboom";
+        assert_eq!(
+            super::failure_excerpt(panic)[0],
+            "thread 'main' panicked at src/x.rs:1:1:"
+        );
+        let runner = "\x1b]8;;file://x\x1b\\link\x1b]8;;\x1b\\\nsoothfast runner: no such item";
+        assert_eq!(
+            super::failure_excerpt(runner),
+            ["soothfast runner: no such item"]
+        );
+    }
+
+    #[test]
+    fn a_base_failure_is_the_build_until_cargo_runs_a_bench() {
+        let compile = "   Compiling m v0.1.0\nerror[E0463]: can't find crate";
+        assert!(super::build_failed(compile, true));
+        let ran = "     Running benches/soothfast.rs (target/release/deps/soothfast-1)\n\
+                   thread 'main' panicked at src/lib.rs:1:1:";
+        assert!(!super::build_failed(ran, true));
+        assert!(!super::build_failed(compile, false));
     }
 
     #[test]

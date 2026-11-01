@@ -28,18 +28,6 @@ pub struct Unit {
     deps: Vec<u64>,
 }
 
-impl Unit {
-    /// Its own hashes as the seed record writes them.
-    pub fn key(&self) -> String {
-        let mut own = self.own.clone();
-        own.sort_unstable();
-        own.iter()
-            .map(|h| format!("{h:016x}"))
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-}
-
 /// Read the fingerprint directory of one unit. Files cargo has not written
 /// yet read as nothing, which only makes the unit look unconnected.
 pub fn read(dir: &Path) -> Unit {
@@ -107,18 +95,18 @@ fn checked_dependencies(text: &str) -> Vec<u64> {
 }
 
 /// The `candidates` (units of `head` that `base` lacks) a seed must leave for
-/// the base build, each with why. `seeded` maps a unit an earlier seed copied
-/// into `base` to the key HEAD's copy had; a unit of `base` that is not there
-/// under its current key is the merge-base's own build.
+/// the base build, each with why. `copies` names the units of `base` whose
+/// outputs are HEAD's own, as a seed copied them; every other unit of `base`
+/// is the merge-base's own build.
 pub fn blocked(
     head: &BTreeMap<String, Unit>,
     base: &BTreeMap<String, Unit>,
-    seeded: &BTreeMap<String, String>,
+    copies: &BTreeSet<String>,
     candidates: &[String],
 ) -> BTreeMap<String, String> {
     let own: BTreeSet<&str> = base
         .iter()
-        .filter(|(name, unit)| seeded.get(*name) != Some(&unit.key()))
+        .filter(|(name, _)| !copies.contains(*name))
         .map(|(name, _)| name.as_str())
         .collect();
     let graph = Graph {
@@ -241,7 +229,7 @@ mod tests {
         ]);
         let base = units(&[("linkme-a", unit(1, &[]))]);
         let candidates = names(&["registry-b", "facade-c", "itoa-d"]);
-        let blocked = blocked(&head, &base, &BTreeMap::new(), &candidates);
+        let blocked = blocked(&head, &base, &BTreeSet::new(), &candidates);
         assert_eq!(
             blocked.keys().collect::<Vec<_>>(),
             ["facade-c", "registry-b"]
@@ -253,11 +241,10 @@ mod tests {
     fn a_dependency_an_earlier_seed_copied_does_not_block() {
         let head = units(&[("linkme-a", unit(1, &[])), ("registry-b", unit(2, &[1]))]);
         let base = units(&[("linkme-a", unit(1, &[]))]);
-        let seeded = BTreeMap::from([("linkme-a".to_string(), unit(1, &[]).key())]);
+        let copies = BTreeSet::from(["linkme-a".to_string()]);
         let candidates = names(&["registry-b"]);
-        assert!(blocked(&head, &base, &seeded, &candidates).is_empty());
-        let rebuilt = units(&[("linkme-a", unit(9, &[]))]);
-        assert!(blocked(&head, &rebuilt, &seeded, &candidates).contains_key("registry-b"));
+        assert!(blocked(&head, &base, &copies, &candidates).is_empty());
+        assert!(blocked(&head, &base, &BTreeSet::new(), &candidates).contains_key("registry-b"));
     }
 
     #[test]
@@ -265,9 +252,9 @@ mod tests {
         let head = units(&[("d-a", unit(5, &[])), ("c-b", unit(2, &[1]))]);
         let candidates = names(&["c-b"]);
         let base_built = units(&[("d-a", unit(1, &[]))]);
-        let why = blocked(&head, &base_built, &BTreeMap::new(), &candidates);
+        let why = blocked(&head, &base_built, &BTreeSet::new(), &candidates);
         assert!(why["c-b"].contains("d-a"), "{why:?}");
-        let why = blocked(&head, &BTreeMap::new(), &BTreeMap::new(), &candidates);
+        let why = blocked(&head, &BTreeMap::new(), &BTreeSet::new(), &candidates);
         assert!(why["c-b"].contains("neither target dir"), "{why:?}");
     }
 
@@ -276,16 +263,16 @@ mod tests {
         let head = units(&[("libc-a", unit(1, &[]))]);
         let base = units(&[("measure-b", unit(2, &[1]))]);
         let candidates = names(&["libc-a"]);
-        assert!(blocked(&head, &base, &BTreeMap::new(), &candidates).contains_key("libc-a"));
-        let seeded = BTreeMap::from([("measure-b".to_string(), unit(2, &[1]).key())]);
-        assert!(blocked(&head, &base, &seeded, &candidates).is_empty());
+        assert!(blocked(&head, &base, &BTreeSet::new(), &candidates).contains_key("libc-a"));
+        let copies = BTreeSet::from(["measure-b".to_string()]);
+        assert!(blocked(&head, &base, &copies, &candidates).is_empty());
     }
 
     #[test]
     fn a_cold_merge_base_blocks_nothing() {
         let head = units(&[("linkme-a", unit(1, &[])), ("registry-b", unit(2, &[1]))]);
         let candidates = names(&["linkme-a", "registry-b"]);
-        assert!(blocked(&head, &BTreeMap::new(), &BTreeMap::new(), &candidates).is_empty());
+        assert!(blocked(&head, &BTreeMap::new(), &BTreeSet::new(), &candidates).is_empty());
     }
 
     #[test]
