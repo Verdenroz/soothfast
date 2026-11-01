@@ -348,12 +348,15 @@ runs:
         PULL: ${{ github.event_name == 'pull_request' }}
         REF_NAME: ${{ github.ref_name }}
         SHARD: ${{ inputs.shard }}
+      # Restore keys match by prefix, so the shard comes before the sha: a leg
+      # falls back to its own shard's latest entry before any other leg's.
       run: |
-        key="soothfast-runs-${REF_NAME}-${GITHUB_SHA}"
+        prefix="soothfast-runs-${REF_NAME}-"
         if [ "$PULL" = true ] && [ -n "$SHARD" ]; then
-          key="${key}-shard-${SHARD%/*}-of-${SHARD#*/}"
+          prefix="${prefix}shard-${SHARD%/*}-of-${SHARD#*/}-"
+          echo "shard_prefix=$prefix" >>"$GITHUB_OUTPUT"
         fi
-        echo "key=$key" >>"$GITHUB_OUTPUT"
+        echo "key=${prefix}${GITHUB_SHA}" >>"$GITHUB_OUTPUT"
     # A pull request starts from the union of its own latest saved entry and
     # the merge-base's. Restoring both into the same paths would make the
     # second overwrite the first, so the first is set aside and merged.
@@ -367,6 +370,7 @@ runs:
           .soothfast/maps
         key: ${{ steps.save-key.outputs.key }}
         restore-keys: |
+          ${{ steps.save-key.outputs.shard_prefix }}
           soothfast-runs-${{ github.ref_name }}-
     - name: Set the branch's runs aside
       if: steps.prepare.outputs.cache_runs == 'true' && github.event_name == 'pull_request'
@@ -389,6 +393,7 @@ runs:
           .soothfast/maps
         key: soothfast-runs-${{ steps.prepare.outputs.default_branch }}-${{ steps.prepare.outputs.reference }}
         restore-keys: |
+          ${{ steps.save-key.outputs.shard_prefix }}
           soothfast-runs-${{ github.ref_name }}-
           soothfast-runs-${{ steps.prepare.outputs.default_branch }}-
     - name: Merge the branch's runs
