@@ -1,6 +1,6 @@
 //! `import --failed`: the file an import gate that failed or errored leaves
 //! for the docs job. It holds no numbers, only a `gate-failed` entry for the
-//! prefix, naming the items of HEAD's results, else of the merge-base's,
+//! prefix (`save-failed` for a passing gate whose save failed), naming the items of HEAD's results, else of the merge-base's,
 //! else the prefix's ids in a prior baseline. With none of them it names
 //! nothing, and a claim on the prefix's items fails, unchanged or not.
 
@@ -20,6 +20,8 @@ pub struct Fallbacks<'a> {
     pub base_results: Option<&'a str>,
     /// A baseline under `root` whose items carry the prefix.
     pub prior: Option<(&'a Path, &'a str)>,
+    /// The gate passed, and only saving its numbers failed.
+    pub save_failed: bool,
 }
 
 /// The stub for results `file` of `format` under `prefix`.
@@ -55,24 +57,28 @@ pub fn stub(
                 .collect();
             (!ids.is_empty()).then_some((ids, "the prior baseline"))
         });
+    let (reason, what) = if fallbacks.save_failed {
+        (
+            Reason::SaveFailed,
+            "the import gate passed, but saving its numbers failed",
+        )
+    } else {
+        (Reason::GateFailed, "the import gate failed")
+    };
     let (items, detail) = match named {
         Some((ids, source)) => (
             ids,
-            format!(
-                "the import gate failed, so {prefix} saved no numbers; items named from {source}"
-            ),
+            format!("{what}, so {prefix} saved no numbers; items named from {source}"),
         ),
         None => (
             Vec::new(),
-            format!(
-                "the import gate failed, and no results were available to name {prefix}'s items"
-            ),
+            format!("{what}, and no results were available to name {prefix}'s items"),
         ),
     };
     let entry = Unmeasured {
         detail,
         package: prefix.clone(),
-        reason: Reason::GateFailed,
+        reason,
         items,
         ..Unmeasured::default()
     };
@@ -118,7 +124,7 @@ mod tests {
         std::fs::write(&base, JMH).unwrap();
         let fallbacks = Fallbacks {
             base_results: base.to_str(),
-            prior: None,
+            ..Fallbacks::default()
         };
         let doc = stub("jmh", "/nonexistent/results.json", None, &fallbacks).unwrap();
         let entry = &unmeasured::read(&doc).unwrap()[0];
@@ -136,8 +142,8 @@ mod tests {
         } });
         invoke::write_baseline_in(&dir, "head", &prior).unwrap();
         let fallbacks = Fallbacks {
-            base_results: None,
             prior: Some((&dir, "head")),
+            ..Fallbacks::default()
         };
         let doc = stub("jmh", "/nonexistent/results.json", Some("app"), &fallbacks).unwrap();
         let entry = &unmeasured::read(&doc).unwrap()[0];
@@ -158,5 +164,25 @@ mod tests {
         assert!(entry.items.is_empty() && entry.detail.contains("no results"));
         assert_eq!(entry.package, "app");
         assert_eq!(doc[IMPORTED_KEY], "app");
+    }
+
+    #[test]
+    fn a_passing_gate_whose_save_failed_is_listed_save_failed() {
+        let dir = scratch("save-failed");
+        let file = dir.join("jmh.json");
+        std::fs::write(&file, JMH).unwrap();
+        let fallbacks = Fallbacks {
+            save_failed: true,
+            ..Fallbacks::default()
+        };
+        let doc = stub("jmh", file.to_str().unwrap(), None, &fallbacks).unwrap();
+        let entry = &unmeasured::read(&doc).unwrap()[0];
+        assert_eq!(entry.reason, Reason::SaveFailed);
+        assert!(
+            entry.detail.contains("saving its numbers failed"),
+            "{}",
+            entry.detail
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

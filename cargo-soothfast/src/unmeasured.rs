@@ -24,6 +24,8 @@ pub enum Reason {
     ShardMissing,
     /// The package's gate failed or errored, so it saved no numbers.
     GateFailed,
+    /// The gate passed, but its numbers could not be saved.
+    SaveFailed,
     /// A default-branch push whose commit has no parent to gate against.
     NoParent,
     /// No leg of the gate wrote anything for the package.
@@ -39,11 +41,12 @@ pub enum Reason {
     StoredRun,
 }
 
-const REASONS: [Reason; 9] = [
+const REASONS: [Reason; 10] = [
     Reason::IdenticalBinaries,
     Reason::ReusedWalltime,
     Reason::ShardMissing,
     Reason::GateFailed,
+    Reason::SaveFailed,
     Reason::NoParent,
     Reason::NoMeasurement,
     Reason::ClaimsSkipped,
@@ -58,6 +61,7 @@ impl Reason {
             Reason::ReusedWalltime => "reused-walltime",
             Reason::ShardMissing => "shard-missing",
             Reason::GateFailed => "gate-failed",
+            Reason::SaveFailed => "save-failed",
             Reason::NoParent => "no-parent",
             Reason::NoMeasurement => "no-measurement",
             Reason::ClaimsSkipped => "claims-skipped",

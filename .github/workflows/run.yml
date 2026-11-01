@@ -196,10 +196,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
           compression-level: 1
-      # Each package's planned items, read from the stores the prebuild filled,
-      # so the docs job can name the items of a gate leg that uploaded nothing.
+      # Each package's planned items, read from what the prebuild built, so
+      # the docs job can name the items of a gate leg that uploaded nothing.
+      # A package whose build failed is skipped with a warning.
       - name: List each package's items
-        if: steps.prebuild.outcome == 'success'
+        if: always()
         shell: bash
         env:
           PACKAGES: ${{ needs.plan.outputs.packages }}
@@ -210,7 +211,7 @@ jobs:
               || echo "::warning::could not list ${pkg}'s items for the docs check"
           done
       - name: Upload the item listing
-        if: steps.prebuild.outcome == 'success'
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: soothfast-plan
@@ -633,7 +634,8 @@ jobs:
             }
             passed() {
               if ! save; then
-                echo "::error::could not save HEAD's imported items"
+                : >"$RUNNER_TEMP/soothfast-save-failed-$NAME"
+                echo "::error::save failed: the import gate passed, but HEAD's imported items could not be saved (a save or config error, not a gate failure)"
                 exit 3
               fi
               echo 0 >"$RUNNER_TEMP/soothfast-exit"
@@ -697,6 +699,7 @@ jobs:
             base="$RUNNER_TEMP/soothfast-base-results-$NAME"
             names=()
             [ ! -f "$base" ] || names+=(--base-results "$base")
+            [ ! -f "$RUNNER_TEMP/soothfast-save-failed-$NAME" ] || names+=(--save-failed)
             cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} --out "$file" --failed "${names[@]}"
           fi
       - name: Record the verdict

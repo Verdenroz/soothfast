@@ -266,8 +266,11 @@ gate that errored uploads no numbers, only a `gate-failed` entry naming the
 items of HEAD's results, else, when HEAD failed to bench, of the
 merge-base's, which is benched then only to name them, so an unchanged
 claim on them reads "not evaluated". With none of those to read, the entry names nothing, and a
-claim on the prefix's items fails, unchanged or not. Two projects whose
-results share an item id fail the merge, which names both files.
+claim on the prefix's items fails, unchanged or not. A gate that passed but
+could not save its numbers errors with a `save failed` line, and its entry
+reads `save-failed` instead, so the verdict and the docs check both name the
+save, not the gate. Two projects whose results share an item id fail the
+merge, which names both files.
 
 `docs check` and `docs accept` need no cargo project for `path#Symbol` binds
 (see [living docs](living-docs.md)).

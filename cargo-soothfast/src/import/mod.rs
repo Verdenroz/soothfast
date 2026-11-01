@@ -200,6 +200,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut save = None;
     let mut out = None;
     let mut failed = false;
+    let mut save_failed = false;
     let mut base_results = None;
     let mut prior = None;
     let mut it = args.iter();
@@ -207,6 +208,10 @@ pub fn run(args: &[String]) -> i32 {
         let slot = match a.as_str() {
             "--failed" => {
                 failed = true;
+                continue;
+            }
+            "--save-failed" => {
+                save_failed = true;
                 continue;
             }
             "--from" => &mut format,
@@ -232,9 +237,9 @@ pub fn run(args: &[String]) -> i32 {
     if save.is_some() == out.is_some() {
         return fail("import needs exactly one of --save-baseline NAME or --out FILE");
     }
-    if !failed && (base_results.is_some() || prior.is_some()) {
+    if !failed && (base_results.is_some() || prior.is_some() || save_failed) {
         return fail(
-            "--base-results and --prior-baseline name a failed import's items; pass --failed",
+            "--base-results, --prior-baseline and --save-failed describe a failed import; pass --failed",
         );
     }
     if failed {
@@ -245,6 +250,7 @@ pub fn run(args: &[String]) -> i32 {
         let fallbacks = failed::Fallbacks {
             base_results: base_results.as_deref(),
             prior: prior.as_deref().map(|name| (root.as_path(), name)),
+            save_failed,
         };
         let stub = failed::stub(&format, &file, prefix.as_deref(), &fallbacks);
         let written = stub.and_then(|doc| {
@@ -253,7 +259,12 @@ pub fn run(args: &[String]) -> i32 {
         });
         return match written {
             Ok(()) => {
-                println!("import: {path} lists the gate's items as gate-failed");
+                let reason = if save_failed {
+                    "save-failed"
+                } else {
+                    "gate-failed"
+                };
+                println!("import: {path} lists the gate's items as {reason}");
                 0
             }
             Err(e) => fail(&e),
