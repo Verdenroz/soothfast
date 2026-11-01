@@ -256,16 +256,16 @@ the harness or writes no result file, the gate notes that and passes. An
 imported gate measures walltime only, so each project gates hard; set its
 `walltime = "advisory"` if the runner is too noisy to trust. Each gate
 uploads its output as the `soothfast-result-<project>` artifact. A gate that
-did not fail also uploads HEAD's imported items as
+did not error, regressions included, also uploads HEAD's imported items as
 `soothfast-baseline-import-<project>` (the file `import-<project>.json`),
 which the docs job merges beside the cargo gate's, so a claim on a `jmh::` or
 `pytest::` item is checked against the numbers this pull request produced. A
 push, or any event the cargo gate runs on outside a pull request, runs the
 harness on HEAD alone and uploads the same file for its own docs check. A
-gate that failed or errored uploads no numbers, only a `gate-failed` entry
-naming the items of HEAD's results, else of the merge-base's, else the
-prefix's ids in a prior baseline, so an unchanged claim on them reads "not
-evaluated". With none of those to read, the entry names nothing, and a
+gate that errored uploads no numbers, only a `gate-failed` entry naming the
+items of HEAD's results, else, when HEAD failed to bench, of the
+merge-base's, which is benched then only to name them, so an unchanged
+claim on them reads "not evaluated". With none of those to read, the entry names nothing, and a
 claim on the prefix's items fails, unchanged or not. Two projects whose
 results share an item id fail the merge, which names both files.
 

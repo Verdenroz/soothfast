@@ -157,6 +157,10 @@
           "description": "Import prefix the item came from, written by `cargo soothfast import`. Absent for measured items.",
           "type": "string"
         },
+        "saved_by": {
+          "description": "Package whose save wrote the number, as given with `-p`. A failed gate of another package that lists the id leaves it.",
+          "type": "string"
+        },
         "tolerance_pct": {
           "description": "Per-item gate threshold override, in percent.",
           "type": "number"

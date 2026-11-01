@@ -59,13 +59,24 @@ fn a_misspelled_item_fails_even_in_an_unmeasured_package() {
 }
 
 #[test]
-fn a_leg_that_saved_nothing_leaves_its_unowned_items_to_the_edited_claim_rule() {
-    let b = baseline(&[entry(Reason::NoMeasurement, &[], &[])]);
+fn a_leg_that_saved_nothing_covers_only_its_own_package_s_items() {
+    let mut b = baseline(&[entry(Reason::NoMeasurement, &[], &[])]);
+    b["owners"] = json!({ "core": ["core::a"] });
     let outcome = read("core::a.alloc.allocs <= 0", &b);
     assert!(matches!(
         outcome,
         Reading::Unmeasured(Reason::NoMeasurement, _)
     ));
+    for unclaimed in [
+        "core::typo.alloc.allocs <= 0",
+        "jmh::x.walltime.median_ns < 1ms",
+    ] {
+        let outcome = read(unclaimed, &b);
+        assert!(
+            matches!(outcome, Reading::Decided(Outcome::Failed(_))),
+            "{unclaimed}"
+        );
+    }
 }
 
 #[test]

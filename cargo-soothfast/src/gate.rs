@@ -1492,8 +1492,16 @@ fn identical_pass_cache(
         return Some(ref_doc(pass));
     }
     let mut doc = stored.cloned()?;
-    if let (Some(shard), Some(items)) = (shard, doc["items"].as_object_mut()) {
-        items.retain(|id, _| shard.owns(id));
+    if let Some(shard) = shard {
+        if let Some(items) = doc["items"].as_object_mut() {
+            items.retain(|id, _| shard.owns(id));
+        }
+        if let Some(assertions) = doc["assertions"].as_array_mut() {
+            assertions.retain(|a| a["id"].as_str().is_some_and(|id| shard.owns(id)));
+        }
+        if let Some(executed) = doc["executed"].as_object_mut() {
+            executed.retain(|id, _| shard.owns(id));
+        }
     }
     Some(doc)
 }
@@ -2130,7 +2138,14 @@ fn errored(g: &GateArgs, exe: Option<&std::path::Path>, msg: &str) -> i32 {
     if let (Some(name), Ok(root)) = (&g.save_baseline, invoke::workspace_root())
         && g.common.backend.as_deref() != Some("buildcost")
     {
-        let listed = exe.and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
+        let built = exe.map(std::path::Path::to_path_buf).or_else(|| {
+            let stored = crate::benchexe::is_stored(&g.common, None, None, invoke::Build::Measure);
+            stored
+                .then(|| invoke::bench_executable(&g.common, None, None))
+                .flatten()
+        });
+        let filter = g.common.filter.as_deref();
+        let listed = built.and_then(|exe| invoke::listed_ids(&exe, filter));
         errored_at(&root, name, &g.common, listed.as_deref(), msg);
     }
     err(msg)
@@ -2604,14 +2619,26 @@ mod tests {
         let shard = invoke::Shard { index: 1, count: 2 };
         let ids: Vec<String> = (0..8).map(|n| format!("pkg::f{n}")).collect();
         let mut stored = json!({ "version": 1, "items": {} });
+        stored["assertions"] = json!([]);
         for id in &ids {
             stored["items"][id] = json!({ "callgrind": { "ir": 1 } });
+            stored["executed"][id] = json!([]);
+            let verdict = json!({ "id": id, "kind": "alloc", "ok": true, "detail": "" });
+            stored["assertions"].as_array_mut().unwrap().push(verdict);
         }
-        let kept =
-            identical_pass_cache(Some(&stored), &Run::default(), false, Some(shard)).unwrap();
-        let kept: Vec<&String> = kept["items"].as_object().unwrap().keys().collect();
+        let doc = identical_pass_cache(Some(&stored), &Run::default(), false, Some(shard)).unwrap();
+        let kept: Vec<&String> = doc["items"].as_object().unwrap().keys().collect();
         assert!(!kept.is_empty() && kept.len() < ids.len());
         assert!(kept.iter().all(|id| shard.owns(id)));
+        let executed: Vec<&String> = doc["executed"].as_object().unwrap().keys().collect();
+        assert_eq!(executed, kept);
+        let verdicts = doc["assertions"].as_array().unwrap();
+        assert!(
+            verdicts
+                .iter()
+                .all(|a| shard.owns(a["id"].as_str().unwrap()))
+        );
+        assert_eq!(verdicts.len(), kept.len());
     }
 
     #[test]

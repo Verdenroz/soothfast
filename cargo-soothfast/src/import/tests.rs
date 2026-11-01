@@ -400,3 +400,13 @@ fn the_workspace_package_names_are_read_once_and_clash_by_package_name() {
     assert!(check_prefixes(&root, &["cargo_soothfast".into()]).is_err());
     assert!(check_prefixes(&root, &["jmh".into()]).is_ok());
 }
+
+#[test]
+fn the_failed_import_fallbacks_need_failed() {
+    for flag in ["--base-results", "--prior-baseline"] {
+        let args: Vec<String> = ["--from", "jmh", "r.json", "--out", "o.json", flag, "x"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(run(&args), 2, "{flag}");
+    }
+}

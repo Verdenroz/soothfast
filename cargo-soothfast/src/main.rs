@@ -115,7 +115,8 @@ commands:
            named PREFIX::NAME; the prefix defaults to the format; --failed
            writes no numbers, only a gate-failed entry naming FILE's items,
            else the merge-base results', else the prefix's ids in the prior
-           baseline; with none, claims on the prefix's items fail)
+           baseline; with none, claims on the prefix's items fail; the two
+           flags need --failed)
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]

@@ -597,7 +597,7 @@ jobs:
         # The exit file stays 3 (errored) until the gate command itself
         # finishes, so a failing bench, npm or worktree step is never a
         # regression. Everything the leg prints, stderr included, is the result.
-        # Only a gate that did not fail saves HEAD's items for the docs job.
+        # A gate that did not error saves HEAD's items for the docs job.
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
           date +%s >"$RUNNER_TEMP/soothfast-start"
@@ -621,13 +621,15 @@ jobs:
             trap 'git worktree remove --force "$tree" >/dev/null 2>&1 || true' EXIT
             base="$tree"
             [ "$DIR" = . ] || base="$tree/$DIR"
-            # The merge-base runs first, so a HEAD that fails to bench still
-            # leaves results naming the items its failed gate covers.
-            base_ok=true
-            { bench "$base" && [ -f "$base/$OUT" ]; } || base_ok=false
-            if [ "$base_ok" = true ]; then cp "$base/$OUT" "$RUNNER_TEMP/soothfast-base-results-$NAME"; fi
-            bench .
-            if [ "$base_ok" = false ]; then
+            # A HEAD that fails to bench leaves no results; the merge-base's
+            # then name the items its failed gate covers.
+            if ! bench .; then
+              if bench "$base" && [ -f "$base/$OUT" ]; then
+                cp "$base/$OUT" "$RUNNER_TEMP/soothfast-base-results-$NAME"
+              fi
+              exit 1
+            fi
+            if ! bench "$base" || [ ! -f "$base/$OUT" ]; then
               echo "merge-base has no benchmark results; nothing to compare"
               echo "::notice::merge-base has no benchmark results; nothing to compare"
               save
@@ -639,7 +641,8 @@ jobs:
               ${PREFIX:+--prefix "$PREFIX"} ${WALLTIME:+--walltime "$WALLTIME"}
             rc=$?
             set -e
-            if [ "$rc" -eq 0 ]; then save; fi
+            # Regressions are measured numbers; only an error saves none.
+            if [ "$rc" -le 1 ]; then save; fi
             echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
             exit "$rc"
           } 2>&1 | tee "$RESULT"
@@ -658,10 +661,9 @@ jobs:
           if [ ! -f "$file" ]; then
             mkdir -p "$RUNNER_TEMP/soothfast-baseline"
             base="$RUNNER_TEMP/soothfast-base-results-$NAME"
-            prior=()
-            [ ! -f "$base" ] || prior+=(--base-results "$base")
-            [ ! -f .soothfast/baselines/head.json ] || prior+=(--prior-baseline head)
-            cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} --out "$file" --failed "${prior[@]}"
+            names=()
+            [ ! -f "$base" ] || names+=(--base-results "$base")
+            cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} --out "$file" --failed "${names[@]}"
           fi
       - name: Record the verdict
         if: always()

@@ -1055,7 +1055,16 @@ pub fn save_baseline_in(
     run: &Run,
     scope: SaveScope,
 ) -> io::Result<PathBuf> {
-    let new_items = saved_items(run);
+    let mut new_items = saved_items(run);
+    if let SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg)) = &scope {
+        for item in new_items
+            .as_object_mut()
+            .into_iter()
+            .flat_map(|m| m.values_mut())
+        {
+            item["saved_by"] = json!(pkg);
+        }
+    }
     let measured = match &scope {
         SaveScope::BenchFull(pkg) => Some(pkg.clone()),
         _ => None,

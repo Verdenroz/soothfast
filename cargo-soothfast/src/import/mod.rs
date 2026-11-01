@@ -232,6 +232,11 @@ pub fn run(args: &[String]) -> i32 {
     if save.is_some() == out.is_some() {
         return fail("import needs exactly one of --save-baseline NAME or --out FILE");
     }
+    if !failed && (base_results.is_some() || prior.is_some()) {
+        return fail(
+            "--base-results and --prior-baseline name a failed import's items; pass --failed",
+        );
+    }
     if failed {
         let Some(path) = &out else {
             return fail("import --failed writes a file; pass --out FILE");

@@ -499,8 +499,9 @@ no other package owns, and its entry names those, or the ones its listing
 shows; with neither it names nothing, and a claim on an item no package owns
 fails, naming that gate failure as possibly related. A leg that uploaded
 nothing at all, from a setup failure or a cancel, gets a `no-measurement`
-entry instead, and an item no package owns reads under it: an unchanged
-claim is not evaluated and a new or edited one fails. An id two packages both
+entry instead, and an item its package owns reads under it: an unchanged
+claim is not evaluated and a new or edited one fails. An item no package
+owns, an import's among them, still fails. An id two packages both
 list, as a lib item linked into both their bench binaries is, belongs to
 both, and a claim on it reads the number the last save wrote. A full save
 leaves alone any id another package owns. `baseline merge` refuses an id two
