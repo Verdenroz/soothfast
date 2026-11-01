@@ -28,7 +28,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::{Instant, SystemTime};
 
 use crate::unitgraph::{self, Unit};
@@ -51,12 +50,16 @@ pub struct Seeded {
 /// Copy the units in profile dir `head` that belong to no package in
 /// `members` into profile dir `base`, skipping units `base` already has.
 pub fn seed(head: &Path, base: &Path, members: &BTreeSet<String>) -> io::Result<Seeded> {
+    let _ = fs::remove_file(base.join(STALE_RECORD));
     let mut seeded = Seeded::default();
     for layout in [Layout::Flat, Layout::Nested] {
         seed_layout(layout, head, base, members, &mut seeded)?;
     }
     Ok(seeded)
 }
+
+/// A list of seeded units no build reads; outputs say which units are copies.
+const STALE_RECORD: &str = ".soothfast-seeded";
 
 #[derive(Clone, Copy)]
 enum Layout {
@@ -83,25 +86,11 @@ fn seed_layout(
     if candidates.is_empty() {
         return Ok(());
     }
-    let shared: Vec<&str> = base_dirs
-        .keys()
-        .filter(|name| head_dirs.contains_key(*name))
-        .map(String::as_str)
-        .collect();
-    let (head_out, base_out) = (
-        outputs(layout, head, &shared),
-        outputs(layout, base, &shared),
-    );
-    let copies: BTreeSet<String> = shared
-        .iter()
-        .filter(|name| {
-            head_out
-                .get(**name)
-                .is_some_and(|o| !o.is_empty() && base_out.get(**name) == Some(o))
-        })
-        .map(|name| name.to_string())
-        .collect();
-    let blocked = unitgraph::blocked(&graph(&head_dirs), &graph(&base_dirs), &copies, &candidates);
+    let (head_graph, base_graph) = (graph(&head_dirs), graph(&base_dirs));
+    let touched = unitgraph::touching(&head_graph, &base_graph, &candidates);
+    let names: Vec<&str> = touched.iter().map(String::as_str).collect();
+    let copies = copies(layout, head, base, &names);
+    let blocked = unitgraph::blocked(&head_graph, &base_graph, &copies, &candidates);
     seeded
         .skipped
         .extend(blocked.iter().map(|(name, why)| format!("{name}: {why}")));
@@ -210,43 +199,80 @@ fn unit_dirs(
 /// size and mtime.
 type Outputs = BTreeSet<(PathBuf, u64, SystemTime)>;
 
+/// The units of `names` whose outputs in `base` match HEAD's in name, size
+/// and mtime: what a seed's copy leaves and any rebuild in place breaks.
+fn copies(layout: Layout, head: &Path, base: &Path, names: &[&str]) -> BTreeSet<String> {
+    let (head_out, base_out) = (outputs(layout, head, names), outputs(layout, base, names));
+    names
+        .iter()
+        .filter(|name| {
+            head_out
+                .get(**name)
+                .is_some_and(|o| !o.is_empty() && base_out.get(**name) == Some(o))
+        })
+        .map(|name| name.to_string())
+        .collect()
+}
+
 /// The outputs of each of `names` in `profile`: a flat unit's `build/` and
 /// `deps/` entries, a nested unit's directory without its fingerprint.
 fn outputs(layout: Layout, profile: &Path, names: &[&str]) -> BTreeMap<String, Outputs> {
-    let mut out: BTreeMap<String, Outputs> = BTreeMap::new();
-    match layout {
-        Layout::Flat => {
-            let by_hash: BTreeMap<&str, &str> = names
-                .iter()
-                .filter_map(|name| split_unit(name).map(|(_, hash)| (hash, *name)))
-                .collect();
-            for dir in ["build", "deps"] {
-                let Ok(entries) = fs::read_dir(profile.join(dir)) else {
-                    continue;
-                };
-                for entry in entries.flatten() {
-                    let file = entry.file_name().to_string_lossy().into_owned();
-                    let stem = file.split('.').next().unwrap_or(&file);
-                    if let Some((_, hash)) = split_unit(stem)
-                        && let Some(name) = by_hash.get(hash)
-                    {
-                        let files = out.entry(name.to_string()).or_default();
-                        walk(profile, &Path::new(dir).join(&file), files);
-                    }
-                }
+    let entries = match layout {
+        Layout::Flat => flat_entries(profile, names).unwrap_or_default(),
+        Layout::Nested => names
+            .iter()
+            .map(|name| {
+                let dir = Path::new("build").join(name);
+                let entries = fs::read_dir(profile.join(&dir))
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.file_name() != "fingerprint")
+                    .map(|e| dir.join(e.file_name()))
+                    .collect();
+                (name.to_string(), entries)
+            })
+            .collect(),
+    };
+    entries
+        .into_iter()
+        .map(|(name, rels)| {
+            let mut files = Outputs::new();
+            for rel in rels {
+                walk(profile, &rel, &mut files);
             }
-        }
-        Layout::Nested => {
-            for name in names {
-                let files = out.entry(name.to_string()).or_default();
-                walk(profile, &Path::new("build").join(name), files);
-                files.retain(|(path, _, _)| {
-                    !path.starts_with(Path::new("build").join(name).join("fingerprint"))
-                });
+            (name, files)
+        })
+        .collect()
+}
+
+/// The `build/` and `deps/` entries of each flat unit of `names`, by name;
+/// a unit with none maps to an empty list.
+fn flat_entries(profile: &Path, names: &[&str]) -> io::Result<BTreeMap<String, Vec<PathBuf>>> {
+    let by_hash: BTreeMap<&str, &str> = names
+        .iter()
+        .filter_map(|name| split_unit(name).map(|(_, hash)| (hash, *name)))
+        .collect();
+    let mut out: BTreeMap<String, Vec<PathBuf>> = by_hash
+        .values()
+        .map(|name| (name.to_string(), Vec::new()))
+        .collect();
+    for dir in ["build", "deps"] {
+        let Ok(entries) = fs::read_dir(profile.join(dir)) else {
+            continue;
+        };
+        for entry in entries {
+            let file = entry?.file_name().to_string_lossy().into_owned();
+            let stem = file.split('.').next().unwrap_or(&file);
+            if let Some((_, hash)) = split_unit(stem)
+                && let Some(name) = by_hash.get(hash)
+                && let Some(rels) = out.get_mut(*name)
+            {
+                rels.push(Path::new(dir).join(&file));
             }
         }
     }
-    out
+    Ok(out)
 }
 
 fn walk(profile: &Path, rel: &Path, files: &mut Outputs) {
@@ -279,34 +305,17 @@ fn copy_flat(
     base: &Path,
     names: &[String],
 ) -> io::Result<Vec<(String, io::Result<u64>)>> {
-    let mut units: BTreeMap<&str, (&str, Vec<PathBuf>)> = names
-        .iter()
-        .filter_map(|name| split_unit(name).map(|(_, hash)| (hash, (name.as_str(), Vec::new()))))
-        .collect();
-    for dir in ["build", "deps"] {
-        let Ok(entries) = fs::read_dir(head.join(dir)) else {
-            continue;
-        };
-        for entry in entries {
-            let name = entry?.file_name().to_string_lossy().into_owned();
-            let stem = name.split('.').next().unwrap_or(&name);
-            if let Some((_, hash)) = split_unit(stem)
-                && let Some((_, files)) = units.get_mut(hash)
-            {
-                files.push(Path::new(dir).join(&name));
-            }
-        }
-    }
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
     // A unit's fingerprint goes last: a unit whose copy fails or is cut short
     // has none, so cargo rebuilds it instead of trusting a partial copy.
-    Ok(units
-        .into_values()
+    Ok(flat_entries(head, &names)?
+        .into_iter()
         .map(|(fingerprint, mut files)| {
-            files.push(Path::new(".fingerprint").join(fingerprint));
+            files.push(Path::new(".fingerprint").join(&fingerprint));
             let copied = files.iter().try_fold(0, |bytes, rel| {
                 Ok::<_, io::Error>(bytes + copy_tree(&head.join(rel), &base.join(rel))?)
             });
-            (fingerprint.to_string(), copied)
+            (fingerprint, copied)
         })
         .collect())
 }
@@ -345,9 +354,6 @@ pub fn seed_worktree(wt: &Path, wt_target: &Path) {
         &members,
     ) {
         Ok(s) => {
-            if let Ok(mut this_run) = SEEDED_THIS_RUN.lock() {
-                this_run.extend(s.names.iter().cloned());
-            }
             if s.units > 0 {
                 println!(
                     "gate: seeded {} dependency units ({:.1} MiB) from HEAD's target dir in {:.1}s",
@@ -375,18 +381,25 @@ pub fn seed_worktree(wt: &Path, wt_target: &Path) {
     }
 }
 
-/// Every unit the seeds of this process copied, for [`report`].
-static SEEDED_THIS_RUN: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
 /// How many seeded units [`report`] names before it only counts.
 const REPORTED_UNITS: usize = 20;
 
-/// After a failed merge-base build, name what this gate run's seeds copied.
-pub fn report() {
-    let units = SEEDED_THIS_RUN
-        .lock()
-        .map(|u| u.clone())
-        .unwrap_or_default();
+/// After a failed merge-base build, name the units of its target dir that
+/// are still HEAD's copies.
+pub fn report(wt_target: &Path) {
+    let Some(head_target) = wt_target.parent() else {
+        return;
+    };
+    let (head, base) = (head_target.join("release"), wt_target.join("release"));
+    let mut units = Vec::new();
+    for layout in [Layout::Flat, Layout::Nested] {
+        let head_dirs = unit_dirs(layout, &head, &mut Vec::new());
+        let shared: Vec<&str> = unit_dirs(layout, &base, &mut Vec::new())
+            .into_keys()
+            .filter_map(|name| head_dirs.get_key_value(&name).map(|(n, _)| n.as_str()))
+            .collect();
+        units.extend(copies(layout, &head, &base, &shared));
+    }
     for unit in units.iter().take(REPORTED_UNITS) {
         eprintln!("gate: seeded unit {unit}");
     }

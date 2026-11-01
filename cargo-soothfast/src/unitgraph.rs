@@ -132,6 +132,35 @@ pub fn blocked(
         .collect()
 }
 
+/// The units of `base` a candidate depends on or that depend on one: the only
+/// ones whose provenance [`blocked`] reads.
+pub fn touching(
+    head: &BTreeMap<String, Unit>,
+    base: &BTreeMap<String, Unit>,
+    candidates: &[String],
+) -> BTreeSet<String> {
+    let (head_by_hash, base_by_hash) = (by_hash(head), by_hash(base));
+    let units: Vec<&Unit> = candidates.iter().filter_map(|c| head.get(c)).collect();
+    let own: BTreeSet<u64> = units.iter().flat_map(|u| u.own.iter().copied()).collect();
+    let mut out: BTreeSet<String> = units
+        .iter()
+        .flat_map(|u| u.deps.iter())
+        .filter_map(|h| {
+            head_by_hash
+                .get(h)
+                .filter(|name| base.contains_key(**name))
+                .or_else(|| base_by_hash.get(h))
+                .map(|name| name.to_string())
+        })
+        .collect();
+    out.extend(
+        base.iter()
+            .filter(|(_, u)| u.deps.iter().any(|h| own.contains(h)))
+            .map(|(name, _)| name.clone()),
+    );
+    out
+}
+
 fn by_hash(units: &BTreeMap<String, Unit>) -> BTreeMap<u64, &str> {
     units
         .iter()
@@ -266,6 +295,25 @@ mod tests {
         assert!(blocked(&head, &base, &BTreeSet::new(), &candidates).contains_key("libc-a"));
         let copies = BTreeSet::from(["measure-b".to_string()]);
         assert!(blocked(&head, &base, &copies, &candidates).is_empty());
+    }
+
+    #[test]
+    fn only_units_next_to_a_candidate_are_touched() {
+        let head = units(&[
+            ("linkme-a", unit(1, &[])),
+            ("registry-b", unit(2, &[1])),
+            ("itoa-d", unit(4, &[])),
+        ]);
+        let base = units(&[
+            ("linkme-a", unit(1, &[])),
+            ("itoa-d", unit(4, &[])),
+            ("measure-e", unit(5, &[2])),
+        ]);
+        let touched = touching(&head, &base, &names(&["registry-b"]));
+        assert_eq!(
+            touched.into_iter().collect::<Vec<_>>(),
+            ["linkme-a", "measure-e"]
+        );
     }
 
     #[test]
