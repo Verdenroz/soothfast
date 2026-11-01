@@ -809,8 +809,8 @@ fn accept_cmd(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     harness_note(&harness);
-    if current.items.is_empty() {
-        return err("measured 0 items — check --filter / registry setup; refusing to accept");
+    if let Some(refusal) = nothing_measured(&current, &g.common) {
+        return err(refusal);
     }
     let root = match invoke::workspace_root() {
         Ok(r) => r,
@@ -959,6 +959,20 @@ fn write_gate_status(failures: u32) {
     );
 }
 
+/// `doc` narrowed to the items and claims `shard` owns, when there is one.
+fn narrowed(mut doc: Value, shard: Option<invoke::Shard>) -> Value {
+    let Some(shard) = shard else {
+        return doc;
+    };
+    if let Some(items) = doc.get_mut("items").and_then(Value::as_object_mut) {
+        items.retain(|id, _| shard.owns(id));
+    }
+    if let Some(claims) = doc.get_mut("assertions").and_then(Value::as_array_mut) {
+        claims.retain(|a| a["id"].as_str().is_none_or(|id| shard.owns(id)));
+    }
+    doc
+}
+
 /// Why a gate that measured nothing must not pass, unless it is a shard that
 /// owns no item now and still checks none it owned is gone.
 fn nothing_measured(current: &Run, common: &CommonArgs) -> Option<&'static str> {
@@ -998,7 +1012,7 @@ fn newly_measured(
             Ok(None)
         }
         NewTarget::Empty => {
-            println!("gate: HEAD's new bench target registers no items yet, or cannot list them");
+            println!("gate: HEAD's new bench target registers no items yet");
             Ok(None)
         }
         NewTarget::Registers => {
@@ -1166,7 +1180,8 @@ fn measure_ref_interleaved(
         let by_binary = match (reuse, &digests) {
             (true, Some(d)) => runs.load_reference(&d.base, &base_sha),
             _ => None,
-        };
+        }
+        .map(|doc| narrowed(doc, common.shard));
 
         if let Some(d) = digests.as_ref().filter(|d| d.head == d.base) {
             println!(
@@ -1306,7 +1321,9 @@ fn measure_ref_interleaved(
             let exe = head_exe.clone();
             let head = match (at_head, &head_exe) {
                 (false, _) => NewTarget::Absent,
-                (true, Some(exe)) if invoke::list_items(exe, None).is_none_or(|l| l.is_empty()) => {
+                (true, Some(exe))
+                    if invoke::list_items(exe, None).is_some_and(|l| l.is_empty()) =>
+                {
                     NewTarget::Empty
                 }
                 (true, _) => NewTarget::Registers,
@@ -3052,8 +3069,7 @@ mod tests {
                 ..ItemMetrics::default()
             })
         };
-        let stored =
-            json!({ "items": { "pkg::bt_base_to_htf_index": { "callgrind": { "ir": 7 } } } });
+        let stored = json!({ "items": { "pkg::bt_base_to_htf_index": { "callgrind": { "ir": 7 } } }, "head_format": crate::headrun::HEAD_FORMAT });
         let ids = std::collections::BTreeSet::from(["pkg::bt_base_to_htf_index".to_string()]);
         let stored = Box::new((stored, "binary abc".to_string(), ids));
         let (run, source) = super::identical_head(pass(), false, Some(stored));
