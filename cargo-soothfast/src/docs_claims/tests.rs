@@ -192,6 +192,7 @@ fn only_a_claim_the_merge_base_made_counts_as_unchanged() {
     git(&["init", "-q"]);
     git(&["config", "user.email", "t@example.com"]);
     git(&["config", "user.name", "t"]);
+    git(&["config", "commit.gpgsign", "false"]);
     let old = "<!-- soothfast:claim core::a.alloc.allocs <= 0 -->\n";
     std::fs::write(dir.join("a.md"), old).unwrap();
     git(&["add", "-A"]);
