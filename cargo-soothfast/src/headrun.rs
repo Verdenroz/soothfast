@@ -121,11 +121,17 @@ fn run_head(common: &CommonArgs, extra: &[&str], stamp: BuildStamp) -> Result<Ru
 /// which also carries every assertion verdict. Every field but walltime,
 /// fingerprint/covers, and tolerance_pct (all read off the binary the fresh
 /// pass actually ran) comes from the stored item, so a counter added to
-/// `ItemMetrics` later carries over without a change here. The timing pass
-/// back unless the stored run counted every item it measured.
+/// `ItemMetrics` later carries over without a change here. The stored run may
+/// hold more items than the pass, as a whole run does for a shard or a
+/// `--filter`; the timing pass comes back unless it counted every one the
+/// pass measured.
 pub fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Result<Run, Box<Run>> {
     let counted = invoke::run_from_items_value(&stored["items"]);
-    if !has_callgrind_counts(stored) || !counted.items.keys().eq(timing.items.keys()) {
+    let covered = timing
+        .items
+        .keys()
+        .all(|id| counted.items.get(id).is_some_and(|m| m.ir.is_some()));
+    if timing.items.is_empty() || !covered {
         return Err(Box::new(timing));
     }
     let mut run = timing;
@@ -645,6 +651,31 @@ mod tests {
     fn a_stored_run_of_other_items_is_a_miss() {
         let doc = stored(json!({ "pkg::b": { "fingerprint": "fp", "callgrind": { "ir": 1 } } }));
         assert!(merge_stored(&doc, "binary x", timing()).is_err());
+    }
+
+    /// A whole stored run with `pkg::a`, which the pass measured, plus `extra`.
+    fn whole_run(extra: serde_json::Value) -> serde_json::Value {
+        let mut items = json!({ "pkg::a": { "fingerprint": "fp", "callgrind": { "ir": 4567 } } });
+        for (id, v) in extra.as_object().unwrap() {
+            items[id] = v.clone();
+        }
+        stored(items)
+    }
+
+    #[test]
+    fn a_shard_takes_its_items_from_a_whole_stored_run() {
+        let other_shard = json!({ "pkg::z": { "fingerprint": "fz", "callgrind": { "ir": 9 } } });
+        let run = merge_stored(&whole_run(other_shard), "binary x", timing()).expect("hit");
+        assert_eq!(run.items.keys().collect::<Vec<_>>(), ["pkg::a"]);
+        assert_eq!(run.items["pkg::a"].ir, Some(4567));
+    }
+
+    #[test]
+    fn a_filtered_pass_takes_its_items_even_where_the_rest_lack_counts() {
+        let filtered_out =
+            json!({ "pkg::slow": { "fingerprint": "fs", "walltime": { "median_ns": 5.0 } } });
+        let run = merge_stored(&whole_run(filtered_out), "binary x", timing()).expect("hit");
+        assert_eq!(run.items.keys().collect::<Vec<_>>(), ["pkg::a"]);
     }
 
     #[test]

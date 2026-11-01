@@ -6,6 +6,7 @@
 //! prefix defaults to the format and the name is whatever that harness
 //! calls the benchmark, so an id is stable as long as the benchmark is.
 
+pub mod failed;
 mod jmh;
 mod pyperf;
 mod pytest;
@@ -137,9 +138,14 @@ pub fn run(args: &[String]) -> i32 {
     let mut prefix = None;
     let mut save = None;
     let mut out = None;
+    let mut failed = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let slot = match a.as_str() {
+            "--failed" => {
+                failed = true;
+                continue;
+            }
             "--from" => &mut format,
             "--prefix" => &mut prefix,
             "--save-baseline" => &mut save,
@@ -160,6 +166,22 @@ pub fn run(args: &[String]) -> i32 {
     };
     if save.is_some() == out.is_some() {
         return fail("import needs exactly one of --save-baseline NAME or --out FILE");
+    }
+    if failed {
+        let Some(path) = &out else {
+            return fail("import --failed writes a file; pass --out FILE");
+        };
+        let written = failed::stub(&format, &file, prefix.as_deref()).and_then(|doc| {
+            let text = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
+            std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))
+        });
+        return match written {
+            Ok(()) => {
+                println!("import: {path} lists the gate's items as gate-failed");
+                0
+            }
+            Err(e) => fail(&e),
+        };
     }
     let outcome = read(&format, &file, prefix.as_deref()).and_then(|(run, prefix)| {
         let written = match (&save, &out) {

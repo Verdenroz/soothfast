@@ -39,9 +39,7 @@ pub fn save_head(
     listed: Option<&[String]>,
     failures: u32,
 ) -> Result<(), String> {
-    if let Some(shard) = common.shard {
-        baseline_merge::check_shard_in(root, name, shard)?;
-    }
+    let listed = shard_listing(common, listed)?;
     if failures > 0 && common.backend.as_deref() == Some("buildcost") {
         eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
         return Ok(());
@@ -52,19 +50,28 @@ pub fn save_head(
             Some(ids) => ids.to_vec(),
             None => current.items.keys().cloned().collect(),
         };
-        mark_failed(root, name, common, &ids, "the gate failed")?;
-    } else {
-        let (run, entries) = baseline_material(current, source);
-        let scope = invoke::SaveScope::of(common);
-        let path = invoke::save_baseline_in(root, name, &run, scope).map_err(|e| e.to_string())?;
-        unmeasured::append_in(root, name, &entries).map_err(|e| e.to_string())?;
-        println!("baseline saved: {}", path.display());
-        report(name, &entries);
+        return mark_package(
+            root,
+            name,
+            common,
+            Reason::GateFailed,
+            "the gate failed",
+            &ids,
+        );
     }
-    stamp(root, name, common, listed)
+    if let Some(shard) = common.shard {
+        baseline_merge::check_shard_in(root, name, shard)?;
+    }
+    let (run, entries) = baseline_material(current, source);
+    let scope = invoke::SaveScope::of(common);
+    let path = invoke::save_baseline_in(root, name, &run, scope).map_err(|e| e.to_string())?;
+    unmeasured::append_in(root, name, &entries).map_err(|e| e.to_string())?;
+    println!("baseline saved: {}", path.display());
+    report(name, &entries);
+    stamp(root, name, common, listed.unwrap_or_default())
 }
 
-/// `--save-baseline NAME` for a gate that errored before it had a run.
+/// `--save-baseline NAME` for a gate that errored before it had a verdict.
 pub fn save_errored(
     root: &Path,
     name: &str,
@@ -72,55 +79,91 @@ pub fn save_errored(
     listed: Option<&[String]>,
     why: &str,
 ) -> Result<(), String> {
-    if let Some(shard) = common.shard {
-        baseline_merge::check_shard_in(root, name, shard)?;
-    }
-    let ids = listed.unwrap_or_default();
-    mark_failed(root, name, common, ids, &format!("the gate errored: {why}"))?;
-    stamp(root, name, common, listed)
+    let listed = shard_listing(common, listed)?;
+    let detail = format!("the gate errored: {why}");
+    mark_package(
+        root,
+        name,
+        common,
+        Reason::GateFailed,
+        &detail,
+        listed.unwrap_or_default(),
+    )
 }
 
-fn stamp(
-    root: &Path,
-    name: &str,
+/// `listed`, which a shard's baseline must carry for `baseline merge`.
+fn shard_listing<'a>(
     common: &CommonArgs,
-    listed: Option<&[String]>,
-) -> Result<(), String> {
+    listed: Option<&'a [String]>,
+) -> Result<Option<&'a [String]>, String> {
+    match (common.shard, listed) {
+        (Some(shard), None) => Err(format!(
+            "cannot list the bench binary's items, which shard {shard}'s baseline must carry"
+        )),
+        _ => Ok(listed),
+    }
+}
+
+fn stamp(root: &Path, name: &str, common: &CommonArgs, listed: &[String]) -> Result<(), String> {
     match common.shard {
         Some(shard) => {
-            baseline_merge::stamp_shard_in(root, name, shard, listed.unwrap_or_default())
-                .map_err(|e| e.to_string())
+            baseline_merge::stamp_shard_in(root, name, shard, listed).map_err(|e| e.to_string())
         }
         None => Ok(()),
     }
 }
 
-/// Replace the package's numbers in baseline `name` with one `gate-failed`
-/// entry naming the items of `ids` this gate owns.
-fn mark_failed(
+/// Replace the numbers of the gate's packages in baseline `name` with one
+/// `reason` entry each, naming the items of `ids` this gate owns. The
+/// packages are `-p`'s, else every package `ids` names. With a shard, `ids`
+/// is the bench binary's whole listing, which the file is stamped with.
+pub fn mark_package(
     root: &Path,
     name: &str,
     common: &CommonArgs,
-    ids: &[String],
+    reason: Reason,
     detail: &str,
+    ids: &[String],
 ) -> Result<(), String> {
-    let Some(pkg) = common.pkg.as_ref().map(|p| p.replace('-', "_")) else {
-        return Ok(());
+    if let Some(shard) = common.shard {
+        baseline_merge::check_shard_in(root, name, shard)?;
+    }
+    let packages: Vec<String> = match &common.pkg {
+        Some(pkg) => vec![pkg.replace('-', "_")],
+        None => {
+            let mut seen: Vec<String> = ids
+                .iter()
+                .map(|id| invoke::id_pkg(id).to_string())
+                .collect();
+            seen.sort();
+            seen.dedup();
+            seen
+        }
     };
-    let items: Vec<String> = ids
-        .iter()
-        .filter(|id| invoke::id_pkg(id) == pkg && common.shard.is_none_or(|s| s.owns(id)))
-        .cloned()
+    if packages.is_empty() {
+        return Err(format!(
+            "cannot tell which packages the gate covered, so baseline {name:?} would keep their old numbers"
+        ));
+    }
+    let entries: Vec<Unmeasured> = packages
+        .into_iter()
+        .map(|package| Unmeasured {
+            items: ids
+                .iter()
+                .filter(|id| {
+                    invoke::id_pkg(id) == package && common.shard.is_none_or(|s| s.owns(id))
+                })
+                .cloned()
+                .collect(),
+            detail: format!("{detail}, so {package} saved no numbers"),
+            package,
+            reason,
+            ..Unmeasured::default()
+        })
         .collect();
-    let entry = Unmeasured {
-        package: pkg.clone(),
-        reason: Reason::GateFailed,
-        detail: format!("{detail}, so {pkg} saved no numbers"),
-        items,
-        metrics: Vec::new(),
-    };
-    report(name, std::slice::from_ref(&entry));
-    unmeasured::mark_in(root, name, &[pkg], &[entry]).map_err(|e| e.to_string())
+    report(name, &entries);
+    unmeasured::mark_in(root, name, &entries).map_err(|e| e.to_string())?;
+    stamp(root, name, common, ids)
 }
 
 fn report(name: &str, entries: &[Unmeasured]) {

@@ -8,6 +8,7 @@ fn entry(reason: Reason, items: &[&str], metrics: &[&str]) -> Unmeasured {
         detail: format!("{} detail", reason.as_str()),
         items: items.iter().map(|s| s.to_string()).collect(),
         metrics: metrics.iter().map(|s| s.to_string()).collect(),
+        all_items: false,
     }
 }
 

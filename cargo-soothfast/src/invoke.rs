@@ -464,13 +464,15 @@ fn shard_ids(
 /// Every item id `exe` lists under `filter`, whichever shard owns it, listed
 /// once per binary.
 pub fn listed_ids(exe: &Path, filter: Option<&str>) -> Option<Vec<String>> {
-    static LISTED: OnceLock<Mutex<HashMap<PathBuf, Vec<String>>>> = OnceLock::new();
+    type Key = (PathBuf, Option<String>);
+    static LISTED: OnceLock<Mutex<HashMap<Key, Vec<String>>>> = OnceLock::new();
     let mut memo = LISTED.get_or_init(Default::default).lock().ok()?;
-    if let Some(ids) = memo.get(exe) {
+    let key = (exe.to_path_buf(), filter.map(str::to_string));
+    if let Some(ids) = memo.get(&key) {
         return Some(ids.clone());
     }
     let ids: Vec<String> = list_items(exe, filter)?.into_keys().collect();
-    memo.insert(exe.to_path_buf(), ids.clone());
+    memo.insert(key, ids.clone());
     Some(ids)
 }
 

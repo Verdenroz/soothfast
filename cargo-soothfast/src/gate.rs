@@ -196,7 +196,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     let walltime_advisory = match gate_config::apply(&mut g.common) {
         Ok(cfg) => cfg.walltime_advisory,
-        Err(e) => return err(&e),
+        Err(e) => return errored(&g, None, &e),
     };
     if let Some(shard) = g.common.shard {
         println!("gate: shard {shard}: gating the items it owns");
@@ -217,10 +217,10 @@ pub fn run(args: &[String]) -> i32 {
             );
             match newly_measured(&g.common) {
                 Ok(resolved) => resolved,
-                Err(e) => return errored(&g, &e),
+                Err(e) => return errored(&g, None, &e),
             }
         }
-        Err(e) => return errored(&g, &e),
+        Err(e) => return errored(&g, None, &e),
     };
     let Resolved {
         reference,
@@ -229,9 +229,6 @@ pub fn run(args: &[String]) -> i32 {
         harness,
         exe,
     } = resolved;
-    let listed = exe
-        .as_deref()
-        .and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
     // A gate that measured nothing must never pass: a typo'd --filter, an
     // empty registry, or lost records would otherwise be permanently green.
     // A shard that owns nothing now still fails on any item it owned that is gone.
@@ -242,6 +239,7 @@ pub fn run(args: &[String]) -> i32 {
         _ if current.items.is_empty() => {
             return errored(
                 &g,
+                exe.as_deref(),
                 "measured 0 items — check --filter / registry setup; refusing to gate",
             );
         }
@@ -281,8 +279,11 @@ pub fn run(args: &[String]) -> i32 {
     // Ratchet: also compare against a long-lived baseline (e.g. last release)
     // so ten +4% regressions can't compound past a single gate.
     if let Some(ratchet_name) = &g.ratchet {
-        match invoke::load_baseline(ratchet_name) {
-            Ok(Some(r)) => {
+        let ratchet = invoke::workspace_root()
+            .map_err(|e| e.to_string())
+            .and_then(|root| ratchet_in(&root, ratchet_name));
+        match ratchet {
+            Ok(r) => {
                 println!("--- ratchet: {ratchet_name} ---");
                 let rctx = CompareCtx {
                     deps_mode: false,
@@ -298,8 +299,7 @@ pub fn run(args: &[String]) -> i32 {
                     &mut Vec::new(),
                 );
             }
-            Ok(None) => return err(&format!("no ratchet baseline named {ratchet_name:?}")),
-            Err(e) => return err(&format!("failed to load ratchet baseline: {e}")),
+            Err(e) => return errored(&g, exe.as_deref(), &e),
         }
     }
 
@@ -325,6 +325,9 @@ pub fn run(args: &[String]) -> i32 {
         let saved = invoke::workspace_root()
             .map_err(|e| e.to_string())
             .and_then(|root| {
+                let listed = exe
+                    .as_deref()
+                    .and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
                 let listed = listed.as_deref();
                 save_head(&root, name, &current, &head, &g.common, listed, failures)
             });
@@ -537,12 +540,11 @@ fn run_each(args: &[String], packages: &[String]) -> i32 {
         common.try_parse(a, &mut it);
     }
     common.pkg = None;
-    if let Err(e) = gate_config::apply(&mut common) {
-        return err(&e);
-    }
-    // `--features` names one package's features; across several cargo wants
-    // `pkg/feature`, so leave those builds to the per-package legs.
-    if common.features.is_none() {
+    // A config error is left to each package's leg, which reports it and
+    // marks the package gate-failed in its baseline.
+    if gate_config::apply(&mut common).is_ok() && common.features.is_none() {
+        // `--features` names one package's features; across several cargo
+        // wants `pkg/feature`, so leave those builds to the per-package legs.
         prebuild_both_sides(packages, &common, args);
     }
 
@@ -2057,17 +2059,39 @@ fn err(msg: &str) -> i32 {
 /// `err` for a gate that never reached a verdict. Its `--save-baseline`
 /// still names the package's items as gate-failed, so no claim on them reads
 /// as measured.
-fn errored(g: &GateArgs, msg: &str) -> i32 {
+fn errored(g: &GateArgs, exe: Option<&std::path::Path>, msg: &str) -> i32 {
     if let (Some(name), Ok(root)) = (&g.save_baseline, invoke::workspace_root())
         && g.common.backend.as_deref() != Some("buildcost")
     {
-        let listed = invoke::bench_executable(&g.common, None, None)
-            .and_then(|exe| invoke::listed_ids(&exe, g.common.filter.as_deref()));
-        if let Err(e) = save_errored(&root, name, &g.common, listed.as_deref(), msg) {
-            eprintln!("soothfast: failed to save baseline: {e}");
-        }
+        let exe = exe
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| invoke::bench_executable(&g.common, None, None));
+        let listed = exe.and_then(|exe| invoke::listed_ids(&exe, g.common.filter.as_deref()));
+        errored_at(&root, name, &g.common, listed.as_deref(), msg);
     }
     err(msg)
+}
+
+/// The gate-failed stub `errored` writes into baseline `name` under `root`.
+fn errored_at(
+    root: &std::path::Path,
+    name: &str,
+    common: &CommonArgs,
+    listed: Option<&[String]>,
+    msg: &str,
+) {
+    if let Err(e) = save_errored(root, name, common, listed, msg) {
+        eprintln!("soothfast: failed to save baseline: {e}");
+    }
+}
+
+/// The ratchet baseline `name` under `root`.
+fn ratchet_in(root: &std::path::Path, name: &str) -> Result<Value, String> {
+    match invoke::load_baseline_in(root, name) {
+        Ok(Some(r)) => Ok(r),
+        Ok(None) => Err(format!("no ratchet baseline named {name:?}")),
+        Err(e) => Err(format!("failed to load ratchet baseline: {e}")),
+    }
 }
 
 /// Like `err`, but for a `gate accept --only` invocation that recorded
@@ -2893,6 +2917,28 @@ mod tests {
         assert_eq!(run.reused.unwrap().from, "binary abc");
         let (_, source) = super::identical_head(pass(), false, None);
         assert_eq!(source, HeadRun::Uncounted);
+    }
+
+    #[test]
+    fn a_ratchet_error_replaces_the_package_s_saved_numbers_with_a_failed_entry() {
+        let root = scratch("ratchet-error");
+        let stale = json!({
+            "version": 1,
+            "items": { "pkg::old": { "alloc": { "allocs": 1, "bytes": 8 } } },
+        });
+        invoke::write_baseline_in(&root, "head", &stale).unwrap();
+        let e = super::ratchet_in(&root, "release").unwrap_err();
+        let common = CommonArgs {
+            pkg: Some("pkg".into()),
+            ..CommonArgs::default()
+        };
+        let listed = ["pkg::new".to_string()];
+        super::errored_at(&root, "head", &common, Some(&listed), &e);
+        let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+        assert_eq!(saved["items"], json!({}));
+        assert_eq!(saved["unmeasured"][0]["reason"], "gate-failed");
+        assert_eq!(saved["unmeasured"][0]["items"], json!(["pkg::new"]));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

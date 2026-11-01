@@ -11,11 +11,14 @@ use serde_json::{Map, Value, json};
 
 use crate::invoke::{self, Shard};
 use crate::unmeasured::{self, Reason, Unmeasured};
+use crate::{gate_config, gate_save};
 
 /// The shard a gate's baseline holds the items of, as `I/N`.
 const SHARD_KEY: &str = "shard";
 /// Every item the shard's bench binary lists, per package.
 const LISTED_KEY: &str = "listed";
+/// The import prefix of an import gate's file, which is no shard of the gate.
+pub const IMPORTED_KEY: &str = "imported";
 
 /// Refuse to save shard `shard` into baseline `name` when it already holds
 /// another shard's run, or an unsharded one.
@@ -55,9 +58,10 @@ pub fn stamp_shard_in(root: &Path, name: &str, shard: Shard, ids: &[String]) -> 
 
 /// Whether `doc` holds a gate's run, as opposed to imported items only.
 fn is_rust(doc: &Value) -> bool {
-    doc.get(SHARD_KEY).is_some()
-        || doc.get("unmeasured").is_some()
-        || items(doc).is_some_and(|m| m.values().any(|v| !v["imported"].is_string()))
+    doc.get(IMPORTED_KEY).is_none()
+        && (doc.get(SHARD_KEY).is_some()
+            || doc.get("unmeasured").is_some()
+            || items(doc).is_some_and(|m| m.values().any(|v| !v["imported"].is_string())))
 }
 
 fn items(doc: &Value) -> Option<&Map<String, Value>> {
@@ -106,31 +110,25 @@ fn mark_cmd(args: &[String]) -> i32 {
     let (Some(into), Some(pkg), Some(reason)) = (into, common.pkg.clone(), reason) else {
         return fail("baseline mark needs --into NAME, -p PKG and a known --reason");
     };
-    let pkg = pkg.replace('-', "_");
-    let items: Vec<String> = invoke::bench_executable(&common, None, None)
-        .and_then(|exe| invoke::listed_ids(&exe, common.filter.as_deref()))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|id| invoke::id_pkg(id) == pkg)
-        .collect();
-    let entry = Unmeasured {
-        package: pkg.clone(),
-        reason,
-        detail: detail.unwrap_or_else(|| format!("{} for {pkg}", reason.as_str())),
-        items,
-        metrics: Vec::new(),
-    };
-    let root = invoke::project_root();
-    if let Err(e) = unmeasured::mark_in(&root, &into, &[pkg], std::slice::from_ref(&entry)) {
-        return fail(&format!("cannot write baseline {into:?}: {e}"));
+    if let Err(e) = gate_config::apply(&mut common) {
+        return fail(&e);
     }
-    println!(
-        "baseline mark: {} item(s) of {} as {} in {into}",
-        entry.items.len(),
-        entry.package,
-        reason.as_str()
-    );
-    0
+    let Some(exe) = invoke::bench_executable(&common, None, None) else {
+        return fail(&format!(
+            "{pkg}'s bench target did not build, so its items cannot be listed"
+        ));
+    };
+    let Some(ids) = invoke::listed_ids(&exe, common.filter.as_deref()) else {
+        return fail(&format!("{} lists no items", exe.display()));
+    };
+    let detail = detail.unwrap_or_else(|| reason.as_str().to_string());
+    let marked = invoke::workspace_root()
+        .map_err(|e| e.to_string())
+        .and_then(|root| gate_save::mark_package(&root, &into, &common, reason, &detail, &ids));
+    match marked {
+        Ok(()) => 0,
+        Err(e) => fail(&format!("cannot write baseline {into:?}: {e}")),
+    }
 }
 
 fn merge_cmd(args: &[String]) -> i32 {
@@ -311,6 +309,7 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
             detail: format!("{which} saved no measurement of {pkg}"),
             items: Vec::new(),
             metrics: Vec::new(),
+            all_items: false,
         }];
     }
     missing
@@ -321,6 +320,7 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
             detail: format!("shard {shard} saved no measurement of {pkg}"),
             items: listed.iter().filter(|id| shard.owns(id)).cloned().collect(),
             metrics: Vec::new(),
+            all_items: false,
         })
         .filter(|u| !u.items.is_empty())
         .collect()
