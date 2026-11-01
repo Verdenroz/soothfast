@@ -91,6 +91,30 @@ fn an_unsharded_baseline_is_shard_one_of_one() {
 }
 
 #[test]
+fn an_imported_baseline_merges_beside_the_shards_without_counting_as_one() {
+    let imported = json!({
+        "version": 1,
+        "items": { "jmh::Parse.run": { "imported": "jmh", "walltime": { "median_ns": 5.0 } } },
+        "assertions": [],
+    });
+    let mut files: Vec<_> = (1..=3).map(shard_file).collect();
+    files.push(("import.json".into(), imported));
+    let merged = merge(&files, 3, &packages()).unwrap();
+    assert_eq!(merged["items"]["jmh::Parse.run"]["imported"], "jmh");
+    assert_eq!(merged["unmeasured"], json!([]));
+}
+
+#[test]
+fn an_item_in_two_files_is_corrupt() {
+    let imported = json!({ "items": { "jmh::a": { "imported": "jmh" } } });
+    let twice = [
+        ("a.json".into(), imported.clone()),
+        ("b.json".into(), imported),
+    ];
+    assert!(matches!(merge(&twice, 1, &[]), Err(MergeError::Corrupt(_))));
+}
+
+#[test]
 fn a_shard_stamp_refuses_another_shard_and_an_unsharded_run() {
     let root = std::env::temp_dir().join(format!("soothfast-stamp-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

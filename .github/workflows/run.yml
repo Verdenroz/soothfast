@@ -595,11 +595,17 @@ jobs:
         # The exit file stays 3 (errored) until the gate command itself
         # finishes, so a failing bench, npm or worktree step is never a
         # regression. Everything the leg prints, stderr included, is the result.
+        # Only a gate that did not fail saves HEAD's items for the docs job.
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
           date +%s >"$RUNNER_TEMP/soothfast-start"
           {
             bench() { (cd "$1" && { [ "$ECOSYSTEM" != node ] || npm ci; } && eval "${BENCH_CMD//\{out\}/$OUT}"); }
+            save() {
+              mkdir -p "$RUNNER_TEMP/soothfast-baseline"
+              cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} \
+                --out "$RUNNER_TEMP/soothfast-baseline/import.json"
+            }
             # Unique per run, so a worktree an earlier run left registered on a
             # persistent runner never collides.
             tree="$RUNNER_TEMP/soothfast-base-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -611,6 +617,7 @@ jobs:
             if ! bench "$base" || [ ! -f "$base/$OUT" ]; then
               echo "merge-base has no benchmark results; nothing to compare"
               echo "::notice::merge-base has no benchmark results; nothing to compare"
+              save
               echo 0 >"$RUNNER_TEMP/soothfast-exit"
               exit 0
             fi
@@ -619,6 +626,7 @@ jobs:
               ${PREFIX:+--prefix "$PREFIX"} ${WALLTIME:+--walltime "$WALLTIME"}
             rc=$?
             set -e
+            if [ "$rc" -eq 0 ]; then save; fi
             echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
             exit "$rc"
           } 2>&1 | tee "$RESULT"
@@ -640,10 +648,17 @@ jobs:
           name: soothfast-result-${{ matrix.name }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
+      - name: Upload the imported measurement
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-baseline-import-${{ matrix.name }}
+          path: ${{ runner.temp }}/soothfast-baseline/import.json
+          if-no-files-found: ignore
 
   docs:
     name: Docs check
-    needs: [plan, build-rustdoc, gate-rust]
+    needs: [plan, build-rustdoc, gate-rust, gate]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.plan.outputs.docs == 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
