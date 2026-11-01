@@ -449,3 +449,38 @@ fn a_plan_file_reads_back_each_package_s_ids_and_refuses_a_baseline() {
     std::fs::write(&baseline, r#"{"version":1,"items":{}}"#).unwrap();
     assert!(plan::read(&baseline).is_err());
 }
+
+#[test]
+fn a_claim_naming_no_item_merges_once_whatever_its_shards_report() {
+    let global = json!({ "id": "", "kind": "build", "ok": true, "detail": "size" });
+    let files: Vec<(String, Value)> = (1..=3)
+        .map(|i| {
+            let (label, mut doc) = shard_file(i);
+            doc["assertions"] = json!([global.clone()]);
+            (label, doc)
+        })
+        .collect();
+    let merged = merge(&files, 3, &packages()).unwrap();
+    assert_eq!(merged["assertions"], json!([global]));
+    let shards = (1..=3).map(|index| Shard { index, count: 3 });
+    let keeping: Vec<u64> = shards
+        .filter(|s| s.owns_claim(""))
+        .map(|s| s.index)
+        .collect();
+    assert_eq!(keeping, [1]);
+}
+
+#[test]
+fn repeated_plan_files_add_up() {
+    let dir = crate::test::fixture::TempDir::new("plan-union");
+    std::fs::create_dir_all(&*dir).unwrap();
+    let (first, second) = (dir.join("a.json"), dir.join("b.json"));
+    plan::add(&first, "core", &["core::a".into()]).unwrap();
+    plan::add(&second, "core", &["core::b".into()]).unwrap();
+    plan::add(&second, "app", &["app::x".into()]).unwrap();
+    let mut planned = Planned::new();
+    plan::read_into(&first, &mut planned).unwrap();
+    plan::read_into(&second, &mut planned).unwrap();
+    assert_eq!(planned["core"].len(), 2);
+    assert_eq!(planned["app"].len(), 1);
+}

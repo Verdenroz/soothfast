@@ -33,7 +33,11 @@ pub fn cmd(args: &[String]) -> i32 {
     if let Err(e) = gate_config::apply(&mut common) {
         return fail(&e);
     }
-    let exe = benchexe::stored(&common, None, None, invoke::Build::Measure);
+    let exe = if benchexe::storable(&common, invoke::Build::Measure) {
+        benchexe::stored(&common, None, None, invoke::Build::Measure)
+    } else {
+        benchexe::already_built(&common)
+    };
     let ids = match benchexe::listing(&common, exe.as_deref()) {
         Ok(ids) => ids,
         Err(e) => return fail(&e),
@@ -57,6 +61,14 @@ pub fn add(path: &Path, pkg: &str, ids: &[String]) -> Result<(), String> {
 
 /// Each package's planned ids.
 pub type Planned = BTreeMap<String, BTreeSet<String>>;
+
+/// Add the plan file at `path` to `planned`.
+pub fn read_into(path: &Path, planned: &mut Planned) -> Result<(), String> {
+    for (pkg, ids) in read(path)? {
+        planned.entry(pkg).or_default().extend(ids);
+    }
+    Ok(())
+}
 
 /// The plan file at `path`.
 pub fn read(path: &Path) -> Result<Planned, String> {

@@ -968,7 +968,7 @@ fn narrowed(mut doc: Value, shard: Option<invoke::Shard>) -> Value {
         items.retain(|id, _| shard.owns(id));
     }
     if let Some(claims) = doc.get_mut("assertions").and_then(Value::as_array_mut) {
-        claims.retain(|a| a["id"].as_str().is_none_or(|id| shard.owns(id)));
+        claims.retain(|a| shard.owns_claim(a["id"].as_str().unwrap_or("")));
     }
     doc
 }
@@ -1522,7 +1522,7 @@ fn identical_pass_cache(
             items.retain(|id, _| shard.owns(id));
         }
         if let Some(assertions) = doc["assertions"].as_array_mut() {
-            assertions.retain(|a| a["id"].as_str().is_none_or(|id| shard.owns(id)));
+            assertions.retain(|a| shard.owns_claim(a["id"].as_str().unwrap_or("")));
         }
         if let Some(executed) = doc["executed"].as_object_mut() {
             executed.retain(|id, _| shard.owns(id));

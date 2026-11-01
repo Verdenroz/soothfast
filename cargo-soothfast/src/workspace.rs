@@ -149,6 +149,19 @@ pub(crate) fn bench_target_in(meta: &Value, pkg: &str, target: &str) -> bool {
         })
 }
 
+/// The source file of `pkg`'s bench target `target`, from `meta`.
+pub(crate) fn bench_src_in(meta: &Value, pkg: &str, target: &str) -> Option<String> {
+    let packages = meta["packages"].as_array().into_iter().flatten();
+    let targets = packages
+        .filter(|p| p["name"].as_str() == Some(pkg))
+        .flat_map(|p| p["targets"].as_array().into_iter().flatten());
+    let mut benches = targets.filter(|t| {
+        let kinds = t["kind"].as_array().into_iter().flatten();
+        t["name"].as_str() == Some(target) && kinds.into_iter().any(|k| k == "bench")
+    });
+    benches.next()?["src_path"].as_str().map(str::to_string)
+}
+
 /// Every member with a bench target named `target`, by package name, in
 /// name order: the packages a gate without `-p` runs. Read once per process
 /// and tree; a failed read is asked again.

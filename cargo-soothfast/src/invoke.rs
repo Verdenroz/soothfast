@@ -69,6 +69,16 @@ impl Shard {
     pub fn owns(&self, id: &str) -> bool {
         soothfast_registry::fnv1a(id.as_bytes()) % self.count == self.index - 1
     }
+
+    /// Whether a claim on `id` is this shard's to keep. One that names no
+    /// item, which every shard reports, is shard 1's alone.
+    pub fn owns_claim(&self, id: &str) -> bool {
+        if id.is_empty() {
+            self.index == 1
+        } else {
+            self.owns(id)
+        }
+    }
 }
 
 impl std::fmt::Display for Shard {
@@ -1056,10 +1066,7 @@ pub fn save_baseline_in(
     scope: SaveScope,
 ) -> io::Result<PathBuf> {
     let mut new_items = saved_items(run);
-    if let SaveScope::BenchFull(Some(pkg))
-    | SaveScope::BenchFiltered(Some(pkg))
-    | SaveScope::Buildcost(Some(pkg)) = &scope
-    {
+    if let SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg)) = &scope {
         for item in new_items
             .as_object_mut()
             .into_iter()

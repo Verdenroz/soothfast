@@ -110,13 +110,14 @@ commands:
            it built against what was already stored)
   import   --from jmh|pyperf|pytest-benchmark|vitest FILE [--prefix P]
            (--save-baseline NAME | --out FILE)
-           [--failed [--base-results FILE] [--prior-baseline NAME]]
+           [--failed [--save-failed] [--base-results FILE] [--prior-baseline NAME]]
            (turns another harness's benchmark results into walltime items
            named PREFIX::NAME; the prefix defaults to the format; --failed
            writes no numbers, only a gate-failed entry naming FILE's items,
            else the merge-base results', else the prefix's ids in the prior
-           baseline; with none, claims on the prefix's items fail; the two
-           flags need --failed)
+           baseline; with none, claims on the prefix's items fail;
+           --save-failed lists them as save-failed instead, for a passing
+           gate whose numbers could not be saved; the flags need --failed)
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]
@@ -151,18 +152,22 @@ commands:
            the threshold, past measurement noise, on the same reviewed
            change; --only names outside the recordable set are skipped, not
            fatal, and the command still exits 3, not 0, if any were)
-  baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] FILE...
+  baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT]
+           [--plan FILE]... FILE...
            (one baseline from exactly these files: the shard baselines of
            one gate split N ways, plus imported ones; a shard that saved
-           nothing leaves its items unmeasured; --not-gated EVENT lists each
-           package no file accounts for as not-gated-on-event; exits 2 on a
-           corrupt file, 3 on a file from another split)
+           nothing leaves its items unmeasured, named from the --plan files;
+           --not-gated EVENT lists each package no file accounts for as
+           not-gated-on-event; exits 2 on a corrupt file or a plan file
+           passed as a baseline, 3 on a file from another split)
   baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]
            (marks PKG unmeasured for REASON, naming the items its bench binary
            lists when it builds; fails when it cannot list them)
   baseline plan --out FILE -p PKG [--features F]
-           (adds PKG's bench listing to plan FILE, which the merge reads to
-           name the items of a leg that saved nothing)
+           (adds PKG's bench listing to plan FILE, which `baseline merge
+           --plan FILE` reads to name the items of a leg that saved nothing;
+           lists the stored executable, or one already built when the store
+           cannot hold it, and never builds)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE

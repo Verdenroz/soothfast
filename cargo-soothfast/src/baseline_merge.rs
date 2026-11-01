@@ -87,7 +87,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("plan") => plan::cmd(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] [--plan FILE] FILE...\n       \
+                "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] [--plan FILE]... FILE...\n       \
                  cargo soothfast baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]\n       \
                  cargo soothfast baseline plan --out FILE -p PKG [--features F]"
             );
@@ -175,9 +175,12 @@ fn merge_cmd(args: &[String]) -> i32 {
                 Some(event) => not_gated = Some(event.clone()),
                 None => return fail("--not-gated needs the event name"),
             },
-            "--plan" => match it.next().map(|f| (f, plan::read(Path::new(f)))) {
-                Some((_, Ok(p))) => planned = p,
-                Some((f, Err(e))) => return fail(&format!("plan file {f}: {e}")),
+            "--plan" => match it.next() {
+                Some(f) => {
+                    if let Err(e) = plan::read_into(Path::new(f), &mut planned) {
+                        return fail(&format!("plan file {f}: {e}"));
+                    }
+                }
                 None => return fail("--plan needs the plan file"),
             },
             other if !other.starts_with('-') => files.push(PathBuf::from(other)),
@@ -345,7 +348,10 @@ fn merge_on(
             all_items.insert(id.clone(), v.clone());
         }
         for a in doc["assertions"].as_array().into_iter().flatten() {
-            if a["id"].is_string() || !assertions.contains(a) {
+            let idless = |a: &Value| a["id"].as_str().is_none_or(str::is_empty);
+            let same =
+                |b: &Value| idless(b) && b["kind"] == a["kind"] && b["detail"] == a["detail"];
+            if !idless(a) || !assertions.iter().any(same) {
                 assertions.push(a.clone());
             }
         }

@@ -80,12 +80,13 @@
             "type": "string"
           },
           "reason": {
-            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty. `claims-skipped`: `docs check --skip-claims` evaluated no claim. `not-gated-on-event`: the cargo gate measures only on a pull request or a default-branch push, and this event was neither. `stored-run`: written by older releases for a HEAD run read from the run cache, read as not evaluated.",
+            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `save-failed`: the gate passed, but its numbers could not be saved. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty. `claims-skipped`: `docs check --skip-claims` evaluated no claim. `not-gated-on-event`: the cargo gate measures only on a pull request or a default-branch push, and this event was neither. `stored-run`: written by older releases for a HEAD run read from the run cache, read as not evaluated.",
             "enum": [
               "identical-binaries",
               "reused-walltime",
               "shard-missing",
               "gate-failed",
+              "save-failed",
               "no-parent",
               "no-measurement",
               "claims-skipped",
