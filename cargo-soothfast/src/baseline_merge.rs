@@ -73,17 +73,72 @@ enum MergeError {
 }
 
 pub fn run(args: &[String]) -> i32 {
-    if args.first().map(String::as_str) != Some("merge") {
-        eprintln!(
-            "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] FILE..."
-        );
-        return 2;
+    match args.first().map(String::as_str) {
+        Some("merge") => merge_cmd(&args[1..]),
+        Some("mark") => mark_cmd(&args[1..]),
+        _ => {
+            eprintln!(
+                "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] FILE...\n       \
+                 cargo soothfast baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]"
+            );
+            2
+        }
     }
+}
+
+/// `baseline mark`: list every item of `-p PKG`'s bench binary as unmeasured
+/// in baseline NAME, for a leg that ran no gate to save it.
+fn mark_cmd(args: &[String]) -> i32 {
+    let mut common = invoke::CommonArgs::default();
+    let (mut into, mut reason, mut detail) = (None, None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if common.try_parse(a, &mut it) {
+            continue;
+        }
+        match a.as_str() {
+            "--into" => into = it.next().cloned(),
+            "--reason" => reason = it.next().and_then(|r| Reason::parse(r)),
+            "--detail" => detail = it.next().cloned(),
+            other => return fail(&format!("unknown baseline mark arg {other:?}")),
+        }
+    }
+    let (Some(into), Some(pkg), Some(reason)) = (into, common.pkg.clone(), reason) else {
+        return fail("baseline mark needs --into NAME, -p PKG and a known --reason");
+    };
+    let pkg = pkg.replace('-', "_");
+    let items: Vec<String> = invoke::bench_executable(&common, None, None)
+        .and_then(|exe| invoke::listed_ids(&exe, common.filter.as_deref()))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|id| invoke::id_pkg(id) == pkg)
+        .collect();
+    let entry = Unmeasured {
+        package: pkg.clone(),
+        reason,
+        detail: detail.unwrap_or_else(|| format!("{} for {pkg}", reason.as_str())),
+        items,
+        metrics: Vec::new(),
+    };
+    let root = invoke::project_root();
+    if let Err(e) = unmeasured::mark_in(&root, &into, &[pkg], std::slice::from_ref(&entry)) {
+        return fail(&format!("cannot write baseline {into:?}: {e}"));
+    }
+    println!(
+        "baseline mark: {} item(s) of {} as {} in {into}",
+        entry.items.len(),
+        entry.package,
+        reason.as_str()
+    );
+    0
+}
+
+fn merge_cmd(args: &[String]) -> i32 {
     let mut into = None;
     let mut expect = 1u64;
     let mut packages = Vec::new();
     let mut files = Vec::new();
-    let mut it = args[1..].iter();
+    let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--into" => into = it.next().cloned(),
@@ -255,6 +310,7 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
             reason: Reason::NoMeasurement,
             detail: format!("{which} saved no measurement of {pkg}"),
             items: Vec::new(),
+            metrics: Vec::new(),
         }];
     }
     missing
@@ -264,6 +320,7 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
             reason: Reason::ShardMissing,
             detail: format!("shard {shard} saved no measurement of {pkg}"),
             items: listed.iter().filter(|id| shard.owns(id)).cloned().collect(),
+            metrics: Vec::new(),
         })
         .filter(|u| !u.items.is_empty())
         .collect()

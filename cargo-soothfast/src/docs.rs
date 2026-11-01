@@ -493,16 +493,13 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
             .map(|(f, d, _)| (f.as_str(), d))
             .collect();
         let files: Vec<&str> = docs.iter().map(|(f, _)| *f).collect();
-        let unchanged = match &a.against_ref {
-            Some(against) => match docs_claims::unchanged_since(&scanned.root, against, &files) {
-                Ok(u) => u,
-                Err(e) => return err(&e),
-            },
-            None => BTreeSet::new(),
+        let unchanged = || match &a.against_ref {
+            Some(against) => docs_claims::unchanged_since(&scanned.root, against, &files),
+            None => Ok(BTreeSet::new()),
         };
-        match docs_claims::check(&docs, baseline.as_ref(), &unchanged) {
+        match docs_claims::check(&docs, baseline.as_ref(), unchanged) {
             Ok(n) => failures += n,
-            Err(e) => return err(&format!("baseline {:?}: {e}", a.baseline)),
+            Err(e) => return err(&e),
         }
     }
 

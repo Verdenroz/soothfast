@@ -70,7 +70,7 @@
       }
     },
     "unmeasured": {
-      "description": "Items the measured bench binaries contain but whose measurement this baseline does not hold, one entry per package and reason. `docs check` reports an unchanged claim on one of them as not evaluated; a new or edited claim still fails.",
+      "description": "Items the measured bench binaries contain whose numbers, or some of whose metrics, this baseline does not hold, one entry per package and reason. `docs check` reports an unchanged claim on one of them as not evaluated; a new or edited claim still fails.",
       "type": "array",
       "items": {
         "type": "object",
@@ -80,8 +80,20 @@
             "type": "string"
           },
           "reason": {
-            "description": "`identical-binaries`: the gate took one pass without the gating counters. `stored-run`: HEAD's run came from the run cache. `shard-missing`: the shard owning the items saved nothing. `no-measurement`: no leg saved anything of the package, so `items` is empty.",
-            "enum": ["identical-binaries", "stored-run", "shard-missing", "no-measurement"]
+            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty.",
+            "enum": [
+              "identical-binaries",
+              "reused-walltime",
+              "shard-missing",
+              "gate-failed",
+              "no-parent",
+              "no-measurement"
+            ]
+          },
+          "metrics": {
+            "description": "Backend names (`walltime`) or `backend.metric` the entry covers. Absent for every metric of the items.",
+            "type": "array",
+            "items": { "type": "string" }
           },
           "detail": {
             "description": "Human-readable reason, naming the shard or run.",

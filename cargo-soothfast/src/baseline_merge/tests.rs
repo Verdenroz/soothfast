@@ -91,6 +91,29 @@ fn an_unsharded_baseline_is_shard_one_of_one() {
 }
 
 #[test]
+fn a_failed_gate_s_stub_accounts_for_its_package_sharded_or_not() {
+    let stub = |shard: Option<&str>| {
+        let mut doc = json!({
+            "version": 1,
+            "items": {},
+            "unmeasured": [{ "package": "core", "reason": "gate-failed", "detail": "failed", "items": ["core::a"] }],
+        });
+        if let Some(s) = shard {
+            doc["shard"] = json!(s);
+            doc["listed"] = json!({ "core": [] });
+        }
+        doc
+    };
+    let unsharded = merge(&[("head.json".into(), stub(None))], 1, &packages()).unwrap();
+    let sharded = merge(&[("a.json".into(), stub(Some("1/1")))], 1, &packages()).unwrap();
+    for merged in [unsharded, sharded] {
+        let entries = unmeasured::read(&merged).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].reason, Reason::GateFailed);
+    }
+}
+
+#[test]
 fn an_imported_baseline_merges_beside_the_shards_without_counting_as_one() {
     let imported = json!({
         "version": 1,

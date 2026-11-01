@@ -453,18 +453,24 @@ fn shard_ids(
     dir: Option<&Path>,
     target_dir: Option<&Path>,
 ) -> Option<Vec<String>> {
-    static LISTED: OnceLock<Mutex<HashMap<PathBuf, Vec<String>>>> = OnceLock::new();
     let exe = bench_executable(common, dir, target_dir)?;
-    let mut memo = LISTED.get_or_init(Default::default).lock().ok()?;
-    if let Some(ids) = memo.get(&exe) {
-        return Some(ids.clone());
-    }
-    let listed = list_items(&exe, common.filter.as_deref())?;
+    let listed = listed_ids(&exe, common.filter.as_deref())?;
     if listed.is_empty() {
         return None;
     }
-    let ids: Vec<String> = listed.into_keys().filter(|id| shard.owns(id)).collect();
-    memo.insert(exe, ids.clone());
+    Some(listed.into_iter().filter(|id| shard.owns(id)).collect())
+}
+
+/// Every item id `exe` lists under `filter`, whichever shard owns it, listed
+/// once per binary.
+pub fn listed_ids(exe: &Path, filter: Option<&str>) -> Option<Vec<String>> {
+    static LISTED: OnceLock<Mutex<HashMap<PathBuf, Vec<String>>>> = OnceLock::new();
+    let mut memo = LISTED.get_or_init(Default::default).lock().ok()?;
+    if let Some(ids) = memo.get(exe) {
+        return Some(ids.clone());
+    }
+    let ids: Vec<String> = list_items(exe, filter)?.into_keys().collect();
+    memo.insert(exe.to_path_buf(), ids.clone());
     Some(ids)
 }
 

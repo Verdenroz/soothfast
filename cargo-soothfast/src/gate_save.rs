@@ -1,153 +1,218 @@
-//! What a passing gate's `--save-baseline` writes: HEAD's run when this gate
-//! measured it in full, otherwise its items as `unmeasured` with the reason.
-//! A `--shard` gate also stamps the file with its shard and the items its
-//! bench binary lists, which `baseline merge` needs to name a missing shard's.
+//! What a gate's `--save-baseline` writes. A passing gate saves every number
+//! measured from code proven identical to HEAD's: counters from a stored run
+//! or the item cache count, walltime from either does not and is listed
+//! `unmeasured` per metric instead. A failing or errored gate saves no
+//! numbers, only a `gate-failed` entry naming the package's items. A `--shard`
+//! gate also stamps the file for `baseline merge`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::baseline_merge;
-use crate::invoke::{self, CommonArgs, Run};
-use crate::unmeasured::{self, Reason};
+use crate::headrun;
+use crate::invoke::{self, CommonArgs, Reused, Run};
+use crate::unmeasured::{self, Reason, Unmeasured};
 
-/// Where a gate's HEAD run came from, which decides whether it is baseline
-/// material.
+/// Where a gate's HEAD run came from.
 #[derive(Debug, PartialEq)]
 pub enum HeadRun {
-    /// Measured by this gate, gating counters included.
+    /// Measured by this gate, gating counters included. Items spliced from
+    /// the item cache say so in their own `reused`.
     Measured,
-    /// The identical-binaries short circuit: one pass without the counters.
+    /// The identical-binaries pass, which took no gating counters.
     Uncounted,
-    /// Read from the run cache, labelled with what it was measured from.
+    /// Read whole from the run cache, labelled with what it was measured from.
     Stored(String),
 }
 
-/// What a `--save-baseline` request writes. A failing run writes nothing,
-/// since saving it would ratify its own regression.
-#[derive(Debug, PartialEq)]
-pub enum SaveVerdict {
-    Save,
-    RefuseFailing,
-    Unmeasured(Reason, String),
-}
+/// The metric a reused item's walltime is reported under.
+const WALLTIME: &str = "walltime.median_ns";
 
-pub fn save_verdict(failures: u32, head: &HeadRun) -> SaveVerdict {
-    match head {
-        _ if failures > 0 => SaveVerdict::RefuseFailing,
-        HeadRun::Measured => SaveVerdict::Save,
-        HeadRun::Uncounted => SaveVerdict::Unmeasured(
-            Reason::IdenticalBinaries,
-            "bench binaries identical to the merge-base, so the gate took no gating counters"
-                .into(),
-        ),
-        HeadRun::Stored(from) => SaveVerdict::Unmeasured(
-            Reason::StoredRun,
-            format!("HEAD's run came from the run cache ({from}), not from this gate"),
-        ),
-    }
-}
-
-/// Act on a `--save-baseline NAME` request under `root` as `verdict` decides.
+/// Act on `--save-baseline NAME` under `root` for a gate that ended with
+/// `failures`. `listed` is every item the bench binary lists, if it was read.
 pub fn save_head(
     root: &Path,
     name: &str,
     current: &Run,
+    source: &HeadRun,
     common: &CommonArgs,
-    verdict: SaveVerdict,
+    listed: Option<&[String]>,
+    failures: u32,
 ) -> Result<(), String> {
-    if verdict == SaveVerdict::RefuseFailing {
+    if let Some(shard) = common.shard {
+        baseline_merge::check_shard_in(root, name, shard)?;
+    }
+    if failures > 0 && common.backend.as_deref() == Some("buildcost") {
         eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
         return Ok(());
     }
-    let shard = match common.shard {
-        Some(shard) => {
-            baseline_merge::check_shard_in(root, name, shard)?;
-            Some((shard, listed_ids(common)?))
-        }
-        None => None,
-    };
-    match verdict {
-        SaveVerdict::Unmeasured(reason, detail) => {
-            let entries = unmeasured::by_package(reason, &detail, current.items.keys());
-            unmeasured::mark_in(root, name, &entries).map_err(|e| e.to_string())?;
-            for e in &entries {
-                println!(
-                    "gate: baseline {name:?} holds no measurement of {} item(s) of {}: {detail}",
-                    e.items.len(),
-                    e.package
-                );
-            }
-        }
-        _ => {
-            let scope = invoke::SaveScope::of(common);
-            let path =
-                invoke::save_baseline_in(root, name, current, scope).map_err(|e| e.to_string())?;
-            println!("baseline saved: {}", path.display());
-        }
+    if failures > 0 {
+        eprintln!("soothfast: saving no numbers in baseline {name:?}: gate failed");
+        let ids: Vec<String> = match listed {
+            Some(ids) => ids.to_vec(),
+            None => current.items.keys().cloned().collect(),
+        };
+        mark_failed(root, name, common, &ids, "the gate failed")?;
+    } else {
+        let (run, entries) = baseline_material(current, source);
+        let scope = invoke::SaveScope::of(common);
+        let path = invoke::save_baseline_in(root, name, &run, scope).map_err(|e| e.to_string())?;
+        unmeasured::append_in(root, name, &entries).map_err(|e| e.to_string())?;
+        println!("baseline saved: {}", path.display());
+        report(name, &entries);
     }
-    if let Some((shard, listed)) = shard {
-        baseline_merge::stamp_shard_in(root, name, shard, &listed).map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    stamp(root, name, common, listed)
 }
 
-/// Every item the bench binary lists, whichever shard owns it.
-fn listed_ids(common: &CommonArgs) -> Result<Vec<String>, String> {
-    invoke::bench_executable(common, None, None)
-        .and_then(|exe| invoke::list_items(&exe, common.filter.as_deref()))
-        .map(|items| items.into_keys().collect())
-        .ok_or_else(|| "cannot list the bench binary's items for the shard's baseline".into())
+/// `--save-baseline NAME` for a gate that errored before it had a run.
+pub fn save_errored(
+    root: &Path,
+    name: &str,
+    common: &CommonArgs,
+    listed: Option<&[String]>,
+    why: &str,
+) -> Result<(), String> {
+    if let Some(shard) = common.shard {
+        baseline_merge::check_shard_in(root, name, shard)?;
+    }
+    let ids = listed.unwrap_or_default();
+    mark_failed(root, name, common, ids, &format!("the gate errored: {why}"))?;
+    stamp(root, name, common, listed)
+}
+
+fn stamp(
+    root: &Path,
+    name: &str,
+    common: &CommonArgs,
+    listed: Option<&[String]>,
+) -> Result<(), String> {
+    match common.shard {
+        Some(shard) => {
+            baseline_merge::stamp_shard_in(root, name, shard, listed.unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        None => Ok(()),
+    }
+}
+
+/// Replace the package's numbers in baseline `name` with one `gate-failed`
+/// entry naming the items of `ids` this gate owns.
+fn mark_failed(
+    root: &Path,
+    name: &str,
+    common: &CommonArgs,
+    ids: &[String],
+    detail: &str,
+) -> Result<(), String> {
+    let Some(pkg) = common.pkg.as_ref().map(|p| p.replace('-', "_")) else {
+        return Ok(());
+    };
+    let items: Vec<String> = ids
+        .iter()
+        .filter(|id| invoke::id_pkg(id) == pkg && common.shard.is_none_or(|s| s.owns(id)))
+        .cloned()
+        .collect();
+    let entry = Unmeasured {
+        package: pkg.clone(),
+        reason: Reason::GateFailed,
+        detail: format!("{detail}, so {pkg} saved no numbers"),
+        items,
+        metrics: Vec::new(),
+    };
+    report(name, std::slice::from_ref(&entry));
+    unmeasured::mark_in(root, name, &[pkg], &[entry]).map_err(|e| e.to_string())
+}
+
+fn report(name: &str, entries: &[Unmeasured]) {
+    for e in entries {
+        println!(
+            "gate: baseline {name:?} lists {} item(s) of {} as {} ({}): {}",
+            e.items.len(),
+            e.package,
+            e.reason.as_str(),
+            e.metrics.join(", "),
+            e.detail
+        );
+    }
+}
+
+/// What of `current` a baseline may hold, and the entries for what it may
+/// not. Walltime another run measured is dropped, and so are the verdicts on
+/// those items; a complexity verdict is kept only where this run took the
+/// counters.
+fn baseline_material(current: &Run, source: &HeadRun) -> (Run, Vec<Unmeasured>) {
+    let stored = match source {
+        HeadRun::Stored(from) => Some(from),
+        _ => None,
+    };
+    let mut items = BTreeMap::new();
+    let mut reused_wall = Vec::new();
+    for (id, m) in &current.items {
+        let mut m = m.clone();
+        if let Some(from) = stored {
+            m.reused = Some(Reused {
+                from: from.clone(),
+                metrics: headrun::reused_metrics(&m, true),
+            });
+        }
+        let wall_reused = m
+            .reused
+            .as_ref()
+            .is_some_and(|r| r.metrics.contains(&WALLTIME));
+        if wall_reused && m.median_ns.is_some() {
+            m.median_ns = None;
+            m.mad_ns = None;
+            m.p99_ns = None;
+            m.wall_rounds.clear();
+            reused_wall.push(id.clone());
+        }
+        if let Some(r) = &mut m.reused {
+            r.metrics.retain(|metric| *metric != WALLTIME);
+        }
+        items.insert(id.clone(), m);
+    }
+    let counted_here = *source == HeadRun::Measured && current.reused.is_none();
+    let assertions = current
+        .assertions
+        .iter()
+        .filter(|a| !reused_wall.contains(&a.id))
+        .filter(|a| counted_here || a.kind != "complexity")
+        .cloned()
+        .collect();
+    let mut entries = Vec::new();
+    if !reused_wall.is_empty() {
+        let detail = match stored {
+            Some(from) => {
+                format!("HEAD's run came from the run cache ({from}); its walltime is that run's")
+            }
+            None => "spliced from the item cache; its walltime is another run's".to_string(),
+        };
+        entries.extend(unmeasured::by_package(
+            Reason::ReusedWalltime,
+            &detail,
+            &["walltime"],
+            &reused_wall,
+        ));
+    }
+    if *source == HeadRun::Uncounted {
+        entries.extend(unmeasured::by_package(
+            Reason::IdenticalBinaries,
+            "bench binaries identical to the merge-base, and no stored run of them held the gating counters",
+            &["perfcnt", "callgrind"],
+            current.items.keys(),
+        ));
+    }
+    let run = Run {
+        noise_pct: current.noise_pct,
+        build: current.build.clone(),
+        gating_backend: current.gating_backend.clone(),
+        items,
+        assertions,
+        executed: BTreeMap::new(),
+        reused: current.reused.clone(),
+    };
+    (run, entries)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_failing_run_is_never_saved() {
-        assert_eq!(
-            save_verdict(1, &HeadRun::Measured),
-            SaveVerdict::RefuseFailing
-        );
-        assert_eq!(
-            save_verdict(3, &HeadRun::Uncounted),
-            SaveVerdict::RefuseFailing
-        );
-        assert_eq!(
-            save_verdict(2, &HeadRun::Stored("abc".into())),
-            SaveVerdict::RefuseFailing
-        );
-    }
-
-    #[test]
-    fn only_a_run_this_gate_measured_in_full_is_saved() {
-        assert_eq!(save_verdict(0, &HeadRun::Measured), SaveVerdict::Save);
-        assert!(matches!(
-            save_verdict(0, &HeadRun::Uncounted),
-            SaveVerdict::Unmeasured(Reason::IdenticalBinaries, _)
-        ));
-        assert!(matches!(
-            save_verdict(0, &HeadRun::Stored("abc".into())),
-            SaveVerdict::Unmeasured(Reason::StoredRun, _)
-        ));
-    }
-
-    #[test]
-    fn an_uncounted_pass_lists_its_items_as_unmeasured() {
-        let root = std::env::temp_dir().join(format!("soothfast-uncounted-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let mut run = Run::default();
-        run.items.insert("core::a".into(), Default::default());
-        let common = CommonArgs {
-            pkg: Some("core".into()),
-            ..CommonArgs::default()
-        };
-        let verdict = save_verdict(0, &HeadRun::Uncounted);
-        save_head(&root, "head", &run, &common, verdict).unwrap();
-        let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-        let entries = unmeasured::read(&doc).unwrap();
-        assert_eq!(entries[0].items, ["core::a"]);
-        assert_eq!(entries[0].reason, Reason::IdenticalBinaries);
-        assert_eq!(doc["items"], serde_json::json!({}));
-        let _ = std::fs::remove_dir_all(&root);
-    }
-}
+mod tests;

@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::buildstamp;
 use crate::gate_config;
 use crate::gate_lock;
-use crate::gate_save::{HeadRun, save_head, save_verdict};
+use crate::gate_save::{HeadRun, save_errored, save_head};
 use crate::headrun::{
     self, RECOUNT, Settled, binary_digest, cache_head, cache_head_doc, head_from_runcache, ref_doc,
     settle, settled_doc,
@@ -217,17 +217,21 @@ pub fn run(args: &[String]) -> i32 {
             );
             match newly_measured(&g.common) {
                 Ok(resolved) => resolved,
-                Err(e) => return err(&e),
+                Err(e) => return errored(&g, &e),
             }
         }
-        Err(e) => return err(&e),
+        Err(e) => return errored(&g, &e),
     };
     let Resolved {
         reference,
         current,
         head,
         harness,
+        exe,
     } = resolved;
+    let listed = exe
+        .as_deref()
+        .and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
     // A gate that measured nothing must never pass: a typo'd --filter, an
     // empty registry, or lost records would otherwise be permanently green.
     // A shard that owns nothing now still fails on any item it owned that is gone.
@@ -236,7 +240,10 @@ pub fn run(args: &[String]) -> i32 {
             println!("gate: shard {shard} owns no item now; checking none it owned is gone");
         }
         _ if current.items.is_empty() => {
-            return err("measured 0 items — check --filter / registry setup; refusing to gate");
+            return errored(
+                &g,
+                "measured 0 items — check --filter / registry setup; refusing to gate",
+            );
         }
         _ => {}
     }
@@ -315,10 +322,12 @@ pub fn run(args: &[String]) -> i32 {
 
     write_gate_status(failures);
     if let Some(name) = &g.save_baseline {
-        let verdict = save_verdict(failures, &head);
         let saved = invoke::workspace_root()
             .map_err(|e| e.to_string())
-            .and_then(|root| save_head(&root, name, &current, &g.common, verdict));
+            .and_then(|root| {
+                let listed = listed.as_deref();
+                save_head(&root, name, &current, &head, &g.common, listed, failures)
+            });
         if let Err(e) = saved {
             eprintln!("soothfast: failed to save baseline: {e}");
             return 1;
@@ -615,6 +624,8 @@ struct Resolved {
     current: Run,
     head: HeadRun,
     harness: invoke::HarnessSync,
+    /// HEAD's probed bench executable, which lists the items a save names.
+    exe: Option<std::path::PathBuf>,
 }
 
 /// HEAD's run from the run cache, or measured now with `measure`.
@@ -665,6 +676,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
             current,
             head: HeadRun::Measured,
             harness: invoke::HarnessSync::default(),
+            exe: None,
         }));
     }
     if let Some(refname) = &g.against_ref {
@@ -689,6 +701,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
         current,
         head: HeadRun::Measured,
         harness: invoke::HarnessSync::default(),
+        exe: invoke::bench_executable(&g.common, None, None),
     }))
 }
 
@@ -966,7 +979,10 @@ fn newly_measured(common: &CommonArgs) -> Result<Resolved, String> {
         let settled = settle("gate", "HEAD's run", &head, || measure(RECOUNT).ok());
         cache_head(&runs, &head, digest.as_deref(), &settled);
     }
-    Ok(self_compared(head))
+    Ok(Resolved {
+        exe,
+        ..self_compared(head)
+    })
 }
 
 /// `head` as both sides of a comparison, so every delta is zero.
@@ -976,6 +992,7 @@ fn self_compared(head: Run) -> Resolved {
         current: head,
         head: HeadRun::Measured,
         harness: invoke::HarnessSync::default(),
+        exe: None,
     }
 }
 
@@ -999,10 +1016,12 @@ fn measure_ref_interleaved(
     const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
     enum Ref {
         NoBenchTarget,
-        /// The one pass, and whether it carries the gating counters.
+        /// The one pass, whether it carries the gating counters, and the run
+        /// stored for the identical binary with its label.
         IdenticalBinaries {
             run: Result<Run, String>,
             counted: bool,
+            stored: Option<Box<(Value, String)>>,
         },
         /// Reference served by binary identity rather than by commit.
         Cached(Value),
@@ -1072,6 +1091,7 @@ fn measure_ref_interleaved(
             reference: doc,
             current: head,
             head: source,
+            exe: head_exe.clone(),
         }));
     }
 
@@ -1149,7 +1169,16 @@ fn measure_ref_interleaved(
                     cache_head_doc(&runs, &doc, head_dig.as_deref());
                 }
             }
-            return Ok((Ref::IdenticalBinaries { run, counted }, digests, harness));
+            let stored = by_binary.map(|doc| Box::new((doc, format!("binary {}", d.base))));
+            return Ok((
+                Ref::IdenticalBinaries {
+                    run,
+                    counted,
+                    stored,
+                },
+                digests,
+                harness,
+            ));
         }
         if let Some(doc) = by_binary {
             println!("gate: reusing a run measured from the same merge-base binary");
@@ -1235,17 +1264,19 @@ fn measure_ref_interleaved(
         Ref::NoBenchTarget => return Ok(None),
         // One cheap pass serves as both sides: real items and assertions,
         // zero deltas by construction.
-        Ref::IdenticalBinaries { run, counted } => {
-            let head = run?;
+        Ref::IdenticalBinaries {
+            run,
+            counted,
+            stored,
+        } => {
+            let pass = run?;
+            let (head, source) = identical_head(pass, counted, stored);
             return Ok(Some(Resolved {
                 reference: ref_doc(&head),
                 current: head,
-                head: if counted {
-                    HeadRun::Measured
-                } else {
-                    HeadRun::Uncounted
-                },
+                head: source,
                 harness,
+                exe: head_exe.clone(),
             }));
         }
         Ref::Cached(doc) => {
@@ -1260,6 +1291,7 @@ fn measure_ref_interleaved(
                 current: head,
                 head: source,
                 harness,
+                exe: head_exe.clone(),
             }));
         }
         Ref::Rounds(rounds, timing_rounds, head_settled, base_settled) => {
@@ -1301,6 +1333,7 @@ fn measure_ref_interleaved(
         current: head,
         head: HeadRun::Measured,
         harness,
+        exe: head_exe,
     }))
 }
 
@@ -1399,6 +1432,28 @@ fn identical_pass_cache(stored: Option<&Value>, pass: &Run, counted: bool) -> Op
         Some(ref_doc(pass))
     } else {
         stored.cloned()
+    }
+}
+
+/// HEAD's run from the identical-binaries pass. A pass without the gating
+/// counters takes them from the run stored for the byte-identical binary.
+fn identical_head(
+    pass: Run,
+    counted: bool,
+    stored: Option<Box<(Value, String)>>,
+) -> (Run, HeadRun) {
+    if counted {
+        return (pass, HeadRun::Measured);
+    }
+    let Some((doc, from)) = stored.map(|s| *s) else {
+        return (pass, HeadRun::Uncounted);
+    };
+    match headrun::merge_stored(&doc, &from, pass) {
+        Ok(run) => {
+            println!("gate: counters for the identical binaries read from its stored run ({from})");
+            (run, HeadRun::Measured)
+        }
+        Err(pass) => (*pass, HeadRun::Uncounted),
     }
 }
 
@@ -1999,6 +2054,22 @@ fn err(msg: &str) -> i32 {
     2
 }
 
+/// `err` for a gate that never reached a verdict. Its `--save-baseline`
+/// still names the package's items as gate-failed, so no claim on them reads
+/// as measured.
+fn errored(g: &GateArgs, msg: &str) -> i32 {
+    if let (Some(name), Ok(root)) = (&g.save_baseline, invoke::workspace_root())
+        && g.common.backend.as_deref() != Some("buildcost")
+    {
+        let listed = invoke::bench_executable(&g.common, None, None)
+            .and_then(|exe| invoke::listed_ids(&exe, g.common.filter.as_deref()));
+        if let Err(e) = save_errored(&root, name, &g.common, listed.as_deref(), msg) {
+            eprintln!("soothfast: failed to save baseline: {e}");
+        }
+    }
+    err(msg)
+}
+
 /// Like `err`, but for a `gate accept --only` invocation that recorded
 /// nothing: distinct from `2` (a usage/config error) so a CI step doesn't
 /// mistake "named benches, none eligible" for full success or bad usage.
@@ -2015,7 +2086,7 @@ mod tests {
     };
     use crate::buildstamp;
     use crate::gate_lock;
-    use crate::gate_save::{save_head, save_verdict};
+    use crate::gate_save::save_head;
     use crate::invoke::{self, CommonArgs, HarnessSync, ItemMetrics, Run};
     use serde_json::{Value, json};
 
@@ -2770,8 +2841,17 @@ mod tests {
             pkg: Some("pkg".into()),
             ..CommonArgs::default()
         };
-        let verdict = save_verdict(failures, &resolved.head);
-        save_head(root, "head", &resolved.current, &common, verdict).unwrap();
+        let current = &resolved.current;
+        save_head(
+            root,
+            "head",
+            current,
+            &resolved.head,
+            &common,
+            None,
+            failures,
+        )
+        .unwrap();
         failures
     }
 
@@ -2795,10 +2875,38 @@ mod tests {
     }
 
     #[test]
-    fn a_failing_new_crate_fails_the_gate_and_saves_nothing() {
+    fn an_uncounted_identical_pass_takes_the_identical_binary_s_stored_counters() {
+        use crate::gate_save::HeadRun;
+        let pass = || {
+            run_with(ItemMetrics {
+                median_ns: Some(5.0),
+                ..ItemMetrics::default()
+            })
+        };
+        let stored =
+            json!({ "items": { "pkg::bt_base_to_htf_index": { "callgrind": { "ir": 7 } } } });
+        let (run, source) =
+            super::identical_head(pass(), false, Some(Box::new((stored, "binary abc".into()))));
+        assert_eq!(source, HeadRun::Measured);
+        assert_eq!(run.items["pkg::bt_base_to_htf_index"].ir, Some(7));
+        assert_eq!(run.items["pkg::bt_base_to_htf_index"].median_ns, Some(5.0));
+        assert_eq!(run.reused.unwrap().from, "binary abc");
+        let (_, source) = super::identical_head(pass(), false, None);
+        assert_eq!(source, HeadRun::Uncounted);
+    }
+
+    #[test]
+    fn a_failing_new_crate_fails_the_gate_and_saves_no_numbers() {
         let root = scratch("new-crate-fail");
         assert_eq!(gate_new_crate(&root, false), 1);
-        assert!(invoke::load_baseline_in(&root, "head").unwrap().is_none());
+        let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+        assert_eq!(saved["items"], json!({}));
+        assert_eq!(saved["unmeasured"][0]["reason"], "gate-failed");
+        assert_eq!(
+            saved["unmeasured"][0]["items"][0],
+            "pkg::bt_base_to_htf_index"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -124,9 +124,10 @@ commands:
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
            [--codegen-units N|inherit] [--no-reuse-base] [--allow-gone]
            [--allow-harness-change] [--no-item-cache]
-           (--save-baseline persists the measured head run after a pass; a
-           head this gate did not measure in full is listed as unmeasured,
-           and with --shard the file holds that shard's items only)
+           (--save-baseline persists the head run after a pass, listing
+           walltime another run measured as unmeasured; a failed or errored
+           gate lists its items as gate-failed; with --shard the file holds
+           that shard's items only)
            (--allow-harness-change passes a run whose reference could not be
            pinned to HEAD's soothfast, where the delta may be the harness)
            (--codegen-units pins both sides' partitioning; default 1)
@@ -149,6 +150,9 @@ commands:
            one gate split N ways, plus imported ones; a shard that saved
            nothing leaves its items unmeasured; exits 2 on a corrupt file,
            3 on a file from another split)
+  baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]
+           (lists every item of PKG's bench binary as unmeasured for REASON,
+           e.g. no-parent, for a leg that ran no gate to save it)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE

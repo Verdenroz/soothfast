@@ -1,6 +1,7 @@
-//! A baseline's `unmeasured` list: the items of a package that the PR's own
-//! binaries contain but whose measurement the baseline does not hold, each
-//! with a typed reason. `docs check` reports their claims "not evaluated".
+//! A baseline's `unmeasured` list: items the PR's own binaries contain whose
+//! numbers, or some of whose metrics, the baseline does not hold, each with a
+//! typed reason. `docs check` reports an unchanged claim on one "not
+//! evaluated" and fails a new or edited one.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -10,74 +11,109 @@ use serde_json::{Value, json};
 
 use crate::invoke;
 
-/// Why a baseline holds no measurement of an item.
+/// Why a baseline holds no number for an item's metric.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Reason {
-    /// The bench binaries matched the merge-base, so the gate took one pass
-    /// without the gating counters.
+    /// The bench binaries matched the merge-base and no stored run of that
+    /// binary held the gating counters, so the gate took none.
     IdenticalBinaries,
-    /// HEAD's run came from the run cache rather than this gate.
-    StoredRun,
+    /// The walltime came from another run of the same code, which another
+    /// host or load could have skewed.
+    ReusedWalltime,
     /// The shard that owns the item saved no measurement.
     ShardMissing,
-    /// No leg of the gate saved a measurement of the package.
+    /// The package's gate failed or errored, so it saved no numbers.
+    GateFailed,
+    /// A default-branch push whose commit has no parent to gate against.
+    NoParent,
+    /// No leg of the gate wrote anything for the package.
     NoMeasurement,
+    /// `docs check --skip-claims` evaluated no claim.
+    ClaimsSkipped,
 }
+
+const REASONS: [Reason; 7] = [
+    Reason::IdenticalBinaries,
+    Reason::ReusedWalltime,
+    Reason::ShardMissing,
+    Reason::GateFailed,
+    Reason::NoParent,
+    Reason::NoMeasurement,
+    Reason::ClaimsSkipped,
+];
 
 impl Reason {
     pub fn as_str(self) -> &'static str {
         match self {
             Reason::IdenticalBinaries => "identical-binaries",
-            Reason::StoredRun => "stored-run",
+            Reason::ReusedWalltime => "reused-walltime",
             Reason::ShardMissing => "shard-missing",
+            Reason::GateFailed => "gate-failed",
+            Reason::NoParent => "no-parent",
             Reason::NoMeasurement => "no-measurement",
+            Reason::ClaimsSkipped => "claims-skipped",
         }
     }
 
-    fn parse(s: &str) -> Option<Reason> {
-        [
-            Reason::IdenticalBinaries,
-            Reason::StoredRun,
-            Reason::ShardMissing,
-            Reason::NoMeasurement,
-        ]
-        .into_iter()
-        .find(|r| r.as_str() == s)
+    pub fn parse(s: &str) -> Option<Reason> {
+        REASONS.into_iter().find(|r| r.as_str() == s)
     }
 }
 
 /// One `unmeasured` entry: `items` of `package` (an id prefix, `-` written
-/// `_`), with no measurement for `reason`. `items` is empty when nothing
-/// named the package's items, and then no claim reads as not evaluated.
+/// `_`) lack the `metrics` (backend names, or `backend.metric`; empty for
+/// every metric) for `reason`. `items` is empty when nothing named the
+/// package's items, and then no claim reads as not evaluated.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Unmeasured {
     pub package: String,
     pub reason: Reason,
     pub detail: String,
     pub items: Vec<String>,
+    pub metrics: Vec<String>,
 }
 
 impl Unmeasured {
     pub fn to_json(&self) -> Value {
-        json!({
+        let mut v = json!({
             "package": self.package,
             "reason": self.reason.as_str(),
             "detail": self.detail,
             "items": self.items,
-        })
+        });
+        if !self.metrics.is_empty() {
+            v["metrics"] = json!(self.metrics);
+        }
+        v
     }
 
     fn from_json(v: &Value) -> Option<Unmeasured> {
+        let strings = |v: &Value| -> Option<Vec<String>> {
+            v.as_array()?
+                .iter()
+                .map(|s| s.as_str().map(str::to_string))
+                .collect()
+        };
         Some(Unmeasured {
             package: v["package"].as_str()?.to_string(),
             reason: Reason::parse(v["reason"].as_str()?)?,
             detail: v["detail"].as_str()?.to_string(),
-            items: v["items"]
-                .as_array()?
-                .iter()
-                .map(|id| id.as_str().map(str::to_string))
-                .collect::<Option<_>>()?,
+            items: strings(&v["items"])?,
+            metrics: match v.get("metrics") {
+                None => Vec::new(),
+                Some(m) => strings(m)?,
+            },
         })
+    }
+
+    /// Whether this entry accounts for `backend.metric` of `item`.
+    pub fn covers(&self, item: &str, backend: &str, metric: &str) -> bool {
+        self.items.iter().any(|i| i == item)
+            && (self.metrics.is_empty()
+                || self
+                    .metrics
+                    .iter()
+                    .any(|m| m == backend || *m == format!("{backend}.{metric}")))
     }
 }
 
@@ -95,10 +131,11 @@ pub fn read(doc: &Value) -> Result<Vec<Unmeasured>, String> {
         .collect()
 }
 
-/// `ids` grouped into one entry per package.
+/// `ids` grouped into one entry per package, lacking `metrics`.
 pub fn by_package<'a>(
     reason: Reason,
     detail: &str,
+    metrics: &[&str],
     ids: impl IntoIterator<Item = &'a String>,
 ) -> Vec<Unmeasured> {
     let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -115,31 +152,58 @@ pub fn by_package<'a>(
             reason,
             detail: detail.to_string(),
             items,
+            metrics: metrics.iter().map(|m| m.to_string()).collect(),
         })
         .collect()
 }
 
-/// Record `entries` in baseline `name` under `root`, dropping every item,
-/// assertion and earlier entry of their packages so no older number stays.
-pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured]) -> io::Result<()> {
+/// Record that `packages` saved no numbers at all, for `entries`: every item,
+/// assertion and earlier entry of those packages is dropped from baseline
+/// `name` under `root`, so no older number stays.
+pub fn mark_in(
+    root: &Path,
+    name: &str,
+    packages: &[String],
+    entries: &[Unmeasured],
+) -> io::Result<()> {
     let mut doc = invoke::load_baseline_in(root, name)?
         .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
-    let of_marked = |id: &str| entries.iter().any(|e| invoke::id_pkg(id) == e.package);
+    let of_marked = |id: &str| packages.iter().any(|p| invoke::id_pkg(id) == p);
     if let Some(items) = doc.get_mut("items").and_then(Value::as_object_mut) {
         items.retain(|id, v| v["imported"].is_string() || !of_marked(id));
     }
     if let Some(assertions) = doc.get_mut("assertions").and_then(Value::as_array_mut) {
         assertions.retain(|a| a["id"].as_str().is_none_or(|id| !of_marked(id)));
     }
-    let mut kept: Vec<Value> = read(&doc)
+    clear_packages(&mut doc, packages);
+    append(&mut doc, entries)?;
+    invoke::write_baseline_in(root, name, &doc)
+}
+
+/// Add `entries` to baseline `name` under `root`, beside the numbers a save
+/// just wrote.
+pub fn append_in(root: &Path, name: &str, entries: &[Unmeasured]) -> io::Result<()> {
+    let mut doc = invoke::load_baseline_in(root, name)?
+        .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+    append(&mut doc, entries)?;
+    invoke::write_baseline_in(root, name, &doc)
+}
+
+fn append(doc: &mut Value, entries: &[Unmeasured]) -> io::Result<()> {
+    let mut all: Vec<Value> = read(doc)
         .map_err(io::Error::other)?
         .iter()
-        .filter(|u| !entries.iter().any(|e| e.package == u.package))
         .map(Unmeasured::to_json)
         .collect();
-    kept.extend(entries.iter().map(Unmeasured::to_json));
-    doc["unmeasured"] = Value::Array(kept);
-    invoke::write_baseline_in(root, name, &doc)
+    all.extend(entries.iter().map(Unmeasured::to_json));
+    doc["unmeasured"] = Value::Array(all);
+    Ok(())
+}
+
+fn clear_packages(doc: &mut Value, packages: &[String]) {
+    if let Some(entries) = doc.get_mut("unmeasured").and_then(Value::as_array_mut) {
+        entries.retain(|e| !packages.iter().any(|p| e["package"].as_str() == Some(p)));
+    }
 }
 
 /// Drop the entries of `package` (every entry for `None`), for a save that
@@ -163,7 +227,13 @@ mod tests {
     #[test]
     fn an_entry_reads_back_as_written() {
         let ids = ["core::a".to_string(), "core::b".to_string()];
-        let entries = by_package(Reason::ShardMissing, "shard 2/3", &ids);
+        let mut entries = by_package(Reason::ShardMissing, "shard 2/3", &[], &ids);
+        entries.extend(by_package(
+            Reason::ReusedWalltime,
+            "cache",
+            &["walltime"],
+            &ids,
+        ));
         let doc =
             json!({ "unmeasured": entries.iter().map(Unmeasured::to_json).collect::<Vec<_>>() });
         assert_eq!(read(&doc).unwrap(), entries);
@@ -173,6 +243,17 @@ mod tests {
     fn a_malformed_entry_is_an_error() {
         let doc = json!({ "unmeasured": [{ "package": "core", "reason": "guess", "detail": "", "items": [] }] });
         assert!(read(&doc).is_err());
+    }
+
+    #[test]
+    fn an_entry_covers_only_its_metrics() {
+        let ids = ["core::a".to_string()];
+        let wall = &by_package(Reason::ReusedWalltime, "cache", &["walltime"], &ids)[0];
+        assert!(wall.covers("core::a", "walltime", "median_ns"));
+        assert!(!wall.covers("core::a", "callgrind", "ir"));
+        assert!(!wall.covers("core::b", "walltime", "median_ns"));
+        let all = &by_package(Reason::GateFailed, "failed", &[], &ids)[0];
+        assert!(all.covers("core::a", "callgrind", "ir"));
     }
 
     #[test]
@@ -189,12 +270,8 @@ mod tests {
         });
         invoke::write_baseline_in(&root, "head", &doc).unwrap();
         let ids = ["core::a".to_string()];
-        mark_in(
-            &root,
-            "head",
-            &by_package(Reason::IdenticalBinaries, "same", &ids),
-        )
-        .unwrap();
+        let entries = by_package(Reason::GateFailed, "failed", &[], &ids);
+        mark_in(&root, "head", &["core".to_string()], &entries).unwrap();
         let marked = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
         let kept: Vec<&String> = marked["items"].as_object().unwrap().keys().collect();
         assert_eq!(kept, ["jmh::c", "other::b"]);

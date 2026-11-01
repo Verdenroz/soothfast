@@ -56,7 +56,7 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
     if let Some((doc, label)) = stored {
         let merged = if has_callgrind_counts(&doc) {
             let timing = run_head(common, &["--skip-gating-counters"], stamp.clone())?;
-            merge_stored(&doc, &label, timing)
+            merge_stored(&doc, &label, timing).ok()
         } else {
             None
         };
@@ -121,12 +121,12 @@ fn run_head(common: &CommonArgs, extra: &[&str], stamp: BuildStamp) -> Result<Ru
 /// which also carries every assertion verdict. Every field but walltime,
 /// fingerprint/covers, and tolerance_pct (all read off the binary the fresh
 /// pass actually ran) comes from the stored item, so a counter added to
-/// `ItemMetrics` later carries over without a change here. `None` unless the
-/// stored run counted every item the timing pass measured.
-fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run> {
+/// `ItemMetrics` later carries over without a change here. The timing pass
+/// back unless the stored run counted every item it measured.
+pub fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Result<Run, Box<Run>> {
     let counted = invoke::run_from_items_value(&stored["items"]);
     if !has_callgrind_counts(stored) || !counted.items.keys().eq(timing.items.keys()) {
-        return None;
+        return Err(Box::new(timing));
     }
     let mut run = timing;
     let mut metrics = BTreeSet::new();
@@ -150,7 +150,7 @@ fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Option<Run>
         from: measured_from.to_string(),
         metrics: metrics.into_iter().collect(),
     });
-    Some(run)
+    Ok(run)
 }
 
 /// A counter's backend-qualified name paired with its presence check.
@@ -633,18 +633,18 @@ mod tests {
             "perfcnt": { "instructions": 4567 },
             "alloc": { "allocs": 3, "bytes": 96 },
         }}));
-        assert!(merge_stored(&perfcnt, "binary x", timing()).is_none());
+        assert!(merge_stored(&perfcnt, "binary x", timing()).is_err());
         let timing_only = stored(json!({ "pkg::a": {
             "fingerprint": "fp",
             "walltime": { "median_ns": 999.0 },
         }}));
-        assert!(merge_stored(&timing_only, "binary x", timing()).is_none());
+        assert!(merge_stored(&timing_only, "binary x", timing()).is_err());
     }
 
     #[test]
     fn a_stored_run_of_other_items_is_a_miss() {
         let doc = stored(json!({ "pkg::b": { "fingerprint": "fp", "callgrind": { "ir": 1 } } }));
-        assert!(merge_stored(&doc, "binary x", timing()).is_none());
+        assert!(merge_stored(&doc, "binary x", timing()).is_err());
     }
 
     #[test]
