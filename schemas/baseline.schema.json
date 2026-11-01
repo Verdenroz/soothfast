@@ -68,6 +68,77 @@
           }
         }
       }
+    },
+    "unmeasured": {
+      "description": "Items the measured bench binaries contain whose numbers, or some of whose metrics, this baseline does not hold, one entry per package and reason. `docs check` reports an unchanged claim on one of them as not evaluated; a new or edited claim still fails.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "package": {
+            "description": "Package the items belong to, as the first segment of their ids.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `save-failed`: the gate passed, but its numbers could not be saved. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty. `claims-skipped`: `docs check --skip-claims` evaluated no claim. `not-gated-on-event`: the cargo gate measures only on a pull request or a default-branch push, and this event was neither. `stored-run`: written by older releases for a HEAD run read from the run cache, read as not evaluated.",
+            "enum": [
+              "identical-binaries",
+              "reused-walltime",
+              "shard-missing",
+              "gate-failed",
+              "save-failed",
+              "no-parent",
+              "no-measurement",
+              "claims-skipped",
+              "not-gated-on-event",
+              "stored-run"
+            ]
+          },
+          "except_imported": {
+            "description": "Only on the `not-gated-on-event` entry of an event the cargo gate does not measure on: the configured import prefixes. The entry covers every item outside them; an imported item is evaluated as usual.",
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "metrics": {
+            "description": "Backend names (`walltime`) or `backend.metric` the entry covers. Absent for every metric of the items.",
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "detail": {
+            "description": "Human-readable reason, naming the shard or run.",
+            "type": "string"
+          },
+          "items": {
+            "description": "Ids of the items without a measurement.",
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "imported": {
+      "description": "The import prefix of an import gate's file, which `baseline merge` reads beside the cargo gate's and never counts as one of its shards; a merged baseline has none.",
+      "type": "string"
+    },
+    "shard": {
+      "description": "`I/N` of the `gate --shard` run whose items this file holds. Only `baseline merge` reads it; a merged baseline has none.",
+      "type": "string"
+    },
+    "owners": {
+      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id two packages both list is owned by both. A failed package's old numbers are exactly the ids it owns and no other package does.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "listed": {
+      "description": "Every item id each package's bench binary lists, whichever shard owns it, keyed by package. Written beside `shard` so `baseline merge` can name the items of a shard that saved nothing.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
     }
   },
   "$defs": {
@@ -85,6 +156,10 @@
         },
         "imported": {
           "description": "Import prefix the item came from, written by `cargo soothfast import`. Absent for measured items.",
+          "type": "string"
+        },
+        "saved_by": {
+          "description": "Package whose save wrote the number, as given with `-p`. A failed gate of another package that lists the id leaves it.",
           "type": "string"
         },
         "tolerance_pct": {

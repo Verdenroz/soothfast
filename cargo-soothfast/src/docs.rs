@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use soothfast_docs::{claims, diff, gentests, lockfile, markdown, reference, surface};
+use soothfast_docs::{diff, gentests, lockfile, markdown, reference, surface};
 
-use crate::{docs_binds, docs_config, docs_generated, docs_support, glob, invoke};
+use crate::{docs_binds, docs_claims, docs_config, docs_generated, docs_support, glob, invoke};
 
 #[derive(Default)]
 struct DocsArgs {
@@ -472,41 +472,37 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
 
     // 2. Claims vs the measurement baseline.
     let any_claims = scanned.docs.iter().any(|(_, d, _)| !d.claims.is_empty());
-    if any_claims && a.skip_claims {
-        println!("docs check: claims not evaluated: no measurement");
-    } else if any_claims {
-        let baseline = match invoke::load_baseline_in(&scanned.root, &a.baseline) {
-            Ok(Some(b)) => b,
-            Ok(None) => {
-                return err(&format!(
-                    "claims present but no baseline {:?} — run `cargo soothfast measure --save-baseline {}`",
-                    a.baseline, a.baseline
-                ));
-            }
-            Err(e) => return err(&format!("cannot load baseline: {e}")),
-        };
-        for (file, doc, _) in &scanned.docs {
-            for cm in &doc.claims {
-                match claims::parse(&cm.expr).and_then(|c| claims::evaluate(&c, &baseline)) {
-                    Ok((true, actual)) => {
-                        println!(
-                            "ok    {file}:{} claim `{}` (actual {actual:.1})",
-                            cm.line, cm.expr
-                        )
-                    }
-                    Ok((false, actual)) => {
-                        failures += 1;
-                        println!(
-                            "FAIL  {file}:{} claim `{}` VIOLATED (actual {actual:.1})",
-                            cm.line, cm.expr
-                        );
-                    }
-                    Err(e) => {
-                        failures += 1;
-                        println!("FAIL  {file}:{} claim `{}`: {e}", cm.line, cm.expr);
-                    }
+    if any_claims {
+        let baseline = if a.skip_claims {
+            None
+        } else {
+            match invoke::load_baseline_in(&scanned.root, &a.baseline) {
+                Ok(Some(b)) => Some(b),
+                Ok(None) => {
+                    return err(&format!(
+                        "claims present but no baseline {:?} — run `cargo soothfast measure --save-baseline {}`",
+                        a.baseline, a.baseline
+                    ));
                 }
+                Err(e) => return err(&format!("cannot load baseline: {e}")),
             }
+        };
+        let docs: Vec<(&str, &markdown::Doc)> = scanned
+            .docs
+            .iter()
+            .map(|(f, d, _)| (f.as_str(), d))
+            .collect();
+        let files: Vec<&str> = (docs.iter())
+            .filter(|(_, d)| !d.claims.is_empty())
+            .map(|(f, _)| *f)
+            .collect();
+        let unchanged = || match &a.against_ref {
+            Some(against) => docs_claims::unchanged_since(&scanned.root, against, &files),
+            None => Ok(BTreeSet::new()),
+        };
+        match docs_claims::check(&docs, baseline.as_ref(), unchanged) {
+            Ok(n) => failures += n,
+            Err(e) => return err(&e),
         }
     }
 
