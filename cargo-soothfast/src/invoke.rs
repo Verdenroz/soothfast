@@ -712,7 +712,7 @@ pub struct ItemMetrics {
 }
 
 /// One assertion verdict from the runner.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AssertionOutcome {
     pub id: String,
     pub kind: String,
@@ -721,6 +721,11 @@ pub struct AssertionOutcome {
 }
 
 impl AssertionOutcome {
+    /// The verdict with its item id, as a baseline or a stored run keeps it.
+    pub fn to_json(&self) -> Value {
+        json!({ "id": self.id, "kind": self.kind, "ok": self.ok, "detail": self.detail })
+    }
+
     /// The verdict without its item id, as a per-item store keeps it.
     pub fn verdict_json(&self) -> Value {
         json!({ "kind": self.kind, "ok": self.ok, "detail": self.detail })
@@ -1099,9 +1104,7 @@ pub fn save_baseline_in(
         })
         .collect();
     for a in &run.assertions {
-        assertions.push(json!({
-            "id": a.id, "kind": a.kind, "ok": a.ok, "detail": a.detail,
-        }));
+        assertions.push(a.to_json());
     }
     doc["assertions"] = Value::Array(assertions);
 
@@ -2134,6 +2137,8 @@ mod tests {
             "user.name=t",
             "-c",
             "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
             "-q",
             "--allow-empty",
