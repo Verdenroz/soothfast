@@ -8,6 +8,7 @@
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod agreement;
+mod ambiguity;
 mod baseline_merge;
 mod benchexe;
 mod binstore;
@@ -38,6 +39,7 @@ mod itemreuse;
 mod jumptable;
 mod linkmap;
 mod mcp;
+mod ownership;
 mod plan;
 mod prebuild;
 mod project_surface;
@@ -388,6 +390,10 @@ fn cmd_measure(args: &[String]) -> i32 {
         return 1;
     }
     if let Some(name) = save {
+        let run = match common.backend.as_deref() {
+            Some("buildcost") => run,
+            _ => ownership::for_save(&run, &common, None),
+        };
         match invoke::save_baseline(&name, &run, invoke::SaveScope::of(&common)) {
             Ok(path) => println!("baseline saved: {}", path.display()),
             Err(e) => {

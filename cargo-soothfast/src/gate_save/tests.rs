@@ -39,7 +39,7 @@ fn verdict(id: &str, kind: &str) -> AssertionOutcome {
 
 fn saved(name: &str, run: &Run, source: &HeadRun, failures: u32) -> Value {
     let root = scratch(name);
-    let listed = ["core::a".to_string(), "core::b".to_string()];
+    let listed = [("core::a".to_string(), None), ("core::b".to_string(), None)];
     save_head(&root, "head", run, source, &core(), Some(&listed), failures).unwrap();
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
     let _ = std::fs::remove_dir_all(&root);
@@ -351,7 +351,7 @@ fn a_passing_shard_whose_listing_failed_drops_its_numbers_and_fails() {
 fn a_passing_save_records_its_owners_and_drops_what_it_no_longer_lists() {
     let root = stale("save-owners", &[("core", &["soothfast::gone"])]);
     let run = run_of(vec![("soothfast::kept", item(None))]);
-    let listed = ["soothfast::kept".to_string()];
+    let listed = [("soothfast::kept".to_string(), None)];
     save_head(
         &root,
         "head",
@@ -403,16 +403,22 @@ fn a_filtered_save_keeps_the_unfiltered_numbers() {
 }
 
 #[test]
-fn an_id_two_packages_save_is_owned_by_both_and_keeps_the_last_number() {
+fn a_save_of_an_id_another_package_owns_fails_its_claims_as_ambiguous() {
     let root = stale("duplicate-id", &[("a", &["soothfast::same"])]);
     let scope = invoke::SaveScope::BenchFull(Some("b".into()));
     save_ids(&root, &["soothfast::same"], scope).unwrap();
-    assert_eq!(kept(&root), ["soothfast::same"]);
+    assert!(kept(&root).is_empty());
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    let side = doc["ambiguous"]["soothfast::same"].as_object().unwrap();
+    assert_eq!(side.keys().collect::<Vec<_>>(), ["a", "b"]);
     assert_eq!(unmeasured::owned_by(&doc, "a"), ["soothfast::same"]);
     assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::same"]);
-    let holds = reading(&root, "soothfast::same.walltime.median_ns < 1ms");
-    assert!(matches!(holds, Reading::Decided(Outcome::Holds(_))));
+    let Reading::Decided(Outcome::Failed(why)) =
+        reading(&root, "soothfast::same.alloc.allocs <= 1")
+    else {
+        panic!("a claim on an ambiguous id must fail");
+    };
+    assert!(why.contains("measured by both a and b; a claim on it is ambiguous"));
     let _ = std::fs::remove_dir_all(&root);
 }
 

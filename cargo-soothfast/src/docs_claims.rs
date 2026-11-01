@@ -120,7 +120,7 @@ impl<'a> Against<'a> {
         })
     }
 
-    /// One claim.
+    /// One claim. An item two packages own fails before its number is read.
     pub fn evaluate(&self, expr: &str) -> Reading {
         let claim = match claims::parse(expr) {
             Ok(c) => c,
@@ -130,6 +130,12 @@ impl<'a> Against<'a> {
             std::iter::once((&claim.item, &claim.backend, &claim.metric))
                 .chain(claim.minus.iter().map(|m| (&m.item, &m.backend, &m.metric)))
                 .collect();
+        let ambiguous = self.entries.iter().find(|u| {
+            u.reason == Reason::AmbiguousId && operands.iter().any(|(i, b, m)| u.covers(i, b, m))
+        });
+        if let Some(u) = ambiguous {
+            return Reading::Decided(Outcome::Failed(u.detail.clone()));
+        }
         let e = match claims::evaluate(&claim, self.baseline) {
             Ok((true, actual)) => return Reading::Decided(Outcome::Holds(actual)),
             Ok((false, actual)) => return Reading::Decided(Outcome::Violated(actual)),

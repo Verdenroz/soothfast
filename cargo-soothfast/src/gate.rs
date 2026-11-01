@@ -330,7 +330,7 @@ pub fn run(args: &[String]) -> i32 {
             .and_then(|root| {
                 let listed = exe
                     .as_deref()
-                    .and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
+                    .and_then(|exe| invoke::listing(exe, g.common.filter.as_deref()));
                 let listed = listed.as_deref();
                 save_head(&root, name, &current, &head, &g.common, listed, failures)
             });
@@ -696,7 +696,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
         g.common.codegen_units_stamp().as_deref(),
         None,
     ));
-    let baseline = invoke::load_baseline(&g.baseline)
+    let mut baseline = invoke::load_baseline(&g.baseline)
         .map_err(|e| format!("failed to load baseline: {e}"))?
         .ok_or_else(|| {
             format!(
@@ -704,6 +704,9 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
                 g.baseline, g.baseline
             )
         })?;
+    for note in crate::ambiguity::unbaselined(&mut baseline, &current) {
+        println!("{note}");
+    }
     Ok(Some(Resolved {
         reference: baseline,
         current,

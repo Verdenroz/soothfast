@@ -229,6 +229,30 @@ fn an_event_the_gate_skips_writes_one_entry_for_everything_but_imports() {
 }
 
 #[test]
+fn an_id_two_packages_own_across_files_is_ambiguous_not_refused() {
+    let file = |package: &str, shard: &str| json!({ "version": 1, "shard": shard, "items": {}, "owners": { package: ["soothfast::same"] } });
+    let files = [
+        ("a.json".into(), file("a", "1/2")),
+        ("b.json".into(), file("b", "2/2")),
+    ];
+    let merged = merge(&files, 2, &[]).unwrap();
+    let entries = unmeasured::read(&merged).unwrap();
+    assert_eq!(entries[0].reason, Reason::AmbiguousId);
+    assert!(entries[0].detail.contains("measured by both a and b"));
+    let doc = markdown_claim("soothfast::same.alloc.allocs <= 0");
+    let made = || {
+        Ok(crate::docs_claims::Claims::from([(
+            "a.md".into(),
+            "soothfast::same.alloc.allocs <= 0".into(),
+        )]))
+    };
+    assert_eq!(
+        crate::docs_claims::check(&[("a.md", &doc)], Some(&merged), made),
+        Ok(1)
+    );
+}
+
+#[test]
 fn a_shard_that_errored_before_listing_is_named_from_the_other_shards_listing() {
     let listed: Vec<String> = (1..=2).map(|i| owned_by(i, 2)).collect();
     let mut first = json!({
@@ -345,6 +369,40 @@ fn a_package_whose_listing_is_empty_is_accounted_for() {
 }
 
 #[test]
+fn an_id_two_rust_files_both_own_is_set_aside_not_refused() {
+    let file = |pkg: &str, allocs: u64| {
+        json!({
+            "items": { "util::hash": { "alloc": { "allocs": allocs, "bytes": 0 } } },
+            "owners": { pkg: ["util::hash"] },
+        })
+    };
+    let mut collected = collect::Collected::default();
+    for (label, doc) in [("a.json", file("a", 1)), ("b.json", file("b", 2))] {
+        let items = doc["items"].as_object().unwrap();
+        collected.take(label, &doc, items).unwrap();
+    }
+    assert!(collected.items.is_empty());
+    assert_eq!(collected.side["util::hash"]["a"]["alloc"]["allocs"], 1);
+    assert_eq!(collected.side["util::hash"]["b"]["alloc"]["allocs"], 2);
+    let mut merged = json!({ "items": {}, "owners": { "a": ["util::hash"], "b": ["util::hash"] } });
+    merged["ambiguous"] = Value::Object(collected.side);
+    ambiguity::settle(&mut merged, None, &ambiguity::Gated::new()).unwrap();
+    assert_eq!(
+        unmeasured::read(&merged).unwrap()[0].reason,
+        Reason::AmbiguousId
+    );
+}
+
+#[test]
+fn a_rust_file_holding_an_id_none_of_its_packages_owns_is_refused() {
+    let doc = json!({ "items": { "core::a": item() }, "owners": { "core": [] } });
+    let Err(MergeError::Corrupt(why)) = merge(&[("head.json".into(), doc)], 1, &packages()) else {
+        panic!("an unowned id must fail the merge");
+    };
+    assert!(why.contains("which no package of it owns"), "{why}");
+}
+
+#[test]
 fn a_rust_only_merge_reads_no_import_config() {
     let rust = [(
         "head.json".to_string(),
@@ -357,4 +415,69 @@ fn a_rust_only_merge_reads_no_import_config() {
         json!({ "imported": "jmh", "items": {} }),
     )];
     assert!(reads_import_config(&import, false));
+}
+
+/// A workspace whose packages `a` and `b` both link lib `util`, which has
+/// no bench target, and `core`, whose own bench lists the `core::parse`
+/// that `a` links too.
+fn linked_lib_listing(pkg: &str) -> Vec<invoke::Listed> {
+    let util = ("util::hash".to_string(), Some("util".to_string()));
+    let core = ("core::parse".to_string(), Some("core".to_string()));
+    match pkg {
+        "core" => vec![core],
+        "a" => vec![util, core],
+        _ => vec![util],
+    }
+}
+
+#[test]
+fn a_linked_lib_runs_through_gate_save_merge_and_docs_check() {
+    use crate::gate_save::{HeadRun, save_head};
+    let root = std::env::temp_dir().join(format!("soothfast-linked-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for pkg in ["core", "a", "b"] {
+        let listing = linked_lib_listing(pkg);
+        let mut run = invoke::Run::default();
+        for (id, _) in &listing {
+            let m = invoke::ItemMetrics {
+                allocs: Some(if pkg == "core" { 0 } else { 5 }),
+                bytes: Some(0),
+                ..invoke::ItemMetrics::default()
+            };
+            run.items.insert(id.clone(), m);
+        }
+        let common = invoke::CommonArgs {
+            pkg: Some(pkg.into()),
+            ..invoke::CommonArgs::default()
+        };
+        save_head(
+            &root,
+            "head",
+            &run,
+            &HeadRun::Measured,
+            &common,
+            Some(&listing),
+            0,
+        )
+        .unwrap();
+    }
+    let head = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    let all: Vec<String> = ["a", "b", "core"].map(String::from).to_vec();
+    let merged = merge(&[("head.json".into(), head)], 1, &all).unwrap();
+    assert_eq!(unmeasured::owned_by(&merged, "core"), ["core::parse"]);
+    let claims = markdown_claim("core::parse.alloc.allocs <= 0");
+    let none = || Ok(crate::docs_claims::Claims::new());
+    let check = |doc| crate::docs_claims::check(&[("a.md", doc)], Some(&merged), none).unwrap();
+    assert_eq!(check(&claims), 0, "core's own number decides its claim");
+    let ambiguous = markdown_claim("util::hash.alloc.allocs <= 9");
+    assert_eq!(check(&ambiguous), 1, "a claim on util::hash is ambiguous");
+    let reading = crate::docs_claims::Against::new(&merged)
+        .unwrap()
+        .evaluate("util::hash.alloc.allocs <= 9");
+    let crate::docs_claims::Reading::Decided(crate::docs_claims::Outcome::Failed(why)) = reading
+    else {
+        panic!("an ambiguous claim fails");
+    };
+    assert!(why.contains("measured by both a and b"), "{why}");
+    let _ = std::fs::remove_dir_all(&root);
 }

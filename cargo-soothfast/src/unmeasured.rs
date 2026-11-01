@@ -37,9 +37,13 @@ pub enum Reason {
     /// Read from baselines older writers left: HEAD's run came from the run
     /// cache. Never written.
     StoredRun,
+    /// Two packages' binaries both list the item id, so its number cannot be
+    /// told apart. A claim on it fails, unchanged or not.
+    AmbiguousId,
 }
 
-const REASONS: [Reason; 9] = [
+const REASONS: [Reason; 10] = [
+    Reason::AmbiguousId,
     Reason::IdenticalBinaries,
     Reason::ReusedWalltime,
     Reason::ShardMissing,
@@ -63,6 +67,7 @@ impl Reason {
             Reason::ClaimsSkipped => "claims-skipped",
             Reason::NotGatedOnEvent => "not-gated-on-event",
             Reason::StoredRun => "stored-run",
+            Reason::AmbiguousId => "ambiguous-id",
         }
     }
 
@@ -277,6 +282,11 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
     let mut gone: BTreeSet<String> = BTreeSet::new();
     for e in entries {
         gone.extend(e.items.iter().cloned());
+        let mut unvouched: BTreeSet<String> = e.items.iter().cloned().collect();
+        if whole {
+            unvouched.extend(owned_by(&doc, &e.package));
+        }
+        crate::ambiguity::forget(&mut doc, &e.package, &unvouched);
         if !whole {
             continue;
         }
@@ -300,6 +310,7 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         clear_entries(&mut doc, |p| packages.contains(&p));
     }
     append(&mut doc, entries).map_err(|e| e.to_string())?;
+    crate::ambiguity::settle(&mut doc, None, &Default::default()).map_err(|e| e.to_string())?;
     invoke::write_baseline_in(root, name, &doc).map_err(|e| e.to_string())
 }
 

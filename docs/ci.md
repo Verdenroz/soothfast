@@ -493,15 +493,27 @@ even when it is new or edited.
 
 Which items belong to which package comes from each package's bench binary
 listing, recorded as `owners` in the baseline, never from an id's name: every
-bench file's ids start with the bench target's name. An entry covers only the
-ids it names. A failed package's old numbers are exactly the ids it owned and
-no other package owns, and its entry names those, or the ones its listing
-shows; with neither it names nothing, and a claim on an item no package owns
-fails, naming that gate failure as possibly related. An id two packages both
-list, as a lib item linked into both their bench binaries is, belongs to
-both, and a claim on it reads the number the last save wrote. A full save
-leaves alone any id another package owns. `baseline merge` refuses an id two
-merged files both hold.
+bench file's ids start with the bench target's name. A lib's measured fn is
+linked into every dependent's bench binary, so each lists it. Each saved
+item's `pkg`, the package that registered it, comes from the listing of the
+binary that ran, never from a stored run or the item cache. That package
+takes the id from the others when it owns the id too, or when the run gated
+it and its listing showed the id; otherwise (a feature-gated item, a
+registrar CI does not gate, a lib with no bench target) every listing
+package keeps it. An id two packages then both own is ambiguous: an
+`ambiguous-id` entry names both, its numbers move out of `items` to the
+`ambiguous` side map, so an older reader finds no number, and every reader
+here reports it ambiguous instead of reading either one. A claim on it
+fails, the site shows a warn chip, and `gate --baseline` treats the item as
+having no baseline number. Every save and merge recomputes these, and an id
+one package owns again gets that package's number back. An entry covers
+only the ids it names. A failed package's old numbers are exactly the ids it
+owned and no other package owns, and its entry names those, or the ones its
+listing shows; with neither it names nothing, and a claim on an item no
+package owns fails, naming that gate failure as possibly related. A full
+save leaves alone any id another package owns. `baseline merge` refuses an
+id a Rust file and an import file both hold, or a Rust file holding an id
+none of its packages owns.
 
 `--save-baseline`, on `gate` or `measure`, needs `-p` in a workspace with more
 than one bench package, and fails before measuring without it; with one

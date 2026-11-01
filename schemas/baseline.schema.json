@@ -80,7 +80,7 @@
             "type": "string"
           },
           "reason": {
-            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty. `claims-skipped`: `docs check --skip-claims` evaluated no claim. `not-gated-on-event`: the cargo gate measures only on a pull request or a default-branch push, and this event was neither. `stored-run`: written by older releases for a HEAD run read from the run cache, read as not evaluated.",
+            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty. `claims-skipped`: `docs check --skip-claims` evaluated no claim. `not-gated-on-event`: the cargo gate measures only on a pull request or a default-branch push, and this event was neither. `ambiguous-id`: two packages both own the id and neither registered it, so its numbers move to `ambiguous` and a claim on it fails. `stored-run`: written by older releases for a HEAD run read from the run cache, read as not evaluated.",
             "enum": [
               "identical-binaries",
               "reused-walltime",
@@ -90,7 +90,8 @@
               "no-measurement",
               "claims-skipped",
               "not-gated-on-event",
-              "stored-run"
+              "stored-run",
+              "ambiguous-id"
             ]
           },
           "except_imported": {
@@ -124,11 +125,19 @@
       "type": "string"
     },
     "owners": {
-      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id two packages both list is owned by both. A failed package's old numbers are exactly the ids it owns and no other package does.",
+      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id the registering package (the item's `pkg`) owns belongs to it alone; an id two other packages both list is ambiguous. A failed package's old numbers are exactly these ids.",
       "type": "object",
       "additionalProperties": {
         "type": "array",
         "items": { "type": "string" }
+      }
+    },
+    "ambiguous": {
+      "description": "The numbers of each ambiguous id, keyed by id and then by the package that saved them (`\"\"` when nothing names it), kept out of `items` so a reader that predates this map finds no number. An id one package owns again gets that package's number back in `items`.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": { "$ref": "#/$defs/item" }
       }
     },
     "listed": {
@@ -155,6 +164,10 @@
         },
         "imported": {
           "description": "Import prefix the item came from, written by `cargo soothfast import`. Absent for measured items.",
+          "type": "string"
+        },
+        "pkg": {
+          "description": "Package whose code registered the item, taken at save time from the listing of the binary that ran. When this package owns the id too, it takes the id from every other package that lists it. Absent when the listing names none.",
           "type": "string"
         },
         "tolerance_pct": {

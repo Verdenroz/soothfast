@@ -104,6 +104,20 @@ fn a_nameless_entry_is_said_as_possibly_related_only_for_an_unowned_item() {
     assert!(!owned.contains("possibly related"));
 }
 
+#[test]
+fn a_claim_on_an_ambiguous_id_fails_naming_both_packages() {
+    let mut ambiguous = entry(Reason::AmbiguousId, &["core::measured"], &[]);
+    ambiguous.detail =
+        "item id core::measured is measured by both a and b; a claim on it is ambiguous".into();
+    let mut b = baseline(&[ambiguous]);
+    b["items"].as_object_mut().unwrap().remove("core::measured");
+    let Reading::Decided(Outcome::Failed(why)) = read("core::measured.alloc.allocs <= 0", &b)
+    else {
+        panic!("an ambiguous claim fails");
+    };
+    assert!(why.contains("measured by both a and b"));
+}
+
 /// A merged baseline of an ungated event, holding one measured import.
 fn ungated_baseline() -> Value {
     let mut ungated = entry(Reason::NotGatedOnEvent, &[], &[]);
