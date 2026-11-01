@@ -4,6 +4,8 @@
 
 use serde_json::{Value, json};
 
+use soothfast_docs::baseline::AMBIGUOUS_KEY;
+
 use crate::invoke::{self, CommonArgs};
 
 pub fn run(args: &[String]) -> i32 {
@@ -152,12 +154,29 @@ fn point_from_baseline(
                 .unwrap_or_default()
         ));
     }
-    Ok(json!({
+    let ambiguous: serde_json::Map<String, Value> = (doc[AMBIGUOUS_KEY].as_object().into_iter())
+        .flatten()
+        .filter(|(_, v)| pkg.is_none_or(|p| owned_by(v, p)))
+        .map(|(id, v)| (id.clone(), v.clone()))
+        .collect();
+    let mut point = json!({
         "unix": unix,
         "commit": commit,
         "noise_pct": doc["noise_pct"],
         "items": items,
-    }))
+    });
+    if !ambiguous.is_empty() {
+        point[AMBIGUOUS_KEY] = Value::Object(ambiguous);
+    }
+    Ok(point)
+}
+
+/// Whether `pkg` is one of the packages ambiguous index `entry` names.
+fn owned_by(entry: &Value, pkg: &str) -> bool {
+    let packages = entry["packages"].as_array().into_iter().flatten();
+    packages
+        .filter_map(Value::as_str)
+        .any(|p| crate::unmeasured::norm(p) == crate::unmeasured::norm(pkg))
 }
 
 fn render() -> i32 {
@@ -200,6 +219,15 @@ fn render() -> i32 {
     ids.sort();
     ids.dedup();
 
+    if let Some(last) = points.last() {
+        for a in soothfast_docs::baseline::ambiguous(last) {
+            println!(
+                "{:<44} no number: ambiguous between {}",
+                a.id,
+                a.packages.join(", ")
+            );
+        }
+    }
     for id in &ids {
         for (metric, path_keys) in [
             ("instructions", ["perfcnt", "instructions"]),
@@ -294,5 +322,17 @@ mod tests {
     fn an_empty_slice_is_an_error_not_an_empty_point() {
         let err = point_from_baseline(&baseline(), Some("absent-pkg"), "c", 0).unwrap_err();
         assert!(err.contains("absent-pkg"), "unhelpful error: {err}");
+    }
+
+    #[test]
+    fn a_point_keeps_the_ambiguous_ids_of_its_package_only() {
+        let mut doc = baseline();
+        doc["ambiguous"] = json!({
+            "util::hash": { "packages": ["finance_query", "other"] },
+            "util::mine": { "packages": ["other", "third"] },
+        });
+        let p = point_from_baseline(&doc, Some("finance-query"), "c", 0).unwrap();
+        let ids: Vec<&String> = p["ambiguous"].as_object().unwrap().keys().collect();
+        assert_eq!(ids, ["util::hash"]);
     }
 }

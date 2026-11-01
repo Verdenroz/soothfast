@@ -20,7 +20,10 @@ fn scratch(name: &str) -> Scratch {
 
 /// Save, as `pkg`'s full save, items `(id, registrar, allocs)`.
 fn save(root: &Scratch, pkg: &str, items: &[(&str, Option<&str>, u64)]) {
-    let mut run = Run::default();
+    let mut run = Run {
+        listed: true,
+        ..Run::default()
+    };
     for (id, registrar, allocs) in items {
         let m = ItemMetrics {
             pkg: registrar.map(str::to_string),
@@ -68,9 +71,10 @@ fn two_packages_registering_one_id_leave_it_ambiguous_with_no_number() {
     save(&root, "b", &[("dup::f", Some("b"), 3)]);
     let doc = head(&root);
     assert!(
-        doc["items"]["dup::f"]["alloc"].is_null(),
-        "an older reader sees no number"
+        doc["items"].get("dup::f").is_none(),
+        "an older reader sees no item"
     );
+    assert_eq!(doc["ambiguous"]["dup::f"]["packages"], json!(["a", "b"]));
     assert_eq!(
         allocs(&doc, "dup::f"),
         Number::Ambiguous(vec!["a".into(), "b".into()])
@@ -133,7 +137,10 @@ fn an_id_handed_to_its_registrar_keeps_only_a_number_the_registrar_saved() {
 #[test]
 fn a_filtered_save_drops_ids_its_listing_shows_another_package_registered() {
     let mut doc = json!({ "registered": { "app": ["core::parse", "app::x"] } });
-    let mut run = Run::default();
+    let mut run = Run {
+        listed: true,
+        ..Run::default()
+    };
     let item = |pkg: &str| ItemMetrics {
         pkg: Some(pkg.into()),
         ..ItemMetrics::default()
@@ -184,17 +191,88 @@ fn a_registrar_that_did_not_list_the_id_leaves_it_with_the_listing_package() {
 
 #[test]
 fn the_gate_reads_an_ambiguous_item_as_having_no_baseline_number() {
-    let mut baseline = json!({
-        "items": { "util::hash": { "alloc": { "allocs": 2 } } },
-        "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+    let baseline = json!({
+        "items": {},
+        "ambiguous": { "util::hash": { "packages": ["a", "b"] } },
     });
     let mut run = Run::default();
     run.items
         .insert("util::hash".into(), ItemMetrics::default());
-    let notes = unbaselined(&mut baseline, &run);
-    assert!(baseline["items"]["util::hash"].is_null());
     assert_eq!(
-        notes,
-        ["gate: util::hash has no baseline number: it is ambiguous between a and b"]
+        unbaselined(&baseline, &run),
+        ["util::hash has no baseline number: ambiguous between a, b"]
     );
+}
+
+#[test]
+fn an_ambiguous_id_keeps_what_it_covers_in_the_index_and_nothing_in_items() {
+    let mut doc = json!({
+        "items": { "util::hash": { "covers": "util::hash_bytes", "alloc": { "allocs": 2 } } },
+        "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+        "assertions": [{ "id": "util::hash", "kind": "alloc", "ok": true, "detail": "" }],
+    });
+    settle(&mut doc, &Gated::new());
+    assert!(doc["items"].get("util::hash").is_none());
+    assert_eq!(doc["assertions"], json!([]));
+    assert_eq!(
+        doc["ambiguous"]["util::hash"],
+        json!({ "packages": ["a", "b"], "covers": "util::hash_bytes" })
+    );
+    settle(&mut doc, &Gated::new());
+    assert_eq!(doc["ambiguous"]["util::hash"]["covers"], "util::hash_bytes");
+}
+
+#[test]
+fn settle_never_touches_an_imported_item() {
+    let mut doc = json!({
+        "items": { "jmh::a": { "imported": "jmh", "walltime": { "median_ns": 5.0 } } },
+        "owners": { "a": ["jmh::a"], "b": ["jmh::a"] },
+    });
+    settle(&mut doc, &Gated::new());
+    assert_eq!(doc["items"]["jmh::a"]["walltime"]["median_ns"], 5.0);
+    assert!(doc.get("ambiguous").is_none());
+}
+
+#[test]
+fn a_registration_its_package_no_longer_owns_is_pruned_and_blocks_no_save() {
+    let mut doc = json!({
+        "owners": { "core": [], "app": ["core::parse"] },
+        "registered": { "core": ["core::parse"], "app": [] },
+    });
+    let mut run = Run::default();
+    run.items
+        .insert("core::parse".into(), ItemMetrics::default());
+    assert!(foreign(&doc, "app", &run).is_empty());
+    settle(&mut doc, &Gated::new());
+    assert_eq!(doc["registered"]["core"], json!([]));
+}
+
+#[test]
+fn a_full_save_whose_listing_names_nothing_of_its_own_records_none() {
+    let mut doc = json!({ "registered": { "app": ["app::x"] } });
+    let run = Run {
+        listed: true,
+        ..Run::default()
+    };
+    record_registered(&mut doc, "app", &run, true);
+    assert_eq!(doc["registered"]["app"], json!([]));
+}
+
+#[test]
+fn a_package_spelled_with_a_dash_is_the_one_spelled_with_an_underscore() {
+    let mut doc = json!({
+        "owners": { "my-core": ["my_core::parse"], "app": ["my_core::parse"] },
+        "registered": { "my_core": ["my_core::parse"] },
+    });
+    let mut run = Run::default();
+    let m = ItemMetrics {
+        pkg: Some("my-core".into()),
+        ..ItemMetrics::default()
+    };
+    run.items.insert("my_core::parse".into(), m);
+    assert!(foreign(&doc, "my_core", &run).is_empty());
+    assert_eq!(foreign(&doc, "app", &run).len(), 1);
+    settle(&mut doc, &Gated::new());
+    assert_eq!(unmeasured::owned_by(&doc, "my_core"), ["my_core::parse"]);
+    assert!(unmeasured::owned_by(&doc, "app").is_empty());
 }

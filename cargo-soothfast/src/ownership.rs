@@ -20,14 +20,27 @@ pub fn stamped(run: &Run, listing: &[Listed]) -> Run {
     for (id, m) in &mut out.items {
         m.pkg = pkgs.get(id.as_str()).map(|pkg| (*pkg).clone());
     }
+    out.listed = true;
+    out
+}
+
+/// `run` for a save with no listing: every item's `pkg` unknown.
+pub fn unlisted(run: &Run) -> Run {
+    let mut out = run.clone();
+    for m in out.items.values_mut() {
+        m.pkg = None;
+    }
+    out.listed = false;
     out
 }
 
 /// `run` as a save writes it, stamped from the listing of `exe`, the bench
 /// binary that ran.
 pub fn for_save(run: &Run, common: &CommonArgs, exe: &Path) -> Run {
-    let listing = invoke::listing(exe, common.filter.as_deref()).unwrap_or_default();
-    stamped(run, &listing)
+    match invoke::listing(exe, common.filter.as_deref()) {
+        Some(listing) => stamped(run, &listing),
+        None => unlisted(run),
+    }
 }
 
 #[cfg(test)]

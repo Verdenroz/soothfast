@@ -161,14 +161,6 @@ fn measurements_for(state: &State, path: &str) -> Vec<String> {
             if target != path && id != path {
                 continue;
             }
-            let packages = baseline::ambiguous_packages(&state.baseline, id);
-            if !packages.is_empty() {
-                let packages = packages.join(", ");
-                facts.push(format!(
-                    "no number: ambiguous between {packages} (as `{id}`)"
-                ));
-                continue;
-            }
             for (label, keys) in [
                 ("instructions/iter", ["perfcnt", "instructions"]),
                 ("median ns", ["walltime", "median_ns"]),
@@ -179,6 +171,14 @@ fn measurements_for(state: &State, path: &str) -> Vec<String> {
                     facts.push(format!("{v:.0} {label} (as `{id}`)"));
                 }
             }
+        }
+    }
+    for a in baseline::ambiguous(&state.baseline) {
+        if a.id == path || a.covers.is_some_and(|c| c == path) {
+            let (id, packages) = (a.id, a.packages.join(", "));
+            facts.push(format!(
+                "no number: ambiguous between {packages} (as `{id}`)"
+            ));
         }
     }
     facts
@@ -236,6 +236,16 @@ fn tool_call(state: &State, name: &str, args: &Value) -> Result<String, String> 
             let mut lines: Vec<String> = Vec::new();
             for p in &state.trend {
                 let m = &p["items"][item];
+                let packages = baseline::ambiguous_packages(p, item);
+                if !packages.is_empty() {
+                    lines.push(format!(
+                        "{} {}: no number: ambiguous between {}",
+                        p["unix"].as_u64().unwrap_or(0),
+                        p["commit"].as_str().unwrap_or("?"),
+                        packages.join(", ")
+                    ));
+                    continue;
+                }
                 if m.is_null() {
                     continue;
                 }
@@ -285,8 +295,9 @@ mod tests {
             pkg: "a".into(),
             entries: Vec::new(),
             baseline: json!({
-                "items": { "util::hash": { "covers": "util::hash_bytes" } },
+                "items": {},
                 "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+                "ambiguous": { "util::hash": { "packages": ["a", "b"], "covers": "util::hash_bytes" } },
             }),
             trend: Vec::new(),
         };
@@ -294,6 +305,24 @@ mod tests {
         assert_eq!(
             facts,
             ["no number: ambiguous between a, b (as `util::hash`)"]
+        );
+    }
+
+    #[test]
+    fn the_trend_of_an_ambiguous_item_says_so_at_each_point() {
+        let state = State {
+            pkg: "a".into(),
+            entries: Vec::new(),
+            baseline: json!({}),
+            trend: vec![json!({
+                "unix": 1, "commit": "abc", "items": {},
+                "ambiguous": { "util::hash": { "packages": ["a", "b"] } },
+            })],
+        };
+        let out = tool_call(&state, "perf_trend", &json!({ "item": "util::hash" })).unwrap();
+        assert!(
+            out.contains("1 abc: no number: ambiguous between a, b"),
+            "{out}"
         );
     }
 }

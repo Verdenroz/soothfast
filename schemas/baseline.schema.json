@@ -124,11 +124,24 @@
       "type": "string"
     },
     "owners": {
-      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id the registering package (the item's `pkg`) owns belongs to it alone; an id two packages still both own is ambiguous and has no number in `items`. A failed package's old numbers are exactly these ids.",
+      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id the registering package (the item's `pkg`) owns belongs to it alone; an id two packages still both own is ambiguous, absent from `items`, and listed under `ambiguous`. A failed package's old numbers are exactly these ids.",
       "type": "object",
       "additionalProperties": {
         "type": "array",
         "items": { "type": "string" }
+      }
+    },
+    "ambiguous": {
+      "description": "Each id two packages still both own, which `items` holds nothing for: the packages that own it and the public path it covers, when known. Readers report such an id as ambiguous rather than unmeasured.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["packages"],
+        "properties": {
+          "packages": { "type": "array", "items": { "type": "string" } },
+          "covers": { "type": "string" }
+        },
+        "additionalProperties": false
       }
     },
     "registered": {

@@ -277,6 +277,9 @@ pub fn run(args: &[String]) -> i32 {
         match ratchet {
             Ok(r) => {
                 println!("--- ratchet: {ratchet_name} ---");
+                for note in crate::ambiguity::unbaselined(&r, &current) {
+                    println!("RATCHET {note}");
+                }
                 let rctx = CompareCtx {
                     deps_mode: false,
                     ..ctx.clone()
@@ -694,7 +697,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
         g.common.codegen_units_stamp().as_deref(),
         None,
     ));
-    let mut baseline = invoke::load_baseline(&g.baseline)
+    let baseline = invoke::load_baseline(&g.baseline)
         .map_err(|e| format!("failed to load baseline: {e}"))?
         .ok_or_else(|| {
             format!(
@@ -702,8 +705,8 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
                 g.baseline, g.baseline
             )
         })?;
-    for note in crate::ambiguity::unbaselined(&mut baseline, &current) {
-        println!("{note}");
+    for note in crate::ambiguity::unbaselined(&baseline, &current) {
+        println!("gate: {note}");
     }
     Ok(Some(Resolved {
         reference: baseline,

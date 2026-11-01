@@ -1,9 +1,13 @@
 //! Reading one measured number out of a baseline. An id two packages both
-//! own (`owners` lists it under each) has no number of its own, so `items`
-//! holds none for it and a reader that predates this finds nothing. Every
-//! reader asks [`number`] so each one says why.
+//! own has no number of its own: `items` holds nothing for it, and the
+//! baseline's `ambiguous` index (`{id: {packages, covers}}`) names the
+//! packages instead, so a reader that predates the index finds no item.
+//! Every reader asks [`number`] or [`ambiguous`] so each one says why.
 
 use serde_json::Value;
+
+/// The key of a baseline's index of ambiguous ids.
+pub const AMBIGUOUS_KEY: &str = "ambiguous";
 
 /// What a baseline holds for one metric of one item.
 #[derive(Debug, Clone, PartialEq)]
@@ -14,6 +18,17 @@ pub enum Number {
     Ambiguous(Vec<String>),
     /// No number for that metric, or no such item.
     Missing,
+}
+
+/// One id of a baseline's `ambiguous` index.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ambiguous<'a> {
+    /// The ambiguous item id.
+    pub id: &'a str,
+    /// The packages that own it.
+    pub packages: Vec<String>,
+    /// The public path it covers, when known.
+    pub covers: Option<&'a str>,
 }
 
 /// `id`'s `backend.metric` in `baseline`.
@@ -28,18 +43,28 @@ pub fn number(baseline: &Value, id: &str, backend: &str, metric: &str) -> Number
     }
 }
 
-/// The packages that own `id` when more than one does; empty otherwise.
+/// The packages the `ambiguous` index names for `id`; empty when it names none.
 pub fn ambiguous_packages(baseline: &Value, id: &str) -> Vec<String> {
-    let owners = baseline["owners"].as_object().into_iter().flatten();
-    let packages: Vec<String> = owners
-        .filter(|(_, ids)| ids.as_array().into_iter().flatten().any(|i| i == id))
-        .map(|(p, _)| p.clone())
-        .collect();
-    if packages.len() > 1 {
-        packages
-    } else {
-        Vec::new()
-    }
+    packages(&baseline[AMBIGUOUS_KEY][id])
+}
+
+/// Every id of `baseline`'s `ambiguous` index.
+pub fn ambiguous(baseline: &Value) -> Vec<Ambiguous<'_>> {
+    let index = baseline[AMBIGUOUS_KEY].as_object().into_iter().flatten();
+    index
+        .map(|(id, entry)| Ambiguous {
+            id,
+            packages: packages(entry),
+            covers: entry["covers"].as_str(),
+        })
+        .collect()
+}
+
+fn packages(entry: &Value) -> Vec<String> {
+    let packages = entry["packages"].as_array().into_iter().flatten();
+    packages
+        .filter_map(|p| p.as_str().map(str::to_string))
+        .collect()
 }
 
 #[cfg(test)]
@@ -51,6 +76,7 @@ mod tests {
         json!({
             "items": { "a::x": { "alloc": { "allocs": 1 } } },
             "owners": { "a": ["util::hash", "a::x"], "b": ["util::hash"] },
+            "ambiguous": { "util::hash": { "packages": ["a", "b"], "covers": "util::hash_bytes" } },
         })
     }
 
@@ -90,5 +116,18 @@ mod tests {
                 "{err}"
             );
         }
+    }
+
+    #[test]
+    fn the_index_lists_each_ambiguous_id_with_what_it_covers() {
+        let baseline = baseline();
+        assert_eq!(
+            ambiguous(&baseline),
+            [Ambiguous {
+                id: "util::hash",
+                packages: vec!["a".into(), "b".into()],
+                covers: Some("util::hash_bytes"),
+            }]
+        );
     }
 }

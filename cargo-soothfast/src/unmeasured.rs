@@ -3,7 +3,7 @@
 //! typed reason. `docs check` reports an unchanged claim on one "not
 //! evaluated" and fails a new or edited one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::Path;
 
@@ -196,14 +196,32 @@ pub fn legacy_note(doc: &Value, name: &str) -> Option<String> {
 /// The `owners` key: each package's items, from its bench binary's listing.
 pub const OWNERS_KEY: &str = "owners";
 
+/// A package name as ids and listings spell it, `-` read as `_`.
+pub fn norm(pkg: &str) -> String {
+    pkg.replace('-', "_")
+}
+
+/// `map` (`{package: [ids]}`) keyed by [`norm`]ed package.
+pub fn by_package(map: &Value) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (pkg, ids) in map.as_object().into_iter().flatten() {
+        let ids = ids
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str);
+        out.entry(norm(pkg))
+            .or_default()
+            .extend(ids.map(str::to_string));
+    }
+    out
+}
+
 /// The items baseline `doc` says `package` owns.
 pub fn owned_by(doc: &Value, package: &str) -> Vec<String> {
-    doc[OWNERS_KEY][package]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|id| id.as_str().map(str::to_string))
-        .collect()
+    let mut owners = by_package(&doc[OWNERS_KEY]);
+    let ids = owners.remove(&norm(package)).unwrap_or_default();
+    ids.into_iter().collect()
 }
 
 /// Record in `doc` that `package` owns `ids`.
@@ -227,13 +245,11 @@ pub fn owned(doc: &Value) -> BTreeSet<String> {
 
 /// Every item a package of baseline `doc` other than `package` owns.
 pub fn owned_by_others(doc: &Value, package: &str) -> BTreeSet<String> {
-    doc[OWNERS_KEY]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(p, _)| p.as_str() != package)
-        .flat_map(|(_, ids)| ids.as_array().into_iter().flatten())
-        .filter_map(|id| id.as_str().map(str::to_string))
+    let package = norm(package);
+    let owners = by_package(&doc[OWNERS_KEY]).into_iter();
+    owners
+        .filter(|(p, _)| *p != package)
+        .flat_map(|(_, ids)| ids)
         .collect()
 }
 

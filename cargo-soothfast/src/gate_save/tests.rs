@@ -479,7 +479,7 @@ fn a_failed_filtered_gate_drops_and_names_only_the_filtered_ids() {
     );
     assert_eq!(
         unmeasured::owned_by(&doc, "core"),
-        ["soothfast::parse_fast", "soothfast::other"]
+        ["soothfast::other", "soothfast::parse_fast"]
     );
     let _ = std::fs::remove_dir_all(&root);
 }

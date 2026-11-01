@@ -801,6 +801,8 @@ pub struct Run {
     pub executed: BTreeMap<String, Vec<(String, String)>>,
     /// Set when some metrics came from a stored run instead of this process.
     pub reused: Option<Reused>,
+    /// Whether each item's `pkg` came from a listing of the binary that ran.
+    pub listed: bool,
 }
 
 /// Which metrics of a run were taken from a stored run, and what it measured.
@@ -1222,7 +1224,7 @@ fn own_measured(
         crate::unmeasured::owned_by(doc, pkg).into_iter().collect()
     };
     let mut owned: BTreeSet<String> = if full { BTreeSet::new() } else { prior.clone() };
-    let norm = |p: &str| p.replace('-', "_");
+    let norm = crate::unmeasured::norm;
     let registers = |m: &ItemMetrics| m.pkg.as_deref().is_some_and(|p| norm(p) == norm(pkg));
     owned.extend(
         run.items

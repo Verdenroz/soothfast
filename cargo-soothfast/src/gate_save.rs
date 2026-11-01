@@ -122,7 +122,10 @@ pub fn save_head(
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
-    let stamped = ownership::stamped(current, listing.unwrap_or_default());
+    let stamped = match listing {
+        Some(listing) => ownership::stamped(current, listing),
+        None => ownership::unlisted(current),
+    };
     let (mut run, mut entries) = baseline_material(&stamped, source, package);
     if let Some(shard) = common.shard {
         run.items.retain(|id, _| shard.owns(id));
@@ -301,6 +304,7 @@ fn baseline_material(current: &Run, source: &HeadRun, package: &str) -> (Run, Ve
         assertions,
         executed: BTreeMap::new(),
         reused: current.reused.clone(),
+        listed: current.listed,
     };
     (run, entries)
 }

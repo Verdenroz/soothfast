@@ -8,6 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
+use soothfast_docs::baseline::AMBIGUOUS_KEY;
 
 use crate::invoke::{self, Shard};
 use crate::unmeasured::{self, Reason, Unmeasured};
@@ -294,6 +295,7 @@ fn merge_on(
     let no_items = Map::new();
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut registered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut ambiguous = Map::new();
     for (label, doc) in files {
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
@@ -350,6 +352,9 @@ fn merge_on(
         }
         union(&mut owners, &doc[unmeasured::OWNERS_KEY]);
         union(&mut registered, &doc[ambiguity::REGISTERED_KEY]);
+        for (id, entry) in doc[AMBIGUOUS_KEY].as_object().into_iter().flatten() {
+            ambiguous.entry(id.clone()).or_insert_with(|| entry.clone());
+        }
         entries.extend(file_entries);
     }
     for pkg in packages {
@@ -391,6 +396,9 @@ fn merge_on(
     }
     if !registered.is_empty() {
         out[ambiguity::REGISTERED_KEY] = json!(registered);
+    }
+    if !ambiguous.is_empty() {
+        out[AMBIGUOUS_KEY] = Value::Object(ambiguous);
     }
     let gated = gated_listing(packages, &shards);
     ambiguity::settle(&mut out, &gated);

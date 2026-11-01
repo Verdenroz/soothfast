@@ -743,8 +743,9 @@ mod tests {
     #[test]
     fn a_claim_on_an_ambiguous_id_is_a_warn_chip_naming_both_packages() {
         let baseline = serde_json::json!({
-            "items": { "util::hash": { "alloc": { "allocs": 0 } } },
+            "items": {},
             "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+            "ambiguous": { "util::hash": { "packages": ["a", "b"] } },
         });
         let p = Evidence::new(baseline, lockfile::Binds::new());
         let md = "<!-- soothfast:claim util::hash.alloc.allocs <= 0 -->\n";

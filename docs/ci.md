@@ -498,22 +498,27 @@ linked into every dependent's bench binary, so each lists it. Each saved
 item's `pkg`, the package that registered it, comes only from the listing of
 the binary that ran; with no listing, or none naming a package, it is
 unknown. A save records under `registered` the ids its own package
-registered, and stamps each number it writes with `saved_by`. A number is
+registered and still owns, replacing them on a full save whose listing
+ran, and stamps each number it writes with `saved_by`. A number is
 credited to a package only when that package saved it: a save never
 writes, or attaches verdicts to, an id another package registered, nor,
-with its package unknown, one another package owns. One owner that
+with its package unknown, one another package owns; a registration
+counts only while its package still owns the id. One owner that
 registered an id takes it from the others; with none recorded, the item's
 `pkg` takes it when that package owns it too, or when the run gated it and
 its listing showed the id. The id keeps its number only if that package
 saved it; otherwise the package's next save brings it back. Otherwise
 (two packages registering the same id, a feature-gated item, a registrar
 CI does not gate, a lib with no bench target) every listing package keeps
-it, and the id is ambiguous: `owners` names both and `items` holds no
-number for it, so an older reader finds none and every reader here reports
-it ambiguous. A claim reading it fails, whichever operand it is, the site
-shows a warn chip, and `gate --baseline` treats the item as having no
-baseline number. Once one package alone owns the id again, that package's
-next save measures it again. An entry covers only the ids it names. A
+it, and the id is ambiguous: `items` holds nothing for it, so an older
+reader finds no item, and the `ambiguous` index names its packages and
+the path it covers. A claim reading it fails, whichever operand it is,
+the site shows a warn chip, the perf table and `trend render` list it
+with no numbers, the MCP server reports it by the path it covers, and
+`gate --baseline` and `--ratchet` report it as having no baseline number,
+naming the packages. Once one package alone owns the id again, that
+package's next save measures it again. Imported items belong to no
+package and are never ambiguous. An entry covers only the ids it names. A
 failed package's old numbers are exactly the ids it owned and no other
 package owns, or a shared id's number it saved itself, and its entry names
 those, or the ones its listing shows; with neither it names nothing, and a

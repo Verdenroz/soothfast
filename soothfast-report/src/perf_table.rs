@@ -16,25 +16,48 @@ pub struct Row {
     pub polls: Option<u64>,
     /// Brought in by `import` from another language's harness.
     pub imported: bool,
+    /// The packages that own the id when more than one does, which leaves
+    /// it with no number.
+    pub ambiguous: Vec<String>,
 }
 
-/// One `Row` per measured item in the baseline, in baseline (map) order.
+/// One `Row` per measured item in the baseline, in baseline (map) order,
+/// then one per id of its `ambiguous` index.
 pub fn rows(baseline: &Value) -> Vec<Row> {
-    let Some(items) = baseline["items"].as_object() else {
-        return Vec::new();
-    };
-    items
-        .iter()
-        .map(|(id, m)| Row {
-            id: id.clone(),
-            instructions: m["perfcnt"]["instructions"].as_u64(),
-            median_ns: m["walltime"]["median_ns"].as_f64(),
-            p99_ns: m["walltime"]["p99_ns"].as_f64(),
-            allocs: m["alloc"]["allocs"].as_u64(),
-            polls: m["asyncexec"]["polls"].as_u64(),
-            imported: m["imported"].is_string(),
-        })
-        .collect()
+    let items = baseline["items"].as_object().into_iter().flatten();
+    let measured = items.map(|(id, m)| Row {
+        id: id.clone(),
+        instructions: m["perfcnt"]["instructions"].as_u64(),
+        median_ns: m["walltime"]["median_ns"].as_f64(),
+        p99_ns: m["walltime"]["p99_ns"].as_f64(),
+        allocs: m["alloc"]["allocs"].as_u64(),
+        polls: m["asyncexec"]["polls"].as_u64(),
+        imported: m["imported"].is_string(),
+        ambiguous: Vec::new(),
+    });
+    let index = baseline["ambiguous"].as_object().into_iter().flatten();
+    let ambiguous = index.map(|(id, entry)| Row {
+        id: id.clone(),
+        instructions: None,
+        median_ns: None,
+        p99_ns: None,
+        allocs: None,
+        polls: None,
+        imported: false,
+        ambiguous: (entry["packages"].as_array().into_iter().flatten())
+            .filter_map(|p| p.as_str().map(str::to_string))
+            .collect(),
+    });
+    measured.chain(ambiguous).collect()
+}
+
+/// The item cell's text after the id: why an ambiguous row has no numbers.
+fn note(r: &Row) -> String {
+    if r.ambiguous.is_empty() {
+        String::new()
+    } else {
+        format!(" (ambiguous: {})", r.ambiguous.join(", "))
+    }
 }
 
 /// The walltime columns of each imported item, grouped by import prefix.
@@ -82,8 +105,9 @@ pub fn markdown_at(baseline: &Value, depth: usize) -> String {
     let any_imported = rows.iter().any(|r| r.imported);
     for r in rows.into_iter().filter(|r| !r.imported) {
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} |\n",
+            "| `{}`{} | {} | {} | {} | {} | {} |\n",
             r.id,
+            note(&r),
             fmt_u(r.instructions),
             fmt_ns(r.median_ns),
             fmt_ns(r.p99_ns),
@@ -116,8 +140,9 @@ pub fn html(baseline: &Value) -> String {
     let any_imported = rows.iter().any(|r| r.imported);
     for r in rows.into_iter().filter(|r| !r.imported) {
         out.push_str(&format!(
-            "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            "<tr><td><code>{}</code>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
             r.id,
+            note(&r),
             fmt_u(r.instructions),
             fmt_ns(r.median_ns),
             fmt_ns(r.p99_ns),
@@ -175,5 +200,19 @@ mod tests {
         assert!(rest.contains("| `jmh::A.b` | 2.50µs | 40.0ns | 3.10µs |"));
         assert!(rest.contains("\n## pytest\n"));
         assert!(super::html(&baseline).contains("<h2>jmh</h2>"));
+    }
+
+    #[test]
+    fn an_ambiguous_id_is_a_row_naming_its_packages_with_no_numbers() {
+        let baseline = json!({
+            "items": {},
+            "ambiguous": { "util::hash": { "packages": ["a", "b"] } },
+        });
+        let md = super::markdown(&baseline);
+        assert!(
+            md.contains("| `util::hash` (ambiguous: a, b) | n/a | n/a | n/a | n/a | n/a |"),
+            "{md}"
+        );
+        assert!(super::html(&baseline).contains("<code>util::hash</code> (ambiguous: a, b)</td>"));
     }
 }
