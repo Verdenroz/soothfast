@@ -97,8 +97,13 @@
             "description": "`I/N`: with `all_items`, the entry covers only the items that shard owns.",
             "type": "string"
           },
+          "prefixes": {
+            "description": "The crate names the package's item ids start with, from its library and bench targets. With `all_items`, the entry covers every item under one of them; absent, under `package`.",
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "all_items": {
-            "description": "True when the entry covers every item under the `package::` prefix (every item, for an empty `package`), for a gate that could not name them.",
+            "description": "True when the entry covers every item under its `prefixes` (or `package`), for a gate that could not name them.",
             "type": "boolean"
           },
           "metrics": {

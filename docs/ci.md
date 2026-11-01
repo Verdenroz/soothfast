@@ -480,8 +480,12 @@ evaluated, since its gate takes no counters. The cargo gate measures only a
 pull request and a default-branch push; on any other event (a push to
 another branch, a tag, `workflow_dispatch`, `merge_group`) each Rust package
 is listed `not-gated-on-event`, while imported claims measured on that event
-are still checked. A gate that fails without listing its items still drops
-their old numbers and covers the whole package.
+are still checked. Where no measurement was possible (`not-gated-on-event`,
+`no-parent`), a claim reads "not evaluated" even when it is new or edited. A
+gate that fails without listing its items still drops their old numbers and
+covers the whole package, matched by its library's and bench target's crate
+names; without `-p` it covers every bench package of the workspace, and when
+the workspace cannot be read it deletes the baseline and fails.
 
 `cargo soothfast prebuild` runs the same lanes by hand: `-p PKG` for bench
 packages, `--against-ref REF` for the merge-base, `--docs PKG`, `--spec

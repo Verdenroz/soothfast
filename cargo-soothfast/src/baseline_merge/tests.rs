@@ -179,7 +179,10 @@ fn baseline_mark_on_a_broken_build_drops_the_old_numbers_and_still_fails() {
     let reading = crate::docs_claims::evaluate("core::a.alloc.allocs <= 0", &doc, &entries);
     assert!(matches!(
         reading,
-        crate::docs_claims::Reading::Unmeasured(Reason::NoParent, _)
+        crate::docs_claims::Reading::Decided(crate::docs_claims::Outcome::NotEvaluated(
+            Reason::NoParent,
+            _
+        ))
     ));
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -192,4 +195,61 @@ fn an_event_the_gate_skips_lists_each_package_whole() {
     assert_eq!(entries[0].reason, Reason::NotGatedOnEvent);
     assert!(entries[0].all_items);
     assert!(entries[0].detail.contains("workflow_dispatch"));
+}
+
+/// Checks one claim on `core::f0` against `merged`, as an edited claim:
+/// the merge-base never made it.
+fn edited_claim_failures(merged: &Value) -> u32 {
+    let doc = markdown_claim("core::f0.alloc.allocs <= 0");
+    let never_made = || Ok(crate::docs_claims::Claims::new());
+    crate::docs_claims::check(&[("a.md", &doc)], Some(merged), never_made).unwrap()
+}
+
+fn markdown_claim(expr: &str) -> soothfast_docs::markdown::Doc {
+    soothfast_docs::markdown::scan(&format!("<!-- soothfast:claim {expr} -->\n")).unwrap()
+}
+
+#[test]
+fn an_edited_claim_on_a_merge_group_event_is_not_evaluated() {
+    let merged = merge_on(&[], 1, &packages(), Some("merge_group")).unwrap();
+    assert_eq!(edited_claim_failures(&merged), 0);
+}
+
+#[test]
+fn a_claim_on_a_parentless_commit_with_no_base_ref_is_not_evaluated() {
+    let stub = json!({
+        "version": 1,
+        "items": {},
+        "unmeasured": [{ "package": "core", "reason": "no-parent", "detail": "no parent",
+                         "items": [], "all_items": true }],
+    });
+    let merged = merge(&[("head.json".into(), stub)], 1, &packages()).unwrap();
+    assert_eq!(edited_claim_failures(&merged), 0);
+}
+
+#[test]
+fn an_edited_claim_a_failed_gate_could_have_measured_still_fails() {
+    let stub = json!({
+        "version": 1,
+        "items": {},
+        "unmeasured": [{ "package": "core", "reason": "gate-failed", "detail": "failed",
+                         "items": [], "all_items": true }],
+    });
+    let merged = merge(&[("head.json".into(), stub)], 1, &packages()).unwrap();
+    assert_eq!(edited_claim_failures(&merged), 1);
+}
+
+#[test]
+fn an_ungated_event_still_names_a_covered_package_s_missing_shard() {
+    let merged = merge_on(
+        &[shard_file(1), shard_file(3)],
+        3,
+        &packages(),
+        Some("push"),
+    )
+    .unwrap();
+    let entries = unmeasured::read(&merged).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].reason, Reason::ShardMissing);
+    assert_eq!(entries[0].items, [owned_by(2, 3)]);
 }

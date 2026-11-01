@@ -129,6 +129,57 @@ pub(crate) fn bench_target_in(meta: &Value, pkg: &str, target: &str) -> bool {
         })
 }
 
+/// A member with a bench target, and the crate names its items' ids start
+/// with: its library's and the bench target's, `-` written `_`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BenchCrate {
+    pub package: String,
+    pub prefixes: Vec<String>,
+}
+
+/// Every member with a bench target named `target`, in name order.
+pub fn bench_crates(target: &str, dir: Option<&Path>) -> io::Result<Vec<BenchCrate>> {
+    Ok(bench_crates_in(&metadata(dir, true)?, target))
+}
+
+/// The lookup itself, over metadata already in hand.
+pub(crate) fn bench_crates_in(meta: &Value, target: &str) -> Vec<BenchCrate> {
+    let mut crates: Vec<BenchCrate> = meta["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| {
+            let package = p["name"].as_str()?;
+            if !bench_target_in(meta, package, target) {
+                return None;
+            }
+            let mut prefixes: Vec<String> = p["targets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|t| t["name"].as_str() == Some(target) || has_lib_kind(t))
+                .filter_map(|t| t["name"].as_str().map(|n| n.replace('-', "_")))
+                .collect();
+            prefixes.sort();
+            prefixes.dedup();
+            Some(BenchCrate {
+                package: package.to_string(),
+                prefixes,
+            })
+        })
+        .collect();
+    crates.sort_by(|a, b| a.package.cmp(&b.package));
+    crates
+}
+
+fn has_lib_kind(target: &Value) -> bool {
+    target["kind"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|k| matches!(k.as_str(), Some("lib" | "rlib" | "dylib" | "proc-macro")))
+}
+
 /// The ids one resolve node depends on outside dev- and build-only edges.
 fn normal_deps<'a>(meta: &'a Value, id: &str) -> Vec<&'a str> {
     let Some(node) = meta["resolve"]["nodes"]
@@ -270,6 +321,26 @@ mod tests {
         // A bench under a different name is not the one the gate runs.
         assert!(!bench_target_in(&m, "server", "criterion"));
         assert!(!bench_target_in(&m, "absent", "soothfast"));
+    }
+
+    #[test]
+    fn a_bench_crate_carries_its_lib_s_own_name() {
+        let renamed = json!({ "name": "my-server", "id": "my-server", "targets": [
+            { "kind": ["lib"], "name": "wire" },
+            { "kind": ["bench"], "name": "soothfast" }] });
+        let m = meta(
+            vec![renamed, lib("plain")],
+            vec!["my-server", "plain"],
+            vec![],
+        );
+        let crates = bench_crates_in(&m, "soothfast");
+        assert_eq!(
+            crates,
+            [BenchCrate {
+                package: "my-server".into(),
+                prefixes: vec!["soothfast".into(), "wire".into()],
+            }]
+        );
     }
 
     #[test]

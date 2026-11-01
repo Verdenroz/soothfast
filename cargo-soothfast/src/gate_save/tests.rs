@@ -197,10 +197,32 @@ fn a_sharded_failure_with_no_listing_covers_the_shard_s_items() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+fn bench_crate(package: &str, prefixes: &[&str]) -> BenchCrate {
+    BenchCrate {
+        package: package.into(),
+        prefixes: prefixes.iter().map(|p| p.to_string()).collect(),
+    }
+}
+
+/// `mark_package` as an errored gate under `common`, with no listing, over a
+/// workspace whose bench crates `crates` reads.
+fn mark_unlisted(
+    root: &Path,
+    common: &CommonArgs,
+    crates: Result<Vec<BenchCrate>, String>,
+) -> Result<(), String> {
+    let reason = Reason::GateFailed;
+    mark_package_with(root, "head", common, reason, "no bench", None, || crates)
+}
+
 #[test]
-fn an_errored_gate_without_p_or_a_listing_covers_the_packages_it_saved_before() {
+fn an_errored_gate_without_p_or_a_listing_covers_the_workspace_s_bench_packages() {
     let root = stale("errored-no-p", &["core::a", "util::b"]);
-    save_errored(&root, "head", &CommonArgs::default(), None, "no bench").unwrap();
+    let crates = vec![
+        bench_crate("core", &["core"]),
+        bench_crate("util", &["util"]),
+    ];
+    mark_unlisted(&root, &CommonArgs::default(), Ok(crates)).unwrap();
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
     assert_eq!(doc["items"], json!({}));
     let packages: Vec<String> = unmeasured::read(&doc)
@@ -217,15 +239,59 @@ fn an_errored_gate_without_p_or_a_listing_covers_the_packages_it_saved_before() 
 }
 
 #[test]
-fn an_errored_gate_with_nothing_to_go_on_covers_every_item() {
-    let root = scratch("errored-nothing");
-    save_errored(&root, "head", &CommonArgs::default(), None, "no bench").unwrap();
-    let entry =
-        &unmeasured::read(&invoke::load_baseline_in(&root, "head").unwrap().unwrap()).unwrap()[0];
-    assert!(entry.package.is_empty() && entry.all_items);
+fn an_unreadable_workspace_deletes_the_baseline_and_fails() {
+    let root = stale("errored-unreadable", &["core::a"]);
+    let outcome = mark_unlisted(&root, &CommonArgs::default(), Err("no Cargo.toml".into()));
+    assert!(outcome.unwrap_err().contains("no Cargo.toml"));
+    assert!(invoke::load_baseline_in(&root, "head").unwrap().is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_package_whose_lib_is_named_otherwise_is_matched_by_the_lib_s_name() {
+    let root = stale("renamed-lib", &["wire::parse"]);
+    let common = CommonArgs {
+        pkg: Some("my-server".into()),
+        ..CommonArgs::default()
+    };
+    let crates = vec![bench_crate("my-server", &["soothfast", "wire"])];
+    mark_unlisted(&root, &common, Ok(crates)).unwrap();
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(doc["items"], json!({}));
+    let entry = &unmeasured::read(&doc).unwrap()[0];
+    assert_eq!(entry.package, "my_server");
+    assert_eq!(entry.prefixes, ["soothfast", "wire"]);
     assert!(unmeasured_as(
-        reading(&root, "any::x.alloc.allocs <= 0"),
+        reading(&root, "wire::parse.alloc.allocs <= 0"),
         Reason::GateFailed
     ));
+    assert!(matches!(
+        reading(&root, "my_server::parse.alloc.allocs <= 0"),
+        crate::docs_claims::Reading::Decided(_)
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_passing_shard_whose_listing_failed_drops_its_numbers_and_fails() {
+    let shard = invoke::Shard { index: 1, count: 2 };
+    let owned = (0..)
+        .map(|n| format!("core::f{n}"))
+        .find(|id| shard.owns(id))
+        .unwrap();
+    let root = stale("shard-listing-failed", &[&owned]);
+    crate::baseline_merge::stamp_shard_in(&root, "head", shard, std::slice::from_ref(&owned))
+        .unwrap();
+    let common = CommonArgs {
+        shard: Some(shard),
+        ..core()
+    };
+    let run = run_of(vec![(owned.as_str(), item(None))]);
+    let saved = save_head(&root, "head", &run, &HeadRun::Measured, &common, None, 0);
+    assert!(saved.is_err());
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(doc["items"], json!({}));
+    let entry = &unmeasured::read(&doc).unwrap()[0];
+    assert!(entry.all_items && entry.detail.contains("listing failed"));
     let _ = std::fs::remove_dir_all(&root);
 }

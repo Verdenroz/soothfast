@@ -69,15 +69,25 @@ impl Reason {
     pub fn parse(s: &str) -> Option<Reason> {
         REASONS.into_iter().find(|r| r.as_str() == s)
     }
+
+    /// Whether a measurement could have been taken on this run. Where it
+    /// could, a new or edited claim must have one; where it could not, every
+    /// claim the entry covers reads not evaluated, edited or not.
+    pub fn measurable_here(self) -> bool {
+        !matches!(
+            self,
+            Reason::NotGatedOnEvent | Reason::NoParent | Reason::ClaimsSkipped
+        )
+    }
 }
 
-/// One `unmeasured` entry: `items` of `package` (an id prefix, `-` written
-/// `_`) lack the `metrics` (backend names, or `backend.metric`; empty for
-/// every metric) for `reason`. `all_items` covers every item under the
-/// `package::` prefix (every item, for an empty `package`), for a gate that
-/// could not name them; `shard` narrows it to the items that shard owns.
-/// Otherwise an empty `items` names nothing, and no claim reads as not
-/// evaluated.
+/// One `unmeasured` entry: `items` of `package` lack the `metrics` (backend
+/// names, or `backend.metric`; empty for every metric) for `reason`.
+/// `all_items` covers every item under any of `prefixes`, the crate names
+/// the package's ids start with (the package itself, `-` written `_`, when
+/// none are stored), for a gate that could not name them; `shard` narrows it
+/// to the items that shard owns. Otherwise an empty `items` names nothing,
+/// and no claim reads as not evaluated.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Unmeasured {
     pub package: String,
@@ -87,6 +97,7 @@ pub struct Unmeasured {
     pub metrics: Vec<String>,
     pub all_items: bool,
     pub shard: Option<Shard>,
+    pub prefixes: Vec<String>,
 }
 
 impl Unmeasured {
@@ -106,20 +117,24 @@ impl Unmeasured {
         if let Some(shard) = self.shard {
             v["shard"] = json!(shard.to_string());
         }
+        if !self.prefixes.is_empty() {
+            v["prefixes"] = json!(self.prefixes);
+        }
         v
     }
 
     /// Whether this entry names `item` or, with `all_items`, its prefix.
     pub fn names(&self, item: &str) -> bool {
         self.items.iter().any(|i| i == item)
-            || (self.all_items
-                && self.shard.is_none_or(|s| s.owns(item))
-                && (self.package.is_empty() || item.starts_with(&format!("{}::", self.package))))
+            || (self.all_items && self.shard.is_none_or(|s| s.owns(item)) && self.takes(item))
     }
 
-    /// Whether this entry drops the saved numbers of `id`.
+    /// Whether `id` belongs to this entry's package, whose numbers it drops.
     fn takes(&self, id: &str) -> bool {
-        self.package.is_empty() || invoke::id_pkg(id) == self.package
+        if self.prefixes.is_empty() {
+            return id.starts_with(&format!("{}::", self.package));
+        }
+        self.prefixes.iter().any(|p| invoke::id_pkg(id) == p)
     }
 
     fn from_json(v: &Value) -> Option<Unmeasured> {
@@ -145,6 +160,10 @@ impl Unmeasured {
             shard: match v.get("shard") {
                 None => None,
                 Some(s) => Some(Shard::parse(s.as_str()?).ok()?),
+            },
+            prefixes: match v.get("prefixes") {
+                None => Vec::new(),
+                Some(p) => strings(p)?,
             },
         })
     }
@@ -198,6 +217,7 @@ pub fn by_package<'a>(
             metrics: metrics.iter().map(|m| m.to_string()).collect(),
             all_items: false,
             shard: None,
+            prefixes: Vec::new(),
         })
         .collect()
 }
@@ -244,28 +264,8 @@ fn append(doc: &mut Value, entries: &[Unmeasured]) -> io::Result<()> {
 
 fn clear_packages(doc: &mut Value, packages: &[String]) {
     if let Some(entries) = doc.get_mut("unmeasured").and_then(Value::as_array_mut) {
-        entries.retain(|e| {
-            !packages
-                .iter()
-                .any(|p| p.is_empty() || e["package"].as_str() == Some(p))
-        });
+        entries.retain(|e| !packages.iter().any(|p| e["package"].as_str() == Some(p)));
     }
-}
-
-/// The packages whose cargo-measured items baseline `name` under `root`
-/// holds, for a gate that could not tell which packages it covered.
-pub fn packages_in(root: &Path, name: &str) -> io::Result<Vec<String>> {
-    let doc = invoke::load_baseline_in(root, name)?.unwrap_or_default();
-    let mut packages: Vec<String> = doc["items"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(id, v)| !v["imported"].is_string() && !id.starts_with("buildcost::"))
-        .map(|(id, _)| invoke::id_pkg(id).to_string())
-        .collect();
-    packages.sort();
-    packages.dedup();
-    Ok(packages)
 }
 
 /// Drop the entries of `package` (every entry for `None`), for a save that

@@ -36,39 +36,40 @@ pub fn probe<'a>(
 pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
     let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
     let (digest, runs, exe) = probe("measure", common, &stamp);
-    let stored = match (reuse_plan(reuse, runs.gating_backend()), digest.as_deref()) {
-        (Plan::Reuse, Some(digest)) => {
+    let expected = exe.as_deref().and_then(|exe| expected_ids(common, exe));
+    let stored = match (
+        reuse_plan(reuse, runs.gating_backend()),
+        digest.as_deref(),
+        &expected,
+    ) {
+        (Plan::Reuse, Some(digest), Some(ids)) => {
             let label = format!("binary {digest}");
-            match runs.load_covering(digest, &label) {
-                Some(doc) => Some((doc, label)),
+            match runs.load_covering(digest, &label, ids) {
+                Some(doc) => Some((doc, label, ids)),
                 None => {
-                    println!("measure: no stored run for binary {digest}; measuring in full");
+                    println!(
+                        "measure: no stored run for binary {digest} counts these items; measuring in full"
+                    );
                     None
                 }
             }
         }
-        (Plan::Full(why), _) => {
+        (Plan::Full(why), _, _) => {
             println!("measure: {why}; measuring in full");
             None
         }
-        (Plan::Reuse, None) => None,
+        (Plan::Reuse, _, _) => None,
     };
-    if let Some((doc, label)) = stored {
-        let expected = exe.as_deref().and_then(|exe| expected_ids(common, exe));
-        let merged = match expected.filter(|ids| counts_cover(&doc, ids)) {
-            Some(ids) => {
-                let timing = run_head(common, &["--skip-gating-counters"], stamp.clone())?;
-                merge_stored(&doc, &label, timing, &ids).ok()
-            }
-            None => None,
-        };
+    if let Some((doc, label, ids)) = stored {
+        let timing = run_head(common, &["--skip-gating-counters"], stamp.clone())?;
+        let merged = merge_stored(&doc, &label, timing, ids).ok();
         match merged {
             Some(run) => {
                 println!("measure: reusing counters for {label}; timing measured fresh");
                 return Ok(run);
             }
             None => println!(
-                "measure: stored run for {label} lacks callgrind counts for these items; measuring in full"
+                "measure: the timing pass of {label} missed an item it was asked for; measuring in full"
             ),
         }
     }
@@ -710,7 +711,7 @@ mod tests {
         };
         Runs::new(&stamp, &whole, Some(callgrind_env())).store(id, &stored(items));
         let doc = Runs::new(&stamp, &narrowed, Some(callgrind_env()))
-            .load_covering(id, "binary x")
+            .load_covering(id, "binary x", &only_a())
             .expect("the whole run is reachable");
         assert!(
             Runs::new(&stamp, &narrowed, Some(callgrind_env()))
@@ -750,6 +751,29 @@ mod tests {
         let doc = through_the_lookup("test-headrun-filter", filtered_out, narrowed);
         let run = merge_stored(&doc, "binary x", timing(), &only_a()).expect("hit");
         assert_eq!(run.items.keys().collect::<Vec<_>>(), ["pkg::a"]);
+    }
+
+    #[test]
+    fn the_lookup_passes_over_a_stored_run_that_lacks_the_counts() {
+        let id = "test-headrun-covering";
+        let stamp = test_stamp();
+        let narrowed = CommonArgs {
+            pkg: Some(id.into()),
+            filter: Some("pkg::a".into()),
+            ..CommonArgs::default()
+        };
+        let whole = CommonArgs {
+            pkg: Some(id.into()),
+            ..CommonArgs::default()
+        };
+        let timing_only = stored(json!({ "pkg::a": { "walltime": { "median_ns": 5.0 } } }));
+        let counted = stored(json!({ "pkg::a": { "callgrind": { "ir": 4567 } } }));
+        Runs::new(&stamp, &narrowed, Some(callgrind_env())).store(id, &timing_only);
+        Runs::new(&stamp, &whole, Some(callgrind_env())).store(id, &counted);
+        let doc = Runs::new(&stamp, &narrowed, Some(callgrind_env()))
+            .load_covering(id, "binary x", &only_a())
+            .expect("the counted run is reachable");
+        assert_eq!(doc["items"]["pkg::a"]["callgrind"]["ir"], 4567);
     }
 
     #[test]

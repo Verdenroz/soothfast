@@ -114,6 +114,7 @@ fn shard_baseline() -> Value {
         detail: "the gate errored".into(),
         all_items: true,
         shard: Some(shard),
+        prefixes: vec!["other_lib".into()],
         ..unmeasured::Unmeasured::default()
     };
     unmeasured::append_in(&root, "head", &[unlisted]).unwrap();

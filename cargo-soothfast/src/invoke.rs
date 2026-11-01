@@ -993,7 +993,7 @@ pub fn project_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn baseline_path(root: &Path, name: &str) -> PathBuf {
+pub fn baseline_path(root: &Path, name: &str) -> PathBuf {
     root.join(".soothfast")
         .join("baselines")
         .join(format!("{name}.json"))

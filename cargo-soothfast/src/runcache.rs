@@ -7,6 +7,7 @@
 //! Reuse is safe because the key pins every condition that moves the
 //! numbers, so a run measured any other way cannot be served from here.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -68,11 +69,15 @@ impl<'a> Runs<'a> {
         self.reference_source(id, measured_from).map(|(_, doc)| doc)
     }
 
-    /// A stored run of `id` that may hold every item this invocation
-    /// measures: its own key first, then the run taken without the shard,
-    /// without the filter, and without either. The caller checks it holds
-    /// the items it needs.
-    pub fn load_covering(&self, id: &str, measured_from: &str) -> Option<Value> {
+    /// The first stored run of `id` with callgrind counts for every one of
+    /// `expected`: under its own key, then the run taken without the shard,
+    /// without the filter, and without either.
+    pub fn load_covering(
+        &self,
+        id: &str,
+        measured_from: &str,
+        expected: &BTreeSet<String>,
+    ) -> Option<Value> {
         let env = self.env.as_ref()?;
         let (shard, filter) = (self.common.shard, self.common.filter.as_deref());
         let mut keys: Vec<String> = Vec::new();
@@ -82,7 +87,9 @@ impl<'a> Runs<'a> {
                 keys.push(key);
             }
         }
-        keys.iter().find_map(|key| load(key, measured_from))
+        keys.iter()
+            .filter_map(|key| load(key, measured_from))
+            .find(|doc| crate::headrun::counts_cover(doc, expected))
     }
 
     /// The run and its file that a gate with `reuse` takes in place of

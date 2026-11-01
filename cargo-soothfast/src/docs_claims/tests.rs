@@ -10,6 +10,7 @@ fn entry(reason: Reason, items: &[&str], metrics: &[&str]) -> Unmeasured {
         metrics: metrics.iter().map(|s| s.to_string()).collect(),
         all_items: false,
         shard: None,
+        prefixes: Vec::new(),
     }
 }
 

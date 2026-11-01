@@ -27,7 +27,8 @@ pub enum Outcome {
 #[derive(Debug, PartialEq)]
 pub enum Reading {
     Decided(Outcome),
-    /// Every missing metric is listed `unmeasured`; the first one's reason.
+    /// Every missing metric is listed `unmeasured`, and some for a reason a
+    /// measurement was possible under; the first such reason.
     Unmeasured(Reason, String),
 }
 
@@ -117,6 +118,7 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
     let operands = std::iter::once((&claim.item, &claim.backend, &claim.metric))
         .chain(claim.minus.iter().map(|m| (&m.item, &m.backend, &m.metric)));
     let mut first: Option<Reason> = None;
+    let mut measurable: Option<Reason> = None;
     let mut reasons = Vec::new();
     for (item, backend, metric) in operands {
         if baseline["items"][item][backend][metric].is_number() {
@@ -125,6 +127,9 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
         match entries.iter().find(|u| u.covers(item, backend, metric)) {
             Some(u) => {
                 first.get_or_insert(u.reason);
+                if u.reason.measurable_here() {
+                    measurable.get_or_insert(u.reason);
+                }
                 reasons.push(format!("{item}: {}", u.detail));
             }
             None => {
@@ -138,9 +143,11 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
             }
         }
     }
-    match first {
-        Some(reason) => Reading::Unmeasured(reason, reasons.join("; ")),
-        None => Reading::Decided(Outcome::Failed(e)),
+    let why = reasons.join("; ");
+    match (measurable, first) {
+        (Some(reason), _) => Reading::Unmeasured(reason, why),
+        (None, Some(reason)) => Reading::Decided(Outcome::NotEvaluated(reason, why)),
+        (None, None) => Reading::Decided(Outcome::Failed(e)),
     }
 }
 

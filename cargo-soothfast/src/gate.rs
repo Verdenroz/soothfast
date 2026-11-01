@@ -1172,11 +1172,13 @@ fn measure_ref_interleaved(
                 }
             }
             let label = format!("binary {}", d.head);
-            let stored = (!counted)
-                .then(|| runs.load_covering(&d.head, &label))
+            let stored = takes_stored_counters(reuse, counted)
+                .then(|| headrun::expected_ids(common, &d.head_exe))
                 .flatten()
-                .zip(headrun::expected_ids(common, &d.head_exe))
-                .map(|(doc, expected)| Box::new((doc, label, expected)));
+                .and_then(|expected| {
+                    let doc = runs.load_covering(&d.head, &label, &expected)?;
+                    Some(Box::new((doc, label, expected)))
+                });
             return Ok((
                 Ref::IdenticalBinaries {
                     run,
@@ -1440,6 +1442,12 @@ fn identical_pass_cache(stored: Option<&Value>, pass: &Run, counted: bool) -> Op
     } else {
         stored.cloned()
     }
+}
+
+/// Whether an identical-binaries pass takes its counters from a stored run:
+/// only one that took none itself, and never with reuse turned off.
+fn takes_stored_counters(reuse: bool, counted: bool) -> bool {
+    reuse && !counted
 }
 
 /// A run stored for the identical binary, its label, and the ids the pass
@@ -2912,6 +2920,13 @@ mod tests {
         );
         assert_eq!(saved["assertions"][0]["ok"], true);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn no_reuse_base_takes_no_stored_counters() {
+        assert!(super::takes_stored_counters(true, false));
+        assert!(!super::takes_stored_counters(false, false));
+        assert!(!super::takes_stored_counters(true, true));
     }
 
     #[test]

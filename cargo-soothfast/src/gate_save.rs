@@ -12,6 +12,7 @@ use crate::baseline_merge;
 use crate::headrun;
 use crate::invoke::{self, CommonArgs, Reused, Run};
 use crate::unmeasured::{self, Reason, Unmeasured};
+use crate::workspace::{self, BenchCrate};
 
 /// Where a gate's HEAD run came from.
 #[derive(Debug, PartialEq)]
@@ -48,7 +49,13 @@ pub fn save_head(
         let reason = Reason::GateFailed;
         return mark_package(root, name, common, reason, "the gate failed", listed);
     }
-    let listed = shard_listing(common, listed)?;
+    if let (Some(shard), None) = (common.shard, listed) {
+        let reason = Reason::GateFailed;
+        mark_package(root, name, common, reason, "listing failed", None)?;
+        return Err(format!(
+            "cannot list the bench binary's items, which shard {shard}'s baseline must carry"
+        ));
+    }
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
@@ -73,19 +80,6 @@ pub fn save_errored(
     mark_package(root, name, common, Reason::GateFailed, &detail, listed)
 }
 
-/// `listed`, which a shard's baseline must carry for `baseline merge`.
-fn shard_listing<'a>(
-    common: &CommonArgs,
-    listed: Option<&'a [String]>,
-) -> Result<Option<&'a [String]>, String> {
-    match (common.shard, listed) {
-        (Some(shard), None) => Err(format!(
-            "cannot list the bench binary's items, which shard {shard}'s baseline must carry"
-        )),
-        _ => Ok(listed),
-    }
-}
-
 fn stamp(root: &Path, name: &str, common: &CommonArgs, listed: &[String]) -> Result<(), String> {
     match common.shard {
         Some(shard) => {
@@ -97,11 +91,10 @@ fn stamp(root: &Path, name: &str, common: &CommonArgs, listed: &[String]) -> Res
 
 /// Replace the numbers of the gate's packages in baseline `name` with one
 /// `reason` entry each, naming the items of `ids` this gate owns. The
-/// packages are `-p`'s, else every package `ids` names, else every package
-/// the baseline holds numbers of. Without `ids` each entry covers all of its
-/// package's items (the shard's, when sharded), and with no package known at
-/// all one entry covers every item. With a shard, `ids` is the bench
-/// binary's whole listing, which the file is stamped with.
+/// packages are `-p`'s, else those `ids` name, else every bench package of
+/// the workspace. Without `ids` each entry covers all of its package's items
+/// (the shard's, when sharded). With a shard, `ids` is the bench binary's
+/// whole listing, which the file is stamped with.
 pub fn mark_package(
     root: &Path,
     name: &str,
@@ -110,43 +103,53 @@ pub fn mark_package(
     detail: &str,
     ids: Option<&[String]>,
 ) -> Result<(), String> {
+    let target = common.target.as_deref().unwrap_or("soothfast");
+    let crates = || workspace::bench_crates(target, None).map_err(|e| e.to_string());
+    mark_package_with(root, name, common, reason, detail, ids, crates)
+}
+
+/// [`mark_package`] with the workspace's bench crates read by `crates`.
+/// When no package can be told, the baseline is deleted, so no old number
+/// outlives the failure, and the error says so.
+pub(crate) fn mark_package_with(
+    root: &Path,
+    name: &str,
+    common: &CommonArgs,
+    reason: Reason,
+    detail: &str,
+    ids: Option<&[String]>,
+    crates: impl FnOnce() -> Result<Vec<BenchCrate>, String>,
+) -> Result<(), String> {
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
-    let mut packages: Vec<String> = match (&common.pkg, ids) {
-        (Some(pkg), _) => vec![pkg.replace('-', "_")],
-        (None, Some(ids)) => ids
-            .iter()
-            .map(|id| invoke::id_pkg(id).to_string())
-            .collect(),
-        (None, None) => Vec::new(),
+    let covered = match covered_crates(common, ids, crates) {
+        Ok(covered) if !covered.is_empty() => covered,
+        outcome => {
+            let why = outcome
+                .err()
+                .unwrap_or_else(|| "the workspace has no bench package".into());
+            let _ = std::fs::remove_file(invoke::baseline_path(root, name));
+            return Err(format!(
+                "cannot tell which packages the gate covered ({why}); baseline {name:?} was deleted"
+            ));
+        }
     };
-    packages.sort();
-    packages.dedup();
-    if packages.is_empty() {
-        packages = unmeasured::packages_in(root, name).map_err(|e| e.to_string())?;
-    }
-    if packages.is_empty() {
-        packages.push(String::new());
-    }
-    let entries: Vec<Unmeasured> = packages
+    let entries: Vec<Unmeasured> = covered
         .into_iter()
-        .map(|package| Unmeasured {
+        .map(|c| Unmeasured {
             items: ids
                 .unwrap_or_default()
                 .iter()
-                .filter(|id| {
-                    invoke::id_pkg(id) == package && common.shard.is_none_or(|s| s.owns(id))
-                })
+                .filter(|id| c.prefixes.iter().any(|p| invoke::id_pkg(id) == p))
+                .filter(|id| common.shard.is_none_or(|s| s.owns(id)))
                 .cloned()
                 .collect(),
-            detail: match package.as_str() {
-                "" => format!("{detail}, so no package saved numbers"),
-                p => format!("{detail}, so {p} saved no numbers"),
-            },
-            all_items: ids.is_none() || package.is_empty(),
-            shard: common.shard.filter(|_| ids.is_none() || package.is_empty()),
-            package,
+            detail: format!("{detail}, so {} saved no numbers", c.package),
+            all_items: ids.is_none(),
+            shard: common.shard.filter(|_| ids.is_none()),
+            package: c.package.replace('-', "_"),
+            prefixes: c.prefixes,
             reason,
             ..Unmeasured::default()
         })
@@ -154,6 +157,36 @@ pub fn mark_package(
     report(name, &entries);
     unmeasured::mark_in(root, name, &entries).map_err(|e| e.to_string())?;
     stamp(root, name, common, ids.unwrap_or_default())
+}
+
+/// The bench crates a gate covered: `-p`'s, else those `ids` name, else all.
+/// A `-p` the workspace cannot place keeps its own name as the prefix.
+fn covered_crates(
+    common: &CommonArgs,
+    ids: Option<&[String]>,
+    crates: impl FnOnce() -> Result<Vec<BenchCrate>, String>,
+) -> Result<Vec<BenchCrate>, String> {
+    let all = crates();
+    if let Some(pkg) = &common.pkg {
+        let own = all
+            .ok()
+            .and_then(|all| all.into_iter().find(|c| &c.package == pkg));
+        return Ok(vec![own.unwrap_or_else(|| BenchCrate {
+            package: pkg.clone(),
+            prefixes: vec![pkg.replace('-', "_")],
+        })]);
+    }
+    let all = all?;
+    Ok(match ids {
+        Some(ids) => all
+            .into_iter()
+            .filter(|c| {
+                ids.iter()
+                    .any(|id| c.prefixes.iter().any(|p| invoke::id_pkg(id) == p))
+            })
+            .collect(),
+        None => all,
+    })
 }
 
 fn report(name: &str, entries: &[Unmeasured]) {

@@ -304,8 +304,7 @@ fn merge_on(
                     ..Unmeasured::default()
                 })
             }
-            Some(_) => {}
-            None => entries.extend(unaccounted(&pkg, &shards, expect)),
+            _ => entries.extend(unaccounted(&pkg, &shards, expect)),
         }
     }
     out["created_unix"] = json!(
@@ -354,6 +353,7 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
             metrics: Vec::new(),
             all_items: false,
             shard: None,
+            prefixes: Vec::new(),
         }];
     }
     missing
@@ -366,6 +366,7 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
             metrics: Vec::new(),
             all_items: false,
             shard: None,
+            prefixes: Vec::new(),
         })
         .filter(|u| !u.items.is_empty())
         .collect()
