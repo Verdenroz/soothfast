@@ -778,8 +778,8 @@ fn accept_cmd(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     harness_note(&harness);
-    if let Some(refusal) = nothing_measured(&current, &g.common) {
-        return err(refusal);
+    if current.items.is_empty() {
+        return err("measured 0 items — check --filter / registry setup; refusing to accept");
     }
     let root = match invoke::workspace_root() {
         Ok(r) => r,
@@ -1227,12 +1227,8 @@ fn measure_ref_interleaved(
             println!(
                 "gate: bench binaries identical (code and data match) — no measurable change possible"
             );
-            let pass = identical_pass(
-                reuse,
-                by_binary.is_some(),
-                recording(),
-                common.backend.as_deref(),
-            );
+            let readable = by_binary.as_ref().is_some_and(headrun::readable_as_head);
+            let pass = identical_pass(reuse, readable, common.backend.as_deref());
             let exe = pass.plan.then_some(d.head_exe.as_path());
             let outcome = measure_head_with(exe, pass.args);
             let counted = outcome
@@ -1255,7 +1251,7 @@ fn measure_ref_interleaved(
                     None => {}
                 }
             }
-            let stored = by_binary.filter(|_| !counted).map(Box::new);
+            let stored = by_binary.filter(|_| readable && !counted).map(Box::new);
             let identical = Ref::IdenticalBinaries {
                 run,
                 counted,
@@ -1500,9 +1496,9 @@ pub fn recording() -> bool {
 /// counters, so it can be stored as that binary's run. A backend named on the
 /// command line may be one of the gating counters, which measures nothing once
 /// those counters are skipped, so it keeps them.
-fn identical_pass_args(backend: Option<&str>, record: bool) -> &'static [&'static str] {
+fn identical_pass_args(backend: Option<&str>, count: bool) -> &'static [&'static str] {
     match backend {
-        _ if record => &[],
+        _ if count => &[],
         Some("perfcnt" | "callgrind") => &[],
         _ => &["--skip-gating-counters"],
     }
@@ -1526,15 +1522,12 @@ impl IdenticalPass {
 
 /// A run stored for the binary is carried forward by a plan too, which splices
 /// its items and their claims from the item store instead of measuring them.
-fn identical_pass(
-    reuse: bool,
-    stored: bool,
-    recording: bool,
-    backend: Option<&str>,
-) -> IdenticalPass {
+/// With no counted run `stored` readable as HEAD's, the pass keeps the gating
+/// counters: nothing else could judge its complexity claims.
+fn identical_pass(reuse: bool, stored: bool, backend: Option<&str>) -> IdenticalPass {
     IdenticalPass {
         plan: reuse,
-        args: identical_pass_args(backend, !stored && recording),
+        args: identical_pass_args(backend, !stored),
     }
 }
 
@@ -2580,37 +2573,39 @@ mod tests {
 
     #[test]
     fn the_identical_branch_plans_whenever_reuse_is_on() {
-        for (stored, recording) in [(false, false), (true, false), (false, true), (true, true)] {
-            assert!(identical_pass(true, stored, recording, None).plan);
+        for stored in [false, true] {
+            assert!(identical_pass(true, stored, None).plan);
         }
-        assert!(!identical_pass(false, false, false, None).plan);
+        assert!(!identical_pass(false, false, None).plan);
     }
 
     #[test]
     fn a_plan_that_applies_counts_and_one_that_does_not_takes_the_cheap_pass() {
-        let pass = identical_pass(true, false, false, None);
+        let pass = identical_pass(true, true, None);
         assert!(pass.counted(true));
         assert!(!pass.counted(false));
         assert_eq!(pass.args, ["--skip-gating-counters"]);
     }
 
     #[test]
-    fn a_stored_run_keeps_the_cheap_fallback_even_when_recording() {
-        let pass = identical_pass(false, true, true, None);
+    fn a_stored_counted_run_lets_the_pass_skip_the_counters() {
+        let pass = identical_pass(false, true, None);
         assert_eq!(pass.args, ["--skip-gating-counters"]);
         assert!(!pass.counted(false));
     }
 
     #[test]
-    fn a_recording_fallback_counts_and_is_baseline_material() {
-        let pass = identical_pass(false, false, true, Some("walltime"));
-        assert!(pass.args.is_empty());
-        assert!(pass.counted(false));
+    fn with_no_counted_run_stored_the_pass_keeps_the_counters() {
+        for backend in [None, Some("walltime")] {
+            let pass = identical_pass(false, false, backend);
+            assert!(pass.args.is_empty());
+            assert!(pass.counted(false));
+        }
     }
 
     #[test]
     fn a_counted_identical_run_saves_the_baseline() {
-        let counted = identical_pass(true, true, false, None).counted(true);
+        let counted = identical_pass(true, true, None).counted(true);
         assert_eq!(save_verdict(0, !counted), SaveVerdict::Save);
     }
 
