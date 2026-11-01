@@ -1,0 +1,284 @@
+//! `cargo soothfast baseline merge`: one baseline built from exactly the
+//! baseline files of one CI run, the shard baselines of a sharded gate plus
+//! any imported ones. Nothing else is read, so no other commit's numbers can
+//! reach it. A shard that saved nothing leaves its items `unmeasured`.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::io;
+use std::path::{Path, PathBuf};
+
+use serde_json::{Map, Value, json};
+
+use crate::invoke::{self, Shard};
+use crate::unmeasured::{self, Reason, Unmeasured};
+
+/// The shard a gate's baseline holds the items of, as `I/N`.
+const SHARD_KEY: &str = "shard";
+/// Every item the shard's bench binary lists, per package.
+const LISTED_KEY: &str = "listed";
+
+/// Refuse to save shard `shard` into baseline `name` when it already holds
+/// another shard's run, or an unsharded one.
+pub fn check_shard_in(root: &Path, name: &str, shard: Shard) -> Result<(), String> {
+    let Some(doc) = invoke::load_baseline_in(root, name).map_err(|e| e.to_string())? else {
+        return Ok(());
+    };
+    match doc.get(SHARD_KEY).and_then(Value::as_str) {
+        Some(s) if s == shard.to_string() => Ok(()),
+        Some(s) => Err(format!(
+            "baseline {name:?} holds shard {s}; save shard {shard} into its own baseline"
+        )),
+        None if is_rust(&doc) => Err(format!(
+            "baseline {name:?} holds an unsharded run; save shard {shard} into its own baseline"
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Stamp baseline `name` as shard `shard`, listing `ids` by package.
+pub fn stamp_shard_in(root: &Path, name: &str, shard: Shard, ids: &[String]) -> io::Result<()> {
+    let mut doc = invoke::load_baseline_in(root, name)?
+        .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+    doc[SHARD_KEY] = json!(shard.to_string());
+    if !doc[LISTED_KEY].is_object() {
+        doc[LISTED_KEY] = json!({});
+    }
+    let mut by_pkg: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
+    for id in ids {
+        by_pkg.entry(invoke::id_pkg(id)).or_default().push(id);
+    }
+    for (pkg, ids) in by_pkg {
+        doc[LISTED_KEY][pkg] = json!(ids);
+    }
+    invoke::write_baseline_in(root, name, &doc)
+}
+
+/// Whether `doc` holds a gate's run, as opposed to imported items only.
+fn is_rust(doc: &Value) -> bool {
+    doc.get(SHARD_KEY).is_some()
+        || doc.get("unmeasured").is_some()
+        || items(doc).is_some_and(|m| m.values().any(|v| !v["imported"].is_string()))
+}
+
+fn items(doc: &Value) -> Option<&Map<String, Value>> {
+    doc.get("items").and_then(Value::as_object)
+}
+
+/// Why a merge failed: a file that cannot be trusted, or one from a gate
+/// split another way than `--expect` says.
+#[derive(Debug, PartialEq)]
+enum MergeError {
+    Corrupt(String),
+    Count(String),
+}
+
+pub fn run(args: &[String]) -> i32 {
+    if args.first().map(String::as_str) != Some("merge") {
+        eprintln!(
+            "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] FILE..."
+        );
+        return 2;
+    }
+    let mut into = None;
+    let mut expect = 1u64;
+    let mut packages = Vec::new();
+    let mut files = Vec::new();
+    let mut it = args[1..].iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--into" => into = it.next().cloned(),
+            "--expect" => match it.next().map(|n| n.parse::<u64>()) {
+                Some(Ok(n)) if n > 0 => expect = n,
+                _ => return fail("--expect needs a shard count of at least 1"),
+            },
+            "--packages" => match it.next() {
+                Some(p) => packages = p.split_whitespace().map(str::to_string).collect(),
+                None => return fail("--packages needs a space-separated list"),
+            },
+            other if !other.starts_with('-') => files.push(PathBuf::from(other)),
+            other => return fail(&format!("unknown baseline merge arg {other:?}")),
+        }
+    }
+    let Some(into) = into else {
+        return fail("baseline merge needs --into NAME");
+    };
+    let mut docs = Vec::new();
+    for file in &files {
+        let read = std::fs::read_to_string(file)
+            .map_err(|e| e.to_string())
+            .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string()));
+        match read {
+            Ok(doc) => docs.push((file.display().to_string(), doc)),
+            Err(e) => return fail(&format!("corrupt baseline {}: {e}", file.display())),
+        }
+    }
+    let merged = match merge(&docs, expect, &packages) {
+        Ok(doc) => doc,
+        Err(MergeError::Corrupt(e)) => return fail(&e),
+        Err(MergeError::Count(e)) => {
+            eprintln!("soothfast: {e}");
+            return 3;
+        }
+    };
+    if let Err(e) = invoke::write_baseline_in(&invoke::project_root(), &into, &merged) {
+        return fail(&format!("cannot write baseline {into:?}: {e}"));
+    }
+    report(&into, docs.len(), &merged);
+    0
+}
+
+fn report(into: &str, files: usize, merged: &Value) {
+    let count = items(merged).map_or(0, Map::len);
+    println!("baseline merge: {files} file(s) into {into}: {count} item(s)");
+    for u in unmeasured::read(merged).unwrap_or_default() {
+        let ids = if u.items.is_empty() {
+            "items unknown".to_string()
+        } else {
+            u.items.join(", ")
+        };
+        println!(
+            "baseline merge: not measured ({}): {}: {ids}",
+            u.reason.as_str(),
+            u.detail
+        );
+    }
+}
+
+fn fail(msg: &str) -> i32 {
+    eprintln!("soothfast: {msg}");
+    2
+}
+
+/// One baseline from `files` (label, document) of a gate split into
+/// `expect` shards, accounting for every one of `packages`.
+fn merge(files: &[(String, Value)], expect: u64, packages: &[String]) -> Result<Value, MergeError> {
+    let corrupt = |label: &str, why: String| MergeError::Corrupt(format!("{label}: {why}"));
+    let mut out = json!({ "version": 1 });
+    let mut all_items = Map::new();
+    let mut assertions = Vec::new();
+    let mut entries: Vec<Unmeasured> = Vec::new();
+    let mut shards: BTreeMap<u64, &Value> = BTreeMap::new();
+    let no_items = Map::new();
+    for (label, doc) in files {
+        let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
+        let file_items = match doc.get("items") {
+            None => &no_items,
+            Some(v) => v
+                .as_object()
+                .ok_or_else(|| corrupt(label, "`items` is not an object".into()))?,
+        };
+        if is_rust(doc) {
+            let shard = match doc.get(SHARD_KEY) {
+                None => Shard { index: 1, count: 1 },
+                Some(v) => v
+                    .as_str()
+                    .and_then(|s| Shard::parse(s).ok())
+                    .ok_or_else(|| corrupt(label, format!("bad shard stamp {v}")))?,
+            };
+            if shard.count != expect {
+                return Err(MergeError::Count(format!(
+                    "{label} is shard {shard}, but the gate was split into {expect}"
+                )));
+            }
+            if shards.insert(shard.index, doc).is_some() {
+                return Err(corrupt(label, format!("a second file for shard {shard}")));
+            }
+            if let Some(id) = file_items
+                .iter()
+                .find(|(id, v)| !v["imported"].is_string() && !shard.owns(id))
+                .map(|(id, _)| id)
+            {
+                return Err(corrupt(
+                    label,
+                    format!("shard {shard} holds {id}, which it does not own"),
+                ));
+            }
+            for key in ["noise_pct", "build"] {
+                if out.get(key).is_none()
+                    && let Some(v) = doc.get(key)
+                {
+                    out[key] = v.clone();
+                }
+            }
+        }
+        for (id, v) in file_items {
+            if all_items.insert(id.clone(), v.clone()).is_some() {
+                return Err(corrupt(label, format!("{id} is in another file too")));
+            }
+        }
+        assertions.extend(doc["assertions"].as_array().into_iter().flatten().cloned());
+        entries.extend(file_entries);
+    }
+    for pkg in packages {
+        entries.extend(unaccounted(&pkg.replace('-', "_"), &shards, expect));
+    }
+    out["created_unix"] = json!(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    );
+    out["items"] = Value::Object(all_items);
+    out["assertions"] = Value::Array(assertions);
+    out["unmeasured"] = entries.iter().map(Unmeasured::to_json).collect();
+    Ok(out)
+}
+
+/// The entries for the shards of `pkg` that saved nothing of it. Their items
+/// are named from the other shards' listings; with none to read, no item is.
+fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Unmeasured> {
+    let missing: Vec<Shard> = (1..=expect)
+        .map(|index| Shard {
+            index,
+            count: expect,
+        })
+        .filter(|s| !shards.get(&s.index).is_some_and(|doc| covers(doc, pkg)))
+        .collect();
+    if missing.is_empty() {
+        return Vec::new();
+    }
+    let listed: BTreeSet<String> = shards
+        .values()
+        .filter_map(|doc| doc[LISTED_KEY][pkg].as_array())
+        .flatten()
+        .filter_map(|id| id.as_str().map(str::to_string))
+        .collect();
+    if listed.is_empty() {
+        let which = if expect == 1 {
+            "the gate".to_string()
+        } else {
+            let names: Vec<String> = missing.iter().map(Shard::to_string).collect();
+            format!("shard {}", names.join(", "))
+        };
+        return vec![Unmeasured {
+            package: pkg.to_string(),
+            reason: Reason::NoMeasurement,
+            detail: format!("{which} saved no measurement of {pkg}"),
+            items: Vec::new(),
+        }];
+    }
+    missing
+        .into_iter()
+        .map(|shard| Unmeasured {
+            package: pkg.to_string(),
+            reason: Reason::ShardMissing,
+            detail: format!("shard {shard} saved no measurement of {pkg}"),
+            items: listed.iter().filter(|id| shard.owns(id)).cloned().collect(),
+        })
+        .filter(|u| !u.items.is_empty())
+        .collect()
+}
+
+/// Whether a gate's baseline accounts for `pkg`: it listed, measured or
+/// marked the package.
+fn covers(doc: &Value, pkg: &str) -> bool {
+    doc[LISTED_KEY].get(pkg).is_some()
+        || items(doc).is_some_and(|m| {
+            m.iter()
+                .any(|(id, v)| !v["imported"].is_string() && invoke::id_pkg(id) == pkg)
+        })
+        || unmeasured::read(doc).is_ok_and(|es| es.iter().any(|e| e.package == pkg))
+}
+
+#[cfg(test)]
+mod tests;

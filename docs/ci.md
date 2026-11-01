@@ -140,7 +140,7 @@ installed on is refused.
 | `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes. |
 | `spec` | none | Space-separated packages whose `mode = "generate"` specs to regenerate. |
 | `features` | none | Cargo features for the gate, the baseline measurement, and spec generation. A bench target with `required-features` needs them here. |
-| `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. A failing gate saves nothing, and neither does one whose bench binaries are identical on both sides, since that pass collects no gating counters. A job reading the baseline has to handle its absence. |
+| `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. A failing gate saves nothing. One whose bench binaries are identical on both sides collects no gating counters, so it lists its items as `unmeasured` instead, and so does one that read HEAD's run from the run cache. With `shard`, each leg's file holds its shard's items; merge them with `cargo soothfast baseline merge`. A job reading the baseline has to handle its absence. |
 | `changelog-packages` | `packages` | Packages whose API surface `report changelog` diffs. Set it when a crate without a bench target still ships an API. |
 | `changelog-features` | `features` | Features for `report changelog`, which decide what the API surface diff contains. Set it wider than `features` when gating under the full feature set is too heavy. |
 | `regen-run` | none | Shell run on the default branch after the built-in regeneration, for derived files the inputs above do not cover. `$SOOTHFAST` is the `cargo-soothfast` this step installed, so `"$SOOTHFAST" sdk gen -p mylib` works whether the CLI came from the install or from `binary`. Requires `regen-paths`. |
@@ -453,12 +453,18 @@ jobs:
 ```
 
 The legs record `soothfast-result-rust-shard-<i>-of-<n>` and the verdict folds them
-into one section for the package. A pull request's shards cannot save the
-`head` baseline, which holds every item, so on a pull request with `shard`
-above 1 the docs check reports "claims not evaluated: sharded gate saves no
-measurement" and checks binds and examples only. A default-branch push records every item
-in its first leg and saves the baseline as before; the other legs are
-skipped on a push, since they would only set up.
+into one section for the package. Each leg of a pull request saves the items
+its shard owns into its own `head` baseline, stamped with the shard and
+listing every item the bench binary holds, and uploads it as
+`soothfast-baseline-rust-shard-<i>-of-<n>`. The docs job builds one baseline
+from exactly the files of this run with `cargo soothfast baseline merge
+--into head --expect N --packages "A B" FILE...`. A package a leg did not save,
+because its gate failed or errored, leaves the items that shard owns listed
+as `unmeasured` by id, and the docs check reports their claims "not
+evaluated". A corrupt file, or one from a gate split another way, fails the
+docs job. A default-branch push records every item in its first leg and
+saves the baseline as before; the other legs are skipped on a push, since
+they would only set up.
 
 `cargo soothfast prebuild` runs the same lanes by hand: `-p PKG` for bench
 packages, `--against-ref REF` for the merge-base, `--docs PKG`, `--spec

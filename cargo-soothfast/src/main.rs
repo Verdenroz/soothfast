@@ -8,6 +8,7 @@
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod agreement;
+mod baseline_merge;
 mod benchexe;
 mod binstore;
 mod buildcost;
@@ -25,6 +26,7 @@ mod docs_support;
 mod gate;
 mod gate_config;
 mod gate_lock;
+mod gate_save;
 mod glob;
 mod headrun;
 mod import;
@@ -60,6 +62,7 @@ mod spec_probe;
 mod store;
 mod test;
 mod trend;
+mod unmeasured;
 mod verdict;
 mod workspace;
 
@@ -120,7 +123,9 @@ commands:
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
            [--codegen-units N|inherit] [--no-reuse-base] [--allow-gone]
            [--allow-harness-change] [--no-item-cache]
-           (--save-baseline persists the measured head run after a pass)
+           (--save-baseline persists the measured head run after a pass; a
+           head this gate did not measure in full is listed as unmeasured,
+           and with --shard the file holds that shard's items only)
            (--allow-harness-change passes a run whose reference could not be
            pinned to HEAD's soothfast, where the delta may be the harness)
            (--codegen-units pins both sides' partitioning; default 1)
@@ -138,6 +143,11 @@ commands:
            the threshold, past measurement noise, on the same reviewed
            change; --only names outside the recordable set are skipped, not
            fatal, and the command still exits 3, not 0, if any were)
+  baseline merge --into NAME [--expect N] [--packages \"A B\"] FILE...
+           (one baseline from exactly these files: the shard baselines of
+           one gate split N ways, plus imported ones; a shard that saved
+           nothing leaves its items unmeasured; exits 2 on a corrupt file,
+           3 on a file from another split)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE
@@ -226,6 +236,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "cache" => cache::run(rest),
         "import" => import::run(rest),
         "gate" => gate::run(rest),
+        "baseline" => baseline_merge::run(rest),
         "trend" => trend::run(rest),
         "verdict" => verdict::run(rest),
         "docs" => docs::run(rest),

@@ -947,6 +947,10 @@ pub fn save_baseline_in(
     scope: SaveScope,
 ) -> io::Result<PathBuf> {
     let new_items = saved_items(run);
+    let measured = match &scope {
+        SaveScope::BenchFull(pkg) => Some(pkg.as_ref().map(|p| p.replace('-', "_"))),
+        _ => None,
+    };
     let mut doc =
         load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let unix_now = std::time::SystemTime::now()
@@ -1008,12 +1012,20 @@ pub fn save_baseline_in(
         }));
     }
     doc["assertions"] = Value::Array(assertions);
+    if let Some(pkg) = measured {
+        crate::unmeasured::clear(&mut doc, pkg.as_deref());
+    }
 
+    write_baseline_in(root, name, &doc)?;
+    prune_absorbed_accepts(root, run);
+    Ok(baseline_path(root, name))
+}
+
+/// Write `doc` as baseline `name` under `root`.
+pub fn write_baseline_in(root: &Path, name: &str, doc: &Value) -> io::Result<()> {
     let path = baseline_path(root, name);
     std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
-    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
-    prune_absorbed_accepts(root, run);
-    Ok(path)
+    std::fs::write(&path, serde_json::to_string_pretty(doc)?)
 }
 
 /// Drop `soothfast-gate.lock` entries a fresh baseline has absorbed. Best

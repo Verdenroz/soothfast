@@ -68,6 +68,44 @@
           }
         }
       }
+    },
+    "unmeasured": {
+      "description": "Items the measured bench binaries contain but whose measurement this baseline does not hold, one entry per package and reason. `docs check` reports an unchanged claim on one of them as not evaluated; a new or edited claim still fails.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "package": {
+            "description": "Package the items belong to, as the first segment of their ids.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "`identical-binaries`: the gate took one pass without the gating counters. `stored-run`: HEAD's run came from the run cache. `shard-missing`: the shard owning the items saved nothing. `no-measurement`: no leg saved anything of the package, so `items` is empty.",
+            "enum": ["identical-binaries", "stored-run", "shard-missing", "no-measurement"]
+          },
+          "detail": {
+            "description": "Human-readable reason, naming the shard or run.",
+            "type": "string"
+          },
+          "items": {
+            "description": "Ids of the items without a measurement.",
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "shard": {
+      "description": "`I/N` of the `gate --shard` run whose items this file holds. Only `baseline merge` reads it; a merged baseline has none.",
+      "type": "string"
+    },
+    "listed": {
+      "description": "Every item id each package's bench binary lists, whichever shard owns it, keyed by package. Written beside `shard` so `baseline merge` can name the items of a shard that saved nothing.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
     }
   },
   "$defs": {

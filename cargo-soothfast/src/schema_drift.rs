@@ -93,7 +93,23 @@ fn a_saved_baseline_conforms_to_its_schema() {
     let _cleanup = RemoveOnDrop(path.clone());
     let text = std::fs::read_to_string(&path).unwrap();
     let baseline: Value = serde_json::from_str(&text).unwrap();
-    assert_conforms("baseline.schema.json", &baseline);
+    assert_all_conform("baseline.schema.json", &[baseline, shard_baseline()]);
+}
+
+/// A shard's baseline whose package went unmeasured.
+fn shard_baseline() -> Value {
+    use crate::unmeasured::{self, Reason};
+    let root = std::env::temp_dir().join(format!("soothfast-schema-shard-{}", std::process::id()));
+    let ids = ["pkg::api".to_string()];
+    let entries = unmeasured::by_package(Reason::IdenticalBinaries, "identical", &ids);
+    unmeasured::mark_in(&root, "head", &entries).unwrap();
+    let shard = crate::invoke::Shard { index: 1, count: 2 };
+    crate::baseline_merge::stamp_shard_in(&root, "head", shard, &ids).unwrap();
+    let doc = crate::invoke::load_baseline_in(&root, "head")
+        .unwrap()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    doc
 }
 
 #[test]

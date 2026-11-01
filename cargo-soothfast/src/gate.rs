@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::buildstamp;
 use crate::gate_config;
 use crate::gate_lock;
+use crate::gate_save::{HeadRun, save_head, save_verdict};
 use crate::headrun::{
     self, RECOUNT, Settled, binary_digest, cache_head, cache_head_doc, head_from_runcache, ref_doc,
     settle, settled_doc,
@@ -198,9 +199,6 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     if let Some(shard) = g.common.shard {
-        if g.save_baseline.is_some() {
-            return err("--save-baseline needs every item; a --shard run measures some");
-        }
         println!("gate: shard {shard}: gating the items it owns");
     }
 
@@ -227,7 +225,7 @@ pub fn run(args: &[String]) -> i32 {
     let Resolved {
         reference,
         current,
-        short_circuited,
+        head,
         harness,
     } = resolved;
     // A gate that measured nothing must never pass: a typo'd --filter, an
@@ -317,7 +315,7 @@ pub fn run(args: &[String]) -> i32 {
 
     write_gate_status(failures);
     if let Some(name) = &g.save_baseline {
-        let verdict = save_verdict(failures, short_circuited);
+        let verdict = save_verdict(failures, &head);
         let saved = invoke::workspace_root()
             .map_err(|e| e.to_string())
             .and_then(|root| save_head(&root, name, &current, &g.common, verdict));
@@ -615,10 +613,22 @@ fn with_package(args: &[String], pkg: &str) -> Vec<String> {
 struct Resolved {
     reference: Value,
     current: Run,
-    /// The identical-binaries short circuit ran one pass that skipped the
-    /// gating counters, so `current` is not baseline material.
-    short_circuited: bool,
+    head: HeadRun,
     harness: invoke::HarnessSync,
+}
+
+/// HEAD's run from the run cache, or measured now with `measure`.
+fn head_from_cache_or(
+    runs: &crate::runcache::Runs,
+    digest: Option<&str>,
+    measure: impl FnOnce() -> Result<(Run, Settled), String>,
+) -> Result<(Run, Settled, HeadRun), String> {
+    if let Some((head, from)) = head_from_runcache(runs, digest) {
+        println!("gate: reusing HEAD's own run, measured from {from}");
+        return Ok((head, Settled::AsMeasured, HeadRun::Stored(from)));
+    }
+    let (head, settled) = measure()?;
+    Ok((head, settled, HeadRun::Measured))
 }
 
 /// Measure or load both sides of a gate run as a [`Resolved`]. `Ok(None)`
@@ -653,7 +663,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
         return Ok(Some(Resolved {
             reference,
             current,
-            short_circuited: false,
+            head: HeadRun::Measured,
             harness: invoke::HarnessSync::default(),
         }));
     }
@@ -677,7 +687,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
     Ok(Some(Resolved {
         reference: baseline,
         current,
-        short_circuited: false,
+        head: HeadRun::Measured,
         harness: invoke::HarnessSync::default(),
     }))
 }
@@ -893,17 +903,6 @@ fn accept_cmd(args: &[String]) -> i32 {
     if skipped.is_empty() { 0 } else { 3 }
 }
 
-/// Whether a `--save-baseline` request may persist this run. A failing run
-/// is never saved (it would ratify its own regression), and the identical-
-/// binaries short-circuit run carries no gating counters — saving it would
-/// hand downstream readers a baseline with the instruction counts missing.
-#[derive(Debug, PartialEq)]
-enum SaveVerdict {
-    Save,
-    RefuseFailing,
-    SkipShortCircuit,
-}
-
 /// Print HEAD's checked claims and count the ones that failed.
 fn assertion_failures(current: &Run, failing_ids: &mut Vec<String>) -> u32 {
     let mut failures = 0u32;
@@ -916,42 +915,6 @@ fn assertion_failures(current: &Run, failing_ids: &mut Vec<String>) -> u32 {
         println!("{verdict:<5} {} assert {}: {}", a.id, a.kind, a.detail);
     }
     failures
-}
-
-/// Act on a `--save-baseline` request under `root` as `verdict` decides.
-fn save_head(
-    root: &std::path::Path,
-    name: &str,
-    current: &Run,
-    common: &CommonArgs,
-    verdict: SaveVerdict,
-) -> Result<(), String> {
-    match verdict {
-        SaveVerdict::Save => {
-            let scope = invoke::SaveScope::of(common);
-            let path =
-                invoke::save_baseline_in(root, name, current, scope).map_err(|e| e.to_string())?;
-            println!("baseline saved: {}", path.display());
-        }
-        SaveVerdict::RefuseFailing => {
-            eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
-        }
-        SaveVerdict::SkipShortCircuit => println!(
-            "gate: not saving baseline {name:?} — the short-circuit pass skipped the \
-             gating counters, and unchanged code leaves the previous baseline valid"
-        ),
-    }
-    Ok(())
-}
-
-fn save_verdict(failures: u32, short_circuited: bool) -> SaveVerdict {
-    if failures > 0 {
-        SaveVerdict::RefuseFailing
-    } else if short_circuited {
-        SaveVerdict::SkipShortCircuit
-    } else {
-        SaveVerdict::Save
-    }
 }
 
 /// Record the verdict for `report render` (badge) — best effort, never fatal.
@@ -1011,7 +974,7 @@ fn self_compared(head: Run) -> Resolved {
     Resolved {
         reference: ref_doc(&head),
         current: head,
-        short_circuited: false,
+        head: HeadRun::Measured,
         harness: invoke::HarnessSync::default(),
     }
 }
@@ -1098,23 +1061,17 @@ fn measure_ref_interleaved(
 
     if let Some((_, doc)) = runs.reusable_reference(reuse, &base_sha) {
         println!("gate: reusing the measured merge-base {base_sha}");
-        let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
-            Some((head, from)) => {
-                println!("gate: reusing HEAD's own run, measured from {from}");
-                (head, Settled::AsMeasured)
-            }
-            None => {
-                let head = measure_head(head_exe.as_deref())?;
-                let settled = settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
-                (head, settled)
-            }
-        };
+        let (head, settled, source) = head_from_cache_or(&runs, head_dig.as_deref(), || {
+            let head = measure_head(head_exe.as_deref())?;
+            let settled = settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
+            Ok((head, settled))
+        })?;
         cache_head(&runs, &head, head_dig.as_deref(), &settled);
         return Ok(Some(Resolved {
             harness: harness_of(&doc),
             reference: doc,
             current: head,
-            short_circuited: false,
+            head: source,
         }));
     }
 
@@ -1283,25 +1240,25 @@ fn measure_ref_interleaved(
             return Ok(Some(Resolved {
                 reference: ref_doc(&head),
                 current: head,
-                short_circuited: !counted,
+                head: if counted {
+                    HeadRun::Measured
+                } else {
+                    HeadRun::Uncounted
+                },
                 harness,
             }));
         }
         Ref::Cached(doc) => {
-            let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
-                Some((head, _)) => (head, Settled::AsMeasured),
-                None => {
-                    let head = measure_head(head_exe.as_deref())?;
-                    let settled =
-                        settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
-                    (head, settled)
-                }
-            };
+            let (head, settled, source) = head_from_cache_or(&runs, head_dig.as_deref(), || {
+                let head = measure_head(head_exe.as_deref())?;
+                let settled = settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
+                Ok((head, settled))
+            })?;
             cache_head(&runs, &head, head_dig.as_deref(), &settled);
             return Ok(Some(Resolved {
                 reference: doc,
                 current: head,
-                short_circuited: false,
+                head: source,
                 harness,
             }));
         }
@@ -1342,7 +1299,7 @@ fn measure_ref_interleaved(
     Ok(Some(Resolved {
         reference,
         current: head,
-        short_circuited: false,
+        head: HeadRun::Measured,
         harness,
     }))
 }
@@ -2053,12 +2010,12 @@ fn partial(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompareCtx, FailedMetric, GateArgs, SaveVerdict, combine_min, combine_rounds, compare,
-        identical_pass, identical_pass_args, identical_pass_cache, reuse_hint, round_duration,
-        save_verdict, walltime_limit,
+        CompareCtx, FailedMetric, GateArgs, combine_min, combine_rounds, compare, identical_pass,
+        identical_pass_args, identical_pass_cache, reuse_hint, round_duration, walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
+    use crate::gate_save::{save_head, save_verdict};
     use crate::invoke::{self, CommonArgs, HarnessSync, ItemMetrics, Run};
     use serde_json::{Value, json};
 
@@ -2504,8 +2461,7 @@ mod tests {
 
     #[test]
     fn a_counted_identical_run_saves_the_baseline() {
-        let counted = identical_pass(true, true, false, None).counted(true);
-        assert_eq!(save_verdict(0, !counted), SaveVerdict::Save);
+        assert!(identical_pass(true, true, false, None).counted(true));
     }
 
     #[test]
@@ -2794,23 +2750,6 @@ mod tests {
         assert_eq!(failures, 1);
     }
 
-    #[test]
-    fn a_passing_full_run_is_baseline_material() {
-        assert_eq!(save_verdict(0, false), SaveVerdict::Save);
-    }
-
-    #[test]
-    fn a_failing_run_is_never_saved() {
-        // Saving it would ratify its own regression.
-        assert_eq!(save_verdict(1, false), SaveVerdict::RefuseFailing);
-        assert_eq!(save_verdict(3, true), SaveVerdict::RefuseFailing);
-    }
-
-    #[test]
-    fn a_short_circuit_run_lacks_counters_and_is_skipped() {
-        assert_eq!(save_verdict(0, true), SaveVerdict::SkipShortCircuit);
-    }
-
     /// Gate a new crate whose one alloc claim holds or not, saving into `root`.
     fn gate_new_crate(root: &std::path::Path, holds: bool) -> u32 {
         let mut head = run_with(ItemMetrics {
@@ -2831,8 +2770,8 @@ mod tests {
             pkg: Some("pkg".into()),
             ..CommonArgs::default()
         };
-        let verdict = save_verdict(failures, resolved.short_circuited);
-        super::save_head(root, "head", &resolved.current, &common, verdict).unwrap();
+        let verdict = save_verdict(failures, &resolved.head);
+        save_head(root, "head", &resolved.current, &common, verdict).unwrap();
         failures
     }
 
