@@ -232,8 +232,8 @@ pub fn run(args: &[String]) -> i32 {
     // A gate that measured nothing must never pass: a typo'd --filter, an
     // empty registry, or lost records would otherwise be permanently green.
     // A shard that owns nothing now still fails on any item it owned that is gone.
-    if let Some(refusal) = nothing_measured(&current, &g.common) {
-        return err(refusal);
+    if let Some(refusal) = nothing_measured(&current, &g.common, "gate") {
+        return err(&refusal);
     }
     if let Some(b) = &current.gating_backend {
         println!("gate: gating backend = {b}");
@@ -700,6 +700,19 @@ struct AcceptArgs {
 /// skipped, not fatal — see the exit-code contract at the end of this
 /// function.
 fn accept_cmd(args: &[String]) -> i32 {
+    let mut a = match accept_args(args) {
+        Ok(a) => a,
+        Err(e) => return err(&e),
+    };
+    let walltime_advisory = match gate_config::apply(&mut a.common) {
+        Ok(cfg) => cfg.walltime_advisory,
+        Err(e) => return err(&e),
+    };
+    accept_parsed(a, walltime_advisory)
+}
+
+/// `gate accept`'s arguments.
+fn accept_args(args: &[String]) -> Result<AcceptArgs, String> {
     let mut a = AcceptArgs {
         common: CommonArgs::default(),
         baseline: "base".into(),
@@ -717,35 +730,41 @@ fn accept_cmd(args: &[String]) -> i32 {
         match arg.as_str() {
             "--baseline" => match it.next() {
                 Some(n) => a.baseline = n.clone(),
-                None => return err("--baseline needs a name"),
+                None => return Err("--baseline needs a name".into()),
             },
             "--against-ref" => match it.next() {
                 Some(r) => a.against_ref = Some(r.clone()),
-                None => return err("--against-ref needs a git ref"),
+                None => return Err("--against-ref needs a git ref".into()),
             },
             "--features-matrix" => match it.next() {
                 Some(m) => a.matrix = m.clone(),
-                None => return err("--features-matrix needs combos like \"default;full\""),
+                None => return Err("--features-matrix needs combos like \"default;full\"".into()),
             },
             "--justification" => match it.next() {
                 Some(j) => a.justification = Some(j.clone()),
-                None => return err("--justification needs text"),
+                None => return Err("--justification needs text".into()),
             },
             "--only" => match it.next() {
                 Some(id) => a.only.push(id.clone()),
-                None => return err("--only needs a bench id"),
+                None => return Err("--only needs a bench id".into()),
             },
             "--headroom" => match it.next().map(|v| v.parse::<f64>()) {
                 Some(Ok(pct)) => a.headroom = Some(pct),
-                _ => return err("--headroom needs a percentage number"),
+                _ => return Err("--headroom needs a percentage number".into()),
             },
-            other => return err(&format!("unknown gate accept arg {other:?}")),
+            "--shard" => match it.next().map(|s| invoke::Shard::parse(s)) {
+                Some(Ok(shard)) => a.common.shard = Some(shard),
+                Some(Err(e)) => return Err(e),
+                None => return Err("--shard needs I/N".into()),
+            },
+            other => return Err(format!("unknown gate accept arg {other:?}")),
         }
     }
-    let walltime_advisory = match gate_config::apply(&mut a.common) {
-        Ok(cfg) => cfg.walltime_advisory,
-        Err(e) => return err(&e),
-    };
+    Ok(a)
+}
+
+/// `gate accept` once its arguments and config are read.
+fn accept_parsed(a: AcceptArgs, walltime_advisory: bool) -> i32 {
     let Some(justification) = a.justification.clone() else {
         return err("gate accept needs --justification \"...\"");
     };
@@ -778,8 +797,8 @@ fn accept_cmd(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     harness_note(&harness);
-    if current.items.is_empty() {
-        return err("measured 0 items — check --filter / registry setup; refusing to accept");
+    if let Some(refusal) = nothing_measured(&current, &g.common, "accept") {
+        return err(&refusal);
     }
     let root = match invoke::workspace_root() {
         Ok(r) => r,
@@ -1011,7 +1030,7 @@ fn narrowed(mut doc: Value, shard: Option<invoke::Shard>) -> Value {
 
 /// Why a gate that measured nothing must not pass, unless it is a shard that
 /// owns no item now and still checks none it owned is gone.
-fn nothing_measured(current: &Run, common: &CommonArgs) -> Option<&'static str> {
+fn nothing_measured(current: &Run, common: &CommonArgs, verb: &str) -> Option<String> {
     if !current.items.is_empty() {
         return None;
     }
@@ -1020,7 +1039,9 @@ fn nothing_measured(current: &Run, common: &CommonArgs) -> Option<&'static str> 
             println!("gate: shard {shard} owns no item now; checking none it owned is gone");
             None
         }
-        _ => Some("measured 0 items — check --filter / registry setup; refusing to gate"),
+        _ => Some(format!(
+            "measured 0 items — check --filter / registry setup; refusing to {verb}"
+        )),
     }
 }
 
@@ -1227,18 +1248,30 @@ fn measure_ref_interleaved(
             println!(
                 "gate: bench binaries identical (code and data match) — no measurable change possible"
             );
-            let readable = by_binary.as_ref().is_some_and(headrun::readable_as_head);
-            let pass = identical_pass(reuse, readable, common.backend.as_deref());
+            let readable = by_binary.filter(headrun::readable_as_head);
+            let pass = identical_pass(
+                reuse,
+                readable.is_some(),
+                recording(),
+                common.backend.as_deref(),
+            );
             let exe = pass.plan.then_some(d.head_exe.as_path());
-            let outcome = measure_head_with(exe, pass.args);
-            let counted = outcome
-                .as_ref()
-                .is_ok_and(|(_, planned)| pass.counted(*planned));
+            let mut outcome = measure_head_with(exe, pass.args)
+                .map(|(run, planned)| (run, pass.counted(planned)));
+            if let Ok((run, false)) = &outcome
+                && headrun::uncounted_complexity(run, readable.as_ref())
+            {
+                println!(
+                    "gate: a complexity claim has no counted verdict stored for this binary; measuring with the gating counters"
+                );
+                outcome = measure_head_with(exe, &[]).map(|(run, _)| (run, true));
+            }
+            let counted = outcome.as_ref().is_ok_and(|(_, counted)| *counted);
             let run = outcome.map(|(run, _)| run);
             // Head shares that machine code, so a run of it is its
             // measurement too, and the next commit can reuse it from HEAD.
             if let Ok(pass) = &run
-                && let Some(doc) = identical_pass_cache(by_binary.as_ref(), pass, counted)
+                && let Some(doc) = identical_pass_cache(readable.as_ref(), pass, counted)
             {
                 let settled = if counted {
                     settle("gate", "HEAD's run", pass, || measure(None, RECOUNT).ok())
@@ -1251,7 +1284,7 @@ fn measure_ref_interleaved(
                     None => {}
                 }
             }
-            let stored = by_binary.filter(|_| readable && !counted).map(Box::new);
+            let stored = readable.filter(|_| !counted).map(Box::new);
             let identical = Ref::IdenticalBinaries {
                 run,
                 counted,
@@ -1496,9 +1529,9 @@ pub fn recording() -> bool {
 /// counters, so it can be stored as that binary's run. A backend named on the
 /// command line may be one of the gating counters, which measures nothing once
 /// those counters are skipped, so it keeps them.
-fn identical_pass_args(backend: Option<&str>, count: bool) -> &'static [&'static str] {
+fn identical_pass_args(backend: Option<&str>, record: bool) -> &'static [&'static str] {
     match backend {
-        _ if count => &[],
+        _ if record => &[],
         Some("perfcnt" | "callgrind") => &[],
         _ => &["--skip-gating-counters"],
     }
@@ -1522,12 +1555,17 @@ impl IdenticalPass {
 
 /// A run stored for the binary is carried forward by a plan too, which splices
 /// its items and their claims from the item store instead of measuring them.
-/// With no counted run `stored` readable as HEAD's, the pass keeps the gating
-/// counters: nothing else could judge its complexity claims.
-fn identical_pass(reuse: bool, stored: bool, backend: Option<&str>) -> IdenticalPass {
+/// A pass that skips the counters is measured again with them when one of
+/// its complexity claims has no counted verdict `stored`.
+fn identical_pass(
+    reuse: bool,
+    stored: bool,
+    recording: bool,
+    backend: Option<&str>,
+) -> IdenticalPass {
     IdenticalPass {
         plan: reuse,
-        args: identical_pass_args(backend, !stored),
+        args: identical_pass_args(backend, !stored && recording),
     }
 }
 
@@ -2573,39 +2611,46 @@ mod tests {
 
     #[test]
     fn the_identical_branch_plans_whenever_reuse_is_on() {
-        for stored in [false, true] {
-            assert!(identical_pass(true, stored, None).plan);
+        for (stored, recording) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert!(identical_pass(true, stored, recording, None).plan);
         }
-        assert!(!identical_pass(false, false, None).plan);
+        assert!(!identical_pass(false, false, false, None).plan);
     }
 
     #[test]
     fn a_plan_that_applies_counts_and_one_that_does_not_takes_the_cheap_pass() {
-        let pass = identical_pass(true, true, None);
+        let pass = identical_pass(true, false, false, None);
         assert!(pass.counted(true));
         assert!(!pass.counted(false));
         assert_eq!(pass.args, ["--skip-gating-counters"]);
     }
 
     #[test]
-    fn a_stored_counted_run_lets_the_pass_skip_the_counters() {
-        let pass = identical_pass(false, true, None);
+    fn a_stored_run_keeps_the_cheap_fallback_even_when_recording() {
+        let pass = identical_pass(false, true, true, None);
         assert_eq!(pass.args, ["--skip-gating-counters"]);
         assert!(!pass.counted(false));
     }
 
     #[test]
-    fn with_no_counted_run_stored_the_pass_keeps_the_counters() {
-        for backend in [None, Some("walltime")] {
-            let pass = identical_pass(false, false, backend);
-            assert!(pass.args.is_empty());
-            assert!(pass.counted(false));
-        }
+    fn a_recording_fallback_counts_and_is_baseline_material() {
+        let pass = identical_pass(false, false, true, Some("walltime"));
+        assert!(pass.args.is_empty());
+        assert!(pass.counted(false));
+    }
+
+    #[test]
+    fn a_shard_that_owns_nothing_is_accepted_as_it_is_gated() {
+        let argv: Vec<String> = ["--shard", "3/4"].iter().map(|s| s.to_string()).collect();
+        let a = super::accept_args(&argv).unwrap();
+        assert!(super::nothing_measured(&Run::default(), &a.common, "accept").is_none());
+        let refusal = super::nothing_measured(&Run::default(), &CommonArgs::default(), "accept");
+        assert!(refusal.unwrap().ends_with("refusing to accept"));
     }
 
     #[test]
     fn a_counted_identical_run_saves_the_baseline() {
-        let counted = identical_pass(true, true, None).counted(true);
+        let counted = identical_pass(true, true, false, None).counted(true);
         assert_eq!(save_verdict(0, !counted), SaveVerdict::Save);
     }
 
@@ -2994,7 +3039,7 @@ mod tests {
             .unwrap()
             .expect("gated, so the zero-items guard refuses it");
         let common = CommonArgs::default();
-        assert!(super::nothing_measured(&resolved.current, &common).is_some());
+        assert!(super::nothing_measured(&resolved.current, &common, "gate").is_some());
     }
 
     #[test]
