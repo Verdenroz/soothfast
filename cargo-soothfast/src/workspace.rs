@@ -6,12 +6,32 @@
 //! has no source tree here, and documenting the whole dependency graph would
 //! cost a nightly rustdoc build per crate for types no route ever names.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
+
+/// The workspace package names under `dir` from `cargo metadata --no-deps`,
+/// read once per process.
+pub fn package_names(dir: &Path) -> Result<BTreeSet<String>, String> {
+    static NAMES: OnceLock<Mutex<HashMap<std::path::PathBuf, BTreeSet<String>>>> = OnceLock::new();
+    let mut memo = NAMES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|e| e.to_string())?;
+    if let Some(names) = memo.get(dir) {
+        return Ok(names.clone());
+    }
+    let meta = metadata(Some(dir), true).map_err(|e| e.to_string())?;
+    let names: BTreeSet<String> = (meta["packages"].as_array().into_iter().flatten())
+        .filter_map(|p| p["name"].as_str().map(str::to_string))
+        .collect();
+    memo.insert(dir.to_path_buf(), names.clone());
+    Ok(names)
+}
 
 /// `cargo metadata` for a tree: with the resolved dependency graph, or with
 /// `no_deps` exactly the workspace's own packages and their declared
@@ -127,6 +147,53 @@ pub(crate) fn bench_target_in(meta: &Value, pkg: &str, target: &str) -> bool {
                     .flatten()
                     .any(|k| k.as_str() == Some("bench"))
         })
+}
+
+/// The source file of `pkg`'s bench target `target`, from `meta`.
+pub(crate) fn bench_src_in(meta: &Value, pkg: &str, target: &str) -> Option<String> {
+    let packages = meta["packages"].as_array().into_iter().flatten();
+    let targets = packages
+        .filter(|p| p["name"].as_str() == Some(pkg))
+        .flat_map(|p| p["targets"].as_array().into_iter().flatten());
+    let mut benches = targets.filter(|t| {
+        let kinds = t["kind"].as_array().into_iter().flatten();
+        t["name"].as_str() == Some(target) && kinds.into_iter().any(|k| k == "bench")
+    });
+    benches.next()?["src_path"].as_str().map(str::to_string)
+}
+
+/// Every member with a bench target named `target`, by package name, in
+/// name order: the packages a gate without `-p` runs. Read once per process
+/// and tree; a failed read is asked again.
+pub fn bench_crates(target: &str, dir: Option<&Path>) -> Result<Vec<String>, String> {
+    type Key = (String, Option<std::path::PathBuf>);
+    static CRATES: OnceLock<Mutex<HashMap<Key, Vec<String>>>> = OnceLock::new();
+    let key = (target.to_string(), dir.map(Path::to_path_buf));
+    let mut memo = CRATES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|e| e.to_string())?;
+    if let Some(crates) = memo.get(&key) {
+        return Ok(crates.clone());
+    }
+    let meta = metadata(dir, true).map_err(|e| e.to_string())?;
+    let crates = bench_crates_in(&meta, target);
+    memo.insert(key, crates.clone());
+    Ok(crates)
+}
+
+/// The lookup itself, over metadata already in hand.
+pub(crate) fn bench_crates_in(meta: &Value, target: &str) -> Vec<String> {
+    let mut crates: Vec<String> = meta["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p["name"].as_str())
+        .filter(|package| bench_target_in(meta, package, target))
+        .map(str::to_string)
+        .collect();
+    crates.sort();
+    crates
 }
 
 /// The ids one resolve node depends on outside dev- and build-only edges.
@@ -270,6 +337,19 @@ mod tests {
         // A bench under a different name is not the one the gate runs.
         assert!(!bench_target_in(&m, "server", "criterion"));
         assert!(!bench_target_in(&m, "absent", "soothfast"));
+    }
+
+    #[test]
+    fn the_bench_crates_are_the_members_with_the_bench_target_by_package_name() {
+        let renamed = json!({ "name": "my-server", "id": "my-server", "targets": [
+            { "kind": ["lib"], "name": "wire" },
+            { "kind": ["bench"], "name": "soothfast" }] });
+        let m = meta(
+            vec![renamed, lib("plain")],
+            vec!["my-server", "plain"],
+            vec![],
+        );
+        assert_eq!(bench_crates_in(&m, "soothfast"), ["my-server"]);
     }
 
     #[test]

@@ -244,7 +244,84 @@ pub fn is_stored(
     target_dir: Option<&Path>,
     build: Build,
 ) -> bool {
-    plan(common, dir, target_dir, build).is_some_and(|plan| plan.load().is_some())
+    stored(common, dir, target_dir, build).is_some()
+}
+
+/// The ids `exe`, `common`'s bench executable when one is built, lists, or
+/// why there are none to read.
+pub fn listing(common: &CommonArgs, exe: Option<&Path>) -> Result<Vec<String>, String> {
+    let pkg = common.pkg.as_deref().unwrap_or("the workspace");
+    let exe = exe.ok_or_else(|| format!("{pkg} has no built bench executable to list"))?;
+    invoke::listed_ids(exe, common.filter.as_deref()).ok_or_else(|| {
+        format!(
+            "{pkg}'s bench target lists nothing: `{} --list` failed",
+            exe.display()
+        )
+    })
+}
+
+/// Whether the store can hold this build's executable at all.
+pub fn storable(common: &CommonArgs, build: Build) -> bool {
+    plan(common, None, None, build).is_some()
+}
+
+/// `common`'s bench executable a build already left in the target dir, for a
+/// build the store cannot hold; nothing is built. With `--features` set,
+/// nothing in the target dir tells which features a build had, so none is.
+pub fn already_built(common: &CommonArgs) -> Option<PathBuf> {
+    if common.features.is_some() {
+        return None;
+    }
+    let target = common.target.as_deref().unwrap_or("soothfast");
+    let meta = crate::workspace::metadata(None, true).ok()?;
+    let src = crate::workspace::bench_src_in(&meta, common.pkg.as_deref()?, target)?;
+    let root = Path::new(meta["workspace_root"].as_str()?);
+    let mut deps = PathBuf::from(meta["target_directory"].as_str()?);
+    if let Ok(triple) = std::env::var("CARGO_BUILD_TARGET") {
+        deps.push(triple);
+    }
+    newest_built(
+        &deps.join("release").join("deps"),
+        target,
+        Path::new(&src),
+        root,
+    )
+}
+
+/// The newest executable in `deps` of bench `target` whose dep-info names
+/// `src`, the bench's own source file, so another package's bench of the
+/// same name is never taken. Dep-info names workspace files relative to
+/// `root`, where cargo runs rustc.
+fn newest_built(deps: &Path, target: &str, src: &Path, root: &Path) -> Option<PathBuf> {
+    let prefix = format!("{}-", target.replace('-', "_"));
+    let names_src = |info: &Path| {
+        let text = std::fs::read_to_string(info).unwrap_or_default();
+        let first = text.lines().next().unwrap_or_default();
+        let deps = first.split_whitespace().skip(1);
+        deps.into_iter().any(|dep| root.join(dep) == src)
+    };
+    std::fs::read_dir(deps)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "d"))
+        .filter(|p| {
+            (p.file_name().and_then(|n| n.to_str())).is_some_and(|n| n.starts_with(&prefix))
+        })
+        .filter(|info| names_src(info))
+        .map(|info| info.with_extension(""))
+        .filter(|exe| exe.is_file())
+        .max_by_key(|exe| exe.metadata().and_then(|m| m.modified()).ok())
+}
+
+/// This build's executable, if the store holds it; nothing is built.
+pub fn stored(
+    common: &CommonArgs,
+    dir: Option<&Path>,
+    target_dir: Option<&Path>,
+    build: Build,
+) -> Option<PathBuf> {
+    plan(common, dir, target_dir, build).and_then(|plan| plan.load())
 }
 
 /// Path of the bench executable, from the store or else from
@@ -707,5 +784,27 @@ mod tests {
             "[target.x86_64-unknown-linux-gnu]\nrunner = \"qemu\"\n",
         );
         assert!(runner_configured(&repo.0, "/nowhere"));
+    }
+
+    #[test]
+    fn an_already_built_bench_is_found_by_its_own_source_never_another_package_s() {
+        let dir = crate::test::fixture::TempDir::new("already-built");
+        std::fs::create_dir_all(&*dir).unwrap();
+        let write = |name: &str, src: &str| {
+            let exe = dir.join(name);
+            std::fs::write(&exe, b"exe").unwrap();
+            std::fs::write(
+                exe.with_extension("d"),
+                format!("{}: {src}\n", exe.display()),
+            )
+            .unwrap();
+        };
+        write("soothfast-aaaa", "core/benches/soothfast.rs Cargo.toml");
+        write("soothfast-bbbb", "app/benches/soothfast.rs Cargo.toml");
+        let root = Path::new("/w");
+        let src = |pkg: &str| PathBuf::from(format!("/w/{pkg}/benches/soothfast.rs"));
+        let found = newest_built(&dir, "soothfast", &src("app"), root);
+        assert_eq!(found, Some(dir.join("soothfast-bbbb")));
+        assert_eq!(newest_built(&dir, "soothfast", &src("web"), root), None);
     }
 }

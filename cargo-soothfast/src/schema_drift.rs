@@ -89,11 +89,51 @@ impl Drop for RemoveOnDrop {
 #[test]
 fn a_saved_baseline_conforms_to_its_schema() {
     let name = format!("schema-drift-{}", std::process::id());
-    let path = crate::invoke::save_baseline(&name, &full_run(), SaveScope::BenchFiltered).unwrap();
+    let path = crate::invoke::save_baseline(
+        &name,
+        &full_run(),
+        SaveScope::BenchFiltered(Some("pkg".into())),
+    )
+    .unwrap();
     let _cleanup = RemoveOnDrop(path.clone());
     let text = std::fs::read_to_string(&path).unwrap();
     let baseline: Value = serde_json::from_str(&text).unwrap();
-    assert_conforms("baseline.schema.json", &baseline);
+    let import_stub =
+        crate::import::failed::stub("jmh", "/nonexistent.json", None, &Default::default()).unwrap();
+    assert_all_conform(
+        "baseline.schema.json",
+        &[baseline, shard_baseline(), import_stub],
+    );
+}
+
+/// A shard's baseline whose package went unmeasured.
+fn shard_baseline() -> Value {
+    use crate::unmeasured::{self, Reason};
+    let root = std::env::temp_dir().join(format!("soothfast-schema-shard-{}", std::process::id()));
+    let ids = ["pkg::api".to_string()];
+    let reused = unmeasured::entry(
+        "pkg",
+        Reason::ReusedWalltime,
+        "cache",
+        &["walltime"],
+        ids.to_vec(),
+    );
+    unmeasured::mark_in(&root, "head", &[reused], true).unwrap();
+    let shard = crate::invoke::Shard { index: 1, count: 2 };
+    let ungated = unmeasured::Unmeasured {
+        package: "cargo".into(),
+        reason: Reason::NotGatedOnEvent,
+        detail: "push".into(),
+        except_imported: Some(vec!["jmh".into()]),
+        ..unmeasured::Unmeasured::default()
+    };
+    unmeasured::append_in(&root, "head", &[ungated]).unwrap();
+    crate::baseline_merge::stamp_shard_in(&root, "head", shard, "pkg", &ids).unwrap();
+    let doc = crate::invoke::load_baseline_in(&root, "head")
+        .unwrap()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    doc
 }
 
 #[test]
