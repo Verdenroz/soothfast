@@ -10,8 +10,13 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### ✨ Features
+
+- Check docs claims against the PR's own run (#346)
+
 ### 🐛 Fixes
 
+- Measure and save a newly measured crate (#345)
 - Keep seeds off the base's own dependencies (#336)
 - Prebuild docs rustdoc only when docs check would (#334)
 
