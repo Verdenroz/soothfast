@@ -466,6 +466,12 @@ docs job. A default-branch push records every item in its first leg and
 saves the baseline as before; the other legs are skipped on a push, since
 they would only set up.
 
+The docs check runs with `--against-ref` on the merge-base: a claim reads
+"not evaluated" only when the merge-base made it unchanged and its item is
+listed `unmeasured`. A new or edited claim, or one on an item nothing lists,
+fails without a measurement. A pull request whose bench binaries match the
+merge-base reports its claims not evaluated, since its gate takes no counters.
+
 `cargo soothfast prebuild` runs the same lanes by hand: `-p PKG` for bench
 packages, `--against-ref REF` for the merge-base, `--docs PKG`, `--spec
 PKG[:TARGET]`, `--only bench|routes|rustdoc`, `--stage DIR` and `--shards N`.

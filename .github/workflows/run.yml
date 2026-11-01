@@ -667,9 +667,11 @@ jobs:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
+      # History for the merge-base, whose claims decide which are unchanged.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
@@ -774,12 +776,18 @@ jobs:
           PACKAGES: ${{ needs.plan.outputs.packages }}
           # A push records every item in one unsharded leg.
           EXPECT: ${{ github.event_name == 'pull_request' && inputs.shard > 1 && inputs.shard || 1 }}
+          BASE_REF: ${{ github.base_ref }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
           date +%s >"$RUNNER_TEMP/soothfast-start"
           args=()
           for package in $DOCS_PACKAGE; do args+=(-p "$package"); done
+          if [ -n "$BASE_REF" ]; then
+            args+=(--against-ref "origin/$BASE_REF")
+          elif git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
+            args+=(--against-ref 'HEAD^')
+          fi
           : > "$RESULT"
           shopt -s nullglob
           files=("$RUNNER_TEMP"/baselines/*/*.json)

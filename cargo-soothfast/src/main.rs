@@ -20,6 +20,7 @@ mod coverage;
 mod coverage_lang;
 mod docs;
 mod docs_binds;
+mod docs_claims;
 mod docs_config;
 mod docs_generated;
 mod docs_support;
@@ -156,6 +157,9 @@ commands:
            (one job's result, then the pull request's single comment;
            exits 1 on a regression or error)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--skip-claims] [--features F] [PATHS...]
+           (check --against-ref REF: a claim the merge-base made unchanged,
+           on an item the baseline lists as unmeasured, is reported not
+           evaluated; any other claim with no measurement fails)
   docs     capture -p PKG [--check] [PATHS...]
   docs     diff -p PKG --against-ref REF [--features F]
   docs     reference -p PKG [--baseline NAME] [--features F] [--out DIR]
