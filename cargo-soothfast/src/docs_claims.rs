@@ -120,7 +120,7 @@ impl<'a> Against<'a> {
         })
     }
 
-    /// One claim.
+    /// One claim. An item two packages own fails, unchanged or not.
     pub fn evaluate(&self, expr: &str) -> Reading {
         let claim = match claims::parse(expr) {
             Ok(c) => c,
@@ -133,7 +133,10 @@ impl<'a> Against<'a> {
         let e = match claims::evaluate(&claim, self.baseline) {
             Ok((true, actual)) => return Reading::Decided(Outcome::Holds(actual)),
             Ok((false, actual)) => return Reading::Decided(Outcome::Violated(actual)),
-            Err(e) => e,
+            Err(e @ claims::Unread::Ambiguous { .. }) => {
+                return Reading::Decided(Outcome::Failed(e.to_string()));
+            }
+            Err(claims::Unread::Other(e)) => e,
         };
         let mut first: Option<Reason> = None;
         let mut measurable: Option<Reason> = None;

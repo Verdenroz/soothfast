@@ -432,7 +432,8 @@ fn route_status(rec: &reconcile::Reconciliation, r: &RouteDecl) -> RouteStatus {
 /// measurement or a `covers`-linked bench (direct wins on overlap). `None`
 /// when nothing in the baseline measures this handler at all.
 fn measured_facts(baseline: &serde_json::Value, handler_id: &str) -> Option<String> {
-    let items = baseline["items"].as_object()?;
+    let no_items = serde_json::Map::new();
+    let items = baseline["items"].as_object().unwrap_or(&no_items);
     let mut seen: Vec<&str> = Vec::new();
     let mut facts = Vec::new();
     let matches = |id: &str, m: &serde_json::Value, exact: bool| {
@@ -465,7 +466,15 @@ fn measured_facts(baseline: &serde_json::Value, handler_id: &str) -> Option<Stri
             }
         }
     }
-    (!facts.is_empty()).then(|| facts.join(" · "))
+    if facts.is_empty() {
+        let mut index = soothfast_docs::baseline::ambiguous(baseline).into_iter();
+        let shared = index.find(|a| a.id == handler_id || a.covers == Some(handler_id))?;
+        return Some(format!(
+            "no number: ambiguous between {}",
+            shared.packages.join(", ")
+        ));
+    }
+    Some(facts.join(" · "))
 }
 
 /// A calibrated rail-and-fill gauge (light-page palette, unlike the dark
@@ -565,4 +574,20 @@ pub(crate) fn escape(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn an_ambiguous_handler_is_a_fact_naming_its_packages() {
+        let baseline = serde_json::json!({
+            "items": {},
+            "ambiguous": { "api::list": { "packages": ["a", "b"] } },
+        });
+        assert_eq!(
+            super::measured_facts(&baseline, "api::list").as_deref(),
+            Some("no number: ambiguous between a, b")
+        );
+        assert_eq!(super::measured_facts(&baseline, "api::other"), None);
+    }
 }

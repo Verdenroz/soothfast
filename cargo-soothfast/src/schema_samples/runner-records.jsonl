@@ -1,13 +1,13 @@
 {"type":"env","perfcnt":true,"perfcnt_detail":"ok","gating_backend":"perfcnt","item_reuse":true}
 {"type":"env","perfcnt":true,"perfcnt_detail":"ok","gating_backend":"perfcnt","item_reuse":true,"guest_cpu":"0123456789abcdef","guest_glibc":"2.39","guest_libc":"fedcba9876543210","valgrind":"valgrind-3.22.0","callgrind_method":"one-process"}
-{"type":"item","id":"app::decode","group":"self","fingerprint":"00000000000000ff","covers":"app::decode"}
+{"type":"item","id":"app::decode","pkg":"app","group":"self","fingerprint":"00000000000000ff","covers":"app::decode"}
 {"type":"calibration","backend":"walltime","noise_pct":1.2500}
-{"type":"result","id":"app::decode","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","tolerance_pct":7.5,"backend":"walltime","metrics":{"median_ns":10.5,"mad_ns":0.5,"min_ns":10,"max_ns":12,"p99_ns":11.5}}
-{"type":"result","id":"app::decode","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"perfcnt","metrics":{"instructions":100,"cycles":50,"cache_refs":5}}
-{"type":"result","id":"app::decode","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"callgrind","metrics":{"ir":123456,"window":10}}
-{"type":"result","id":"app::decode","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"alloc","metrics":{"allocs":2,"bytes":64}}
-{"type":"result","id":"app::decode","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"asyncexec","metrics":{"polls":9,"wakes":8}}
-{"type":"result","id":"app::decode","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"buildcost","metrics":{"build_ms":900,"size_bytes":4096}}
+{"type":"result","id":"app::decode","pkg":"app","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","tolerance_pct":7.5,"backend":"walltime","metrics":{"median_ns":10.5,"mad_ns":0.5,"min_ns":10,"max_ns":12,"p99_ns":11.5}}
+{"type":"result","id":"app::decode","pkg":"app","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"perfcnt","metrics":{"instructions":100,"cycles":50,"cache_refs":5}}
+{"type":"result","id":"app::decode","pkg":"app","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"callgrind","metrics":{"ir":123456,"window":10}}
+{"type":"result","id":"app::decode","pkg":"app","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"alloc","metrics":{"allocs":2,"bytes":64}}
+{"type":"result","id":"app::decode","pkg":"app","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"asyncexec","metrics":{"polls":9,"wakes":8}}
+{"type":"result","id":"app::decode","pkg":"app","group":"self","fingerprint":"00000000000000ff","covers":"app::decode","backend":"buildcost","metrics":{"build_ms":900,"size_bytes":4096}}
 {"type":"executed","id":"app::decode","functions":[["/usr/bin/app","_ZN3app6decodeE"]]}
 {"type":"assertion","id":"app::decode","kind":"alloc","ok":true,"detail":"allocs 2 <= 2"}
 {"type":"sweep","id":"app::decode","claimed":"n","sizes":[1024,8192],"values":[100,800],"drift":0.996,"ok":true}

@@ -41,6 +41,7 @@ fn full_item() -> ItemMetrics {
         build_ms: None,
         size_bytes: None,
         imported: Some("ext".into()),
+        pkg: Some("pkg".into()),
         reused: Some(Reused {
             from: "item cache".into(),
             metrics: vec!["callgrind"],
@@ -56,6 +57,7 @@ fn full_run() -> Run {
         ..ItemMetrics::default()
     };
     Run {
+        listed: true,
         noise_pct: Some(1.2),
         build: Some(BuildStamp {
             rustc: "1.88.0 x86_64-unknown-linux-gnu".into(),
@@ -100,9 +102,15 @@ fn a_saved_baseline_conforms_to_its_schema() {
     let baseline: Value = serde_json::from_str(&text).unwrap();
     let import_stub =
         crate::import::failed::stub("jmh", "/nonexistent.json", None, &Default::default()).unwrap();
+    let mut shared = serde_json::json!({
+        "version": 1,
+        "items": { "util::hash": { "covers": "util::hash_bytes", "pkg": "c" } },
+        "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+    });
+    crate::ambiguity::settle(&mut shared, &Default::default());
     assert_all_conform(
         "baseline.schema.json",
-        &[baseline, shard_baseline(), import_stub],
+        &[baseline, shard_baseline(), import_stub, shared],
     );
 }
 

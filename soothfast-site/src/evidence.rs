@@ -43,6 +43,7 @@ impl Evidence {
                     bound: String::new(),
                     raw_bound: 0.0,
                     error: Some(format!("bad claim `{expr}`: {e}")),
+                    unmeasured: None,
                 };
             }
         };
@@ -80,6 +81,7 @@ impl Evidence {
                 bound,
                 raw_bound: parsed.bound,
                 error: None,
+                unmeasured: None,
             },
             Ok((false, actual)) => ClaimEval {
                 state: "fail",
@@ -92,8 +94,9 @@ impl Evidence {
                 bound,
                 raw_bound: parsed.bound,
                 error: None,
+                unmeasured: None,
             },
-            Err(_) => ClaimEval {
+            Err(unread) => ClaimEval {
                 state: "warn",
                 mark: "?",
                 item: short,
@@ -104,6 +107,12 @@ impl Evidence {
                 bound,
                 raw_bound: parsed.bound,
                 error: None,
+                unmeasured: match unread {
+                    claims::Unread::Ambiguous { packages, .. } => {
+                        Some(format!("ambiguous: {}", packages.join(", ")))
+                    }
+                    claims::Unread::Other(_) => None,
+                },
             },
         }
     }
@@ -115,7 +124,10 @@ impl Evidence {
         }
         let detail = match &e.actual {
             Some(actual) => format!("{} {actual}", e.metric),
-            None => format!("{} not yet measured", e.metric),
+            None => match &e.unmeasured {
+                Some(why) => format!("{} {why}", e.metric),
+                None => format!("{} not yet measured", e.metric),
+            },
         };
         let limit = format!("(limit {} {})", e.op, e.bound);
         let segments = [
@@ -144,7 +156,10 @@ impl Evidence {
         }
         let actual_html = match &e.actual {
             Some(a) => format!("<span class=\"ev-actual\">{}</span>", escape(a)),
-            None => "<span class=\"ev-actual ev-unmeasured\">unmeasured</span>".to_string(),
+            None => format!(
+                "<span class=\"ev-actual ev-unmeasured\">{}</span>",
+                escape(e.unmeasured.as_deref().unwrap_or("unmeasured"))
+            ),
         };
         format!(
             "<div class=\"ev-row ev-row-{state}\" data-soothfast-claim title=\"{raw}\">\
@@ -223,6 +238,8 @@ struct ClaimEval {
     /// Set instead of everything else when the claim expression itself
     /// fails to parse.
     error: Option<String>,
+    /// Why `actual` is `None` when that is not simply a missing measurement.
+    unmeasured: Option<String>,
 }
 
 impl SitePlugin for Evidence {
@@ -721,6 +738,21 @@ mod tests {
         let out = plugin().on_page_markdown(&page(), md.into()).unwrap();
         assert!(out.contains("runpanel"));
         assert!(out.contains("\ntail\n"));
+    }
+
+    #[test]
+    fn a_claim_on_an_ambiguous_id_is_a_warn_chip_naming_both_packages() {
+        let baseline = serde_json::json!({
+            "items": {},
+            "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+            "ambiguous": { "util::hash": { "packages": ["a", "b"] } },
+        });
+        let p = Evidence::new(baseline, lockfile::Binds::new());
+        let md = "<!-- soothfast:claim util::hash.alloc.allocs <= 0 -->\n";
+        let out = p.on_page_markdown(&page(), md.into()).unwrap();
+        assert!(out.contains("chip-warn"), "{out}");
+        assert!(out.contains("ambiguous: a, b"), "{out}");
+        assert!(!out.contains("chip-pass"));
     }
 
     #[test]

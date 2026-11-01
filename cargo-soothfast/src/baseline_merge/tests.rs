@@ -360,6 +360,127 @@ fn plan_of(pkg: &str, ids: &[&str]) -> Planned {
 }
 
 #[test]
+fn a_rust_file_holding_an_id_none_of_its_packages_owns_is_refused() {
+    let doc = json!({ "items": { "core::a": item() }, "owners": { "core": [] } });
+    let Err(MergeError::Corrupt(why)) = merge(&[("head.json".into(), doc)], 1, &packages()) else {
+        panic!("an unowned id must fail the merge");
+    };
+    assert!(why.contains("which no package of it owns"), "{why}");
+}
+
+/// A workspace whose packages `a` and `b` both link lib `util`, which has
+/// no bench target, and `core`, whose own bench lists the `core::parse`
+/// that `a` links too.
+fn linked_lib_listing(pkg: &str) -> Vec<invoke::Listed> {
+    let util = ("util::hash".to_string(), Some("util".to_string()));
+    let core = ("core::parse".to_string(), Some("core".to_string()));
+    match pkg {
+        "core" => vec![core],
+        "a" => vec![util, core],
+        _ => vec![util],
+    }
+}
+
+#[test]
+fn a_linked_lib_runs_through_gate_save_merge_and_docs_check() {
+    use crate::gate_save::{HeadRun, save_head};
+    let root = std::env::temp_dir().join(format!("soothfast-linked-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for pkg in ["core", "a", "b"] {
+        let listing = linked_lib_listing(pkg);
+        let mut run = invoke::Run::default();
+        for (id, _) in &listing {
+            let m = invoke::ItemMetrics {
+                allocs: Some(if pkg == "core" { 0 } else { 5 }),
+                bytes: Some(0),
+                ..invoke::ItemMetrics::default()
+            };
+            run.items.insert(id.clone(), m);
+        }
+        let common = invoke::CommonArgs {
+            pkg: Some(pkg.into()),
+            ..invoke::CommonArgs::default()
+        };
+        save_head(
+            &root,
+            "head",
+            &run,
+            &HeadRun::Measured,
+            &common,
+            Some(&listing),
+            0,
+        )
+        .unwrap();
+    }
+    let head = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    let all: Vec<String> = ["a", "b", "core"].map(String::from).to_vec();
+    let merged = merge(&[("head.json".into(), head)], 1, &all).unwrap();
+    assert_eq!(unmeasured::owned_by(&merged, "core"), ["core::parse"]);
+    let claims = markdown_claim("core::parse.alloc.allocs <= 0");
+    let none = || Ok(crate::docs_claims::Claims::new());
+    let check = |doc| crate::docs_claims::check(&[("a.md", doc)], Some(&merged), none).unwrap();
+    assert_eq!(check(&claims), 0, "core's own number decides its claim");
+    let ambiguous = markdown_claim("util::hash.alloc.allocs <= 9");
+    assert_eq!(check(&ambiguous), 1, "a claim on util::hash is ambiguous");
+    let reading = crate::docs_claims::Against::new(&merged)
+        .unwrap()
+        .evaluate("util::hash.alloc.allocs <= 9");
+    let crate::docs_claims::Reading::Decided(crate::docs_claims::Outcome::Failed(why)) = reading
+    else {
+        panic!("an ambiguous claim fails");
+    };
+    assert!(why.contains("measured by both a and b"), "{why}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_merged_id_two_packages_own_has_no_number_and_fails_its_claims() {
+    let doc = json!({
+        "version": 1,
+        "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 0 } } },
+        "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+    });
+    let merged = merge(&[("head.json".into(), doc)], 1, &[]).unwrap();
+    assert!(merged["items"]["util::hash"]["alloc"].is_null());
+    assert!(unmeasured::read(&merged).unwrap().is_empty());
+    let reading = crate::docs_claims::Against::new(&merged)
+        .unwrap()
+        .evaluate("util::hash.alloc.allocs <= 9");
+    let crate::docs_claims::Reading::Decided(crate::docs_claims::Outcome::Failed(why)) = reading
+    else {
+        panic!("an ambiguous claim fails");
+    };
+    assert!(why.contains("measured by both a and b"), "{why}");
+}
+
+#[test]
+fn an_id_two_rust_files_hold_is_refused() {
+    let file =
+        |pkg: &str| json!({ "items": { "util::hash": item() }, "owners": { pkg: ["util::hash"] } });
+    let mut collected = collect::Collected::default();
+    let a = file("a");
+    collected
+        .take("a.json", &a, a["items"].as_object().unwrap())
+        .unwrap();
+    let b = file("b");
+    let why = collected
+        .take("b.json", &b, b["items"].as_object().unwrap())
+        .unwrap_err();
+    assert!(why.contains("is in a.json too"), "{why}");
+}
+
+#[test]
+fn buildcost_and_legacy_items_need_no_owner_to_merge() {
+    let doc = json!({
+        "items": { "buildcost::core::default": { "buildcost": { "build_ms": 1, "size_bytes": 2 } } },
+        "owners": { "core": [] },
+    });
+    assert!(merge(&[("head.json".into(), doc)], 1, &packages()).is_ok());
+    let legacy = json!({ "items": { "core::a": item() } });
+    assert!(merge(&[("old.json".into(), legacy)], 1, &packages()).is_ok());
+}
+
+#[test]
 fn a_leg_that_uploaded_nothing_has_its_items_named_from_the_plan() {
     let plan = plan_of("core", &["core::a", "core::b"]);
     let merged = merge_on(&[], 1, &packages(), &plan, None).unwrap();

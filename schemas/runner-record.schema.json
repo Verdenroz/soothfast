@@ -29,6 +29,7 @@
       "properties": {
         "type": { "const": "item" },
         "id": { "description": "Item id, `package::module::function`.", "type": "string" },
+        "pkg": { "description": "Package whose code registered the item, the one that owns it in a baseline. Older runners omit it, and the listing package owns the item.", "type": "string" },
         "group": { "description": "Group named by `group = ...`; ignored by readers.", "type": "string" },
         "fingerprint": { "description": "Hex FNV-1a fingerprint of the item's token stream, as a string.", "type": "string" },
         "covers": { "description": "Public item the benchmark covers; empty when unset.", "type": "string" }
@@ -51,6 +52,7 @@
       "properties": {
         "type": { "const": "result" },
         "id": { "description": "Item id. A record without it is skipped.", "type": "string" },
+        "pkg": { "description": "Package whose code registered the item, as in `item`.", "type": "string" },
         "group": { "description": "Item group; ignored by readers.", "type": "string" },
         "fingerprint": { "description": "Hex fingerprint of the item; empty when unknown.", "type": "string" },
         "covers": { "description": "Public item the benchmark covers; empty when unset.", "type": "string" },

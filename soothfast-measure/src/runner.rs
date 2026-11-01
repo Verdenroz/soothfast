@@ -392,10 +392,7 @@ pub fn main() {
         }
         for e in &entries {
             if args.json {
-                println!(
-                    "{}",
-                    item_json(&e.id, e.item.group, e.fingerprint, e.item.covers)
-                );
+                println!("{}", item_json(&Ident::of(e)));
             } else {
                 println!("{} [{}]", e.id, e.item.group);
             }
@@ -552,14 +549,40 @@ pub fn main() {
     }
 }
 
-fn item_json(id: &str, group: &str, fingerprint: u64, covers: &str) -> String {
-    format!(
-        "{{\"type\":\"item\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"}}",
-        esc(id),
-        esc(group),
-        fingerprint,
-        esc(covers),
-    )
+/// What every `item` and `result` record says of its item.
+struct Ident<'a> {
+    id: &'a str,
+    pkg: &'a str,
+    group: &'a str,
+    fingerprint: u64,
+    covers: &'a str,
+}
+
+impl Ident<'_> {
+    fn of(e: &Entry) -> Ident<'_> {
+        Ident {
+            id: &e.id,
+            pkg: e.item.pkg,
+            group: e.item.group,
+            fingerprint: e.fingerprint,
+            covers: e.item.covers,
+        }
+    }
+
+    fn fields(&self) -> String {
+        format!(
+            "\"id\":\"{}\",\"pkg\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"",
+            esc(self.id),
+            esc(self.pkg),
+            esc(self.group),
+            self.fingerprint,
+            esc(self.covers),
+        )
+    }
+}
+
+fn item_json(ident: &Ident) -> String {
+    format!("{{\"type\":\"item\",{}}}", ident.fields())
 }
 
 fn calibration_json(noise_pct: f64) -> String {
@@ -589,10 +612,7 @@ fn asyncexec_metrics(polls: u64, wakes: u64) -> String {
 }
 
 fn result_json(
-    id: &str,
-    group: &str,
-    fingerprint: u64,
-    covers: &str,
+    ident: &Ident,
     tolerance_pct: Option<f64>,
     backend: &str,
     metrics_json: &str,
@@ -602,28 +622,15 @@ fn result_json(
         None => String::new(),
     };
     format!(
-        "{{\"type\":\"result\",\"id\":\"{}\",\"group\":\"{}\",\"fingerprint\":\"{:016x}\",\"covers\":\"{}\"{tolerance},\"backend\":\"{backend}\",\"metrics\":{{{metrics_json}}}}}",
-        esc(id),
-        esc(group),
-        fingerprint,
-        esc(covers),
+        "{{\"type\":\"result\",{}{tolerance},\"backend\":\"{backend}\",\"metrics\":{{{metrics_json}}}}}",
+        ident.fields(),
     )
 }
 
 fn emit_result(e: &Entry, backend: &str, metrics_json: &str, human: &str, json: bool) {
     if json {
-        println!(
-            "{}",
-            result_json(
-                &e.id,
-                e.item.group,
-                e.fingerprint,
-                e.item.covers,
-                e.item.tolerance_pct,
-                backend,
-                metrics_json,
-            )
-        );
+        let line = result_json(&Ident::of(e), e.item.tolerance_pct, backend, metrics_json);
+        println!("{line}");
     } else {
         println!("{:<44} {human}", e.id);
     }
@@ -1090,16 +1097,15 @@ mod tests {
             method: guest.is_some().then_some(callgrind::Method::OneProcess),
             guest,
         };
+        let decode = Ident {
+            id: "app::decode",
+            pkg: "app",
+            group: "self",
+            fingerprint: 0xff,
+            covers: "app::decode",
+        };
         let result = |tolerance, backend, metrics: String| {
-            result_json(
-                "app::decode",
-                "self",
-                0xff,
-                "app::decode",
-                tolerance,
-                backend,
-                &metrics,
-            )
+            result_json(&decode, tolerance, backend, &metrics)
         };
         let full_route = RouteItem::new(
             "app::create",
@@ -1115,7 +1121,7 @@ mod tests {
         let lines = [
             env_line(&env(None), true),
             env_line(&env(Some(guest())), true),
-            item_json("app::decode", "self", 0xff, "app::decode"),
+            item_json(&decode),
             calibration_json(1.25),
             result(
                 Some(7.5),

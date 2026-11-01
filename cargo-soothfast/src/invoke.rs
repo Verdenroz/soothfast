@@ -566,16 +566,39 @@ fn shard_ids(
 /// Every item id `exe` lists under `filter`, whichever shard owns it, listed
 /// once per binary.
 pub fn listed_ids(exe: &Path, filter: Option<&str>) -> Option<Vec<String>> {
+    Some(
+        listing(exe, filter)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect(),
+    )
+}
+
+/// A listed item's id, and the package that registered it when the runner
+/// says.
+pub type Listed = (String, Option<String>);
+
+/// [`listed_ids`] with each item's registering package.
+pub fn listing(exe: &Path, filter: Option<&str>) -> Option<Vec<Listed>> {
     type Key = (PathBuf, Option<String>);
-    static LISTED: OnceLock<Mutex<HashMap<Key, Vec<String>>>> = OnceLock::new();
+    static LISTED: OnceLock<Mutex<HashMap<Key, Vec<Listed>>>> = OnceLock::new();
     let mut memo = LISTED.get_or_init(Default::default).lock().ok()?;
     let key = (exe.to_path_buf(), filter.map(str::to_string));
-    if let Some(ids) = memo.get(&key) {
-        return Some(ids.clone());
+    if let Some(listed) = memo.get(&key) {
+        return Some(listed.clone());
     }
-    let ids: Vec<String> = list_items(exe, filter)?.into_keys().collect();
-    memo.insert(key, ids.clone());
-    Some(ids)
+    let listed: Vec<Listed> = item_records(exe, filter)?
+        .iter()
+        .filter(|v| v["fingerprint"].is_string())
+        .filter_map(|v| {
+            let id = v["id"].as_str()?.to_string();
+            Some((id, v["pkg"].as_str().map(str::to_string)))
+        })
+        .collect::<BTreeMap<_, _>>()
+        .into_iter()
+        .collect();
+    memo.insert(key, listed.clone());
+    Some(listed)
 }
 
 /// Path of the compiled bench executable, from the binary store or else via
@@ -673,6 +696,21 @@ pub fn host_env(exe: &Path, backend: Option<&str>) -> Result<HostEnv, String> {
 /// The items `exe` registers with their fingerprints, narrowed by `filter`
 /// the way a run is.
 pub fn list_items(exe: &Path, filter: Option<&str>) -> Option<BTreeMap<String, String>> {
+    Some(
+        item_records(exe, filter)?
+            .iter()
+            .filter_map(|v| {
+                Some((
+                    v["id"].as_str()?.to_string(),
+                    v["fingerprint"].as_str()?.to_string(),
+                ))
+            })
+            .collect(),
+    )
+}
+
+/// The `item` records of `exe --list --json` under `filter`.
+fn item_records(exe: &Path, filter: Option<&str>) -> Option<Vec<Value>> {
     let mut cmd = Command::new(exe);
     cmd.args(["--list", "--json"]);
     if let Some(f) = filter {
@@ -684,12 +722,6 @@ pub fn list_items(exe: &Path, filter: Option<&str>) -> Option<BTreeMap<String, S
             .lines()
             .filter_map(|l| serde_json::from_str::<Value>(l).ok())
             .filter(|v| v["type"] == "item")
-            .filter_map(|v| {
-                Some((
-                    v["id"].as_str()?.to_string(),
-                    v["fingerprint"].as_str()?.to_string(),
-                ))
-            })
             .collect(),
     )
 }
@@ -723,6 +755,8 @@ pub struct ItemMetrics {
     pub reused: Option<Reused>,
     /// Id prefix of the `import` that produced this item.
     pub imported: Option<String>,
+    /// Package whose code registered the item, when the runner says.
+    pub pkg: Option<String>,
 }
 
 /// One assertion verdict from the runner.
@@ -762,7 +796,7 @@ pub fn pair(v: &Value) -> Option<(String, String)> {
 }
 
 /// A full measurement run, keyed by item ID.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Run {
     pub noise_pct: Option<f64>,
     pub build: Option<crate::buildstamp::BuildStamp>,
@@ -773,6 +807,8 @@ pub struct Run {
     pub executed: BTreeMap<String, Vec<(String, String)>>,
     /// Set when some metrics came from a stored run instead of this process.
     pub reused: Option<Reused>,
+    /// Whether each item's `pkg` came from a listing of the binary that ran.
+    pub listed: bool,
 }
 
 /// Which metrics of a run were taken from a stored run, and what it measured.
@@ -816,6 +852,9 @@ pub fn collect(records: &[Value]) -> Run {
                 }
                 if let Some(c) = rec["covers"].as_str() {
                     item.covers = c.to_string();
+                }
+                if let Some(p) = rec["pkg"].as_str() {
+                    item.pkg = Some(p.to_string());
                 }
                 if let Some(t) = rec["tolerance_pct"].as_f64() {
                     item.tolerance_pct = Some(t);
@@ -900,6 +939,9 @@ pub fn run_to_items_value(run: &Run) -> Value {
         if let Some(prefix) = &m.imported {
             entry["imported"] = json!(prefix);
         }
+        if let Some(pkg) = &m.pkg {
+            entry["pkg"] = json!(pkg);
+        }
         items.insert(id.clone(), entry);
     }
     Value::Object(items)
@@ -942,6 +984,7 @@ pub fn run_from_items_value(items: &Value) -> Run {
                 size_bytes: v["buildcost"]["size_bytes"].as_u64(),
                 reused: None,
                 imported: v["imported"].as_str().map(String::from),
+                pkg: v["pkg"].as_str().map(String::from),
             },
         );
     }
@@ -1040,11 +1083,6 @@ impl SaveScope {
     }
 }
 
-/// First segment of a measured-item id (the package, `-` normalized to `_`).
-pub fn id_pkg(id: &str) -> &str {
-    id.split("::").next().unwrap_or(id)
-}
-
 fn is_imported(item: &Value) -> bool {
     item["imported"].is_string()
 }
@@ -1061,6 +1099,18 @@ pub fn save_baseline_in(
     run: &Run,
     scope: SaveScope,
 ) -> io::Result<PathBuf> {
+    let mut doc =
+        load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+    let (foreign, mine) = match &scope {
+        SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg)) => {
+            let foreign = crate::ambiguity::foreign(&doc, pkg, run);
+            let kept = crate::ambiguity::without(run, &foreign);
+            (foreign, Some(kept))
+        }
+        _ => (BTreeSet::new(), None),
+    };
+    let owners_run = run;
+    let run = mine.as_ref().unwrap_or(run);
     let mut new_items = saved_items(run);
     if let SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg)) = &scope {
         for item in new_items
@@ -1068,16 +1118,14 @@ pub fn save_baseline_in(
             .into_iter()
             .flat_map(|m| m.values_mut())
         {
-            item["saved_by"] = json!(pkg);
+            item["saved_by"] = json!(crate::unmeasured::norm(pkg));
         }
     }
     let measured = match &scope {
         SaveScope::BenchFull(pkg) => Some(pkg.clone()),
         _ => None,
     };
-    let mut doc =
-        load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
-    let prior = own_measured(&mut doc, &scope, run)?;
+    let prior = own_measured(&mut doc, &scope, owners_run, &foreign)?;
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1135,8 +1183,13 @@ pub fn save_baseline_in(
         crate::unmeasured::clear(&mut doc, pkg.as_deref());
     }
 
+    crate::ambiguity::settle(&mut doc, &Default::default());
     write_baseline_in(root, name, &doc)?;
-    prune_absorbed_accepts(root, run);
+    let unsaved: BTreeSet<String> = (run.items.keys())
+        .filter(|id| doc["items"][id.as_str()].is_null())
+        .cloned()
+        .collect();
+    prune_absorbed_accepts(root, &crate::ambiguity::without(run, &unsaved));
     Ok(baseline_path(root, name))
 }
 
@@ -1144,7 +1197,12 @@ pub fn save_baseline_in(
 /// measured, and return what it owned before and no other package owns,
 /// which a full save replaces. A filtered save adds to its owners and
 /// replaces nothing beyond its own ids.
-fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTreeSet<String>> {
+fn own_measured(
+    doc: &mut Value,
+    scope: &SaveScope,
+    run: &Run,
+    foreign: &BTreeSet<String>,
+) -> io::Result<BTreeSet<String>> {
     let (pkg, full) = match scope {
         SaveScope::BenchFull(Some(pkg)) => (pkg, true),
         SaveScope::BenchFiltered(Some(pkg)) => (pkg, false),
@@ -1169,15 +1227,19 @@ fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTr
         crate::unmeasured::owned_by(doc, pkg).into_iter().collect()
     };
     let mut owned: BTreeSet<String> = if full { BTreeSet::new() } else { prior.clone() };
+    let norm = crate::unmeasured::norm;
+    let registers = |m: &ItemMetrics| m.pkg.as_deref().is_some_and(|p| norm(p) == norm(pkg));
     owned.extend(
         run.items
             .iter()
             .filter(|(id, m)| m.imported.is_none() && !id.starts_with("buildcost::"))
+            .filter(|(id, m)| !foreign.contains(*id) || registers(m))
             .map(|(id, _)| id.clone()),
     );
     let owned: Vec<String> = owned.into_iter().collect();
     let others = crate::unmeasured::owned_by_others(doc, pkg);
     crate::unmeasured::set_owners(doc, pkg, &owned);
+    crate::ambiguity::record_registered(doc, pkg, run, full);
     if !full {
         return Ok(BTreeSet::new());
     }
@@ -1223,7 +1285,9 @@ pub fn load_baseline_in(root: &Path, name: &str) -> io::Result<Option<Value>> {
         return Ok(None);
     }
     let text = std::fs::read_to_string(path)?;
-    Ok(Some(serde_json::from_str(&text)?))
+    let mut doc = serde_json::from_str(&text)?;
+    crate::unmeasured::normalize(&mut doc);
+    Ok(Some(doc))
 }
 
 /// Directory of a workspace package (parent of its Cargo.toml).
@@ -2398,6 +2462,7 @@ mod tests {
                 size_bytes: None,
                 reused: None,
                 imported: Some("jmh".into()),
+                pkg: Some("pkg".into()),
             },
         );
         let round_tripped = run_from_items_value(&run_to_items_value(&run));
@@ -2409,6 +2474,7 @@ mod tests {
         assert_eq!(back.mad_ns, original.mad_ns);
         assert_eq!(back.p99_ns, original.p99_ns);
         assert_eq!(back.imported, original.imported);
+        assert_eq!(back.pkg, original.pkg);
         assert_eq!(back.wall_rounds, original.wall_rounds);
         assert_eq!(back.instructions, original.instructions);
         assert_eq!(back.cycles, original.cycles);

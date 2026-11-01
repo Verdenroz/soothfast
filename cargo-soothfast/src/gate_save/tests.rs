@@ -39,7 +39,7 @@ fn verdict(id: &str, kind: &str) -> AssertionOutcome {
 
 fn saved(name: &str, run: &Run, source: &HeadRun, failures: u32) -> Value {
     let root = scratch(name);
-    let listed = ["core::a".to_string(), "core::b".to_string()];
+    let listed = [("core::a".to_string(), None), ("core::b".to_string(), None)];
     save_head(&root, "head", run, source, &core(), Some(&listed), failures).unwrap();
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
     let _ = std::fs::remove_dir_all(&root);
@@ -351,7 +351,7 @@ fn a_passing_shard_whose_listing_failed_drops_its_numbers_and_fails() {
 fn a_passing_save_records_its_owners_and_drops_what_it_no_longer_lists() {
     let root = stale("save-owners", &[("core", &["soothfast::gone"])]);
     let run = run_of(vec![("soothfast::kept", item(None))]);
-    let listed = ["soothfast::kept".to_string()];
+    let listed = [("soothfast::kept".to_string(), None)];
     save_head(
         &root,
         "head",
@@ -403,26 +403,32 @@ fn a_filtered_save_keeps_the_unfiltered_numbers() {
 }
 
 #[test]
-fn an_id_two_packages_save_is_owned_by_both_and_keeps_the_last_number() {
+fn a_save_with_no_listing_never_writes_an_id_another_package_owns() {
     let root = stale("duplicate-id", &[("a", &["soothfast::same"])]);
     let scope = invoke::SaveScope::BenchFull(Some("b".into()));
     save_ids(&root, &["soothfast::same"], scope).unwrap();
-    assert_eq!(kept(&root), ["soothfast::same"]);
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(
+        doc["items"]["soothfast::same"]["alloc"]["allocs"], 1,
+        "a's number stands"
+    );
     assert_eq!(unmeasured::owned_by(&doc, "a"), ["soothfast::same"]);
-    assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::same"]);
-    let holds = reading(&root, "soothfast::same.walltime.median_ns < 1ms");
-    assert!(matches!(holds, Reading::Decided(Outcome::Holds(_))));
+    assert!(unmeasured::owned_by(&doc, "b").is_empty());
     let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
-fn an_item_that_moved_keeps_its_number_through_both_packages_saves() {
+fn an_item_that_moved_gets_its_number_back_from_its_new_package_s_next_save() {
     let root = stale("moved-item", &[("a", &["soothfast::moved"])]);
-    let b = invoke::SaveScope::BenchFull(Some("b".into()));
-    save_ids(&root, &["soothfast::moved"], b).unwrap();
+    let b = || invoke::SaveScope::BenchFull(Some("b".into()));
+    save_ids(&root, &["soothfast::moved"], b()).unwrap();
     let a = invoke::SaveScope::BenchFull(Some("a".into()));
     save_ids(&root, &[], a).unwrap();
+    assert!(
+        kept(&root).is_empty(),
+        "a number two packages owned is gone"
+    );
+    save_ids(&root, &["soothfast::moved"], b()).unwrap();
     assert_eq!(kept(&root), ["soothfast::moved"]);
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
     assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::moved"]);
@@ -535,16 +541,9 @@ fn a_shard_saves_only_its_own_ids_whatever_the_run_holds() {
         shard: Some(shard),
         ..core()
     };
-    save_head(
-        &root,
-        "head",
-        &run,
-        &HeadRun::Measured,
-        &common,
-        Some(&ids),
-        0,
-    )
-    .unwrap();
+    let listing: Vec<invoke::Listed> = ids.iter().map(|id| (id.clone(), None)).collect();
+    let source = HeadRun::Measured;
+    save_head(&root, "head", &run, &source, &common, Some(&listing), 0).unwrap();
     let saved = kept(&root);
     assert!(!saved.is_empty() && saved.iter().all(|id| shard.owns(id)));
     let _ = std::fs::remove_dir_all(&root);

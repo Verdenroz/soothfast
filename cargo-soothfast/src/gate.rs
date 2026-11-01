@@ -277,6 +277,9 @@ pub fn run(args: &[String]) -> i32 {
         match ratchet {
             Ok(r) => {
                 println!("--- ratchet: {ratchet_name} ---");
+                for note in crate::ambiguity::unbaselined(&r, &current) {
+                    println!("RATCHET {note}");
+                }
                 let rctx = CompareCtx {
                     deps_mode: false,
                     ..ctx.clone()
@@ -320,7 +323,7 @@ pub fn run(args: &[String]) -> i32 {
             .and_then(|root| {
                 let listed = exe
                     .as_deref()
-                    .and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
+                    .and_then(|exe| invoke::listing(exe, g.common.filter.as_deref()));
                 let listed = listed.as_deref();
                 save_head(
                     root,
@@ -702,6 +705,9 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
                 g.baseline, g.baseline
             )
         })?;
+    for note in crate::ambiguity::unbaselined(&baseline, &current) {
+        println!("gate: {note}");
+    }
     Ok(Some(Resolved {
         reference: baseline,
         current,

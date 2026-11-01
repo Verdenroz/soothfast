@@ -37,6 +37,19 @@ pub fn rows(baseline: &Value) -> Vec<Row> {
         .collect()
 }
 
+/// Each id of the baseline's `ambiguous` index, which has no numbers, and
+/// the packages that own it.
+fn ambiguous(baseline: &Value) -> Vec<(&str, String)> {
+    let index = baseline["ambiguous"].as_object().into_iter().flatten();
+    index
+        .map(|(id, entry)| {
+            let packages = entry["packages"].as_array().into_iter().flatten();
+            let packages: Vec<&str> = packages.filter_map(Value::as_str).collect();
+            (id.as_str(), packages.join(", "))
+        })
+        .collect()
+}
+
 /// The walltime columns of each imported item, grouped by import prefix.
 fn by_harness(baseline: &Value) -> BTreeMap<&str, Vec<[String; 4]>> {
     let mut by_harness: BTreeMap<&str, Vec<[String; 4]>> = BTreeMap::new();
@@ -91,6 +104,11 @@ pub fn markdown_at(baseline: &Value, depth: usize) -> String {
             fmt_u(r.polls),
         ));
     }
+    for (id, packages) in ambiguous(baseline) {
+        out.push_str(&format!(
+            "| `{id}` (ambiguous: {packages}) | n/a | n/a | n/a | n/a | n/a |\n"
+        ));
+    }
     let imported = if any_imported {
         by_harness(baseline)
     } else {
@@ -123,6 +141,11 @@ pub fn html(baseline: &Value) -> String {
             fmt_ns(r.p99_ns),
             fmt_u(r.allocs),
             fmt_u(r.polls),
+        ));
+    }
+    for (id, packages) in ambiguous(baseline) {
+        out.push_str(&format!(
+            "<tr><td><code>{id}</code> (ambiguous: {packages})</td><td>n/a</td><td>n/a</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>\n"
         ));
     }
     out.push_str("</tbody>\n</table>\n");
@@ -175,5 +198,19 @@ mod tests {
         assert!(rest.contains("| `jmh::A.b` | 2.50µs | 40.0ns | 3.10µs |"));
         assert!(rest.contains("\n## pytest\n"));
         assert!(super::html(&baseline).contains("<h2>jmh</h2>"));
+    }
+
+    #[test]
+    fn an_ambiguous_id_is_a_row_naming_its_packages_with_no_numbers() {
+        let baseline = json!({
+            "items": {},
+            "ambiguous": { "util::hash": { "packages": ["a", "b"] } },
+        });
+        let md = super::markdown(&baseline);
+        assert!(
+            md.contains("| `util::hash` (ambiguous: a, b) | n/a | n/a | n/a | n/a | n/a |"),
+            "{md}"
+        );
+        assert!(super::html(&baseline).contains("<code>util::hash</code> (ambiguous: a, b)</td>"));
     }
 }

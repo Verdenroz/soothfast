@@ -32,8 +32,9 @@ pub fn probe<'a>(
 /// Measure HEAD's bench binary for `measure`. Under callgrind, a run already
 /// stored for this binary supplies the counters and allocations, and only
 /// timing is measured again; everything else measures in full and stores
-/// the result for the next gate or measure.
-pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
+/// the result for the next gate or measure. Returns the bench binary too,
+/// which lists the items a save stamps.
+pub fn measure(common: &CommonArgs, reuse: bool) -> Result<(Run, Option<PathBuf>), String> {
     let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
     let (digest, runs, exe) = probe("measure", common, &stamp);
     let expected = exe.as_deref().and_then(|exe| expected_ids(common, exe));
@@ -66,7 +67,7 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
         match merged {
             Some(run) => {
                 println!("measure: reusing counters for {label}; timing measured fresh");
-                return Ok(run);
+                return Ok((run, exe));
             }
             None => println!(
                 "measure: the timing pass of {label} missed an item it was asked for; measuring in full"
@@ -92,7 +93,7 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
         run_head(common, RECOUNT, stamp.clone()).ok()
     });
     cache_head(&runs, &run, digest.as_deref(), &settled);
-    Ok(run)
+    Ok((run, exe))
 }
 
 #[derive(Debug, PartialEq)]

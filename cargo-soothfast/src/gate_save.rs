@@ -11,7 +11,8 @@ use std::path::Path;
 
 use crate::baseline_merge;
 use crate::headrun;
-use crate::invoke::{self, CommonArgs, Reused, Run};
+use crate::invoke::{self, CommonArgs, Listed, Reused, Run};
+use crate::ownership;
 use crate::unmeasured::{self, Reason, Unmeasured};
 use crate::workspace;
 
@@ -84,8 +85,8 @@ pub fn bench_packages(common: &CommonArgs) -> Result<Vec<String>, String> {
 /// Act on `--save-baseline NAME` under `root` for a gate in which
 /// `failed_claims` of HEAD's claims failed. Regressions alone still save
 /// HEAD's numbers: they are measured, and the gate's own verdict, or a label
-/// accepting it, decides pass or fail. `listed` is every item the bench
-/// binary lists, if it was read. Under a shard only its own ids are saved.
+/// accepting it, decides pass or fail. `listing` is every item the bench
+/// binary lists, with its registering package, if it was read. Under a shard only its own ids are saved.
 /// `common.pkg` is set: [`configure_save`] resolved it before the gate ran.
 pub fn save_head(
     root: &Path,
@@ -93,9 +94,11 @@ pub fn save_head(
     current: &Run,
     source: &HeadRun,
     common: &CommonArgs,
-    listed: Option<&[String]>,
+    listing: Option<&[Listed]>,
     failed_claims: u32,
 ) -> Result<(), String> {
+    let ids: Option<Vec<String>> = listing.map(|l| l.iter().map(|(id, _)| id.clone()).collect());
+    let listed = ids.as_deref();
     let buildcost = common.backend.as_deref() == Some("buildcost");
     let Some(package) = common.pkg.as_deref() else {
         return Err("--save-baseline needs -p PKG".into());
@@ -119,7 +122,11 @@ pub fn save_head(
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
-    let (mut run, mut entries) = baseline_material(current, source, package);
+    let stamped = match listing {
+        Some(listing) => ownership::stamped(current, listing),
+        None => ownership::unlisted(current),
+    };
+    let (mut run, mut entries) = baseline_material(&stamped, source, package);
     if let Some(shard) = common.shard {
         run.items.retain(|id, _| shard.owns(id));
         run.assertions.retain(|a| shard.owns_claim(&a.id));
@@ -296,6 +303,7 @@ fn baseline_material(current: &Run, source: &HeadRun, package: &str) -> (Run, Ve
         assertions,
         executed: BTreeMap::new(),
         reused: current.reused.clone(),
+        listed: current.listed,
     };
     (run, entries)
 }

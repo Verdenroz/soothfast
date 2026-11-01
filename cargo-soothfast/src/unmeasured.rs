@@ -3,7 +3,7 @@
 //! typed reason. `docs check` reports an unchanged claim on one "not
 //! evaluated" and fails a new or edited one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::Path;
 
@@ -200,13 +200,57 @@ pub fn legacy_note(doc: &Value, name: &str) -> Option<String> {
 /// The `owners` key: each package's items, from its bench binary's listing.
 pub const OWNERS_KEY: &str = "owners";
 
+/// A package name as ids and listings spell it, `-` read as `_`.
+pub fn norm(pkg: &str) -> String {
+    pkg.replace('-', "_")
+}
+
+/// `map` (`{package: [ids]}`) keyed by [`norm`]ed package.
+pub fn by_package(map: &Value) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (pkg, ids) in map.as_object().into_iter().flatten() {
+        let ids = ids
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str);
+        out.entry(norm(pkg))
+            .or_default()
+            .extend(ids.map(str::to_string));
+    }
+    out
+}
+
+/// Spell every package key of `doc`'s `owners`, `registered` and `listed`,
+/// and every `saved_by`, as [`norm`] does, merging two spellings of one
+/// package. Writers spell them so already; this migrates older files.
+pub fn normalize(doc: &mut Value) {
+    let keys = [
+        OWNERS_KEY,
+        crate::ambiguity::REGISTERED_KEY,
+        crate::baseline_merge::LISTED_KEY,
+    ];
+    for key in keys {
+        let spelled = doc.get(key).and_then(Value::as_object);
+        if spelled.is_some_and(|m| m.keys().any(|p| *p != norm(p))) {
+            doc[key] = json!(by_package(&doc[key]));
+        }
+    }
+    let items = doc.get_mut("items").and_then(Value::as_object_mut);
+    for item in items.into_iter().flat_map(|m| m.values_mut()) {
+        if let Some(by) = item["saved_by"].as_str().filter(|by| *by != norm(by)) {
+            item["saved_by"] = json!(norm(by));
+        }
+    }
+}
+
 /// The items baseline `doc` says `package` owns.
 pub fn owned_by(doc: &Value, package: &str) -> Vec<String> {
-    doc[OWNERS_KEY][package]
+    let ids = doc[OWNERS_KEY][norm(package)]
         .as_array()
         .into_iter()
-        .flatten()
-        .filter_map(|id| id.as_str().map(str::to_string))
+        .flatten();
+    ids.filter_map(|id| id.as_str().map(str::to_string))
         .collect()
 }
 
@@ -215,7 +259,7 @@ pub fn set_owners(doc: &mut Value, package: &str, ids: &[String]) {
     if !doc[OWNERS_KEY].is_object() {
         doc[OWNERS_KEY] = json!({});
     }
-    doc[OWNERS_KEY][package] = json!(ids);
+    doc[OWNERS_KEY][norm(package)] = json!(ids);
 }
 
 /// Every item some package of baseline `doc` owns.
@@ -231,11 +275,10 @@ pub fn owned(doc: &Value) -> BTreeSet<String> {
 
 /// Every item a package of baseline `doc` other than `package` owns.
 pub fn owned_by_others(doc: &Value, package: &str) -> BTreeSet<String> {
-    doc[OWNERS_KEY]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(p, _)| p.as_str() != package)
+    let package = norm(package);
+    let owners = doc[OWNERS_KEY].as_object().into_iter().flatten();
+    owners
+        .filter(|(p, _)| **p != package)
         .flat_map(|(_, ids)| ids.as_array().into_iter().flatten())
         .filter_map(|id| id.as_str().map(str::to_string))
         .collect()
@@ -282,9 +325,10 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
     let mut gone: BTreeSet<String> = BTreeSet::new();
     for e in entries {
         let others = owned_by_others(&doc, &e.package);
+        let package = norm(&e.package);
         let theirs = |id: &String| {
             let by = doc["items"][id]["saved_by"].as_str();
-            others.contains(id) && by.is_none_or(|by| by != e.package)
+            others.contains(id) && by.is_none_or(|by| by != package)
         };
         let mine = |id: &String| !theirs(id);
         gone.extend(e.items.iter().filter(|id| mine(id)).cloned());
@@ -294,7 +338,7 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         gone.extend(owned_by(&doc, &e.package).into_iter().filter(mine));
         if e.items.is_empty() {
             if let Some(owners) = doc.get_mut(OWNERS_KEY).and_then(Value::as_object_mut) {
-                owners.remove(&e.package);
+                owners.remove(&package);
             }
         } else {
             set_owners(&mut doc, &e.package, &e.items);
@@ -306,6 +350,7 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         clear_entries(&mut doc, |p| packages.contains(&p));
     }
     append(&mut doc, entries).map_err(|e| e.to_string())?;
+    crate::ambiguity::settle(&mut doc, &Default::default());
     invoke::write_baseline_in(root, name, &doc).map_err(|e| e.to_string())
 }
 
@@ -490,11 +535,11 @@ mod tests {
 
     #[test]
     fn a_failed_package_keeps_a_shared_id_s_number_only_when_another_package_saved_it() {
-        for (writer, kept) in [("b", true), ("a", false), ("", true), ("only-a", false)] {
+        for (writer, kept) in [("b", true), ("a", false), ("", false), ("only-a", false)] {
             let root = scratch(&format!("unmeasured-shared-id-{writer}"));
             let mut doc = json!({
                 "version": 1,
-                "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 8 } } },
+                "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 8 }, "pkg": "b" } },
                 "owners": { "a": ["util::hash"], "b": ["util::hash"] },
             });
             match writer {
@@ -513,5 +558,20 @@ mod tests {
             );
             let _ = std::fs::remove_dir_all(&root);
         }
+    }
+
+    #[test]
+    fn reading_merges_two_spellings_of_one_package() {
+        let mut doc = json!({
+            "items": { "a_b::x": { "saved_by": "a-b" } },
+            "owners": { "a-b": ["a_b::x"], "a_b": ["a_b::y"] },
+            "listed": { "a-b": ["a_b::x"] },
+        });
+        normalize(&mut doc);
+        assert_eq!(doc["owners"], json!({ "a_b": ["a_b::x", "a_b::y"] }));
+        assert_eq!(doc["listed"], json!({ "a_b": ["a_b::x"] }));
+        assert_eq!(doc["items"]["a_b::x"]["saved_by"], "a_b");
+        set_owners(&mut doc, "a-b", &["a_b::x".to_string()]);
+        assert_eq!(doc["owners"], json!({ "a_b": ["a_b::x"] }));
     }
 }
