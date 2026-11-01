@@ -256,7 +256,7 @@ installed on is refused.</p>
 <tr><td><code>changelog</code></td><td><code>true</code></td><td>Regenerate <code>CHANGELOG.md</code> on default-branch pushes.</td></tr>
 <tr><td><code>spec</code></td><td>none</td><td>Space-separated packages whose <code>mode = &quot;generate&quot;</code> specs to regenerate.</td></tr>
 <tr><td><code>features</code></td><td>none</td><td>Cargo features for the gate, the baseline measurement, and spec generation. A bench target with <code>required-features</code> needs them here.</td></tr>
-<tr><td><code>save-baseline</code></td><td>none</td><td>Baseline name a passing pull-request gate saves its HEAD measurement under, in <code>.soothfast/baselines/</code>. Upload that directory as an artifact and a later job (a <code>docs check</code> of claims) reads HEAD's numbers without measuring again. A failing gate saves nothing, and neither does one whose bench binaries are identical on both sides, since that pass collects no gating counters. A job reading the baseline has to handle its absence.</td></tr>
+<tr><td><code>save-baseline</code></td><td>none</td><td>Baseline name a passing pull-request gate saves its HEAD measurement under, in <code>.soothfast/baselines/</code>. Upload that directory as an artifact and a later job (a <code>docs check</code> of claims) reads HEAD's numbers without measuring again. Counters measured from code proven identical to HEAD's (the item cache, a run stored for the same binary, a run-cache hit on HEAD) are saved with their <code>reused</code> marker; walltime from those sources is listed as <code>unmeasured</code> (<code>reused-walltime</code>) instead. A gate whose claims failed, or that errored, saves no numbers and lists the package's items as <code>gate-failed</code>; one that failed only on regressions saves HEAD's numbers, and its verdict or the <code>soothfast:perf-accepted</code> label decides. With <code>shard</code>, each leg's file holds its shard's items; merge them with <code>cargo soothfast baseline merge</code>.</td></tr>
 <tr><td><code>changelog-packages</code></td><td><code>packages</code></td><td>Packages whose API surface <code>report changelog</code> diffs. Set it when a crate without a bench target still ships an API.</td></tr>
 <tr><td><code>changelog-features</code></td><td><code>features</code></td><td>Features for <code>report changelog</code>, which decide what the API surface diff contains. Set it wider than <code>features</code> when gating under the full feature set is too heavy.</td></tr>
 <tr><td><code>regen-run</code></td><td>none</td><td>Shell run on the default branch after the built-in regeneration, for derived files the inputs above do not cover. <code>$SOOTHFAST</code> is the <code>cargo-soothfast</code> this step installed, so <code>&quot;$SOOTHFAST&quot; sdk gen -p mylib</code> works whether the CLI came from the install or from <code>binary</code>. Requires <code>regen-paths</code>.</td></tr>
@@ -505,12 +505,68 @@ executables of both sides, so measuring is all it does:</p>
       shard: 3
 </code></pre></figure>
 <p>The legs record <code>soothfast-result-rust-shard-&lt;i&gt;-of-&lt;n&gt;</code> and the verdict folds them
-into one section for the package. A pull request's shards cannot save the
-<code>head</code> baseline, which holds every item, so on a pull request with <code>shard</code>
-above 1 the docs check reports "claims not evaluated: sharded gate saves no
-measurement" and checks binds and examples only. A default-branch push records every item
-in its first leg and saves the baseline as before; the other legs are
-skipped on a push, since they would only set up.</p>
+into one section for the package. Each leg of a pull request saves the items
+its shard owns into its own <code>head</code> baseline, stamped with the shard and
+listing every item the bench binary holds, and uploads it as
+<code>soothfast-baseline-rust-shard-&lt;i&gt;-of-&lt;n&gt;</code>. The docs job builds one baseline
+from exactly the files of this run with <code>cargo soothfast baseline merge
+--into head --expect N --packages &quot;A B&quot; FILE...</code>. A package whose gate failed
+or errored, sharded or not, saves no numbers and lists the items its shard
+owns as <code>gate-failed</code>; a leg that wrote no file at all leaves its shard's
+items <code>shard-missing</code>, named from the other legs' listings. A corrupt file,
+or one from a gate split another way, fails the docs job after binds and
+examples are checked. A default-branch push records every item in its first
+leg and saves the baseline as before; the other legs are skipped on a push,
+since they would only set up. A push whose commit has no parent lists its
+items as <code>no-parent</code>.</p>
+<p>The docs check runs with <code>--against-ref</code> on the merge-base: a claim reads
+"not evaluated" only when the merge-base made it unchanged and its metric is
+listed <code>unmeasured</code>. A new or edited claim, or one on an item nothing lists,
+fails without a measurement. Counters taken from the item cache, from a run
+stored for the same binary or from a run-cache hit on HEAD count as this
+pull request's, since the code they measured is proven identical; walltime
+from those sources does not. A pull request whose bench binaries match the
+merge-base, with no stored run of them, reports its counter claims not
+evaluated, since its gate takes no counters. The cargo gate measures only a
+pull request and a default-branch push. On any other event (a push to
+another branch, a tag, <code>workflow_dispatch</code>, <code>merge_group</code>) the merge writes
+one <code>not-gated-on-event</code> entry: every claim whose item does not start with a
+configured import prefix (each <code>[[project]]</code>'s <code>prefix</code>, else its format's)
+is not evaluated. Imported claims measured on that event are checked as
+usual, and a missing or misspelled imported id fails. A prefix equal to a
+package name in the cargo workspace (<code>-</code> read as <code>_</code>), the only name a Rust
+id starts with, fails <code>import</code>, <code>gate --import</code>, and a <code>baseline merge</code> of
+an import file or an ungated event; with no workspace to read, a note says
+the prefixes went unchecked. A merge of Rust shards alone never reads
+<code>soothfast.toml</code>. Where no measurement was
+possible (<code>not-gated-on-event</code>, <code>no-parent</code>), a claim reads "not evaluated"
+even when it is new or edited.</p>
+<p>Which items belong to which package comes from each package's bench binary
+listing, recorded as <code>owners</code> in the baseline, never from an id's name: every
+bench file's ids start with the bench target's name. An entry covers only the
+ids it names. A failed package's old numbers are exactly the ids it owned and
+no other package owns, and its entry names those, or the ones its listing
+shows; with neither it names nothing, and a claim on an item no package owns
+fails, naming that gate failure as possibly related. A leg that uploaded
+nothing at all, from a setup failure or a cancel, gets a <code>no-measurement</code>
+entry naming the items the Build (bench) job listed for its package from
+the stores it built, with <code>cargo soothfast baseline plan</code> (the
+<code>soothfast-plan</code> artifact, passed to the merge as <code>--plan</code>): an
+unchanged claim on them is not evaluated and a new or edited one fails. An
+item no listing names, an import's among them, still fails. An id two packages both
+list, as a lib item linked into both their bench binaries is, belongs to
+both, and a claim on it reads the number the last save wrote. A full save
+leaves alone any id another package owns. <code>baseline merge</code> refuses an id two
+merged files both hold.</p>
+<p><code>--save-baseline</code>, on <code>gate</code> or <code>measure</code>, needs <code>-p</code> in a workspace with more
+than one bench package, and fails before measuring without it; with one
+bench package the save is that package's. A filtered save updates the
+package's numbers in place, and a failed filtered gate drops and names only
+the filtered ids. A full save into a baseline
+saved before <code>owners</code> existed replaces every bench item no other package
+owns, and says to re-save the other packages. Baselines saved before
+<code>owners</code> existed are read with their old unmeasured entries left out, and
+the check says to re-save them.</p>
 <p><code>cargo soothfast prebuild</code> runs the same lanes by hand: <code>-p PKG</code> for bench
 packages, <code>--against-ref REF</code> for the merge-base, <code>--docs PKG</code>, <code>--spec
 PKG[:TARGET]</code>, <code>--only bench|routes|rustdoc</code>, <code>--stage DIR</code> and <code>--shards N</code>.</p>

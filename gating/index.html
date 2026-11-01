@@ -497,8 +497,9 @@ branch only shard 1 records a reference: it measures every item and saves
 under the key pull requests restore, and each shard compares its own items
 against that run. On a pull request each shard saves what it measured under
 its own key, for a rerun.
-<code>--shard</code> and <code>--save-baseline</code> cannot be combined, since a baseline must
-hold every item. Each leg builds both sides itself unless the stores hold
+With <code>--save-baseline</code>, each shard's file holds only the items it owns and is
+stamped with the shard, and <code>cargo soothfast baseline merge</code> joins the legs'
+files into one baseline. Each leg builds both sides itself unless the stores hold
 them; <code>shard:</code> on the <a href="../ci/#one-build">reusable workflow</a> builds them once
 and gives every leg a hit.</p>
 <h2 id="thresholds">Thresholds<a class="anchor" href="#thresholds" aria-label="Link to this section">#</a></h2>
