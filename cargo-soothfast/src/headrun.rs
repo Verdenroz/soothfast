@@ -227,7 +227,23 @@ pub fn expected_ids(common: &CommonArgs, exe: &Path) -> Option<BTreeSet<String>>
 pub fn head_from_runcache(runs: &Runs, digest: Option<&str>) -> Option<(Run, String)> {
     let (id, measured_from) = head_cache_id(digest)?;
     let doc = runs.load(&id, &measured_from)?;
-    Some((invoke::run_from_items_value(&doc["items"]), measured_from))
+    Some((run_from_doc(&doc), measured_from))
+}
+
+/// A run read back from [`ref_doc`]'s shape, its claims' verdicts included.
+pub fn run_from_doc(doc: &Value) -> Run {
+    let mut run = invoke::run_from_items_value(&doc["items"]);
+    let verdicts = doc["assertions"].as_array().into_iter().flatten();
+    run.assertions = verdicts
+        .filter_map(|v| invoke::AssertionOutcome::from_verdict_json(v["id"].as_str()?, v))
+        .collect();
+    run
+}
+
+/// Whether `doc` records a claim that failed.
+pub fn claims_failed(doc: &Value) -> bool {
+    let verdicts = doc["assertions"].as_array().into_iter().flatten();
+    verdicts.into_iter().any(|v| v["ok"] == false)
 }
 
 /// What HEAD's own run is stored under, and the label saying what it was
@@ -404,8 +420,13 @@ pub fn cache_head(runs: &Runs, head: &Run, digest: Option<&str>, settled: &Settl
     }
 }
 
-/// Keep `doc` as HEAD's measurement.
+/// Keep `doc` as HEAD's measurement, unless a claim on it failed: a rerun
+/// then measures and fails it again instead of reusing it.
 pub fn cache_head_doc(runs: &Runs, doc: &Value, digest: Option<&str>) {
+    if claims_failed(doc) {
+        println!("not storing HEAD's run: a claim on it failed");
+        return;
+    }
     if let Some(digest) = digest {
         runs.store(digest, doc);
     }
@@ -428,6 +449,14 @@ pub fn ref_doc(run: &Run) -> Value {
         doc["build"] = b.to_json();
     }
     doc["items"] = invoke::run_to_items_value(run);
+    if !run.assertions.is_empty() {
+        let verdicts = run.assertions.iter().map(|a| {
+            let mut v = a.verdict_json();
+            v["id"] = serde_json::json!(a.id);
+            v
+        });
+        doc["assertions"] = verdicts.collect();
+    }
     doc
 }
 
@@ -477,7 +506,7 @@ fn digestible(name: &str, flags: &str) -> bool {
 mod tests {
     use super::{
         Plan, Settled, cache_head, digestible, loaded_section_bytes, merge_stored, ref_doc,
-        reuse_plan, settle, settled_doc,
+        reuse_plan, run_from_doc, settle, settled_doc,
     };
     use crate::buildstamp::BuildStamp;
     use crate::codekey;
@@ -590,6 +619,40 @@ mod tests {
             &Settled::Refused,
         );
         assert!(runs.load("test-headrun-refused", "x").is_none());
+    }
+
+    #[test]
+    fn a_head_run_whose_claim_failed_is_not_kept_and_reads_back_failing() {
+        let stamp = BuildStamp {
+            rustc: "1.88.0".into(),
+            codegen_units: "1".into(),
+            profiles: "p".into(),
+            rustflags: "f".into(),
+        };
+        let common = CommonArgs {
+            pkg: Some("test-headrun-failed-claim".into()),
+            ..CommonArgs::default()
+        };
+        let env = HostEnv {
+            gating_backend: "callgrind".into(),
+            guest: None,
+            callgrind_method: None,
+            item_reuse: true,
+        };
+        let runs = Runs::new(&stamp, &common, Some(env));
+        let mut failing = timing();
+        failing.assertions[0].ok = false;
+        let digest = "test-headrun-failed-claim";
+        cache_head(&runs, &failing, Some(digest), &Settled::AsMeasured);
+        assert!(
+            runs.load(digest, "x").is_none(),
+            "a rerun must measure again"
+        );
+        let rerun = run_from_doc(&ref_doc(&failing));
+        assert!(
+            rerun.assertions.iter().any(|a| !a.ok),
+            "a stored verdict replays"
+        );
     }
 
     fn stored(items: serde_json::Value) -> serde_json::Value {

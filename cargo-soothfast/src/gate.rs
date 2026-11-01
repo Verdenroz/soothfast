@@ -13,8 +13,8 @@ use crate::gate_config;
 use crate::gate_lock;
 use crate::gate_save::{HeadRun, bench_packages, configure_save, save_errored, save_head};
 use crate::headrun::{
-    self, RECOUNT, Settled, binary_digest, cache_head, cache_head_doc, head_from_runcache, ref_doc,
-    settle, settled_doc,
+    self, RECOUNT, Settled, binary_digest, cache_head, cache_head_doc, claims_failed,
+    head_from_runcache, ref_doc, settle, settled_doc,
 };
 use crate::import;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
@@ -210,18 +210,13 @@ pub fn run(args: &[String]) -> i32 {
 
     let resolved = match resolve(&g, walltime_advisory) {
         Ok(Some(resolved)) => resolved,
-        // Nothing at the ref to regress against, so HEAD's own assertions
-        // decide, and a passing run is saved like any other.
         Ok(None) => {
             println!(
-                "gate: no bench target at {} for {} — newly measured, checking its own claims",
+                "gate: no bench target at {} for {} — newly measured, nothing to compare",
                 g.against_ref.as_deref().unwrap_or("?"),
                 g.common.pkg.as_deref().unwrap_or("this package")
             );
-            match newly_measured(&g.common) {
-                Ok(resolved) => resolved,
-                Err(e) => return errored(&g, None, &e),
-            }
+            return 0;
         }
         Err(e) => return errored(&g, None, &e),
     };
@@ -325,14 +320,15 @@ pub fn run(args: &[String]) -> i32 {
 
     write_gate_status(failures);
     if let Some(name) = &g.save_baseline {
-        let saved = invoke::workspace_root()
-            .map_err(|e| e.to_string())
+        let saved = root
+            .as_deref()
+            .ok_or_else(|| "cannot find the workspace root".to_string())
             .and_then(|root| {
                 let listed = exe
                     .as_deref()
                     .and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
                 let listed = listed.as_deref();
-                save_head(&root, name, &current, &head, &g.common, listed, failures)
+                save_head(root, name, &current, &head, &g.common, listed, failures)
             });
         if let Err(e) = saved {
             eprintln!("soothfast: failed to save baseline: {e}");
@@ -960,37 +956,25 @@ fn write_gate_status(failures: u32) {
     );
 }
 
-/// HEAD of a crate with no bench target at the merge-base. Cached only when
-/// its assertions hold: a cached run keeps none for a later gate to check.
-fn newly_measured(common: &CommonArgs) -> Result<Resolved, String> {
-    let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
-    let head_stamp = stamp();
-    let (digest, runs, exe) = headrun::probe("gate", common, &head_stamp);
-    let measure = |extra: &[&str]| -> Result<Run, String> {
-        let records = invoke::run_bench(common, extra).map_err(|e| e.to_string())?;
-        let mut run = invoke::collect(&records);
-        run.build = Some(stamp());
-        Ok(run)
-    };
-    let head_bin = exe.as_deref().map(|exe| Bin::head(exe, digest.as_deref()));
-    let (head, _) = Reuse::measure_head(
-        "gate",
-        common,
-        &runs,
-        head_bin,
-        recording(),
-        &[],
-        stamp,
-        measure,
-    )?;
-    if head.assertions.iter().all(|a| a.ok) {
-        let settled = settle("gate", "HEAD's run", &head, || measure(RECOUNT).ok());
-        cache_head(&runs, &head, digest.as_deref(), &settled);
+/// HEAD of a crate the merge-base has no bench target for, compared with
+/// itself so its own claims decide; `keep` stores the run. `None` when HEAD
+/// has no bench target either, or one that measures no items yet, which
+/// leaves nothing to gate.
+fn newly_measured(
+    has_target: bool,
+    measure: impl FnOnce() -> Result<Run, String>,
+    keep: impl FnOnce(&Run),
+) -> Result<Option<Resolved>, String> {
+    if !has_target {
+        return Ok(None);
     }
-    Ok(Resolved {
-        exe,
-        ..self_compared(head)
-    })
+    let head = measure()?;
+    if head.items.is_empty() {
+        println!("gate: its new bench target measures no items yet");
+        return Ok(None);
+    }
+    keep(&head);
+    Ok(Some(self_compared(head)))
 }
 
 /// `head` as both sides of a comparison, so every delta is zero.
@@ -1276,7 +1260,31 @@ fn measure_ref_interleaved(
     let (outcome, digests, harness) = outcome;
 
     let sides = match outcome {
-        Ref::NoBenchTarget => return Ok(None),
+        Ref::NoBenchTarget => {
+            let target = common.target.as_deref().unwrap_or("soothfast");
+            let has_target = match &common.pkg {
+                Some(pkg) => {
+                    workspace::has_bench_target(pkg, target, None).map_err(|e| e.to_string())?
+                }
+                None => true,
+            };
+            println!("gate: no bench target at {refname}; HEAD's own claims decide");
+            let exe = head_exe.clone();
+            let resolved = newly_measured(
+                has_target,
+                || measure_head(head_exe.as_deref().filter(|_| reuse)),
+                |head| {
+                    let settled = match runs.env() {
+                        Some(_) => {
+                            settle("gate", "HEAD's run", head, || measure(None, RECOUNT).ok())
+                        }
+                        None => Settled::AsMeasured,
+                    };
+                    cache_head(&runs, head, head_dig.as_deref(), &settled);
+                },
+            )?;
+            return Ok(resolved.map(|r| Resolved { exe, ..r }));
+        }
         // One cheap pass serves as both sides: real items and assertions,
         // zero deltas by construction.
         Ref::IdenticalBinaries {
@@ -1339,7 +1347,8 @@ fn measure_ref_interleaved(
             runs.store(&d.base, &stored);
         }
     }
-    if let (Some(d), Some(stored)) = (&digests, settled_doc(ref_doc(&head), &head_settled)) {
+    let head_doc = settled_doc(ref_doc(&head), &head_settled).filter(|doc| !claims_failed(doc));
+    if let (Some(d), Some(stored)) = (&digests, head_doc) {
         runs.store(&d.head, &stored);
     }
     cache_head(&runs, &head, head_dig.as_deref(), &head_settled);
@@ -2876,7 +2885,7 @@ mod tests {
     }
 
     /// Gate a new crate whose one alloc claim holds or not, saving into `root`.
-    fn gate_new_crate(root: &std::path::Path, holds: bool) -> u32 {
+    fn new_crate_run(holds: bool) -> Run {
         let mut head = run_with(ItemMetrics {
             allocs: Some(0),
             bytes: Some(0),
@@ -2888,44 +2897,62 @@ mod tests {
             ok: holds,
             detail: "claimed 0".into(),
         });
-        let resolved = super::self_compared(head);
-        let (regressions, _) = gate_failures(&resolved.reference, &resolved.current);
-        let failures = regressions + super::assertion_failures(&resolved.current, &mut Vec::new());
-        let common = CommonArgs {
-            pkg: Some("pkg".into()),
-            ..CommonArgs::default()
-        };
-        let current = &resolved.current;
-        save_head(
-            root,
-            "head",
-            current,
-            &resolved.head,
-            &common,
-            None,
-            failures,
-        )
-        .unwrap();
-        failures
+        head
     }
 
-    fn scratch(name: &str) -> std::path::PathBuf {
+    fn gated(resolved: &super::Resolved) -> u32 {
+        let (regressions, _) = gate_failures(&resolved.reference, &resolved.current);
+        regressions + super::assertion_failures(&resolved.current, &mut Vec::new())
+    }
+
+    /// A temporary directory removed when the test ends, pass or fail.
+    struct Scratch(std::path::PathBuf);
+
+    impl std::ops::Deref for Scratch {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for Scratch {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scratch(name: &str) -> Scratch {
         let root = std::env::temp_dir().join(format!("soothfast-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        root
+        Scratch(root)
     }
 
     #[test]
-    fn a_passing_new_crate_saves_its_run() {
-        let root = scratch("new-crate-pass");
-        assert_eq!(gate_new_crate(&root, true), 0);
-        let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-        assert_eq!(
-            saved["items"]["pkg::bt_base_to_htf_index"]["alloc"]["allocs"],
-            0
+    fn a_new_crate_is_measured_and_kept_and_its_claims_decide() {
+        for holds in [true, false] {
+            let mut kept = 0;
+            let resolved = super::newly_measured(true, || Ok(new_crate_run(holds)), |_| kept += 1)
+                .unwrap()
+                .expect("a crate with a bench target at HEAD is gated");
+            assert_eq!(kept, 1);
+            assert_eq!(gated(&resolved), u32::from(!holds));
+        }
+    }
+
+    #[test]
+    fn a_package_with_no_bench_target_at_head_either_is_not_gated() {
+        let measured = super::newly_measured(
+            false,
+            || panic!("nothing to measure"),
+            |_| panic!("nothing to keep"),
         );
-        assert_eq!(saved["assertions"][0]["ok"], true);
-        let _ = std::fs::remove_dir_all(&root);
+        assert!(measured.unwrap().is_none());
     }
 
     #[test]
@@ -3021,7 +3048,26 @@ mod tests {
     #[test]
     fn a_failing_new_crate_fails_the_gate_and_saves_no_numbers() {
         let root = scratch("new-crate-fail");
-        assert_eq!(gate_new_crate(&root, false), 1);
+        let resolved = super::newly_measured(true, || Ok(new_crate_run(false)), |_| {})
+            .unwrap()
+            .unwrap();
+        let failures = gated(&resolved);
+        assert_eq!(failures, 1);
+        let common = CommonArgs {
+            pkg: Some("pkg".into()),
+            ..CommonArgs::default()
+        };
+        let current = &resolved.current;
+        save_head(
+            &root,
+            "head",
+            current,
+            &resolved.head,
+            &common,
+            None,
+            failures,
+        )
+        .unwrap();
         let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
         assert_eq!(saved["items"], json!({}));
         assert_eq!(saved["unmeasured"][0]["reason"], "gate-failed");
@@ -3032,7 +3078,13 @@ mod tests {
                 .unwrap()
                 .contains("no listing")
         );
-        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_new_bench_target_with_no_items_yet_is_not_gated() {
+        let measured =
+            super::newly_measured(true, || Ok(Run::default()), |_| panic!("nothing to keep"));
+        assert!(measured.unwrap().is_none());
     }
 
     #[test]
