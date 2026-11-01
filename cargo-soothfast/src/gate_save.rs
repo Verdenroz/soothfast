@@ -1,9 +1,10 @@
 //! What a gate's `--save-baseline` writes. A passing gate saves every number
 //! measured from code proven identical to HEAD's: counters from a stored run
 //! or the item cache count, walltime from either does not and is listed
-//! `unmeasured` per metric instead. A failing or errored gate saves no
-//! numbers, only a `gate-failed` entry naming the package's items. A `--shard`
-//! gate also stamps the file for `baseline merge`.
+//! `unmeasured` per metric instead. Regressions alone still save HEAD's
+//! numbers. A gate whose claims failed, or that errored, saves no numbers,
+//! only a `gate-failed` entry naming the package's items. A `--shard` gate
+//! also stamps the file for `baseline merge`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -81,10 +82,12 @@ pub fn bench_packages(common: &CommonArgs) -> Result<Vec<String>, String> {
     workspace::bench_crates(common.target.as_deref().unwrap_or("soothfast"), None)
 }
 
-/// Act on `--save-baseline NAME` under `root` for a gate that ended with
-/// `failures`. `listing` is every item the bench binary lists, with its
-/// registering package, if it was read. `common.pkg` is set:
-/// [`configure_save`] resolved it before the gate ran.
+/// Act on `--save-baseline NAME` under `root` for a gate in which
+/// `failed_claims` of HEAD's claims failed. Regressions alone still save
+/// HEAD's numbers: they are measured, and the gate's own verdict, or a label
+/// accepting it, decides pass or fail. `listing` is every item the bench
+/// binary lists, with its registering package, if it was read. Under a shard only its own ids are saved.
+/// `common.pkg` is set: [`configure_save`] resolved it before the gate ran.
 pub fn save_head(
     root: &Path,
     name: &str,
@@ -92,7 +95,7 @@ pub fn save_head(
     source: &HeadRun,
     common: &CommonArgs,
     listing: Option<&[Listed]>,
-    failures: u32,
+    failed_claims: u32,
 ) -> Result<(), String> {
     let ids: Option<Vec<String>> = listing.map(|l| l.iter().map(|(id, _)| id.clone()).collect());
     let listed = ids.as_deref();
@@ -100,14 +103,14 @@ pub fn save_head(
     let Some(package) = common.pkg.as_deref() else {
         return Err("--save-baseline needs -p PKG".into());
     };
-    if failures > 0 && buildcost {
-        eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
+    if failed_claims > 0 && buildcost {
+        eprintln!("soothfast: refusing to save baseline {name:?}: a claim failed");
         return Ok(());
     }
-    if failures > 0 {
-        eprintln!("soothfast: saving no numbers in baseline {name:?}: gate failed");
+    if failed_claims > 0 {
+        eprintln!("soothfast: saving no numbers in baseline {name:?}: a claim failed");
         let reason = Reason::GateFailed;
-        return mark_package(root, name, common, reason, "the gate failed", listed);
+        return mark_package(root, name, common, reason, "a claim failed", listed);
     }
     if let (Some(shard), None) = (common.shard, listed) {
         let reason = Reason::GateFailed;
@@ -120,7 +123,14 @@ pub fn save_head(
         baseline_merge::check_shard_in(root, name, shard)?;
     }
     let stamped = ownership::stamped(current, listing.unwrap_or_default());
-    let (run, entries) = baseline_material(&stamped, source, package);
+    let (mut run, mut entries) = baseline_material(&stamped, source, package);
+    if let Some(shard) = common.shard {
+        run.items.retain(|id, _| shard.owns(id));
+        run.assertions.retain(|a| shard.owns(&a.id));
+        for e in &mut entries {
+            e.items.retain(|id| shard.owns(id));
+        }
+    }
     let scope = invoke::SaveScope::of(common);
     let path = invoke::save_baseline_in(root, name, &run, scope).map_err(|e| e.to_string())?;
     unmeasured::append_in(root, name, &entries).map_err(|e| e.to_string())?;

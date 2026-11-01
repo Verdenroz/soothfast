@@ -621,8 +621,13 @@ jobs:
             trap 'git worktree remove --force "$tree" >/dev/null 2>&1 || true' EXIT
             base="$tree"
             [ "$DIR" = . ] || base="$tree/$DIR"
+            # The merge-base runs first, so a HEAD that fails to bench still
+            # leaves results naming the items its failed gate covers.
+            base_ok=true
+            { bench "$base" && [ -f "$base/$OUT" ]; } || base_ok=false
+            if [ "$base_ok" = true ]; then cp "$base/$OUT" "$RUNNER_TEMP/soothfast-base-results-$NAME"; fi
             bench .
-            if ! bench "$base" || [ ! -f "$base/$OUT" ]; then
+            if [ "$base_ok" = false ]; then
               echo "merge-base has no benchmark results; nothing to compare"
               echo "::notice::merge-base has no benchmark results; nothing to compare"
               save
@@ -652,7 +657,11 @@ jobs:
           file="$RUNNER_TEMP/soothfast-baseline/import-$NAME.json"
           if [ ! -f "$file" ]; then
             mkdir -p "$RUNNER_TEMP/soothfast-baseline"
-            cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} --out "$file" --failed
+            base="$RUNNER_TEMP/soothfast-base-results-$NAME"
+            prior=()
+            [ ! -f "$base" ] || prior+=(--base-results "$base")
+            [ ! -f .soothfast/baselines/head.json ] || prior+=(--prior-baseline head)
+            cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} --out "$file" --failed "${prior[@]}"
           fi
       - name: Record the verdict
         if: always()

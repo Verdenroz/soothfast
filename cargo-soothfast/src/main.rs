@@ -111,11 +111,13 @@ commands:
            generate a spec; prints what
            it built against what was already stored)
   import   --from jmh|pyperf|pytest-benchmark|vitest FILE [--prefix P]
-           (--save-baseline NAME | --out FILE) [--failed]
+           (--save-baseline NAME | --out FILE)
+           [--failed [--base-results FILE] [--prior-baseline NAME]]
            (turns another harness's benchmark results into walltime items
            named PREFIX::NAME; the prefix defaults to the format; --failed
-           writes no numbers, only a gate-failed entry naming the items, or
-           the whole prefix when FILE has none)
+           writes no numbers, only a gate-failed entry naming FILE's items,
+           else the merge-base results', else the prefix's ids in the prior
+           baseline; with none, claims on the prefix's items fail)
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]

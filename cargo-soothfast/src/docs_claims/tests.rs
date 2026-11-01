@@ -59,8 +59,18 @@ fn a_misspelled_item_fails_even_in_an_unmeasured_package() {
 }
 
 #[test]
-fn an_entry_that_names_no_item_covers_none() {
+fn a_leg_that_saved_nothing_leaves_its_unowned_items_to_the_edited_claim_rule() {
     let b = baseline(&[entry(Reason::NoMeasurement, &[], &[])]);
+    let outcome = read("core::a.alloc.allocs <= 0", &b);
+    assert!(matches!(
+        outcome,
+        Reading::Unmeasured(Reason::NoMeasurement, _)
+    ));
+}
+
+#[test]
+fn a_nameless_failed_gate_covers_no_item() {
+    let b = baseline(&[entry(Reason::GateFailed, &[], &[])]);
     let outcome = read("core::a.alloc.allocs <= 0", &b);
     assert!(matches!(outcome, Reading::Decided(Outcome::Failed(_))));
 }

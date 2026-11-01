@@ -140,7 +140,7 @@ installed on is refused.
 | `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes. |
 | `spec` | none | Space-separated packages whose `mode = "generate"` specs to regenerate. |
 | `features` | none | Cargo features for the gate, the baseline measurement, and spec generation. A bench target with `required-features` needs them here. |
-| `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. Counters measured from code proven identical to HEAD's (the item cache, a run stored for the same binary, a run-cache hit on HEAD) are saved with their `reused` marker; walltime from those sources is listed as `unmeasured` (`reused-walltime`) instead. A failing or errored gate saves no numbers and lists the package's items as `gate-failed`. With `shard`, each leg's file holds its shard's items; merge them with `cargo soothfast baseline merge`. |
+| `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. Counters measured from code proven identical to HEAD's (the item cache, a run stored for the same binary, a run-cache hit on HEAD) are saved with their `reused` marker; walltime from those sources is listed as `unmeasured` (`reused-walltime`) instead. A gate whose claims failed, or that errored, saves no numbers and lists the package's items as `gate-failed`; one that failed only on regressions saves HEAD's numbers, and its verdict or the `soothfast:perf-accepted` label decides. With `shard`, each leg's file holds its shard's items; merge them with `cargo soothfast baseline merge`. |
 | `changelog-packages` | `packages` | Packages whose API surface `report changelog` diffs. Set it when a crate without a bench target still ships an API. |
 | `changelog-features` | `features` | Features for `report changelog`, which decide what the API surface diff contains. Set it wider than `features` when gating under the full feature set is too heavy. |
 | `regen-run` | none | Shell run on the default branch after the built-in regeneration, for derived files the inputs above do not cover. `$SOOTHFAST` is the `cargo-soothfast` this step installed, so `"$SOOTHFAST" sdk gen -p mylib` works whether the CLI came from the install or from `binary`. Requires `regen-paths`. |
@@ -510,7 +510,10 @@ one package owns again gets that package's number back. An entry covers
 only the ids it names. A failed package's old numbers are exactly the ids it
 owned and no other package owns, and its entry names those, or the ones its
 listing shows; with neither it names nothing, and a claim on an item no
-package owns fails, naming that gate failure as possibly related. A full
+package owns fails, naming that gate failure as possibly related. A leg
+that uploaded nothing at all, from a setup failure or a cancel, gets a
+`no-measurement` entry instead, and an item no package owns reads under it:
+an unchanged claim is not evaluated and a new or edited one fails. A full
 save leaves alone any id another package owns. `baseline merge` refuses an
 id a Rust file and an import file both hold, or a Rust file holding an id
 none of its packages owns.

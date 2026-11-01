@@ -530,3 +530,29 @@ fn a_config_error_still_has_the_save_s_package_to_mark() {
     assert!(entries[0].package == "core" && entries[0].reason == Reason::GateFailed);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn a_shard_saves_only_its_own_ids_whatever_the_run_holds() {
+    let root = scratch("shard-backstop");
+    let shard = invoke::Shard { index: 1, count: 2 };
+    let ids: Vec<String> = (0..8).map(|n| format!("core::f{n}")).collect();
+    let run = run_of(ids.iter().map(|id| (id.as_str(), item(None))).collect());
+    let common = CommonArgs {
+        shard: Some(shard),
+        ..core()
+    };
+    let listing: Vec<invoke::Listed> = ids.iter().map(|id| (id.clone(), None)).collect();
+    let source = HeadRun::Measured;
+    save_head(&root, "head", &run, &source, &common, Some(&listing), 0).unwrap();
+    let saved = kept(&root);
+    assert!(!saved.is_empty() && saved.iter().all(|id| shard.owns(id)));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_gate_that_failed_only_on_regressions_saves_head_s_numbers() {
+    let run = run_of(vec![("core::a", item(None))]);
+    let doc = saved("regressed", &run, &HeadRun::Measured, 0);
+    assert!(doc["items"]["core::a"]["alloc"].is_object());
+    assert!(unmeasured::read(&doc).unwrap().is_empty());
+}

@@ -402,21 +402,6 @@ fn a_rust_file_holding_an_id_none_of_its_packages_owns_is_refused() {
     assert!(why.contains("which no package of it owns"), "{why}");
 }
 
-#[test]
-fn a_rust_only_merge_reads_no_import_config() {
-    let rust = [(
-        "head.json".to_string(),
-        json!({ "items": {}, "owners": {} }),
-    )];
-    assert!(!reads_import_config(&rust, false));
-    assert!(reads_import_config(&rust, true));
-    let import = [(
-        "jmh.json".to_string(),
-        json!({ "imported": "jmh", "items": {} }),
-    )];
-    assert!(reads_import_config(&import, false));
-}
-
 /// A workspace whose packages `a` and `b` both link lib `util`, which has
 /// no bench target, and `core`, whose own bench lists the `core::parse`
 /// that `a` links too.

@@ -263,8 +263,10 @@ which the docs job merges beside the cargo gate's, so a claim on a `jmh::` or
 push, or any event the cargo gate runs on outside a pull request, runs the
 harness on HEAD alone and uploads the same file for its own docs check. A
 gate that failed or errored uploads no numbers, only a `gate-failed` entry
-naming the items of HEAD's results, or the whole prefix when there are none,
-so an unchanged claim on them reads "not evaluated". Two projects whose
+naming the items of HEAD's results, else of the merge-base's, else the
+prefix's ids in a prior baseline, so an unchanged claim on them reads "not
+evaluated". With none of those to read, the entry names nothing, and a
+claim on the prefix's items fails, unchanged or not. Two projects whose
 results share an item id fail the merge, which names both files.
 
 `docs check` and `docs accept` need no cargo project for `path#Symbol` binds

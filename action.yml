@@ -89,7 +89,7 @@ inputs:
       Baseline name a passing pull-request gate, or the reference run of a
       default-branch push, saves its HEAD measurement under, in `.soothfast/baselines/`. A later job that needs HEAD's
       numbers (a docs claim check) can then read it instead of measuring
-      again. A failing or errored gate saves no numbers and lists the
+      again. A gate whose claims failed, or that errored, saves no numbers and lists the
       package's items as `gate-failed`. Walltime another run measured, and
       counters nothing measured, are listed as `unmeasured` per metric. With
       `shard`, the file holds that shard's items and is stamped for `cargo
