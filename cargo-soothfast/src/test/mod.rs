@@ -3,7 +3,7 @@
 mod cargo;
 pub(crate) mod config;
 #[cfg(test)]
-mod fixture;
+pub(crate) mod fixture;
 mod key;
 pub(crate) mod project;
 mod runner;

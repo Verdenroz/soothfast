@@ -212,9 +212,13 @@ fn stored_head(doc: &Value) -> Option<Run> {
 /// verdicts. One stored before it reads as a miss, since it lost them.
 const HEAD_FORMAT: u64 = 2;
 
-/// A run read back from [`ref_doc`]'s shape, its claims' verdicts included.
+/// A run read back from [`ref_doc`]'s shape: its claims' verdicts, build
+/// stamp, gating backend and noise floor included.
 pub fn run_from_doc(doc: &Value) -> Run {
     let mut run = invoke::run_from_items_value(&doc["items"]);
+    run.noise_pct = doc["noise_pct"].as_f64();
+    run.build = BuildStamp::from_json(&doc["build"]);
+    run.gating_backend = doc["gating_backend"].as_str().map(str::to_string);
     let verdicts = doc["assertions"].as_array().into_iter().flatten();
     run.assertions = verdicts
         .filter_map(|v| invoke::AssertionOutcome::from_verdict_json(v["id"].as_str()?, v))
@@ -409,9 +413,33 @@ pub fn store_head(runs: &Runs, mut doc: Value, head: &Run, digests: &[Option<&st
         .iter()
         .map(AssertionOutcome::to_json)
         .collect();
+    stamp(&mut doc);
+    put(runs, &doc, digests);
+}
+
+/// Keep `doc`, a counted run of the byte-identical binary, as HEAD's too,
+/// with its own verdicts: a `pass` that skipped the gating counters judges
+/// complexity on walltime alone, so its verdicts are never stored. Nothing
+/// is kept when the pass failed a claim, or `doc` predates its verdicts.
+pub fn store_identical(runs: &Runs, doc: Value, pass: &Run, digests: &[Option<&str>]) {
+    if pass.assertions.iter().any(|a| !a.ok) {
+        println!("not storing HEAD's run: a claim on it failed");
+        return;
+    }
+    if doc["head_format"] != HEAD_FORMAT {
+        return;
+    }
+    put(runs, &doc, digests);
+}
+
+/// Mark `doc`, a run whose verdicts it records, as readable as HEAD's own.
+pub fn stamp(doc: &mut Value) {
     doc["head_format"] = serde_json::json!(HEAD_FORMAT);
+}
+
+fn put(runs: &Runs, doc: &Value, digests: &[Option<&str>]) {
     for digest in digests.iter().flatten() {
-        runs.store(digest, &doc);
+        runs.store(digest, doc);
     }
     if !invoke::tree_is_clean() {
         return;
@@ -419,7 +447,7 @@ pub fn store_head(runs: &Runs, mut doc: Value, head: &Run, digests: &[Option<&st
     let Ok(sha) = invoke::git(&["rev-parse", "HEAD"]) else {
         return;
     };
-    runs.store(sha.trim(), &doc);
+    runs.store(sha.trim(), doc);
 }
 
 /// A measured run in the reference-document shape `compare` reads.
@@ -430,6 +458,9 @@ pub fn ref_doc(run: &Run) -> Value {
     }
     if let Some(b) = &run.build {
         doc["build"] = b.to_json();
+    }
+    if let Some(backend) = &run.gating_backend {
+        doc["gating_backend"] = serde_json::json!(backend);
     }
     doc["items"] = invoke::run_to_items_value(run);
     if !run.assertions.is_empty() {
@@ -633,6 +664,54 @@ mod tests {
         assert!(
             rerun.assertions.iter().any(|a| !a.ok),
             "a stored verdict replays"
+        );
+    }
+
+    #[test]
+    fn a_stored_run_reads_back_with_its_build_backend_and_noise_floor() {
+        let mut run = timing();
+        run.noise_pct = Some(1.5);
+        run.build = Some(BuildStamp::fixture());
+        let mut doc = ref_doc(&run);
+        super::stamp(&mut doc);
+        let back = super::stored_head(&doc).unwrap();
+        assert_eq!(back.noise_pct, Some(1.5));
+        assert_eq!(back.gating_backend.as_deref(), Some("walltime"));
+        assert_eq!(back.build.unwrap().digest(), BuildStamp::fixture().digest());
+    }
+
+    #[test]
+    fn an_uncounted_identical_pass_stores_the_counted_doc_s_verdicts_or_nothing() {
+        let common = CommonArgs {
+            pkg: Some("test-headrun-identical".into()),
+            ..CommonArgs::default()
+        };
+        let env = HostEnv {
+            gating_backend: "callgrind".into(),
+            guest: None,
+            callgrind_method: None,
+            item_reuse: true,
+        };
+        let stamp = BuildStamp::fixture();
+        let runs = Runs::new(&stamp, &common, Some(env));
+        let digest = "test-headrun-identical";
+        let mut pass = timing();
+        pass.assertions[0].ok = true;
+        let unstamped = ref_doc(&timing());
+        super::store_identical(&runs, unstamped, &pass, &[Some(digest)]);
+        assert!(
+            runs.load(digest, "x").is_none(),
+            "no verdicts of its own, so not HEAD's"
+        );
+        let mut counted = ref_doc(&timing());
+        counted["assertions"][0]["detail"] = json!("counted verdict");
+        super::stamp(&mut counted);
+        let mut failing = timing();
+        failing.assertions[0].ok = false;
+        super::store_identical(&runs, counted.clone(), &failing, &[Some(digest)]);
+        assert!(
+            runs.load(digest, "x").is_none(),
+            "a failed pass keeps nothing"
         );
     }
 

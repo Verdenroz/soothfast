@@ -13,7 +13,7 @@ use crate::gate_config;
 use crate::gate_lock;
 use crate::headrun::{
     self, RECOUNT, Settled, binary_digest, cache_head, head_from_runcache, ref_doc, settle,
-    settled_doc, store_head,
+    settled_doc, store_head, store_identical,
 };
 use crate::import;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
@@ -215,7 +215,7 @@ pub fn run(args: &[String]) -> i32 {
         Ok(Some(resolved)) => resolved,
         Ok(None) => {
             println!(
-                "gate: nothing to gate for {}: no bench target at {}, and HEAD registers no item",
+                "gate: nothing to gate for {}: no bench target at {}",
                 g.common.pkg.as_deref().unwrap_or("this package"),
                 g.against_ref.as_deref().unwrap_or("?"),
             );
@@ -232,14 +232,8 @@ pub fn run(args: &[String]) -> i32 {
     // A gate that measured nothing must never pass: a typo'd --filter, an
     // empty registry, or lost records would otherwise be permanently green.
     // A shard that owns nothing now still fails on any item it owned that is gone.
-    match g.common.shard {
-        Some(shard) if current.items.is_empty() && g.common.filter.is_none() => {
-            println!("gate: shard {shard} owns no item now; checking none it owned is gone");
-        }
-        _ if current.items.is_empty() => {
-            return err("measured 0 items — check --filter / registry setup; refusing to gate");
-        }
-        _ => {}
+    if let Some(refusal) = nothing_measured(&current, &g.common) {
+        return err(refusal);
     }
     if let Some(b) = &current.gating_backend {
         println!("gate: gating backend = {b}");
@@ -1001,6 +995,21 @@ fn write_gate_status(failures: u32) {
     );
 }
 
+/// Why a gate that measured nothing must not pass, unless it is a shard that
+/// owns no item now and still checks none it owned is gone.
+fn nothing_measured(current: &Run, common: &CommonArgs) -> Option<&'static str> {
+    if !current.items.is_empty() {
+        return None;
+    }
+    match common.shard {
+        Some(shard) if common.filter.is_none() => {
+            println!("gate: shard {shard} owns no item now; checking none it owned is gone");
+            None
+        }
+        _ => Some("measured 0 items — check --filter / registry setup; refusing to gate"),
+    }
+}
+
 /// What HEAD has of a crate the merge-base has no bench target for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum NewTarget {
@@ -1020,12 +1029,18 @@ fn newly_measured(
     measure: impl FnOnce() -> Result<Run, String>,
 ) -> Result<Option<Resolved>, String> {
     match head {
-        NewTarget::Absent => Ok(None),
-        NewTarget::Empty => {
-            println!("gate: its new bench target registers no items yet");
+        NewTarget::Absent => {
+            println!("gate: HEAD has no bench target either");
             Ok(None)
         }
-        NewTarget::Registers => Ok(Some(self_compared(measure()?))),
+        NewTarget::Empty => {
+            println!("gate: HEAD's new bench target registers no items yet, or cannot list them");
+            Ok(None)
+        }
+        NewTarget::Registers => {
+            println!("gate: HEAD's own claims decide");
+            Ok(Some(self_compared(measure()?)))
+        }
     }
 }
 
@@ -1154,8 +1169,8 @@ fn measure_ref_interleaved(
         if let Some(pkg) = &pkg
             && !workspace::has_bench_target(pkg, &target, Some(wt)).map_err(|e| e.to_string())?
         {
-            let at_head =
-                workspace::has_bench_target(pkg, &target, None).map_err(|e| e.to_string())?;
+            let at_head = measure_new
+                && workspace::has_bench_target(pkg, &target, None).map_err(|e| e.to_string())?;
             let none = invoke::HarnessSync::default();
             return Ok((Ref::NoBenchTarget(at_head), None, none));
         }
@@ -1217,8 +1232,10 @@ fn measure_ref_interleaved(
                 } else {
                     Settled::AsMeasured
                 };
-                if let Some(doc) = settled_doc(doc, &settled) {
-                    store_head(&runs, doc, pass, &[head_dig.as_deref()]);
+                match settled_doc(doc, &settled) {
+                    Some(doc) if counted => store_head(&runs, doc, pass, &[head_dig.as_deref()]),
+                    Some(doc) => store_identical(&runs, doc, pass, &[head_dig.as_deref()]),
+                    None => {}
                 }
             }
             return Ok((Ref::IdenticalBinaries { run, counted }, digests, harness));
@@ -1306,18 +1323,19 @@ fn measure_ref_interleaved(
     let sides = match outcome {
         Ref::NoBenchTarget(_) if !measure_new => return Ok(None),
         Ref::NoBenchTarget(at_head) => {
-            println!("gate: no bench target at {refname}; HEAD's own claims decide");
+            println!("gate: no bench target at {refname}");
             let head = match (at_head, &head_exe) {
                 (false, _) => NewTarget::Absent,
-                (true, Some(exe))
-                    if invoke::list_items(exe, None).is_some_and(|l| l.is_empty()) =>
-                {
+                (true, Some(exe)) if invoke::list_items(exe, None).is_none_or(|l| l.is_empty()) => {
                     NewTarget::Empty
                 }
                 (true, _) => NewTarget::Registers,
             };
             return newly_measured(head, || {
-                if let Some((head, from)) = head_from_runcache(&runs, head_dig.as_deref()) {
+                let cached = (reuse && !recording())
+                    .then(|| head_from_runcache(&runs, head_dig.as_deref()))
+                    .flatten();
+                if let Some((head, from)) = cached {
                     println!("gate: reusing HEAD's own run, measured from {from}");
                     return Ok(head);
                 }
@@ -1377,9 +1395,10 @@ fn measure_ref_interleaved(
         reference["items"][id.as_str()]["reused_from"] = serde_json::json!("item cache");
     }
     mark_harness(&mut reference, &harness);
-    if let Some(stored) =
+    if let Some(mut stored) =
         settled_doc(reference.clone(), &base_settled).filter(|_| harness.method().is_none())
     {
+        headrun::stamp(&mut stored);
         if base_known {
             runs.store(&base_sha, &stored);
         }
@@ -2114,6 +2133,7 @@ mod tests {
     use crate::buildstamp;
     use crate::gate_lock;
     use crate::invoke::{self, CommonArgs, HarnessSync, ItemMetrics, Run};
+    use crate::test::fixture::TempDir;
     use serde_json::{Value, json};
 
     fn ctx() -> CompareCtx {
@@ -2886,36 +2906,12 @@ mod tests {
         regressions + super::assertion_failures(&resolved.current, &mut Vec::new())
     }
 
-    /// A temporary directory removed when the test ends, pass or fail.
-    struct Scratch(std::path::PathBuf);
-
-    impl std::ops::Deref for Scratch {
-        type Target = std::path::Path;
-        fn deref(&self) -> &std::path::Path {
-            &self.0
-        }
-    }
-
-    impl AsRef<std::path::Path> for Scratch {
-        fn as_ref(&self) -> &std::path::Path {
-            &self.0
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn scratch(name: &str) -> Scratch {
-        let root = std::env::temp_dir().join(format!("soothfast-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        Scratch(root)
+    fn scratch(name: &str) -> TempDir {
+        TempDir::new(name)
     }
 
     /// A new crate gated and saved into `root` through the gate's save path.
-    fn save_new_crate(root: &Scratch, holds: bool) -> u32 {
+    fn save_new_crate(root: &TempDir, holds: bool) -> u32 {
         let resolved =
             super::newly_measured(super::NewTarget::Registers, || Ok(new_crate_run(holds)))
                 .unwrap()
@@ -2970,7 +2966,8 @@ mod tests {
         let resolved = measured
             .unwrap()
             .expect("gated, so the zero-items guard refuses it");
-        assert!(resolved.current.items.is_empty());
+        let common = CommonArgs::default();
+        assert!(super::nothing_measured(&resolved.current, &common).is_some());
     }
 
     #[test]
