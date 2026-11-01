@@ -130,6 +130,8 @@ mod tests {
             &["init", "-q"][..],
             &["config", "user.email", "t@example.com"],
             &["config", "user.name", "t"],
+            &["config", "commit.gpgsign", "false"],
+            &["config", "tag.gpgsign", "false"],
         ] {
             invoke::git_in(&dir, args).unwrap();
         }
