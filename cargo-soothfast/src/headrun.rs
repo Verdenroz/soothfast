@@ -120,16 +120,17 @@ fn run_head(common: &CommonArgs, extra: &[&str], stamp: BuildStamp) -> Result<Ru
     Ok(run)
 }
 
-/// HEAD's run from a stored run's counters plus a fresh timing-only pass.
-/// Its verdicts are the pass's own, except complexity verdicts the stored run
-/// holds (see [`counted_verdicts`]). Every field but walltime,
-/// fingerprint/covers, and tolerance_pct (all read off the binary the fresh
-/// pass actually ran) comes from the stored item, so a counter added to
-/// `ItemMetrics` later carries over without a change here. The stored run may
-/// hold more items than `expected`, the ids the pass was asked for, as a
-/// whole run does for a shard or a `--filter`. The timing pass comes back
-/// unless it measured exactly `expected` and the stored run, readable as
-/// HEAD's, counted each.
+/// HEAD's run from `stored`, a counted run readable as HEAD's, plus a fresh
+/// timing-only pass. Its verdicts are the pass's own, but for complexity,
+/// which comes from the stored run (see [`counted_verdicts`]). Every field
+/// but walltime, fingerprint/covers, and tolerance_pct (all read off the
+/// binary the fresh pass actually ran) comes from the stored item, so a
+/// counter added to `ItemMetrics` later carries over without a change here.
+/// The stored run may hold more items than `expected`, the ids the pass was
+/// asked for, as a whole run does for a shard or a `--filter`. The timing
+/// pass comes back unless it measured exactly `expected`, the stored run
+/// counted each, and it holds a verdict for each of the pass's complexity
+/// claims.
 pub fn merge_stored(
     stored: &Value,
     measured_from: &str,
@@ -137,9 +138,9 @@ pub fn merge_stored(
     expected: &BTreeSet<String>,
 ) -> Result<Run, Box<Run>> {
     if expected.is_empty()
-        || !readable_as_head(stored)
         || !timing.items.keys().eq(expected.iter())
         || !counts_cover(stored, expected)
+        || uncounted_complexity(&timing, Some(stored))
     {
         return Err(Box::new(timing));
     }
@@ -461,12 +462,10 @@ pub fn store_identical(runs: &Runs, doc: Value, pass: &Run, digests: &[Option<&s
     }
 }
 
-/// [`store_identical`]'s decision: `doc` itself, or `None`. The pass is
-/// judged on the verdicts the gate used, [`counted_verdicts`].
+/// [`store_identical`]'s decision: `doc` itself, or `None`. `doc` is
+/// readable as HEAD's, and the pass is judged on the verdicts the gate used,
+/// [`counted_verdicts`].
 fn identical_doc(doc: Value, pass: &Run) -> Option<Value> {
-    if !readable_as_head(&doc) {
-        return None;
-    }
     if counted_verdicts(pass, &doc).iter().any(|a| !a.ok) || claims_failed(&doc) {
         println!("not storing HEAD's run: a claim on it failed");
         return None;
@@ -494,15 +493,12 @@ fn verdicts(doc: &Value) -> Vec<AssertionOutcome> {
 }
 
 /// The verdicts a pass that skipped the gating counters is judged on: its
-/// own, but for a complexity claim that `stored`, a counted run of the
-/// identical binary readable as HEAD's, holds a verdict for. A pass without
-/// the counters fits complexity on walltime; every other claim it judges.
+/// own, but for complexity claims, which come from `stored`, a counted run
+/// of the identical binary readable as HEAD's. A pass without the counters
+/// fits complexity on walltime, so callers first check
+/// [`uncounted_complexity`]; every other claim the pass judges itself.
 pub fn counted_verdicts(pass: &Run, stored: &Value) -> Vec<AssertionOutcome> {
-    let counted = if readable_as_head(stored) {
-        verdicts(stored)
-    } else {
-        Vec::new()
-    };
+    let counted = verdicts(stored);
     let replacement = |a: &AssertionOutcome| {
         (a.kind == "complexity")
             .then(|| counted.iter().find(|c| c.id == a.id && c.kind == a.kind))
@@ -512,6 +508,17 @@ pub fn counted_verdicts(pass: &Run, stored: &Value) -> Vec<AssertionOutcome> {
     judged
         .map(|a| replacement(a).unwrap_or(a).clone())
         .collect()
+}
+
+/// Whether `pass` has a complexity claim that `stored`, when there is one,
+/// holds no counted verdict for. Only a run with the gating counters can
+/// judge such a claim.
+pub fn uncounted_complexity(pass: &Run, stored: Option<&Value>) -> bool {
+    let counted = stored.map(verdicts).unwrap_or_default();
+    let complexity = pass.assertions.iter().filter(|a| a.kind == "complexity");
+    complexity
+        .into_iter()
+        .any(|a| !counted.iter().any(|c| c.id == a.id && c.kind == a.kind))
 }
 
 fn put(runs: &Runs, doc: &Value, digests: &[Option<&str>]) {
@@ -759,7 +766,7 @@ mod tests {
     }
 
     #[test]
-    fn an_uncounted_identical_pass_stores_the_counted_doc_s_verdicts_or_nothing() {
+    fn an_uncounted_identical_pass_stores_the_counted_doc_or_nothing() {
         let common = CommonArgs {
             pkg: Some("test-headrun-identical".into()),
             ..CommonArgs::default()
@@ -772,15 +779,9 @@ mod tests {
         };
         let stamp = BuildStamp::fixture();
         let runs = Runs::new(&stamp, &common, Some(env));
-        let digest = "test-headrun-identical";
+        let digest = &format!("test-headrun-identical-{}", std::process::id());
         let mut pass = timing();
         pass.assertions[0].ok = true;
-        let unstamped = ref_doc(&timing());
-        super::store_identical(&runs, unstamped, &pass, &[Some(digest)]);
-        assert!(
-            runs.load(digest, "x").is_none(),
-            "no verdicts of its own, so not HEAD's"
-        );
         let mut counted = ref_doc(&timing());
         counted["assertions"][0]["detail"] = json!("counted verdict");
         super::stamp(&mut counted);
@@ -825,11 +826,17 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_run_without_its_verdicts_is_not_merged() {
-        let mut doc =
-            stored(json!({ "pkg::a": { "fingerprint": "fp", "callgrind": { "ir": 1 } } }));
-        doc.as_object_mut().unwrap().remove("head_format");
-        assert!(merge_stored(&doc, "binary x", timing(), &only_a()).is_err());
+    fn a_stored_run_without_a_counted_complexity_verdict_is_not_merged() {
+        let doc = stored(json!({ "pkg::a": { "fingerprint": "fp", "callgrind": { "ir": 1 } } }));
+        let mut pass = timing();
+        pass.assertions.push(AssertionOutcome {
+            id: "pkg::a".into(),
+            kind: "complexity".into(),
+            ok: true,
+            detail: "walltime fit".into(),
+        });
+        assert!(merge_stored(&doc, "binary x", pass, &only_a()).is_err());
+        assert!(merge_stored(&doc, "binary x", timing(), &only_a()).is_ok());
     }
 
     #[test]
@@ -854,13 +861,13 @@ mod tests {
         assert_eq!(by_kind("complexity").detail, "callgrind fit");
         assert!(!by_kind("alloc").ok, "the pass's own alloc verdict");
         assert_eq!(judged.len(), 3);
-        let mut unreadable = doc.clone();
-        unreadable.as_object_mut().unwrap().remove("head_format");
-        assert_eq!(super::counted_verdicts(&pass, &unreadable), pass.assertions);
+        assert!(!super::uncounted_complexity(&pass, Some(&doc)));
         let none_stored = json!({ "items": {}, "head_format": super::HEAD_FORMAT });
-        assert_eq!(
-            super::counted_verdicts(&pass, &none_stored),
-            pass.assertions
+        assert!(super::uncounted_complexity(&pass, Some(&none_stored)));
+        assert!(super::uncounted_complexity(&pass, None));
+        assert!(
+            !super::uncounted_complexity(&timing(), None),
+            "no complexity claim"
         );
     }
 
