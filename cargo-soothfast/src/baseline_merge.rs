@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::invoke::{self, Shard};
 use crate::unmeasured::{self, Reason, Unmeasured};
-use crate::{gate_config, gate_save};
+use crate::{gate_config, gate_save, import};
 
 /// The shard a gate's baseline holds the items of, as `I/N`.
 const SHARD_KEY: &str = "shard";
@@ -180,11 +180,28 @@ fn merge_cmd(args: &[String]) -> i32 {
             .map_err(|e| e.to_string())
             .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string()));
         match read {
-            Ok(doc) => docs.push((file.display().to_string(), doc)),
+            Ok(doc) => {
+                let label = file.display().to_string();
+                if let Some(note) = unmeasured::legacy_note(&doc, &label) {
+                    println!("baseline merge: {note}");
+                }
+                docs.push((label, doc));
+            }
             Err(e) => return fail(&format!("corrupt baseline {}: {e}", file.display())),
         }
     }
-    let merged = match merge_on(&docs, expect, &packages, not_gated.as_deref()) {
+    let imports = match &not_gated {
+        Some(_) => match import::configured_prefixes(&invoke::project_root()) {
+            Ok(prefixes) => prefixes,
+            Err(e) => return fail(&format!("cannot read the import prefixes: {e}")),
+        },
+        None => Vec::new(),
+    };
+    let ungated = not_gated.as_deref().map(|event| Ungated {
+        event,
+        imports: &imports,
+    });
+    let merged = match merge_on(&docs, expect, &packages, ungated.as_ref()) {
         Ok(doc) => doc,
         Err(MergeError::Corrupt(e)) => return fail(&e),
         Err(MergeError::Count(e)) => {
@@ -228,14 +245,22 @@ fn merge(files: &[(String, Value)], expect: u64, packages: &[String]) -> Result<
     merge_on(files, expect, packages, None)
 }
 
+/// A CI event the cargo gate does not measure on, and the configured import
+/// prefixes, whose items are measured on it all the same.
+pub struct Ungated<'a> {
+    pub event: &'a str,
+    pub imports: &'a [String],
+}
+
 /// [`merge`] for a CI event the cargo gate measured on, or, with
-/// `not_gated`, one it did not: then `packages` no file accounts for are
-/// listed whole as `not-gated-on-event`.
+/// `not_gated`, one it did not: then one entry covers every item outside the
+/// import prefixes, and only packages some file accounts for are checked for
+/// a missing shard.
 fn merge_on(
     files: &[(String, Value)],
     expect: u64,
     packages: &[String],
-    not_gated: Option<&str>,
+    not_gated: Option<&Ungated>,
 ) -> Result<Value, MergeError> {
     let corrupt = |label: &str, why: String| MergeError::Corrupt(format!("{label}: {why}"));
     let mut out = json!({ "version": 1 });
@@ -245,6 +270,7 @@ fn merge_on(
     let mut shards: BTreeMap<u64, &Value> = BTreeMap::new();
     let no_items = Map::new();
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut owner_of: BTreeMap<String, String> = BTreeMap::new();
     for (label, doc) in files {
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
@@ -298,31 +324,42 @@ fn merge_on(
             .into_iter()
             .flatten()
         {
-            let ids = ids
+            for id in ids
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(Value::as_str);
-            owners
-                .entry(package.clone())
-                .or_default()
-                .extend(ids.map(str::to_string));
+                .filter_map(Value::as_str)
+            {
+                match owner_of.insert(id.to_string(), package.clone()) {
+                    Some(other) if &other != package => {
+                        return Err(corrupt(label, unmeasured::duplicate(id, &other, package)));
+                    }
+                    _ => {}
+                }
+                owners
+                    .entry(package.clone())
+                    .or_default()
+                    .insert(id.to_string());
+            }
         }
         entries.extend(file_entries);
     }
     for pkg in packages {
-        match not_gated {
-            Some(event) if !shards.values().any(|doc| covers(doc, pkg)) => {
-                entries.push(Unmeasured {
-                    detail: format!("the cargo gate does not measure {pkg} on a {event} event"),
-                    package: pkg.clone(),
-                    reason: Reason::NotGatedOnEvent,
-                    all_items: true,
-                    ..Unmeasured::default()
-                })
-            }
-            _ => entries.extend(unaccounted(pkg, &shards, expect)),
+        if not_gated.is_none() || shards.values().any(|doc| covers(doc, pkg)) {
+            entries.extend(unaccounted(pkg, &shards, expect));
         }
+    }
+    if let Some(ungated) = not_gated {
+        entries.push(Unmeasured {
+            package: "cargo".into(),
+            reason: Reason::NotGatedOnEvent,
+            detail: format!(
+                "the cargo gate does not measure on a {} event; only imported items are",
+                ungated.event
+            ),
+            except_imported: Some(ungated.imports.to_vec()),
+            ..Unmeasured::default()
+        });
     }
     out["created_unix"] = json!(
         std::time::SystemTime::now()

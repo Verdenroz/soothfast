@@ -301,6 +301,12 @@ fn cmd_measure(args: &[String]) -> i32 {
     if let Err(e) = gate_config::apply(&mut common) {
         return arg_err(&e);
     }
+    if save.is_some() && common.backend.as_deref() != Some("buildcost") {
+        match gate_save::save_package(&common, || gate_save::bench_packages(&common)) {
+            Ok(pkg) => common.pkg = Some(pkg),
+            Err(e) => return arg_err(&e),
+        }
+    }
 
     // buildcost is CLI-side (no bench binary); everything else runs the runner.
     let run = if common.backend.as_deref() == Some("buildcost") {

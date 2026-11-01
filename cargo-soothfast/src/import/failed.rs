@@ -16,9 +16,14 @@ pub fn stub(format: &str, file: &str, prefix: Option<&str>) -> Result<Value, Str
     let items: Vec<String> = read(format, file, Some(&prefix))
         .map(|(run, _)| run.items.into_keys().collect())
         .unwrap_or_default();
+    let detail = match items.is_empty() {
+        true => format!(
+            "the import gate failed, and no results were available to name {prefix}'s items"
+        ),
+        false => format!("the import gate failed, so {prefix} saved no numbers"),
+    };
     let entry = Unmeasured {
-        detail: format!("the import gate failed, so {prefix} saved no numbers"),
-        all_items: items.is_empty(),
+        detail,
         package: prefix.clone(),
         reason: Reason::GateFailed,
         items,
@@ -49,15 +54,14 @@ mod tests {
         let entry = &unmeasured::read(&doc).unwrap()[0];
         assert_eq!(entry.items.len(), 1);
         assert!(entry.items[0].starts_with("jmh::a.B.run"));
-        assert!(!entry.all_items);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn a_gate_without_results_covers_its_prefix() {
+    fn a_gate_without_results_names_nothing_and_says_so() {
         let doc = stub("jmh", "/nonexistent/results.json", Some("app")).unwrap();
         let entry = &unmeasured::read(&doc).unwrap()[0];
-        assert!(entry.all_items && entry.items.is_empty());
+        assert!(entry.items.is_empty() && entry.detail.contains("no results"));
         assert_eq!(entry.package, "app");
         assert_eq!(doc[IMPORTED_KEY], "app");
     }

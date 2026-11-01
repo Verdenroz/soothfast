@@ -203,14 +203,33 @@ fn baseline_mark_on_a_broken_build_drops_the_old_numbers_and_still_fails() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+fn ungated<'a>(event: &'a str, imports: &'a [String]) -> Ungated<'a> {
+    Ungated { event, imports }
+}
+
 #[test]
-fn an_event_the_gate_skips_lists_each_package_whole() {
-    let merged = merge_on(&[], 1, &packages(), Some("workflow_dispatch")).unwrap();
+fn an_event_the_gate_skips_writes_one_entry_for_everything_but_imports() {
+    let imports = ["jmh".to_string()];
+    let event = ungated("workflow_dispatch", &imports);
+    let merged = merge_on(&[], 1, &packages(), Some(&event)).unwrap();
     let entries = unmeasured::read(&merged).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].reason, Reason::NotGatedOnEvent);
-    assert!(entries[0].all_items);
+    assert_eq!(entries[0].except_imported.as_deref(), Some(&imports[..]));
     assert!(entries[0].detail.contains("workflow_dispatch"));
+}
+
+#[test]
+fn an_id_two_packages_own_across_files_is_refused() {
+    let file = |package: &str, shard: &str| json!({ "version": 1, "shard": shard, "items": {}, "owners": { package: ["soothfast::same"] } });
+    let files = [
+        ("a.json".into(), file("a", "1/2")),
+        ("b.json".into(), file("b", "2/2")),
+    ];
+    let Err(MergeError::Corrupt(why)) = merge(&files, 2, &[]) else {
+        panic!("a shared id must be refused");
+    };
+    assert!(why.contains("listed by both a and b"));
 }
 
 /// Checks one claim on `core::f0` against `merged`, as an edited claim:
@@ -227,45 +246,42 @@ fn markdown_claim(expr: &str) -> soothfast_docs::markdown::Doc {
 
 #[test]
 fn an_edited_claim_on_a_merge_group_event_is_not_evaluated() {
-    let merged = merge_on(&[], 1, &packages(), Some("merge_group")).unwrap();
+    let event = ungated("merge_group", &[]);
+    let merged = merge_on(&[], 1, &packages(), Some(&event)).unwrap();
     assert_eq!(edited_claim_failures(&merged), 0);
+}
+
+/// A gate's baseline of `core` that names `core::f0` for `reason`.
+fn stub(reason: &str) -> Value {
+    json!({
+        "version": 1,
+        "items": {},
+        "owners": { "core": ["core::f0"] },
+        "unmeasured": [{ "package": "core", "reason": reason, "detail": reason,
+                         "items": ["core::f0"] }],
+    })
 }
 
 #[test]
 fn a_claim_on_a_parentless_commit_with_no_base_ref_is_not_evaluated() {
-    let stub = json!({
-        "version": 1,
-        "items": {},
-        "unmeasured": [{ "package": "core", "reason": "no-parent", "detail": "no parent",
-                         "items": [], "all_items": true }],
-    });
-    let merged = merge(&[("head.json".into(), stub)], 1, &packages()).unwrap();
+    let merged = merge(&[("head.json".into(), stub("no-parent"))], 1, &packages()).unwrap();
     assert_eq!(edited_claim_failures(&merged), 0);
 }
 
 #[test]
 fn an_edited_claim_a_failed_gate_could_have_measured_still_fails() {
-    let stub = json!({
-        "version": 1,
-        "items": {},
-        "unmeasured": [{ "package": "core", "reason": "gate-failed", "detail": "failed",
-                         "items": [], "all_items": true }],
-    });
-    let merged = merge(&[("head.json".into(), stub)], 1, &packages()).unwrap();
+    let merged = merge(&[("head.json".into(), stub("gate-failed"))], 1, &packages()).unwrap();
     assert_eq!(edited_claim_failures(&merged), 1);
 }
 
 #[test]
 fn an_ungated_event_still_names_a_covered_package_s_missing_shard() {
-    let merged = merge_on(
-        &[shard_file(1), shard_file(3)],
-        3,
-        &packages(),
-        Some("push"),
-    )
-    .unwrap();
+    let event = ungated("push", &[]);
+    let files = [shard_file(1), shard_file(3)];
+    let merged = merge_on(&files, 3, &packages(), Some(&event)).unwrap();
     let entries = unmeasured::read(&merged).unwrap();
-    assert_eq!(entries.len(), 1);
+    assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].reason, Reason::ShardMissing);
     assert_eq!(entries[0].items, [owned_by(2, 3)]);
+    assert_eq!(entries[1].reason, Reason::NotGatedOnEvent);
 }

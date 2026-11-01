@@ -9,7 +9,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::invoke::{self, Shard};
+use crate::invoke;
 
 /// Why a baseline holds no number for an item's metric.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -83,9 +83,9 @@ impl Reason {
 
 /// One `unmeasured` entry: `items` of `package` lack the `metrics` (backend
 /// names, or `backend.metric`; empty for every metric) for `reason`. An entry
-/// that could name no item has `all_items`: it covers every item no package
-/// of the baseline's `owners` claims, narrowed to `shard` when set. An entry
-/// with `package` empty is one older writers left; it reads the same way.
+/// covers only the ids it names. The one exception is the typed entry of an
+/// event the cargo gate does not measure on: with `except_imported` it names
+/// every item outside those import prefixes.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Unmeasured {
     pub package: String,
@@ -93,8 +93,7 @@ pub struct Unmeasured {
     pub detail: String,
     pub items: Vec<String>,
     pub metrics: Vec<String>,
-    pub all_items: bool,
-    pub shard: Option<Shard>,
+    pub except_imported: Option<Vec<String>>,
 }
 
 impl Unmeasured {
@@ -108,20 +107,18 @@ impl Unmeasured {
         if !self.metrics.is_empty() {
             v["metrics"] = json!(self.metrics);
         }
-        if self.all_items {
-            v["all_items"] = json!(true);
-        }
-        if let Some(shard) = self.shard {
-            v["shard"] = json!(shard.to_string());
+        if let Some(prefixes) = &self.except_imported {
+            v["except_imported"] = json!(prefixes);
         }
         v
     }
 
-    /// Whether this entry names `item`: by id, or with `all_items` as one of
-    /// the items `owned` (every id the baseline's `owners` list) leaves out.
-    pub fn names(&self, item: &str, owned: &BTreeSet<String>) -> bool {
+    /// Whether this entry names `item`.
+    pub fn names(&self, item: &str) -> bool {
         self.items.iter().any(|i| i == item)
-            || (self.all_items && self.shard.is_none_or(|s| s.owns(item)) && !owned.contains(item))
+            || self.except_imported.as_ref().is_some_and(|prefixes| {
+                !prefixes.iter().any(|p| item.starts_with(&format!("{p}::")))
+            })
     }
 
     fn from_json(v: &Value) -> Option<Unmeasured> {
@@ -140,26 +137,16 @@ impl Unmeasured {
                 None => Vec::new(),
                 Some(m) => strings(m)?,
             },
-            all_items: match v.get("all_items") {
-                None => false,
-                Some(b) => b.as_bool()?,
-            },
-            shard: match v.get("shard") {
+            except_imported: match v.get("except_imported") {
                 None => None,
-                Some(s) => Some(Shard::parse(s.as_str()?).ok()?),
+                Some(p) => Some(strings(p)?),
             },
         })
     }
 
     /// Whether this entry accounts for `backend.metric` of `item`.
-    pub fn covers(
-        &self,
-        item: &str,
-        backend: &str,
-        metric: &str,
-        owned: &BTreeSet<String>,
-    ) -> bool {
-        self.names(item, owned)
+    pub fn covers(&self, item: &str, backend: &str, metric: &str) -> bool {
+        self.names(item)
             && (self.metrics.is_empty()
                 || self
                     .metrics
@@ -168,8 +155,18 @@ impl Unmeasured {
     }
 }
 
-/// The `unmeasured` entries of a baseline document. A malformed entry is an
-/// error: reading past it would turn its items' claims into plain failures.
+/// Whether an entry is one older writers left, which matched items by name
+/// prefix rather than by `owners` and so means nothing now.
+fn is_legacy(v: &Value) -> bool {
+    v["package"].as_str() == Some("")
+        || v.get("prefixes").is_some()
+        || v.get("all_items").is_some()
+        || v.get("shard").is_some()
+}
+
+/// The `unmeasured` entries of a baseline document, legacy ones left out.
+/// A malformed entry is an error: reading past it would turn its items'
+/// claims into plain failures.
 pub fn read(doc: &Value) -> Result<Vec<Unmeasured>, String> {
     let Some(entries) = doc.get("unmeasured") else {
         return Ok(Vec::new());
@@ -178,8 +175,22 @@ pub fn read(doc: &Value) -> Result<Vec<Unmeasured>, String> {
         .as_array()
         .ok_or("`unmeasured` is not a list")?
         .iter()
+        .filter(|v| !is_legacy(v))
         .map(|v| Unmeasured::from_json(v).ok_or_else(|| format!("malformed unmeasured entry {v}")))
         .collect()
+}
+
+/// The line to print when `doc` predates item ownership, which reading it
+/// leaves out.
+pub fn legacy_note(doc: &Value, name: &str) -> Option<String> {
+    let legacy = doc["unmeasured"]
+        .as_array()
+        .is_some_and(|es| es.iter().any(is_legacy));
+    legacy.then(|| {
+        format!(
+            "baseline {name:?} predates item ownership; its old unmeasured entries are ignored, so re-save it"
+        )
+    })
 }
 
 /// The `owners` key: each package's items, from its bench binary's listing.
@@ -195,23 +206,31 @@ pub fn owned_by(doc: &Value, package: &str) -> Vec<String> {
         .collect()
 }
 
-/// Every item some package of baseline `doc` owns.
-pub fn owned(doc: &Value) -> BTreeSet<String> {
-    doc[OWNERS_KEY]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .flat_map(|(_, ids)| ids.as_array().into_iter().flatten())
-        .filter_map(|id| id.as_str().map(str::to_string))
-        .collect()
-}
-
-/// Record that `package` owns `ids`.
-pub fn set_owners(doc: &mut Value, package: &str, ids: &[String]) {
+/// Record in `doc` that `package` owns `ids`, refusing an id another package
+/// already owns: one package's numbers must never replace another's.
+pub fn set_owners(doc: &mut Value, package: &str, ids: &[String]) -> Result<(), String> {
+    for (other, owned) in doc[OWNERS_KEY].as_object().into_iter().flatten() {
+        if other == package {
+            continue;
+        }
+        let owned = owned.as_array().into_iter().flatten();
+        if let Some(id) = owned
+            .filter_map(Value::as_str)
+            .find(|id| ids.iter().any(|i| i == id))
+        {
+            return Err(duplicate(id, other, package));
+        }
+    }
     if !doc[OWNERS_KEY].is_object() {
         doc[OWNERS_KEY] = json!({});
     }
     doc[OWNERS_KEY][package] = json!(ids);
+    Ok(())
+}
+
+/// The refusal for an item id two packages both list.
+pub fn duplicate(id: &str, a: &str, b: &str) -> String {
+    format!("item id {id} is listed by both {a} and {b}; give one a distinct name")
 }
 
 /// One entry of `package` for `items`, lacking `metrics`.
@@ -233,7 +252,7 @@ pub fn entry(
 }
 
 /// Drop the numbers and assertions of `ids` from `doc`, imported items aside.
-fn drop_items(doc: &mut Value, ids: &BTreeSet<String>) {
+pub fn drop_items(doc: &mut Value, ids: &BTreeSet<String>) {
     if let Some(items) = doc.get_mut("items").and_then(Value::as_object_mut) {
         items.retain(|id, v| v["imported"].is_string() || !ids.contains(id));
     }
@@ -245,8 +264,9 @@ fn drop_items(doc: &mut Value, ids: &BTreeSet<String>) {
 /// Record that the packages of `entries` saved no numbers at all. Each one's
 /// prior `owners` and the items its entry names are dropped from baseline
 /// `name` under `root`, and the entry's items become its owners.
-pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured]) -> io::Result<()> {
-    let mut doc = invoke::load_baseline_in(root, name)?
+pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured]) -> Result<(), String> {
+    let mut doc = invoke::load_baseline_in(root, name)
+        .map_err(|e| e.to_string())?
         .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let mut gone: BTreeSet<String> = BTreeSet::new();
     for e in entries {
@@ -257,26 +277,14 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured]) -> io::Result<()
                 owners.remove(&e.package);
             }
         } else {
-            set_owners(&mut doc, &e.package, &e.items);
+            set_owners(&mut doc, &e.package, &e.items)?;
         }
     }
     drop_items(&mut doc, &gone);
     let packages: Vec<&str> = entries.iter().map(|e| e.package.as_str()).collect();
     clear_entries(&mut doc, |p| packages.contains(&p));
-    append(&mut doc, entries)?;
-    invoke::write_baseline_in(root, name, &doc)
-}
-
-/// Before a save of `package`'s numbers into baseline `name` under `root`:
-/// drop what the package owned before, so an item it no longer lists leaves
-/// with it, and record that it now owns `ids`.
-pub fn claim_in(root: &Path, name: &str, package: &str, ids: &[String]) -> io::Result<()> {
-    let mut doc = invoke::load_baseline_in(root, name)?
-        .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
-    let gone: BTreeSet<String> = owned_by(&doc, package).into_iter().collect();
-    drop_items(&mut doc, &gone);
-    set_owners(&mut doc, package, ids);
-    invoke::write_baseline_in(root, name, &doc)
+    append(&mut doc, entries).map_err(|e| e.to_string())?;
+    invoke::write_baseline_in(root, name, &doc).map_err(|e| e.to_string())
 }
 
 /// Add `entries` to baseline `name` under `root`, beside the numbers a save
@@ -299,14 +307,10 @@ fn append(doc: &mut Value, entries: &[Unmeasured]) -> io::Result<()> {
     Ok(())
 }
 
-/// Drop the entries whose package `gone` picks, and every legacy entry with
-/// no package.
+/// Drop the entries whose package `gone` picks, and every legacy entry.
 fn clear_entries(doc: &mut Value, gone: impl Fn(&str) -> bool) {
     if let Some(entries) = doc.get_mut("unmeasured").and_then(Value::as_array_mut) {
-        entries.retain(|e| {
-            let package = e["package"].as_str().unwrap_or("");
-            !package.is_empty() && !gone(package)
-        });
+        entries.retain(|e| !is_legacy(e) && !gone(e["package"].as_str().unwrap_or("")));
     }
 }
 
@@ -332,6 +336,8 @@ mod tests {
 
     #[test]
     fn an_entry_reads_back_as_written() {
+        let mut ungated = entry("cargo", Reason::NotGatedOnEvent, "push", &[], Vec::new());
+        ungated.except_imported = Some(ids(&["jmh"]));
         let entries = vec![
             entry(
                 "core",
@@ -347,6 +353,7 @@ mod tests {
                 &["walltime"],
                 ids(&["soothfast::b"]),
             ),
+            ungated,
         ];
         let doc =
             json!({ "unmeasured": entries.iter().map(Unmeasured::to_json).collect::<Vec<_>>() });
@@ -358,24 +365,40 @@ mod tests {
         let doc = json!({ "unmeasured": [{ "package": "core", "reason": "stored-run", "detail": "", "items": ["core::a"] }] });
         let entries = read(&doc).unwrap();
         assert_eq!(entries[0].reason, Reason::StoredRun);
-        assert!(entries[0].covers("core::a", "callgrind", "ir", &BTreeSet::new()));
+        assert!(entries[0].covers("core::a", "callgrind", "ir"));
     }
 
     #[test]
-    fn a_package_level_entry_covers_only_items_no_package_owns() {
-        let doc = json!({
-            "owners": { "a": ["soothfast::x"] },
-            "unmeasured": [{ "package": "b", "reason": "gate-failed", "detail": "",
-                             "items": [], "all_items": true }],
-        });
-        let owned = owned(&doc);
-        let e = &read(&doc).unwrap()[0];
-        assert!(!e.covers("soothfast::x", "alloc", "allocs", &owned));
-        assert!(e.covers("soothfast::y", "alloc", "allocs", &owned));
+    fn an_entry_that_names_nothing_covers_nothing() {
+        let e = entry("core", Reason::GateFailed, "failed", &[], Vec::new());
+        assert!(!e.covers("soothfast::x", "alloc", "allocs"));
     }
 
     #[test]
-    fn a_legacy_entry_without_a_package_reads_as_package_level_and_a_save_clears_it() {
+    fn the_ungated_entry_names_every_item_outside_the_import_prefixes() {
+        let mut e = entry("cargo", Reason::NotGatedOnEvent, "push", &[], Vec::new());
+        e.except_imported = Some(ids(&["jmh", "app::bench"]));
+        assert!(e.names("soothfast::parse"));
+        assert!(!e.names("jmh::Parse.run"));
+        assert!(!e.names("app::bench::x"));
+    }
+
+    #[test]
+    fn prefix_era_entries_are_left_out_with_a_note() {
+        let doc = json!({ "unmeasured": [
+            { "package": "", "reason": "gate-failed", "detail": "", "items": [], "all_items": true },
+            { "package": "core", "reason": "gate-failed", "detail": "", "items": [], "prefixes": ["core"] },
+            { "package": "core", "reason": "gate-failed", "detail": "", "items": ["soothfast::a"] },
+        ] });
+        let entries = read(&doc).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].items, ["soothfast::a"]);
+        assert!(legacy_note(&doc, "head").is_some_and(|n| n.contains("re-save")));
+        assert!(legacy_note(&json!({ "unmeasured": [] }), "head").is_none());
+    }
+
+    #[test]
+    fn a_save_clears_legacy_entries() {
         let root = scratch("unmeasured-legacy");
         let doc = json!({
             "version": 1,
@@ -383,8 +406,6 @@ mod tests {
             "unmeasured": [{ "package": "", "reason": "gate-failed", "detail": "old",
                              "items": [], "all_items": true }],
         });
-        let legacy = &read(&doc).unwrap()[0];
-        assert!(legacy.covers("soothfast::z", "alloc", "allocs", &BTreeSet::new()));
         invoke::write_baseline_in(&root, "head", &doc).unwrap();
         let fresh = entry(
             "core",
@@ -395,12 +416,8 @@ mod tests {
         );
         mark_in(&root, "head", &[fresh]).unwrap();
         let marked = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-        let packages: Vec<String> = read(&marked)
-            .unwrap()
-            .into_iter()
-            .map(|e| e.package)
-            .collect();
-        assert_eq!(packages, ["core"]);
+        assert_eq!(marked["unmeasured"].as_array().unwrap().len(), 1);
+        assert!(legacy_note(&marked, "head").is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -412,7 +429,6 @@ mod tests {
 
     #[test]
     fn an_entry_covers_only_its_metrics() {
-        let none = BTreeSet::new();
         let wall = entry(
             "core",
             Reason::ReusedWalltime,
@@ -420,11 +436,9 @@ mod tests {
             &["walltime"],
             ids(&["s::a"]),
         );
-        assert!(wall.covers("s::a", "walltime", "median_ns", &none));
-        assert!(!wall.covers("s::a", "callgrind", "ir", &none));
-        assert!(!wall.covers("s::b", "walltime", "median_ns", &none));
-        let all = entry("core", Reason::GateFailed, "failed", &[], ids(&["s::a"]));
-        assert!(all.covers("s::a", "callgrind", "ir", &none));
+        assert!(wall.covers("s::a", "walltime", "median_ns"));
+        assert!(!wall.covers("s::a", "callgrind", "ir"));
+        assert!(!wall.covers("s::b", "walltime", "median_ns"));
     }
 
     #[test]
@@ -442,15 +456,7 @@ mod tests {
         });
         invoke::write_baseline_in(&root, "head", &doc).unwrap();
         let failed = entry("a", Reason::GateFailed, "failed", &[], Vec::new());
-        mark_in(
-            &root,
-            "head",
-            &[Unmeasured {
-                all_items: true,
-                ..failed
-            }],
-        )
-        .unwrap();
+        mark_in(&root, "head", &[failed]).unwrap();
         let marked = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
         let kept: Vec<&String> = marked["items"].as_object().unwrap().keys().collect();
         assert_eq!(kept, ["jmh::c", "soothfast::b_item"]);
@@ -461,18 +467,11 @@ mod tests {
     }
 
     #[test]
-    fn a_save_drops_an_item_its_package_no_longer_lists() {
-        let root = scratch("unmeasured-claim");
-        let doc = json!({
-            "version": 1,
-            "items": { "soothfast::gone": { "alloc": { "allocs": 1, "bytes": 8 } } },
-            "owners": { "a": ["soothfast::gone"] },
-        });
-        invoke::write_baseline_in(&root, "head", &doc).unwrap();
-        claim_in(&root, "head", "a", &ids(&["soothfast::kept"])).unwrap();
-        let claimed = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-        assert_eq!(claimed["items"], json!({}));
-        assert_eq!(owned_by(&claimed, "a"), ["soothfast::kept"]);
-        let _ = std::fs::remove_dir_all(&root);
+    fn an_id_two_packages_list_is_refused() {
+        let mut doc = json!({ "owners": { "a": ["soothfast::same"] } });
+        let err = set_owners(&mut doc, "b", &ids(&["soothfast::same"])).unwrap_err();
+        assert!(err.contains("listed by both a and b"));
+        assert_eq!(owned_by(&doc, "a"), ["soothfast::same"]);
+        assert!(set_owners(&mut doc, "a", &ids(&["soothfast::same", "soothfast::new"])).is_ok());
     }
 }

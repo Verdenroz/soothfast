@@ -8,8 +8,7 @@ fn entry(reason: Reason, items: &[&str], metrics: &[&str]) -> Unmeasured {
         detail: format!("{} detail", reason.as_str()),
         items: items.iter().map(|s| s.to_string()).collect(),
         metrics: metrics.iter().map(|s| s.to_string()).collect(),
-        all_items: false,
-        shard: None,
+        except_imported: None,
     }
 }
 
@@ -81,19 +80,35 @@ fn every_covering_entry_counts_whatever_its_order() {
 }
 
 #[test]
-fn a_package_level_entry_covers_only_items_no_package_owns() {
-    let mut level = entry(Reason::GateFailed, &[], &[]);
-    level.all_items = true;
-    let mut b = baseline(&[level]);
-    b["owners"] = json!({ "other": ["core::cached"] });
-    assert!(matches!(
-        read("core::orphan.alloc.allocs <= 0", &b),
-        Reading::Unmeasured(Reason::GateFailed, _)
-    ));
-    assert!(matches!(
-        read("core::cached.walltime.median_ns <= 1", &b),
-        Reading::Decided(Outcome::Failed(_))
-    ));
+fn a_failed_package_with_no_listing_has_its_claims_fail_saying_so() {
+    let mut unnamed = entry(Reason::GateFailed, &[], &[]);
+    unnamed.detail = "the gate failed, and no listing was available to name core's items".into();
+    let b = baseline(&[unnamed]);
+    let Reading::Decided(Outcome::Failed(why)) = read("soothfast::x.alloc.allocs <= 0", &b) else {
+        panic!("a claim on an unnamed item must fail");
+    };
+    assert!(why.contains("gate-failed") && why.contains("no listing"));
+}
+
+/// A merged baseline of an ungated event, holding one measured import.
+fn ungated_baseline() -> Value {
+    let mut ungated = entry(Reason::NotGatedOnEvent, &[], &[]);
+    ungated.except_imported = Some(vec!["jmh".into()]);
+    let mut b = baseline(&[ungated]);
+    b["items"]["jmh::Parse.run"] = json!({ "imported": "jmh", "walltime": { "median_ns": 5.0 } });
+    b
+}
+
+#[test]
+fn on_an_ungated_event_rust_claims_are_not_evaluated_and_imported_ones_are() {
+    let b = ungated_baseline();
+    let doc = doc_with("soothfast::parse.alloc.allocs <= 0");
+    let never_made = || Ok(Claims::new());
+    assert_eq!(check(&[("a.md", &doc)], Some(&b), never_made), Ok(0));
+    let holds = read("jmh::Parse.run.walltime.median_ns < 10", &b);
+    assert_eq!(holds, Reading::Decided(Outcome::Holds(5.0)));
+    let missing = read("jmh::Prase.run.walltime.median_ns < 10", &b);
+    assert!(matches!(missing, Reading::Decided(Outcome::Failed(_))));
 }
 
 #[test]

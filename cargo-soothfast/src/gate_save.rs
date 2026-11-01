@@ -29,14 +29,39 @@ pub enum HeadRun {
 /// The metric a reused item's walltime is reported under.
 const WALLTIME: &str = "walltime.median_ns";
 
-/// The package a save is recorded under: `-p`'s, as given to the gate.
-/// Without one the entries still name their items; only the label is lost.
-fn package_of(common: &CommonArgs) -> &str {
-    common.pkg.as_deref().unwrap_or("workspace")
+/// The package a `--save-baseline` is recorded under: `-p`'s, or the
+/// workspace's one bench package. A save with several and no `-p` cannot be
+/// attributed, so it is refused before anything is measured or written.
+pub fn save_package(
+    common: &CommonArgs,
+    crates: impl FnOnce() -> Result<Vec<String>, String>,
+) -> Result<String, String> {
+    if let Some(pkg) = &common.pkg {
+        return Ok(pkg.clone());
+    }
+    let crates = crates().map_err(|e| {
+        format!(
+            "--save-baseline needs -p PKG: the workspace's bench packages could not be read ({e})"
+        )
+    })?;
+    match crates.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => Err("--save-baseline needs -p PKG: the workspace has no bench package".into()),
+        many => Err(format!(
+            "--save-baseline needs -p PKG in a workspace with more than one bench package ({})",
+            many.join(", ")
+        )),
+    }
+}
+
+/// The workspace's bench packages for `common`'s bench target.
+pub fn bench_packages(common: &CommonArgs) -> Result<Vec<String>, String> {
+    workspace::bench_crates(common.target.as_deref().unwrap_or("soothfast"), None)
 }
 
 /// Act on `--save-baseline NAME` under `root` for a gate that ended with
 /// `failures`. `listed` is every item the bench binary lists, if it was read.
+/// `common.pkg` is set: [`save_package`] resolved it before the gate ran.
 pub fn save_head(
     root: &Path,
     name: &str,
@@ -46,6 +71,9 @@ pub fn save_head(
     listed: Option<&[String]>,
     failures: u32,
 ) -> Result<(), String> {
+    let Some(package) = common.pkg.as_deref() else {
+        return Err("--save-baseline needs -p PKG".into());
+    };
     if failures > 0 && common.backend.as_deref() == Some("buildcost") {
         eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
         return Ok(());
@@ -64,14 +92,6 @@ pub fn save_head(
     }
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
-    }
-    let package = package_of(common);
-    let owned: Vec<String> = match listed {
-        Some(ids) => owned_here(common, ids),
-        None => current.items.keys().cloned().collect(),
-    };
-    if common.pkg.is_some() {
-        unmeasured::claim_in(root, name, package, &owned).map_err(|e| e.to_string())?;
     }
     let (run, entries) = baseline_material(current, source, package);
     let scope = invoke::SaveScope::of(common);
@@ -92,6 +112,7 @@ fn owned_here(common: &CommonArgs, listed: &[String]) -> Vec<String> {
 }
 
 /// `--save-baseline NAME` for a gate that errored before it had a verdict.
+/// Without a package nothing can be attributed, so nothing is written.
 pub fn save_errored(
     root: &Path,
     name: &str,
@@ -99,6 +120,9 @@ pub fn save_errored(
     listed: Option<&[String]>,
     why: &str,
 ) -> Result<(), String> {
+    if common.pkg.is_none() {
+        return Ok(());
+    }
     let detail = format!("the gate errored: {why}");
     mark_package(root, name, common, Reason::GateFailed, &detail, listed)
 }
@@ -107,19 +131,13 @@ fn stamp(root: &Path, name: &str, common: &CommonArgs, listed: &[String]) -> Res
     match (common.shard, &common.pkg) {
         (Some(shard), Some(pkg)) => baseline_merge::stamp_shard_in(root, name, shard, pkg, listed)
             .map_err(|e| e.to_string()),
-        (Some(shard), None) => {
-            baseline_merge::stamp_shard_in(root, name, shard, package_of(common), &[])
-                .map_err(|e| e.to_string())
-        }
-        (None, _) => Ok(()),
+        _ => Ok(()),
     }
 }
 
-/// Replace the numbers of the gate's packages in baseline `name` with one
-/// `reason` entry each. With `-p` that package is marked, naming the items
-/// of `listed` this gate owns, else those its prior `owners` name, else none
-/// (`all_items`). Without `-p` every bench package of the workspace is
-/// marked by its prior `owners`.
+/// Replace `-p`'s numbers in baseline `name` with one `reason` entry, naming
+/// the items of `listed` this gate owns, else those its prior `owners` name.
+/// With neither it names nothing, and claims on its items fail.
 pub fn mark_package(
     root: &Path,
     name: &str,
@@ -128,77 +146,27 @@ pub fn mark_package(
     detail: &str,
     listed: Option<&[String]>,
 ) -> Result<(), String> {
-    let target = common.target.as_deref().unwrap_or("soothfast");
-    let crates = || workspace::bench_crates(target, None);
-    mark_package_with(root, name, common, reason, detail, listed, crates)
-}
-
-/// [`mark_package`] with the workspace's bench packages read by `crates`.
-/// When they cannot be read, every package the baseline's `owners` names is
-/// marked instead and the error is returned; nothing is deleted.
-pub(crate) fn mark_package_with(
-    root: &Path,
-    name: &str,
-    common: &CommonArgs,
-    reason: Reason,
-    detail: &str,
-    listed: Option<&[String]>,
-    crates: impl FnOnce() -> Result<Vec<String>, String>,
-) -> Result<(), String> {
+    let Some(package) = common.pkg.as_deref() else {
+        return Err(format!("cannot mark baseline {name:?} without -p PKG"));
+    };
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
     let prior = invoke::load_baseline_in(root, name)
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
-    let (packages, unread) = match (&common.pkg, crates) {
-        (Some(pkg), _) => (vec![pkg.clone()], None),
-        (None, crates) => match crates() {
-            Ok(packages) => (packages, None),
-            Err(e) => {
-                let owners = prior[unmeasured::OWNERS_KEY].as_object();
-                let known: Vec<String> = owners
-                    .into_iter()
-                    .flatten()
-                    .map(|(p, _)| p.clone())
-                    .collect();
-                (known, Some(e))
-            }
-        },
+    let items = match listed {
+        Some(ids) => owned_here(common, ids),
+        None => unmeasured::owned_by(&prior, package),
     };
-    let entries: Vec<Unmeasured> = packages
-        .iter()
-        .map(|package| {
-            let items = match (listed, &common.pkg) {
-                (Some(ids), Some(_)) => owned_here(common, ids),
-                _ => unmeasured::owned_by(&prior, package),
-            };
-            Unmeasured {
-                all_items: items.is_empty(),
-                shard: common.shard.filter(|_| items.is_empty()),
-                detail: format!("{detail}, so {package} saved no numbers"),
-                package: package.clone(),
-                reason,
-                items,
-                ..Unmeasured::default()
-            }
-        })
-        .collect();
-    if !entries.is_empty() {
-        report(name, &entries);
-        unmeasured::mark_in(root, name, &entries).map_err(|e| e.to_string())?;
-        stamp(root, name, common, listed.unwrap_or_default())?;
-    }
-    match unread {
-        Some(e) => Err(format!(
-            "cannot read the workspace's bench packages ({e}); marked the {} package(s) baseline {name:?} names",
-            entries.len()
-        )),
-        None if entries.is_empty() => Err(format!(
-            "the workspace has no bench package to mark in baseline {name:?}"
-        )),
-        None => Ok(()),
-    }
+    let detail = match (&items[..], listed) {
+        ([], None) => format!("{detail}, and no listing was available to name {package}'s items"),
+        _ => format!("{detail}, so {package} saved no numbers"),
+    };
+    let entry = unmeasured::entry(package, reason, &detail, &[], items);
+    report(name, std::slice::from_ref(&entry));
+    unmeasured::mark_in(root, name, std::slice::from_ref(&entry))?;
+    stamp(root, name, common, listed.unwrap_or_default())
 }
 
 fn report(name: &str, entries: &[Unmeasured]) {

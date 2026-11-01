@@ -89,7 +89,8 @@ impl Drop for RemoveOnDrop {
 #[test]
 fn a_saved_baseline_conforms_to_its_schema() {
     let name = format!("schema-drift-{}", std::process::id());
-    let path = crate::invoke::save_baseline(&name, &full_run(), SaveScope::BenchFiltered).unwrap();
+    let path =
+        crate::invoke::save_baseline(&name, &full_run(), SaveScope::BenchFiltered(None)).unwrap();
     let _cleanup = RemoveOnDrop(path.clone());
     let text = std::fs::read_to_string(&path).unwrap();
     let baseline: Value = serde_json::from_str(&text).unwrap();
@@ -114,15 +115,14 @@ fn shard_baseline() -> Value {
     );
     unmeasured::mark_in(&root, "head", &[reused]).unwrap();
     let shard = crate::invoke::Shard { index: 1, count: 2 };
-    let unlisted = unmeasured::Unmeasured {
-        package: "other".into(),
-        reason: Reason::GateFailed,
-        detail: "the gate errored".into(),
-        all_items: true,
-        shard: Some(shard),
+    let ungated = unmeasured::Unmeasured {
+        package: "cargo".into(),
+        reason: Reason::NotGatedOnEvent,
+        detail: "push".into(),
+        except_imported: Some(vec!["jmh".into()]),
         ..unmeasured::Unmeasured::default()
     };
-    unmeasured::append_in(&root, "head", &[unlisted]).unwrap();
+    unmeasured::append_in(&root, "head", &[ungated]).unwrap();
     crate::baseline_merge::stamp_shard_in(&root, "head", shard, "pkg", &ids).unwrap();
     let doc = crate::invoke::load_baseline_in(&root, "head")
         .unwrap()

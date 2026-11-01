@@ -477,20 +477,29 @@ pull request's, since the code they measured is proven identical; walltime
 from those sources does not. A pull request whose bench binaries match the
 merge-base, with no stored run of them, reports its counter claims not
 evaluated, since its gate takes no counters. The cargo gate measures only a
-pull request and a default-branch push; on any other event (a push to
-another branch, a tag, `workflow_dispatch`, `merge_group`) each Rust package
-is listed `not-gated-on-event`, while imported claims measured on that event
-are still checked. Where no measurement was possible (`not-gated-on-event`,
-`no-parent`), a claim reads "not evaluated" even when it is new or edited.
+pull request and a default-branch push. On any other event (a push to
+another branch, a tag, `workflow_dispatch`, `merge_group`) the merge writes
+one `not-gated-on-event` entry: every claim whose item does not start with a
+configured import prefix (each `[[project]]`'s `prefix`, else its format's)
+is not evaluated. Imported claims measured on that event are checked as
+usual, and a missing or misspelled imported id fails. Where no measurement
+was possible (`not-gated-on-event`, `no-parent`), a claim reads "not
+evaluated" even when it is new or edited.
 
 Which items belong to which package comes from each package's bench binary
 listing, recorded as `owners` in the baseline, never from an id's name: every
-bench file's ids start with the bench target's name. A failed package's old
-numbers are exactly the ids it owned; a gate that cannot list its items names
-the ones it owned before, or, when there are none, covers every item no
-package owns. Without `-p` a failed gate marks the workspace's bench packages;
-when the workspace cannot be read it marks the packages the baseline's
-`owners` name, keeps the file, and fails.
+bench file's ids start with the bench target's name. An entry covers only the
+ids it names. A failed package's old numbers are exactly the ids it owned,
+and its entry names those, or the ones its listing shows; with neither it
+names nothing, and a claim on its items fails, saying the gate failed and no
+listing was available. An id two packages both list is refused, in a save
+and in the merge.
+
+`--save-baseline`, on `gate` or `measure`, needs `-p` in a workspace with more
+than one bench package, and fails before measuring without it; with one bench
+package the save is that package's. A filtered save updates the package's
+numbers in place. Baselines saved before `owners` existed are read with
+their old unmeasured entries left out, and the check says to re-save them.
 
 `cargo soothfast prebuild` runs the same lanes by hand: `-p PKG` for bench
 packages, `--against-ref REF` for the merge-base, `--docs PKG`, `--spec

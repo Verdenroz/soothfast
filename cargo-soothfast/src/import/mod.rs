@@ -127,6 +127,22 @@ pub fn read(format: &str, file: &str, prefix: Option<&str>) -> Result<(Run, Stri
     Ok((run, prefix.unwrap_or(format.default_prefix()).to_string()))
 }
 
+/// The id prefixes of every imported project `soothfast.toml` under `root`
+/// configures: its own `prefix`, else its format's.
+pub fn configured_prefixes(root: &std::path::Path) -> Result<Vec<String>, String> {
+    let mut prefixes = Vec::new();
+    for project in crate::init::manifest(root)? {
+        let Some(bench) = &project.bench else {
+            continue;
+        };
+        prefixes.push(match project.prefix {
+            Some(prefix) => prefix,
+            None => Format::parse(&bench.from)?.default_prefix().to_string(),
+        });
+    }
+    Ok(prefixes)
+}
+
 /// The run in the baseline file shape.
 pub fn to_doc(run: &Run) -> Value {
     json!({ "version": 1, "items": invoke::run_to_items_value(run), "assertions": [] })

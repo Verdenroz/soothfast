@@ -1008,7 +1008,7 @@ pub enum SaveScope {
     /// Full bench run of one package (ids are package-qualified) — or of the
     /// whole workspace when no `-p` was given (`None` replaces every bench id).
     BenchFull(Option<String>),
-    BenchFiltered,
+    BenchFiltered(Option<String>),
     /// Buildcost run of one package (`None`: replace every buildcost entry).
     Buildcost(Option<String>),
     /// Import under `<prefix>`: replaces the items it marked with that prefix.
@@ -1022,7 +1022,7 @@ impl SaveScope {
         if common.backend.as_deref() == Some("buildcost") {
             SaveScope::Buildcost(common.pkg.clone())
         } else if common.filter.is_some() {
-            SaveScope::BenchFiltered
+            SaveScope::BenchFiltered(common.pkg.clone())
         } else {
             SaveScope::BenchFull(common.pkg.clone())
         }
@@ -1057,6 +1057,7 @@ pub fn save_baseline_in(
     };
     let mut doc =
         load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+    let prior = own_measured(&mut doc, &scope, run)?;
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1072,12 +1073,7 @@ pub fn save_baseline_in(
         // Full runs replace their scope: renamed/removed items must not
         // haunt the baseline (the gate fails on GONE entries).
         match scope {
-            SaveScope::BenchFull(Some(pkg)) => {
-                let pkg = pkg.replace('-', "_");
-                map.retain(|k, v| {
-                    is_imported(v) || k.starts_with("buildcost::") || id_pkg(k) != pkg
-                });
-            }
+            SaveScope::BenchFull(Some(_)) => map.retain(|k, _| !prior.contains(k)),
             SaveScope::BenchFull(None) => {
                 map.retain(|k, v| is_imported(v) || k.starts_with("buildcost::"))
             }
@@ -1089,7 +1085,7 @@ pub fn save_baseline_in(
             SaveScope::Imported(prefix) => {
                 map.retain(|_, v| v["imported"].as_str() != Some(prefix.as_str()))
             }
-            SaveScope::BenchFiltered => {}
+            SaveScope::BenchFiltered(_) => {}
         }
         for (k, v) in new_map {
             map.insert(k.clone(), v.clone());
@@ -1098,7 +1094,7 @@ pub fn save_baseline_in(
     // Assertion verdicts ride along so renderers can show *verified* claims
     // ("proven O(n log n), zero-alloc") from produced data. Same scope rules
     // as items: a full run replaces its slice, keyed by the assertion's id.
-    let replaced: Vec<String> = run.items.keys().cloned().collect();
+    let replaced: Vec<String> = run.items.keys().chain(&prior).cloned().collect();
     let mut assertions: Vec<Value> = doc["assertions"]
         .as_array()
         .cloned()
@@ -1123,6 +1119,28 @@ pub fn save_baseline_in(
     write_baseline_in(root, name, &doc)?;
     prune_absorbed_accepts(root, run);
     Ok(baseline_path(root, name))
+}
+
+/// For a `-p` bench save, record in `doc` that the package owns what `run`
+/// measured, and return what it owned before, which a full save replaces. A
+/// filtered save adds to its owners and replaces nothing beyond its own ids.
+fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTreeSet<String>> {
+    let (pkg, full) = match scope {
+        SaveScope::BenchFull(Some(pkg)) => (pkg, true),
+        SaveScope::BenchFiltered(Some(pkg)) => (pkg, false),
+        _ => return Ok(BTreeSet::new()),
+    };
+    let prior: BTreeSet<String> = crate::unmeasured::owned_by(doc, pkg).into_iter().collect();
+    let mut owned: BTreeSet<String> = if full { BTreeSet::new() } else { prior.clone() };
+    owned.extend(
+        run.items
+            .iter()
+            .filter(|(id, m)| m.imported.is_none() && !id.starts_with("buildcost::"))
+            .map(|(id, _)| id.clone()),
+    );
+    let owned: Vec<String> = owned.into_iter().collect();
+    crate::unmeasured::set_owners(doc, pkg, &owned).map_err(io::Error::other)?;
+    Ok(if full { prior } else { BTreeSet::new() })
 }
 
 /// Write `doc` as baseline `name` under `root`.
@@ -2367,7 +2385,10 @@ mod tests {
             SaveScope::of(&common), SaveScope::BenchFull(Some(p)) if p == "mylib"
         ));
         common.filter = Some("group::".into());
-        assert!(matches!(SaveScope::of(&common), SaveScope::BenchFiltered));
+        assert!(matches!(
+            SaveScope::of(&common),
+            SaveScope::BenchFiltered(_)
+        ));
         common.filter = None;
         common.backend = Some("buildcost".into());
         assert!(matches!(

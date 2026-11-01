@@ -44,6 +44,9 @@ pub fn check(
     baseline: Option<&Value>,
     unchanged: impl FnOnce() -> Result<Claims, String>,
 ) -> Result<u32, String> {
+    if let Some(note) = baseline.and_then(|b| unmeasured::legacy_note(b, "the docs baseline")) {
+        println!("docs check: {note}");
+    }
     let entries = baseline
         .map(unmeasured::read)
         .transpose()?
@@ -117,7 +120,6 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
     };
     let operands = std::iter::once((&claim.item, &claim.backend, &claim.metric))
         .chain(claim.minus.iter().map(|m| (&m.item, &m.backend, &m.metric)));
-    let owned = unmeasured::owned(baseline);
     let mut first: Option<Reason> = None;
     let mut measurable: Option<Reason> = None;
     let mut reasons = Vec::new();
@@ -127,10 +129,10 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
         }
         let covering: Vec<&Unmeasured> = entries
             .iter()
-            .filter(|u| u.covers(item, backend, metric, &owned))
+            .filter(|u| u.covers(item, backend, metric))
             .collect();
         if covering.is_empty() {
-            return Reading::Decided(Outcome::Failed(e));
+            return Reading::Decided(Outcome::Failed(with_unnamed(e, entries)));
         }
         for u in covering {
             first.get_or_insert(u.reason);
@@ -145,6 +147,21 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
         (Some(reason), _) => Reading::Unmeasured(reason, why),
         (None, Some(reason)) => Reading::Decided(Outcome::NotEvaluated(reason, why)),
         (None, None) => Reading::Decided(Outcome::Failed(e)),
+    }
+}
+
+/// `e`, with every entry that names no item said beside it: a gate that
+/// failed with no listing is the likely reason a claim has no number.
+fn with_unnamed(e: String, entries: &[Unmeasured]) -> String {
+    let unnamed: Vec<String> = entries
+        .iter()
+        .filter(|u| u.items.is_empty() && u.except_imported.is_none())
+        .map(|u| format!("{} ({}): {}", u.package, u.reason.as_str(), u.detail))
+        .collect();
+    if unnamed.is_empty() {
+        e
+    } else {
+        format!("{e}; {}", unnamed.join("; "))
     }
 }
 

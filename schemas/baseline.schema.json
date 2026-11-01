@@ -93,13 +93,10 @@
               "stored-run"
             ]
           },
-          "shard": {
-            "description": "`I/N`: with `all_items`, the entry covers only the items that shard owns.",
-            "type": "string"
-          },
-          "all_items": {
-            "description": "True when the entry could name no item: it covers every item no package of `owners` claims (the shard's, with `shard`).",
-            "type": "boolean"
+          "except_imported": {
+            "description": "Only on the `not-gated-on-event` entry of an event the cargo gate does not measure on: the configured import prefixes. The entry covers every item outside them; an imported item is evaluated as usual.",
+            "type": "array",
+            "items": { "type": "string" }
           },
           "metrics": {
             "description": "Backend names (`walltime`) or `backend.metric` the entry covers. Absent for every metric of the items.",
@@ -127,7 +124,7 @@
       "type": "string"
     },
     "owners": {
-      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). A failed package's old numbers are exactly these ids; an `all_items` entry covers only items no package here claims.",
+      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). A failed package's old numbers are exactly these ids, and no id may belong to two packages.",
       "type": "object",
       "additionalProperties": {
         "type": "array",
