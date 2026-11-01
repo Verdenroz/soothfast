@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::Value;
-use soothfast_docs::{baseline, claims, lockfile, markdown};
+use soothfast_docs::{claims, lockfile, markdown};
 
 use crate::highlight;
 use crate::plugin::{PageRef, SitePlugin};
@@ -96,7 +96,7 @@ impl Evidence {
                 error: None,
                 unmeasured: None,
             },
-            Err(_) => ClaimEval {
+            Err(unread) => ClaimEval {
                 state: "warn",
                 mark: "?",
                 item: short,
@@ -107,7 +107,12 @@ impl Evidence {
                 bound,
                 raw_bound: parsed.bound,
                 error: None,
-                unmeasured: ambiguity(&parsed, &self.baseline),
+                unmeasured: match unread {
+                    claims::Unread::Ambiguous { packages, .. } => {
+                        Some(format!("ambiguous: {}", packages.join(", ")))
+                    }
+                    claims::Unread::Other(_) => None,
+                },
             },
         }
     }
@@ -235,15 +240,6 @@ struct ClaimEval {
     error: Option<String>,
     /// Why `actual` is `None` when that is not simply a missing measurement.
     unmeasured: Option<String>,
-}
-
-/// "ambiguous: A, B" when an item `claim` reads is one two packages own.
-fn ambiguity(claim: &claims::Claim, baseline: &Value) -> Option<String> {
-    let items = std::iter::once(&claim.item).chain(claim.minus.iter().map(|m| &m.item));
-    items
-        .map(|item| baseline::ambiguous_packages(baseline, item))
-        .find(|packages| !packages.is_empty())
-        .map(|packages| format!("ambiguous: {}", packages.join(", ")))
 }
 
 impl SitePlugin for Evidence {
@@ -749,7 +745,7 @@ mod tests {
         let baseline = serde_json::json!({
             "items": { "util::hash": { "alloc": { "allocs": 0 } } },
             "owners": { "a": ["util::hash"], "b": ["util::hash"] },
-            "unmeasured": [{ "package": "a", "reason": "ambiguous-id", "items": ["util::hash"] }],
+            "ambiguous": { "util::hash": [{ "package": "a", "item": {} }, { "package": "b", "item": {} }] },
         });
         let p = Evidence::new(baseline, lockfile::Binds::new());
         let md = "<!-- soothfast:claim util::hash.alloc.allocs <= 0 -->\n";

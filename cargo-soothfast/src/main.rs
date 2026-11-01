@@ -313,7 +313,7 @@ fn cmd_measure(args: &[String]) -> i32 {
     }
 
     // buildcost is CLI-side (no bench binary); everything else runs the runner.
-    let run = if common.backend.as_deref() == Some("buildcost") {
+    let (run, exe) = if common.backend.as_deref() == Some("buildcost") {
         let Some(pkg) = common.pkg.clone() else {
             return arg_err("--backend buildcost requires -p PKG");
         };
@@ -322,15 +322,15 @@ fn cmd_measure(args: &[String]) -> i32 {
             Err(e) => return arg_err(&e.to_string()),
         };
         match buildcost::measure(&pkg, &matrix, Some(&target_dir)) {
-            Ok(r) => r,
+            Ok(r) => (r, None),
             Err(e) => {
                 eprintln!("soothfast: {e}");
                 return 1;
             }
         }
     } else {
-        let run = match headrun::measure(&common, reuse) {
-            Ok(r) => r,
+        let (run, exe) = match headrun::measure(&common, reuse) {
+            Ok(measured) => measured,
             Err(e) => {
                 eprintln!("soothfast: {e}");
                 return 1;
@@ -367,7 +367,7 @@ fn cmd_measure(args: &[String]) -> i32 {
                 println!("{id:<44} asyncexec polls={p} wakes={w}");
             }
         }
-        run
+        (run, exe)
     };
 
     let mut assertion_failures = 0;
@@ -392,9 +392,9 @@ fn cmd_measure(args: &[String]) -> i32 {
         return 1;
     }
     if let Some(name) = save {
-        let run = match common.backend.as_deref() {
-            Some("buildcost") => run,
-            _ => ownership::for_save(&run, &common, None),
+        let run = match &exe {
+            Some(exe) => ownership::for_save(&run, &common, exe),
+            None => run,
         };
         match invoke::save_baseline(&name, &run, invoke::SaveScope::of(&common)) {
             Ok(path) => println!("baseline saved: {}", path.display()),

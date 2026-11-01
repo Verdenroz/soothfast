@@ -409,8 +409,9 @@ fn a_save_of_an_id_another_package_owns_fails_its_claims_as_ambiguous() {
     save_ids(&root, &["soothfast::same"], scope).unwrap();
     assert!(kept(&root).is_empty());
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-    let side = doc["ambiguous"]["soothfast::same"].as_object().unwrap();
-    assert_eq!(side.keys().collect::<Vec<_>>(), ["a", "b"]);
+    let side = doc["ambiguous"]["soothfast::same"].as_array().unwrap();
+    let writers: Vec<&Value> = side.iter().map(|s| &s["package"]).collect();
+    assert_eq!(writers, [&json!("a"), &json!("b")]);
     assert_eq!(unmeasured::owned_by(&doc, "a"), ["soothfast::same"]);
     assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::same"]);
     let Reading::Decided(Outcome::Failed(why)) =

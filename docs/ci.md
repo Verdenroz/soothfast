@@ -500,13 +500,15 @@ binary that ran, never from a stored run or the item cache. That package
 takes the id from the others when it owns the id too, or when the run gated
 it and its listing showed the id; otherwise (a feature-gated item, a
 registrar CI does not gate, a lib with no bench target) every listing
-package keeps it. An id two packages then both own is ambiguous: an
-`ambiguous-id` entry names both, its numbers move out of `items` to the
-`ambiguous` side map, so an older reader finds no number, and every reader
-here reports it ambiguous instead of reading either one. A claim on it
-fails, the site shows a warn chip, and `gate --baseline` treats the item as
-having no baseline number. Every save and merge recomputes these, and an id
-one package owns again gets that package's number back. An entry covers
+package keeps it. An id two packages then both own is ambiguous: its
+numbers move out of `items` to the `ambiguous` side map, each under the
+package that wrote it, or the owners when nothing names the writer, so an
+older reader finds no number, and every reader here reports it ambiguous
+instead of reading either one. A claim on it fails, the site shows a warn
+chip, and `gate --baseline` treats the item as having no baseline number.
+Every save and merge recomputes these, and an id one package owns again
+gets that package's number back; a number is dropped only once no package
+that may have written it owns the id. An entry covers
 only the ids it names. A failed package's old numbers are exactly the ids it
 owned and no other package owns, and its entry names those, or the ones its
 listing shows; with neither it names nothing, and a claim on an item no
@@ -515,16 +517,17 @@ that uploaded nothing at all, from a setup failure or a cancel, gets a
 `no-measurement` entry instead, and an item no package owns reads under it:
 an unchanged claim is not evaluated and a new or edited one fails. A full
 save leaves alone any id another package owns. `baseline merge` refuses an
-id a Rust file and an import file both hold, or a Rust file holding an id
-none of its packages owns.
+id two merged files both hold, or a bench id none of its file's packages
+owns; imported and `buildcost::` ids, and a file from before `owners`,
+need no owner.
 
 `--save-baseline`, on `gate` or `measure`, needs `-p` in a workspace with more
 than one bench package, and fails before measuring without it; with one
 bench package the save is that package's. A filtered save updates the
 package's numbers in place, and a failed filtered gate drops and names only
-the filtered ids. A full save into a baseline
-saved before `owners` existed replaces every bench item no other package
-owns, and says to re-save the other packages. Baselines saved before
+the filtered ids. A full save into a baseline saved before `owners`
+existed replaces every bench item no other package owns, and says to
+re-save the other packages. Baselines saved before
 `owners` existed are read with their old unmeasured entries left out, and
 the check says to re-save them.
 

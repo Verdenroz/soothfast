@@ -150,9 +150,31 @@ fn split_operand(text: &str) -> Result<(&str, &str, &str), String> {
         .ok_or_else(|| format!("left side must be item.backend.metric, got {text:?}"))
 }
 
+/// Why a claim's numbers could not be read.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Unread {
+    /// The claim reads an item two packages both own, so no number is its.
+    Ambiguous { item: String, packages: Vec<String> },
+    /// Any other reason, said in full.
+    Other(String),
+}
+
+impl std::fmt::Display for Unread {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unread::Ambiguous { item, packages } => write!(
+                f,
+                "item id {item} is measured by both {}; a claim on it is ambiguous",
+                packages.join(" and ")
+            ),
+            Unread::Other(why) => f.write_str(why),
+        }
+    }
+}
+
 /// The measured value of the claim's item and, for a difference, of the item
 /// subtracted from it.
-pub fn values(claim: &Claim, baseline: &Value) -> Result<(f64, Option<f64>), String> {
+pub fn values(claim: &Claim, baseline: &Value) -> Result<(f64, Option<f64>), Unread> {
     let first = measured(baseline, &claim.item, &claim.backend, &claim.metric)?;
     let second = match &claim.minus {
         Some(m) => Some(measured(baseline, &m.item, &m.backend, &m.metric)?),
@@ -162,16 +184,15 @@ pub fn values(claim: &Claim, baseline: &Value) -> Result<(f64, Option<f64>), Str
 }
 
 /// Evaluate against a baseline document; returns (holds, actual value).
-pub fn evaluate(claim: &Claim, baseline: &Value) -> Result<(bool, f64), String> {
-    let (first, second) = values(claim, baseline).map_err(|e| {
-        if claim.minus.is_none() && claim.item.contains(" - ") {
-            format!(
+pub fn evaluate(claim: &Claim, baseline: &Value) -> Result<(bool, f64), Unread> {
+    let (first, second) = values(claim, baseline).map_err(|e| match e {
+        Unread::Other(e) if claim.minus.is_none() && claim.item.contains(" - ") => {
+            Unread::Other(format!(
                 "{e} (read as one item; for a difference both sides need a known backend: {})",
                 BACKENDS.join(", ")
-            )
-        } else {
-            e
+            ))
         }
+        e => e,
     })?;
     let actual = first - second.unwrap_or(0.0);
     let holds = match claim.op {
@@ -183,16 +204,16 @@ pub fn evaluate(claim: &Claim, baseline: &Value) -> Result<(bool, f64), String> 
     Ok((holds, actual))
 }
 
-fn measured(baseline: &Value, item: &str, backend: &str, metric: &str) -> Result<f64, String> {
+fn measured(baseline: &Value, item: &str, backend: &str, metric: &str) -> Result<f64, Unread> {
     match crate::baseline::number(baseline, item, backend, metric) {
         Number::Measured(v) => Ok(v),
-        Number::Ambiguous(packages) => Err(format!(
-            "item id {item} is measured by both {}; a claim on it is ambiguous",
-            packages.join(" and ")
-        )),
-        Number::Missing => Err(format!(
+        Number::Ambiguous(packages) => Err(Unread::Ambiguous {
+            item: item.to_string(),
+            packages,
+        }),
+        Number::Missing => Err(Unread::Other(format!(
             "no measurement for {item}.{backend}.{metric} in baseline — run `cargo soothfast measure --save-baseline`"
-        )),
+        ))),
     }
 }
 
@@ -271,7 +292,7 @@ mod tests {
     #[test]
     fn a_dash_in_a_single_operand_hints_at_the_difference_form() {
         let c = parse("a.walltime.median_ns - b.nope.median_ns < 2us").unwrap();
-        let err = evaluate(&c, &json!({})).unwrap_err();
+        let err = evaluate(&c, &json!({})).unwrap_err().to_string();
         assert!(err.contains("read as one item"), "{err}");
         assert!(err.contains("perfcnt, walltime"), "{err}");
     }
@@ -290,12 +311,14 @@ mod tests {
         assert!(
             evaluate(&c, &baseline)
                 .unwrap_err()
+                .to_string()
                 .contains("gone.walltime.median_ns")
         );
         let c = parse("gone.walltime.median_ns - b.walltime.median_ns < 2us").unwrap();
         assert!(
             evaluate(&c, &baseline)
                 .unwrap_err()
+                .to_string()
                 .contains("gone.walltime.median_ns")
         );
     }

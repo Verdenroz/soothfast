@@ -388,7 +388,7 @@ fn merge_on(
         out[unmeasured::OWNERS_KEY] = json!(owners);
     }
     let gated = gated_listing(packages, &shards);
-    ambiguity::settle(&mut out, None, &gated).map_err(|e| MergeError::Corrupt(e.to_string()))?;
+    ambiguity::settle(&mut out, None, &gated);
     Ok(out)
 }
 

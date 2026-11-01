@@ -144,8 +144,9 @@ fn shard_baseline() -> Value {
 fn ambiguous_baseline() -> Value {
     let mut doc = ambiguous_saves();
     let items = crate::invoke::run_to_items_value(&full_run());
-    for (n, item) in items.as_object().unwrap().values().enumerate() {
-        doc["ambiguous"]["util::hash"][format!("other{n}")] = item.clone();
+    let saved = doc["ambiguous"]["util::hash"].as_array_mut().unwrap();
+    for item in items.as_object().unwrap().values() {
+        saved.push(serde_json::json!({ "owners": ["a", "b"], "item": item }));
     }
     doc
 }

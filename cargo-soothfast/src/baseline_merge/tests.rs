@@ -229,30 +229,6 @@ fn an_event_the_gate_skips_writes_one_entry_for_everything_but_imports() {
 }
 
 #[test]
-fn an_id_two_packages_own_across_files_is_ambiguous_not_refused() {
-    let file = |package: &str, shard: &str| json!({ "version": 1, "shard": shard, "items": {}, "owners": { package: ["soothfast::same"] } });
-    let files = [
-        ("a.json".into(), file("a", "1/2")),
-        ("b.json".into(), file("b", "2/2")),
-    ];
-    let merged = merge(&files, 2, &[]).unwrap();
-    let entries = unmeasured::read(&merged).unwrap();
-    assert_eq!(entries[0].reason, Reason::AmbiguousId);
-    assert!(entries[0].detail.contains("measured by both a and b"));
-    let doc = markdown_claim("soothfast::same.alloc.allocs <= 0");
-    let made = || {
-        Ok(crate::docs_claims::Claims::from([(
-            "a.md".into(),
-            "soothfast::same.alloc.allocs <= 0".into(),
-        )]))
-    };
-    assert_eq!(
-        crate::docs_claims::check(&[("a.md", &doc)], Some(&merged), made),
-        Ok(1)
-    );
-}
-
-#[test]
 fn a_shard_that_errored_before_listing_is_named_from_the_other_shards_listing() {
     let listed: Vec<String> = (1..=2).map(|i| owned_by(i, 2)).collect();
     let mut first = json!({
@@ -369,31 +345,6 @@ fn a_package_whose_listing_is_empty_is_accounted_for() {
 }
 
 #[test]
-fn an_id_two_rust_files_both_own_is_set_aside_not_refused() {
-    let file = |pkg: &str, allocs: u64| {
-        json!({
-            "items": { "util::hash": { "alloc": { "allocs": allocs, "bytes": 0 } } },
-            "owners": { pkg: ["util::hash"] },
-        })
-    };
-    let mut collected = collect::Collected::default();
-    for (label, doc) in [("a.json", file("a", 1)), ("b.json", file("b", 2))] {
-        let items = doc["items"].as_object().unwrap();
-        collected.take(label, &doc, items).unwrap();
-    }
-    assert!(collected.items.is_empty());
-    assert_eq!(collected.side["util::hash"]["a"]["alloc"]["allocs"], 1);
-    assert_eq!(collected.side["util::hash"]["b"]["alloc"]["allocs"], 2);
-    let mut merged = json!({ "items": {}, "owners": { "a": ["util::hash"], "b": ["util::hash"] } });
-    merged["ambiguous"] = Value::Object(collected.side);
-    ambiguity::settle(&mut merged, None, &ambiguity::Gated::new()).unwrap();
-    assert_eq!(
-        unmeasured::read(&merged).unwrap()[0].reason,
-        Reason::AmbiguousId
-    );
-}
-
-#[test]
 fn a_rust_file_holding_an_id_none_of_its_packages_owns_is_refused() {
     let doc = json!({ "items": { "core::a": item() }, "owners": { "core": [] } });
     let Err(MergeError::Corrupt(why)) = merge(&[("head.json".into(), doc)], 1, &packages()) else {
@@ -465,4 +416,58 @@ fn a_linked_lib_runs_through_gate_save_merge_and_docs_check() {
     };
     assert!(why.contains("measured by both a and b"), "{why}");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_file_s_set_aside_numbers_survive_the_merge_and_fail_their_claims() {
+    let doc = json!({
+        "version": 1,
+        "items": {},
+        "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+        "ambiguous": { "util::hash": [
+            { "package": "a", "item": { "alloc": { "allocs": 1, "bytes": 0 } } },
+            { "package": "b", "item": { "alloc": { "allocs": 2, "bytes": 0 } } },
+        ] },
+    });
+    let merged = merge(&[("head.json".into(), doc)], 1, &[]).unwrap();
+    assert_eq!(
+        merged["ambiguous"]["util::hash"].as_array().unwrap().len(),
+        2
+    );
+    assert!(unmeasured::read(&merged).unwrap().is_empty());
+    let reading = crate::docs_claims::Against::new(&merged)
+        .unwrap()
+        .evaluate("util::hash.alloc.allocs <= 9");
+    let crate::docs_claims::Reading::Decided(crate::docs_claims::Outcome::Failed(why)) = reading
+    else {
+        panic!("an ambiguous claim fails");
+    };
+    assert!(why.contains("measured by both a and b"), "{why}");
+}
+
+#[test]
+fn an_id_two_rust_files_hold_is_refused() {
+    let file =
+        |pkg: &str| json!({ "items": { "util::hash": item() }, "owners": { pkg: ["util::hash"] } });
+    let mut collected = collect::Collected::default();
+    let a = file("a");
+    collected
+        .take("a.json", &a, a["items"].as_object().unwrap())
+        .unwrap();
+    let b = file("b");
+    let why = collected
+        .take("b.json", &b, b["items"].as_object().unwrap())
+        .unwrap_err();
+    assert!(why.contains("is in a.json too"), "{why}");
+}
+
+#[test]
+fn buildcost_and_legacy_items_need_no_owner_to_merge() {
+    let doc = json!({
+        "items": { "buildcost::core::default": { "buildcost": { "build_ms": 1, "size_bytes": 2 } } },
+        "owners": { "core": [] },
+    });
+    assert!(merge(&[("head.json".into(), doc)], 1, &packages()).is_ok());
+    let legacy = json!({ "items": { "core::a": item() } });
+    assert!(merge(&[("old.json".into(), legacy)], 1, &packages()).is_ok());
 }

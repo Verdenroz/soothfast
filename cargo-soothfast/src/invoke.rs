@@ -785,7 +785,7 @@ pub fn pair(v: &Value) -> Option<(String, String)> {
 }
 
 /// A full measurement run, keyed by item ID.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Run {
     pub noise_pct: Option<f64>,
     pub build: Option<crate::buildstamp::BuildStamp>,
@@ -1104,14 +1104,12 @@ pub fn save_baseline_in(
         _ => None,
     };
     if let Some(writer) = &writer {
-        for id in new_items
+        let ids = new_items
             .as_object()
             .into_iter()
             .flatten()
-            .map(|(id, _)| id)
-        {
-            crate::ambiguity::stash_before_write(&mut doc, writer, id);
-        }
+            .map(|(id, _)| id);
+        crate::ambiguity::stash_before_write(&mut doc, writer, ids);
     }
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1171,7 +1169,7 @@ pub fn save_baseline_in(
         crate::unmeasured::clear(&mut doc, pkg.as_deref());
     }
 
-    crate::ambiguity::settle(&mut doc, writer.as_deref(), &Default::default())?;
+    crate::ambiguity::settle(&mut doc, writer.as_deref(), &Default::default());
     write_baseline_in(root, name, &doc)?;
     prune_absorbed_accepts(root, run);
     Ok(baseline_path(root, name))

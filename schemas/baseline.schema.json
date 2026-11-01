@@ -80,7 +80,7 @@
             "type": "string"
           },
           "reason": {
-            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty. `claims-skipped`: `docs check --skip-claims` evaluated no claim. `not-gated-on-event`: the cargo gate measures only on a pull request or a default-branch push, and this event was neither. `ambiguous-id`: two packages both own the id and neither registered it, so its numbers move to `ambiguous` and a claim on it fails. `stored-run`: written by older releases for a HEAD run read from the run cache, read as not evaluated.",
+            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty. `claims-skipped`: `docs check --skip-claims` evaluated no claim. `not-gated-on-event`: the cargo gate measures only on a pull request or a default-branch push, and this event was neither. `stored-run`: written by older releases for a HEAD run read from the run cache, read as not evaluated.",
             "enum": [
               "identical-binaries",
               "reused-walltime",
@@ -90,8 +90,7 @@
               "no-measurement",
               "claims-skipped",
               "not-gated-on-event",
-              "stored-run",
-              "ambiguous-id"
+              "stored-run"
             ]
           },
           "except_imported": {
@@ -133,11 +132,19 @@
       }
     },
     "ambiguous": {
-      "description": "The numbers of each ambiguous id, keyed by id and then by the package that saved them (`\"\"` when nothing names it), kept out of `items` so a reader that predates this map finds no number. An id one package owns again gets that package's number back in `items`.",
+      "description": "The numbers of each ambiguous id, kept out of `items` so a reader that predates this map finds no number: one element per saved number, by the package that wrote it, or by the packages that owned the id when nothing named the writer. An id one package owns again gets that package's number back in `items`, else one whose writer nothing named.",
       "type": "object",
       "additionalProperties": {
-        "type": "object",
-        "additionalProperties": { "$ref": "#/$defs/item" }
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["item"],
+          "properties": {
+            "package": { "description": "Package that wrote the number.", "type": "string" },
+            "owners": { "description": "Packages that owned the id when nothing named the writer.", "type": "array", "items": { "type": "string" } },
+            "item": { "$ref": "#/$defs/item" }
+          }
+        }
       }
     },
     "listed": {
