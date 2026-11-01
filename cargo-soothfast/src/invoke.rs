@@ -1116,6 +1116,7 @@ pub fn save_baseline_in(
         crate::unmeasured::clear(&mut doc, pkg.as_deref());
     }
 
+    crate::unmeasured::settle_ambiguity(&mut doc);
     write_baseline_in(root, name, &doc)?;
     prune_absorbed_accepts(root, run);
     Ok(baseline_path(root, name))
@@ -1130,7 +1131,24 @@ fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTr
         SaveScope::BenchFiltered(Some(pkg)) => (pkg, false),
         _ => return Ok(BTreeSet::new()),
     };
-    let prior: BTreeSet<String> = crate::unmeasured::owned_by(doc, pkg).into_iter().collect();
+    let bench = |id: &str, v: &Value| !is_imported(v) && !id.starts_with("buildcost::");
+    let prior: BTreeSet<String> = if full && doc.get(crate::unmeasured::OWNERS_KEY).is_none() {
+        let legacy: BTreeSet<String> = doc["items"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(id, v)| bench(id, v))
+            .map(|(id, _)| id.clone())
+            .collect();
+        if !legacy.is_empty() {
+            println!(
+                "baseline: it predates item ownership, so this save of {pkg} replaces every bench item in it; re-save the other packages"
+            );
+        }
+        legacy
+    } else {
+        crate::unmeasured::owned_by(doc, pkg).into_iter().collect()
+    };
     let mut owned: BTreeSet<String> = if full { BTreeSet::new() } else { prior.clone() };
     owned.extend(
         run.items
@@ -1139,7 +1157,7 @@ fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTr
             .map(|(id, _)| id.clone()),
     );
     let owned: Vec<String> = owned.into_iter().collect();
-    crate::unmeasured::set_owners(doc, pkg, &owned).map_err(io::Error::other)?;
+    crate::unmeasured::set_owners(doc, pkg, &owned);
     Ok(if full { prior } else { BTreeSet::new() })
 }
 

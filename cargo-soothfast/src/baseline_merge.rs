@@ -92,8 +92,9 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-/// `baseline mark`: list every item of `-p PKG`'s bench binary as unmeasured
-/// in baseline NAME, for a leg that ran no gate to save it.
+/// `baseline mark`: mark `-p PKG` unmeasured in baseline NAME, for a leg that
+/// ran no gate to save it, naming the items its bench binary lists when it
+/// builds and lists them.
 fn mark_cmd(args: &[String]) -> i32 {
     let mut common = invoke::CommonArgs::default();
     let (mut into, mut reason, mut detail) = (None, None, None);
@@ -125,8 +126,9 @@ fn mark_cmd(args: &[String]) -> i32 {
     }
 }
 
-/// Mark `common`'s package in baseline `into` under `root`. Items that could
-/// not be `listed` are all covered, and the command still fails.
+/// Mark `common`'s package in baseline `into` under `root`. When the items
+/// could not be `listed`, the entry names only the package's prior owners
+/// and the command fails, so the caller warns.
 fn mark_listed(
     root: &Path,
     into: &str,
@@ -141,7 +143,10 @@ fn mark_listed(
     }
     match listed {
         Ok(_) => 0,
-        Err(e) => fail(&format!("{e}, so every item is listed {}", reason.as_str())),
+        Err(e) => fail(&format!(
+            "{e}: no items could be listed, so the entry names only what {} owned before, and claims on the rest will fail",
+            common.pkg.as_deref().unwrap_or("the package")
+        )),
     }
 }
 
@@ -270,7 +275,7 @@ fn merge_on(
     let mut shards: BTreeMap<u64, &Value> = BTreeMap::new();
     let no_items = Map::new();
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut owner_of: BTreeMap<String, String> = BTreeMap::new();
+    let mut twice: Vec<(String, String)> = Vec::new();
     for (label, doc) in files {
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
@@ -315,7 +320,7 @@ fn merge_on(
         }
         for (id, v) in file_items {
             if all_items.insert(id.clone(), v.clone()).is_some() {
-                return Err(corrupt(label, format!("{id} is in another file too")));
+                twice.push((label.clone(), id.clone()));
             }
         }
         assertions.extend(doc["assertions"].as_array().into_iter().flatten().cloned());
@@ -330,12 +335,6 @@ fn merge_on(
                 .flatten()
                 .filter_map(Value::as_str)
             {
-                match owner_of.insert(id.to_string(), package.clone()) {
-                    Some(other) if &other != package => {
-                        return Err(corrupt(label, unmeasured::duplicate(id, &other, package)));
-                    }
-                    _ => {}
-                }
                 owners
                     .entry(package.clone())
                     .or_default()
@@ -349,7 +348,17 @@ fn merge_on(
             entries.extend(unaccounted(pkg, &shards, expect));
         }
     }
+    let listers = |id: &str| owners.values().filter(|ids| ids.contains(id)).count();
+    if let Some((label, id)) = twice.iter().find(|(_, id)| listers(id) < 2) {
+        return Err(corrupt(label, format!("{id} is in another file too")));
+    }
     if let Some(ungated) = not_gated {
+        let mut imports: BTreeSet<String> = ungated.imports.iter().cloned().collect();
+        imports.extend(
+            all_items
+                .values()
+                .filter_map(|v| v["imported"].as_str().map(str::to_string)),
+        );
         entries.push(Unmeasured {
             package: "cargo".into(),
             reason: Reason::NotGatedOnEvent,
@@ -357,7 +366,7 @@ fn merge_on(
                 "the cargo gate does not measure on a {} event; only imported items are",
                 ungated.event
             ),
-            except_imported: Some(ungated.imports.to_vec()),
+            except_imported: Some(imports.into_iter().collect()),
             ..Unmeasured::default()
         });
     }
@@ -373,6 +382,7 @@ fn merge_on(
     if !owners.is_empty() {
         out[unmeasured::OWNERS_KEY] = json!(owners);
     }
+    unmeasured::settle_ambiguity(&mut out);
     Ok(out)
 }
 
@@ -415,12 +425,27 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
     }
     missing
         .into_iter()
-        .map(|shard| Unmeasured {
-            detail: format!("shard {shard} saved no measurement of {pkg}"),
-            package: pkg.to_string(),
-            reason: Reason::ShardMissing,
-            items: known.iter().filter(|id| shard.owns(id)).cloned().collect(),
-            ..Unmeasured::default()
+        .map(|shard| {
+            let nameless = shards.get(&shard.index).and_then(|doc| {
+                let entries = unmeasured::read(doc).ok()?;
+                entries
+                    .into_iter()
+                    .find(|e| e.package == pkg && e.items.is_empty())
+            });
+            let (reason, detail) = match nameless {
+                Some(e) => (e.reason, format!("{} (shard {shard})", e.detail)),
+                None => (
+                    Reason::ShardMissing,
+                    format!("shard {shard} saved no measurement of {pkg}"),
+                ),
+            };
+            Unmeasured {
+                detail,
+                package: pkg.to_string(),
+                reason,
+                items: known.iter().filter(|id| shard.owns(id)).cloned().collect(),
+                ..Unmeasured::default()
+            }
         })
         .filter(|u| !u.items.is_empty())
         .collect()
@@ -429,9 +454,11 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
 /// Whether a gate's baseline accounts for `pkg`, by that file's own record
 /// of the package: its owners, its listing, or an entry.
 fn covers(doc: &Value, pkg: &str) -> bool {
-    doc[unmeasured::OWNERS_KEY].get(pkg).is_some()
-        || doc[LISTED_KEY].get(pkg).is_some()
-        || unmeasured::read(doc).is_ok_and(|es| es.iter().any(|e| e.package == pkg))
+    let named = |v: &Value| v.as_array().is_some_and(|ids| !ids.is_empty());
+    named(&doc[unmeasured::OWNERS_KEY][pkg])
+        || named(&doc[LISTED_KEY][pkg])
+        || unmeasured::read(doc)
+            .is_ok_and(|es| es.iter().any(|e| e.package == pkg && !e.items.is_empty()))
 }
 
 #[cfg(test)]

@@ -200,6 +200,11 @@ fn baseline_mark_on_a_broken_build_drops_the_old_numbers_and_still_fails() {
             _
         ))
     ));
+    let unlisted = crate::docs_claims::evaluate("core::b.alloc.allocs <= 0", &doc, &entries);
+    assert!(matches!(
+        unlisted,
+        crate::docs_claims::Reading::Decided(crate::docs_claims::Outcome::Failed(_))
+    ));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -220,16 +225,68 @@ fn an_event_the_gate_skips_writes_one_entry_for_everything_but_imports() {
 }
 
 #[test]
-fn an_id_two_packages_own_across_files_is_refused() {
+fn an_id_two_packages_own_across_files_is_ambiguous_not_refused() {
     let file = |package: &str, shard: &str| json!({ "version": 1, "shard": shard, "items": {}, "owners": { package: ["soothfast::same"] } });
     let files = [
         ("a.json".into(), file("a", "1/2")),
         ("b.json".into(), file("b", "2/2")),
     ];
-    let Err(MergeError::Corrupt(why)) = merge(&files, 2, &[]) else {
-        panic!("a shared id must be refused");
+    let merged = merge(&files, 2, &[]).unwrap();
+    let entries = unmeasured::read(&merged).unwrap();
+    assert_eq!(entries[0].reason, Reason::AmbiguousId);
+    assert!(entries[0].detail.contains("measured by both a and b"));
+    let doc = markdown_claim("soothfast::same.alloc.allocs <= 0");
+    let made = || {
+        Ok(crate::docs_claims::Claims::from([(
+            "a.md".into(),
+            "soothfast::same.alloc.allocs <= 0".into(),
+        )]))
     };
-    assert!(why.contains("listed by both a and b"));
+    assert_eq!(
+        crate::docs_claims::check(&[("a.md", &doc)], Some(&merged), made),
+        Ok(1)
+    );
+}
+
+#[test]
+fn a_shard_that_errored_before_listing_is_named_from_the_other_shards_listing() {
+    let listed: Vec<String> = (1..=2).map(|i| owned_by(i, 2)).collect();
+    let mut first = json!({
+        "version": 1, "shard": "1/2", "listed": { "core": listed }, "items": {},
+        "owners": { "core": [owned_by(1, 2)] },
+    });
+    first["items"][owned_by(1, 2)] = item();
+    let errored = json!({
+        "version": 1, "shard": "2/2", "listed": { "core": [] }, "items": {},
+        "unmeasured": [{ "package": "core", "reason": "gate-failed",
+                         "detail": "the gate errored", "items": [] }],
+    });
+    let files = [("1.json".into(), first), ("2.json".into(), errored)];
+    let merged = merge(&files, 2, &packages()).unwrap();
+    let named: Vec<Unmeasured> = unmeasured::read(&merged)
+        .unwrap()
+        .into_iter()
+        .filter(|e| !e.items.is_empty())
+        .collect();
+    assert_eq!(named.len(), 1);
+    assert_eq!(named[0].reason, Reason::GateFailed);
+    assert_eq!(named[0].items, [owned_by(2, 2)]);
+}
+
+#[test]
+fn an_ungated_event_counts_an_item_a_file_marks_imported_as_imported() {
+    let imported = json!({
+        "version": 1, "imported": "bench",
+        "items": { "bench::x": { "imported": "bench", "walltime": { "median_ns": 5.0 } } },
+    });
+    let event = ungated("push", &[]);
+    let merged = merge_on(&[("i.json".into(), imported)], 1, &[], Some(&event)).unwrap();
+    let entry = &unmeasured::read(&merged).unwrap()[0];
+    assert_eq!(
+        entry.except_imported.as_deref(),
+        Some(&["bench".to_string()][..])
+    );
+    assert!(!entry.names("bench::y"));
 }
 
 /// Checks one claim on `core::f0` against `merged`, as an edited claim:

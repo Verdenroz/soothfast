@@ -401,13 +401,95 @@ fn a_filtered_save_keeps_the_unfiltered_numbers() {
 }
 
 #[test]
-fn a_save_of_an_id_another_package_owns_is_refused() {
+fn a_save_of_an_id_another_package_owns_drops_it_as_ambiguous() {
     let root = stale("duplicate-id", &[("a", &["soothfast::same"])]);
     let scope = invoke::SaveScope::BenchFull(Some("b".into()));
-    let err = save_ids(&root, &["soothfast::same"], scope).unwrap_err();
-    assert!(err.to_string().contains("listed by both a and b"));
+    save_ids(&root, &["soothfast::same"], scope).unwrap();
+    assert!(kept(&root).is_empty());
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
     assert_eq!(unmeasured::owned_by(&doc, "a"), ["soothfast::same"]);
-    assert_eq!(doc["items"]["soothfast::same"]["alloc"]["allocs"], 1);
+    assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::same"]);
+    let Reading::Decided(Outcome::Failed(why)) =
+        reading(&root, "soothfast::same.alloc.allocs <= 1")
+    else {
+        panic!("a claim on an ambiguous id must fail");
+    };
+    assert!(why.contains("measured by both a and b; a claim on it is ambiguous"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_full_save_into_a_baseline_with_no_owners_replaces_its_bench_items() {
+    let root = scratch("legacy-full-save");
+    let legacy = json!({ "version": 1, "items": {
+        "core::old_name": { "alloc": { "allocs": 1, "bytes": 8 } },
+        "jmh::kept": { "imported": "jmh", "walltime": { "median_ns": 5.0 } },
+    } });
+    invoke::write_baseline_in(&root, "head", &legacy).unwrap();
+    let scope = invoke::SaveScope::BenchFull(Some("core".into()));
+    save_ids(&root, &["soothfast::new_name"], scope).unwrap();
+    assert_eq!(kept(&root), ["jmh::kept", "soothfast::new_name"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_failed_filtered_gate_drops_and_names_only_the_filtered_ids() {
+    let root = stale(
+        "filtered-failure",
+        &[("core", &["soothfast::parse_fast", "soothfast::other"])],
+    );
+    let common = CommonArgs {
+        filter: Some("parse".into()),
+        ..core()
+    };
+    save_head(
+        &root,
+        "head",
+        &Run::default(),
+        &HeadRun::Measured,
+        &common,
+        None,
+        1,
+    )
+    .unwrap();
+    assert_eq!(kept(&root), ["soothfast::other"]);
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(
+        unmeasured::read(&doc).unwrap()[0].items,
+        ["soothfast::parse_fast"]
+    );
+    assert_eq!(
+        unmeasured::owned_by(&doc, "core"),
+        ["soothfast::parse_fast", "soothfast::other"]
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_buildcost_save_needs_no_package() {
+    let root = scratch("buildcost-save");
+    let common = CommonArgs {
+        backend: Some("buildcost".into()),
+        ..CommonArgs::default()
+    };
+    let run = run_of(vec![("buildcost::core::default", item(None))]);
+    assert!(save_head(&root, "head", &run, &HeadRun::Measured, &common, None, 0).is_ok());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_config_error_still_has_the_save_s_package_to_mark() {
+    let mut common = CommonArgs::default();
+    let only = |_: &CommonArgs| Ok(vec!["core".to_string()]);
+    let configured = configure_save(&mut common, true, only, |c| {
+        assert_eq!(c.pkg.as_deref(), Some("core"));
+        Err::<(), _>("bad soothfast.toml".to_string())
+    });
+    assert_eq!(configured, Ok(Err("bad soothfast.toml".into())));
+    let root = scratch("config-error");
+    save_errored(&root, "head", &common, None, "bad soothfast.toml").unwrap();
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    let entries = unmeasured::read(&doc).unwrap();
+    assert!(entries[0].package == "core" && entries[0].reason == Reason::GateFailed);
     let _ = std::fs::remove_dir_all(&root);
 }

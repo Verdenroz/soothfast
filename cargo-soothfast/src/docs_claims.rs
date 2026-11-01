@@ -132,7 +132,12 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
             .filter(|u| u.covers(item, backend, metric))
             .collect();
         if covering.is_empty() {
-            return Reading::Decided(Outcome::Failed(with_unnamed(e, entries)));
+            let owned = unmeasured::owned(baseline).contains(item.as_str());
+            let e = if owned { e } else { with_unnamed(e, entries) };
+            return Reading::Decided(Outcome::Failed(e));
+        }
+        if let Some(u) = covering.iter().find(|u| u.reason == Reason::AmbiguousId) {
+            return Reading::Decided(Outcome::Failed(u.detail.clone()));
         }
         for u in covering {
             first.get_or_insert(u.reason);
@@ -150,8 +155,9 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
     }
 }
 
-/// `e`, with every entry that names no item said beside it: a gate that
-/// failed with no listing is the likely reason a claim has no number.
+/// `e` for a claim on an item no package owns, with every entry that names
+/// no item said beside it as possibly related: a gate that failed with no
+/// listing may be why the item has no number, but nothing proves it.
 fn with_unnamed(e: String, entries: &[Unmeasured]) -> String {
     let unnamed: Vec<String> = entries
         .iter()
@@ -161,7 +167,7 @@ fn with_unnamed(e: String, entries: &[Unmeasured]) -> String {
     if unnamed.is_empty() {
         e
     } else {
-        format!("{e}; {}", unnamed.join("; "))
+        format!("{e}; possibly related: {}", unnamed.join("; "))
     }
 }
 

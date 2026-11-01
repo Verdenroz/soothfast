@@ -128,7 +128,9 @@ pub fn read(format: &str, file: &str, prefix: Option<&str>) -> Result<(Run, Stri
 }
 
 /// The id prefixes of every imported project `soothfast.toml` under `root`
-/// configures: its own `prefix`, else its format's.
+/// configures: its own `prefix`, else its format's. A prefix that is also a
+/// crate or bench target name of the cargo workspace there is an error,
+/// since its ids could not be told from that crate's.
 pub fn configured_prefixes(root: &std::path::Path) -> Result<Vec<String>, String> {
     let mut prefixes = Vec::new();
     for project in crate::init::manifest(root)? {
@@ -140,7 +142,36 @@ pub fn configured_prefixes(root: &std::path::Path) -> Result<Vec<String>, String
             None => Format::parse(&bench.from)?.default_prefix().to_string(),
         });
     }
+    if root.join("Cargo.toml").is_file() {
+        let meta = crate::workspace::metadata(Some(root), true).map_err(|e| e.to_string())?;
+        clashing_prefix(&prefixes, &meta)?;
+    }
     Ok(prefixes)
+}
+
+/// Refuse an import prefix equal to a package or target name in `meta`.
+fn clashing_prefix(prefixes: &[String], meta: &Value) -> Result<(), String> {
+    let packages = meta["packages"].as_array().into_iter().flatten();
+    let names: std::collections::BTreeSet<String> = packages
+        .flat_map(|p| {
+            let targets = p["targets"].as_array().into_iter().flatten();
+            std::iter::once(&p["name"]).chain(targets.map(|t| &t["name"]))
+        })
+        .filter_map(|n| n.as_str().map(|n| n.replace('-', "_")))
+        .collect();
+    for prefix in prefixes {
+        let head = prefix
+            .split("::")
+            .next()
+            .unwrap_or(prefix)
+            .replace('-', "_");
+        if names.contains(&head) {
+            return Err(format!(
+                "import prefix {prefix:?} is also a crate or bench target name in this workspace; give the import a distinct prefix"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The run in the baseline file shape.

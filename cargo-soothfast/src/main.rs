@@ -155,8 +155,8 @@ commands:
            package no file accounts for as not-gated-on-event; exits 2 on a
            corrupt file, 3 on a file from another split)
   baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]
-           (lists every item of PKG's bench binary as unmeasured for REASON,
-           e.g. no-parent, for a leg that ran no gate to save it)
+           (marks PKG unmeasured for REASON, naming the items its bench binary
+           lists when it builds; fails when it cannot list them)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE

@@ -54,6 +54,22 @@ pub fn save_package(
     }
 }
 
+/// Resolve a non-buildcost save's package into `common`, then `configure`
+/// it, so a config error still has a package to mark. The outer error is the
+/// package's, the inner one the config's.
+pub fn configure_save<T>(
+    common: &mut CommonArgs,
+    saving: bool,
+    crates: impl FnOnce(&CommonArgs) -> Result<Vec<String>, String>,
+    configure: impl FnOnce(&mut CommonArgs) -> Result<T, String>,
+) -> Result<Result<T, String>, String> {
+    if saving && common.backend.as_deref() != Some("buildcost") {
+        let pkg = save_package(common, || crates(common))?;
+        common.pkg = Some(pkg);
+    }
+    Ok(configure(common))
+}
+
 /// The workspace's bench packages for `common`'s bench target.
 pub fn bench_packages(common: &CommonArgs) -> Result<Vec<String>, String> {
     workspace::bench_crates(common.target.as_deref().unwrap_or("soothfast"), None)
@@ -71,10 +87,13 @@ pub fn save_head(
     listed: Option<&[String]>,
     failures: u32,
 ) -> Result<(), String> {
-    let Some(package) = common.pkg.as_deref() else {
-        return Err("--save-baseline needs -p PKG".into());
+    let buildcost = common.backend.as_deref() == Some("buildcost");
+    let package = match common.pkg.as_deref() {
+        Some(pkg) => pkg,
+        None if buildcost => "",
+        None => return Err("--save-baseline needs -p PKG".into()),
     };
-    if failures > 0 && common.backend.as_deref() == Some("buildcost") {
+    if failures > 0 && buildcost {
         eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
         return Ok(());
     }
@@ -155,9 +174,13 @@ pub fn mark_package(
     let prior = invoke::load_baseline_in(root, name)
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
-    let items = match listed {
+    let filter = common.filter.as_deref();
+    let items: Vec<String> = match listed {
         Some(ids) => owned_here(common, ids),
-        None => unmeasured::owned_by(&prior, package),
+        None => unmeasured::owned_by(&prior, package)
+            .into_iter()
+            .filter(|id| filter.is_none_or(|f| id.contains(f)))
+            .collect(),
     };
     let detail = match (&items[..], listed) {
         ([], None) => format!("{detail}, and no listing was available to name {package}'s items"),
@@ -165,7 +188,7 @@ pub fn mark_package(
     };
     let entry = unmeasured::entry(package, reason, &detail, &[], items);
     report(name, std::slice::from_ref(&entry));
-    unmeasured::mark_in(root, name, std::slice::from_ref(&entry))?;
+    unmeasured::mark_in(root, name, std::slice::from_ref(&entry), filter.is_none())?;
     stamp(root, name, common, listed.unwrap_or_default())
 }
 

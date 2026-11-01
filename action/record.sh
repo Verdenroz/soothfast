@@ -17,7 +17,7 @@ if ! git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
     for pkg in "${pkgs[@]}"; do
       "$CLI" baseline mark --into "$SAVE_BASELINE" -p "$pkg" --reason no-parent \
         --detail "HEAD has no parent to gate ${pkg} against" "${features[@]}" ||
-        echo "::warning::could not list ${pkg}'s items as no-parent"
+        echo "::warning::could not list ${pkg}'s items, so its claims will fail rather than read not evaluated"
     done
   fi
   exit 0

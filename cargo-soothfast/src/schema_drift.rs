@@ -113,7 +113,7 @@ fn shard_baseline() -> Value {
         &["walltime"],
         ids.to_vec(),
     );
-    unmeasured::mark_in(&root, "head", &[reused]).unwrap();
+    unmeasured::mark_in(&root, "head", &[reused], true).unwrap();
     let shard = crate::invoke::Shard { index: 1, count: 2 };
     let ungated = unmeasured::Unmeasured {
         package: "cargo".into(),

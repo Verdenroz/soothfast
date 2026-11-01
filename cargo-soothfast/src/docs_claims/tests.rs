@@ -90,6 +90,34 @@ fn a_failed_package_with_no_listing_has_its_claims_fail_saying_so() {
     assert!(why.contains("gate-failed") && why.contains("no listing"));
 }
 
+#[test]
+fn a_nameless_entry_is_said_as_possibly_related_only_for_an_unowned_item() {
+    let mut b = baseline(&[entry(Reason::GateFailed, &[], &[])]);
+    b["owners"] = json!({ "core": ["core::owned"] });
+    let Reading::Decided(Outcome::Failed(unowned)) = read("core::x.alloc.allocs <= 0", &b) else {
+        panic!("a claim on an unowned item fails");
+    };
+    assert!(unowned.contains("possibly related: core (gate-failed)"));
+    let Reading::Decided(Outcome::Failed(owned)) = read("core::owned.alloc.allocs <= 0", &b) else {
+        panic!("a claim on an owned item with no number fails");
+    };
+    assert!(!owned.contains("possibly related"));
+}
+
+#[test]
+fn a_claim_on_an_ambiguous_id_fails_naming_both_packages() {
+    let mut ambiguous = entry(Reason::AmbiguousId, &["core::measured"], &[]);
+    ambiguous.detail =
+        "item id core::measured is measured by both a and b; a claim on it is ambiguous".into();
+    let mut b = baseline(&[ambiguous]);
+    b["items"].as_object_mut().unwrap().remove("core::measured");
+    let Reading::Decided(Outcome::Failed(why)) = read("core::measured.alloc.allocs <= 0", &b)
+    else {
+        panic!("an ambiguous claim fails");
+    };
+    assert!(why.contains("measured by both a and b"));
+}
+
 /// A merged baseline of an ungated event, holding one measured import.
 fn ungated_baseline() -> Value {
     let mut ungated = entry(Reason::NotGatedOnEvent, &[], &[]);

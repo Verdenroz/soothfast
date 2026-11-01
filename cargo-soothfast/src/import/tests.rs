@@ -370,3 +370,16 @@ fn the_cli_names_each_format() {
     }
     assert!(Format::parse("criterion").is_err());
 }
+
+#[test]
+fn an_import_prefix_naming_a_workspace_crate_or_bench_target_is_refused() {
+    let meta = json!({ "packages": [{
+        "name": "my-core",
+        "targets": [{ "name": "my_core" }, { "name": "soothfast" }],
+    }]});
+    for clash in ["my_core", "my-core::sub", "soothfast"] {
+        let err = clashing_prefix(&[clash.into()], &meta).unwrap_err();
+        assert!(err.contains("distinct prefix"), "{clash}: {err}");
+    }
+    assert!(clashing_prefix(&["jmh".into()], &meta).is_ok());
+}

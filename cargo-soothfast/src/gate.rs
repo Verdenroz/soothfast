@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::buildstamp;
 use crate::gate_config;
 use crate::gate_lock;
-use crate::gate_save::{HeadRun, bench_packages, save_errored, save_head, save_package};
+use crate::gate_save::{HeadRun, bench_packages, configure_save, save_errored, save_head};
 use crate::headrun::{
     self, RECOUNT, Settled, binary_digest, cache_head, cache_head_doc, head_from_runcache, ref_doc,
     settle, settled_doc,
@@ -194,16 +194,13 @@ pub fn run(args: &[String]) -> i32 {
     if g.import.current.is_some() {
         return run_imported(&g, &invoke::project_root());
     }
-    let walltime_advisory = match gate_config::apply(&mut g.common) {
-        Ok(cfg) => cfg.walltime_advisory,
-        Err(e) => return errored_unbuilt(&g, &e),
+    let saving = g.save_baseline.is_some();
+    let configured = configure_save(&mut g.common, saving, bench_packages, gate_config::apply);
+    let walltime_advisory = match configured {
+        Ok(Ok(cfg)) => cfg.walltime_advisory,
+        Ok(Err(e)) => return errored_unbuilt(&g, &e),
+        Err(e) => return err(&e),
     };
-    if g.save_baseline.is_some() && g.common.backend.as_deref() != Some("buildcost") {
-        match save_package(&g.common, || bench_packages(&g.common)) {
-            Ok(pkg) => g.common.pkg = Some(pkg),
-            Err(e) => return err(&e),
-        }
-    }
     if let Some(shard) = g.common.shard {
         println!("gate: shard {shard}: gating the items it owns");
     }

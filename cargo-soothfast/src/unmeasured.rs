@@ -3,7 +3,7 @@
 //! typed reason. `docs check` reports an unchanged claim on one "not
 //! evaluated" and fails a new or edited one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::Path;
 
@@ -37,9 +37,13 @@ pub enum Reason {
     /// Read from baselines older writers left: HEAD's run came from the run
     /// cache. Never written.
     StoredRun,
+    /// Two packages' binaries both list the item id, so its number cannot be
+    /// told apart. A claim on it fails, unchanged or not.
+    AmbiguousId,
 }
 
-const REASONS: [Reason; 9] = [
+const REASONS: [Reason; 10] = [
+    Reason::AmbiguousId,
     Reason::IdenticalBinaries,
     Reason::ReusedWalltime,
     Reason::ShardMissing,
@@ -63,6 +67,7 @@ impl Reason {
             Reason::ClaimsSkipped => "claims-skipped",
             Reason::NotGatedOnEvent => "not-gated-on-event",
             Reason::StoredRun => "stored-run",
+            Reason::AmbiguousId => "ambiguous-id",
         }
     }
 
@@ -206,31 +211,64 @@ pub fn owned_by(doc: &Value, package: &str) -> Vec<String> {
         .collect()
 }
 
-/// Record in `doc` that `package` owns `ids`, refusing an id another package
-/// already owns: one package's numbers must never replace another's.
-pub fn set_owners(doc: &mut Value, package: &str, ids: &[String]) -> Result<(), String> {
-    for (other, owned) in doc[OWNERS_KEY].as_object().into_iter().flatten() {
-        if other == package {
-            continue;
-        }
-        let owned = owned.as_array().into_iter().flatten();
-        if let Some(id) = owned
-            .filter_map(Value::as_str)
-            .find(|id| ids.iter().any(|i| i == id))
-        {
-            return Err(duplicate(id, other, package));
-        }
-    }
+/// Record in `doc` that `package` owns `ids`.
+pub fn set_owners(doc: &mut Value, package: &str, ids: &[String]) {
     if !doc[OWNERS_KEY].is_object() {
         doc[OWNERS_KEY] = json!({});
     }
     doc[OWNERS_KEY][package] = json!(ids);
-    Ok(())
 }
 
-/// The refusal for an item id two packages both list.
-pub fn duplicate(id: &str, a: &str, b: &str) -> String {
-    format!("item id {id} is listed by both {a} and {b}; give one a distinct name")
+/// Every item some package of baseline `doc` owns.
+pub fn owned(doc: &Value) -> BTreeSet<String> {
+    doc[OWNERS_KEY]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .flat_map(|(_, ids)| ids.as_array().into_iter().flatten())
+        .filter_map(|id| id.as_str().map(str::to_string))
+        .collect()
+}
+
+/// Recompute, from `doc`'s current owners, the ids two packages both list:
+/// their numbers are dropped, since nothing says whose they are, and each
+/// gets an `ambiguous-id` entry. Each package keeps its owners, so an id
+/// stops being ambiguous once one of them saves without it.
+pub fn settle_ambiguity(doc: &mut Value) {
+    let mut listers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (package, ids) in doc[OWNERS_KEY].as_object().into_iter().flatten() {
+        for id in ids
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            listers
+                .entry(id.to_string())
+                .or_default()
+                .push(package.clone());
+        }
+    }
+    if let Some(entries) = doc.get_mut("unmeasured").and_then(Value::as_array_mut) {
+        entries.retain(|e| e["reason"].as_str() != Some(Reason::AmbiguousId.as_str()));
+    }
+    let ambiguous: Vec<(String, Vec<String>)> =
+        listers.into_iter().filter(|(_, p)| p.len() > 1).collect();
+    if ambiguous.is_empty() {
+        return;
+    }
+    drop_items(doc, &ambiguous.iter().map(|(id, _)| id.clone()).collect());
+    let entries: Vec<Unmeasured> = ambiguous
+        .into_iter()
+        .map(|(id, packages)| {
+            let detail = format!(
+                "item id {id} is measured by both {}; a claim on it is ambiguous",
+                packages.join(" and ")
+            );
+            entry(&packages[0], Reason::AmbiguousId, &detail, &[], vec![id])
+        })
+        .collect();
+    let _ = append(doc, &entries);
 }
 
 /// One entry of `package` for `items`, lacking `metrics`.
@@ -261,29 +299,37 @@ pub fn drop_items(doc: &mut Value, ids: &BTreeSet<String>) {
     }
 }
 
-/// Record that the packages of `entries` saved no numbers at all. Each one's
-/// prior `owners` and the items its entry names are dropped from baseline
-/// `name` under `root`, and the entry's items become its owners.
-pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured]) -> Result<(), String> {
+/// Record that the packages of `entries` saved no numbers. With `whole`,
+/// each one's prior `owners` and the items its entry names are dropped from
+/// baseline `name` under `root`, and the entry's items become its owners.
+/// Without, as for a filtered gate, only the named items are dropped, and
+/// the package's other owners and numbers stay.
+pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> Result<(), String> {
     let mut doc = invoke::load_baseline_in(root, name)
         .map_err(|e| e.to_string())?
         .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let mut gone: BTreeSet<String> = BTreeSet::new();
     for e in entries {
-        gone.extend(owned_by(&doc, &e.package));
         gone.extend(e.items.iter().cloned());
+        if !whole {
+            continue;
+        }
+        gone.extend(owned_by(&doc, &e.package));
         if e.items.is_empty() {
             if let Some(owners) = doc.get_mut(OWNERS_KEY).and_then(Value::as_object_mut) {
                 owners.remove(&e.package);
             }
         } else {
-            set_owners(&mut doc, &e.package, &e.items)?;
+            set_owners(&mut doc, &e.package, &e.items);
         }
     }
     drop_items(&mut doc, &gone);
-    let packages: Vec<&str> = entries.iter().map(|e| e.package.as_str()).collect();
-    clear_entries(&mut doc, |p| packages.contains(&p));
+    if whole {
+        let packages: Vec<&str> = entries.iter().map(|e| e.package.as_str()).collect();
+        clear_entries(&mut doc, |p| packages.contains(&p));
+    }
     append(&mut doc, entries).map_err(|e| e.to_string())?;
+    settle_ambiguity(&mut doc);
     invoke::write_baseline_in(root, name, &doc).map_err(|e| e.to_string())
 }
 
@@ -414,7 +460,7 @@ mod tests {
             &[],
             ids(&["soothfast::a"]),
         );
-        mark_in(&root, "head", &[fresh]).unwrap();
+        mark_in(&root, "head", &[fresh], true).unwrap();
         let marked = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
         assert_eq!(marked["unmeasured"].as_array().unwrap().len(), 1);
         assert!(legacy_note(&marked, "head").is_none());
@@ -456,7 +502,7 @@ mod tests {
         });
         invoke::write_baseline_in(&root, "head", &doc).unwrap();
         let failed = entry("a", Reason::GateFailed, "failed", &[], Vec::new());
-        mark_in(&root, "head", &[failed]).unwrap();
+        mark_in(&root, "head", &[failed], true).unwrap();
         let marked = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
         let kept: Vec<&String> = marked["items"].as_object().unwrap().keys().collect();
         assert_eq!(kept, ["jmh::c", "soothfast::b_item"]);
@@ -467,11 +513,20 @@ mod tests {
     }
 
     #[test]
-    fn an_id_two_packages_list_is_refused() {
-        let mut doc = json!({ "owners": { "a": ["soothfast::same"] } });
-        let err = set_owners(&mut doc, "b", &ids(&["soothfast::same"])).unwrap_err();
-        assert!(err.contains("listed by both a and b"));
-        assert_eq!(owned_by(&doc, "a"), ["soothfast::same"]);
-        assert!(set_owners(&mut doc, "a", &ids(&["soothfast::same", "soothfast::new"])).is_ok());
+    fn an_id_two_packages_list_is_ambiguous_until_one_lists_it_no_more() {
+        let mut doc = json!({
+            "items": { "soothfast::bench_parse": { "alloc": { "allocs": 1, "bytes": 8 } } },
+            "owners": { "a": ["soothfast::bench_parse"] },
+        });
+        set_owners(&mut doc, "b", &ids(&["soothfast::bench_parse"]));
+        settle_ambiguity(&mut doc);
+        assert_eq!(doc["items"], json!({}));
+        assert_eq!(owned_by(&doc, "a"), ["soothfast::bench_parse"]);
+        let entries = read(&doc).unwrap();
+        assert_eq!(entries[0].reason, Reason::AmbiguousId);
+        assert!(entries[0].detail.contains("measured by both a and b"));
+        set_owners(&mut doc, "b", &[]);
+        settle_ambiguity(&mut doc);
+        assert!(read(&doc).unwrap().is_empty());
     }
 }
