@@ -23,7 +23,7 @@ fn baseline(entries: &[Unmeasured]) -> Value {
 }
 
 fn read(expr: &str, b: &Value) -> Reading {
-    evaluate(expr, b, &unmeasured::read(b).unwrap())
+    Against::new(b).unwrap().evaluate(expr)
 }
 
 #[test]

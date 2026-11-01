@@ -41,6 +41,7 @@ fn full_item() -> ItemMetrics {
         build_ms: None,
         size_bytes: None,
         imported: Some("ext".into()),
+        pkg: Some("pkg".into()),
         reused: Some(Reused {
             from: "item cache".into(),
             metrics: vec!["callgrind"],

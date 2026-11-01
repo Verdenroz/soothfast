@@ -330,7 +330,7 @@ pub fn run(args: &[String]) -> i32 {
             .and_then(|root| {
                 let listed = exe
                     .as_deref()
-                    .and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
+                    .and_then(|exe| crate::ownership::listed_owned(exe, &g.common));
                 let listed = listed.as_deref();
                 save_head(&root, name, &current, &head, &g.common, listed, failures)
             });
@@ -2082,7 +2082,7 @@ fn errored(g: &GateArgs, exe: Option<&std::path::Path>, msg: &str) -> i32 {
         let exe = exe
             .map(std::path::Path::to_path_buf)
             .or_else(|| invoke::bench_executable(&g.common, None, None));
-        let listed = exe.and_then(|exe| invoke::listed_ids(&exe, g.common.filter.as_deref()));
+        let listed = exe.and_then(|exe| crate::ownership::listed_owned(&exe, &g.common));
         errored_at(&root, name, &g.common, listed.as_deref(), msg);
     }
     err(msg)

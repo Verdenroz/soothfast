@@ -11,6 +11,7 @@ use std::path::Path;
 use crate::baseline_merge;
 use crate::headrun;
 use crate::invoke::{self, CommonArgs, Reused, Run};
+use crate::ownership;
 use crate::unmeasured::{self, Reason, Unmeasured};
 use crate::workspace;
 
@@ -88,10 +89,8 @@ pub fn save_head(
     failures: u32,
 ) -> Result<(), String> {
     let buildcost = common.backend.as_deref() == Some("buildcost");
-    let package = match common.pkg.as_deref() {
-        Some(pkg) => pkg,
-        None if buildcost => "",
-        None => return Err("--save-baseline needs -p PKG".into()),
+    let Some(package) = common.pkg.as_deref() else {
+        return Err("--save-baseline needs -p PKG".into());
     };
     if failures > 0 && buildcost {
         eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
@@ -112,7 +111,8 @@ pub fn save_head(
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
-    let (run, entries) = baseline_material(current, source, package);
+    let owned = ownership::for_save(current, common);
+    let (run, entries) = baseline_material(&owned, source, package);
     let scope = invoke::SaveScope::of(common);
     let path = invoke::save_baseline_in(root, name, &run, scope).map_err(|e| e.to_string())?;
     unmeasured::append_in(root, name, &entries).map_err(|e| e.to_string())?;

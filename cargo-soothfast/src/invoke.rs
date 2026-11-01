@@ -560,16 +560,39 @@ fn shard_ids(
 /// Every item id `exe` lists under `filter`, whichever shard owns it, listed
 /// once per binary.
 pub fn listed_ids(exe: &Path, filter: Option<&str>) -> Option<Vec<String>> {
+    Some(
+        listing(exe, filter)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect(),
+    )
+}
+
+/// A listed item's id, and the package that registered it when the runner
+/// says.
+pub type Listed = (String, Option<String>);
+
+/// [`listed_ids`] with each item's registering package.
+pub fn listing(exe: &Path, filter: Option<&str>) -> Option<Vec<Listed>> {
     type Key = (PathBuf, Option<String>);
-    static LISTED: OnceLock<Mutex<HashMap<Key, Vec<String>>>> = OnceLock::new();
+    static LISTED: OnceLock<Mutex<HashMap<Key, Vec<Listed>>>> = OnceLock::new();
     let mut memo = LISTED.get_or_init(Default::default).lock().ok()?;
     let key = (exe.to_path_buf(), filter.map(str::to_string));
-    if let Some(ids) = memo.get(&key) {
-        return Some(ids.clone());
+    if let Some(listed) = memo.get(&key) {
+        return Some(listed.clone());
     }
-    let ids: Vec<String> = list_items(exe, filter)?.into_keys().collect();
-    memo.insert(key, ids.clone());
-    Some(ids)
+    let listed: Vec<Listed> = item_records(exe, filter)?
+        .iter()
+        .filter(|v| v["fingerprint"].is_string())
+        .filter_map(|v| {
+            let id = v["id"].as_str()?.to_string();
+            Some((id, v["pkg"].as_str().map(str::to_string)))
+        })
+        .collect::<BTreeMap<_, _>>()
+        .into_iter()
+        .collect();
+    memo.insert(key, listed.clone());
+    Some(listed)
 }
 
 /// Path of the compiled bench executable, from the binary store or else via
@@ -667,6 +690,21 @@ pub fn host_env(exe: &Path, backend: Option<&str>) -> Result<HostEnv, String> {
 /// The items `exe` registers with their fingerprints, narrowed by `filter`
 /// the way a run is.
 pub fn list_items(exe: &Path, filter: Option<&str>) -> Option<BTreeMap<String, String>> {
+    Some(
+        item_records(exe, filter)?
+            .iter()
+            .filter_map(|v| {
+                Some((
+                    v["id"].as_str()?.to_string(),
+                    v["fingerprint"].as_str()?.to_string(),
+                ))
+            })
+            .collect(),
+    )
+}
+
+/// The `item` records of `exe --list --json` under `filter`.
+fn item_records(exe: &Path, filter: Option<&str>) -> Option<Vec<Value>> {
     let mut cmd = Command::new(exe);
     cmd.args(["--list", "--json"]);
     if let Some(f) = filter {
@@ -678,12 +716,6 @@ pub fn list_items(exe: &Path, filter: Option<&str>) -> Option<BTreeMap<String, S
             .lines()
             .filter_map(|l| serde_json::from_str::<Value>(l).ok())
             .filter(|v| v["type"] == "item")
-            .filter_map(|v| {
-                Some((
-                    v["id"].as_str()?.to_string(),
-                    v["fingerprint"].as_str()?.to_string(),
-                ))
-            })
             .collect(),
     )
 }
@@ -717,6 +749,8 @@ pub struct ItemMetrics {
     pub reused: Option<Reused>,
     /// Id prefix of the `import` that produced this item.
     pub imported: Option<String>,
+    /// Package whose code registered the item, when the runner says.
+    pub pkg: Option<String>,
 }
 
 /// One assertion verdict from the runner.
@@ -806,6 +840,9 @@ pub fn collect(records: &[Value]) -> Run {
                 if let Some(c) = rec["covers"].as_str() {
                     item.covers = c.to_string();
                 }
+                if let Some(p) = rec["pkg"].as_str() {
+                    item.pkg = Some(p.to_string());
+                }
                 if let Some(t) = rec["tolerance_pct"].as_f64() {
                     item.tolerance_pct = Some(t);
                 }
@@ -889,6 +926,9 @@ pub fn run_to_items_value(run: &Run) -> Value {
         if let Some(prefix) = &m.imported {
             entry["imported"] = json!(prefix);
         }
+        if let Some(pkg) = &m.pkg {
+            entry["pkg"] = json!(pkg);
+        }
         items.insert(id.clone(), entry);
     }
     Value::Object(items)
@@ -931,6 +971,7 @@ pub fn run_from_items_value(items: &Value) -> Run {
                 size_bytes: v["buildcost"]["size_bytes"].as_u64(),
                 reused: None,
                 imported: v["imported"].as_str().map(String::from),
+                pkg: v["pkg"].as_str().map(String::from),
             },
         );
     }
@@ -1116,15 +1157,16 @@ pub fn save_baseline_in(
         crate::unmeasured::clear(&mut doc, pkg.as_deref());
     }
 
-    crate::unmeasured::settle_ambiguity(&mut doc);
+    crate::unmeasured::settle_ambiguity(&mut doc)?;
     write_baseline_in(root, name, &doc)?;
     prune_absorbed_accepts(root, run);
     Ok(baseline_path(root, name))
 }
 
 /// For a `-p` bench save, record in `doc` that the package owns what `run`
-/// measured, and return what it owned before, which a full save replaces. A
-/// filtered save adds to its owners and replaces nothing beyond its own ids.
+/// measured, and return what it owned before and no other package owns,
+/// which a full save replaces. A filtered save adds to its owners and
+/// replaces nothing beyond its own ids.
 fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTreeSet<String>> {
     let (pkg, full) = match scope {
         SaveScope::BenchFull(Some(pkg)) => (pkg, true),
@@ -1157,8 +1199,15 @@ fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTr
             .map(|(id, _)| id.clone()),
     );
     let owned: Vec<String> = owned.into_iter().collect();
+    let others = crate::unmeasured::owned_by_others(doc, pkg);
     crate::unmeasured::set_owners(doc, pkg, &owned);
-    Ok(if full { prior } else { BTreeSet::new() })
+    if !full {
+        return Ok(BTreeSet::new());
+    }
+    Ok(prior
+        .into_iter()
+        .filter(|id| !others.contains(id))
+        .collect())
 }
 
 /// Write `doc` as baseline `name` under `root`.
@@ -2370,6 +2419,7 @@ mod tests {
                 size_bytes: None,
                 reused: None,
                 imported: Some("jmh".into()),
+                pkg: Some("pkg".into()),
             },
         );
         let round_tripped = run_from_items_value(&run_to_items_value(&run));
@@ -2381,6 +2431,7 @@ mod tests {
         assert_eq!(back.mad_ns, original.mad_ns);
         assert_eq!(back.p99_ns, original.p99_ns);
         assert_eq!(back.imported, original.imported);
+        assert_eq!(back.pkg, original.pkg);
         assert_eq!(back.wall_rounds, original.wall_rounds);
         assert_eq!(back.instructions, original.instructions);
         assert_eq!(back.cycles, original.cycles);

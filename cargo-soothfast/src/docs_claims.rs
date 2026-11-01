@@ -47,10 +47,7 @@ pub fn check(
     if let Some(note) = baseline.and_then(|b| unmeasured::legacy_note(b, "the docs baseline")) {
         println!("docs check: {note}");
     }
-    let entries = baseline
-        .map(unmeasured::read)
-        .transpose()?
-        .unwrap_or_default();
+    let against = baseline.map(Against::new).transpose()?;
     let mut unchanged = Some(unchanged);
     let mut base: Option<Claims> = None;
     let mut failures = 0u32;
@@ -58,8 +55,8 @@ pub fn check(
     for (file, doc) in docs {
         for cm in &doc.claims {
             let at = format!("{file}:{} claim `{}`", cm.line, cm.expr);
-            let reading = match baseline {
-                Some(b) => evaluate(&cm.expr, b, &entries),
+            let reading = match &against {
+                Some(a) => a.evaluate(&cm.expr),
                 None => Reading::Decided(Outcome::NotEvaluated(
                     Reason::ClaimsSkipped,
                     "docs check ran with --skip-claims".into(),
@@ -107,51 +104,74 @@ pub fn check(
     Ok(failures)
 }
 
-/// One claim against `baseline` and its `unmeasured` entries.
-pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading {
-    let claim = match claims::parse(expr) {
-        Ok(c) => c,
-        Err(e) => return Reading::Decided(Outcome::Failed(e)),
-    };
-    let e = match claims::evaluate(&claim, baseline) {
-        Ok((true, actual)) => return Reading::Decided(Outcome::Holds(actual)),
-        Ok((false, actual)) => return Reading::Decided(Outcome::Violated(actual)),
-        Err(e) => e,
-    };
-    let operands = std::iter::once((&claim.item, &claim.backend, &claim.metric))
-        .chain(claim.minus.iter().map(|m| (&m.item, &m.backend, &m.metric)));
-    let mut first: Option<Reason> = None;
-    let mut measurable: Option<Reason> = None;
-    let mut reasons = Vec::new();
-    for (item, backend, metric) in operands {
-        if baseline["items"][item][backend][metric].is_number() {
-            continue;
-        }
-        let covering: Vec<&Unmeasured> = entries
-            .iter()
-            .filter(|u| u.covers(item, backend, metric))
-            .collect();
-        if covering.is_empty() {
-            let owned = unmeasured::owned(baseline).contains(item.as_str());
-            let e = if owned { e } else { with_unnamed(e, entries) };
-            return Reading::Decided(Outcome::Failed(e));
-        }
-        if let Some(u) = covering.iter().find(|u| u.reason == Reason::AmbiguousId) {
+/// A baseline claims are read against, with its entries and owners read once.
+pub struct Against<'a> {
+    baseline: &'a Value,
+    entries: Vec<Unmeasured>,
+    owned: BTreeSet<String>,
+}
+
+impl<'a> Against<'a> {
+    pub fn new(baseline: &'a Value) -> Result<Against<'a>, String> {
+        Ok(Against {
+            baseline,
+            entries: unmeasured::read(baseline)?,
+            owned: unmeasured::owned(baseline),
+        })
+    }
+
+    /// One claim. An item two packages own fails before its number is read.
+    pub fn evaluate(&self, expr: &str) -> Reading {
+        let claim = match claims::parse(expr) {
+            Ok(c) => c,
+            Err(e) => return Reading::Decided(Outcome::Failed(e)),
+        };
+        let operands: Vec<(&String, &String, &String)> =
+            std::iter::once((&claim.item, &claim.backend, &claim.metric))
+                .chain(claim.minus.iter().map(|m| (&m.item, &m.backend, &m.metric)))
+                .collect();
+        let ambiguous = self.entries.iter().find(|u| {
+            u.reason == Reason::AmbiguousId && operands.iter().any(|(i, b, m)| u.covers(i, b, m))
+        });
+        if let Some(u) = ambiguous {
             return Reading::Decided(Outcome::Failed(u.detail.clone()));
         }
-        for u in covering {
-            first.get_or_insert(u.reason);
-            if u.reason.measurable_here() {
-                measurable.get_or_insert(u.reason);
+        let e = match claims::evaluate(&claim, self.baseline) {
+            Ok((true, actual)) => return Reading::Decided(Outcome::Holds(actual)),
+            Ok((false, actual)) => return Reading::Decided(Outcome::Violated(actual)),
+            Err(e) => e,
+        };
+        let mut first: Option<Reason> = None;
+        let mut measurable: Option<Reason> = None;
+        let mut reasons = Vec::new();
+        for (item, backend, metric) in operands {
+            if self.baseline["items"][item][backend][metric].is_number() {
+                continue;
             }
-            reasons.push(format!("{item}: {} ({})", u.detail, u.reason.as_str()));
+            let covering: Vec<&Unmeasured> = (self.entries.iter())
+                .filter(|u| u.covers(item, backend, metric))
+                .collect();
+            if covering.is_empty() {
+                let e = match self.owned.contains(item.as_str()) {
+                    true => e,
+                    false => with_unnamed(e, &self.entries),
+                };
+                return Reading::Decided(Outcome::Failed(e));
+            }
+            for u in covering {
+                first.get_or_insert(u.reason);
+                if u.reason.measurable_here() {
+                    measurable.get_or_insert(u.reason);
+                }
+                reasons.push(format!("{item}: {} ({})", u.detail, u.reason.as_str()));
+            }
         }
-    }
-    let why = reasons.join("; ");
-    match (measurable, first) {
-        (Some(reason), _) => Reading::Unmeasured(reason, why),
-        (None, Some(reason)) => Reading::Decided(Outcome::NotEvaluated(reason, why)),
-        (None, None) => Reading::Decided(Outcome::Failed(e)),
+        let why = reasons.join("; ");
+        match (measurable, first) {
+            (Some(reason), _) => Reading::Unmeasured(reason, why),
+            (None, Some(reason)) => Reading::Decided(Outcome::NotEvaluated(reason, why)),
+            (None, None) => Reading::Decided(Outcome::Failed(e)),
+        }
     }
 }
 

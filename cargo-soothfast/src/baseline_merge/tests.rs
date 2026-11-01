@@ -192,7 +192,9 @@ fn baseline_mark_on_a_broken_build_drops_the_old_numbers_and_still_fails() {
     assert_eq!(doc["items"], json!({}));
     let entries = unmeasured::read(&doc).unwrap();
     assert!(entries[0].items == ["core::a"] && entries[0].reason == Reason::NoParent);
-    let reading = crate::docs_claims::evaluate("core::a.alloc.allocs <= 0", &doc, &entries);
+    let reading = crate::docs_claims::Against::new(&doc)
+        .unwrap()
+        .evaluate("core::a.alloc.allocs <= 0");
     assert!(matches!(
         reading,
         crate::docs_claims::Reading::Decided(crate::docs_claims::Outcome::NotEvaluated(
@@ -200,7 +202,9 @@ fn baseline_mark_on_a_broken_build_drops_the_old_numbers_and_still_fails() {
             _
         ))
     ));
-    let unlisted = crate::docs_claims::evaluate("core::b.alloc.allocs <= 0", &doc, &entries);
+    let unlisted = crate::docs_claims::Against::new(&doc)
+        .unwrap()
+        .evaluate("core::b.alloc.allocs <= 0");
     assert!(matches!(
         unlisted,
         crate::docs_claims::Reading::Decided(crate::docs_claims::Outcome::Failed(_))
@@ -341,4 +345,25 @@ fn an_ungated_event_still_names_a_covered_package_s_missing_shard() {
     assert_eq!(entries[0].reason, Reason::ShardMissing);
     assert_eq!(entries[0].items, [owned_by(2, 3)]);
     assert_eq!(entries[1].reason, Reason::NotGatedOnEvent);
+}
+
+#[test]
+fn a_rust_id_an_import_also_holds_fails_naming_both_files() {
+    let rust = json!({ "items": { "jmh::a": item() }, "owners": { "core": ["jmh::a"] } });
+    let imported = json!({ "items": { "jmh::a": { "imported": "jmh" } } });
+    let files = [("rust.json".into(), rust), ("import.json".into(), imported)];
+    let Err(MergeError::Corrupt(why)) = merge(&files, 1, &packages()) else {
+        panic!("a colliding id must fail the merge");
+    };
+    assert!(
+        why.contains("import.json") && why.contains("rust.json"),
+        "{why}"
+    );
+}
+
+#[test]
+fn a_package_whose_listing_is_empty_is_accounted_for() {
+    let doc = json!({ "version": 1, "items": {}, "owners": { "core": [] } });
+    let merged = merge(&[("head.json".into(), doc)], 1, &packages()).unwrap();
+    assert!(unmeasured::read(&merged).unwrap().is_empty());
 }

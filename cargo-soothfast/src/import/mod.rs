@@ -119,18 +119,19 @@ pub fn parse(format: Format, text: &str, prefix: Option<&str>) -> Result<Run, St
 }
 
 /// Read and parse a result file named by its `--from` format, returning the
-/// run with the id prefix it used.
+/// run with the id prefix it used, once [`check_prefixes`] passes it.
 pub fn read(format: &str, file: &str, prefix: Option<&str>) -> Result<(Run, String), String> {
     let format = Format::parse(format)?;
+    let prefix = prefix.unwrap_or(format.default_prefix()).to_string();
+    check_prefixes(&invoke::project_root(), std::slice::from_ref(&prefix))?;
     let text = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
-    let run = parse(format, &text, prefix)?;
-    Ok((run, prefix.unwrap_or(format.default_prefix()).to_string()))
+    let run = parse(format, &text, Some(&prefix))?;
+    Ok((run, prefix))
 }
 
 /// The id prefixes of every imported project `soothfast.toml` under `root`
-/// configures: its own `prefix`, else its format's. A prefix that is also a
-/// crate or bench target name of the cargo workspace there is an error,
-/// since its ids could not be told from that crate's.
+/// configures: its own `prefix`, else its format's. Each is checked by
+/// [`check_prefixes`].
 pub fn configured_prefixes(root: &std::path::Path) -> Result<Vec<String>, String> {
     let mut prefixes = Vec::new();
     for project in crate::init::manifest(root)? {
@@ -142,20 +143,51 @@ pub fn configured_prefixes(root: &std::path::Path) -> Result<Vec<String>, String
             None => Format::parse(&bench.from)?.default_prefix().to_string(),
         });
     }
-    if root.join("Cargo.toml").is_file() {
-        let meta = crate::workspace::metadata(Some(root), true).map_err(|e| e.to_string())?;
-        clashing_prefix(&prefixes, &meta)?;
-    }
+    check_prefixes(root, &prefixes)?;
     Ok(prefixes)
 }
 
-/// Refuse an import prefix equal to a package or target name in `meta`.
+/// Refuse an import prefix a Rust item id of the cargo workspace at `root`
+/// could start with, since its ids could not be told from that crate's.
+/// With no workspace there, or one whose metadata cannot be read, a note
+/// says nothing was checked.
+pub fn check_prefixes(root: &std::path::Path, prefixes: &[String]) -> Result<(), String> {
+    if prefixes.is_empty() {
+        return Ok(());
+    }
+    if !root.join("Cargo.toml").is_file() {
+        println!(
+            "import: no cargo workspace, so the id prefixes are not checked against crate names"
+        );
+        return Ok(());
+    }
+    match crate::workspace::metadata(Some(root), true) {
+        Ok(meta) => clashing_prefix(prefixes, &meta),
+        Err(e) => {
+            println!("import: the id prefixes are not checked against crate names: {e}");
+            Ok(())
+        }
+    }
+}
+
+/// Refuse an import prefix equal to a package or lib name in `meta`, the
+/// only names a Rust item id starts with.
 fn clashing_prefix(prefixes: &[String], meta: &Value) -> Result<(), String> {
+    let is_lib = |t: &Value| {
+        let kinds = t["kind"].as_array().into_iter().flatten();
+        kinds
+            .filter_map(Value::as_str)
+            .any(|k| k.ends_with("lib") || k == "proc-macro")
+    };
     let packages = meta["packages"].as_array().into_iter().flatten();
     let names: std::collections::BTreeSet<String> = packages
         .flat_map(|p| {
-            let targets = p["targets"].as_array().into_iter().flatten();
-            std::iter::once(&p["name"]).chain(targets.map(|t| &t["name"]))
+            let libs = p["targets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|t| is_lib(t));
+            std::iter::once(&p["name"]).chain(libs.map(|t| &t["name"]))
         })
         .filter_map(|n| n.as_str().map(|n| n.replace('-', "_")))
         .collect();
@@ -167,7 +199,7 @@ fn clashing_prefix(prefixes: &[String], meta: &Value) -> Result<(), String> {
             .replace('-', "_");
         if names.contains(&head) {
             return Err(format!(
-                "import prefix {prefix:?} is also a crate or bench target name in this workspace; give the import a distinct prefix"
+                "import prefix {prefix:?} is also a crate name in this workspace; give the import a distinct prefix"
             ));
         }
     }

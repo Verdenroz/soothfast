@@ -230,11 +230,22 @@ pub fn owned(doc: &Value) -> BTreeSet<String> {
         .collect()
 }
 
-/// Recompute, from `doc`'s current owners, the ids two packages both list:
-/// their numbers are dropped, since nothing says whose they are, and each
-/// gets an `ambiguous-id` entry. Each package keeps its owners, so an id
-/// stops being ambiguous once one of them saves without it.
-pub fn settle_ambiguity(doc: &mut Value) {
+/// Every item a package of baseline `doc` other than `package` owns.
+pub fn owned_by_others(doc: &Value, package: &str) -> BTreeSet<String> {
+    doc[OWNERS_KEY]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(p, _)| p.as_str() != package)
+        .flat_map(|(_, ids)| ids.as_array().into_iter().flatten())
+        .filter_map(|id| id.as_str().map(str::to_string))
+        .collect()
+}
+
+/// Recompute, from `doc`'s current owners, the ids two packages both own,
+/// each getting an `ambiguous-id` entry that fails a claim on it. Numbers
+/// stay, so an id that stops being ambiguous reads its number again.
+pub fn settle_ambiguity(doc: &mut Value) -> io::Result<()> {
     let mut listers: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (package, ids) in doc[OWNERS_KEY].as_object().into_iter().flatten() {
         for id in ids
@@ -252,14 +263,9 @@ pub fn settle_ambiguity(doc: &mut Value) {
     if let Some(entries) = doc.get_mut("unmeasured").and_then(Value::as_array_mut) {
         entries.retain(|e| e["reason"].as_str() != Some(Reason::AmbiguousId.as_str()));
     }
-    let ambiguous: Vec<(String, Vec<String>)> =
-        listers.into_iter().filter(|(_, p)| p.len() > 1).collect();
-    if ambiguous.is_empty() {
-        return;
-    }
-    drop_items(doc, &ambiguous.iter().map(|(id, _)| id.clone()).collect());
-    let entries: Vec<Unmeasured> = ambiguous
+    let entries: Vec<Unmeasured> = listers
         .into_iter()
+        .filter(|(_, packages)| packages.len() > 1)
         .map(|(id, packages)| {
             let detail = format!(
                 "item id {id} is measured by both {}; a claim on it is ambiguous",
@@ -268,7 +274,10 @@ pub fn settle_ambiguity(doc: &mut Value) {
             entry(&packages[0], Reason::AmbiguousId, &detail, &[], vec![id])
         })
         .collect();
-    let _ = append(doc, &entries);
+    if entries.is_empty() {
+        return Ok(());
+    }
+    append(doc, &entries)
 }
 
 /// One entry of `package` for `items`, lacking `metrics`.
@@ -314,7 +323,12 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         if !whole {
             continue;
         }
-        gone.extend(owned_by(&doc, &e.package));
+        let others = owned_by_others(&doc, &e.package);
+        gone.extend(
+            owned_by(&doc, &e.package)
+                .into_iter()
+                .filter(|id| !others.contains(id)),
+        );
         if e.items.is_empty() {
             if let Some(owners) = doc.get_mut(OWNERS_KEY).and_then(Value::as_object_mut) {
                 owners.remove(&e.package);
@@ -329,7 +343,7 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         clear_entries(&mut doc, |p| packages.contains(&p));
     }
     append(&mut doc, entries).map_err(|e| e.to_string())?;
-    settle_ambiguity(&mut doc);
+    settle_ambiguity(&mut doc).map_err(|e| e.to_string())?;
     invoke::write_baseline_in(root, name, &doc).map_err(|e| e.to_string())
 }
 
@@ -513,20 +527,27 @@ mod tests {
     }
 
     #[test]
-    fn an_id_two_packages_list_is_ambiguous_until_one_lists_it_no_more() {
-        let mut doc = json!({
-            "items": { "soothfast::bench_parse": { "alloc": { "allocs": 1, "bytes": 8 } } },
-            "owners": { "a": ["soothfast::bench_parse"] },
-        });
+    fn an_id_two_packages_own_is_ambiguous_until_one_owns_it_no_more() {
+        let items = json!({ "soothfast::bench_parse": { "alloc": { "allocs": 1, "bytes": 8 } } });
+        let mut doc = json!({ "items": items, "owners": { "a": ["soothfast::bench_parse"] } });
         set_owners(&mut doc, "b", &ids(&["soothfast::bench_parse"]));
-        settle_ambiguity(&mut doc);
-        assert_eq!(doc["items"], json!({}));
+        settle_ambiguity(&mut doc).unwrap();
         assert_eq!(owned_by(&doc, "a"), ["soothfast::bench_parse"]);
         let entries = read(&doc).unwrap();
         assert_eq!(entries[0].reason, Reason::AmbiguousId);
         assert!(entries[0].detail.contains("measured by both a and b"));
-        set_owners(&mut doc, "b", &[]);
-        settle_ambiguity(&mut doc);
+        set_owners(&mut doc, "a", &[]);
+        settle_ambiguity(&mut doc).unwrap();
         assert!(read(&doc).unwrap().is_empty());
+        assert_eq!(doc["items"], items);
+    }
+
+    #[test]
+    fn a_malformed_entry_fails_the_settle() {
+        let mut doc = json!({
+            "owners": { "a": ["x"], "b": ["x"] },
+            "unmeasured": [{ "package": "a", "reason": "no-such-reason" }],
+        });
+        assert!(settle_ambiguity(&mut doc).is_err());
     }
 }

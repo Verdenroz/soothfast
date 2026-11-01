@@ -38,6 +38,7 @@ mod itemreuse;
 mod jumptable;
 mod linkmap;
 mod mcp;
+mod ownership;
 mod plan;
 mod prebuild;
 mod project_surface;
@@ -388,7 +389,8 @@ fn cmd_measure(args: &[String]) -> i32 {
         return 1;
     }
     if let Some(name) = save {
-        match invoke::save_baseline(&name, &run, invoke::SaveScope::of(&common)) {
+        let owned = ownership::for_save(&run, &common);
+        match invoke::save_baseline(&name, &owned, invoke::SaveScope::of(&common)) {
             Ok(path) => println!("baseline saved: {}", path.display()),
             Err(e) => {
                 eprintln!("soothfast: failed to save baseline: {e}");

@@ -482,27 +482,33 @@ another branch, a tag, `workflow_dispatch`, `merge_group`) the merge writes
 one `not-gated-on-event` entry: every claim whose item does not start with a
 configured import prefix (each `[[project]]`'s `prefix`, else its format's)
 is not evaluated. Imported claims measured on that event are checked as
-usual, and a missing or misspelled imported id fails. A prefix that is also a
-crate or bench target name in the workspace is a config error. Where no
-measurement was possible (`not-gated-on-event`, `no-parent`), a claim reads
-"not evaluated" even when it is new or edited.
+usual, and a missing or misspelled imported id fails. A prefix equal to a
+package or lib name in the cargo workspace, the only names a Rust id starts
+with, fails `import`, `gate --import` and `baseline merge`; with no workspace
+to read, a note says the prefixes went unchecked. Where no measurement was
+possible (`not-gated-on-event`, `no-parent`), a claim reads "not evaluated"
+even when it is new or edited.
 
 Which items belong to which package comes from each package's bench binary
 listing, recorded as `owners` in the baseline, never from an id's name: every
-bench file's ids start with the bench target's name. An entry covers only the
-ids it names. A failed package's old numbers are exactly the ids it owned,
-and its entry names those, or the ones its listing shows; with neither it
-names nothing, and a claim on an item no package owns fails, naming that
-gate failure as possibly related. An id two packages both list keeps no
-number: an `ambiguous-id` entry names it and both packages, and a claim on
-it fails. Every save and merge recomputes these, so the entry goes once
-only one package lists the id.
+bench file's ids start with the bench target's name. A lib's measured fn is
+linked into every dependent's bench binary, so each lists it; the runner
+names the package that registered it, and only that package owns and saves
+it when it has a bench target of its own. An entry covers only the ids it
+names. A failed package's old numbers are exactly the ids it owned and no
+other package owns, and its entry names those, or the ones its listing
+shows; with neither it names nothing, and a claim on an item no package owns
+fails, naming that gate failure as possibly related. An id two packages both
+own gets an `ambiguous-id` entry naming both, and a claim on it fails. Every
+save and merge recomputes these, and the number stays, so the claim reads it
+again once only one package owns the id. A full save leaves alone any id
+another package owns.
 
 `--save-baseline`, on `gate` or `measure`, needs `-p` in a workspace with more
-than one bench package (a `buildcost` save excepted), and fails before
-measuring without it; with one bench package the save is that package's. A
-filtered save updates the package's numbers in place, and a failed filtered
-gate drops and names only the filtered ids. A full save into a baseline
+than one bench package, and fails before measuring without it; with one
+bench package the save is that package's. A filtered save updates the
+package's numbers in place, and a failed filtered gate drops and names only
+the filtered ids. A full save into a baseline
 saved before `owners` existed replaces every bench item no other package
 owns, and says to re-save the other packages. Baselines saved before
 `owners` existed are read with their old unmeasured entries left out, and

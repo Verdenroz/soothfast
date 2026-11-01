@@ -152,7 +152,9 @@ fn stale(name: &str, owners: &[(&str, &[&str])]) -> std::path::PathBuf {
 /// What `docs check` makes of `expr` against baseline `head` under `root`.
 fn reading(root: &Path, expr: &str) -> crate::docs_claims::Reading {
     let doc = invoke::load_baseline_in(root, "head").unwrap().unwrap();
-    crate::docs_claims::evaluate(expr, &doc, &unmeasured::read(&doc).unwrap())
+    crate::docs_claims::Against::new(&doc)
+        .unwrap()
+        .evaluate(expr)
 }
 
 fn unmeasured_as(reading: crate::docs_claims::Reading, reason: Reason) -> bool {
@@ -401,11 +403,11 @@ fn a_filtered_save_keeps_the_unfiltered_numbers() {
 }
 
 #[test]
-fn a_save_of_an_id_another_package_owns_drops_it_as_ambiguous() {
+fn a_save_of_an_id_another_package_owns_fails_its_claims_as_ambiguous() {
     let root = stale("duplicate-id", &[("a", &["soothfast::same"])]);
     let scope = invoke::SaveScope::BenchFull(Some("b".into()));
     save_ids(&root, &["soothfast::same"], scope).unwrap();
-    assert!(kept(&root).is_empty());
+    assert_eq!(kept(&root), ["soothfast::same"]);
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
     assert_eq!(unmeasured::owned_by(&doc, "a"), ["soothfast::same"]);
     assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::same"]);
@@ -415,6 +417,21 @@ fn a_save_of_an_id_another_package_owns_drops_it_as_ambiguous() {
         panic!("a claim on an ambiguous id must fail");
     };
     assert!(why.contains("measured by both a and b; a claim on it is ambiguous"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_item_that_moved_keeps_its_number_through_both_packages_saves() {
+    let root = stale("moved-item", &[("a", &["soothfast::moved"])]);
+    let b = invoke::SaveScope::BenchFull(Some("b".into()));
+    save_ids(&root, &["soothfast::moved"], b).unwrap();
+    let a = invoke::SaveScope::BenchFull(Some("a".into()));
+    save_ids(&root, &[], a).unwrap();
+    assert_eq!(kept(&root), ["soothfast::moved"]);
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::moved"]);
+    let holds = reading(&root, "soothfast::moved.walltime.median_ns < 1ms");
+    assert!(matches!(holds, Reading::Decided(Outcome::Holds(_))));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -466,15 +483,16 @@ fn a_failed_filtered_gate_drops_and_names_only_the_filtered_ids() {
 }
 
 #[test]
-fn a_buildcost_save_needs_no_package() {
+fn a_buildcost_save_still_needs_a_package() {
     let root = scratch("buildcost-save");
     let common = CommonArgs {
         backend: Some("buildcost".into()),
         ..CommonArgs::default()
     };
     let run = run_of(vec![("buildcost::core::default", item(None))]);
-    assert!(save_head(&root, "head", &run, &HeadRun::Measured, &common, None, 0).is_ok());
-    let _ = std::fs::remove_dir_all(&root);
+    let saved = save_head(&root, "head", &run, &HeadRun::Measured, &common, None, 0);
+    assert_eq!(saved, Err("--save-baseline needs -p PKG".into()));
+    assert!(!invoke::baseline_path(&root, "head").exists());
 }
 
 #[test]

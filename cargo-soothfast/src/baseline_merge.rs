@@ -116,7 +116,7 @@ fn mark_cmd(args: &[String]) -> i32 {
     let listed = gate_config::apply(&mut common).and_then(|_| {
         let exe = invoke::bench_executable(&common, None, None)
             .ok_or_else(|| format!("{pkg}'s bench target did not build"))?;
-        invoke::listed_ids(&exe, common.filter.as_deref())
+        crate::ownership::listed_owned(&exe, &common)
             .ok_or_else(|| format!("{} lists no items", exe.display()))
     });
     let detail = detail.unwrap_or_else(|| reason.as_str().to_string());
@@ -195,12 +195,9 @@ fn merge_cmd(args: &[String]) -> i32 {
             Err(e) => return fail(&format!("corrupt baseline {}: {e}", file.display())),
         }
     }
-    let imports = match &not_gated {
-        Some(_) => match import::configured_prefixes(&invoke::project_root()) {
-            Ok(prefixes) => prefixes,
-            Err(e) => return fail(&format!("cannot read the import prefixes: {e}")),
-        },
-        None => Vec::new(),
+    let imports = match import::configured_prefixes(&invoke::project_root()) {
+        Ok(prefixes) => prefixes,
+        Err(e) => return fail(&format!("cannot read the import prefixes: {e}")),
     };
     let ungated = not_gated.as_deref().map(|event| Ungated {
         event,
@@ -272,10 +269,10 @@ fn merge_on(
     let mut all_items = Map::new();
     let mut assertions = Vec::new();
     let mut entries: Vec<Unmeasured> = Vec::new();
-    let mut shards: BTreeMap<u64, &Value> = BTreeMap::new();
+    let mut shards: BTreeMap<u64, Saved> = BTreeMap::new();
     let no_items = Map::new();
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut twice: Vec<(String, String)> = Vec::new();
+    let mut origin: BTreeMap<String, &str> = BTreeMap::new();
     for (label, doc) in files {
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
@@ -297,7 +294,11 @@ fn merge_on(
                     "{label} is shard {shard}, but the gate was split into {expect}"
                 )));
             }
-            if shards.insert(shard.index, doc).is_some() {
+            let saved = Saved {
+                doc,
+                entries: file_entries.clone(),
+            };
+            if shards.insert(shard.index, saved).is_some() {
                 return Err(corrupt(label, format!("a second file for shard {shard}")));
             }
             if let Some(id) = file_items
@@ -319,9 +320,10 @@ fn merge_on(
             }
         }
         for (id, v) in file_items {
-            if all_items.insert(id.clone(), v.clone()).is_some() {
-                twice.push((label.clone(), id.clone()));
+            if let Some(first) = origin.insert(id.clone(), label) {
+                return Err(corrupt(label, format!("{id} is in {first} too")));
             }
+            all_items.insert(id.clone(), v.clone());
         }
         assertions.extend(doc["assertions"].as_array().into_iter().flatten().cloned());
         for (package, ids) in doc[unmeasured::OWNERS_KEY]
@@ -344,13 +346,9 @@ fn merge_on(
         entries.extend(file_entries);
     }
     for pkg in packages {
-        if not_gated.is_none() || shards.values().any(|doc| covers(doc, pkg)) {
+        if not_gated.is_none() || shards.values().any(|s| s.covers(pkg)) {
             entries.extend(unaccounted(pkg, &shards, expect));
         }
-    }
-    let listers = |id: &str| owners.values().filter(|ids| ids.contains(id)).count();
-    if let Some((label, id)) = twice.iter().find(|(_, id)| listers(id) < 2) {
-        return Err(corrupt(label, format!("{id} is in another file too")));
     }
     if let Some(ungated) = not_gated {
         let mut imports: BTreeSet<String> = ungated.imports.iter().cloned().collect();
@@ -382,27 +380,27 @@ fn merge_on(
     if !owners.is_empty() {
         out[unmeasured::OWNERS_KEY] = json!(owners);
     }
-    unmeasured::settle_ambiguity(&mut out);
+    unmeasured::settle_ambiguity(&mut out).map_err(|e| MergeError::Corrupt(e.to_string()))?;
     Ok(out)
 }
 
 /// The entries for the shards of `pkg` that saved nothing of it. Their items
 /// are named from the other shards' listings and owners of `pkg`; with none
 /// to read, no item is.
-fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Unmeasured> {
+fn unaccounted(pkg: &str, shards: &BTreeMap<u64, Saved>, expect: u64) -> Vec<Unmeasured> {
     let missing: Vec<Shard> = (1..=expect)
         .map(|index| Shard {
             index,
             count: expect,
         })
-        .filter(|s| !shards.get(&s.index).is_some_and(|doc| covers(doc, pkg)))
+        .filter(|s| !shards.get(&s.index).is_some_and(|saved| saved.covers(pkg)))
         .collect();
     if missing.is_empty() {
         return Vec::new();
     }
     let known: BTreeSet<String> = shards
         .values()
-        .flat_map(|doc| {
+        .flat_map(|Saved { doc, .. }| {
             let listed = doc[LISTED_KEY][pkg].as_array().into_iter().flatten();
             listed
                 .filter_map(|id| id.as_str().map(str::to_string))
@@ -426,11 +424,8 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
     missing
         .into_iter()
         .map(|shard| {
-            let nameless = shards.get(&shard.index).and_then(|doc| {
-                let entries = unmeasured::read(doc).ok()?;
-                entries
-                    .into_iter()
-                    .find(|e| e.package == pkg && e.items.is_empty())
+            let nameless = shards.get(&shard.index).and_then(|saved| {
+                (saved.entries.iter()).find(|e| e.package == pkg && e.items.is_empty())
             });
             let (reason, detail) = match nameless {
                 Some(e) => (e.reason, format!("{} (shard {shard})", e.detail)),
@@ -451,14 +446,22 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
         .collect()
 }
 
-/// Whether a gate's baseline accounts for `pkg`, by that file's own record
-/// of the package: its owners, its listing, or an entry.
-fn covers(doc: &Value, pkg: &str) -> bool {
-    let named = |v: &Value| v.as_array().is_some_and(|ids| !ids.is_empty());
-    named(&doc[unmeasured::OWNERS_KEY][pkg])
-        || named(&doc[LISTED_KEY][pkg])
-        || unmeasured::read(doc)
-            .is_ok_and(|es| es.iter().any(|e| e.package == pkg && !e.items.is_empty()))
+/// One shard's file, with its entries read once.
+struct Saved<'a> {
+    doc: &'a Value,
+    entries: Vec<Unmeasured>,
+}
+
+impl Saved<'_> {
+    /// Whether the file accounts for `pkg`, by its own record of the
+    /// package: its owners, even none, a non-empty listing, or an entry
+    /// naming items.
+    fn covers(&self, pkg: &str) -> bool {
+        let named = |v: &Value| v.as_array().is_some_and(|ids| !ids.is_empty());
+        self.doc[unmeasured::OWNERS_KEY][pkg].is_array()
+            || named(&self.doc[LISTED_KEY][pkg])
+            || (self.entries.iter()).any(|e| e.package == pkg && !e.items.is_empty())
+    }
 }
 
 #[cfg(test)]

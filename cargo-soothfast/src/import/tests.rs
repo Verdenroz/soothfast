@@ -372,14 +372,29 @@ fn the_cli_names_each_format() {
 }
 
 #[test]
-fn an_import_prefix_naming_a_workspace_crate_or_bench_target_is_refused() {
+fn an_import_prefix_naming_a_package_or_lib_is_refused_and_other_targets_are_not() {
     let meta = json!({ "packages": [{
         "name": "my-core",
-        "targets": [{ "name": "my_core" }, { "name": "soothfast" }],
+        "targets": [
+            { "name": "core_impl", "kind": ["lib"] },
+            { "name": "soothfast", "kind": ["bench"] },
+            { "name": "jmh", "kind": ["test"] },
+            { "name": "pyperf", "kind": ["example"] },
+        ],
     }]});
-    for clash in ["my_core", "my-core::sub", "soothfast"] {
+    for clash in ["my_core", "my-core::sub", "core_impl"] {
         let err = clashing_prefix(&[clash.into()], &meta).unwrap_err();
         assert!(err.contains("distinct prefix"), "{clash}: {err}");
     }
-    assert!(clashing_prefix(&["jmh".into()], &meta).is_ok());
+    for fine in ["soothfast", "jmh", "pyperf"] {
+        assert!(clashing_prefix(&[fine.into()], &meta).is_ok(), "{fine}");
+    }
+}
+
+#[test]
+fn with_no_cargo_workspace_the_prefixes_are_not_checked() {
+    let root = std::env::temp_dir().join(format!("soothfast-no-ws-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    assert!(check_prefixes(&root, &["anything".into()]).is_ok());
+    let _ = std::fs::remove_dir_all(&root);
 }
