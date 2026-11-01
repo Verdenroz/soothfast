@@ -119,11 +119,11 @@ pub fn parse(format: Format, text: &str, prefix: Option<&str>) -> Result<Run, St
 }
 
 /// Read and parse a result file named by its `--from` format, returning the
-/// run with the id prefix it used, once [`check_prefixes`] passes it.
+/// run with the id prefix it used. Callers check the prefix once with
+/// [`check_prefixes`].
 pub fn read(format: &str, file: &str, prefix: Option<&str>) -> Result<(Run, String), String> {
     let format = Format::parse(format)?;
     let prefix = prefix.unwrap_or(format.default_prefix()).to_string();
-    check_prefixes(&invoke::project_root(), std::slice::from_ref(&prefix))?;
     let text = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
     let run = parse(format, &text, Some(&prefix))?;
     Ok((run, prefix))
@@ -161,8 +161,8 @@ pub fn check_prefixes(root: &std::path::Path, prefixes: &[String]) -> Result<(),
         );
         return Ok(());
     }
-    match crate::workspace::metadata(Some(root), true) {
-        Ok(meta) => clashing_prefix(prefixes, &meta),
+    match crate::workspace::package_names(root) {
+        Ok(names) => clashing_prefix(prefixes, &names),
         Err(e) => {
             println!("import: the id prefixes are not checked against crate names: {e}");
             Ok(())
@@ -170,36 +170,18 @@ pub fn check_prefixes(root: &std::path::Path, prefixes: &[String]) -> Result<(),
     }
 }
 
-/// Refuse an import prefix equal to a package or lib name in `meta`, the
-/// only names a Rust item id starts with.
-fn clashing_prefix(prefixes: &[String], meta: &Value) -> Result<(), String> {
-    let is_lib = |t: &Value| {
-        let kinds = t["kind"].as_array().into_iter().flatten();
-        kinds
-            .filter_map(Value::as_str)
-            .any(|k| k.ends_with("lib") || k == "proc-macro")
-    };
-    let packages = meta["packages"].as_array().into_iter().flatten();
-    let names: std::collections::BTreeSet<String> = packages
-        .flat_map(|p| {
-            let libs = p["targets"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|t| is_lib(t));
-            std::iter::once(&p["name"]).chain(libs.map(|t| &t["name"]))
-        })
-        .filter_map(|n| n.as_str().map(|n| n.replace('-', "_")))
-        .collect();
+/// Refuse an import prefix equal to one of the package `names`: a Rust item
+/// id always starts with its package's name, `-` written as `_`.
+fn clashing_prefix(
+    prefixes: &[String],
+    names: &std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    let norm = |name: &str| name.replace('-', "_");
     for prefix in prefixes {
-        let head = prefix
-            .split("::")
-            .next()
-            .unwrap_or(prefix)
-            .replace('-', "_");
-        if names.contains(&head) {
+        let head = norm(prefix.split("::").next().unwrap_or(prefix));
+        if names.iter().any(|n| norm(n) == head) {
             return Err(format!(
-                "import prefix {prefix:?} is also a crate name in this workspace; give the import a distinct prefix"
+                "import prefix {prefix:?} is also a package name in this workspace; give the import a distinct prefix"
             ));
         }
     }
@@ -263,6 +245,7 @@ pub fn run(args: &[String]) -> i32 {
         };
     }
     let outcome = read(&format, &file, prefix.as_deref()).and_then(|(run, prefix)| {
+        check_prefixes(&invoke::project_root(), std::slice::from_ref(&prefix))?;
         let written = match (&save, &out) {
             (Some(name), _) => {
                 let scope = invoke::SaveScope::Imported(prefix);

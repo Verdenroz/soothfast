@@ -12,6 +12,7 @@
 
 mod comments;
 
+pub mod baseline;
 pub mod claims;
 pub mod diff;
 pub mod gentests;

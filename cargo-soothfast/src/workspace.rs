@@ -14,6 +14,25 @@ use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
+/// The workspace package names under `dir` from `cargo metadata --no-deps`,
+/// read once per process.
+pub fn package_names(dir: &Path) -> Result<BTreeSet<String>, String> {
+    static NAMES: OnceLock<Mutex<HashMap<std::path::PathBuf, BTreeSet<String>>>> = OnceLock::new();
+    let mut memo = NAMES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|e| e.to_string())?;
+    if let Some(names) = memo.get(dir) {
+        return Ok(names.clone());
+    }
+    let meta = metadata(Some(dir), true).map_err(|e| e.to_string())?;
+    let names: BTreeSet<String> = (meta["packages"].as_array().into_iter().flatten())
+        .filter_map(|p| p["name"].as_str().map(str::to_string))
+        .collect();
+    memo.insert(dir.to_path_buf(), names.clone());
+    Ok(names)
+}
+
 /// `cargo metadata` for a tree: with the resolved dependency graph, or with
 /// `no_deps` exactly the workspace's own packages and their declared
 /// dependencies.

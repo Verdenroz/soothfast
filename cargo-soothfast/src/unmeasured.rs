@@ -3,7 +3,7 @@
 //! typed reason. `docs check` reports an unchanged claim on one "not
 //! evaluated" and fails a new or edited one.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 
@@ -242,44 +242,6 @@ pub fn owned_by_others(doc: &Value, package: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Recompute, from `doc`'s current owners, the ids two packages both own,
-/// each getting an `ambiguous-id` entry that fails a claim on it. Numbers
-/// stay, so an id that stops being ambiguous reads its number again.
-pub fn settle_ambiguity(doc: &mut Value) -> io::Result<()> {
-    let mut listers: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (package, ids) in doc[OWNERS_KEY].as_object().into_iter().flatten() {
-        for id in ids
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-        {
-            listers
-                .entry(id.to_string())
-                .or_default()
-                .push(package.clone());
-        }
-    }
-    if let Some(entries) = doc.get_mut("unmeasured").and_then(Value::as_array_mut) {
-        entries.retain(|e| e["reason"].as_str() != Some(Reason::AmbiguousId.as_str()));
-    }
-    let entries: Vec<Unmeasured> = listers
-        .into_iter()
-        .filter(|(_, packages)| packages.len() > 1)
-        .map(|(id, packages)| {
-            let detail = format!(
-                "item id {id} is measured by both {}; a claim on it is ambiguous",
-                packages.join(" and ")
-            );
-            entry(&packages[0], Reason::AmbiguousId, &detail, &[], vec![id])
-        })
-        .collect();
-    if entries.is_empty() {
-        return Ok(());
-    }
-    append(doc, &entries)
-}
-
 /// One entry of `package` for `items`, lacking `metrics`.
 pub fn entry(
     package: &str,
@@ -320,6 +282,11 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
     let mut gone: BTreeSet<String> = BTreeSet::new();
     for e in entries {
         gone.extend(e.items.iter().cloned());
+        let mut unvouched: BTreeSet<String> = e.items.iter().cloned().collect();
+        if whole {
+            unvouched.extend(owned_by(&doc, &e.package));
+        }
+        crate::ambiguity::forget(&mut doc, &e.package, &unvouched);
         if !whole {
             continue;
         }
@@ -343,7 +310,7 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
         clear_entries(&mut doc, |p| packages.contains(&p));
     }
     append(&mut doc, entries).map_err(|e| e.to_string())?;
-    settle_ambiguity(&mut doc).map_err(|e| e.to_string())?;
+    crate::ambiguity::settle(&mut doc, None, &Default::default()).map_err(|e| e.to_string())?;
     invoke::write_baseline_in(root, name, &doc).map_err(|e| e.to_string())
 }
 
@@ -524,30 +491,5 @@ mod tests {
         assert!(marked[OWNERS_KEY].get("a").is_none());
         assert_eq!(owned_by(&marked, "b"), ["soothfast::b_item"]);
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn an_id_two_packages_own_is_ambiguous_until_one_owns_it_no_more() {
-        let items = json!({ "soothfast::bench_parse": { "alloc": { "allocs": 1, "bytes": 8 } } });
-        let mut doc = json!({ "items": items, "owners": { "a": ["soothfast::bench_parse"] } });
-        set_owners(&mut doc, "b", &ids(&["soothfast::bench_parse"]));
-        settle_ambiguity(&mut doc).unwrap();
-        assert_eq!(owned_by(&doc, "a"), ["soothfast::bench_parse"]);
-        let entries = read(&doc).unwrap();
-        assert_eq!(entries[0].reason, Reason::AmbiguousId);
-        assert!(entries[0].detail.contains("measured by both a and b"));
-        set_owners(&mut doc, "a", &[]);
-        settle_ambiguity(&mut doc).unwrap();
-        assert!(read(&doc).unwrap().is_empty());
-        assert_eq!(doc["items"], items);
-    }
-
-    #[test]
-    fn a_malformed_entry_fails_the_settle() {
-        let mut doc = json!({
-            "owners": { "a": ["x"], "b": ["x"] },
-            "unmeasured": [{ "package": "a", "reason": "no-such-reason" }],
-        });
-        assert!(settle_ambiguity(&mut doc).is_err());
     }
 }

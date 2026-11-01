@@ -8,6 +8,7 @@
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod agreement;
+mod ambiguity;
 mod baseline_merge;
 mod benchexe;
 mod binstore;
@@ -389,8 +390,11 @@ fn cmd_measure(args: &[String]) -> i32 {
         return 1;
     }
     if let Some(name) = save {
-        let owned = ownership::for_save(&run, &common);
-        match invoke::save_baseline(&name, &owned, invoke::SaveScope::of(&common)) {
+        let run = match common.backend.as_deref() {
+            Some("buildcost") => run,
+            _ => ownership::for_save(&run, &common, None),
+        };
+        match invoke::save_baseline(&name, &run, invoke::SaveScope::of(&common)) {
             Ok(path) => println!("baseline saved: {}", path.display()),
             Err(e) => {
                 eprintln!("soothfast: failed to save baseline: {e}");

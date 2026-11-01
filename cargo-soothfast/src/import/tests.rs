@@ -372,22 +372,14 @@ fn the_cli_names_each_format() {
 }
 
 #[test]
-fn an_import_prefix_naming_a_package_or_lib_is_refused_and_other_targets_are_not() {
-    let meta = json!({ "packages": [{
-        "name": "my-core",
-        "targets": [
-            { "name": "core_impl", "kind": ["lib"] },
-            { "name": "soothfast", "kind": ["bench"] },
-            { "name": "jmh", "kind": ["test"] },
-            { "name": "pyperf", "kind": ["example"] },
-        ],
-    }]});
-    for clash in ["my_core", "my-core::sub", "core_impl"] {
-        let err = clashing_prefix(&[clash.into()], &meta).unwrap_err();
+fn only_a_package_name_clashes_with_an_import_prefix() {
+    let names = std::collections::BTreeSet::from(["my-core".to_string(), "foo-sys".to_string()]);
+    for clash in ["my_core", "my-core::sub", "foo_sys"] {
+        let err = clashing_prefix(&[clash.into()], &names).unwrap_err();
         assert!(err.contains("distinct prefix"), "{clash}: {err}");
     }
-    for fine in ["soothfast", "jmh", "pyperf"] {
-        assert!(clashing_prefix(&[fine.into()], &meta).is_ok(), "{fine}");
+    for fine in ["foo", "soothfast", "jmh"] {
+        assert!(clashing_prefix(&[fine.into()], &names).is_ok(), "{fine}");
     }
 }
 
@@ -397,4 +389,14 @@ fn with_no_cargo_workspace_the_prefixes_are_not_checked() {
     std::fs::create_dir_all(&root).unwrap();
     assert!(check_prefixes(&root, &["anything".into()]).is_ok());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_workspace_package_names_are_read_once_and_clash_by_package_name() {
+    let root = invoke::project_root();
+    let names = crate::workspace::package_names(&root).unwrap();
+    assert!(names.contains("cargo-soothfast"));
+    assert_eq!(crate::workspace::package_names(&root).unwrap(), names);
+    assert!(check_prefixes(&root, &["cargo_soothfast".into()]).is_err());
+    assert!(check_prefixes(&root, &["jmh".into()]).is_ok());
 }

@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::io::BufRead;
 
 use serde_json::{Value, json};
+use soothfast_docs::baseline;
 use soothfast_report::llms::SurfaceEntry;
 
 use crate::{docs_support, invoke};
@@ -170,6 +171,17 @@ fn measurements_for(state: &State, path: &str) -> Vec<String> {
                     facts.push(format!("{v:.0} {label} (as `{id}`)"));
                 }
             }
+        }
+    }
+    let ambiguous = state.baseline[baseline::AMBIGUOUS_KEY].as_object();
+    for (id, saved) in ambiguous.into_iter().flatten() {
+        let covers = saved.as_object().into_iter().flatten();
+        if id == path || covers.into_iter().any(|(_, m)| m["covers"] == path) {
+            let packages = baseline::ambiguous_packages(&state.baseline, id);
+            facts.push(format!(
+                "no number: ambiguous between {} (as `{id}`)",
+                packages.join(", ")
+            ));
         }
     }
     facts

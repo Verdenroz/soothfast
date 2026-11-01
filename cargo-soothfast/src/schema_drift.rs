@@ -98,7 +98,12 @@ fn a_saved_baseline_conforms_to_its_schema() {
     let import_stub = crate::import::failed::stub("jmh", "/nonexistent.json", None).unwrap();
     assert_all_conform(
         "baseline.schema.json",
-        &[baseline, shard_baseline(), import_stub],
+        &[
+            baseline,
+            shard_baseline(),
+            import_stub,
+            ambiguous_baseline(),
+        ],
     );
 }
 
@@ -125,6 +130,37 @@ fn shard_baseline() -> Value {
     };
     unmeasured::append_in(&root, "head", &[ungated]).unwrap();
     crate::baseline_merge::stamp_shard_in(&root, "head", shard, "pkg", &ids).unwrap();
+    let doc = crate::invoke::load_baseline_in(&root, "head")
+        .unwrap()
+        .unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    doc
+}
+
+/// A baseline in which two packages saved the same lib item, with a
+/// set-aside number of every other shape an item takes, as a merged file
+/// can carry.
+fn ambiguous_baseline() -> Value {
+    let mut doc = ambiguous_saves();
+    let items = crate::invoke::run_to_items_value(&full_run());
+    for (n, item) in items.as_object().unwrap().values().enumerate() {
+        doc["ambiguous"]["util::hash"][format!("other{n}")] = item.clone();
+    }
+    doc
+}
+
+fn ambiguous_saves() -> Value {
+    let root = std::env::temp_dir().join(format!("soothfast-schema-amb-{}", std::process::id()));
+    for pkg in ["a", "b"] {
+        let mut run = Run::default();
+        let measured = ItemMetrics {
+            imported: None,
+            ..full_item()
+        };
+        run.items.insert("util::hash".into(), measured);
+        let scope = SaveScope::BenchFull(Some(pkg.into()));
+        crate::invoke::save_baseline_in(&root, "head", &run, scope).unwrap();
+    }
     let doc = crate::invoke::load_baseline_in(&root, "head")
         .unwrap()
         .unwrap();

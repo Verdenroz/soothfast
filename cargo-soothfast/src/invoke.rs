@@ -1099,6 +1099,20 @@ pub fn save_baseline_in(
     let mut doc =
         load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let prior = own_measured(&mut doc, &scope, run)?;
+    let writer = match &scope {
+        SaveScope::BenchFull(pkg) | SaveScope::BenchFiltered(pkg) => pkg.clone(),
+        _ => None,
+    };
+    if let Some(writer) = &writer {
+        for id in new_items
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(id, _)| id)
+        {
+            crate::ambiguity::stash_before_write(&mut doc, writer, id);
+        }
+    }
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1157,7 +1171,7 @@ pub fn save_baseline_in(
         crate::unmeasured::clear(&mut doc, pkg.as_deref());
     }
 
-    crate::unmeasured::settle_ambiguity(&mut doc)?;
+    crate::ambiguity::settle(&mut doc, writer.as_deref(), &Default::default())?;
     write_baseline_in(root, name, &doc)?;
     prune_absorbed_accepts(root, run);
     Ok(baseline_path(root, name))

@@ -10,7 +10,7 @@ use std::path::Path;
 
 use crate::baseline_merge;
 use crate::headrun;
-use crate::invoke::{self, CommonArgs, Reused, Run};
+use crate::invoke::{self, CommonArgs, Listed, Reused, Run};
 use crate::ownership;
 use crate::unmeasured::{self, Reason, Unmeasured};
 use crate::workspace;
@@ -55,17 +55,22 @@ pub fn save_package(
     }
 }
 
-/// Resolve a non-buildcost save's package into `common`, then `configure`
-/// it, so a config error still has a package to mark. The outer error is the
-/// package's, the inner one the config's.
+/// Resolve a save's package into `common`, then `configure` it, so a config
+/// error still has a package to mark. A buildcost save needs `-p`, as its
+/// gate does; it is refused here, before anything is built. The outer error
+/// is the package's, the inner one the config's.
 pub fn configure_save<T>(
     common: &mut CommonArgs,
     saving: bool,
     crates: impl FnOnce(&CommonArgs) -> Result<Vec<String>, String>,
     configure: impl FnOnce(&mut CommonArgs) -> Result<T, String>,
 ) -> Result<Result<T, String>, String> {
-    if saving && common.backend.as_deref() != Some("buildcost") {
-        let pkg = save_package(common, || crates(common))?;
+    if saving {
+        let pkg = match (common.backend.as_deref(), &common.pkg) {
+            (Some("buildcost"), Some(pkg)) => pkg.clone(),
+            (Some("buildcost"), None) => return Err("--backend buildcost requires -p PKG".into()),
+            _ => save_package(common, || crates(common))?,
+        };
         common.pkg = Some(pkg);
     }
     Ok(configure(common))
@@ -77,17 +82,20 @@ pub fn bench_packages(common: &CommonArgs) -> Result<Vec<String>, String> {
 }
 
 /// Act on `--save-baseline NAME` under `root` for a gate that ended with
-/// `failures`. `listed` is every item the bench binary lists, if it was read.
-/// `common.pkg` is set: [`save_package`] resolved it before the gate ran.
+/// `failures`. `listing` is every item the bench binary lists, with its
+/// registering package, if it was read. `common.pkg` is set:
+/// [`configure_save`] resolved it before the gate ran.
 pub fn save_head(
     root: &Path,
     name: &str,
     current: &Run,
     source: &HeadRun,
     common: &CommonArgs,
-    listed: Option<&[String]>,
+    listing: Option<&[Listed]>,
     failures: u32,
 ) -> Result<(), String> {
+    let ids: Option<Vec<String>> = listing.map(|l| l.iter().map(|(id, _)| id.clone()).collect());
+    let listed = ids.as_deref();
     let buildcost = common.backend.as_deref() == Some("buildcost");
     let Some(package) = common.pkg.as_deref() else {
         return Err("--save-baseline needs -p PKG".into());
@@ -111,8 +119,8 @@ pub fn save_head(
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
-    let owned = ownership::for_save(current, common);
-    let (run, entries) = baseline_material(&owned, source, package);
+    let stamped = ownership::stamped(current, listing.unwrap_or_default());
+    let (run, entries) = baseline_material(&stamped, source, package);
     let scope = invoke::SaveScope::of(common);
     let path = invoke::save_baseline_in(root, name, &run, scope).map_err(|e| e.to_string())?;
     unmeasured::append_in(root, name, &entries).map_err(|e| e.to_string())?;

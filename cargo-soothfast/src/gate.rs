@@ -330,7 +330,7 @@ pub fn run(args: &[String]) -> i32 {
             .and_then(|root| {
                 let listed = exe
                     .as_deref()
-                    .and_then(|exe| crate::ownership::listed_owned(exe, &g.common));
+                    .and_then(|exe| invoke::listing(exe, g.common.filter.as_deref()));
                 let listed = listed.as_deref();
                 save_head(&root, name, &current, &head, &g.common, listed, failures)
             });
@@ -389,6 +389,9 @@ fn run_imported(g: &GateArgs, root: &std::path::Path) -> i32 {
         Ok(read) => read,
         Err(e) => return err(&e),
     };
+    if let Err(e) = import::check_prefixes(root, std::slice::from_ref(&prefix)) {
+        return err(&e);
+    }
     if let Some(f) = &g.common.filter {
         current.items.retain(|id, _| id.contains(f.as_str()));
         if current.items.is_empty() {
@@ -693,7 +696,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
         g.common.codegen_units_stamp().as_deref(),
         None,
     ));
-    let baseline = invoke::load_baseline(&g.baseline)
+    let mut baseline = invoke::load_baseline(&g.baseline)
         .map_err(|e| format!("failed to load baseline: {e}"))?
         .ok_or_else(|| {
             format!(
@@ -701,6 +704,9 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
                 g.baseline, g.baseline
             )
         })?;
+    for note in crate::ambiguity::unbaselined(&mut baseline, &current) {
+        println!("{note}");
+    }
     Ok(Some(Resolved {
         reference: baseline,
         current,
@@ -2082,7 +2088,7 @@ fn errored(g: &GateArgs, exe: Option<&std::path::Path>, msg: &str) -> i32 {
         let exe = exe
             .map(std::path::Path::to_path_buf)
             .or_else(|| invoke::bench_executable(&g.common, None, None));
-        let listed = exe.and_then(|exe| crate::ownership::listed_owned(&exe, &g.common));
+        let listed = exe.and_then(|exe| invoke::listed_ids(&exe, g.common.filter.as_deref()));
         errored_at(&root, name, &g.common, listed.as_deref(), msg);
     }
     err(msg)
