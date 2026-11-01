@@ -15,6 +15,8 @@ impl TempRepo {
         std::fs::create_dir_all(&root).unwrap();
         let repo = TempRepo { root };
         repo.git(&["init", "-q"]);
+        repo.git(&["config", "commit.gpgsign", "false"]);
+        repo.git(&["config", "tag.gpgsign", "false"]);
         repo
     }
 
