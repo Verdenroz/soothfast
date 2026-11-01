@@ -260,10 +260,12 @@ did not fail also uploads HEAD's imported items as
 `soothfast-baseline-import-<project>` (the file `import-<project>.json`),
 which the docs job merges beside the cargo gate's, so a claim on a `jmh::` or
 `pytest::` item is checked against the numbers this pull request produced. A
-default-branch push runs the harness on HEAD alone and uploads the same file
-for its own docs check. A failing gate uploads none, and a claim on its
-items fails for want of a measurement. Two projects whose results share an
-item id fail the merge, which names both files.
+push, or any event the cargo gate runs on outside a pull request, runs the
+harness on HEAD alone and uploads the same file for its own docs check. A
+gate that failed or errored uploads no numbers, only a `gate-failed` entry
+naming the items of HEAD's results, or the whole prefix when there are none,
+so an unchanged claim on them reads "not evaluated". Two projects whose
+results share an item id fail the merge, which names both files.
 
 `docs check` and `docs accept` need no cargo project for `path#Symbol` binds
 (see [living docs](living-docs.md)).

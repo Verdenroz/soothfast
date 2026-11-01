@@ -535,8 +535,8 @@ jobs:
   gate:
     name: Gate (${{ matrix.name }})
     needs: plan
-    # A push only records HEAD's numbers for its docs check, as the cargo gate does.
-    if: (github.event_name == 'pull_request' || github.event_name == 'push') && needs.plan.outputs.projects == 'true'
+    # The events gate-rust runs on; outside a pull request it only records HEAD's numbers.
+    if: github.event_name != 'schedule' && needs.plan.outputs.projects == 'true'
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
       contents: read
@@ -638,6 +638,22 @@ jobs:
             echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
             exit "$rc"
           } 2>&1 | tee "$RESULT"
+      # A gate that saved no numbers still names its items, so the docs job
+      # reports their unchanged claims not evaluated.
+      - name: List a failed gate's items
+        if: always()
+        shell: bash
+        env:
+          FROM: ${{ matrix.from }}
+          OUT: ${{ matrix.bench_out }}
+          PREFIX: ${{ matrix.prefix }}
+          NAME: ${{ matrix.name }}
+        run: |
+          file="$RUNNER_TEMP/soothfast-baseline/import-$NAME.json"
+          if [ ! -f "$file" ]; then
+            mkdir -p "$RUNNER_TEMP/soothfast-baseline"
+            cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} --out "$file" --failed
+          fi
       - name: Record the verdict
         if: always()
         shell: bash
@@ -785,6 +801,8 @@ jobs:
           # A push records every item in one unsharded leg.
           EXPECT: ${{ github.event_name == 'pull_request' && inputs.shard > 1 && inputs.shard || 1 }}
           BASE_REF: ${{ github.base_ref }}
+          PROJECTS: ${{ needs.plan.outputs.projects }}
+          EVENT: ${{ github.event_name }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
@@ -797,13 +815,25 @@ jobs:
             args+=(--against-ref 'HEAD^')
           fi
           : > "$RESULT"
+          skip() {
+            echo "::warning::claims not evaluated: $1"
+            echo "claims not evaluated: $1" >> "$RESULT"
+            args+=(--skip-claims)
+          }
           shopt -s nullglob
           files=("$RUNNER_TEMP"/baselines/*/*.json)
           merged=0
-          cargo soothfast baseline merge --into head --expect "$EXPECT" --packages "$PACKAGES" "${files[@]}" 2>&1 |
-            tee -a "$RESULT" || merged=$?
-          # A merge that failed still leaves binds and examples to check; the step fails either way.
-          if [ "$merged" -eq 0 ]; then args+=(--baseline head); else args+=(--skip-claims); fi
+          # The gates measure only on a pull request or a push.
+          if [ -z "$PACKAGES" ] && [ "$PROJECTS" != true ]; then
+            skip "no gate measures this repository"
+          elif [ "$EVENT" != pull_request ] && [ "$EVENT" != push ]; then
+            skip "the gates do not measure on a $EVENT event"
+          else
+            cargo soothfast baseline merge --into head --expect "$EXPECT" --packages "$PACKAGES" "${files[@]}" 2>&1 |
+              tee -a "$RESULT" || merged=$?
+            # A merge that failed still leaves binds and examples to check; the step fails either way.
+            if [ "$merged" -eq 0 ]; then args+=(--baseline head); else args+=(--skip-claims); fi
+          fi
           rc=0
           cargo soothfast docs check "${args[@]}" 2>&1 | tee -a "$RESULT" || rc=$?
           if [ "$merged" -ne 0 ]; then rc=$merged; fi
