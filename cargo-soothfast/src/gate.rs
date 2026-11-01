@@ -2173,9 +2173,11 @@ fn errored(g: &GateArgs, exe: Option<&std::path::Path>, msg: &str) -> i32 {
         let built = exe
             .map(std::path::Path::to_path_buf)
             .or_else(|| crate::benchexe::stored(&g.common, None, None, invoke::Build::Measure));
-        let filter = g.common.filter.as_deref();
-        let listed = built.and_then(|exe| invoke::listed_ids(&exe, filter));
-        errored_at(&root, name, &g.common, listed.as_deref(), msg);
+        let listed = crate::benchexe::listing(&g.common, built.as_deref());
+        if let Err(e) = &listed {
+            println!("gate: {e}, so its gate-failed entry names only the items it owned before");
+        }
+        errored_at(&root, name, &g.common, listed.ok().as_deref(), msg);
     }
     err(msg)
 }

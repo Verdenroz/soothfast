@@ -486,15 +486,17 @@ mod tests {
 
     #[test]
     fn a_failed_package_keeps_a_shared_id_s_number_only_when_another_package_saved_it() {
-        for (writer, kept) in [("b", true), ("a", false), ("", true)] {
+        for (writer, kept) in [("b", true), ("a", false), ("", true), ("only-a", false)] {
             let root = scratch(&format!("unmeasured-shared-id-{writer}"));
             let mut doc = json!({
                 "version": 1,
                 "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 8 } } },
                 "owners": { "a": ["util::hash"], "b": ["util::hash"] },
             });
-            if !writer.is_empty() {
-                doc["items"]["util::hash"]["saved_by"] = json!(writer);
+            match writer {
+                "" => {}
+                "only-a" => doc["owners"] = json!({ "a": ["util::hash"], "b": [] }),
+                _ => doc["items"]["util::hash"]["saved_by"] = json!(writer),
             }
             invoke::write_baseline_in(&root, "head", &doc).unwrap();
             let failed = entry("a", Reason::GateFailed, "failed", &[], ids(&["util::hash"]));

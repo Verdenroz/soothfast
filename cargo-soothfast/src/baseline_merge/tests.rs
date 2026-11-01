@@ -1,3 +1,4 @@
+use super::plan::Planned;
 use super::*;
 
 /// An id under the shared bench crate name that shard `index` of `count` owns.
@@ -220,7 +221,7 @@ fn ungated<'a>(event: &'a str, imports: &'a [String]) -> Ungated<'a> {
 fn an_event_the_gate_skips_writes_one_entry_for_everything_but_imports() {
     let imports = ["jmh".to_string()];
     let event = ungated("workflow_dispatch", &imports);
-    let merged = merge_on(&[], 1, &packages(), Some(&event)).unwrap();
+    let merged = merge_on(&[], 1, &packages(), &Planned::new(), Some(&event)).unwrap();
     let entries = unmeasured::read(&merged).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].reason, Reason::NotGatedOnEvent);
@@ -260,7 +261,14 @@ fn an_ungated_event_counts_an_item_a_file_marks_imported_as_imported() {
         "items": { "bench::x": { "imported": "bench", "walltime": { "median_ns": 5.0 } } },
     });
     let event = ungated("push", &[]);
-    let merged = merge_on(&[("i.json".into(), imported)], 1, &[], Some(&event)).unwrap();
+    let merged = merge_on(
+        &[("i.json".into(), imported)],
+        1,
+        &[],
+        &Planned::new(),
+        Some(&event),
+    )
+    .unwrap();
     let entry = &unmeasured::read(&merged).unwrap()[0];
     assert_eq!(
         entry.except_imported.as_deref(),
@@ -284,7 +292,7 @@ fn markdown_claim(expr: &str) -> soothfast_docs::markdown::Doc {
 #[test]
 fn an_edited_claim_on_a_merge_group_event_is_not_evaluated() {
     let event = ungated("merge_group", &[]);
-    let merged = merge_on(&[], 1, &packages(), Some(&event)).unwrap();
+    let merged = merge_on(&[], 1, &packages(), &Planned::new(), Some(&event)).unwrap();
     assert_eq!(edited_claim_failures(&merged), 0);
 }
 
@@ -315,7 +323,7 @@ fn an_edited_claim_a_failed_gate_could_have_measured_still_fails() {
 fn an_ungated_event_still_names_a_covered_package_s_missing_shard() {
     let event = ungated("push", &[]);
     let files = [shard_file(1), shard_file(3)];
-    let merged = merge_on(&files, 3, &packages(), Some(&event)).unwrap();
+    let merged = merge_on(&files, 3, &packages(), &Planned::new(), Some(&event)).unwrap();
     let entries = unmeasured::read(&merged).unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].reason, Reason::ShardMissing);
@@ -344,10 +352,17 @@ fn a_package_whose_listing_is_empty_is_accounted_for() {
     assert!(unmeasured::read(&merged).unwrap().is_empty());
 }
 
+fn plan_of(pkg: &str, ids: &[&str]) -> Planned {
+    Planned::from([(
+        pkg.to_string(),
+        ids.iter().map(|id| id.to_string()).collect(),
+    )])
+}
+
 #[test]
 fn a_leg_that_uploaded_nothing_has_its_items_named_from_the_plan() {
-    let plan = json!({ "version": 1, "plan": true, "listed": { "core": ["core::a", "core::b"] } });
-    let merged = merge(&[("plan.json".into(), plan)], 1, &packages()).unwrap();
+    let plan = plan_of("core", &["core::a", "core::b"]);
+    let merged = merge_on(&[], 1, &packages(), &plan, None).unwrap();
     let entries = unmeasured::read(&merged).unwrap();
     assert_eq!(entries[0].reason, Reason::NoMeasurement);
     assert_eq!(entries[0].items, ["core::a", "core::b"]);
@@ -383,4 +398,54 @@ fn baseline_plan_adds_each_package_s_listing_to_one_file() {
     assert!(plan::is_plan(&doc));
     assert_eq!(doc["listed"]["core"], json!(["core::a"]));
     assert_eq!(doc["listed"]["app"], json!(["app::x"]));
+}
+
+#[test]
+fn an_import_item_is_never_covered_by_a_silent_leg_s_entry() {
+    let imported = json!({
+        "version": 1, "imported": "jmh",
+        "items": { "jmh::a": { "imported": "jmh", "walltime": { "median_ns": 5.0 } } },
+    });
+    let plan = plan_of("core", &["core::a"]);
+    let files = [("import.json".into(), imported)];
+    let merged = merge_on(&files, 1, &packages(), &plan, None).unwrap();
+    let entries = unmeasured::read(&merged).unwrap();
+    assert!(entries.iter().all(|e| e.items == ["core::a"]));
+    let claim = markdown_claim("jmh::missing.walltime.median_ns < 1ms");
+    let unchanged = || {
+        Ok(crate::docs_claims::Claims::from([(
+            "a.md".to_string(),
+            "jmh::missing.walltime.median_ns < 1ms".to_string(),
+        )]))
+    };
+    assert_eq!(
+        crate::docs_claims::check(&[("a.md", &claim)], Some(&merged), unchanged).unwrap(),
+        1
+    );
+}
+
+#[test]
+fn an_assertion_with_no_id_is_kept_once_across_shards() {
+    let global = json!({ "kind": "build", "ok": true, "detail": "" });
+    let files: Vec<(String, Value)> = (1..=3)
+        .map(|i| {
+            let (label, mut doc) = shard_file(i);
+            doc["assertions"] = json!([global.clone()]);
+            (label, doc)
+        })
+        .collect();
+    let merged = merge(&files, 3, &packages()).unwrap();
+    assert_eq!(merged["assertions"], json!([global]));
+}
+
+#[test]
+fn a_plan_file_reads_back_each_package_s_ids_and_refuses_a_baseline() {
+    let dir = crate::test::fixture::TempDir::new("plan-read");
+    std::fs::create_dir_all(&*dir).unwrap();
+    let file = dir.join("plan.json");
+    plan::add(&file, "core", &["core::a".into()]).unwrap();
+    assert_eq!(plan::read(&file).unwrap(), plan_of("core", &["core::a"]));
+    let baseline = dir.join("head.json");
+    std::fs::write(&baseline, r#"{"version":1,"items":{}}"#).unwrap();
+    assert!(plan::read(&baseline).is_err());
 }

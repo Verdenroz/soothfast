@@ -499,8 +499,9 @@ no other package owns, and its entry names those, or the ones its listing
 shows; with neither it names nothing, and a claim on an item no package owns
 fails, naming that gate failure as possibly related. A leg that uploaded
 nothing at all, from a setup failure or a cancel, gets a `no-measurement`
-entry naming the items the Build (bench) job listed for its package with
-`cargo soothfast baseline plan` (the `soothfast-baseline-plan` artifact): an
+entry naming the items the Build (bench) job listed for its package from
+the stores it built, with `cargo soothfast baseline plan` (the
+`soothfast-plan` artifact, passed to the merge as `--plan`): an
 unchanged claim on them is not evaluated and a new or edited one fails. An
 item no listing names, an import's among them, still fails. An id two packages both
 list, as a lib item linked into both their bench binaries is, belongs to
