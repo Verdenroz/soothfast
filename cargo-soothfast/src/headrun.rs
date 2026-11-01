@@ -12,7 +12,7 @@ use crate::binstore;
 use crate::buildstamp::{self, BuildStamp};
 use crate::codekey;
 use crate::gate;
-use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
+use crate::invoke::{self, AssertionOutcome, CommonArgs, ItemMetrics, Run};
 use crate::itemreuse::{Bin, Reuse};
 use crate::runcache::{self, Runs};
 
@@ -227,8 +227,17 @@ pub fn expected_ids(common: &CommonArgs, exe: &Path) -> Option<BTreeSet<String>>
 pub fn head_from_runcache(runs: &Runs, digest: Option<&str>) -> Option<(Run, String)> {
     let (id, measured_from) = head_cache_id(digest)?;
     let doc = runs.load(&id, &measured_from)?;
-    Some((run_from_doc(&doc), measured_from))
+    Some((stored_head(&doc)?, measured_from))
 }
+
+/// HEAD's run from a stored doc, unless the doc predates [`HEAD_FORMAT`].
+fn stored_head(doc: &Value) -> Option<Run> {
+    (doc["head_format"] == HEAD_FORMAT).then(|| run_from_doc(doc))
+}
+
+/// The format a stored HEAD run carries since it records its claims'
+/// verdicts. One stored before it reads as a miss, since it lost them.
+const HEAD_FORMAT: u64 = 2;
 
 /// A run read back from [`ref_doc`]'s shape, its claims' verdicts included.
 pub fn run_from_doc(doc: &Value) -> Run {
@@ -238,12 +247,6 @@ pub fn run_from_doc(doc: &Value) -> Run {
         .filter_map(|v| invoke::AssertionOutcome::from_verdict_json(v["id"].as_str()?, v))
         .collect();
     run
-}
-
-/// Whether `doc` records a claim that failed.
-pub fn claims_failed(doc: &Value) -> bool {
-    let verdicts = doc["assertions"].as_array().into_iter().flatten();
-    verdicts.into_iter().any(|v| v["ok"] == false)
 }
 
 /// What HEAD's own run is stored under, and the label saying what it was
@@ -416,19 +419,26 @@ pub fn settled_doc(mut doc: Value, settled: &Settled) -> Option<Value> {
 /// well when the tree is clean enough for the commit to name what was built.
 pub fn cache_head(runs: &Runs, head: &Run, digest: Option<&str>, settled: &Settled) {
     if let Some(doc) = settled_doc(ref_doc(head), settled) {
-        cache_head_doc(runs, &doc, digest);
+        store_head(runs, doc, head, &[digest]);
     }
 }
 
-/// Keep `doc` as HEAD's measurement, unless a claim on it failed: a rerun
-/// then measures and fails it again instead of reusing it.
-pub fn cache_head_doc(runs: &Runs, doc: &Value, digest: Option<&str>) {
-    if claims_failed(doc) {
+/// Keep `doc` as HEAD's measurement under each of `digests`, and HEAD's SHA
+/// when the tree is clean, with the verdicts of `head`, HEAD's own run. A
+/// HEAD whose claim failed is not kept, so a rerun measures and fails again.
+pub fn store_head(runs: &Runs, mut doc: Value, head: &Run, digests: &[Option<&str>]) {
+    if head.assertions.iter().any(|a| !a.ok) {
         println!("not storing HEAD's run: a claim on it failed");
         return;
     }
-    if let Some(digest) = digest {
-        runs.store(digest, doc);
+    doc["assertions"] = head
+        .assertions
+        .iter()
+        .map(AssertionOutcome::to_json)
+        .collect();
+    doc["head_format"] = serde_json::json!(HEAD_FORMAT);
+    for digest in digests.iter().flatten() {
+        runs.store(digest, &doc);
     }
     if !invoke::tree_is_clean() {
         return;
@@ -436,7 +446,7 @@ pub fn cache_head_doc(runs: &Runs, doc: &Value, digest: Option<&str>) {
     let Ok(sha) = invoke::git(&["rev-parse", "HEAD"]) else {
         return;
     };
-    runs.store(sha.trim(), doc);
+    runs.store(sha.trim(), &doc);
 }
 
 /// A measured run in the reference-document shape `compare` reads.
@@ -450,12 +460,11 @@ pub fn ref_doc(run: &Run) -> Value {
     }
     doc["items"] = invoke::run_to_items_value(run);
     if !run.assertions.is_empty() {
-        let verdicts = run.assertions.iter().map(|a| {
-            let mut v = a.verdict_json();
-            v["id"] = serde_json::json!(a.id);
-            v
-        });
-        doc["assertions"] = verdicts.collect();
+        doc["assertions"] = run
+            .assertions
+            .iter()
+            .map(AssertionOutcome::to_json)
+            .collect();
     }
     doc
 }
@@ -653,6 +662,15 @@ mod tests {
             rerun.assertions.iter().any(|a| !a.ok),
             "a stored verdict replays"
         );
+    }
+
+    #[test]
+    fn a_head_run_stored_before_its_verdicts_were_kept_reads_as_a_miss() {
+        let old = ref_doc(&timing());
+        assert!(super::stored_head(&old).is_none());
+        let mut current = old;
+        current["head_format"] = json!(super::HEAD_FORMAT);
+        assert_eq!(super::stored_head(&current).unwrap().assertions.len(), 1);
     }
 
     fn stored(items: serde_json::Value) -> serde_json::Value {

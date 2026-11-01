@@ -13,8 +13,8 @@ use crate::gate_config;
 use crate::gate_lock;
 use crate::gate_save::{HeadRun, bench_packages, configure_save, save_errored, save_head};
 use crate::headrun::{
-    self, RECOUNT, Settled, binary_digest, cache_head, cache_head_doc, claims_failed,
-    head_from_runcache, ref_doc, settle, settled_doc,
+    self, RECOUNT, Settled, binary_digest, cache_head, head_from_runcache, ref_doc, settle,
+    settled_doc, store_head,
 };
 use crate::import;
 use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
@@ -95,6 +95,9 @@ struct GateArgs {
     matrix: String,
     save_baseline: Option<String>,
     reuse_base: bool,
+    /// Whether a crate the merge-base has no bench target for is measured;
+    /// `gate accept` has nothing to accept for one.
+    measure_new: bool,
     import: ImportArgs,
 }
 
@@ -128,6 +131,7 @@ pub fn run(args: &[String]) -> i32 {
         matrix: "default".into(),
         save_baseline: None,
         reuse_base: true,
+        measure_new: true,
         import: ImportArgs::default(),
     };
     let mut it = args.iter();
@@ -212,9 +216,9 @@ pub fn run(args: &[String]) -> i32 {
         Ok(Some(resolved)) => resolved,
         Ok(None) => {
             println!(
-                "gate: no bench target at {} for {} — newly measured, nothing to compare",
+                "gate: nothing to gate for {}: no bench target at {}, and HEAD registers no item",
+                g.common.pkg.as_deref().unwrap_or("this package"),
                 g.against_ref.as_deref().unwrap_or("?"),
-                g.common.pkg.as_deref().unwrap_or("this package")
             );
             return 0;
         }
@@ -654,8 +658,8 @@ fn head_from_cache_or(
 }
 
 /// Measure or load both sides of a gate run as a [`Resolved`]. `Ok(None)`
-/// only in `--against-ref` mode: a crate newly measured has nothing at the
-/// ref to compare against.
+/// only in `--against-ref` mode, when there is nothing to gate: no bench
+/// target at the ref, and HEAD has none or registers no item.
 fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, String> {
     if g.common.backend.as_deref() == Some("buildcost") {
         let Some(pkg) = g.common.pkg.clone() else {
@@ -691,7 +695,8 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
         }));
     }
     if let Some(refname) = &g.against_ref {
-        return measure_ref_interleaved(&g.common, refname, g.reuse_base, walltime_advisory);
+        let new = g.measure_new;
+        return measure_ref_interleaved(&g.common, refname, g.reuse_base, walltime_advisory, new);
     }
     let records = invoke::run_bench(&g.common, &[]).map_err(|e| e.to_string())?;
     let mut current = invoke::collect(&records);
@@ -797,6 +802,7 @@ fn accept_cmd(args: &[String]) -> i32 {
         matrix: a.matrix,
         save_baseline: None,
         reuse_base: true,
+        measure_new: false,
         import: ImportArgs::default(),
     };
     let Resolved {
@@ -963,25 +969,32 @@ fn write_gate_status(failures: u32) {
     );
 }
 
-/// HEAD of a crate the merge-base has no bench target for, compared with
-/// itself so its own claims decide; `keep` stores the run. `None` when HEAD
-/// has no bench target either, or one that measures no items yet, which
-/// leaves nothing to gate.
+/// What HEAD has of a crate the merge-base has no bench target for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum NewTarget {
+    Absent,
+    /// A bench target that registers no item yet.
+    Empty,
+    Registers,
+}
+
+/// HEAD of a crate the merge-base has no bench target for, `measure`d and
+/// compared with itself so its own claims decide. `None` when HEAD has no
+/// bench target either, or one that registers no item yet, which leaves
+/// nothing to gate. A target that registers items but measured none still
+/// reaches the gate's zero-items refusal.
 fn newly_measured(
-    has_target: bool,
+    head: NewTarget,
     measure: impl FnOnce() -> Result<Run, String>,
-    keep: impl FnOnce(&Run),
 ) -> Result<Option<Resolved>, String> {
-    if !has_target {
-        return Ok(None);
+    match head {
+        NewTarget::Absent => Ok(None),
+        NewTarget::Empty => {
+            println!("gate: its new bench target registers no items yet");
+            Ok(None)
+        }
+        NewTarget::Registers => Ok(Some(self_compared(measure()?))),
     }
-    let head = measure()?;
-    if head.items.is_empty() {
-        println!("gate: its new bench target measures no items yet");
-        return Ok(None);
-    }
-    keep(&head);
-    Ok(Some(self_compared(head)))
 }
 
 /// `head` as both sides of a comparison, so every delta is zero.
@@ -1002,19 +1015,22 @@ fn self_compared(head: Run) -> Resolved {
 /// (perfcnt/callgrind) don't drift, so the second round of each side skips
 /// them and re-measures only the timing-sensitive backends. Advisory walltime
 /// can't fail on that second sample, so it skips the second round.
-/// `Ok(None)` when the merge-base has no such bench target: the crate is
-/// newly measured, so there is nothing on that side to compare against.
-/// A merge-base already measured under the same conditions is served from
-/// the run cache instead of being rebuilt, unless `reuse` is false.
+/// With no such bench target at the merge-base, HEAD alone is measured, as
+/// [`newly_measured`] decides, or with `measure_new` false nothing is.
+/// `Ok(None)` then means there is nothing to gate. A merge-base already
+/// measured under the same conditions is served from the run cache instead
+/// of being rebuilt, unless `reuse` is false.
 fn measure_ref_interleaved(
     common: &CommonArgs,
     refname: &str,
     reuse: bool,
     walltime_advisory: bool,
+    measure_new: bool,
 ) -> Result<Option<Resolved>, String> {
     const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
     enum Ref {
-        NoBenchTarget,
+        /// The merge-base has no bench target; whether HEAD has one.
+        NoBenchTarget(bool),
         /// The one pass, whether it carries the gating counters, and the run
         /// stored for the identical binary with its label.
         IdenticalBinaries {
@@ -1104,7 +1120,10 @@ fn measure_ref_interleaved(
         if let Some(pkg) = &pkg
             && !workspace::has_bench_target(pkg, &target, Some(wt)).map_err(|e| e.to_string())?
         {
-            return Ok((Ref::NoBenchTarget, None, invoke::HarnessSync::default()));
+            let at_head =
+                workspace::has_bench_target(pkg, &target, None).map_err(|e| e.to_string())?;
+            let none = invoke::HarnessSync::default();
+            return Ok((Ref::NoBenchTarget(at_head), None, none));
         }
         // A local .cargo/config.toml (untracked, e.g. a linker pin) wouldn't
         // otherwise reach the worktree and would read as a false mismatch.
@@ -1166,7 +1185,7 @@ fn measure_ref_interleaved(
                     Settled::AsMeasured
                 };
                 if let Some(doc) = settled_doc(doc, &settled) {
-                    cache_head_doc(&runs, &doc, head_dig.as_deref());
+                    store_head(&runs, doc, pass, &[head_dig.as_deref()]);
                 }
             }
             let label = format!("binary {}", d.head);
@@ -1268,29 +1287,32 @@ fn measure_ref_interleaved(
     let (outcome, digests, harness) = outcome;
 
     let sides = match outcome {
-        Ref::NoBenchTarget => {
-            let target = common.target.as_deref().unwrap_or("soothfast");
-            let has_target = match &common.pkg {
-                Some(pkg) => {
-                    workspace::has_bench_target(pkg, target, None).map_err(|e| e.to_string())?
-                }
-                None => true,
-            };
+        Ref::NoBenchTarget(_) if !measure_new => return Ok(None),
+        Ref::NoBenchTarget(at_head) => {
             println!("gate: no bench target at {refname}; HEAD's own claims decide");
             let exe = head_exe.clone();
-            let resolved = newly_measured(
-                has_target,
-                || measure_head(head_exe.as_deref().filter(|_| reuse)),
-                |head| {
-                    let settled = match runs.env() {
-                        Some(_) => {
-                            settle("gate", "HEAD's run", head, || measure(None, RECOUNT).ok())
-                        }
-                        None => Settled::AsMeasured,
-                    };
-                    cache_head(&runs, head, head_dig.as_deref(), &settled);
-                },
-            )?;
+            let head = match (at_head, &head_exe) {
+                (false, _) => NewTarget::Absent,
+                (true, Some(exe))
+                    if invoke::list_items(exe, None).is_some_and(|l| l.is_empty()) =>
+                {
+                    NewTarget::Empty
+                }
+                (true, _) => NewTarget::Registers,
+            };
+            let resolved = newly_measured(head, || {
+                if let Some((head, from)) = head_from_runcache(&runs, head_dig.as_deref()) {
+                    println!("gate: reusing HEAD's own run, measured from {from}");
+                    return Ok(head);
+                }
+                let head = measure_head(head_exe.as_deref().filter(|_| reuse))?;
+                let settled = match runs.env() {
+                    Some(_) => settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok()),
+                    None => Settled::AsMeasured,
+                };
+                cache_head(&runs, &head, head_dig.as_deref(), &settled);
+                Ok(head)
+            })?;
             return Ok(resolved.map(|r| Resolved { exe, ..r }));
         }
         // One cheap pass serves as both sides: real items and assertions,
@@ -1355,11 +1377,10 @@ fn measure_ref_interleaved(
             runs.store(&d.base, &stored);
         }
     }
-    let head_doc = settled_doc(ref_doc(&head), &head_settled).filter(|doc| !claims_failed(doc));
-    if let (Some(d), Some(stored)) = (&digests, head_doc) {
-        runs.store(&d.head, &stored);
+    if let Some(doc) = settled_doc(ref_doc(&head), &head_settled) {
+        let text = digests.as_ref().map(|d| d.head.as_str());
+        store_head(&runs, doc, &head, &[head_dig.as_deref(), text]);
     }
-    cache_head(&runs, &head, head_dig.as_deref(), &head_settled);
     Ok(Some(Resolved {
         reference,
         current: head,
@@ -2914,7 +2935,7 @@ mod tests {
         assert_eq!(failures, 1);
     }
 
-    /// Gate a new crate whose one alloc claim holds or not, saving into `root`.
+    /// A new crate's run whose one alloc claim holds or not.
     fn new_crate_run(holds: bool) -> Run {
         let mut head = run_with(ItemMetrics {
             allocs: Some(0),
@@ -2963,25 +2984,39 @@ mod tests {
         Scratch(root)
     }
 
-    #[test]
-    fn a_new_crate_is_measured_and_kept_and_its_claims_decide() {
-        for holds in [true, false] {
-            let mut kept = 0;
-            let resolved = super::newly_measured(true, || Ok(new_crate_run(holds)), |_| kept += 1)
+    /// A new crate gated and saved into `root` through the gate's save path.
+    fn save_new_crate(root: &Scratch, holds: bool) -> u32 {
+        let resolved =
+            super::newly_measured(super::NewTarget::Registers, || Ok(new_crate_run(holds)))
                 .unwrap()
-                .expect("a crate with a bench target at HEAD is gated");
-            assert_eq!(kept, 1);
-            assert_eq!(gated(&resolved), u32::from(!holds));
-        }
+                .expect("a crate whose new target registers items is gated");
+        let failures = gated(&resolved);
+        let common = CommonArgs {
+            pkg: Some("pkg".into()),
+            ..CommonArgs::default()
+        };
+        let current = &resolved.current;
+        let claims = super::assertion_failures(current, &mut Vec::new());
+        save_head(root, "head", current, &resolved.head, &common, None, claims).unwrap();
+        failures
+    }
+
+    #[test]
+    fn a_passing_new_crate_saves_its_run() {
+        let root = scratch("new-crate-pass");
+        assert_eq!(save_new_crate(&root, true), 0);
+        let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+        assert_eq!(
+            saved["items"]["pkg::bt_base_to_htf_index"]["alloc"]["allocs"],
+            0
+        );
+        assert_eq!(saved["assertions"][0]["ok"], true);
     }
 
     #[test]
     fn a_package_with_no_bench_target_at_head_either_is_not_gated() {
-        let measured = super::newly_measured(
-            false,
-            || panic!("nothing to measure"),
-            |_| panic!("nothing to keep"),
-        );
+        let measured =
+            super::newly_measured(super::NewTarget::Absent, || panic!("nothing to measure"));
         assert!(measured.unwrap().is_none());
     }
 
@@ -3078,26 +3113,7 @@ mod tests {
     #[test]
     fn a_failing_new_crate_fails_the_gate_and_saves_no_numbers() {
         let root = scratch("new-crate-fail");
-        let resolved = super::newly_measured(true, || Ok(new_crate_run(false)), |_| {})
-            .unwrap()
-            .unwrap();
-        let failures = gated(&resolved);
-        assert_eq!(failures, 1);
-        let common = CommonArgs {
-            pkg: Some("pkg".into()),
-            ..CommonArgs::default()
-        };
-        let current = &resolved.current;
-        save_head(
-            &root,
-            "head",
-            current,
-            &resolved.head,
-            &common,
-            None,
-            failures,
-        )
-        .unwrap();
+        assert_eq!(save_new_crate(&root, false), 1);
         let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
         assert_eq!(saved["items"], json!({}));
         assert_eq!(saved["unmeasured"][0]["reason"], "gate-failed");
@@ -3113,8 +3129,17 @@ mod tests {
     #[test]
     fn a_new_bench_target_with_no_items_yet_is_not_gated() {
         let measured =
-            super::newly_measured(true, || Ok(Run::default()), |_| panic!("nothing to keep"));
+            super::newly_measured(super::NewTarget::Empty, || panic!("nothing to measure"));
         assert!(measured.unwrap().is_none());
+    }
+
+    #[test]
+    fn a_new_target_that_registers_items_but_measured_none_reaches_the_zero_items_refusal() {
+        let measured = super::newly_measured(super::NewTarget::Registers, || Ok(Run::default()));
+        let resolved = measured
+            .unwrap()
+            .expect("gated, so the zero-items guard refuses it");
+        assert!(resolved.current.items.is_empty());
     }
 
     #[test]
@@ -3283,6 +3308,7 @@ mod tests {
             matrix: "default".into(),
             save_baseline: None,
             reuse_base: true,
+            measure_new: true,
             import: super::ImportArgs {
                 current: Some(file("cur.json", pyperf(current))),
                 reference: Some(reference.clone()),
