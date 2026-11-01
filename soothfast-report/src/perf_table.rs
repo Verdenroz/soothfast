@@ -16,48 +16,38 @@ pub struct Row {
     pub polls: Option<u64>,
     /// Brought in by `import` from another language's harness.
     pub imported: bool,
-    /// The packages that own the id when more than one does, which leaves
-    /// it with no number.
-    pub ambiguous: Vec<String>,
 }
 
-/// One `Row` per measured item in the baseline, in baseline (map) order,
-/// then one per id of its `ambiguous` index.
+/// One `Row` per measured item in the baseline, in baseline (map) order.
 pub fn rows(baseline: &Value) -> Vec<Row> {
-    let items = baseline["items"].as_object().into_iter().flatten();
-    let measured = items.map(|(id, m)| Row {
-        id: id.clone(),
-        instructions: m["perfcnt"]["instructions"].as_u64(),
-        median_ns: m["walltime"]["median_ns"].as_f64(),
-        p99_ns: m["walltime"]["p99_ns"].as_f64(),
-        allocs: m["alloc"]["allocs"].as_u64(),
-        polls: m["asyncexec"]["polls"].as_u64(),
-        imported: m["imported"].is_string(),
-        ambiguous: Vec::new(),
-    });
-    let index = baseline["ambiguous"].as_object().into_iter().flatten();
-    let ambiguous = index.map(|(id, entry)| Row {
-        id: id.clone(),
-        instructions: None,
-        median_ns: None,
-        p99_ns: None,
-        allocs: None,
-        polls: None,
-        imported: false,
-        ambiguous: (entry["packages"].as_array().into_iter().flatten())
-            .filter_map(|p| p.as_str().map(str::to_string))
-            .collect(),
-    });
-    measured.chain(ambiguous).collect()
+    let Some(items) = baseline["items"].as_object() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(|(id, m)| Row {
+            id: id.clone(),
+            instructions: m["perfcnt"]["instructions"].as_u64(),
+            median_ns: m["walltime"]["median_ns"].as_f64(),
+            p99_ns: m["walltime"]["p99_ns"].as_f64(),
+            allocs: m["alloc"]["allocs"].as_u64(),
+            polls: m["asyncexec"]["polls"].as_u64(),
+            imported: m["imported"].is_string(),
+        })
+        .collect()
 }
 
-/// The item cell's text after the id: why an ambiguous row has no numbers.
-fn note(r: &Row) -> String {
-    if r.ambiguous.is_empty() {
-        String::new()
-    } else {
-        format!(" (ambiguous: {})", r.ambiguous.join(", "))
-    }
+/// Each id of the baseline's `ambiguous` index, which has no numbers, and
+/// the packages that own it.
+fn ambiguous(baseline: &Value) -> Vec<(&str, String)> {
+    let index = baseline["ambiguous"].as_object().into_iter().flatten();
+    index
+        .map(|(id, entry)| {
+            let packages = entry["packages"].as_array().into_iter().flatten();
+            let packages: Vec<&str> = packages.filter_map(Value::as_str).collect();
+            (id.as_str(), packages.join(", "))
+        })
+        .collect()
 }
 
 /// The walltime columns of each imported item, grouped by import prefix.
@@ -105,14 +95,18 @@ pub fn markdown_at(baseline: &Value, depth: usize) -> String {
     let any_imported = rows.iter().any(|r| r.imported);
     for r in rows.into_iter().filter(|r| !r.imported) {
         out.push_str(&format!(
-            "| `{}`{} | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} |\n",
             r.id,
-            note(&r),
             fmt_u(r.instructions),
             fmt_ns(r.median_ns),
             fmt_ns(r.p99_ns),
             fmt_u(r.allocs),
             fmt_u(r.polls),
+        ));
+    }
+    for (id, packages) in ambiguous(baseline) {
+        out.push_str(&format!(
+            "| `{id}` (ambiguous: {packages}) | n/a | n/a | n/a | n/a | n/a |\n"
         ));
     }
     let imported = if any_imported {
@@ -140,14 +134,18 @@ pub fn html(baseline: &Value) -> String {
     let any_imported = rows.iter().any(|r| r.imported);
     for r in rows.into_iter().filter(|r| !r.imported) {
         out.push_str(&format!(
-            "<tr><td><code>{}</code>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            "<tr><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
             r.id,
-            note(&r),
             fmt_u(r.instructions),
             fmt_ns(r.median_ns),
             fmt_ns(r.p99_ns),
             fmt_u(r.allocs),
             fmt_u(r.polls),
+        ));
+    }
+    for (id, packages) in ambiguous(baseline) {
+        out.push_str(&format!(
+            "<tr><td><code>{id}</code> (ambiguous: {packages})</td><td>n/a</td><td>n/a</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>\n"
         ));
     }
     out.push_str("</tbody>\n</table>\n");
