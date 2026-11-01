@@ -97,13 +97,8 @@
             "description": "`I/N`: with `all_items`, the entry covers only the items that shard owns.",
             "type": "string"
           },
-          "prefixes": {
-            "description": "The crate names the package's item ids start with, from its library and bench targets. With `all_items`, the entry covers every item under one of them; absent, under `package`.",
-            "type": "array",
-            "items": { "type": "string" }
-          },
           "all_items": {
-            "description": "True when the entry covers every item under its `prefixes` (or `package`), for a gate that could not name them.",
+            "description": "True when the entry could name no item: it covers every item no package of `owners` claims (the shard's, with `shard`).",
             "type": "boolean"
           },
           "metrics": {
@@ -130,6 +125,14 @@
     "shard": {
       "description": "`I/N` of the `gate --shard` run whose items this file holds. Only `baseline merge` reads it; a merged baseline has none.",
       "type": "string"
+    },
+    "owners": {
+      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). A failed package's old numbers are exactly these ids; an `all_items` entry covers only items no package here claims.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
     },
     "listed": {
       "description": "Every item id each package's bench binary lists, whichever shard owns it, keyed by package. Written beside `shard` so `baseline merge` can name the items of a shard that saved nothing.",

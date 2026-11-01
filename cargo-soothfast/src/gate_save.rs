@@ -12,7 +12,7 @@ use crate::baseline_merge;
 use crate::headrun;
 use crate::invoke::{self, CommonArgs, Reused, Run};
 use crate::unmeasured::{self, Reason, Unmeasured};
-use crate::workspace::{self, BenchCrate};
+use crate::workspace;
 
 /// Where a gate's HEAD run came from.
 #[derive(Debug, PartialEq)]
@@ -28,6 +28,12 @@ pub enum HeadRun {
 
 /// The metric a reused item's walltime is reported under.
 const WALLTIME: &str = "walltime.median_ns";
+
+/// The package a save is recorded under: `-p`'s, as given to the gate.
+/// Without one the entries still name their items; only the label is lost.
+fn package_of(common: &CommonArgs) -> &str {
+    common.pkg.as_deref().unwrap_or("workspace")
+}
 
 /// Act on `--save-baseline NAME` under `root` for a gate that ended with
 /// `failures`. `listed` is every item the bench binary lists, if it was read.
@@ -59,13 +65,30 @@ pub fn save_head(
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
-    let (run, entries) = baseline_material(current, source);
+    let package = package_of(common);
+    let owned: Vec<String> = match listed {
+        Some(ids) => owned_here(common, ids),
+        None => current.items.keys().cloned().collect(),
+    };
+    if common.pkg.is_some() {
+        unmeasured::claim_in(root, name, package, &owned).map_err(|e| e.to_string())?;
+    }
+    let (run, entries) = baseline_material(current, source, package);
     let scope = invoke::SaveScope::of(common);
     let path = invoke::save_baseline_in(root, name, &run, scope).map_err(|e| e.to_string())?;
     unmeasured::append_in(root, name, &entries).map_err(|e| e.to_string())?;
     println!("baseline saved: {}", path.display());
     report(name, &entries);
     stamp(root, name, common, listed.unwrap_or_default())
+}
+
+/// The ids of `listed` this gate owns: all of them, or its shard's.
+fn owned_here(common: &CommonArgs, listed: &[String]) -> Vec<String> {
+    listed
+        .iter()
+        .filter(|id| common.shard.is_none_or(|s| s.owns(id)))
+        .cloned()
+        .collect()
 }
 
 /// `--save-baseline NAME` for a gate that errored before it had a verdict.
@@ -81,112 +104,101 @@ pub fn save_errored(
 }
 
 fn stamp(root: &Path, name: &str, common: &CommonArgs, listed: &[String]) -> Result<(), String> {
-    match common.shard {
-        Some(shard) => {
-            baseline_merge::stamp_shard_in(root, name, shard, listed).map_err(|e| e.to_string())
+    match (common.shard, &common.pkg) {
+        (Some(shard), Some(pkg)) => baseline_merge::stamp_shard_in(root, name, shard, pkg, listed)
+            .map_err(|e| e.to_string()),
+        (Some(shard), None) => {
+            baseline_merge::stamp_shard_in(root, name, shard, package_of(common), &[])
+                .map_err(|e| e.to_string())
         }
-        None => Ok(()),
+        (None, _) => Ok(()),
     }
 }
 
 /// Replace the numbers of the gate's packages in baseline `name` with one
-/// `reason` entry each, naming the items of `ids` this gate owns. The
-/// packages are `-p`'s, else those `ids` name, else every bench package of
-/// the workspace. Without `ids` each entry covers all of its package's items
-/// (the shard's, when sharded). With a shard, `ids` is the bench binary's
-/// whole listing, which the file is stamped with.
+/// `reason` entry each. With `-p` that package is marked, naming the items
+/// of `listed` this gate owns, else those its prior `owners` name, else none
+/// (`all_items`). Without `-p` every bench package of the workspace is
+/// marked by its prior `owners`.
 pub fn mark_package(
     root: &Path,
     name: &str,
     common: &CommonArgs,
     reason: Reason,
     detail: &str,
-    ids: Option<&[String]>,
+    listed: Option<&[String]>,
 ) -> Result<(), String> {
     let target = common.target.as_deref().unwrap_or("soothfast");
     let crates = || workspace::bench_crates(target, None);
-    mark_package_with(root, name, common, reason, detail, ids, crates)
+    mark_package_with(root, name, common, reason, detail, listed, crates)
 }
 
-/// [`mark_package`] with the workspace's bench crates read by `crates`.
-/// When no package can be told, the baseline is deleted, so no old number
-/// outlives the failure, and the error says so.
+/// [`mark_package`] with the workspace's bench packages read by `crates`.
+/// When they cannot be read, every package the baseline's `owners` names is
+/// marked instead and the error is returned; nothing is deleted.
 pub(crate) fn mark_package_with(
     root: &Path,
     name: &str,
     common: &CommonArgs,
     reason: Reason,
     detail: &str,
-    ids: Option<&[String]>,
-    crates: impl FnOnce() -> Result<Vec<BenchCrate>, String>,
+    listed: Option<&[String]>,
+    crates: impl FnOnce() -> Result<Vec<String>, String>,
 ) -> Result<(), String> {
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
-    let covered = match covered_crates(common, ids, crates) {
-        Ok(covered) if !covered.is_empty() => covered,
-        outcome => {
-            let why = outcome
-                .err()
-                .unwrap_or_else(|| "the workspace has no bench package".into());
-            let _ = std::fs::remove_file(invoke::baseline_path(root, name));
-            return Err(format!(
-                "cannot tell which packages the gate covered ({why}); baseline {name:?} was deleted"
-            ));
-        }
+    let prior = invoke::load_baseline_in(root, name)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    let (packages, unread) = match (&common.pkg, crates) {
+        (Some(pkg), _) => (vec![pkg.clone()], None),
+        (None, crates) => match crates() {
+            Ok(packages) => (packages, None),
+            Err(e) => {
+                let owners = prior[unmeasured::OWNERS_KEY].as_object();
+                let known: Vec<String> = owners
+                    .into_iter()
+                    .flatten()
+                    .map(|(p, _)| p.clone())
+                    .collect();
+                (known, Some(e))
+            }
+        },
     };
-    let entries: Vec<Unmeasured> = covered
-        .into_iter()
-        .map(|c| Unmeasured {
-            items: ids
-                .unwrap_or_default()
-                .iter()
-                .filter(|id| c.prefixes.iter().any(|p| invoke::id_pkg(id) == p))
-                .filter(|id| common.shard.is_none_or(|s| s.owns(id)))
-                .cloned()
-                .collect(),
-            detail: format!("{detail}, so {} saved no numbers", c.package),
-            all_items: ids.is_none(),
-            shard: common.shard.filter(|_| ids.is_none()),
-            package: c.package.replace('-', "_"),
-            prefixes: c.prefixes,
-            reason,
-            ..Unmeasured::default()
+    let entries: Vec<Unmeasured> = packages
+        .iter()
+        .map(|package| {
+            let items = match (listed, &common.pkg) {
+                (Some(ids), Some(_)) => owned_here(common, ids),
+                _ => unmeasured::owned_by(&prior, package),
+            };
+            Unmeasured {
+                all_items: items.is_empty(),
+                shard: common.shard.filter(|_| items.is_empty()),
+                detail: format!("{detail}, so {package} saved no numbers"),
+                package: package.clone(),
+                reason,
+                items,
+                ..Unmeasured::default()
+            }
         })
         .collect();
-    report(name, &entries);
-    unmeasured::mark_in(root, name, &entries).map_err(|e| e.to_string())?;
-    stamp(root, name, common, ids.unwrap_or_default())
-}
-
-/// The bench crates a gate covered: `-p`'s, else those `ids` name, else all.
-/// A `-p` the workspace cannot place keeps its own name as the prefix.
-fn covered_crates(
-    common: &CommonArgs,
-    ids: Option<&[String]>,
-    crates: impl FnOnce() -> Result<Vec<BenchCrate>, String>,
-) -> Result<Vec<BenchCrate>, String> {
-    let all = crates();
-    if let Some(pkg) = &common.pkg {
-        let own = all
-            .ok()
-            .and_then(|all| all.into_iter().find(|c| &c.package == pkg));
-        return Ok(vec![own.unwrap_or_else(|| BenchCrate {
-            package: pkg.clone(),
-            prefixes: vec![pkg.replace('-', "_")],
-        })]);
+    if !entries.is_empty() {
+        report(name, &entries);
+        unmeasured::mark_in(root, name, &entries).map_err(|e| e.to_string())?;
+        stamp(root, name, common, listed.unwrap_or_default())?;
     }
-    let all = all?;
-    Ok(match ids {
-        Some(ids) => all
-            .into_iter()
-            .filter(|c| {
-                ids.iter()
-                    .any(|id| c.prefixes.iter().any(|p| invoke::id_pkg(id) == p))
-            })
-            .collect(),
-        None => all,
-    })
+    match unread {
+        Some(e) => Err(format!(
+            "cannot read the workspace's bench packages ({e}); marked the {} package(s) baseline {name:?} names",
+            entries.len()
+        )),
+        None if entries.is_empty() => Err(format!(
+            "the workspace has no bench package to mark in baseline {name:?}"
+        )),
+        None => Ok(()),
+    }
 }
 
 fn report(name: &str, entries: &[Unmeasured]) {
@@ -206,7 +218,7 @@ fn report(name: &str, entries: &[Unmeasured]) {
 /// not. Walltime another run measured is dropped, and so are the verdicts on
 /// those items; a complexity verdict is kept only where this run took the
 /// counters.
-fn baseline_material(current: &Run, source: &HeadRun) -> (Run, Vec<Unmeasured>) {
+fn baseline_material(current: &Run, source: &HeadRun, package: &str) -> (Run, Vec<Unmeasured>) {
     let stored = match source {
         HeadRun::Stored(from) => Some(from),
         _ => None,
@@ -253,19 +265,21 @@ fn baseline_material(current: &Run, source: &HeadRun) -> (Run, Vec<Unmeasured>) 
             }
             None => "spliced from the item cache; its walltime is another run's".to_string(),
         };
-        entries.extend(unmeasured::by_package(
+        entries.push(unmeasured::entry(
+            package,
             Reason::ReusedWalltime,
             &detail,
             &["walltime"],
-            &reused_wall,
+            reused_wall.clone(),
         ));
     }
     if *source == HeadRun::Uncounted {
-        entries.extend(unmeasured::by_package(
+        entries.push(unmeasured::entry(
+            package,
             Reason::IdenticalBinaries,
             "bench binaries identical to the merge-base, and no stored run of them held the gating counters",
             &["perfcnt", "callgrind"],
-            current.items.keys(),
+            current.items.keys().cloned().collect(),
         ));
     }
     let run = Run {

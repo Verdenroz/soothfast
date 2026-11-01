@@ -2957,6 +2957,7 @@ mod tests {
         let stale = json!({
             "version": 1,
             "items": { "pkg::old": { "alloc": { "allocs": 1, "bytes": 8 } } },
+            "owners": { "pkg": ["pkg::old"] },
         });
         invoke::write_baseline_in(&root, "head", &stale).unwrap();
         let common = CommonArgs {
@@ -2994,6 +2995,7 @@ mod tests {
         let stale = json!({
             "version": 1,
             "items": { "pkg::old": { "alloc": { "allocs": 1, "bytes": 8 } } },
+            "owners": { "pkg": ["pkg::old"] },
         });
         invoke::write_baseline_in(&root, "head", &stale).unwrap();
         let e = super::ratchet_in(&root, "release").unwrap_err();

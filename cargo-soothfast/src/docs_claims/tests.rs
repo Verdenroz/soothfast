@@ -10,7 +10,6 @@ fn entry(reason: Reason, items: &[&str], metrics: &[&str]) -> Unmeasured {
         metrics: metrics.iter().map(|s| s.to_string()).collect(),
         all_items: false,
         shard: None,
-        prefixes: Vec::new(),
     }
 }
 
@@ -61,12 +60,40 @@ fn a_misspelled_item_fails_even_in_an_unmeasured_package() {
 }
 
 #[test]
-fn a_package_with_no_named_items_fails_with_its_reason() {
+fn an_entry_that_names_no_item_covers_none() {
     let b = baseline(&[entry(Reason::NoMeasurement, &[], &[])]);
-    let Reading::Decided(Outcome::Failed(why)) = read("core::a.alloc.allocs <= 0", &b) else {
-        panic!("expected a failure");
-    };
-    assert!(why.contains("no-measurement"));
+    let outcome = read("core::a.alloc.allocs <= 0", &b);
+    assert!(matches!(outcome, Reading::Decided(Outcome::Failed(_))));
+}
+
+#[test]
+fn every_covering_entry_counts_whatever_its_order() {
+    let ungated = entry(Reason::NotGatedOnEvent, &["core::same"], &[]);
+    let failed = entry(Reason::GateFailed, &["core::same"], &[]);
+    for order in [[ungated.clone(), failed.clone()], [failed, ungated]] {
+        let b = baseline(&order);
+        let Reading::Unmeasured(reason, why) = read("core::same.alloc.allocs <= 0", &b) else {
+            panic!("a measurable reason keeps the edited-claim rule");
+        };
+        assert_eq!(reason, Reason::GateFailed);
+        assert!(why.contains("not-gated-on-event") && why.contains("gate-failed"));
+    }
+}
+
+#[test]
+fn a_package_level_entry_covers_only_items_no_package_owns() {
+    let mut level = entry(Reason::GateFailed, &[], &[]);
+    level.all_items = true;
+    let mut b = baseline(&[level]);
+    b["owners"] = json!({ "other": ["core::cached"] });
+    assert!(matches!(
+        read("core::orphan.alloc.allocs <= 0", &b),
+        Reading::Unmeasured(Reason::GateFailed, _)
+    ));
+    assert!(matches!(
+        read("core::cached.walltime.median_ns <= 1", &b),
+        Reading::Decided(Outcome::Failed(_))
+    ));
 }
 
 #[test]

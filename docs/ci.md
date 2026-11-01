@@ -481,11 +481,16 @@ pull request and a default-branch push; on any other event (a push to
 another branch, a tag, `workflow_dispatch`, `merge_group`) each Rust package
 is listed `not-gated-on-event`, while imported claims measured on that event
 are still checked. Where no measurement was possible (`not-gated-on-event`,
-`no-parent`), a claim reads "not evaluated" even when it is new or edited. A
-gate that fails without listing its items still drops their old numbers and
-covers the whole package, matched by its library's and bench target's crate
-names; without `-p` it covers every bench package of the workspace, and when
-the workspace cannot be read it deletes the baseline and fails.
+`no-parent`), a claim reads "not evaluated" even when it is new or edited.
+
+Which items belong to which package comes from each package's bench binary
+listing, recorded as `owners` in the baseline, never from an id's name: every
+bench file's ids start with the bench target's name. A failed package's old
+numbers are exactly the ids it owned; a gate that cannot list its items names
+the ones it owned before, or, when there are none, covers every item no
+package owns. Without `-p` a failed gate marks the workspace's bench packages;
+when the workspace cannot be read it marks the packages the baseline's
+`owners` name, keeps the file, and fails.
 
 `cargo soothfast prebuild` runs the same lanes by hand: `-p PKG` for bench
 packages, `--against-ref REF` for the merge-base, `--docs PKG`, `--spec

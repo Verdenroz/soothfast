@@ -129,17 +129,21 @@ fn an_errored_gate_names_the_listed_items_as_failed() {
     save_errored(&root, "head", &core(), Some(&listed), "bench failed").unwrap();
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
     let entries = unmeasured::read(&doc).unwrap();
-    assert_eq!(entries[0].items, ["core::a"]);
+    assert_eq!(entries[0].items, ["core::a", "other::x"]);
     assert!(entries[0].detail.contains("bench failed"));
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A baseline under a fresh `name` root holding stale numbers of `ids`.
-fn stale(name: &str, ids: &[&str]) -> std::path::PathBuf {
+/// A baseline under a fresh `name` root holding stale numbers of each
+/// package's ids, with the package recorded as their owner.
+fn stale(name: &str, owners: &[(&str, &[&str])]) -> std::path::PathBuf {
     let root = scratch(name);
-    let mut doc = json!({ "version": 1, "items": {} });
-    for id in ids {
-        doc["items"][*id] = json!({ "alloc": { "allocs": 1, "bytes": 8 } });
+    let mut doc = json!({ "version": 1, "items": {}, "owners": {} });
+    for (package, ids) in owners {
+        for id in *ids {
+            doc["items"][*id] = json!({ "alloc": { "allocs": 1, "bytes": 8 } });
+        }
+        doc["owners"][*package] = json!(ids);
     }
     invoke::write_baseline_in(&root, "head", &doc).unwrap();
     root
@@ -155,20 +159,27 @@ fn unmeasured_as(reading: crate::docs_claims::Reading, reason: Reason) -> bool {
     matches!(reading, crate::docs_claims::Reading::Unmeasured(r, _) if r == reason)
 }
 
+fn kept(root: &Path) -> Vec<String> {
+    let doc = invoke::load_baseline_in(root, "head").unwrap().unwrap();
+    doc["items"].as_object().unwrap().keys().cloned().collect()
+}
+
 #[test]
-fn a_sharded_failure_with_no_listing_covers_the_shard_s_items() {
+fn a_sharded_failure_with_no_listing_names_what_the_shard_owned() {
     let shard = invoke::Shard { index: 1, count: 2 };
     let owned = (0..)
-        .map(|n| format!("core::f{n}"))
+        .map(|n| format!("soothfast::f{n}"))
         .find(|id| shard.owns(id))
         .unwrap();
-    let other = (0..)
-        .map(|n| format!("core::f{n}"))
-        .find(|id| !shard.owns(id))
-        .unwrap();
-    let root = stale("sharded-unlisted", &[&owned]);
-    crate::baseline_merge::stamp_shard_in(&root, "head", shard, std::slice::from_ref(&owned))
-        .unwrap();
+    let root = stale("sharded-unlisted", &[("core", &[&owned])]);
+    crate::baseline_merge::stamp_shard_in(
+        &root,
+        "head",
+        shard,
+        "core",
+        std::slice::from_ref(&owned),
+    )
+    .unwrap();
     let common = CommonArgs {
         shard: Some(shard),
         ..core()
@@ -187,87 +198,136 @@ fn a_sharded_failure_with_no_listing_covers_the_shard_s_items() {
     assert_eq!(doc["items"], json!({}));
     assert_eq!(doc["shard"], "1/2");
     let entry = &unmeasured::read(&doc).unwrap()[0];
-    assert!(entry.all_items && entry.shard == Some(shard));
-    let claim = |id: &str| reading(&root, &format!("{id}.alloc.allocs <= 0"));
-    assert!(unmeasured_as(claim(&owned), Reason::GateFailed));
-    assert!(matches!(
-        claim(&other),
-        crate::docs_claims::Reading::Decided(_)
+    assert_eq!(entry.items, std::slice::from_ref(&owned));
+    assert!(unmeasured_as(
+        reading(&root, &format!("{owned}.alloc.allocs <= 0")),
+        Reason::GateFailed
     ));
     let _ = std::fs::remove_dir_all(&root);
 }
 
-fn bench_crate(package: &str, prefixes: &[&str]) -> BenchCrate {
-    BenchCrate {
-        package: package.into(),
-        prefixes: prefixes.iter().map(|p| p.to_string()).collect(),
-    }
+#[test]
+fn a_sharded_failure_with_nothing_owned_covers_the_shard_s_unowned_items() {
+    let shard = invoke::Shard { index: 1, count: 2 };
+    let root = scratch("sharded-nothing");
+    let common = CommonArgs {
+        shard: Some(shard),
+        ..core()
+    };
+    save_head(
+        &root,
+        "head",
+        &Run::default(),
+        &HeadRun::Measured,
+        &common,
+        None,
+        1,
+    )
+    .unwrap();
+    let entry =
+        &unmeasured::read(&invoke::load_baseline_in(&root, "head").unwrap().unwrap()).unwrap()[0];
+    assert!(entry.all_items && entry.shard == Some(shard) && entry.items.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// `mark_package` as an errored gate under `common`, with no listing, over a
-/// workspace whose bench crates `crates` reads.
+/// workspace whose bench packages `crates` reads.
 fn mark_unlisted(
     root: &Path,
     common: &CommonArgs,
-    crates: Result<Vec<BenchCrate>, String>,
+    crates: Result<Vec<String>, String>,
 ) -> Result<(), String> {
     let reason = Reason::GateFailed;
     mark_package_with(root, "head", common, reason, "no bench", None, || crates)
 }
 
 #[test]
-fn an_errored_gate_without_p_or_a_listing_covers_the_workspace_s_bench_packages() {
-    let root = stale("errored-no-p", &["core::a", "util::b"]);
-    let crates = vec![
-        bench_crate("core", &["core"]),
-        bench_crate("util", &["util"]),
-    ];
-    mark_unlisted(&root, &CommonArgs::default(), Ok(crates)).unwrap();
+fn one_package_failing_keeps_another_s_numbers_though_their_ids_share_a_prefix() {
+    let root = stale(
+        "shared-prefix",
+        &[("a", &["soothfast::a_item"]), ("b", &["soothfast::b_item"])],
+    );
+    let common = CommonArgs {
+        pkg: Some("a".into()),
+        ..CommonArgs::default()
+    };
+    mark_unlisted(&root, &common, Ok(vec!["a".into(), "b".into()])).unwrap();
+    assert_eq!(kept(&root), ["soothfast::b_item"]);
+    assert!(unmeasured_as(
+        reading(&root, "soothfast::a_item.alloc.allocs <= 0"),
+        Reason::GateFailed
+    ));
+    assert!(matches!(
+        reading(&root, "soothfast::b_item.alloc.allocs <= 1"),
+        crate::docs_claims::Reading::Decided(crate::docs_claims::Outcome::Holds(_))
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_gate_without_p_that_fails_marks_only_the_packages_it_ran() {
+    let root = stale(
+        "no-p-ran",
+        &[("a", &["soothfast::x"]), ("c", &["soothfast::z"])],
+    );
+    mark_unlisted(
+        &root,
+        &CommonArgs::default(),
+        Ok(vec!["a".into(), "b".into()]),
+    )
+    .unwrap();
+    assert_eq!(kept(&root), ["soothfast::z"]);
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-    assert_eq!(doc["items"], json!({}));
-    let packages: Vec<String> = unmeasured::read(&doc)
+    let marked: Vec<String> = unmeasured::read(&doc)
         .unwrap()
         .into_iter()
         .map(|e| e.package)
         .collect();
-    assert_eq!(packages, ["core", "util"]);
-    assert!(unmeasured_as(
-        reading(&root, "util::b.alloc.allocs <= 0"),
-        Reason::GateFailed
-    ));
+    assert_eq!(marked, ["a", "b"]);
     let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
-fn an_unreadable_workspace_deletes_the_baseline_and_fails() {
-    let root = stale("errored-unreadable", &["core::a"]);
+fn a_metadata_failure_keeps_the_baseline_marks_its_owners_and_fails() {
+    let root = stale("metadata-failed", &[("a", &["soothfast::x"])]);
+    let mut doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    doc["items"]["jmh::bench"] = json!({ "imported": "jmh", "walltime": { "median_ns": 5.0 } });
+    invoke::write_baseline_in(&root, "head", &doc).unwrap();
     let outcome = mark_unlisted(&root, &CommonArgs::default(), Err("no Cargo.toml".into()));
     assert!(outcome.unwrap_err().contains("no Cargo.toml"));
-    assert!(invoke::load_baseline_in(&root, "head").unwrap().is_none());
+    assert_eq!(kept(&root), ["jmh::bench"]);
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(unmeasured::read(&doc).unwrap()[0].package, "a");
     let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
-fn a_package_whose_lib_is_named_otherwise_is_matched_by_the_lib_s_name() {
-    let root = stale("renamed-lib", &["wire::parse"]);
+fn a_linked_member_s_items_in_the_listing_belong_to_the_package_that_listed_them() {
+    let root = stale(
+        "linked-member",
+        &[("server", &["soothfast::own", "wire::parse"])],
+    );
     let common = CommonArgs {
-        pkg: Some("my-server".into()),
+        pkg: Some("server".into()),
         ..CommonArgs::default()
     };
-    let crates = vec![bench_crate("my-server", &["soothfast", "wire"])];
-    mark_unlisted(&root, &common, Ok(crates)).unwrap();
-    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-    assert_eq!(doc["items"], json!({}));
-    let entry = &unmeasured::read(&doc).unwrap()[0];
-    assert_eq!(entry.package, "my_server");
-    assert_eq!(entry.prefixes, ["soothfast", "wire"]);
+    let listing = ["soothfast::own".to_string(), "wire::parse".to_string()];
+    let crates = || Ok(vec!["server".to_string()]);
+    let reason = Reason::GateFailed;
+    mark_package_with(
+        &root,
+        "head",
+        &common,
+        reason,
+        "failed",
+        Some(&listing),
+        crates,
+    )
+    .unwrap();
+    assert!(kept(&root).is_empty());
     assert!(unmeasured_as(
         reading(&root, "wire::parse.alloc.allocs <= 0"),
         Reason::GateFailed
-    ));
-    assert!(matches!(
-        reading(&root, "my_server::parse.alloc.allocs <= 0"),
-        crate::docs_claims::Reading::Decided(_)
     ));
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -276,12 +336,18 @@ fn a_package_whose_lib_is_named_otherwise_is_matched_by_the_lib_s_name() {
 fn a_passing_shard_whose_listing_failed_drops_its_numbers_and_fails() {
     let shard = invoke::Shard { index: 1, count: 2 };
     let owned = (0..)
-        .map(|n| format!("core::f{n}"))
+        .map(|n| format!("soothfast::f{n}"))
         .find(|id| shard.owns(id))
         .unwrap();
-    let root = stale("shard-listing-failed", &[&owned]);
-    crate::baseline_merge::stamp_shard_in(&root, "head", shard, std::slice::from_ref(&owned))
-        .unwrap();
+    let root = stale("shard-listing-failed", &[("core", &[&owned])]);
+    crate::baseline_merge::stamp_shard_in(
+        &root,
+        "head",
+        shard,
+        "core",
+        std::slice::from_ref(&owned),
+    )
+    .unwrap();
     let common = CommonArgs {
         shard: Some(shard),
         ..core()
@@ -289,9 +355,30 @@ fn a_passing_shard_whose_listing_failed_drops_its_numbers_and_fails() {
     let run = run_of(vec![(owned.as_str(), item(None))]);
     let saved = save_head(&root, "head", &run, &HeadRun::Measured, &common, None, 0);
     assert!(saved.is_err());
+    assert!(kept(&root).is_empty());
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-    assert_eq!(doc["items"], json!({}));
     let entry = &unmeasured::read(&doc).unwrap()[0];
-    assert!(entry.all_items && entry.detail.contains("listing failed"));
+    assert!(entry.detail.contains("listing failed"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_passing_save_records_its_owners_and_drops_what_it_no_longer_lists() {
+    let root = stale("save-owners", &[("core", &["soothfast::gone"])]);
+    let run = run_of(vec![("soothfast::kept", item(None))]);
+    let listed = ["soothfast::kept".to_string()];
+    save_head(
+        &root,
+        "head",
+        &run,
+        &HeadRun::Measured,
+        &core(),
+        Some(&listed),
+        0,
+    )
+    .unwrap();
+    assert_eq!(kept(&root), ["soothfast::kept"]);
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(unmeasured::owned_by(&doc, "core"), ["soothfast::kept"]);
     let _ = std::fs::remove_dir_all(&root);
 }

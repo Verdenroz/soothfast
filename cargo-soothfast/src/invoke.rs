@@ -1052,7 +1052,7 @@ pub fn save_baseline_in(
 ) -> io::Result<PathBuf> {
     let new_items = saved_items(run);
     let measured = match &scope {
-        SaveScope::BenchFull(pkg) => Some(pkg.as_ref().map(|p| p.replace('-', "_"))),
+        SaveScope::BenchFull(pkg) => Some(pkg.clone()),
         _ => None,
     };
     let mut doc =

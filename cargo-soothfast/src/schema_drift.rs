@@ -105,8 +105,14 @@ fn shard_baseline() -> Value {
     use crate::unmeasured::{self, Reason};
     let root = std::env::temp_dir().join(format!("soothfast-schema-shard-{}", std::process::id()));
     let ids = ["pkg::api".to_string()];
-    let entries = unmeasured::by_package(Reason::ReusedWalltime, "cache", &["walltime"], &ids);
-    unmeasured::mark_in(&root, "head", &entries).unwrap();
+    let reused = unmeasured::entry(
+        "pkg",
+        Reason::ReusedWalltime,
+        "cache",
+        &["walltime"],
+        ids.to_vec(),
+    );
+    unmeasured::mark_in(&root, "head", &[reused]).unwrap();
     let shard = crate::invoke::Shard { index: 1, count: 2 };
     let unlisted = unmeasured::Unmeasured {
         package: "other".into(),
@@ -114,11 +120,10 @@ fn shard_baseline() -> Value {
         detail: "the gate errored".into(),
         all_items: true,
         shard: Some(shard),
-        prefixes: vec!["other_lib".into()],
         ..unmeasured::Unmeasured::default()
     };
     unmeasured::append_in(&root, "head", &[unlisted]).unwrap();
-    crate::baseline_merge::stamp_shard_in(&root, "head", shard, &ids).unwrap();
+    crate::baseline_merge::stamp_shard_in(&root, "head", shard, "pkg", &ids).unwrap();
     let doc = crate::invoke::load_baseline_in(&root, "head")
         .unwrap()
         .unwrap();

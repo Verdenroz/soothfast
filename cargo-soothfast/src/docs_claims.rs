@@ -117,6 +117,7 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
     };
     let operands = std::iter::once((&claim.item, &claim.backend, &claim.metric))
         .chain(claim.minus.iter().map(|m| (&m.item, &m.backend, &m.metric)));
+    let owned = unmeasured::owned(baseline);
     let mut first: Option<Reason> = None;
     let mut measurable: Option<Reason> = None;
     let mut reasons = Vec::new();
@@ -124,23 +125,19 @@ pub fn evaluate(expr: &str, baseline: &Value, entries: &[Unmeasured]) -> Reading
         if baseline["items"][item][backend][metric].is_number() {
             continue;
         }
-        match entries.iter().find(|u| u.covers(item, backend, metric)) {
-            Some(u) => {
-                first.get_or_insert(u.reason);
-                if u.reason.measurable_here() {
-                    measurable.get_or_insert(u.reason);
-                }
-                reasons.push(format!("{item}: {}", u.detail));
+        let covering: Vec<&Unmeasured> = entries
+            .iter()
+            .filter(|u| u.covers(item, backend, metric, &owned))
+            .collect();
+        if covering.is_empty() {
+            return Reading::Decided(Outcome::Failed(e));
+        }
+        for u in covering {
+            first.get_or_insert(u.reason);
+            if u.reason.measurable_here() {
+                measurable.get_or_insert(u.reason);
             }
-            None => {
-                let package = entries
-                    .iter()
-                    .find(|u| u.items.is_empty() && u.package == invoke::id_pkg(item));
-                return Reading::Decided(Outcome::Failed(match package {
-                    Some(u) => format!("{e} ({}: {})", u.reason.as_str(), u.detail),
-                    None => e,
-                }));
-            }
+            reasons.push(format!("{item}: {} ({})", u.detail, u.reason.as_str()));
         }
     }
     let why = reasons.join("; ");
