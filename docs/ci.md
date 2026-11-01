@@ -476,7 +476,12 @@ stored for the same binary or from a run-cache hit on HEAD count as this
 pull request's, since the code they measured is proven identical; walltime
 from those sources does not. A pull request whose bench binaries match the
 merge-base, with no stored run of them, reports its counter claims not
-evaluated, since its gate takes no counters.
+evaluated, since its gate takes no counters. The cargo gate measures only a
+pull request and a default-branch push; on any other event (a push to
+another branch, a tag, `workflow_dispatch`, `merge_group`) each Rust package
+is listed `not-gated-on-event`, while imported claims measured on that event
+are still checked. A gate that fails without listing its items still drops
+their old numbers and covers the whole package.
 
 `cargo soothfast prebuild` runs the same lanes by hand: `-p PKG` for bench
 packages, `--against-ref REF` for the merge-base, `--docs PKG`, `--spec
