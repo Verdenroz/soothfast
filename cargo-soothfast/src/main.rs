@@ -166,8 +166,8 @@ commands:
   baseline plan --out FILE -p PKG [--features F]
            (adds PKG's bench listing to plan FILE, which `baseline merge
            --plan FILE` reads to name the items of a leg that saved nothing;
-           lists the stored executable, or one already built when the store
-           cannot hold it, and never builds)
+           lists the stored executable, or, without --features, one already
+           built when the store cannot hold it, and never builds)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE

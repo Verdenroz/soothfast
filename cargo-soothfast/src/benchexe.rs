@@ -266,24 +266,39 @@ pub fn storable(common: &CommonArgs, build: Build) -> bool {
 }
 
 /// `common`'s bench executable a build already left in the target dir, for a
-/// build the store cannot hold; nothing is built.
+/// build the store cannot hold; nothing is built. With `--features` set,
+/// nothing in the target dir tells which features a build had, so none is.
 pub fn already_built(common: &CommonArgs) -> Option<PathBuf> {
+    if common.features.is_some() {
+        return None;
+    }
     let target = common.target.as_deref().unwrap_or("soothfast");
     let meta = crate::workspace::metadata(None, true).ok()?;
     let src = crate::workspace::bench_src_in(&meta, common.pkg.as_deref()?, target)?;
-    let deps = invoke::target_dir(None).ok()?.join("release").join("deps");
-    newest_built(&deps, target, &src)
+    let root = Path::new(meta["workspace_root"].as_str()?);
+    let mut deps = PathBuf::from(meta["target_directory"].as_str()?);
+    if let Ok(triple) = std::env::var("CARGO_BUILD_TARGET") {
+        deps.push(triple);
+    }
+    newest_built(
+        &deps.join("release").join("deps"),
+        target,
+        Path::new(&src),
+        root,
+    )
 }
 
 /// The newest executable in `deps` of bench `target` whose dep-info names
 /// `src`, the bench's own source file, so another package's bench of the
-/// same name is never taken.
-fn newest_built(deps: &Path, target: &str, src: &str) -> Option<PathBuf> {
+/// same name is never taken. Dep-info names workspace files relative to
+/// `root`, where cargo runs rustc.
+fn newest_built(deps: &Path, target: &str, src: &Path, root: &Path) -> Option<PathBuf> {
     let prefix = format!("{}-", target.replace('-', "_"));
     let names_src = |info: &Path| {
         let text = std::fs::read_to_string(info).unwrap_or_default();
         let first = text.lines().next().unwrap_or_default();
-        first.split_whitespace().any(|dep| dep == src)
+        let deps = first.split_whitespace().skip(1);
+        deps.into_iter().any(|dep| root.join(dep) == src)
     };
     std::fs::read_dir(deps)
         .ok()?
@@ -784,13 +799,12 @@ mod tests {
             )
             .unwrap();
         };
-        write("soothfast-aaaa", "/w/core/benches/soothfast.rs");
-        write("soothfast-bbbb", "/w/app/benches/soothfast.rs");
-        let found = newest_built(&dir, "soothfast", "/w/app/benches/soothfast.rs");
+        write("soothfast-aaaa", "core/benches/soothfast.rs Cargo.toml");
+        write("soothfast-bbbb", "app/benches/soothfast.rs Cargo.toml");
+        let root = Path::new("/w");
+        let src = |pkg: &str| PathBuf::from(format!("/w/{pkg}/benches/soothfast.rs"));
+        let found = newest_built(&dir, "soothfast", &src("app"), root);
         assert_eq!(found, Some(dir.join("soothfast-bbbb")));
-        assert_eq!(
-            newest_built(&dir, "soothfast", "/w/web/benches/soothfast.rs"),
-            None
-        );
+        assert_eq!(newest_built(&dir, "soothfast", &src("web"), root), None);
     }
 }

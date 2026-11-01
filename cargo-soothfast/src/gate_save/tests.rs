@@ -557,3 +557,24 @@ fn a_gate_that_failed_only_on_regressions_saves_head_s_numbers() {
     assert!(doc["items"]["core::a"]["alloc"].is_object());
     assert!(unmeasured::read(&doc).unwrap().is_empty());
 }
+
+#[test]
+fn a_save_replaces_a_claim_naming_no_item_rather_than_adding_a_copy() {
+    let root = scratch("idless-claim");
+    let mut run = Run::default();
+    run.items
+        .insert("soothfast::a".into(), ItemMetrics::default());
+    run.assertions.push(AssertionOutcome {
+        id: String::new(),
+        kind: "build".into(),
+        ok: true,
+        detail: "size".into(),
+    });
+    for _ in 0..2 {
+        let scope = invoke::SaveScope::BenchFull(Some("core".into()));
+        invoke::save_baseline_in(&root, "head", &run, scope).unwrap();
+    }
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(doc["assertions"].as_array().unwrap().len(), 1);
+    let _ = std::fs::remove_dir_all(&root);
+}

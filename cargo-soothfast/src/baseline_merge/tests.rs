@@ -467,7 +467,25 @@ fn a_claim_naming_no_item_merges_once_whatever_its_shards_report() {
         .filter(|s| s.owns_claim(""))
         .map(|s| s.index)
         .collect();
-    assert_eq!(keeping, [1]);
+    assert_eq!(
+        keeping,
+        [1, 2, 3],
+        "every shard keeps it, in case shard 1 saves nothing"
+    );
+}
+
+#[test]
+fn a_failing_copy_of_a_claim_naming_no_item_wins_the_merge() {
+    let claim = |ok: bool| json!({ "id": "", "kind": "build", "ok": ok, "detail": "size" });
+    let files: Vec<(String, Value)> = (1..=3)
+        .map(|i| {
+            let (label, mut doc) = shard_file(i);
+            doc["assertions"] = json!([claim(i != 2)]);
+            (label, doc)
+        })
+        .collect();
+    let merged = merge(&files, 3, &packages()).unwrap();
+    assert_eq!(merged["assertions"], json!([claim(false)]));
 }
 
 #[test]

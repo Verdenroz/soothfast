@@ -349,10 +349,15 @@ fn merge_on(
         }
         for a in doc["assertions"].as_array().into_iter().flatten() {
             let idless = |a: &Value| a["id"].as_str().is_none_or(str::is_empty);
-            let same =
-                |b: &Value| idless(b) && b["kind"] == a["kind"] && b["detail"] == a["detail"];
-            if !idless(a) || !assertions.iter().any(same) {
-                assertions.push(a.clone());
+            let same = |b: &&Value| {
+                idless(a) && idless(b) && b["kind"] == a["kind"] && b["detail"] == a["detail"]
+            };
+            match assertions.iter().position(|b| same(&b)) {
+                Some(i) if assertions[i]["ok"] == true && a["ok"] != true => {
+                    assertions[i] = a.clone();
+                }
+                Some(_) => {}
+                None => assertions.push(a.clone()),
             }
         }
         for (package, ids) in doc[unmeasured::OWNERS_KEY]

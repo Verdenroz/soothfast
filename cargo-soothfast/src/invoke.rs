@@ -71,13 +71,9 @@ impl Shard {
     }
 
     /// Whether a claim on `id` is this shard's to keep. One that names no
-    /// item, which every shard reports, is shard 1's alone.
+    /// item every shard keeps, and `baseline merge` keeps once.
     pub fn owns_claim(&self, id: &str) -> bool {
-        if id.is_empty() {
-            self.index == 1
-        } else {
-            self.owns(id)
-        }
+        id.is_empty() || self.owns(id)
     }
 }
 
@@ -1124,10 +1120,11 @@ pub fn save_baseline_in(
         .cloned()
         .unwrap_or_default()
         .into_iter()
-        .filter(|a| {
-            a["id"]
-                .as_str()
-                .is_none_or(|id| !replaced.contains(&id.to_string()))
+        .filter(|a| match a["id"].as_str().filter(|id| !id.is_empty()) {
+            Some(id) => !replaced.contains(&id.to_string()),
+            None => !run.assertions.iter().any(|n| {
+                n.id.is_empty() && a["kind"] == n.kind.as_str() && a["detail"] == n.detail.as_str()
+            }),
         })
         .collect();
     for a in &run.assertions {
