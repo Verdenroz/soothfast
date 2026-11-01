@@ -39,7 +39,7 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
     let stored = match (reuse_plan(reuse, runs.gating_backend()), digest.as_deref()) {
         (Plan::Reuse, Some(digest)) => {
             let label = format!("binary {digest}");
-            match runs.load(digest, &label) {
+            match runs.load_covering(digest, &label) {
                 Some(doc) => Some((doc, label)),
                 None => {
                     println!("measure: no stored run for binary {digest}; measuring in full");
@@ -54,11 +54,13 @@ pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
         (Plan::Reuse, None) => None,
     };
     if let Some((doc, label)) = stored {
-        let merged = if has_callgrind_counts(&doc) {
-            let timing = run_head(common, &["--skip-gating-counters"], stamp.clone())?;
-            merge_stored(&doc, &label, timing).ok()
-        } else {
-            None
+        let expected = exe.as_deref().and_then(|exe| expected_ids(common, exe));
+        let merged = match expected.filter(|ids| counts_cover(&doc, ids)) {
+            Some(ids) => {
+                let timing = run_head(common, &["--skip-gating-counters"], stamp.clone())?;
+                merge_stored(&doc, &label, timing, &ids).ok()
+            }
+            None => None,
         };
         match merged {
             Some(run) => {
@@ -122,18 +124,22 @@ fn run_head(common: &CommonArgs, extra: &[&str], stamp: BuildStamp) -> Result<Ru
 /// fingerprint/covers, and tolerance_pct (all read off the binary the fresh
 /// pass actually ran) comes from the stored item, so a counter added to
 /// `ItemMetrics` later carries over without a change here. The stored run may
-/// hold more items than the pass, as a whole run does for a shard or a
-/// `--filter`; the timing pass comes back unless it counted every one the
-/// pass measured.
-pub fn merge_stored(stored: &Value, measured_from: &str, timing: Run) -> Result<Run, Box<Run>> {
-    let counted = invoke::run_from_items_value(&stored["items"]);
-    let covered = timing
-        .items
-        .keys()
-        .all(|id| counted.items.get(id).is_some_and(|m| m.ir.is_some()));
-    if timing.items.is_empty() || !covered {
+/// hold more items than `expected`, the ids the pass was asked for, as a
+/// whole run does for a shard or a `--filter`. The timing pass comes back
+/// unless it measured exactly `expected` and the stored run counted each.
+pub fn merge_stored(
+    stored: &Value,
+    measured_from: &str,
+    timing: Run,
+    expected: &BTreeSet<String>,
+) -> Result<Run, Box<Run>> {
+    if expected.is_empty()
+        || !timing.items.keys().eq(expected.iter())
+        || !counts_cover(stored, expected)
+    {
         return Err(Box::new(timing));
     }
+    let counted = invoke::run_from_items_value(&stored["items"]);
     let mut run = timing;
     let mut metrics = BTreeSet::new();
     for (id, item) in &mut run.items {
@@ -192,11 +198,25 @@ pub fn reused_metrics(item: &ItemMetrics, walltime: bool) -> Vec<&'static str> {
     named
 }
 
-/// Whether every item of a stored run carries Ir. Checked before the timing
-/// pass, so a run that cannot be merged costs nothing to find out.
-fn has_callgrind_counts(stored: &Value) -> bool {
+/// Whether a stored run carries Ir for every one of `expected`. Checked
+/// before the timing pass, so a run that cannot be merged costs nothing.
+pub fn counts_cover(stored: &Value, expected: &BTreeSet<String>) -> bool {
     let items = invoke::run_from_items_value(&stored["items"]).items;
-    !items.is_empty() && items.values().all(|m| m.ir.is_some())
+    !expected.is_empty()
+        && expected
+            .iter()
+            .all(|id| items.get(id).is_some_and(|m| m.ir.is_some()))
+}
+
+/// The ids a pass under `common` is asked to measure from `exe`: its listing
+/// under the filter, narrowed to the shard's.
+pub fn expected_ids(common: &CommonArgs, exe: &Path) -> Option<BTreeSet<String>> {
+    let ids = invoke::listed_ids(exe, common.filter.as_deref())?;
+    Some(
+        ids.into_iter()
+            .filter(|id| common.shard.is_none_or(|s| s.owns(id)))
+            .collect(),
+    )
 }
 
 /// HEAD's own measurement, if a run already cached one under this binary and
@@ -460,10 +480,11 @@ mod tests {
     };
     use crate::buildstamp::BuildStamp;
     use crate::codekey;
-    use crate::invoke::{AssertionOutcome, CommonArgs, HostEnv, ItemMetrics, Run};
+    use crate::invoke::{self, AssertionOutcome, CommonArgs, HostEnv, ItemMetrics, Run};
     use crate::runcache::Runs;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::cell::Cell;
+    use std::collections::BTreeSet;
 
     fn perfcnt(instructions: u64) -> Run {
         let mut run = Run {
@@ -622,7 +643,7 @@ mod tests {
             "alloc": { "allocs": 3, "bytes": 96 },
             "walltime": { "median_ns": 999.0, "p99_ns": 1999.0 },
         }}));
-        let run = merge_stored(&doc, "binary 0123456789abcdef", timing()).expect("hit");
+        let run = merge_stored(&doc, "binary 0123456789abcdef", timing(), &only_a()).expect("hit");
         let item = &run.items["pkg::a"];
         assert_eq!(item.ir, Some(4567));
         assert_eq!((item.allocs, item.bytes), (Some(3), Some(96)));
@@ -639,43 +660,106 @@ mod tests {
             "perfcnt": { "instructions": 4567 },
             "alloc": { "allocs": 3, "bytes": 96 },
         }}));
-        assert!(merge_stored(&perfcnt, "binary x", timing()).is_err());
+        assert!(merge_stored(&perfcnt, "binary x", timing(), &only_a()).is_err());
         let timing_only = stored(json!({ "pkg::a": {
             "fingerprint": "fp",
             "walltime": { "median_ns": 999.0 },
         }}));
-        assert!(merge_stored(&timing_only, "binary x", timing()).is_err());
+        assert!(merge_stored(&timing_only, "binary x", timing(), &only_a()).is_err());
     }
 
     #[test]
     fn a_stored_run_of_other_items_is_a_miss() {
         let doc = stored(json!({ "pkg::b": { "fingerprint": "fp", "callgrind": { "ir": 1 } } }));
-        assert!(merge_stored(&doc, "binary x", timing()).is_err());
+        assert!(merge_stored(&doc, "binary x", timing(), &only_a()).is_err());
     }
 
-    /// A whole stored run with `pkg::a`, which the pass measured, plus `extra`.
-    fn whole_run(extra: serde_json::Value) -> serde_json::Value {
-        let mut items = json!({ "pkg::a": { "fingerprint": "fp", "callgrind": { "ir": 4567 } } });
-        for (id, v) in extra.as_object().unwrap() {
-            items[id] = v.clone();
+    fn only_a() -> BTreeSet<String> {
+        BTreeSet::from(["pkg::a".to_string()])
+    }
+
+    fn callgrind_env() -> HostEnv {
+        HostEnv {
+            gating_backend: "callgrind".into(),
+            guest: None,
+            callgrind_method: None,
+            item_reuse: true,
         }
-        stored(items)
+    }
+
+    fn test_stamp() -> BuildStamp {
+        BuildStamp {
+            rustc: "1.88.0".into(),
+            codegen_units: "1".into(),
+            profiles: "p".into(),
+            rustflags: "f".into(),
+        }
+    }
+
+    /// Store a whole run of `pkg::a` plus `extra` under `id` without a shard
+    /// or filter, and read it back the way an invocation with `narrowed` does.
+    fn through_the_lookup(id: &str, extra: serde_json::Value, narrowed: CommonArgs) -> Value {
+        let mut items = json!({ "pkg::a": { "fingerprint": "fp", "callgrind": { "ir": 4567 } } });
+        for (k, v) in extra.as_object().unwrap() {
+            items[k] = v.clone();
+        }
+        let stamp = test_stamp();
+        let whole = CommonArgs {
+            pkg: narrowed.pkg.clone(),
+            ..CommonArgs::default()
+        };
+        Runs::new(&stamp, &whole, Some(callgrind_env())).store(id, &stored(items));
+        let doc = Runs::new(&stamp, &narrowed, Some(callgrind_env()))
+            .load_covering(id, "binary x")
+            .expect("the whole run is reachable");
+        assert!(
+            Runs::new(&stamp, &narrowed, Some(callgrind_env()))
+                .load(id, "x")
+                .is_none()
+        );
+        doc
     }
 
     #[test]
     fn a_shard_takes_its_items_from_a_whole_stored_run() {
+        let shard = (1..=2)
+            .map(|index| invoke::Shard { index, count: 2 })
+            .find(|s| s.owns("pkg::a"))
+            .unwrap();
+        let narrowed = CommonArgs {
+            pkg: Some("test-headrun-shard".into()),
+            shard: Some(shard),
+            ..CommonArgs::default()
+        };
         let other_shard = json!({ "pkg::z": { "fingerprint": "fz", "callgrind": { "ir": 9 } } });
-        let run = merge_stored(&whole_run(other_shard), "binary x", timing()).expect("hit");
+        let doc = through_the_lookup("test-headrun-shard", other_shard, narrowed);
+        let run = merge_stored(&doc, "binary x", timing(), &only_a()).expect("hit");
         assert_eq!(run.items.keys().collect::<Vec<_>>(), ["pkg::a"]);
         assert_eq!(run.items["pkg::a"].ir, Some(4567));
     }
 
     #[test]
     fn a_filtered_pass_takes_its_items_even_where_the_rest_lack_counts() {
+        let narrowed = CommonArgs {
+            pkg: Some("test-headrun-filter".into()),
+            filter: Some("pkg::a".into()),
+            ..CommonArgs::default()
+        };
         let filtered_out =
             json!({ "pkg::slow": { "fingerprint": "fs", "walltime": { "median_ns": 5.0 } } });
-        let run = merge_stored(&whole_run(filtered_out), "binary x", timing()).expect("hit");
+        let doc = through_the_lookup("test-headrun-filter", filtered_out, narrowed);
+        let run = merge_stored(&doc, "binary x", timing(), &only_a()).expect("hit");
         assert_eq!(run.items.keys().collect::<Vec<_>>(), ["pkg::a"]);
+    }
+
+    #[test]
+    fn a_pass_that_lost_an_asked_item_measures_in_full() {
+        let doc = stored(json!({
+            "pkg::a": { "fingerprint": "fp", "callgrind": { "ir": 4567 } },
+            "pkg::b": { "fingerprint": "fb", "callgrind": { "ir": 9 } },
+        }));
+        let asked = BTreeSet::from(["pkg::a".to_string(), "pkg::b".to_string()]);
+        assert!(merge_stored(&doc, "binary x", timing(), &asked).is_err());
     }
 
     #[test]
@@ -709,7 +793,7 @@ mod tests {
         let mut fresh = timing();
         fresh.items.get_mut("pkg::a").unwrap().allocs = None;
 
-        let run = merge_stored(&doc, "binary abc", fresh).expect("hit");
+        let run = merge_stored(&doc, "binary abc", fresh, &only_a()).expect("hit");
         let item = &run.items["pkg::a"];
         assert_eq!(item.instructions, Some(42));
         assert_eq!(item.cycles, Some(100));

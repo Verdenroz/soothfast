@@ -196,7 +196,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     let walltime_advisory = match gate_config::apply(&mut g.common) {
         Ok(cfg) => cfg.walltime_advisory,
-        Err(e) => return errored(&g, None, &e),
+        Err(e) => return errored_unbuilt(&g, &e),
     };
     if let Some(shard) = g.common.shard {
         println!("gate: shard {shard}: gating the items it owns");
@@ -1023,7 +1023,7 @@ fn measure_ref_interleaved(
         IdenticalBinaries {
             run: Result<Run, String>,
             counted: bool,
-            stored: Option<Box<(Value, String)>>,
+            stored: Option<StoredFor>,
         },
         /// Reference served by binary identity rather than by commit.
         Cached(Value),
@@ -1171,7 +1171,12 @@ fn measure_ref_interleaved(
                     cache_head_doc(&runs, &doc, head_dig.as_deref());
                 }
             }
-            let stored = by_binary.map(|doc| Box::new((doc, format!("binary {}", d.base))));
+            let label = format!("binary {}", d.head);
+            let stored = (!counted)
+                .then(|| runs.load_covering(&d.head, &label))
+                .flatten()
+                .zip(headrun::expected_ids(common, &d.head_exe))
+                .map(|(doc, expected)| Box::new((doc, label, expected)));
             return Ok((
                 Ref::IdenticalBinaries {
                     run,
@@ -1437,20 +1442,20 @@ fn identical_pass_cache(stored: Option<&Value>, pass: &Run, counted: bool) -> Op
     }
 }
 
+/// A run stored for the identical binary, its label, and the ids the pass
+/// was asked to measure.
+type StoredFor = Box<(Value, String, BTreeSet<String>)>;
+
 /// HEAD's run from the identical-binaries pass. A pass without the gating
 /// counters takes them from the run stored for the byte-identical binary.
-fn identical_head(
-    pass: Run,
-    counted: bool,
-    stored: Option<Box<(Value, String)>>,
-) -> (Run, HeadRun) {
+fn identical_head(pass: Run, counted: bool, stored: Option<StoredFor>) -> (Run, HeadRun) {
     if counted {
         return (pass, HeadRun::Measured);
     }
-    let Some((doc, from)) = stored.map(|s| *s) else {
+    let Some((doc, from, expected)) = stored.map(|s| *s) else {
         return (pass, HeadRun::Uncounted);
     };
-    match headrun::merge_stored(&doc, &from, pass) {
+    match headrun::merge_stored(&doc, &from, pass, &expected) {
         Ok(run) => {
             println!("gate: counters for the identical binaries read from its stored run ({from})");
             (run, HeadRun::Measured)
@@ -2068,6 +2073,17 @@ fn errored(g: &GateArgs, exe: Option<&std::path::Path>, msg: &str) -> i32 {
             .or_else(|| invoke::bench_executable(&g.common, None, None));
         let listed = exe.and_then(|exe| invoke::listed_ids(&exe, g.common.filter.as_deref()));
         errored_at(&root, name, &g.common, listed.as_deref(), msg);
+    }
+    err(msg)
+}
+
+/// `errored` for a gate whose config did not apply: a build without that
+/// config is not HEAD's binary, so nothing is listed and every item is.
+fn errored_unbuilt(g: &GateArgs, msg: &str) -> i32 {
+    if let (Some(name), Ok(root)) = (&g.save_baseline, invoke::workspace_root())
+        && g.common.backend.as_deref() != Some("buildcost")
+    {
+        errored_at(&root, name, &g.common, None, msg);
     }
     err(msg)
 }
@@ -2909,14 +2925,52 @@ mod tests {
         };
         let stored =
             json!({ "items": { "pkg::bt_base_to_htf_index": { "callgrind": { "ir": 7 } } } });
-        let (run, source) =
-            super::identical_head(pass(), false, Some(Box::new((stored, "binary abc".into()))));
+        let ids = std::collections::BTreeSet::from(["pkg::bt_base_to_htf_index".to_string()]);
+        let stored = Box::new((stored, "binary abc".to_string(), ids));
+        let (run, source) = super::identical_head(pass(), false, Some(stored));
         assert_eq!(source, HeadRun::Measured);
         assert_eq!(run.items["pkg::bt_base_to_htf_index"].ir, Some(7));
         assert_eq!(run.items["pkg::bt_base_to_htf_index"].median_ns, Some(5.0));
         assert_eq!(run.reused.unwrap().from, "binary abc");
         let (_, source) = super::identical_head(pass(), false, None);
         assert_eq!(source, HeadRun::Uncounted);
+    }
+
+    #[test]
+    fn a_gate_whose_bench_did_not_build_covers_its_package_for_unchanged_claims_only() {
+        let root = scratch("bench-unbuilt");
+        let stale = json!({
+            "version": 1,
+            "items": { "pkg::old": { "alloc": { "allocs": 1, "bytes": 8 } } },
+        });
+        invoke::write_baseline_in(&root, "head", &stale).unwrap();
+        let common = CommonArgs {
+            pkg: Some("pkg".into()),
+            ..CommonArgs::default()
+        };
+        super::errored_at(&root, "head", &common, None, "cargo bench failed");
+        let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+        assert_eq!(saved["items"], json!({}));
+        let expr = "pkg::old.alloc.allocs <= 1";
+        let doc =
+            soothfast_docs::markdown::scan(&format!("<!-- soothfast:claim {expr} -->\n")).unwrap();
+        let docs = [("a.md", &doc)];
+        let unchanged = || {
+            Ok(std::collections::BTreeSet::from([(
+                "a.md".to_string(),
+                expr.to_string(),
+            )]))
+        };
+        assert_eq!(
+            crate::docs_claims::check(&docs, Some(&saved), unchanged),
+            Ok(0)
+        );
+        let edited = || Ok(std::collections::BTreeSet::new());
+        assert_eq!(
+            crate::docs_claims::check(&docs, Some(&saved), edited),
+            Ok(1)
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -2948,10 +3002,8 @@ mod tests {
         let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
         assert_eq!(saved["items"], json!({}));
         assert_eq!(saved["unmeasured"][0]["reason"], "gate-failed");
-        assert_eq!(
-            saved["unmeasured"][0]["items"][0],
-            "pkg::bt_base_to_htf_index"
-        );
+        assert_eq!(saved["unmeasured"][0]["package"], "pkg");
+        assert_eq!(saved["unmeasured"][0]["all_items"], true);
         let _ = std::fs::remove_dir_all(&root);
     }
 

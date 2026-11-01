@@ -148,11 +148,12 @@ commands:
            the threshold, past measurement noise, on the same reviewed
            change; --only names outside the recordable set are skipped, not
            fatal, and the command still exits 3, not 0, if any were)
-  baseline merge --into NAME [--expect N] [--packages \"A B\"] FILE...
+  baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] FILE...
            (one baseline from exactly these files: the shard baselines of
            one gate split N ways, plus imported ones; a shard that saved
-           nothing leaves its items unmeasured; exits 2 on a corrupt file,
-           3 on a file from another split)
+           nothing leaves its items unmeasured; --not-gated EVENT lists each
+           package no file accounts for as not-gated-on-event; exits 2 on a
+           corrupt file, 3 on a file from another split)
   baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]
            (lists every item of PKG's bench binary as unmeasured for REASON,
            e.g. no-parent, for a leg that ran no gate to save it)

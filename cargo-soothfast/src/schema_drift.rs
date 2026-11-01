@@ -108,6 +108,15 @@ fn shard_baseline() -> Value {
     let entries = unmeasured::by_package(Reason::ReusedWalltime, "cache", &["walltime"], &ids);
     unmeasured::mark_in(&root, "head", &entries).unwrap();
     let shard = crate::invoke::Shard { index: 1, count: 2 };
+    let unlisted = unmeasured::Unmeasured {
+        package: "other".into(),
+        reason: Reason::GateFailed,
+        detail: "the gate errored".into(),
+        all_items: true,
+        shard: Some(shard),
+        ..unmeasured::Unmeasured::default()
+    };
+    unmeasured::append_in(&root, "head", &[unlisted]).unwrap();
     crate::baseline_merge::stamp_shard_in(&root, "head", shard, &ids).unwrap();
     let doc = crate::invoke::load_baseline_in(&root, "head")
         .unwrap()

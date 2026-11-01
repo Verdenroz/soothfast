@@ -68,6 +68,23 @@ impl<'a> Runs<'a> {
         self.reference_source(id, measured_from).map(|(_, doc)| doc)
     }
 
+    /// A stored run of `id` that may hold every item this invocation
+    /// measures: its own key first, then the run taken without the shard,
+    /// without the filter, and without either. The caller checks it holds
+    /// the items it needs.
+    pub fn load_covering(&self, id: &str, measured_from: &str) -> Option<Value> {
+        let env = self.env.as_ref()?;
+        let (shard, filter) = (self.common.shard, self.common.filter.as_deref());
+        let mut keys: Vec<String> = Vec::new();
+        for (shard, filter) in [(shard, filter), (None, filter), (shard, None), (None, None)] {
+            let key = key_with(id, self.stamp, self.common, env, shard, filter);
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        keys.iter().find_map(|key| load(key, measured_from))
+    }
+
     /// The run and its file that a gate with `reuse` takes in place of
     /// measuring the merge-base at `base_sha`. The gate and `prebuild` both
     /// ask here, so they agree on whether the merge-base needs building.
@@ -80,10 +97,16 @@ impl<'a> Runs<'a> {
 
     fn reference_source(&self, id: &str, measured_from: &str) -> Option<(PathBuf, Value)> {
         let env = self.env.as_ref().filter(|_| !id.is_empty())?;
-        let whole = self
-            .common
-            .shard
-            .map(|_| key_with(id, self.stamp, self.common, env, None));
+        let whole = self.common.shard.map(|_| {
+            key_with(
+                id,
+                self.stamp,
+                self.common,
+                env,
+                None,
+                self.common.filter.as_deref(),
+            )
+        });
         [Some(key(id, self.stamp, self.common, env)), whole]
             .into_iter()
             .flatten()
@@ -157,7 +180,14 @@ pub fn measured_on(env: &HostEnv) -> Value {
 /// callgrind, or the reverse; the `--backend` argument stays too, since it
 /// decides which non-gating backends ran alongside.
 fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> String {
-    key_with(id, stamp, common, env, common.shard)
+    key_with(
+        id,
+        stamp,
+        common,
+        env,
+        common.shard,
+        common.filter.as_deref(),
+    )
 }
 
 fn key_with(
@@ -166,10 +196,11 @@ fn key_with(
     common: &CommonArgs,
     env: &HostEnv,
     shard: Option<Shard>,
+    filter: Option<&str>,
 ) -> String {
     let mut parts = vec![id.to_string()];
     parts.extend(conditions(stamp, common, env));
-    parts.push(common.filter.clone().unwrap_or_default());
+    parts.push(filter.unwrap_or_default().to_string());
     if let Some(shard) = shard {
         parts.push(format!("shard {shard}"));
     }

@@ -152,3 +152,44 @@ fn a_shard_stamp_refuses_another_shard_and_an_unsharded_run() {
     assert!(check_shard_in(&root, "plain", first).is_err());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn baseline_mark_on_a_broken_build_drops_the_old_numbers_and_still_fails() {
+    let root = std::env::temp_dir().join(format!("soothfast-mark-broken-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let stale = json!({ "version": 1, "items": { "core::a": item() } });
+    invoke::write_baseline_in(&root, "head", &stale).unwrap();
+    let common = invoke::CommonArgs {
+        pkg: Some("core".into()),
+        ..invoke::CommonArgs::default()
+    };
+    let rc = mark_listed(
+        &root,
+        "head",
+        &common,
+        Reason::NoParent,
+        "no parent",
+        Err("core's bench target did not build".into()),
+    );
+    assert_eq!(rc, 2);
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(doc["items"], json!({}));
+    let entries = unmeasured::read(&doc).unwrap();
+    assert!(entries[0].all_items && entries[0].reason == Reason::NoParent);
+    let reading = crate::docs_claims::evaluate("core::a.alloc.allocs <= 0", &doc, &entries);
+    assert!(matches!(
+        reading,
+        crate::docs_claims::Reading::Unmeasured(Reason::NoParent, _)
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_event_the_gate_skips_lists_each_package_whole() {
+    let merged = merge_on(&[], 1, &packages(), Some("workflow_dispatch")).unwrap();
+    let entries = unmeasured::read(&merged).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].reason, Reason::NotGatedOnEvent);
+    assert!(entries[0].all_items);
+    assert!(entries[0].detail.contains("workflow_dispatch"));
+}

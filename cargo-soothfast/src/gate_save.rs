@@ -39,26 +39,16 @@ pub fn save_head(
     listed: Option<&[String]>,
     failures: u32,
 ) -> Result<(), String> {
-    let listed = shard_listing(common, listed)?;
     if failures > 0 && common.backend.as_deref() == Some("buildcost") {
         eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
         return Ok(());
     }
     if failures > 0 {
         eprintln!("soothfast: saving no numbers in baseline {name:?}: gate failed");
-        let ids: Vec<String> = match listed {
-            Some(ids) => ids.to_vec(),
-            None => current.items.keys().cloned().collect(),
-        };
-        return mark_package(
-            root,
-            name,
-            common,
-            Reason::GateFailed,
-            "the gate failed",
-            &ids,
-        );
+        let reason = Reason::GateFailed;
+        return mark_package(root, name, common, reason, "the gate failed", listed);
     }
+    let listed = shard_listing(common, listed)?;
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
@@ -79,16 +69,8 @@ pub fn save_errored(
     listed: Option<&[String]>,
     why: &str,
 ) -> Result<(), String> {
-    let listed = shard_listing(common, listed)?;
     let detail = format!("the gate errored: {why}");
-    mark_package(
-        root,
-        name,
-        common,
-        Reason::GateFailed,
-        &detail,
-        listed.unwrap_or_default(),
-    )
+    mark_package(root, name, common, Reason::GateFailed, &detail, listed)
 }
 
 /// `listed`, which a shard's baseline must carry for `baseline merge`.
@@ -115,47 +97,55 @@ fn stamp(root: &Path, name: &str, common: &CommonArgs, listed: &[String]) -> Res
 
 /// Replace the numbers of the gate's packages in baseline `name` with one
 /// `reason` entry each, naming the items of `ids` this gate owns. The
-/// packages are `-p`'s, else every package `ids` names. With a shard, `ids`
-/// is the bench binary's whole listing, which the file is stamped with.
+/// packages are `-p`'s, else every package `ids` names, else every package
+/// the baseline holds numbers of. Without `ids` each entry covers all of its
+/// package's items (the shard's, when sharded), and with no package known at
+/// all one entry covers every item. With a shard, `ids` is the bench
+/// binary's whole listing, which the file is stamped with.
 pub fn mark_package(
     root: &Path,
     name: &str,
     common: &CommonArgs,
     reason: Reason,
     detail: &str,
-    ids: &[String],
+    ids: Option<&[String]>,
 ) -> Result<(), String> {
     if let Some(shard) = common.shard {
         baseline_merge::check_shard_in(root, name, shard)?;
     }
-    let packages: Vec<String> = match &common.pkg {
-        Some(pkg) => vec![pkg.replace('-', "_")],
-        None => {
-            let mut seen: Vec<String> = ids
-                .iter()
-                .map(|id| invoke::id_pkg(id).to_string())
-                .collect();
-            seen.sort();
-            seen.dedup();
-            seen
-        }
+    let mut packages: Vec<String> = match (&common.pkg, ids) {
+        (Some(pkg), _) => vec![pkg.replace('-', "_")],
+        (None, Some(ids)) => ids
+            .iter()
+            .map(|id| invoke::id_pkg(id).to_string())
+            .collect(),
+        (None, None) => Vec::new(),
     };
+    packages.sort();
+    packages.dedup();
     if packages.is_empty() {
-        return Err(format!(
-            "cannot tell which packages the gate covered, so baseline {name:?} would keep their old numbers"
-        ));
+        packages = unmeasured::packages_in(root, name).map_err(|e| e.to_string())?;
+    }
+    if packages.is_empty() {
+        packages.push(String::new());
     }
     let entries: Vec<Unmeasured> = packages
         .into_iter()
         .map(|package| Unmeasured {
             items: ids
+                .unwrap_or_default()
                 .iter()
                 .filter(|id| {
                     invoke::id_pkg(id) == package && common.shard.is_none_or(|s| s.owns(id))
                 })
                 .cloned()
                 .collect(),
-            detail: format!("{detail}, so {package} saved no numbers"),
+            detail: match package.as_str() {
+                "" => format!("{detail}, so no package saved numbers"),
+                p => format!("{detail}, so {p} saved no numbers"),
+            },
+            all_items: ids.is_none() || package.is_empty(),
+            shard: common.shard.filter(|_| ids.is_none() || package.is_empty()),
             package,
             reason,
             ..Unmeasured::default()
@@ -163,7 +153,7 @@ pub fn mark_package(
         .collect();
     report(name, &entries);
     unmeasured::mark_in(root, name, &entries).map_err(|e| e.to_string())?;
-    stamp(root, name, common, ids)
+    stamp(root, name, common, ids.unwrap_or_default())
 }
 
 fn report(name: &str, entries: &[Unmeasured]) {

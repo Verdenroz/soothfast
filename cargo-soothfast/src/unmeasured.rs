@@ -9,7 +9,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::invoke;
+use crate::invoke::{self, Shard};
 
 /// Why a baseline holds no number for an item's metric.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -31,12 +31,15 @@ pub enum Reason {
     NoMeasurement,
     /// `docs check --skip-claims` evaluated no claim.
     ClaimsSkipped,
+    /// The cargo gate measures only on a pull request or a default-branch
+    /// push, and this event was neither.
+    NotGatedOnEvent,
     /// Read from baselines older writers left: HEAD's run came from the run
     /// cache. Never written.
     StoredRun,
 }
 
-const REASONS: [Reason; 8] = [
+const REASONS: [Reason; 9] = [
     Reason::IdenticalBinaries,
     Reason::ReusedWalltime,
     Reason::ShardMissing,
@@ -44,6 +47,7 @@ const REASONS: [Reason; 8] = [
     Reason::NoParent,
     Reason::NoMeasurement,
     Reason::ClaimsSkipped,
+    Reason::NotGatedOnEvent,
     Reason::StoredRun,
 ];
 
@@ -57,6 +61,7 @@ impl Reason {
             Reason::NoParent => "no-parent",
             Reason::NoMeasurement => "no-measurement",
             Reason::ClaimsSkipped => "claims-skipped",
+            Reason::NotGatedOnEvent => "not-gated-on-event",
             Reason::StoredRun => "stored-run",
         }
     }
@@ -69,8 +74,9 @@ impl Reason {
 /// One `unmeasured` entry: `items` of `package` (an id prefix, `-` written
 /// `_`) lack the `metrics` (backend names, or `backend.metric`; empty for
 /// every metric) for `reason`. `all_items` covers every item under the
-/// `package::` prefix, for an import gate that produced no results to name
-/// them. Otherwise an empty `items` names nothing, and no claim reads as not
+/// `package::` prefix (every item, for an empty `package`), for a gate that
+/// could not name them; `shard` narrows it to the items that shard owns.
+/// Otherwise an empty `items` names nothing, and no claim reads as not
 /// evaluated.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Unmeasured {
@@ -80,6 +86,7 @@ pub struct Unmeasured {
     pub items: Vec<String>,
     pub metrics: Vec<String>,
     pub all_items: bool,
+    pub shard: Option<Shard>,
 }
 
 impl Unmeasured {
@@ -96,13 +103,23 @@ impl Unmeasured {
         if self.all_items {
             v["all_items"] = json!(true);
         }
+        if let Some(shard) = self.shard {
+            v["shard"] = json!(shard.to_string());
+        }
         v
     }
 
     /// Whether this entry names `item` or, with `all_items`, its prefix.
     pub fn names(&self, item: &str) -> bool {
         self.items.iter().any(|i| i == item)
-            || (self.all_items && item.starts_with(&format!("{}::", self.package)))
+            || (self.all_items
+                && self.shard.is_none_or(|s| s.owns(item))
+                && (self.package.is_empty() || item.starts_with(&format!("{}::", self.package))))
+    }
+
+    /// Whether this entry drops the saved numbers of `id`.
+    fn takes(&self, id: &str) -> bool {
+        self.package.is_empty() || invoke::id_pkg(id) == self.package
     }
 
     fn from_json(v: &Value) -> Option<Unmeasured> {
@@ -124,6 +141,10 @@ impl Unmeasured {
             all_items: match v.get("all_items") {
                 None => false,
                 Some(b) => b.as_bool()?,
+            },
+            shard: match v.get("shard") {
+                None => None,
+                Some(s) => Some(Shard::parse(s.as_str()?).ok()?),
             },
         })
     }
@@ -176,6 +197,7 @@ pub fn by_package<'a>(
             items,
             metrics: metrics.iter().map(|m| m.to_string()).collect(),
             all_items: false,
+            shard: None,
         })
         .collect()
 }
@@ -188,7 +210,7 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured]) -> io::Result<()
         .unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let packages: Vec<String> = entries.iter().map(|e| e.package.clone()).collect();
     let packages = packages.as_slice();
-    let of_marked = |id: &str| packages.iter().any(|p| invoke::id_pkg(id) == p);
+    let of_marked = |id: &str| entries.iter().any(|e| e.takes(id));
     if let Some(items) = doc.get_mut("items").and_then(Value::as_object_mut) {
         items.retain(|id, v| v["imported"].is_string() || !of_marked(id));
     }
@@ -222,8 +244,28 @@ fn append(doc: &mut Value, entries: &[Unmeasured]) -> io::Result<()> {
 
 fn clear_packages(doc: &mut Value, packages: &[String]) {
     if let Some(entries) = doc.get_mut("unmeasured").and_then(Value::as_array_mut) {
-        entries.retain(|e| !packages.iter().any(|p| e["package"].as_str() == Some(p)));
+        entries.retain(|e| {
+            !packages
+                .iter()
+                .any(|p| p.is_empty() || e["package"].as_str() == Some(p))
+        });
     }
+}
+
+/// The packages whose cargo-measured items baseline `name` under `root`
+/// holds, for a gate that could not tell which packages it covered.
+pub fn packages_in(root: &Path, name: &str) -> io::Result<Vec<String>> {
+    let doc = invoke::load_baseline_in(root, name)?.unwrap_or_default();
+    let mut packages: Vec<String> = doc["items"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(id, v)| !v["imported"].is_string() && !id.starts_with("buildcost::"))
+        .map(|(id, _)| invoke::id_pkg(id).to_string())
+        .collect();
+    packages.sort();
+    packages.dedup();
+    Ok(packages)
 }
 
 /// Drop the entries of `package` (every entry for `None`), for a save that

@@ -9,6 +9,7 @@ fn entry(reason: Reason, items: &[&str], metrics: &[&str]) -> Unmeasured {
         items: items.iter().map(|s| s.to_string()).collect(),
         metrics: metrics.iter().map(|s| s.to_string()).collect(),
         all_items: false,
+        shard: None,
     }
 }
 

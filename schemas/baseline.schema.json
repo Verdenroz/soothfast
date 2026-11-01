@@ -80,7 +80,7 @@
             "type": "string"
           },
           "reason": {
-            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty. `claims-skipped`: `docs check --skip-claims` evaluated no claim. `stored-run`: written by older releases for a HEAD run read from the run cache, read as not evaluated.",
+            "description": "`identical-binaries`: the binaries matched the merge-base and no stored run of them held the gating counters. `reused-walltime`: the walltime came from another run of the same code. `shard-missing`: the shard owning the items saved nothing. `gate-failed`: the package's gate failed or errored. `no-parent`: a push whose commit has no parent to gate against. `no-measurement`: no leg wrote anything for the package, so `items` is empty. `claims-skipped`: `docs check --skip-claims` evaluated no claim. `not-gated-on-event`: the cargo gate measures only on a pull request or a default-branch push, and this event was neither. `stored-run`: written by older releases for a HEAD run read from the run cache, read as not evaluated.",
             "enum": [
               "identical-binaries",
               "reused-walltime",
@@ -89,11 +89,16 @@
               "no-parent",
               "no-measurement",
               "claims-skipped",
+              "not-gated-on-event",
               "stored-run"
             ]
           },
+          "shard": {
+            "description": "`I/N`: with `all_items`, the entry covers only the items that shard owns.",
+            "type": "string"
+          },
           "all_items": {
-            "description": "True when the entry covers every item under the `package::` prefix, for an import gate that left no results to name them.",
+            "description": "True when the entry covers every item under the `package::` prefix (every item, for an empty `package`), for a gate that could not name them.",
             "type": "boolean"
           },
           "metrics": {

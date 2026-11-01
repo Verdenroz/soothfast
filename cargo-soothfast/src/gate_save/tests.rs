@@ -133,3 +133,99 @@ fn an_errored_gate_names_the_listed_items_as_failed() {
     assert!(entries[0].detail.contains("bench failed"));
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A baseline under a fresh `name` root holding stale numbers of `ids`.
+fn stale(name: &str, ids: &[&str]) -> std::path::PathBuf {
+    let root = scratch(name);
+    let mut doc = json!({ "version": 1, "items": {} });
+    for id in ids {
+        doc["items"][*id] = json!({ "alloc": { "allocs": 1, "bytes": 8 } });
+    }
+    invoke::write_baseline_in(&root, "head", &doc).unwrap();
+    root
+}
+
+/// What `docs check` makes of `expr` against baseline `head` under `root`.
+fn reading(root: &Path, expr: &str) -> crate::docs_claims::Reading {
+    let doc = invoke::load_baseline_in(root, "head").unwrap().unwrap();
+    crate::docs_claims::evaluate(expr, &doc, &unmeasured::read(&doc).unwrap())
+}
+
+fn unmeasured_as(reading: crate::docs_claims::Reading, reason: Reason) -> bool {
+    matches!(reading, crate::docs_claims::Reading::Unmeasured(r, _) if r == reason)
+}
+
+#[test]
+fn a_sharded_failure_with_no_listing_covers_the_shard_s_items() {
+    let shard = invoke::Shard { index: 1, count: 2 };
+    let owned = (0..)
+        .map(|n| format!("core::f{n}"))
+        .find(|id| shard.owns(id))
+        .unwrap();
+    let other = (0..)
+        .map(|n| format!("core::f{n}"))
+        .find(|id| !shard.owns(id))
+        .unwrap();
+    let root = stale("sharded-unlisted", &[&owned]);
+    crate::baseline_merge::stamp_shard_in(&root, "head", shard, std::slice::from_ref(&owned))
+        .unwrap();
+    let common = CommonArgs {
+        shard: Some(shard),
+        ..core()
+    };
+    save_head(
+        &root,
+        "head",
+        &Run::default(),
+        &HeadRun::Measured,
+        &common,
+        None,
+        1,
+    )
+    .unwrap();
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(doc["items"], json!({}));
+    assert_eq!(doc["shard"], "1/2");
+    let entry = &unmeasured::read(&doc).unwrap()[0];
+    assert!(entry.all_items && entry.shard == Some(shard));
+    let claim = |id: &str| reading(&root, &format!("{id}.alloc.allocs <= 0"));
+    assert!(unmeasured_as(claim(&owned), Reason::GateFailed));
+    assert!(matches!(
+        claim(&other),
+        crate::docs_claims::Reading::Decided(_)
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_errored_gate_without_p_or_a_listing_covers_the_packages_it_saved_before() {
+    let root = stale("errored-no-p", &["core::a", "util::b"]);
+    save_errored(&root, "head", &CommonArgs::default(), None, "no bench").unwrap();
+    let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(doc["items"], json!({}));
+    let packages: Vec<String> = unmeasured::read(&doc)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.package)
+        .collect();
+    assert_eq!(packages, ["core", "util"]);
+    assert!(unmeasured_as(
+        reading(&root, "util::b.alloc.allocs <= 0"),
+        Reason::GateFailed
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_errored_gate_with_nothing_to_go_on_covers_every_item() {
+    let root = scratch("errored-nothing");
+    save_errored(&root, "head", &CommonArgs::default(), None, "no bench").unwrap();
+    let entry =
+        &unmeasured::read(&invoke::load_baseline_in(&root, "head").unwrap().unwrap()).unwrap()[0];
+    assert!(entry.package.is_empty() && entry.all_items);
+    assert!(unmeasured_as(
+        reading(&root, "any::x.alloc.allocs <= 0"),
+        Reason::GateFailed
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+}

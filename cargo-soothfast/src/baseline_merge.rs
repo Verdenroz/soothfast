@@ -82,7 +82,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("mark") => mark_cmd(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] FILE...\n       \
+                "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] FILE...\n       \
                  cargo soothfast baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]"
             );
             2
@@ -110,24 +110,36 @@ fn mark_cmd(args: &[String]) -> i32 {
     let (Some(into), Some(pkg), Some(reason)) = (into, common.pkg.clone(), reason) else {
         return fail("baseline mark needs --into NAME, -p PKG and a known --reason");
     };
-    if let Err(e) = gate_config::apply(&mut common) {
-        return fail(&e);
-    }
-    let Some(exe) = invoke::bench_executable(&common, None, None) else {
-        return fail(&format!(
-            "{pkg}'s bench target did not build, so its items cannot be listed"
-        ));
-    };
-    let Some(ids) = invoke::listed_ids(&exe, common.filter.as_deref()) else {
-        return fail(&format!("{} lists no items", exe.display()));
-    };
+    let listed = gate_config::apply(&mut common).and_then(|_| {
+        let exe = invoke::bench_executable(&common, None, None)
+            .ok_or_else(|| format!("{pkg}'s bench target did not build"))?;
+        invoke::listed_ids(&exe, common.filter.as_deref())
+            .ok_or_else(|| format!("{} lists no items", exe.display()))
+    });
     let detail = detail.unwrap_or_else(|| reason.as_str().to_string());
-    let marked = invoke::workspace_root()
-        .map_err(|e| e.to_string())
-        .and_then(|root| gate_save::mark_package(&root, &into, &common, reason, &detail, &ids));
-    match marked {
-        Ok(()) => 0,
-        Err(e) => fail(&format!("cannot write baseline {into:?}: {e}")),
+    match invoke::workspace_root() {
+        Ok(root) => mark_listed(&root, &into, &common, reason, &detail, listed),
+        Err(e) => fail(&format!("cannot find the workspace root: {e}")),
+    }
+}
+
+/// Mark `common`'s package in baseline `into` under `root`. Items that could
+/// not be `listed` are all covered, and the command still fails.
+fn mark_listed(
+    root: &Path,
+    into: &str,
+    common: &invoke::CommonArgs,
+    reason: Reason,
+    detail: &str,
+    listed: Result<Vec<String>, String>,
+) -> i32 {
+    let ids = listed.as_ref().ok().map(Vec::as_slice);
+    if let Err(e) = gate_save::mark_package(root, into, common, reason, detail, ids) {
+        return fail(&format!("cannot write baseline {into:?}: {e}"));
+    }
+    match listed {
+        Ok(_) => 0,
+        Err(e) => fail(&format!("{e}, so every item is listed {}", reason.as_str())),
     }
 }
 
@@ -135,6 +147,7 @@ fn merge_cmd(args: &[String]) -> i32 {
     let mut into = None;
     let mut expect = 1u64;
     let mut packages = Vec::new();
+    let mut not_gated = None;
     let mut files = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -147,6 +160,10 @@ fn merge_cmd(args: &[String]) -> i32 {
             "--packages" => match it.next() {
                 Some(p) => packages = p.split_whitespace().map(str::to_string).collect(),
                 None => return fail("--packages needs a space-separated list"),
+            },
+            "--not-gated" => match it.next() {
+                Some(event) => not_gated = Some(event.clone()),
+                None => return fail("--not-gated needs the event name"),
             },
             other if !other.starts_with('-') => files.push(PathBuf::from(other)),
             other => return fail(&format!("unknown baseline merge arg {other:?}")),
@@ -165,7 +182,7 @@ fn merge_cmd(args: &[String]) -> i32 {
             Err(e) => return fail(&format!("corrupt baseline {}: {e}", file.display())),
         }
     }
-    let merged = match merge(&docs, expect, &packages) {
+    let merged = match merge_on(&docs, expect, &packages, not_gated.as_deref()) {
         Ok(doc) => doc,
         Err(MergeError::Corrupt(e)) => return fail(&e),
         Err(MergeError::Count(e)) => {
@@ -204,7 +221,20 @@ fn fail(msg: &str) -> i32 {
 
 /// One baseline from `files` (label, document) of a gate split into
 /// `expect` shards, accounting for every one of `packages`.
+#[cfg(test)]
 fn merge(files: &[(String, Value)], expect: u64, packages: &[String]) -> Result<Value, MergeError> {
+    merge_on(files, expect, packages, None)
+}
+
+/// [`merge`] for a CI event the cargo gate measured on, or, with
+/// `not_gated`, one it did not: then `packages` no file accounts for are
+/// listed whole as `not-gated-on-event`.
+fn merge_on(
+    files: &[(String, Value)],
+    expect: u64,
+    packages: &[String],
+    not_gated: Option<&str>,
+) -> Result<Value, MergeError> {
     let corrupt = |label: &str, why: String| MergeError::Corrupt(format!("{label}: {why}"));
     let mut out = json!({ "version": 1 });
     let mut all_items = Map::new();
@@ -263,7 +293,20 @@ fn merge(files: &[(String, Value)], expect: u64, packages: &[String]) -> Result<
         entries.extend(file_entries);
     }
     for pkg in packages {
-        entries.extend(unaccounted(&pkg.replace('-', "_"), &shards, expect));
+        let pkg = pkg.replace('-', "_");
+        match not_gated {
+            Some(event) if !shards.values().any(|doc| covers(doc, &pkg)) => {
+                entries.push(Unmeasured {
+                    detail: format!("the cargo gate does not measure {pkg} on a {event} event"),
+                    package: pkg,
+                    reason: Reason::NotGatedOnEvent,
+                    all_items: true,
+                    ..Unmeasured::default()
+                })
+            }
+            Some(_) => {}
+            None => entries.extend(unaccounted(&pkg, &shards, expect)),
+        }
     }
     out["created_unix"] = json!(
         std::time::SystemTime::now()
@@ -310,6 +353,7 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
             items: Vec::new(),
             metrics: Vec::new(),
             all_items: false,
+            shard: None,
         }];
     }
     missing
@@ -321,6 +365,7 @@ fn unaccounted(pkg: &str, shards: &BTreeMap<u64, &Value>, expect: u64) -> Vec<Un
             items: listed.iter().filter(|id| shard.owns(id)).cloned().collect(),
             metrics: Vec::new(),
             all_items: false,
+            shard: None,
         })
         .filter(|u| !u.items.is_empty())
         .collect()
