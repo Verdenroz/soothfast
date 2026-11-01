@@ -60,6 +60,7 @@ mod spec_probe;
 mod store;
 mod test;
 mod trend;
+mod unitgraph;
 mod verdict;
 mod workspace;
 
