@@ -56,6 +56,17 @@ impl BuildStamp {
         doc
     }
 
+    /// A stamp read back from [`BuildStamp::to_json`].
+    pub fn from_json(doc: &Value) -> Option<BuildStamp> {
+        let field = |k: &str| doc[k].as_str().map(str::to_string);
+        Some(BuildStamp {
+            rustc: field("rustc")?,
+            codegen_units: field("codegen_units")?,
+            profiles: field("profiles")?,
+            rustflags: field("rustflags")?,
+        })
+    }
+
     /// Short form for the gate banner.
     pub fn digest(&self) -> String {
         let joined = self
