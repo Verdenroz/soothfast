@@ -498,9 +498,14 @@ linked into every dependent's bench binary, so each lists it. Each saved
 item's `pkg`, the package that registered it, comes only from the listing of
 the binary that ran; with no listing, or none naming a package, it is
 unknown. A save records under `registered` the ids its own package
-registered. One owner that registered an id takes it from the others;
-with none recorded, the item's `pkg` takes it when that package owns it
-too, or when the run gated it and its listing showed the id. Otherwise
+registered, and stamps each number it writes with `saved_by`. A number is
+credited to a package only when that package saved it: a save never
+writes, or attaches verdicts to, an id another package registered, nor,
+with its package unknown, one another package owns. One owner that
+registered an id takes it from the others; with none recorded, the item's
+`pkg` takes it when that package owns it too, or when the run gated it and
+its listing showed the id. The id keeps its number only if that package
+saved it; otherwise the package's next save brings it back. Otherwise
 (two packages registering the same id, a feature-gated item, a registrar
 CI does not gate, a lib with no bench target) every listing package keeps
 it, and the id is ambiguous: `owners` names both and `items` holds no

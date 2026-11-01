@@ -426,7 +426,7 @@ fn a_merged_id_two_packages_own_has_no_number_and_fails_its_claims() {
         "owners": { "a": ["util::hash"], "b": ["util::hash"] },
     });
     let merged = merge(&[("head.json".into(), doc)], 1, &[]).unwrap();
-    assert!(merged["items"]["util::hash"].is_null());
+    assert!(merged["items"]["util::hash"]["alloc"].is_null());
     assert!(unmeasured::read(&merged).unwrap().is_empty());
     let reading = crate::docs_claims::Against::new(&merged)
         .unwrap()

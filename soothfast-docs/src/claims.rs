@@ -4,8 +4,6 @@
 
 use serde_json::Value;
 
-use crate::baseline::Number;
-
 /// Comparison operator of a claim expression (`<`, `<=`, `>`, `>=`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Op {
@@ -214,17 +212,13 @@ pub fn evaluate(claim: &Claim, baseline: &Value) -> Result<(bool, f64), Unread> 
     Ok((holds, actual))
 }
 
+/// One operand's number; [`values`] has ruled ambiguity out already.
 fn measured(baseline: &Value, item: &str, backend: &str, metric: &str) -> Result<f64, Unread> {
-    match crate::baseline::number(baseline, item, backend, metric) {
-        Number::Measured(v) => Ok(v),
-        Number::Ambiguous(packages) => Err(Unread::Ambiguous {
-            item: item.to_string(),
-            packages,
-        }),
-        Number::Missing => Err(Unread::Other(format!(
+    baseline["items"][item][backend][metric].as_f64().ok_or_else(|| {
+        Unread::Other(format!(
             "no measurement for {item}.{backend}.{metric} in baseline — run `cargo soothfast measure --save-baseline`"
-        ))),
-    }
+        ))
+    })
 }
 
 #[cfg(test)]

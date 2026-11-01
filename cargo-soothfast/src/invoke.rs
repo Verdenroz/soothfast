@@ -1096,6 +1096,18 @@ pub fn save_baseline_in(
     run: &Run,
     scope: SaveScope,
 ) -> io::Result<PathBuf> {
+    let mut doc =
+        load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+    let (foreign, mine) = match &scope {
+        SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg)) => {
+            let foreign = crate::ambiguity::foreign(&doc, pkg, run);
+            let kept = crate::ambiguity::without(run, &foreign);
+            (foreign, Some(kept))
+        }
+        _ => (BTreeSet::new(), None),
+    };
+    let owners_run = run;
+    let run = mine.as_ref().unwrap_or(run);
     let mut new_items = saved_items(run);
     if let SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg)) = &scope {
         for item in new_items
@@ -1110,15 +1122,7 @@ pub fn save_baseline_in(
         SaveScope::BenchFull(pkg) => Some(pkg.clone()),
         _ => None,
     };
-    let mut doc =
-        load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
-    let prior = own_measured(&mut doc, &scope, run)?;
-    let foreign = match &scope {
-        SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg)) => {
-            crate::ambiguity::registered_elsewhere(&doc, pkg, &new_items)
-        }
-        _ => BTreeSet::new(),
-    };
+    let prior = own_measured(&mut doc, &scope, owners_run, &foreign)?;
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1148,7 +1152,7 @@ pub fn save_baseline_in(
             }
             SaveScope::BenchFiltered(_) => {}
         }
-        for (k, v) in new_map.iter().filter(|(k, _)| !foreign.contains(*k)) {
+        for (k, v) in new_map {
             map.insert(k.clone(), v.clone());
         }
     }
@@ -1185,7 +1189,12 @@ pub fn save_baseline_in(
 /// measured, and return what it owned before and no other package owns,
 /// which a full save replaces. A filtered save adds to its owners and
 /// replaces nothing beyond its own ids.
-fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTreeSet<String>> {
+fn own_measured(
+    doc: &mut Value,
+    scope: &SaveScope,
+    run: &Run,
+    foreign: &BTreeSet<String>,
+) -> io::Result<BTreeSet<String>> {
     let (pkg, full) = match scope {
         SaveScope::BenchFull(Some(pkg)) => (pkg, true),
         SaveScope::BenchFiltered(Some(pkg)) => (pkg, false),
@@ -1210,10 +1219,13 @@ fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTr
         crate::unmeasured::owned_by(doc, pkg).into_iter().collect()
     };
     let mut owned: BTreeSet<String> = if full { BTreeSet::new() } else { prior.clone() };
+    let norm = |p: &str| p.replace('-', "_");
+    let registers = |m: &ItemMetrics| m.pkg.as_deref().is_some_and(|p| norm(p) == norm(pkg));
     owned.extend(
         run.items
             .iter()
             .filter(|(id, m)| m.imported.is_none() && !id.starts_with("buildcost::"))
+            .filter(|(id, m)| !foreign.contains(*id) || registers(m))
             .map(|(id, _)| id.clone()),
     );
     let owned: Vec<String> = owned.into_iter().collect();

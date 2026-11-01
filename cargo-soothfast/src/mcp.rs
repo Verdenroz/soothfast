@@ -161,6 +161,14 @@ fn measurements_for(state: &State, path: &str) -> Vec<String> {
             if target != path && id != path {
                 continue;
             }
+            let packages = baseline::ambiguous_packages(&state.baseline, id);
+            if !packages.is_empty() {
+                let packages = packages.join(", ");
+                facts.push(format!(
+                    "no number: ambiguous between {packages} (as `{id}`)"
+                ));
+                continue;
+            }
             for (label, keys) in [
                 ("instructions/iter", ["perfcnt", "instructions"]),
                 ("median ns", ["walltime", "median_ns"]),
@@ -172,13 +180,6 @@ fn measurements_for(state: &State, path: &str) -> Vec<String> {
                 }
             }
         }
-    }
-    let packages = baseline::ambiguous_packages(&state.baseline, path);
-    if !packages.is_empty() {
-        facts.push(format!(
-            "no number: ambiguous between {} (as `{path}`)",
-            packages.join(", ")
-        ));
     }
     facts
 }
@@ -272,4 +273,27 @@ fn tool_call(state: &State, name: &str, args: &Value) -> Result<String, String> 
 fn err(msg: &str) -> i32 {
     eprintln!("soothfast: {msg}");
     2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_ambiguous_item_is_reported_by_the_path_it_covers() {
+        let state = State {
+            pkg: "a".into(),
+            entries: Vec::new(),
+            baseline: json!({
+                "items": { "util::hash": { "covers": "util::hash_bytes" } },
+                "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+            }),
+            trend: Vec::new(),
+        };
+        let facts = measurements_for(&state, "util::hash_bytes");
+        assert_eq!(
+            facts,
+            ["no number: ambiguous between a, b (as `util::hash`)"]
+        );
+    }
 }

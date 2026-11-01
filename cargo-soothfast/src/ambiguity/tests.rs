@@ -68,7 +68,7 @@ fn two_packages_registering_one_id_leave_it_ambiguous_with_no_number() {
     save(&root, "b", &[("dup::f", Some("b"), 3)]);
     let doc = head(&root);
     assert!(
-        doc["items"]["dup::f"].is_null(),
+        doc["items"]["dup::f"]["alloc"].is_null(),
         "an older reader sees no number"
     );
     assert_eq!(
@@ -105,6 +105,71 @@ fn a_gated_registrar_that_listed_the_id_takes_it_from_the_listing_packages() {
     settle(&mut doc, &gated);
     assert!(unmeasured::owned_by(&doc, "app").is_empty());
     assert!(unmeasured::owned_by(&doc, "web").is_empty());
+    assert_eq!(
+        allocs(&doc, "core::parse"),
+        Number::Missing,
+        "core saved none of it"
+    );
+}
+
+#[test]
+fn an_id_handed_to_its_registrar_keeps_only_a_number_the_registrar_saved() {
+    for (saver, kept) in [("core", true), ("app", false)] {
+        let mut doc = json!({
+            "items": { "core::parse": { "pkg": "core", "saved_by": saver, "alloc": { "allocs": 1 } } },
+            "owners": { "app": ["core::parse"], "core": ["core::parse"] },
+            "registered": { "core": ["core::parse"] },
+        });
+        settle(&mut doc, &Gated::new());
+        assert_eq!(unmeasured::owned_by(&doc, "core"), ["core::parse"]);
+        assert_eq!(
+            matches!(allocs(&doc, "core::parse"), Number::Measured(_)),
+            kept,
+            "{saver}"
+        );
+    }
+}
+
+#[test]
+fn a_filtered_save_drops_ids_its_listing_shows_another_package_registered() {
+    let mut doc = json!({ "registered": { "app": ["core::parse", "app::x"] } });
+    let mut run = Run::default();
+    let item = |pkg: &str| ItemMetrics {
+        pkg: Some(pkg.into()),
+        ..ItemMetrics::default()
+    };
+    run.items.insert("core::parse".into(), item("core"));
+    run.items.insert("app::y".into(), item("app"));
+    record_registered(&mut doc, "app", &run, false);
+    assert_eq!(doc["registered"]["app"], json!(["app::x", "app::y"]));
+}
+
+#[test]
+fn a_full_save_with_no_listing_keeps_what_was_registered() {
+    let mut doc = json!({ "registered": { "app": ["app::x"] } });
+    let mut run = Run::default();
+    run.items.insert("app::x".into(), ItemMetrics::default());
+    record_registered(&mut doc, "app", &run, true);
+    assert_eq!(doc["registered"]["app"], json!(["app::x"]));
+}
+
+#[test]
+fn a_save_never_writes_an_id_another_package_registered() {
+    let root = scratch("never-write");
+    save(&root, "core", &[("core::parse", Some("core"), 1)]);
+    save(
+        &root,
+        "app",
+        &[("core::parse", None, 9), ("app::x", Some("app"), 2)],
+    );
+    let doc = head(&root);
+    assert_eq!(allocs(&doc, "core::parse"), Number::Measured(1.0));
+    assert_eq!(doc["items"]["core::parse"]["saved_by"], "core");
+    assert!(
+        unmeasured::owned_by(&doc, "app")
+            .iter()
+            .all(|id| id != "core::parse")
+    );
 }
 
 #[test]

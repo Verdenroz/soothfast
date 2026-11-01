@@ -403,20 +403,17 @@ fn a_filtered_save_keeps_the_unfiltered_numbers() {
 }
 
 #[test]
-fn a_save_of_an_id_another_package_owns_fails_its_claims_as_ambiguous() {
+fn a_save_with_no_listing_never_writes_an_id_another_package_owns() {
     let root = stale("duplicate-id", &[("a", &["soothfast::same"])]);
     let scope = invoke::SaveScope::BenchFull(Some("b".into()));
     save_ids(&root, &["soothfast::same"], scope).unwrap();
-    assert!(kept(&root).is_empty());
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+    assert_eq!(
+        doc["items"]["soothfast::same"]["alloc"]["allocs"], 1,
+        "a's number stands"
+    );
     assert_eq!(unmeasured::owned_by(&doc, "a"), ["soothfast::same"]);
-    assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::same"]);
-    let Reading::Decided(Outcome::Failed(why)) =
-        reading(&root, "soothfast::same.alloc.allocs <= 1")
-    else {
-        panic!("a claim on an ambiguous id must fail");
-    };
-    assert!(why.contains("measured by both a and b; a claim on it is ambiguous"));
+    assert!(unmeasured::owned_by(&doc, "b").is_empty());
     let _ = std::fs::remove_dir_all(&root);
 }
 

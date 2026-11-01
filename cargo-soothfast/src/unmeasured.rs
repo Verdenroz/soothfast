@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn a_failed_package_keeps_a_shared_id_s_number_only_when_another_package_saved_it() {
-        for (writer, kept) in [("b", true), ("a", false), ("", true)] {
+        for (writer, kept) in [("b", true), ("a", false), ("", false)] {
             let root = scratch(&format!("unmeasured-shared-id-{writer}"));
             let mut doc = json!({
                 "version": 1,

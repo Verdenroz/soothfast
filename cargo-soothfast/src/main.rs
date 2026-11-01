@@ -398,7 +398,8 @@ fn cmd_measure(args: &[String]) -> i32 {
     if let Some(name) = save {
         let run = match &exe {
             Some(exe) => ownership::for_save(&run, &common, exe),
-            None => run,
+            None if common.backend.as_deref() == Some("buildcost") => run,
+            None => ownership::stamped(&run, &[]),
         };
         match invoke::save_baseline(&name, &run, invoke::SaveScope::of(&common)) {
             Ok(path) => println!("baseline saved: {}", path.display()),
