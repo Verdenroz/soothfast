@@ -270,7 +270,7 @@ pub fn drop_items(doc: &mut Value, ids: &BTreeSet<String>) {
 /// baseline `name` under `root`, and the entry's items become its owners.
 /// Without, as for a filtered gate, only the named items are dropped, and
 /// the package's other owners and numbers stay. An id another package owns
-/// keeps its number either way.
+/// keeps its number either way, when that package saved it.
 pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> Result<(), String> {
     let mut doc = invoke::load_baseline_in(root, name)
         .map_err(|e| e.to_string())?
@@ -278,7 +278,11 @@ pub fn mark_in(root: &Path, name: &str, entries: &[Unmeasured], whole: bool) -> 
     let mut gone: BTreeSet<String> = BTreeSet::new();
     for e in entries {
         let others = owned_by_others(&doc, &e.package);
-        let mine = |id: &String| !others.contains(id);
+        let theirs = |id: &String| {
+            let by = doc["items"][id]["saved_by"].as_str();
+            others.contains(id) && by.is_some_and(|by| by != e.package)
+        };
+        let mine = |id: &String| !theirs(id);
         gone.extend(e.items.iter().filter(|id| mine(id)).cloned());
         let mut unvouched: BTreeSet<String> = e.items.iter().cloned().collect();
         if whole {
@@ -487,22 +491,24 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_package_keeps_the_number_of_a_listed_id_another_package_owns() {
-        let root = scratch("unmeasured-shared-id");
-        let doc = json!({
-            "version": 1,
-            "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 8 } } },
-            "owners": { "a": ["util::hash"], "b": ["util::hash"] },
-        });
-        invoke::write_baseline_in(&root, "head", &doc).unwrap();
-        let failed = entry("a", Reason::GateFailed, "failed", &[], ids(&["util::hash"]));
-        mark_in(&root, "head", &[failed], true).unwrap();
-        let marked = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
-        let saved = &marked["ambiguous"]["util::hash"][0];
-        assert_eq!(
-            saved["item"]["alloc"]["allocs"], 1,
-            "set aside, never dropped"
-        );
-        let _ = std::fs::remove_dir_all(&root);
+    fn a_failed_package_keeps_a_shared_id_s_number_only_when_another_package_saved_it() {
+        for (writer, kept) in [("b", true), ("a", false)] {
+            let root = scratch(&format!("unmeasured-shared-id-{writer}"));
+            let doc = json!({
+                "version": 1,
+                "items": { "util::hash": { "alloc": { "allocs": 1, "bytes": 8 }, "saved_by": writer } },
+                "owners": { "a": ["util::hash"], "b": ["util::hash"] },
+            });
+            invoke::write_baseline_in(&root, "head", &doc).unwrap();
+            let failed = entry("a", Reason::GateFailed, "failed", &[], ids(&["util::hash"]));
+            mark_in(&root, "head", &[failed], true).unwrap();
+            let marked = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+            assert_eq!(
+                marked["items"]["util::hash"].is_object(),
+                kept,
+                "saved by {writer}"
+            );
+            let _ = std::fs::remove_dir_all(&root);
+        }
     }
 }

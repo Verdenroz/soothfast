@@ -763,6 +763,11 @@ pub struct AssertionOutcome {
 }
 
 impl AssertionOutcome {
+    /// The verdict with its item id, as a baseline or a stored run keeps it.
+    pub fn to_json(&self) -> Value {
+        json!({ "id": self.id, "kind": self.kind, "ok": self.ok, "detail": self.detail })
+    }
+
     /// The verdict without its item id, as a per-item store keeps it.
     pub fn verdict_json(&self) -> Value {
         json!({ "kind": self.kind, "ok": self.ok, "detail": self.detail })
@@ -1091,7 +1096,16 @@ pub fn save_baseline_in(
     run: &Run,
     scope: SaveScope,
 ) -> io::Result<PathBuf> {
-    let new_items = saved_items(run);
+    let mut new_items = saved_items(run);
+    if let SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg)) = &scope {
+        for item in new_items
+            .as_object_mut()
+            .into_iter()
+            .flat_map(|m| m.values_mut())
+        {
+            item["saved_by"] = json!(pkg);
+        }
+    }
     let measured = match &scope {
         SaveScope::BenchFull(pkg) => Some(pkg.clone()),
         _ => None,
@@ -1160,9 +1174,7 @@ pub fn save_baseline_in(
         })
         .collect();
     for a in &run.assertions {
-        assertions.push(json!({
-            "id": a.id, "kind": a.kind, "ok": a.ok, "detail": a.detail,
-        }));
+        assertions.push(a.to_json());
     }
     doc["assertions"] = Value::Array(assertions);
     if let Some(pkg) = measured {
@@ -2251,6 +2263,8 @@ mod tests {
             "user.name=t",
             "-c",
             "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
             "-q",
             "--allow-empty",

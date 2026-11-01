@@ -90,8 +90,12 @@ impl Drop for RemoveOnDrop {
 #[test]
 fn a_saved_baseline_conforms_to_its_schema() {
     let name = format!("schema-drift-{}", std::process::id());
-    let path =
-        crate::invoke::save_baseline(&name, &full_run(), SaveScope::BenchFiltered(None)).unwrap();
+    let path = crate::invoke::save_baseline(
+        &name,
+        &full_run(),
+        SaveScope::BenchFiltered(Some("pkg".into())),
+    )
+    .unwrap();
     let _cleanup = RemoveOnDrop(path.clone());
     let text = std::fs::read_to_string(&path).unwrap();
     let baseline: Value = serde_json::from_str(&text).unwrap();

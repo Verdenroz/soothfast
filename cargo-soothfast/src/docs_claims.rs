@@ -149,8 +149,8 @@ impl<'a> Against<'a> {
                 .filter(|u| u.covers(item, backend, metric))
                 .collect();
             let owned = self.owned.contains(item.as_str());
-            if covering.is_empty() && !owned {
-                covering = self.unsaved_legs().collect();
+            if covering.is_empty() && owned {
+                covering = self.unsaved_legs(item).collect();
             }
             if covering.is_empty() {
                 let e = match owned {
@@ -175,11 +175,18 @@ impl<'a> Against<'a> {
         }
     }
 
-    /// The entries of packages whose leg saved nothing at all, which may be
-    /// why an item no package owns has no number. They read as covering it,
-    /// so an unchanged claim is not evaluated and an edited one fails.
-    fn unsaved_legs(&self) -> impl Iterator<Item = &Unmeasured> {
-        (self.entries.iter()).filter(|u| u.reason == Reason::NoMeasurement && u.items.is_empty())
+    /// The entries naming no item of packages whose leg saved nothing, for
+    /// an `item` the package owns: they read as covering it, so an unchanged
+    /// claim is not evaluated and an edited one fails. An item no package
+    /// owns, an import's among them, is never covered so.
+    fn unsaved_legs<'b>(&'b self, item: &'b str) -> impl Iterator<Item = &'b Unmeasured> {
+        (self.entries.iter()).filter(move |u| {
+            u.reason == Reason::NoMeasurement
+                && u.items.is_empty()
+                && unmeasured::owned_by(self.baseline, &u.package)
+                    .iter()
+                    .any(|id| id == item)
+        })
     }
 }
 

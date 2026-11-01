@@ -130,6 +130,7 @@ pub fn save_head(
         for e in &mut entries {
             e.items.retain(|id| shard.owns(id));
         }
+        entries.retain(|e| !e.items.is_empty());
     }
     let scope = invoke::SaveScope::of(common);
     let path = invoke::save_baseline_in(root, name, &run, scope).map_err(|e| e.to_string())?;
