@@ -464,3 +464,44 @@ fn buildcost_and_legacy_items_need_no_owner_to_merge() {
     let legacy = json!({ "items": { "core::a": item() } });
     assert!(merge(&[("old.json".into(), legacy)], 1, &packages()).is_ok());
 }
+
+#[test]
+fn a_leg_that_uploaded_nothing_has_its_items_named_from_the_plan() {
+    let plan = json!({ "version": 1, "plan": true, "listed": { "core": ["core::a", "core::b"] } });
+    let merged = merge(&[("plan.json".into(), plan)], 1, &packages()).unwrap();
+    let entries = unmeasured::read(&merged).unwrap();
+    assert_eq!(entries[0].reason, Reason::NoMeasurement);
+    assert_eq!(entries[0].items, ["core::a", "core::b"]);
+    let unchanged = || {
+        Ok(crate::docs_claims::Claims::from([(
+            "a.md".to_string(),
+            "core::a.alloc.allocs <= 0".to_string(),
+        )]))
+    };
+    let named = markdown_claim("core::a.alloc.allocs <= 0");
+    assert_eq!(
+        crate::docs_claims::check(&[("a.md", &named)], Some(&merged), unchanged).unwrap(),
+        0,
+        "an unchanged claim on a planned item is not evaluated"
+    );
+    let typo = markdown_claim("core::typo.alloc.allocs <= 0");
+    let none = || Ok(crate::docs_claims::Claims::new());
+    assert_eq!(
+        crate::docs_claims::check(&[("a.md", &typo)], Some(&merged), none).unwrap(),
+        1,
+        "a claim on an item no plan names still fails"
+    );
+}
+
+#[test]
+fn baseline_plan_adds_each_package_s_listing_to_one_file() {
+    let dir = crate::test::fixture::TempDir::new("plan-file");
+    std::fs::create_dir_all(&*dir).unwrap();
+    let file = dir.join("plan.json");
+    plan::add(&file, "core", &["core::a".into()]).unwrap();
+    plan::add(&file, "app", &["app::x".into()]).unwrap();
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(plan::is_plan(&doc));
+    assert_eq!(doc["listed"]["core"], json!(["core::a"]));
+    assert_eq!(doc["listed"]["app"], json!(["app::x"]));
+}

@@ -183,6 +183,27 @@ jobs:
           prebuild-shards: ${{ github.event_name == 'pull_request' && inputs.shard || 1 }}
           prebuild-stage: ${{ runner.temp }}/store
           bin-cache: "true"
+      # Each package's planned items, so the docs job can name the items of a
+      # gate leg that uploaded nothing.
+      - name: List each package's items
+        if: always()
+        shell: bash
+        env:
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/soothfast-plan"
+          for pkg in $PACKAGES; do
+            cargo soothfast baseline plan --out "$RUNNER_TEMP/soothfast-plan/plan.json" -p "$pkg" \
+              || echo "::warning::could not list ${pkg}'s items for the docs check"
+          done
+      - name: Upload the item listing
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-baseline-plan
+          path: ${{ runner.temp }}/soothfast-plan/plan.json
+          if-no-files-found: ignore
+          retention-days: 1
       - name: Pack the stores
         if: always()
         run: if [ -d "$RUNNER_TEMP/store" ]; then tar -C "$RUNNER_TEMP/store" -cf "$RUNNER_TEMP/store.tar" .; fi
@@ -621,15 +642,19 @@ jobs:
             trap 'git worktree remove --force "$tree" >/dev/null 2>&1 || true' EXIT
             base="$tree"
             [ "$DIR" = . ] || base="$tree/$DIR"
-            # A HEAD that fails to bench leaves no results; the merge-base's
-            # then name the items its failed gate covers.
-            if ! bench .; then
-              if bench "$base" && [ -f "$base/$OUT" ]; then
-                cp "$base/$OUT" "$RUNNER_TEMP/soothfast-base-results-$NAME"
-              fi
+            # Each bench runs under errexit of its own, outside any || list,
+            # and its status is read after.
+            keep_base() { [ ! -f "$base/$OUT" ] || cp "$base/$OUT" "$RUNNER_TEMP/soothfast-base-results-$NAME"; }
+            set +e; ( set -e; bench . ); head_rc=$?; set -e
+            # HEAD with no results: the merge-base's name the items its failed gate covers.
+            if [ "$head_rc" -ne 0 ] || [ ! -f "$OUT" ]; then
+              set +e; ( set -e; bench "$base" ); set -e
+              keep_base
               exit 1
             fi
-            if ! bench "$base" || [ ! -f "$base/$OUT" ]; then
+            set +e; ( set -e; bench "$base" ); base_rc=$?; set -e
+            keep_base
+            if [ "$base_rc" -ne 0 ] || [ ! -f "$base/$OUT" ]; then
               echo "merge-base has no benchmark results; nothing to compare"
               echo "::notice::merge-base has no benchmark results; nothing to compare"
               save
@@ -641,9 +666,11 @@ jobs:
               ${PREFIX:+--prefix "$PREFIX"} ${WALLTIME:+--walltime "$WALLTIME"}
             rc=$?
             set -e
-            # Regressions are measured numbers; only an error saves none.
-            if [ "$rc" -le 1 ]; then save; fi
             echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
+            # Regressions are measured numbers; only an error saves none.
+            if [ "$rc" -le 1 ] && ! save; then
+              echo "::error::could not save HEAD's imported items"
+            fi
             exit "$rc"
           } 2>&1 | tee "$RESULT"
       # A gate that saved no numbers still names its items, so the docs job

@@ -145,13 +145,10 @@ impl<'a> Against<'a> {
             if self.baseline["items"][item][backend][metric].is_number() {
                 continue;
             }
-            let mut covering: Vec<&Unmeasured> = (self.entries.iter())
+            let covering: Vec<&Unmeasured> = (self.entries.iter())
                 .filter(|u| u.covers(item, backend, metric))
                 .collect();
             let owned = self.owned.contains(item.as_str());
-            if covering.is_empty() && owned {
-                covering = self.unsaved_legs(item).collect();
-            }
             if covering.is_empty() {
                 let e = match owned {
                     true => e,
@@ -173,20 +170,6 @@ impl<'a> Against<'a> {
             (None, Some(reason)) => Reading::Decided(Outcome::NotEvaluated(reason, why)),
             (None, None) => Reading::Decided(Outcome::Failed(e)),
         }
-    }
-
-    /// The entries naming no item of packages whose leg saved nothing, for
-    /// an `item` the package owns: they read as covering it, so an unchanged
-    /// claim is not evaluated and an edited one fails. An item no package
-    /// owns, an import's among them, is never covered so.
-    fn unsaved_legs<'b>(&'b self, item: &'b str) -> impl Iterator<Item = &'b Unmeasured> {
-        (self.entries.iter()).filter(move |u| {
-            u.reason == Reason::NoMeasurement
-                && u.items.is_empty()
-                && unmeasured::owned_by(self.baseline, &u.package)
-                    .iter()
-                    .any(|id| id == item)
-        })
     }
 }
 
