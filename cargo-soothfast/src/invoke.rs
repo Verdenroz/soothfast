@@ -549,18 +549,26 @@ fn shard_ids(
     dir: Option<&Path>,
     target_dir: Option<&Path>,
 ) -> Option<Vec<String>> {
-    static LISTED: OnceLock<Mutex<HashMap<PathBuf, Vec<String>>>> = OnceLock::new();
     let exe = bench_executable(common, dir, target_dir)?;
-    let mut memo = LISTED.get_or_init(Default::default).lock().ok()?;
-    if let Some(ids) = memo.get(&exe) {
-        return Some(ids.clone());
-    }
-    let listed = list_items(&exe, common.filter.as_deref())?;
+    let listed = listed_ids(&exe, common.filter.as_deref())?;
     if listed.is_empty() {
         return None;
     }
-    let ids: Vec<String> = listed.into_keys().filter(|id| shard.owns(id)).collect();
-    memo.insert(exe, ids.clone());
+    Some(listed.into_iter().filter(|id| shard.owns(id)).collect())
+}
+
+/// Every item id `exe` lists under `filter`, whichever shard owns it, listed
+/// once per binary.
+pub fn listed_ids(exe: &Path, filter: Option<&str>) -> Option<Vec<String>> {
+    type Key = (PathBuf, Option<String>);
+    static LISTED: OnceLock<Mutex<HashMap<Key, Vec<String>>>> = OnceLock::new();
+    let mut memo = LISTED.get_or_init(Default::default).lock().ok()?;
+    let key = (exe.to_path_buf(), filter.map(str::to_string));
+    if let Some(ids) = memo.get(&key) {
+        return Some(ids.clone());
+    }
+    let ids: Vec<String> = list_items(exe, filter)?.into_keys().collect();
+    memo.insert(key, ids.clone());
     Some(ids)
 }
 
@@ -985,7 +993,7 @@ pub fn project_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn baseline_path(root: &Path, name: &str) -> PathBuf {
+pub fn baseline_path(root: &Path, name: &str) -> PathBuf {
     root.join(".soothfast")
         .join("baselines")
         .join(format!("{name}.json"))
@@ -1000,7 +1008,7 @@ pub enum SaveScope {
     /// Full bench run of one package (ids are package-qualified) — or of the
     /// whole workspace when no `-p` was given (`None` replaces every bench id).
     BenchFull(Option<String>),
-    BenchFiltered,
+    BenchFiltered(Option<String>),
     /// Buildcost run of one package (`None`: replace every buildcost entry).
     Buildcost(Option<String>),
     /// Import under `<prefix>`: replaces the items it marked with that prefix.
@@ -1014,7 +1022,7 @@ impl SaveScope {
         if common.backend.as_deref() == Some("buildcost") {
             SaveScope::Buildcost(common.pkg.clone())
         } else if common.filter.is_some() {
-            SaveScope::BenchFiltered
+            SaveScope::BenchFiltered(common.pkg.clone())
         } else {
             SaveScope::BenchFull(common.pkg.clone())
         }
@@ -1043,8 +1051,13 @@ pub fn save_baseline_in(
     scope: SaveScope,
 ) -> io::Result<PathBuf> {
     let new_items = saved_items(run);
+    let measured = match &scope {
+        SaveScope::BenchFull(pkg) => Some(pkg.clone()),
+        _ => None,
+    };
     let mut doc =
         load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
+    let prior = own_measured(&mut doc, &scope, run)?;
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1060,12 +1073,7 @@ pub fn save_baseline_in(
         // Full runs replace their scope: renamed/removed items must not
         // haunt the baseline (the gate fails on GONE entries).
         match scope {
-            SaveScope::BenchFull(Some(pkg)) => {
-                let pkg = pkg.replace('-', "_");
-                map.retain(|k, v| {
-                    is_imported(v) || k.starts_with("buildcost::") || id_pkg(k) != pkg
-                });
-            }
+            SaveScope::BenchFull(Some(_)) => map.retain(|k, _| !prior.contains(k)),
             SaveScope::BenchFull(None) => {
                 map.retain(|k, v| is_imported(v) || k.starts_with("buildcost::"))
             }
@@ -1077,7 +1085,7 @@ pub fn save_baseline_in(
             SaveScope::Imported(prefix) => {
                 map.retain(|_, v| v["imported"].as_str() != Some(prefix.as_str()))
             }
-            SaveScope::BenchFiltered => {}
+            SaveScope::BenchFiltered(_) => {}
         }
         for (k, v) in new_map {
             map.insert(k.clone(), v.clone());
@@ -1086,7 +1094,7 @@ pub fn save_baseline_in(
     // Assertion verdicts ride along so renderers can show *verified* claims
     // ("proven O(n log n), zero-alloc") from produced data. Same scope rules
     // as items: a full run replaces its slice, keyed by the assertion's id.
-    let replaced: Vec<String> = run.items.keys().cloned().collect();
+    let replaced: Vec<String> = run.items.keys().chain(&prior).cloned().collect();
     let mut assertions: Vec<Value> = doc["assertions"]
         .as_array()
         .cloned()
@@ -1104,12 +1112,67 @@ pub fn save_baseline_in(
         }));
     }
     doc["assertions"] = Value::Array(assertions);
+    if let Some(pkg) = measured {
+        crate::unmeasured::clear(&mut doc, pkg.as_deref());
+    }
 
+    write_baseline_in(root, name, &doc)?;
+    prune_absorbed_accepts(root, run);
+    Ok(baseline_path(root, name))
+}
+
+/// For a `-p` bench save, record in `doc` that the package owns what `run`
+/// measured, and return what it owned before and no other package owns,
+/// which a full save replaces. A filtered save adds to its owners and
+/// replaces nothing beyond its own ids.
+fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTreeSet<String>> {
+    let (pkg, full) = match scope {
+        SaveScope::BenchFull(Some(pkg)) => (pkg, true),
+        SaveScope::BenchFiltered(Some(pkg)) => (pkg, false),
+        _ => return Ok(BTreeSet::new()),
+    };
+    let bench = |id: &str, v: &Value| !is_imported(v) && !id.starts_with("buildcost::");
+    let prior: BTreeSet<String> = if full && doc.get(crate::unmeasured::OWNERS_KEY).is_none() {
+        let legacy: BTreeSet<String> = doc["items"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(id, v)| bench(id, v))
+            .map(|(id, _)| id.clone())
+            .collect();
+        if !legacy.is_empty() {
+            println!(
+                "baseline: it predates item ownership, so this save of {pkg} replaces every bench item in it; re-save the other packages"
+            );
+        }
+        legacy
+    } else {
+        crate::unmeasured::owned_by(doc, pkg).into_iter().collect()
+    };
+    let mut owned: BTreeSet<String> = if full { BTreeSet::new() } else { prior.clone() };
+    owned.extend(
+        run.items
+            .iter()
+            .filter(|(id, m)| m.imported.is_none() && !id.starts_with("buildcost::"))
+            .map(|(id, _)| id.clone()),
+    );
+    let owned: Vec<String> = owned.into_iter().collect();
+    let others = crate::unmeasured::owned_by_others(doc, pkg);
+    crate::unmeasured::set_owners(doc, pkg, &owned);
+    if !full {
+        return Ok(BTreeSet::new());
+    }
+    Ok(prior
+        .into_iter()
+        .filter(|id| !others.contains(id))
+        .collect())
+}
+
+/// Write `doc` as baseline `name` under `root`.
+pub fn write_baseline_in(root: &Path, name: &str, doc: &Value) -> io::Result<()> {
     let path = baseline_path(root, name);
     std::fs::create_dir_all(path.parent().expect("baseline path has a parent"))?;
-    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
-    prune_absorbed_accepts(root, run);
-    Ok(path)
+    std::fs::write(&path, serde_json::to_string_pretty(doc)?)
 }
 
 /// Drop `soothfast-gate.lock` entries a fresh baseline has absorbed. Best
@@ -2347,7 +2410,10 @@ mod tests {
             SaveScope::of(&common), SaveScope::BenchFull(Some(p)) if p == "mylib"
         ));
         common.filter = Some("group::".into());
-        assert!(matches!(SaveScope::of(&common), SaveScope::BenchFiltered));
+        assert!(matches!(
+            SaveScope::of(&common),
+            SaveScope::BenchFiltered(_)
+        ));
         common.filter = None;
         common.backend = Some("buildcost".into());
         assert!(matches!(

@@ -242,22 +242,30 @@ soothfast, since its jobs run twice next to the generated ones. A plain init
 that would only add a second Rust workflow next to one of those writes
 nothing unless `--force` is given.
 
-The docs job waits for the cargo gate, which saves the head measurement as the
-`soothfast-baseline` artifact, and checks claims against it. A pull request
-that leaves the bench binaries unchanged saves none, so the job falls back to
-the default branch's measurement, which each default-branch push caches as
-`soothfast-baseline-<sha>` (the base commit's, else the nearest). Only when
-neither exists does the check report "claims not evaluated: no measurement" as
-a notice, still checking binds and examples.
+The docs job waits for the cargo gate, which saves the head measurement as a
+`soothfast-baseline-rust` artifact (one per shard), merges this run's
+artifacts into one baseline and checks claims against it. It reads no other
+commit's numbers: a package the gate did not measure in full lists its items
+as `unmeasured`, with the reason, and the check reports their claims "not
+evaluated" while still checking binds and examples.
 
 Each project's gate checks out the full history, runs the harness on the
 merge base in a `git worktree` and on HEAD, then runs `gate --import` with
 the merge base's file as `--reference-import`. When the merge base cannot run
-the harness or writes no result file, the gate notes that and passes. Nothing
-is stored. An imported gate measures walltime only, so each project gates
-hard; set its `walltime = "advisory"` if the runner is too noisy to trust.
-Each gate uploads its output as the `soothfast-result-<project>`
-artifact.
+the harness or writes no result file, the gate notes that and passes. An
+imported gate measures walltime only, so each project gates hard; set its
+`walltime = "advisory"` if the runner is too noisy to trust. Each gate
+uploads its output as the `soothfast-result-<project>` artifact. A gate that
+did not fail also uploads HEAD's imported items as
+`soothfast-baseline-import-<project>` (the file `import-<project>.json`),
+which the docs job merges beside the cargo gate's, so a claim on a `jmh::` or
+`pytest::` item is checked against the numbers this pull request produced. A
+push, or any event the cargo gate runs on outside a pull request, runs the
+harness on HEAD alone and uploads the same file for its own docs check. A
+gate that failed or errored uploads no numbers, only a `gate-failed` entry
+naming the items of HEAD's results, or the whole prefix when there are none,
+so an unchanged claim on them reads "not evaluated". Two projects whose
+results share an item id fail the merge, which names both files.
 
 `docs check` and `docs accept` need no cargo project for `path#Symbol` binds
 (see [living docs](living-docs.md)).

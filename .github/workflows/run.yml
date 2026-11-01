@@ -509,9 +509,9 @@ jobs:
           changelog: ${{ inputs.bot && 'true' || 'false' }}
           comment: "false"
           shard: ${{ matrix.shard }}
-          # A pull request's shard measures some items, and a baseline holds
-          # all of them. A push records every item in its first leg.
-          save-baseline: ${{ (matrix.shard == '' || github.event_name != 'pull_request') && 'head' || '' }}
+          # Each pull-request leg saves the items its shard owns; the docs job
+          # merges the legs. A push records every item in its first leg.
+          save-baseline: head
           # The build job owns the executables; only the changelog
           # regeneration on a default-branch push builds rustdoc here.
           rustdoc-cache: ${{ inputs.bot && github.event_name == 'push' && 'true' || 'false' }}
@@ -523,27 +523,20 @@ jobs:
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
       # The docs job reads claims from this instead of measuring again. A
-      # failing gate, or one whose bench binaries match the base, saves none.
+      # failing package saves nothing, and the merge names its items.
       - name: Upload the head measurement
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-baseline
+          name: soothfast-baseline-rust${{ matrix.shard != '' && format('-shard-{0}', matrix.slug) || '' }}
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
-      # A pull request that leaves the bench binaries unchanged saves none,
-      # so the docs job falls back to the default branch's measurement.
-      - name: Keep the default-branch measurement
-        if: github.event_name == 'push' && hashFiles('.soothfast/baselines/head.json') != ''
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .soothfast/baselines/head.json
-          key: soothfast-baseline-${{ github.sha }}
 
   gate:
     name: Gate (${{ matrix.name }})
     needs: plan
-    if: github.event_name == 'pull_request' && needs.plan.outputs.projects == 'true'
+    # The events gate-rust runs on; outside a pull request it only records HEAD's numbers.
+    if: github.event_name != 'schedule' && needs.plan.outputs.projects == 'true'
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
       contents: read
@@ -599,15 +592,28 @@ jobs:
           FROM: ${{ matrix.from }}
           WALLTIME: ${{ matrix.walltime }}
           PREFIX: ${{ matrix.prefix }}
+          NAME: ${{ matrix.name }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         # The exit file stays 3 (errored) until the gate command itself
         # finishes, so a failing bench, npm or worktree step is never a
         # regression. Everything the leg prints, stderr included, is the result.
+        # Only a gate that did not fail saves HEAD's items for the docs job.
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
           date +%s >"$RUNNER_TEMP/soothfast-start"
           {
             bench() { (cd "$1" && { [ "$ECOSYSTEM" != node ] || npm ci; } && eval "${BENCH_CMD//\{out\}/$OUT}"); }
+            save() {
+              mkdir -p "$RUNNER_TEMP/soothfast-baseline"
+              cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} \
+                --out "$RUNNER_TEMP/soothfast-baseline/import-$NAME.json"
+            }
+            if [ -z "$BASE_REF" ]; then
+              bench .
+              save
+              echo 0 >"$RUNNER_TEMP/soothfast-exit"
+              exit 0
+            fi
             # Unique per run, so a worktree an earlier run left registered on a
             # persistent runner never collides.
             tree="$RUNNER_TEMP/soothfast-base-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -619,6 +625,7 @@ jobs:
             if ! bench "$base" || [ ! -f "$base/$OUT" ]; then
               echo "merge-base has no benchmark results; nothing to compare"
               echo "::notice::merge-base has no benchmark results; nothing to compare"
+              save
               echo 0 >"$RUNNER_TEMP/soothfast-exit"
               exit 0
             fi
@@ -627,9 +634,26 @@ jobs:
               ${PREFIX:+--prefix "$PREFIX"} ${WALLTIME:+--walltime "$WALLTIME"}
             rc=$?
             set -e
+            if [ "$rc" -eq 0 ]; then save; fi
             echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
             exit "$rc"
           } 2>&1 | tee "$RESULT"
+      # A gate that saved no numbers still names its items, so the docs job
+      # reports their unchanged claims not evaluated.
+      - name: List a failed gate's items
+        if: always()
+        shell: bash
+        env:
+          FROM: ${{ matrix.from }}
+          OUT: ${{ matrix.bench_out }}
+          PREFIX: ${{ matrix.prefix }}
+          NAME: ${{ matrix.name }}
+        run: |
+          file="$RUNNER_TEMP/soothfast-baseline/import-$NAME.json"
+          if [ ! -f "$file" ]; then
+            mkdir -p "$RUNNER_TEMP/soothfast-baseline"
+            cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} --out "$file" --failed
+          fi
       - name: Record the verdict
         if: always()
         shell: bash
@@ -648,10 +672,17 @@ jobs:
           name: soothfast-result-${{ matrix.name }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
+      - name: Upload the imported measurement
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-baseline-import-${{ matrix.name }}
+          path: ${{ runner.temp }}/soothfast-baseline/import-${{ matrix.name }}.json
+          if-no-files-found: ignore
 
   docs:
     name: Docs check
-    needs: [plan, build-rustdoc, gate-rust]
+    needs: [plan, build-rustdoc, gate-rust, gate]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.plan.outputs.docs == 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
@@ -660,9 +691,11 @@ jobs:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
+      # History for the merge-base, whose claims decide which are unchanged.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
@@ -753,44 +786,58 @@ jobs:
             mkdir -p .soothfast
             tar -xf "$RUNNER_TEMP/store-in/store.tar" -C .soothfast
           fi
-      - name: Download the head measurement
+      # Only this run's own legs: each artifact lands in its own directory.
+      - name: Download this run's measurements
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: soothfast-baseline
-          path: .soothfast/baselines
-      - name: Restore the default-branch measurement
-        if: hashFiles('.soothfast/baselines/head.json') == ''
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .soothfast/baselines/head.json
-          key: soothfast-baseline-${{ github.event.pull_request.base.sha || github.sha }}
-          restore-keys: soothfast-baseline-
+          pattern: soothfast-baseline-*
+          path: ${{ runner.temp }}/baselines
       - name: Check the docs
         shell: bash
         env:
           DOCS_PACKAGE: ${{ needs.plan.outputs.docs_package }}
-          SHARDED: ${{ github.event_name == 'pull_request' && inputs.shard > 1 && needs.plan.outputs.packages != '' }}
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+          # A push records every item in one unsharded leg.
+          EXPECT: ${{ github.event_name == 'pull_request' && inputs.shard > 1 && inputs.shard || 1 }}
+          BASE_REF: ${{ github.base_ref }}
+          PROJECTS: ${{ needs.plan.outputs.projects }}
+          EVENT: ${{ github.event_name }}
+          # The cargo gate gates a pull request and records a default-branch push, nothing else.
+          GATED: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
           RESULT: ${{ runner.temp }}/soothfast-result.txt
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
           date +%s >"$RUNNER_TEMP/soothfast-start"
           args=()
           for package in $DOCS_PACKAGE; do args+=(-p "$package"); done
+          if [ -n "$BASE_REF" ]; then
+            args+=(--against-ref "origin/$BASE_REF")
+          elif git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
+            args+=(--against-ref 'HEAD^')
+          fi
           : > "$RESULT"
-          if [ "$SHARDED" = true ]; then
-            echo "::warning::claims not evaluated: sharded gate saves no measurement"
-            echo "claims not evaluated: sharded gate saves no measurement" >> "$RESULT"
+          skip() {
+            echo "::warning::claims not evaluated: $1"
+            echo "claims not evaluated: $1" >> "$RESULT"
             args+=(--skip-claims)
-          elif [ -f .soothfast/baselines/head.json ]; then
-            args+=(--baseline head)
+          }
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/baselines/*/*.json)
+          merged=0
+          gated=()
+          [ "$GATED" = true ] || gated=(--not-gated "$EVENT")
+          if [ -z "$PACKAGES" ] && [ "$PROJECTS" != true ]; then
+            skip "no gate measures this repository"
           else
-            echo "::warning::claims not evaluated: no measurement"
-            echo "claims not evaluated: no measurement" >> "$RESULT"
-            args+=(--skip-claims)
+            cargo soothfast baseline merge --into head --expect "$EXPECT" --packages "$PACKAGES" "${gated[@]}" \
+              "${files[@]}" 2>&1 | tee -a "$RESULT" || merged=$?
+            # A merge that failed still leaves binds and examples to check; the step fails either way.
+            if [ "$merged" -eq 0 ]; then args+=(--baseline head); else args+=(--skip-claims); fi
           fi
           rc=0
-          cargo soothfast docs check "${args[@]}" 2>&1 | tee -a "$RUNNER_TEMP/soothfast-result.txt" || rc=$?
+          cargo soothfast docs check "${args[@]}" 2>&1 | tee -a "$RESULT" || rc=$?
+          if [ "$merged" -ne 0 ]; then rc=$merged; fi
           echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
           exit "$rc"
       - name: Record the verdict

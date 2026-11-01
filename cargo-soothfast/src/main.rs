@@ -8,6 +8,7 @@
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod agreement;
+mod baseline_merge;
 mod benchexe;
 mod binstore;
 mod buildcost;
@@ -19,12 +20,14 @@ mod coverage;
 mod coverage_lang;
 mod docs;
 mod docs_binds;
+mod docs_claims;
 mod docs_config;
 mod docs_generated;
 mod docs_support;
 mod gate;
 mod gate_config;
 mod gate_lock;
+mod gate_save;
 mod glob;
 mod headrun;
 mod import;
@@ -61,6 +64,7 @@ mod store;
 mod test;
 mod trend;
 mod unitgraph;
+mod unmeasured;
 mod verdict;
 mod workspace;
 
@@ -105,9 +109,11 @@ commands:
            generate a spec; prints what
            it built against what was already stored)
   import   --from jmh|pyperf|pytest-benchmark|vitest FILE [--prefix P]
-           (--save-baseline NAME | --out FILE)
+           (--save-baseline NAME | --out FILE) [--failed]
            (turns another harness's benchmark results into walltime items
-           named PREFIX::NAME; the prefix defaults to the format)
+           named PREFIX::NAME; the prefix defaults to the format; --failed
+           writes no numbers, only a gate-failed entry naming the items, or
+           the whole prefix when FILE has none)
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]
@@ -121,7 +127,10 @@ commands:
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
            [--codegen-units N|inherit] [--no-reuse-base] [--allow-gone]
            [--allow-harness-change] [--no-item-cache]
-           (--save-baseline persists the measured head run after a pass)
+           (--save-baseline persists the head run after a pass, listing
+           walltime another run measured as unmeasured; a failed or errored
+           gate lists its items as gate-failed; with --shard the file holds
+           that shard's items only)
            (--allow-harness-change passes a run whose reference could not be
            pinned to HEAD's soothfast, where the delta may be the harness)
            (--codegen-units pins both sides' partitioning; default 1)
@@ -139,6 +148,15 @@ commands:
            the threshold, past measurement noise, on the same reviewed
            change; --only names outside the recordable set are skipped, not
            fatal, and the command still exits 3, not 0, if any were)
+  baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] FILE...
+           (one baseline from exactly these files: the shard baselines of
+           one gate split N ways, plus imported ones; a shard that saved
+           nothing leaves its items unmeasured; --not-gated EVENT lists each
+           package no file accounts for as not-gated-on-event; exits 2 on a
+           corrupt file, 3 on a file from another split)
+  baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]
+           (marks PKG unmeasured for REASON, naming the items its bench binary
+           lists when it builds; fails when it cannot list them)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
   verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE
@@ -147,6 +165,9 @@ commands:
            (one job's result, then the pull request's single comment;
            exits 1 on a regression or error)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--skip-claims] [--features F] [PATHS...]
+           (check --against-ref REF: a claim the merge-base made unchanged,
+           on an item the baseline lists as unmeasured, is reported not
+           evaluated; any other claim with no measurement fails)
   docs     capture -p PKG [--check] [PATHS...]
   docs     diff -p PKG --against-ref REF [--features F]
   docs     reference -p PKG [--baseline NAME] [--features F] [--out DIR]
@@ -227,6 +248,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "cache" => cache::run(rest),
         "import" => import::run(rest),
         "gate" => gate::run(rest),
+        "baseline" => baseline_merge::run(rest),
         "trend" => trend::run(rest),
         "verdict" => verdict::run(rest),
         "docs" => docs::run(rest),
@@ -278,6 +300,12 @@ fn cmd_measure(args: &[String]) -> i32 {
 
     if let Err(e) = gate_config::apply(&mut common) {
         return arg_err(&e);
+    }
+    if save.is_some() && common.backend.as_deref() != Some("buildcost") {
+        match gate_save::save_package(&common, || gate_save::bench_packages(&common)) {
+            Ok(pkg) => common.pkg = Some(pkg),
+            Err(e) => return arg_err(&e),
+        }
     }
 
     // buildcost is CLI-side (no bench binary); everything else runs the runner.

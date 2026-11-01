@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::buildstamp;
 use crate::gate_config;
 use crate::gate_lock;
+use crate::gate_save::{HeadRun, bench_packages, configure_save, save_errored, save_head};
 use crate::headrun::{
     self, RECOUNT, Settled, binary_digest, cache_head, cache_head_doc, head_from_runcache, ref_doc,
     settle, settled_doc,
@@ -193,14 +194,14 @@ pub fn run(args: &[String]) -> i32 {
     if g.import.current.is_some() {
         return run_imported(&g, &invoke::project_root());
     }
-    let walltime_advisory = match gate_config::apply(&mut g.common) {
-        Ok(cfg) => cfg.walltime_advisory,
+    let saving = g.save_baseline.is_some();
+    let configured = configure_save(&mut g.common, saving, bench_packages, gate_config::apply);
+    let walltime_advisory = match configured {
+        Ok(Ok(cfg)) => cfg.walltime_advisory,
+        Ok(Err(e)) => return errored_unbuilt(&g, &e),
         Err(e) => return err(&e),
     };
     if let Some(shard) = g.common.shard {
-        if g.save_baseline.is_some() {
-            return err("--save-baseline needs every item; a --shard run measures some");
-        }
         println!("gate: shard {shard}: gating the items it owns");
     }
 
@@ -219,16 +220,17 @@ pub fn run(args: &[String]) -> i32 {
             );
             match newly_measured(&g.common) {
                 Ok(resolved) => resolved,
-                Err(e) => return err(&e),
+                Err(e) => return errored(&g, None, &e),
             }
         }
-        Err(e) => return err(&e),
+        Err(e) => return errored(&g, None, &e),
     };
     let Resolved {
         reference,
         current,
-        short_circuited,
+        head,
         harness,
+        exe,
     } = resolved;
     // A gate that measured nothing must never pass: a typo'd --filter, an
     // empty registry, or lost records would otherwise be permanently green.
@@ -238,7 +240,11 @@ pub fn run(args: &[String]) -> i32 {
             println!("gate: shard {shard} owns no item now; checking none it owned is gone");
         }
         _ if current.items.is_empty() => {
-            return err("measured 0 items — check --filter / registry setup; refusing to gate");
+            return errored(
+                &g,
+                exe.as_deref(),
+                "measured 0 items — check --filter / registry setup; refusing to gate",
+            );
         }
         _ => {}
     }
@@ -276,8 +282,11 @@ pub fn run(args: &[String]) -> i32 {
     // Ratchet: also compare against a long-lived baseline (e.g. last release)
     // so ten +4% regressions can't compound past a single gate.
     if let Some(ratchet_name) = &g.ratchet {
-        match invoke::load_baseline(ratchet_name) {
-            Ok(Some(r)) => {
+        let ratchet = invoke::workspace_root()
+            .map_err(|e| e.to_string())
+            .and_then(|root| ratchet_in(&root, ratchet_name));
+        match ratchet {
+            Ok(r) => {
                 println!("--- ratchet: {ratchet_name} ---");
                 let rctx = CompareCtx {
                     deps_mode: false,
@@ -293,8 +302,7 @@ pub fn run(args: &[String]) -> i32 {
                     &mut Vec::new(),
                 );
             }
-            Ok(None) => return err(&format!("no ratchet baseline named {ratchet_name:?}")),
-            Err(e) => return err(&format!("failed to load ratchet baseline: {e}")),
+            Err(e) => return errored(&g, exe.as_deref(), &e),
         }
     }
 
@@ -317,10 +325,15 @@ pub fn run(args: &[String]) -> i32 {
 
     write_gate_status(failures);
     if let Some(name) = &g.save_baseline {
-        let verdict = save_verdict(failures, short_circuited);
         let saved = invoke::workspace_root()
             .map_err(|e| e.to_string())
-            .and_then(|root| save_head(&root, name, &current, &g.common, verdict));
+            .and_then(|root| {
+                let listed = exe
+                    .as_deref()
+                    .and_then(|exe| invoke::listed_ids(exe, g.common.filter.as_deref()));
+                let listed = listed.as_deref();
+                save_head(&root, name, &current, &head, &g.common, listed, failures)
+            });
         if let Err(e) = saved {
             eprintln!("soothfast: failed to save baseline: {e}");
             return 1;
@@ -376,6 +389,9 @@ fn run_imported(g: &GateArgs, root: &std::path::Path) -> i32 {
         Ok(read) => read,
         Err(e) => return err(&e),
     };
+    if let Err(e) = import::check_prefixes(root, std::slice::from_ref(&prefix)) {
+        return err(&e);
+    }
     if let Some(f) = &g.common.filter {
         current.items.retain(|id, _| id.contains(f.as_str()));
         if current.items.is_empty() {
@@ -530,12 +546,11 @@ fn run_each(args: &[String], packages: &[String]) -> i32 {
         common.try_parse(a, &mut it);
     }
     common.pkg = None;
-    if let Err(e) = gate_config::apply(&mut common) {
-        return err(&e);
-    }
-    // `--features` names one package's features; across several cargo wants
-    // `pkg/feature`, so leave those builds to the per-package legs.
-    if common.features.is_none() {
+    // A config error is left to each package's leg, which reports it and
+    // marks the package gate-failed in its baseline.
+    if gate_config::apply(&mut common).is_ok() && common.features.is_none() {
+        // `--features` names one package's features; across several cargo
+        // wants `pkg/feature`, so leave those builds to the per-package legs.
         prebuild_both_sides(packages, &common, args);
     }
 
@@ -615,10 +630,24 @@ fn with_package(args: &[String], pkg: &str) -> Vec<String> {
 struct Resolved {
     reference: Value,
     current: Run,
-    /// The identical-binaries short circuit ran one pass that skipped the
-    /// gating counters, so `current` is not baseline material.
-    short_circuited: bool,
+    head: HeadRun,
     harness: invoke::HarnessSync,
+    /// HEAD's probed bench executable, which lists the items a save names.
+    exe: Option<std::path::PathBuf>,
+}
+
+/// HEAD's run from the run cache, or measured now with `measure`.
+fn head_from_cache_or(
+    runs: &crate::runcache::Runs,
+    digest: Option<&str>,
+    measure: impl FnOnce() -> Result<(Run, Settled), String>,
+) -> Result<(Run, Settled, HeadRun), String> {
+    if let Some((head, from)) = head_from_runcache(runs, digest) {
+        println!("gate: reusing HEAD's own run, measured from {from}");
+        return Ok((head, Settled::AsMeasured, HeadRun::Stored(from)));
+    }
+    let (head, settled) = measure()?;
+    Ok((head, settled, HeadRun::Measured))
 }
 
 /// Measure or load both sides of a gate run as a [`Resolved`]. `Ok(None)`
@@ -653,8 +682,9 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
         return Ok(Some(Resolved {
             reference,
             current,
-            short_circuited: false,
+            head: HeadRun::Measured,
             harness: invoke::HarnessSync::default(),
+            exe: None,
         }));
     }
     if let Some(refname) = &g.against_ref {
@@ -677,8 +707,9 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
     Ok(Some(Resolved {
         reference: baseline,
         current,
-        short_circuited: false,
+        head: HeadRun::Measured,
         harness: invoke::HarnessSync::default(),
+        exe: invoke::bench_executable(&g.common, None, None),
     }))
 }
 
@@ -893,17 +924,6 @@ fn accept_cmd(args: &[String]) -> i32 {
     if skipped.is_empty() { 0 } else { 3 }
 }
 
-/// Whether a `--save-baseline` request may persist this run. A failing run
-/// is never saved (it would ratify its own regression), and the identical-
-/// binaries short-circuit run carries no gating counters — saving it would
-/// hand downstream readers a baseline with the instruction counts missing.
-#[derive(Debug, PartialEq)]
-enum SaveVerdict {
-    Save,
-    RefuseFailing,
-    SkipShortCircuit,
-}
-
 /// Print HEAD's checked claims and count the ones that failed.
 fn assertion_failures(current: &Run, failing_ids: &mut Vec<String>) -> u32 {
     let mut failures = 0u32;
@@ -916,42 +936,6 @@ fn assertion_failures(current: &Run, failing_ids: &mut Vec<String>) -> u32 {
         println!("{verdict:<5} {} assert {}: {}", a.id, a.kind, a.detail);
     }
     failures
-}
-
-/// Act on a `--save-baseline` request under `root` as `verdict` decides.
-fn save_head(
-    root: &std::path::Path,
-    name: &str,
-    current: &Run,
-    common: &CommonArgs,
-    verdict: SaveVerdict,
-) -> Result<(), String> {
-    match verdict {
-        SaveVerdict::Save => {
-            let scope = invoke::SaveScope::of(common);
-            let path =
-                invoke::save_baseline_in(root, name, current, scope).map_err(|e| e.to_string())?;
-            println!("baseline saved: {}", path.display());
-        }
-        SaveVerdict::RefuseFailing => {
-            eprintln!("soothfast: refusing to save baseline {name:?}: gate failed");
-        }
-        SaveVerdict::SkipShortCircuit => println!(
-            "gate: not saving baseline {name:?} — the short-circuit pass skipped the \
-             gating counters, and unchanged code leaves the previous baseline valid"
-        ),
-    }
-    Ok(())
-}
-
-fn save_verdict(failures: u32, short_circuited: bool) -> SaveVerdict {
-    if failures > 0 {
-        SaveVerdict::RefuseFailing
-    } else if short_circuited {
-        SaveVerdict::SkipShortCircuit
-    } else {
-        SaveVerdict::Save
-    }
 }
 
 /// Record the verdict for `report render` (badge) — best effort, never fatal.
@@ -1003,7 +987,10 @@ fn newly_measured(common: &CommonArgs) -> Result<Resolved, String> {
         let settled = settle("gate", "HEAD's run", &head, || measure(RECOUNT).ok());
         cache_head(&runs, &head, digest.as_deref(), &settled);
     }
-    Ok(self_compared(head))
+    Ok(Resolved {
+        exe,
+        ..self_compared(head)
+    })
 }
 
 /// `head` as both sides of a comparison, so every delta is zero.
@@ -1011,8 +998,9 @@ fn self_compared(head: Run) -> Resolved {
     Resolved {
         reference: ref_doc(&head),
         current: head,
-        short_circuited: false,
+        head: HeadRun::Measured,
         harness: invoke::HarnessSync::default(),
+        exe: None,
     }
 }
 
@@ -1036,10 +1024,12 @@ fn measure_ref_interleaved(
     const TIMING_ONLY: &[&str] = &["--skip-gating-counters"];
     enum Ref {
         NoBenchTarget,
-        /// The one pass, and whether it carries the gating counters.
+        /// The one pass, whether it carries the gating counters, and the run
+        /// stored for the identical binary with its label.
         IdenticalBinaries {
             run: Result<Run, String>,
             counted: bool,
+            stored: Option<StoredFor>,
         },
         /// Reference served by binary identity rather than by commit.
         Cached(Value),
@@ -1098,23 +1088,18 @@ fn measure_ref_interleaved(
 
     if let Some((_, doc)) = runs.reusable_reference(reuse, &base_sha) {
         println!("gate: reusing the measured merge-base {base_sha}");
-        let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
-            Some((head, from)) => {
-                println!("gate: reusing HEAD's own run, measured from {from}");
-                (head, Settled::AsMeasured)
-            }
-            None => {
-                let head = measure_head(head_exe.as_deref())?;
-                let settled = settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
-                (head, settled)
-            }
-        };
+        let (head, settled, source) = head_from_cache_or(&runs, head_dig.as_deref(), || {
+            let head = measure_head(head_exe.as_deref())?;
+            let settled = settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
+            Ok((head, settled))
+        })?;
         cache_head(&runs, &head, head_dig.as_deref(), &settled);
         return Ok(Some(Resolved {
             harness: harness_of(&doc),
             reference: doc,
             current: head,
-            short_circuited: false,
+            head: source,
+            exe: head_exe.clone(),
         }));
     }
 
@@ -1192,7 +1177,23 @@ fn measure_ref_interleaved(
                     cache_head_doc(&runs, &doc, head_dig.as_deref());
                 }
             }
-            return Ok((Ref::IdenticalBinaries { run, counted }, digests, harness));
+            let label = format!("binary {}", d.head);
+            let stored = takes_stored_counters(reuse, counted)
+                .then(|| headrun::expected_ids(common, &d.head_exe))
+                .flatten()
+                .and_then(|expected| {
+                    let doc = runs.load_covering(&d.head, &label, &expected)?;
+                    Some(Box::new((doc, label, expected)))
+                });
+            return Ok((
+                Ref::IdenticalBinaries {
+                    run,
+                    counted,
+                    stored,
+                },
+                digests,
+                harness,
+            ));
         }
         if let Some(doc) = by_binary {
             println!("gate: reusing a run measured from the same merge-base binary");
@@ -1278,31 +1279,34 @@ fn measure_ref_interleaved(
         Ref::NoBenchTarget => return Ok(None),
         // One cheap pass serves as both sides: real items and assertions,
         // zero deltas by construction.
-        Ref::IdenticalBinaries { run, counted } => {
-            let head = run?;
+        Ref::IdenticalBinaries {
+            run,
+            counted,
+            stored,
+        } => {
+            let pass = run?;
+            let (head, source) = identical_head(pass, counted, stored);
             return Ok(Some(Resolved {
                 reference: ref_doc(&head),
                 current: head,
-                short_circuited: !counted,
+                head: source,
                 harness,
+                exe: head_exe.clone(),
             }));
         }
         Ref::Cached(doc) => {
-            let (head, settled) = match head_from_runcache(&runs, head_dig.as_deref()) {
-                Some((head, _)) => (head, Settled::AsMeasured),
-                None => {
-                    let head = measure_head(head_exe.as_deref())?;
-                    let settled =
-                        settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
-                    (head, settled)
-                }
-            };
+            let (head, settled, source) = head_from_cache_or(&runs, head_dig.as_deref(), || {
+                let head = measure_head(head_exe.as_deref())?;
+                let settled = settle("gate", "HEAD's run", &head, || measure(None, RECOUNT).ok());
+                Ok((head, settled))
+            })?;
             cache_head(&runs, &head, head_dig.as_deref(), &settled);
             return Ok(Some(Resolved {
                 reference: doc,
                 current: head,
-                short_circuited: false,
+                head: source,
                 harness,
+                exe: head_exe.clone(),
             }));
         }
         Ref::Rounds(rounds, timing_rounds, head_settled, base_settled) => {
@@ -1342,8 +1346,9 @@ fn measure_ref_interleaved(
     Ok(Some(Resolved {
         reference,
         current: head,
-        short_circuited: false,
+        head: HeadRun::Measured,
         harness,
+        exe: head_exe,
     }))
 }
 
@@ -1442,6 +1447,34 @@ fn identical_pass_cache(stored: Option<&Value>, pass: &Run, counted: bool) -> Op
         Some(ref_doc(pass))
     } else {
         stored.cloned()
+    }
+}
+
+/// Whether an identical-binaries pass takes its counters from a stored run:
+/// only one that took none itself, and never with reuse turned off.
+fn takes_stored_counters(reuse: bool, counted: bool) -> bool {
+    reuse && !counted
+}
+
+/// A run stored for the identical binary, its label, and the ids the pass
+/// was asked to measure.
+type StoredFor = Box<(Value, String, BTreeSet<String>)>;
+
+/// HEAD's run from the identical-binaries pass. A pass without the gating
+/// counters takes them from the run stored for the byte-identical binary.
+fn identical_head(pass: Run, counted: bool, stored: Option<StoredFor>) -> (Run, HeadRun) {
+    if counted {
+        return (pass, HeadRun::Measured);
+    }
+    let Some((doc, from, expected)) = stored.map(|s| *s) else {
+        return (pass, HeadRun::Uncounted);
+    };
+    match headrun::merge_stored(&doc, &from, pass, &expected) {
+        Ok(run) => {
+            println!("gate: counters for the identical binaries read from its stored run ({from})");
+            (run, HeadRun::Measured)
+        }
+        Err(pass) => (*pass, HeadRun::Uncounted),
     }
 }
 
@@ -2042,6 +2075,55 @@ fn err(msg: &str) -> i32 {
     2
 }
 
+/// `err` for a gate that never reached a verdict. Its `--save-baseline`
+/// still names the package's items as gate-failed, so no claim on them reads
+/// as measured.
+fn errored(g: &GateArgs, exe: Option<&std::path::Path>, msg: &str) -> i32 {
+    if let (Some(name), Ok(root)) = (&g.save_baseline, invoke::workspace_root())
+        && g.common.backend.as_deref() != Some("buildcost")
+    {
+        let exe = exe
+            .map(std::path::Path::to_path_buf)
+            .or_else(|| invoke::bench_executable(&g.common, None, None));
+        let listed = exe.and_then(|exe| invoke::listed_ids(&exe, g.common.filter.as_deref()));
+        errored_at(&root, name, &g.common, listed.as_deref(), msg);
+    }
+    err(msg)
+}
+
+/// `errored` for a gate whose config did not apply: a build without that
+/// config is not HEAD's binary, so nothing is listed and every item is.
+fn errored_unbuilt(g: &GateArgs, msg: &str) -> i32 {
+    if let (Some(name), Ok(root)) = (&g.save_baseline, invoke::workspace_root())
+        && g.common.backend.as_deref() != Some("buildcost")
+    {
+        errored_at(&root, name, &g.common, None, msg);
+    }
+    err(msg)
+}
+
+/// The gate-failed stub `errored` writes into baseline `name` under `root`.
+fn errored_at(
+    root: &std::path::Path,
+    name: &str,
+    common: &CommonArgs,
+    listed: Option<&[String]>,
+    msg: &str,
+) {
+    if let Err(e) = save_errored(root, name, common, listed, msg) {
+        eprintln!("soothfast: failed to save baseline: {e}");
+    }
+}
+
+/// The ratchet baseline `name` under `root`.
+fn ratchet_in(root: &std::path::Path, name: &str) -> Result<Value, String> {
+    match invoke::load_baseline_in(root, name) {
+        Ok(Some(r)) => Ok(r),
+        Ok(None) => Err(format!("no ratchet baseline named {name:?}")),
+        Err(e) => Err(format!("failed to load ratchet baseline: {e}")),
+    }
+}
+
 /// Like `err`, but for a `gate accept --only` invocation that recorded
 /// nothing: distinct from `2` (a usage/config error) so a CI step doesn't
 /// mistake "named benches, none eligible" for full success or bad usage.
@@ -2053,12 +2135,12 @@ fn partial(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompareCtx, FailedMetric, GateArgs, SaveVerdict, combine_min, combine_rounds, compare,
-        identical_pass, identical_pass_args, identical_pass_cache, reuse_hint, round_duration,
-        save_verdict, walltime_limit,
+        CompareCtx, FailedMetric, GateArgs, combine_min, combine_rounds, compare, identical_pass,
+        identical_pass_args, identical_pass_cache, reuse_hint, round_duration, walltime_limit,
     };
     use crate::buildstamp;
     use crate::gate_lock;
+    use crate::gate_save::save_head;
     use crate::invoke::{self, CommonArgs, HarnessSync, ItemMetrics, Run};
     use serde_json::{Value, json};
 
@@ -2504,8 +2586,7 @@ mod tests {
 
     #[test]
     fn a_counted_identical_run_saves_the_baseline() {
-        let counted = identical_pass(true, true, false, None).counted(true);
-        assert_eq!(save_verdict(0, !counted), SaveVerdict::Save);
+        assert!(identical_pass(true, true, false, None).counted(true));
     }
 
     #[test]
@@ -2794,23 +2875,6 @@ mod tests {
         assert_eq!(failures, 1);
     }
 
-    #[test]
-    fn a_passing_full_run_is_baseline_material() {
-        assert_eq!(save_verdict(0, false), SaveVerdict::Save);
-    }
-
-    #[test]
-    fn a_failing_run_is_never_saved() {
-        // Saving it would ratify its own regression.
-        assert_eq!(save_verdict(1, false), SaveVerdict::RefuseFailing);
-        assert_eq!(save_verdict(3, true), SaveVerdict::RefuseFailing);
-    }
-
-    #[test]
-    fn a_short_circuit_run_lacks_counters_and_is_skipped() {
-        assert_eq!(save_verdict(0, true), SaveVerdict::SkipShortCircuit);
-    }
-
     /// Gate a new crate whose one alloc claim holds or not, saving into `root`.
     fn gate_new_crate(root: &std::path::Path, holds: bool) -> u32 {
         let mut head = run_with(ItemMetrics {
@@ -2831,8 +2895,17 @@ mod tests {
             pkg: Some("pkg".into()),
             ..CommonArgs::default()
         };
-        let verdict = save_verdict(failures, resolved.short_circuited);
-        super::save_head(root, "head", &resolved.current, &common, verdict).unwrap();
+        let current = &resolved.current;
+        save_head(
+            root,
+            "head",
+            current,
+            &resolved.head,
+            &common,
+            None,
+            failures,
+        )
+        .unwrap();
         failures
     }
 
@@ -2856,10 +2929,110 @@ mod tests {
     }
 
     #[test]
-    fn a_failing_new_crate_fails_the_gate_and_saves_nothing() {
+    fn no_reuse_base_takes_no_stored_counters() {
+        assert!(super::takes_stored_counters(true, false));
+        assert!(!super::takes_stored_counters(false, false));
+        assert!(!super::takes_stored_counters(true, true));
+    }
+
+    #[test]
+    fn an_uncounted_identical_pass_takes_the_identical_binary_s_stored_counters() {
+        use crate::gate_save::HeadRun;
+        let pass = || {
+            run_with(ItemMetrics {
+                median_ns: Some(5.0),
+                ..ItemMetrics::default()
+            })
+        };
+        let stored =
+            json!({ "items": { "pkg::bt_base_to_htf_index": { "callgrind": { "ir": 7 } } } });
+        let ids = std::collections::BTreeSet::from(["pkg::bt_base_to_htf_index".to_string()]);
+        let stored = Box::new((stored, "binary abc".to_string(), ids));
+        let (run, source) = super::identical_head(pass(), false, Some(stored));
+        assert_eq!(source, HeadRun::Measured);
+        assert_eq!(run.items["pkg::bt_base_to_htf_index"].ir, Some(7));
+        assert_eq!(run.items["pkg::bt_base_to_htf_index"].median_ns, Some(5.0));
+        assert_eq!(run.reused.unwrap().from, "binary abc");
+        let (_, source) = super::identical_head(pass(), false, None);
+        assert_eq!(source, HeadRun::Uncounted);
+    }
+
+    #[test]
+    fn a_gate_whose_bench_did_not_build_covers_its_package_for_unchanged_claims_only() {
+        let root = scratch("bench-unbuilt");
+        let stale = json!({
+            "version": 1,
+            "items": { "pkg::old": { "alloc": { "allocs": 1, "bytes": 8 } } },
+            "owners": { "pkg": ["pkg::old"] },
+        });
+        invoke::write_baseline_in(&root, "head", &stale).unwrap();
+        let common = CommonArgs {
+            pkg: Some("pkg".into()),
+            ..CommonArgs::default()
+        };
+        super::errored_at(&root, "head", &common, None, "cargo bench failed");
+        let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+        assert_eq!(saved["items"], json!({}));
+        let expr = "pkg::old.alloc.allocs <= 1";
+        let doc =
+            soothfast_docs::markdown::scan(&format!("<!-- soothfast:claim {expr} -->\n")).unwrap();
+        let docs = [("a.md", &doc)];
+        let unchanged = || {
+            Ok(std::collections::BTreeSet::from([(
+                "a.md".to_string(),
+                expr.to_string(),
+            )]))
+        };
+        assert_eq!(
+            crate::docs_claims::check(&docs, Some(&saved), unchanged),
+            Ok(0)
+        );
+        let edited = || Ok(std::collections::BTreeSet::new());
+        assert_eq!(
+            crate::docs_claims::check(&docs, Some(&saved), edited),
+            Ok(1)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_ratchet_error_replaces_the_package_s_saved_numbers_with_a_failed_entry() {
+        let root = scratch("ratchet-error");
+        let stale = json!({
+            "version": 1,
+            "items": { "pkg::old": { "alloc": { "allocs": 1, "bytes": 8 } } },
+            "owners": { "pkg": ["pkg::old"] },
+        });
+        invoke::write_baseline_in(&root, "head", &stale).unwrap();
+        let e = super::ratchet_in(&root, "release").unwrap_err();
+        let common = CommonArgs {
+            pkg: Some("pkg".into()),
+            ..CommonArgs::default()
+        };
+        let listed = ["pkg::new".to_string()];
+        super::errored_at(&root, "head", &common, Some(&listed), &e);
+        let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+        assert_eq!(saved["items"], json!({}));
+        assert_eq!(saved["unmeasured"][0]["reason"], "gate-failed");
+        assert_eq!(saved["unmeasured"][0]["items"], json!(["pkg::new"]));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failing_new_crate_fails_the_gate_and_saves_no_numbers() {
         let root = scratch("new-crate-fail");
         assert_eq!(gate_new_crate(&root, false), 1);
-        assert!(invoke::load_baseline_in(&root, "head").unwrap().is_none());
+        let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
+        assert_eq!(saved["items"], json!({}));
+        assert_eq!(saved["unmeasured"][0]["reason"], "gate-failed");
+        assert_eq!(saved["unmeasured"][0]["package"], "pkg");
+        assert!(
+            saved["unmeasured"][0]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("no listing")
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

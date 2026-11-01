@@ -196,7 +196,13 @@ fn saving_replaces_the_prefix_and_keeps_other_items() {
             },
         );
     }
-    invoke::save_baseline_in(&root, "base", &earlier, invoke::SaveScope::BenchFiltered).unwrap();
+    invoke::save_baseline_in(
+        &root,
+        "base",
+        &earlier,
+        invoke::SaveScope::BenchFiltered(None),
+    )
+    .unwrap();
     invoke::save_baseline_in(&root, "base", &imported(Format::Jmh, JMH), scope()).unwrap();
     let saved = invoke::load_baseline_in(&root, "base").unwrap().unwrap();
     std::fs::remove_dir_all(&root).unwrap();
@@ -238,7 +244,7 @@ fn a_full_bench_save_keeps_imported_items() {
         ("pkg", invoke::SaveScope::BenchFull(Some("pkg".into()))),
     ] {
         let steps = vec![
-            (&imported, invoke::SaveScope::BenchFiltered),
+            (&imported, invoke::SaveScope::BenchFiltered(None)),
             (&rust, scope),
         ];
         let saved = saved_after(name, steps);
@@ -253,7 +259,7 @@ fn a_prefix_equal_to_a_package_name_keeps_its_rust_items() {
     let imported = parse(Format::Jmh, JMH, Some("soothfast_docs")).unwrap();
     let scope = invoke::SaveScope::Imported("soothfast_docs".into());
     let steps = vec![
-        (&rust, invoke::SaveScope::BenchFiltered),
+        (&rust, invoke::SaveScope::BenchFiltered(None)),
         (&imported, scope),
     ];
     let saved = saved_after("pkgname", steps);
@@ -266,7 +272,10 @@ fn a_prefix_with_separators_replaces_its_stale_entries() {
     let mut fresh = parse(Format::Jmh, JMH, Some("app::bench")).unwrap();
     fresh.items.retain(|id, _| id.contains("digest"));
     let scope = invoke::SaveScope::Imported("app::bench".into());
-    let steps = vec![(&stale, invoke::SaveScope::BenchFiltered), (&fresh, scope)];
+    let steps = vec![
+        (&stale, invoke::SaveScope::BenchFiltered(None)),
+        (&fresh, scope),
+    ];
     let saved = saved_after("sep", steps);
     assert_eq!(saved["items"].as_object().unwrap().len(), 1);
 }
@@ -360,4 +369,34 @@ fn the_cli_names_each_format() {
         assert_eq!(Format::parse(name), Ok(format));
     }
     assert!(Format::parse("criterion").is_err());
+}
+
+#[test]
+fn only_a_package_name_clashes_with_an_import_prefix() {
+    let names = std::collections::BTreeSet::from(["my-core".to_string(), "foo-sys".to_string()]);
+    for clash in ["my_core", "my-core::sub", "foo_sys"] {
+        let err = clashing_prefix(&[clash.into()], &names).unwrap_err();
+        assert!(err.contains("distinct prefix"), "{clash}: {err}");
+    }
+    for fine in ["foo", "soothfast", "jmh"] {
+        assert!(clashing_prefix(&[fine.into()], &names).is_ok(), "{fine}");
+    }
+}
+
+#[test]
+fn with_no_cargo_workspace_the_prefixes_are_not_checked() {
+    let root = std::env::temp_dir().join(format!("soothfast-no-ws-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    assert!(check_prefixes(&root, &["anything".into()]).is_ok());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_workspace_package_names_are_read_once_and_clash_by_package_name() {
+    let root = invoke::project_root();
+    let names = crate::workspace::package_names(&root).unwrap();
+    assert!(names.contains("cargo-soothfast"));
+    assert_eq!(crate::workspace::package_names(&root).unwrap(), names);
+    assert!(check_prefixes(&root, &["cargo_soothfast".into()]).is_err());
+    assert!(check_prefixes(&root, &["jmh".into()]).is_ok());
 }
