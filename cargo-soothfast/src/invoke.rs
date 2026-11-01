@@ -323,6 +323,69 @@ pub fn run_discovery(common: &CommonArgs, extra: &[&str]) -> io::Result<Vec<Valu
     run_discovery_in(common, extra, None)
 }
 
+/// Lines of a failed merge-base run's stderr shown from its first error:
+/// enough for rustc's notes under it, which name what it rejected.
+const BASE_ERROR_LINES: usize = 40;
+
+/// Lines shown from the end of that stderr when they fall past the window.
+const BASE_LAST_LINES: usize = 10;
+
+/// Report a failed merge-base bench: its build, which the seed may have
+/// caused, or its run.
+fn report_base_failure(stderr: &str, built: bool, target_dir: &Path) {
+    if built {
+        eprintln!("gate: the merge-base build failed; cargo reported:");
+    } else {
+        eprintln!("gate: the merge-base bench run failed; it reported:");
+    }
+    for line in failure_excerpt(stderr) {
+        eprintln!("  {line}");
+    }
+    if built {
+        crate::seed::report(target_dir);
+    }
+}
+
+/// The one line that says why a bench failed: the excerpt's opening line.
+fn failure_reason(stderr: &str) -> &str {
+    stderr
+        .lines()
+        .find(|l| opens_failure(l))
+        .or_else(|| stderr.trim().lines().last())
+        .unwrap_or("no error output")
+}
+
+/// Whether `line` opens what a failure excerpt shows: an error, a panic, or
+/// the runner's own message.
+fn opens_failure(line: &str) -> bool {
+    let line = crate::verdict::strip_ansi(line);
+    let line = line.trim_start();
+    line.starts_with("error:")
+        || line.starts_with("error[")
+        || (line.starts_with("soothfast runner:")
+            && !line.starts_with("soothfast runner: warning:"))
+        || (line.starts_with("thread '") && line.contains("' panicked"))
+}
+
+/// From the first line [`opens_failure`] matches, then the last lines, with
+/// `...` between when they are not adjacent. Without such a line, the last
+/// lines alone.
+fn failure_excerpt(stderr: &str) -> Vec<&str> {
+    let lines: Vec<&str> = stderr.lines().collect();
+    let start = lines
+        .iter()
+        .position(|l| opens_failure(l))
+        .unwrap_or(lines.len().saturating_sub(BASE_ERROR_LINES));
+    let end = (start + BASE_ERROR_LINES).min(lines.len());
+    let last = lines.len().saturating_sub(BASE_LAST_LINES).max(end);
+    let mut shown = lines[start..end].to_vec();
+    if last > end {
+        shown.push("...");
+    }
+    shown.extend(&lines[last..]);
+    shown
+}
+
 fn run_records(
     common: &CommonArgs,
     extra: &[&str],
@@ -348,17 +411,50 @@ fn run_records(
     };
     args.extend(owned.iter().flat_map(|id| ["--id", id.as_str()]));
     let target = common.target.as_deref().unwrap_or("soothfast");
+    let base = dir.and(target_dir);
+    // On a store miss the merge-base builds in a step of its own, so only a
+    // failed build, which the seed may have caused, gets the seed report.
+    if let Some(td) = base
+        && !benchexe::is_stored(common, dir, target_dir, build)
+    {
+        match timed("cargo bench build", || {
+            benchexe::build_only(common, dir, target_dir, build)
+        }) {
+            Ok(()) => {}
+            Err(benchexe::NoBuild::Failed(stderr)) => {
+                report_base_failure(&stderr, true, td);
+                return Err(io::Error::other(format!(
+                    "the merge-base build failed: {} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
+                    failure_reason(&stderr)
+                )));
+            }
+            Err(benchexe::NoBuild::Other(why)) => {
+                return Err(io::Error::other(format!(
+                    "the merge-base bench was not built: {why}"
+                )));
+            }
+        }
+    }
     let mut cmd = bench_command(common, &args, dir, target_dir, build)?;
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    let out = timed("cargo bench (build and run)", || cmd.output())?;
+    let label = if base.is_some() {
+        "cargo bench run"
+    } else {
+        "cargo bench (build and run)"
+    };
+    let out = timed(label, || cmd.output())?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        let reason = stderr
-            .lines()
-            .find(|l| l.contains("error"))
-            .or_else(|| stderr.trim().lines().last())
-            .unwrap_or("no error output");
+        if let Some(td) = base {
+            report_base_failure(&stderr, false, td);
+            return Err(io::Error::other(format!(
+                "the merge-base bench run failed with {}: {}",
+                out.status,
+                failure_reason(&stderr)
+            )));
+        }
+        let reason = failure_reason(&stderr);
         return Err(io::Error::other(format!(
             "cargo bench failed with {}: {reason} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
             out.status
@@ -2431,6 +2527,35 @@ optional = true
         let failed = "error[E0425]: cannot find value `x` in this scope\n\
                       Caused by: process didn't exit successfully: `rustdoc --emit=dep-info=x.d`";
         assert!(!super::rejects_tracking_flags(failed));
+    }
+
+    #[test]
+    fn a_failed_build_is_shown_from_its_first_error_and_its_last_lines() {
+        let mut lines: Vec<String> = (0..5).map(|i| format!("   Compiling c{i}")).collect();
+        lines.push("\u{1b}[1m\u{1b}[91merror[E0463]\u{1b}[0m: can't find crate".into());
+        lines.extend((0..60).map(|i| format!("note {i}")));
+        let stderr = lines.join("\n");
+        let shown = super::failure_excerpt(&stderr);
+        assert_eq!(
+            shown.len(),
+            super::BASE_ERROR_LINES + 1 + super::BASE_LAST_LINES
+        );
+        assert!(shown[0].contains("E0463"), "{shown:?}");
+        assert_eq!(shown[super::BASE_ERROR_LINES], "...");
+        assert_eq!(shown.last(), Some(&"note 59"));
+        assert_eq!(super::failure_excerpt("a\nb"), ["a", "b"]);
+        let panic = "warming up\nthread 'main' panicked at src/x.rs:1:1:\nboom";
+        assert_eq!(
+            super::failure_excerpt(panic)[0],
+            "thread 'main' panicked at src/x.rs:1:1:"
+        );
+        let runner = "\x1b]8;;file://x\x1b\\link\x1b]8;;\x1b\\\n\
+                      errors: 0\n   Compiling thiserror v2.0.20\n\
+                      soothfast runner: warning: slow\n  soothfast runner: no such item";
+        assert_eq!(
+            super::failure_excerpt(runner),
+            ["  soothfast runner: no such item"]
+        );
     }
 
     #[test]

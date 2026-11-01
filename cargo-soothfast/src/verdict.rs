@@ -270,7 +270,7 @@ fn classify(code: i32, kind: &str, output: &str) -> Verdict {
 
 /// Removes CSI and OSC escape sequences; cargo colours its stderr even when
 /// it is piped.
-fn strip_ansi(text: &str) -> String {
+pub(crate) fn strip_ansi(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
