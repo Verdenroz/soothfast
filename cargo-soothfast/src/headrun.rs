@@ -128,7 +128,8 @@ fn run_head(common: &CommonArgs, extra: &[&str], stamp: BuildStamp) -> Result<Ru
 /// `ItemMetrics` later carries over without a change here. The stored run may
 /// hold more items than `expected`, the ids the pass was asked for, as a
 /// whole run does for a shard or a `--filter`. The timing pass comes back
-/// unless it measured exactly `expected` and the stored run counted each.
+/// unless it measured exactly `expected` and the stored run counted each
+/// and kept its verdicts.
 pub fn merge_stored(
     stored: &Value,
     measured_from: &str,
@@ -136,13 +137,16 @@ pub fn merge_stored(
     expected: &BTreeSet<String>,
 ) -> Result<Run, Box<Run>> {
     if expected.is_empty()
+        || stored["head_format"] != HEAD_FORMAT
         || !timing.items.keys().eq(expected.iter())
         || !counts_cover(stored, expected)
     {
         return Err(Box::new(timing));
     }
     let counted = invoke::run_from_items_value(&stored["items"]);
+    let assertions = counted_verdicts(&timing, stored);
     let mut run = timing;
+    run.assertions = assertions;
     let mut metrics = BTreeSet::new();
     for (id, item) in &mut run.items {
         let stored = &counted.items[id];
@@ -238,7 +242,7 @@ fn stored_head(doc: &Value) -> Option<Run> {
 
 /// The format a stored HEAD run carries since it records its claims'
 /// verdicts. One stored before it reads as a miss, since it lost them.
-const HEAD_FORMAT: u64 = 2;
+pub(crate) const HEAD_FORMAT: u64 = 2;
 
 /// A run read back from [`ref_doc`]'s shape: its claims' verdicts, build
 /// stamp, gating backend and noise floor included.
@@ -450,19 +454,52 @@ pub fn store_head(runs: &Runs, mut doc: Value, head: &Run, digests: &[Option<&st
 /// complexity on walltime alone, so its verdicts are never stored. Nothing
 /// is kept when the pass failed a claim, or `doc` predates its verdicts.
 pub fn store_identical(runs: &Runs, doc: Value, pass: &Run, digests: &[Option<&str>]) {
-    if pass.assertions.iter().any(|a| !a.ok) {
-        println!("not storing HEAD's run: a claim on it failed");
-        return;
+    if let Some(doc) = identical_doc(doc, pass) {
+        put(runs, &doc, digests);
     }
-    if doc["head_format"] != HEAD_FORMAT {
-        return;
-    }
-    put(runs, &doc, digests);
 }
 
-/// Mark `doc`, a run whose verdicts it records, as readable as HEAD's own.
+/// [`store_identical`]'s decision: `doc` itself, or `None`.
+fn identical_doc(doc: Value, pass: &Run) -> Option<Value> {
+    if pass.assertions.iter().any(|a| !a.ok) || claims_failed(&doc) {
+        println!("not storing HEAD's run: a claim on it failed");
+        return None;
+    }
+    (doc["head_format"] == HEAD_FORMAT).then_some(doc)
+}
+
+/// Mark `doc`, a run whose verdicts it records, as readable as HEAD's own,
+/// unless one of those verdicts failed: such a run is never kept as HEAD's.
 pub fn stamp(doc: &mut Value) {
-    doc["head_format"] = serde_json::json!(HEAD_FORMAT);
+    if !claims_failed(doc) {
+        doc["head_format"] = serde_json::json!(HEAD_FORMAT);
+    }
+}
+
+fn claims_failed(doc: &Value) -> bool {
+    let verdicts = doc["assertions"].as_array().into_iter().flatten();
+    verdicts.into_iter().any(|a| a["ok"] == false)
+}
+
+/// A walltime claim, the one kind a pass without the gating counters judges.
+fn timed(claim: &AssertionOutcome) -> bool {
+    claim.kind == "p99"
+}
+
+/// The verdicts a pass that skipped the gating counters is judged on: its
+/// own for walltime claims, and for every other claim, complexity included,
+/// those of `stored`, a counted run of the identical binary, for the items
+/// the pass measured.
+pub fn counted_verdicts(pass: &Run, stored: &Value) -> Vec<AssertionOutcome> {
+    let mut out: Vec<AssertionOutcome> = pass
+        .assertions
+        .iter()
+        .filter(|a| timed(a))
+        .cloned()
+        .collect();
+    let counted = run_from_doc(stored).assertions.into_iter();
+    out.extend(counted.filter(|a| !timed(a) && pass.items.contains_key(&a.id)));
+    out
 }
 
 fn put(runs: &Runs, doc: &Value, digests: &[Option<&str>]) {
@@ -742,6 +779,24 @@ mod tests {
             runs.load(digest, "x").is_none(),
             "a failed pass keeps nothing"
         );
+        let kept =
+            super::identical_doc(counted.clone(), &pass).expect("a clean pass keeps the doc");
+        assert_eq!(kept["assertions"][0]["detail"], "counted verdict");
+        let mut failed_doc = counted;
+        failed_doc["assertions"][0]["ok"] = json!(false);
+        assert!(
+            super::identical_doc(failed_doc, &pass).is_none(),
+            "nor a doc whose claim failed"
+        );
+    }
+
+    #[test]
+    fn a_doc_whose_claim_failed_is_never_stamped_readable_as_head_s() {
+        let mut failing = timing();
+        failing.assertions[0].ok = false;
+        let mut doc = ref_doc(&failing);
+        super::stamp(&mut doc);
+        assert!(super::stored_head(&doc).is_none());
     }
 
     #[test]
@@ -754,7 +809,36 @@ mod tests {
     }
 
     fn stored(items: serde_json::Value) -> serde_json::Value {
-        json!({ "version": 1, "items": items })
+        json!({ "version": 1, "items": items, "head_format": super::HEAD_FORMAT })
+    }
+
+    #[test]
+    fn a_stored_run_without_its_verdicts_is_not_merged() {
+        let mut doc =
+            stored(json!({ "pkg::a": { "fingerprint": "fp", "callgrind": { "ir": 1 } } }));
+        doc.as_object_mut().unwrap().remove("head_format");
+        assert!(merge_stored(&doc, "binary x", timing(), &only_a()).is_err());
+    }
+
+    #[test]
+    fn a_pass_without_counters_is_judged_on_counted_verdicts_but_its_own_walltime() {
+        let mut pass = timing();
+        pass.assertions.push(AssertionOutcome {
+            id: "pkg::a".into(),
+            kind: "complexity".into(),
+            ok: true,
+            detail: "walltime fit".into(),
+        });
+        let doc = json!({ "items": {}, "assertions": [
+            { "id": "pkg::a", "kind": "complexity", "ok": false, "detail": "callgrind fit" },
+            { "id": "pkg::a", "kind": "p99", "ok": false, "detail": "stale walltime" },
+            { "id": "pkg::other", "kind": "alloc", "ok": false, "detail": "not measured here" },
+        ] });
+        let judged = super::counted_verdicts(&pass, &doc);
+        let by_kind = |k: &str| judged.iter().find(|a| a.kind == k).unwrap();
+        assert!(by_kind("p99").ok, "the pass's own walltime verdict");
+        assert_eq!(by_kind("complexity").detail, "callgrind fit");
+        assert_eq!(judged.len(), 2);
     }
 
     fn timing() -> Run {
@@ -973,7 +1057,8 @@ mod tests {
                 ..ItemMetrics::default()
             },
         );
-        let doc = ref_doc(&full);
+        let mut doc = ref_doc(&full);
+        super::stamp(&mut doc);
 
         let mut fresh = timing();
         fresh.items.get_mut("pkg::a").unwrap().allocs = None;

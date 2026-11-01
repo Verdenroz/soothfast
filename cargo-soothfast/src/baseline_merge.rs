@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use crate::invoke::{self, Shard};
 use crate::unmeasured::{self, Reason, Unmeasured};
-use crate::{ambiguity, gate_config, gate_save, import};
+use crate::{ambiguity, benchexe, gate_config, gate_save, import};
 
 mod collect;
 
@@ -89,7 +89,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("plan") => plan::cmd(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] FILE...\n       \
+                "soothfast: usage: cargo soothfast baseline merge --into NAME [--expect N] [--packages \"A B\"] [--not-gated EVENT] [--plan FILE] FILE...\n       \
                  cargo soothfast baseline mark --into NAME -p PKG --reason REASON [--detail TEXT] [--features F]\n       \
                  cargo soothfast baseline plan --out FILE -p PKG [--features F]"
             );
@@ -116,14 +116,12 @@ fn mark_cmd(args: &[String]) -> i32 {
             other => return fail(&format!("unknown baseline mark arg {other:?}")),
         }
     }
-    let (Some(into), Some(pkg), Some(reason)) = (into, common.pkg.clone(), reason) else {
+    let (Some(into), Some(_), Some(reason)) = (into, &common.pkg, reason) else {
         return fail("baseline mark needs --into NAME, -p PKG and a known --reason");
     };
     let listed = gate_config::apply(&mut common).and_then(|_| {
-        let exe = invoke::bench_executable(&common, None, None)
-            .ok_or_else(|| format!("{pkg}'s bench target did not build"))?;
-        invoke::listed_ids(&exe, common.filter.as_deref())
-            .ok_or_else(|| format!("{} lists no items", exe.display()))
+        let exe = invoke::bench_executable(&common, None, None);
+        benchexe::listing(&common, exe.as_deref())
     });
     let detail = detail.unwrap_or_else(|| reason.as_str().to_string());
     match invoke::workspace_root() {
@@ -161,6 +159,7 @@ fn merge_cmd(args: &[String]) -> i32 {
     let mut expect = 1u64;
     let mut packages = Vec::new();
     let mut not_gated = None;
+    let mut planned = plan::Planned::new();
     let mut files = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -178,6 +177,11 @@ fn merge_cmd(args: &[String]) -> i32 {
                 Some(event) => not_gated = Some(event.clone()),
                 None => return fail("--not-gated needs the event name"),
             },
+            "--plan" => match it.next().map(|f| (f, plan::read(Path::new(f)))) {
+                Some((_, Ok(p))) => planned = p,
+                Some((f, Err(e))) => return fail(&format!("plan file {f}: {e}")),
+                None => return fail("--plan needs the plan file"),
+            },
             other if !other.starts_with('-') => files.push(PathBuf::from(other)),
             other => return fail(&format!("unknown baseline merge arg {other:?}")),
         }
@@ -191,6 +195,12 @@ fn merge_cmd(args: &[String]) -> i32 {
             .map_err(|e| e.to_string())
             .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string()));
         match read {
+            Ok(doc) if plan::is_plan(&doc) => {
+                return fail(&format!(
+                    "{} is a plan file; pass it with --plan",
+                    file.display()
+                ));
+            }
             Ok(doc) => {
                 let label = file.display().to_string();
                 if let Some(note) = unmeasured::legacy_note(&doc, &label) {
@@ -213,7 +223,7 @@ fn merge_cmd(args: &[String]) -> i32 {
         event,
         imports: &imports,
     });
-    let merged = match merge_on(&docs, expect, &packages, ungated.as_ref()) {
+    let merged = match merge_on(&docs, expect, &packages, &planned, ungated.as_ref()) {
         Ok(doc) => doc,
         Err(MergeError::Corrupt(e)) => return fail(&e),
         Err(MergeError::Count(e)) => {
@@ -254,7 +264,7 @@ fn fail(msg: &str) -> i32 {
 /// `expect` shards, accounting for every one of `packages`.
 #[cfg(test)]
 fn merge(files: &[(String, Value)], expect: u64, packages: &[String]) -> Result<Value, MergeError> {
-    merge_on(files, expect, packages, None)
+    merge_on(files, expect, packages, &plan::Planned::new(), None)
 }
 
 /// A CI event the cargo gate does not measure on, and the configured import
@@ -272,6 +282,7 @@ fn merge_on(
     files: &[(String, Value)],
     expect: u64,
     packages: &[String],
+    planned: &plan::Planned,
     not_gated: Option<&Ungated>,
 ) -> Result<Value, MergeError> {
     let corrupt = |label: &str, why: String| MergeError::Corrupt(format!("{label}: {why}"));
@@ -283,22 +294,7 @@ fn merge_on(
     let no_items = Map::new();
     let mut owners: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut registered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut planned: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (label, doc) in files {
-        if plan::is_plan(doc) {
-            for (pkg, ids) in doc["listed"].as_object().into_iter().flatten() {
-                let ids = ids
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str);
-                planned
-                    .entry(pkg.clone())
-                    .or_default()
-                    .extend(ids.map(str::to_string));
-            }
-            continue;
-        }
         let file_entries = unmeasured::read(doc).map_err(|e| corrupt(label, e))?;
         let file_items = match doc.get("items") {
             None => &no_items,
@@ -347,7 +343,11 @@ fn merge_on(
         collected
             .take(label, doc, file_items)
             .map_err(MergeError::Corrupt)?;
-        assertions.extend(doc["assertions"].as_array().into_iter().flatten().cloned());
+        for a in doc["assertions"].as_array().into_iter().flatten() {
+            if a["id"].is_string() || !assertions.contains(a) {
+                assertions.push(a.clone());
+            }
+        }
         union(&mut owners, &doc[unmeasured::OWNERS_KEY]);
         union(&mut registered, &doc[ambiguity::REGISTERED_KEY]);
         entries.extend(file_entries);
@@ -478,7 +478,7 @@ fn unaccounted(
                 Some(e) => (e.reason, format!("{} (shard {shard})", e.detail)),
                 None if unsaved => (
                     Reason::NoMeasurement,
-                    format!("no leg saved a measurement of {pkg} (shard {shard}); its plan names the items"),
+                    format!("no gate leg saved a measurement of {pkg} (shard {shard}); the bench build listed these items"),
                 ),
                 None => (
                     Reason::ShardMissing,

@@ -174,7 +174,8 @@ jobs:
           shared-key: bench
       - id: soothfast
         uses: ./.soothfast-action/action/install
-      - uses: ./.soothfast-action
+      - id: prebuild
+        uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
@@ -183,27 +184,6 @@ jobs:
           prebuild-shards: ${{ github.event_name == 'pull_request' && inputs.shard || 1 }}
           prebuild-stage: ${{ runner.temp }}/store
           bin-cache: "true"
-      # Each package's planned items, so the docs job can name the items of a
-      # gate leg that uploaded nothing.
-      - name: List each package's items
-        if: always()
-        shell: bash
-        env:
-          PACKAGES: ${{ needs.plan.outputs.packages }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/soothfast-plan"
-          for pkg in $PACKAGES; do
-            cargo soothfast baseline plan --out "$RUNNER_TEMP/soothfast-plan/plan.json" -p "$pkg" \
-              || echo "::warning::could not list ${pkg}'s items for the docs check"
-          done
-      - name: Upload the item listing
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: soothfast-baseline-plan
-          path: ${{ runner.temp }}/soothfast-plan/plan.json
-          if-no-files-found: ignore
-          retention-days: 1
       - name: Pack the stores
         if: always()
         run: if [ -d "$RUNNER_TEMP/store" ]; then tar -C "$RUNNER_TEMP/store" -cf "$RUNNER_TEMP/store.tar" .; fi
@@ -216,6 +196,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 1
           compression-level: 1
+      # Each package's planned items, read from the stores the prebuild filled,
+      # so the docs job can name the items of a gate leg that uploaded nothing.
+      - name: List each package's items
+        if: steps.prebuild.outcome == 'success'
+        shell: bash
+        env:
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/soothfast-plan"
+          for pkg in $PACKAGES; do
+            cargo soothfast baseline plan --out "$RUNNER_TEMP/soothfast-plan/plan.json" -p "$pkg" \
+              || echo "::warning::could not list ${pkg}'s items for the docs check"
+          done
+      - name: Upload the item listing
+        if: steps.prebuild.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-plan
+          path: ${{ runner.temp }}/soothfast-plan/plan.json
+          if-no-files-found: ignore
+          retention-days: 1
 
   build-rustdoc:
     name: Build (rustdoc)
@@ -618,7 +619,8 @@ jobs:
         # The exit file stays 3 (errored) until the gate command itself
         # finishes, so a failing bench, npm or worktree step is never a
         # regression. Everything the leg prints, stderr included, is the result.
-        # A gate that did not error saves HEAD's items for the docs job.
+        # A gate that did not error saves HEAD's items for the docs job, and a
+        # passing one that cannot save them errors.
         run: |
           echo 3 >"$RUNNER_TEMP/soothfast-exit"
           date +%s >"$RUNNER_TEMP/soothfast-start"
@@ -629,11 +631,17 @@ jobs:
               cargo soothfast import --from "$FROM" "$OUT" ${PREFIX:+--prefix "$PREFIX"} \
                 --out "$RUNNER_TEMP/soothfast-baseline/import-$NAME.json"
             }
-            if [ -z "$BASE_REF" ]; then
-              bench .
-              save
+            passed() {
+              if ! save; then
+                echo "::error::could not save HEAD's imported items"
+                exit 3
+              fi
               echo 0 >"$RUNNER_TEMP/soothfast-exit"
               exit 0
+            }
+            if [ -z "$BASE_REF" ]; then
+              bench .
+              passed
             fi
             # Unique per run, so a worktree an earlier run left registered on a
             # persistent runner never collides.
@@ -657,18 +665,17 @@ jobs:
             if [ "$base_rc" -ne 0 ] || [ ! -f "$base/$OUT" ]; then
               echo "merge-base has no benchmark results; nothing to compare"
               echo "::notice::merge-base has no benchmark results; nothing to compare"
-              save
-              echo 0 >"$RUNNER_TEMP/soothfast-exit"
-              exit 0
+              passed
             fi
             set +e
             cargo soothfast gate --import "$FROM" "$OUT" --reference-import "$FROM" "$base/$OUT" \
               ${PREFIX:+--prefix "$PREFIX"} ${WALLTIME:+--walltime "$WALLTIME"}
             rc=$?
             set -e
+            [ "$rc" -ne 0 ] || passed
             echo "$rc" >"$RUNNER_TEMP/soothfast-exit"
             # Regressions are measured numbers; only an error saves none.
-            if [ "$rc" -le 1 ] && ! save; then
+            if [ "$rc" -eq 1 ] && ! save; then
               echo "::error::could not save HEAD's imported items"
             fi
             exit "$rc"
@@ -831,6 +838,12 @@ jobs:
         with:
           pattern: soothfast-baseline-*
           path: ${{ runner.temp }}/baselines
+      - name: Download the item listing
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: soothfast-plan
+          path: ${{ runner.temp }}/plan
       - name: Check the docs
         shell: bash
         env:
@@ -863,12 +876,13 @@ jobs:
           shopt -s nullglob
           files=("$RUNNER_TEMP"/baselines/*/*.json)
           merged=0
-          gated=()
-          [ "$GATED" = true ] || gated=(--not-gated "$EVENT")
+          merge_args=()
+          [ "$GATED" = true ] || merge_args=(--not-gated "$EVENT")
+          [ ! -f "$RUNNER_TEMP/plan/plan.json" ] || merge_args+=(--plan "$RUNNER_TEMP/plan/plan.json")
           if [ -z "$PACKAGES" ] && [ "$PROJECTS" != true ]; then
             skip "no gate measures this repository"
           else
-            cargo soothfast baseline merge --into head --expect "$EXPECT" --packages "$PACKAGES" "${gated[@]}" \
+            cargo soothfast baseline merge --into head --expect "$EXPECT" --packages "$PACKAGES" "${merge_args[@]}" \
               "${files[@]}" 2>&1 | tee -a "$RESULT" || merged=$?
             # A merge that failed still leaves binds and examples to check; the step fails either way.
             if [ "$merged" -eq 0 ]; then args+=(--baseline head); else args+=(--skip-claims); fi

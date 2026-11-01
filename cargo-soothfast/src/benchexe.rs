@@ -247,6 +247,19 @@ pub fn is_stored(
     stored(common, dir, target_dir, build).is_some()
 }
 
+/// The ids `exe`, `common`'s bench executable when it built, lists, or why
+/// there are none to read.
+pub fn listing(common: &CommonArgs, exe: Option<&Path>) -> Result<Vec<String>, String> {
+    let pkg = common.pkg.as_deref().unwrap_or("the workspace");
+    let exe = exe.ok_or_else(|| format!("{pkg}'s bench target did not build"))?;
+    invoke::listed_ids(exe, common.filter.as_deref()).ok_or_else(|| {
+        format!(
+            "{pkg}'s bench target lists nothing: `{} --list` failed",
+            exe.display()
+        )
+    })
+}
+
 /// This build's executable, if the store holds it; nothing is built.
 pub fn stored(
     common: &CommonArgs,

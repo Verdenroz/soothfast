@@ -520,9 +520,10 @@ those, or the ones its listing shows; with neither it names nothing, and a
 claim on an item no package owns fails, naming that gate failure as
 possibly related. A leg that uploaded nothing at all, from a setup failure
 or a cancel, gets a `no-measurement` entry naming the items the Build
-(bench) job listed for its package with `cargo soothfast baseline plan`
-(the `soothfast-baseline-plan` artifact): an unchanged claim on them is not
-evaluated and a new or edited one fails. An item no listing names, an
+(bench) job listed for its package from the stores it built, with `cargo
+soothfast baseline plan` (the `soothfast-plan` artifact, passed to the merge
+as `--plan`): an unchanged claim on them is not evaluated and a new or
+edited one fails. An item no listing names, an
 import's among them, still fails. A full save leaves alone any id another package owns.
 `baseline merge` refuses an id two merged files both hold, or a bench id
 none of its file's packages owns; imported and `buildcost::` ids, and a
