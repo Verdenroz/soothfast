@@ -68,7 +68,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.target }}
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       # A manylinux_2_17 tag is a claim about glibc at link time, so the
       # glibc targets build in the image that makes it true. `sdk build`
@@ -142,7 +142,7 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       # Every target's artifacts land back in the tree they were staged
       # from, so `sdk publish` sees a complete matrix and its
