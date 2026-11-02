@@ -1,13 +1,58 @@
 # Changelog
 
-## Unreleased (draft vs v0.5.2)
+## 0.5.3 - 2026-11-01
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+Docs claims are now checked against numbers this pull request's own run
+measured. That holds for a crate the pull request starts measuring, for a
+sharded gate and for imported items. When a metric was not measured, an
+unchanged claim reads "not evaluated" with a reason instead of reading an
+older run's number, and a new or edited claim still fails. A crate with no
+bench target at the merge-base is now measured, and its claims decide the
+gate. The rustdoc prebuild runs only when `docs check` would build rustdoc
+JSON, so a docs package with only a binary target no longer fails the Build
+(rustdoc) job. The gate no longer seeds the merge-base's target dir with
+units built against another copy of a dependency it already holds, which
+failed with E0463 on a warm target dir when the merge-base used an older
+soothfast.
+
+### Upgrade notes
+
+- The action has two new inputs, `prebuild-docs-paths` (one path per line)
+  and `prebuild-docs-features`. They are the PATHS and `--features` your
+  `docs check` gets. Both default to empty, which means the `[docs] paths`
+  scope and no features. `run.yml` leaves them empty.
+- The Plan job in `run.yml` has a new `docs_binds_rust` output. When it is
+  `false`, `run.yml` skips the Build (rustdoc) job and the docs job's
+  nightly install.
+- `--save-baseline` on `gate` or `measure` needs `-p` in a workspace with
+  more than one bench package, and fails before measuring without it. A
+  buildcost save needs `-p` too.
+- Claims from a sharded gate and from imported items are now evaluated
+  instead of reported as not evaluated. A claim whose metric went unmeasured
+  names one of the new reasons: `identical-binaries`, `reused-walltime`,
+  `shard-missing`, `gate-failed`, `no-parent`, `no-measurement`,
+  `claims-skipped`, `not-gated-on-event` or `stored-run`. Baselines saved
+  before this release are read without their old unmeasured entries, and
+  the check says to re-save them.
+- The Build (bench) job in `run.yml` uploads a `soothfast-plan` artifact,
+  written by `cargo soothfast baseline plan`. The docs job passes it to the
+  merge, so a gate leg that uploaded nothing still names its items.
+- `cargo soothfast baseline merge` merges shard and import files into one
+  baseline, and `--plan FILE` reads a `soothfast-plan` file. `baseline mark`
+  records a package that never reached a save, and `import --failed`
+  records an import gate that errored, naming its items with no numbers.
+- `import`, `gate --import` and a `baseline merge` that reads import config
+  fail on a prefix equal to a cargo workspace package name, with `-` read as
+  `_`.
+- A gate that failed only on regressions now saves HEAD's numbers under
+  `--save-baseline`. A gate whose claims failed, or that errored, saves no
+  numbers and lists the package's items as `gate-failed`.
+- A crate with no bench target at the merge-base is now measured on HEAD,
+  and its claims decide the gate. A passing run is saved. A HEAD run with
+  failing claims is no longer cached, so a CI rerun measures it again.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
