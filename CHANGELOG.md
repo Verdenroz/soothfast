@@ -10,6 +10,9 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### 📦 Dependencies
+
+- Bump actions and workers-types together (#352)
 
 
 ## 0.5.3 - 2026-11-01
