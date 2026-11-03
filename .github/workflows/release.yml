@@ -95,7 +95,7 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: true
       - name: Verify release version matches workspace version
@@ -130,7 +130,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: true
       - name: Package each crate in dependency order
@@ -172,7 +172,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: true
       - name: Authenticate to crates.io (OIDC)
@@ -228,7 +228,7 @@ jobs:
           TC=$(make -s print-SOOTHFAST_RUSTDOC_TOOLCHAIN)
           echo "SOOTHFAST_RUSTDOC_TOOLCHAIN=$TC" >> "$GITHUB_ENV"
           rustup toolchain install "$TC"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           lookup-only: true
       # Dogfood: release assets are produced from this tag's own measurements.
@@ -317,7 +317,7 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
           lookup-only: true
