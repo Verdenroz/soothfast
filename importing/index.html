@@ -344,8 +344,9 @@ other job runs on the labels <code>[runner]</code> names. <code>init --check</co
 so a flagless check after a flagged init is clean.</p>
 <p>Init warns about any other workflow in <code>.github/workflows</code> that calls
 soothfast, since its jobs run twice next to the generated ones. A plain init
-that would only add a second Rust workflow next to one of those writes
-nothing unless <code>--force</code> is given.</p>
+that would only add a second Rust workflow next to one of those skips the
+workflow file unless <code>--force</code> is given. The <code>[bot]</code> table and the labels are
+still set up, since they belong to the repository rather than to a workflow.</p>
 <p>The docs job waits for the cargo gate, which saves the head measurement as a
 <code>soothfast-baseline-rust</code> artifact (one per shard), merges this run's
 artifacts into one baseline and checks claims against it. It reads no other

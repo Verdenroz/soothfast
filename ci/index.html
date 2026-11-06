@@ -402,11 +402,15 @@ acts as soothfast-bot:</p>
 repository, so neither a fork nor the Triage role can merge a pull request
 through soothfast-bot. <code>do-not-merge</code> counts from anyone, since it only holds
 a merge back. Drafts and pull requests that already have auto-merge enabled
-are skipped. GitHub turns auto-merge off when someone without write access
-pushes to the branch, so later pushes and sweeps never turn it back on:
-to queue the merge again, remove <code>soothfast:merge</code> and add it back. The
-merge is tied to the commit the label was applied to: if the branch moves
-or the label comes off before the bot acts, it queues nothing. The bot never
+are skipped, and the broker logs why. A pull request GitHub would already
+merge (every required check passed or was skipped, which path-filtered checks
+make common) cannot queue auto-merge, so the bot merges it at once, bound to
+the labelled commit and the configured <code>merge_method</code>. GitHub turns
+auto-merge off when someone without write access pushes to the branch, so
+later pushes and sweeps never turn it back on: to queue the merge again,
+remove <code>soothfast:merge</code> and add it back. The merge is tied to the commit
+the label was applied to: if the branch moves or the label comes off before
+the bot acts, it neither queues nor merges anything. The bot never
 watches statuses; GitHub's auto-merge, rulesets and merge queue decide when
 the merge happens.</p>
 <p>A pull request gate labelled <code>soothfast:perf-accepted</code> reports its
@@ -475,6 +479,9 @@ unreachable or refusing broker leaves a warning with the broker's reason.</p>
 <ul>
 <li>Only pull requests into the default branch are evaluated. For one retargeted onto it, the next sweep handles its update label; apply <code>soothfast:merge</code> again to queue it.</li>
 <li>A push or sweep evaluates at most 6 pull requests, most recently updated first among those the bot could act on, to stay inside the Workers subrequest limit. The broker logs when it truncates.</li>
+<li>The broker caches each repository's <code>soothfast.toml</code> for up to 60 seconds per Worker instance, so a changed <code>[bot]</code> table can take that long to apply. A push to the default branch that changes the file, or whose commit list cannot show whether it did, drops the cache first.</li>
+<li>A pull request that is already mergeable on a merge-queue branch is not enqueued: GitHub refuses the direct merge, and the broker logs it. Apply <code>soothfast:merge</code> before its checks finish.</li>
+<li>A pull request whose only failing checks are not required is merged at once, the same as native auto-merge, which waits for required checks only.</li>
 <li>Branch protection that the App cannot read counts as no required checks, so <code>soothfast:merge</code> is refused rather than risk an immediate merge.</li>
 <li>On a merge-queue branch the bot relies on GitHub's auto-merge to enqueue the pull request; this has not been exercised against a live queue.</li>
 </ul>
