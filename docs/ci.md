@@ -323,7 +323,13 @@ the merge happens.
 A pull request gate labelled `soothfast:perf-accepted` reports its
 regressions in the comment and passes; label the pull request, then re-run
 the failed gate. The label waives regressions only, never a gate that
-errored, and it needs a writer too.
+errored, and it needs a writer too. `perf_accepted_labels` renames it, and
+the gate reads that list from `soothfast.toml` on the pull request's base
+branch, never the pull request's copy: a pull request that could rename the
+waiver to a label a maintainer applied for another reason would waive its
+own regressions. When the base branch's table cannot be read (an older
+`cargo soothfast`, no file there, a malformed table), the gate warns and
+accepts only `soothfast:perf-accepted`.
 
 ### Configuration
 
@@ -347,8 +353,21 @@ labels = true                       # default false
 merge_labels = ["soothfast:merge"]
 update_labels = ["soothfast:update"]
 ignore_labels = ["do-not-merge"]
+perf_accepted_labels = ["soothfast:perf-accepted"]  # read by the gate, not the broker
 merge_method = "squash"             # squash | merge | rebase
+
+[[bot.label]]                       # optional, one per label; read by init only
+name = "soothfast:merge"
+color = "0e8a16"                    # 6 hex digits, no '#'
+description = "Merge once the required checks pass"
 ```
+
+`cargo soothfast init --labels` (implied by `--bot`) creates each label with
+the colour and description of the `[[bot.label]]` entry that names it, else
+a default for its role. A bad colour fails `--labels` and only warns when
+`--bot` implied it; an entry naming a label no role uses warns. The broker
+ignores `[[bot.label]]`. `cargo soothfast labels [--ref REF] [--role ROLE]`
+prints the configured names.
 
 A malformed `[bot]` table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the
@@ -432,7 +451,7 @@ default branch). The rest is needed only by the step that uses it, and each
 fails naming the tool:
 
 - `gh`, to comment with the job token and to land regenerated files. Without it the gate still runs and only skips the
-  `soothfast:perf-accepted` check, with a warning.
+  perf-accepted label check, with a warning.
 - `jq`, to comment, sweep labels or mint a token as soothfast-bot, and to find
   the bench packages when none are named.
 - `valgrind`, for the callgrind fallback on machines without hardware
@@ -626,8 +645,9 @@ evaluated)`. `run.yml` sets `CARGO_TERM_COLOR: never` for every job.
 Branch protection needs only the `verdict` check, named `<caller job id> /
 verdict`. The caller `cargo soothfast init` writes names its job `soothfast`,
 so a repo set up with init requires `soothfast / verdict`. The check fails when any project
-regressed or errored, or recorded no result; a `soothfast:perf-accepted` label
-applied by a writer waives regressions, never errors or docs drift.
+regressed or errored, or recorded no result; a perf-accepted label
+(`soothfast:perf-accepted` unless `perf_accepted_labels` renames it) applied by
+a writer waives regressions, never errors or docs drift.
 
 ## The gate on its own
 

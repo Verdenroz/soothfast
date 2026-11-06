@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::{invoke, workspace};
 
-mod bot;
+pub(crate) mod bot;
 pub mod ci;
 mod detect;
 pub(crate) mod ecosystem;
@@ -524,17 +524,26 @@ fn next_step(rust: bool) -> &'static str {
 }
 
 /// Create or refresh the labels on the repository `gh` resolves here, named
-/// as `[bot]` configures them.
+/// and styled as `[bot]` configures them.
 fn create_labels(root: &Path) -> Result<(), String> {
     let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
     let configured = match BotLabels::parse(&text) {
         Ok(labels) => labels,
         Err(e) => return Err(format!("soothfast.toml: {e}")),
     };
-    for (name, (color, description)) in label_set(&configured) {
+    let set = label_set(&configured).map_err(|e| format!("soothfast.toml: {e}"))?;
+    for style in &configured.styles {
+        if !set.iter().any(|(name, ..)| *name == style.name) {
+            println!(
+                "warn     [[bot.label]] names {}, which no role uses",
+                style.name
+            );
+        }
+    }
+    for (name, color, description) in set {
         let status = Command::new("gh")
-            .args(["label", "create", &name, "--force", "--color", color])
-            .args(["--description", description])
+            .args(["label", "create", &name, "--force", "--color", &color])
+            .args(["--description", &description])
             .status();
         match status {
             Ok(s) if s.success() => println!("label    {name}"),
@@ -544,18 +553,32 @@ fn create_labels(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Every label soothfast acts on, with its colour and description.
-fn label_set(labels: &BotLabels) -> Vec<(String, (&'static str, &'static str))> {
-    let group = |names: &[String], look| -> Vec<(String, (&'static str, &'static str))> {
-        names.iter().map(|n| (n.clone(), look)).collect()
+/// Every label soothfast acts on, with its colour and description: a
+/// `[[bot.label]]` entry's where it names the label, else its role's.
+fn label_set(labels: &BotLabels) -> Result<Vec<(String, String, String)>, String> {
+    let group = |names: &[String], (role_color, role_description): (&str, &str)| {
+        names
+            .iter()
+            .map(|name| {
+                let style = labels.styles.iter().find(|s| s.name == *name);
+                let color = style.and_then(|s| s.color.as_deref()).unwrap_or(role_color);
+                let description = style
+                    .and_then(|s| s.description.as_deref())
+                    .unwrap_or(role_description);
+                if color.len() != 6 || !color.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Err(format!("{name}: color {color:?} is not 6 hex digits"));
+                }
+                Ok((name.clone(), color.to_string(), description.to_string()))
+            })
+            .collect::<Result<Vec<_>, String>>()
     };
-    [
-        group(&labels.merge, MERGE_LABEL),
-        group(&labels.update, UPDATE_LABEL),
-        vec![("soothfast:perf-accepted".to_string(), PERF_ACCEPTED_LABEL)],
-        group(&labels.ignore, IGNORE_LABEL),
+    Ok([
+        group(&labels.merge, MERGE_LABEL)?,
+        group(&labels.update, UPDATE_LABEL)?,
+        group(&labels.perf_accepted, PERF_ACCEPTED_LABEL)?,
+        group(&labels.ignore, IGNORE_LABEL)?,
     ]
-    .concat()
+    .concat())
 }
 
 /// The project root, what its scaffold derives from, and a line per
@@ -1470,7 +1493,11 @@ cmd = "npm test"
     #[test]
     fn the_label_set_follows_the_configured_names() {
         let configured = BotLabels::parse("[bot]\nmerge_labels = [\"ship\"]\n").unwrap();
-        let names: Vec<String> = label_set(&configured).into_iter().map(|(n, _)| n).collect();
+        let names: Vec<String> = label_set(&configured)
+            .unwrap()
+            .into_iter()
+            .map(|(n, ..)| n)
+            .collect();
         assert_eq!(
             names,
             [
@@ -1480,6 +1507,22 @@ cmd = "npm test"
                 "do-not-merge"
             ]
         );
+    }
+
+    #[test]
+    fn a_label_entry_styles_the_label_it_names() {
+        let text = "[bot]\nmerge_labels = [\"ship\"]\n\n[[bot.label]]\nname = \"ship\"\n\
+                    color = \"123abc\"\ndescription = \"Go\"\n";
+        let set = label_set(&BotLabels::parse(text).unwrap()).unwrap();
+        assert_eq!(set[0], ("ship".into(), "123abc".into(), "Go".into()));
+        assert_eq!(set[1].1, "1d76db");
+    }
+
+    #[test]
+    fn a_bad_label_colour_is_an_error() {
+        let text = "[[bot.label]]\nname = \"do-not-merge\"\ncolor = \"#b60205\"\n";
+        let err = label_set(&BotLabels::parse(text).unwrap()).unwrap_err();
+        assert!(err.contains("do-not-merge") && err.contains("6 hex digits"));
     }
 
     #[test]

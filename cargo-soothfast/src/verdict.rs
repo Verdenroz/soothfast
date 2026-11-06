@@ -362,13 +362,13 @@ fn two_sided(line: &str) -> Option<Reuse> {
 fn merge(args: &[String]) -> Result<i32, String> {
     let mut dir = None;
     let mut out = None;
-    let mut accepted = false;
+    let mut accepted = None;
     let mut expect = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--out" => out = Some(value(&mut it, a)?),
-            "--accepted" => accepted = true,
+            "--accepted" => accepted = Some(value(&mut it, a)?),
             "--expect" => expect.push(expected(&value(&mut it, a)?)?),
             other if !other.starts_with("--") && dir.is_none() => dir = Some(PathBuf::from(other)),
             other => return Err(format!("unknown merge arg {other:?}")),
@@ -385,8 +385,8 @@ fn merge(args: &[String]) -> Result<i32, String> {
         }
     }
     records.sort_by(|a, b| (a.verdict, &a.name).cmp(&(b.verdict, &b.name)));
-    fs::write(&out, fit(&records, accepted)).map_err(|e| format!("{out}: {e}"))?;
-    Ok(i32::from(fails(&records, accepted)))
+    fs::write(&out, fit(&records, accepted.as_deref())).map_err(|e| format!("{out}: {e}"))?;
+    Ok(i32::from(fails(&records, accepted.is_some())))
 }
 
 fn errored(name: String, kind: String, tail: String) -> Record {
@@ -483,7 +483,7 @@ fn fails(records: &[Record], accepted: bool) -> bool {
 
 /// The comment body under GitHub's size limit: sections are emptied from the
 /// end of the sort order, so passing output goes first and errors keep theirs.
-fn fit(records: &[Record], accepted: bool) -> String {
+fn fit(records: &[Record], accepted: Option<&str>) -> String {
     let mut records = records.to_vec();
     let mut body = render(&records, accepted);
     for i in (0..records.len()).rev() {
@@ -496,7 +496,7 @@ fn fit(records: &[Record], accepted: bool) -> String {
     body
 }
 
-fn render(records: &[Record], accepted: bool) -> String {
+fn render(records: &[Record], accepted: Option<&str>) -> String {
     let count = |v: Verdict| records.iter().filter(|r| r.verdict == v).count();
     let mut out = format!(
         "## soothfast verdict\n{} projects: {} regressed, {} errored, {} pass\n",
@@ -505,8 +505,8 @@ fn render(records: &[Record], accepted: bool) -> String {
         count(Verdict::Errored),
         count(Verdict::Pass) + count(Verdict::NothingToCompare),
     );
-    if accepted && count(Verdict::Regressed) > 0 {
-        out.push_str("\nRegressions accepted by the `soothfast:perf-accepted` label.\n");
+    if let Some(label) = accepted.filter(|_| count(Verdict::Regressed) > 0) {
+        out.push_str(&format!("\nRegressions accepted by the `{label}` label.\n"));
     }
     for r in records {
         out.push_str(&format!(
@@ -602,7 +602,7 @@ mod tests {
         }
         let flaky = read("flaky").unwrap();
         assert!(flaky.flaky && flaky.verdict == Verdict::Pass);
-        assert!(render(&[flaky], false).contains("pass (flaky) | test | 12s"));
+        assert!(render(&[flaky], None).contains("pass (flaky) | test | 12s"));
         assert_eq!(read("failed").unwrap().verdict, Verdict::Errored);
         assert_eq!(read("exploded"), None);
     }
@@ -633,7 +633,7 @@ mod tests {
         let r = build("docs".into(), "docs".into(), 0, &out, 5);
         assert!(r.unevaluated && r.verdict == Verdict::Pass);
         assert_eq!(Record::from_json(&r.to_json()), Some(r.clone()));
-        let body = render(&[r], false);
+        let body = render(&[r], None);
         assert!(body.contains("pass (claims not evaluated) | docs | 5s"));
         assert!(body.contains("1 projects: 0 regressed, 0 errored, 1 pass"));
         assert!(!build("rust".into(), "rust".into(), 0, &out, 5).unevaluated);
@@ -754,7 +754,7 @@ mod tests {
             rec("b", Verdict::Pass, &big),
             rec("c", Verdict::Pass, &big),
         ];
-        let body = fit(&records, false);
+        let body = fit(&records, None);
         assert!(body.chars().count() <= BODY_LIMIT);
         assert!(body.contains("kept") && body.contains(TRUNCATED));
     }
@@ -828,7 +828,7 @@ mod tests {
             rec("d", Verdict::NothingToCompare, ""),
         ];
         records.sort_by(|a, b| (a.verdict, &a.name).cmp(&(b.verdict, &b.name)));
-        let body = render(&records, false);
+        let body = render(&records, None);
         let pos = |n: &str| body.find(&format!("### {n}\n")).unwrap();
         assert!(pos("c") < pos("b") && pos("b") < pos("a") && pos("a") < pos("d"));
         assert!(body.contains("4 projects: 1 regressed, 1 errored, 2 pass"));
@@ -836,8 +836,16 @@ mod tests {
 
     #[test]
     fn fences_in_the_output_cannot_close_the_block() {
-        let body = render(&[rec("a", Verdict::Pass, "x\n```\n@everyone")], false);
+        let body = render(&[rec("a", Verdict::Pass, "x\n```\n@everyone")], None);
         assert_eq!(body.matches("```").count(), 2);
+    }
+
+    #[test]
+    fn the_comment_names_the_label_that_waived() {
+        let reg = [rec("a", Verdict::Regressed, "")];
+        let body = render(&reg, Some("ship-it"));
+        assert!(body.contains("Regressions accepted by the `ship-it` label."));
+        assert!(!render(&[rec("a", Verdict::Pass, "")], Some("ship-it")).contains("accepted by"));
     }
 
     #[test]

@@ -36,6 +36,7 @@ mod invoke;
 mod itemcache;
 mod itemreuse;
 mod jumptable;
+mod labels;
 mod linkmap;
 mod mcp;
 mod plan;
@@ -91,6 +92,11 @@ commands:
            soothfast-bot, and implies --labels, which saves [bot] labels = true, adds the labels job
            and creates the soothfast labels with gh, named as [bot]
            configures them; --no-labels skips all three)
+  labels   [--ref REF] [--role merge|update|ignore|perf-accepted]
+           (prints the label names [bot] in soothfast.toml configures, as
+           role<TAB>name lines or, with --role, one name per line; --ref
+           reads soothfast.toml as committed at REF, which is how the gate
+           takes the waiver names from the base branch)
   cache    merge --from DIR
            (folds a restored .soothfast cache layout in DIR into this
            project's: items keep the entries of both, runs and link maps are
@@ -174,7 +180,7 @@ commands:
            (--from-baseline reads a saved baseline instead of re-measuring)
   verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE
            [--seconds S] [--out FILE]
-  verdict  merge DIR --out FILE [--accepted] [--expect NAME:KIND]..
+  verdict  merge DIR --out FILE [--accepted LABEL] [--expect NAME:KIND]..
            (one job's result, then the pull request's single comment;
            exits 1 on a regression or error)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--skip-claims] [--features F] [PATHS...]
@@ -256,6 +262,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
     match cmd.as_str() {
         "measure" => cmd_measure(rest),
         "init" => init::run(rest),
+        "labels" => labels::run(rest),
         "plan" => plan::run(rest),
         "prebuild" => prebuild::run(rest),
         "cache" => cache::run(rest),

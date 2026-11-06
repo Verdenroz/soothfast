@@ -929,11 +929,13 @@ jobs:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
-      # Only a repository for gh to read the pull request from.
+      # The base branch, for gh to read the pull request from and for the
+      # waiver label names its soothfast.toml configures.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ github.base_ref }}
           persist-credentials: false
-          sparse-checkout: .github
+          sparse-checkout: soothfast.toml
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
@@ -958,6 +960,7 @@ jobs:
           CLI: ${{ steps.soothfast.outputs.bin }}
           RESULTS: ${{ runner.temp }}/soothfast-results
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
           GH_TOKEN: ${{ github.token }}
           EXPECT_RUST: ${{ needs.plan.outputs.packages }}
           EXPECT_SHARDS: ${{ join(fromJSON(needs.plan.outputs.shards).include.*.shard, ' ') }}

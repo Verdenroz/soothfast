@@ -86,9 +86,27 @@ test("subtables and array tables named bot are not the bot table", () => {
   assert.equal(parsed("[[bot]]\nlabels = true\n").labels, false);
 });
 
+test("the gate's perf_accepted_labels and [[bot.label]] entries leave the config unchanged", () => {
+  const config = parsed(`[bot]
+labels = true
+perf_accepted_labels = ["waive"]
+
+[[bot.label]]
+name = "waive"
+color = "fbca04"
+unknown = 1
+`);
+  assert.deepEqual(config, { ...DEFAULTS, labels: true });
+});
+
 const malformed = [
   ["unknown key", "[bot]\nmerge_label = []\n", /unknown keys: merge_label/],
   ["non-boolean labels", '[bot]\nlabels = "yes"\n', /labels must be/],
+  [
+    "scalar perf_accepted_labels",
+    '[bot]\nperf_accepted_labels = "a"\n',
+    /perf_accepted_labels must be/,
+  ],
   ["scalar label list", '[bot]\nmerge_labels = "a"\n', /array of strings/],
   ["non-string item", "[bot]\nmerge_labels = [1]\n", /unreadable/],
   ["unterminated array", '[bot]\nmerge_labels = ["a"\n', /unreadable/],
