@@ -24,6 +24,10 @@
 
 - Bump actions and workers-types together (#352)
 
+### 🔧 Internal
+
+- Turn on the soothfast label bot here (#361)
+
 
 ## 0.5.3 - 2026-11-01
 
