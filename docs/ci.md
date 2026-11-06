@@ -312,7 +312,10 @@ A label counts only when the person who last applied it can write to the
 repository, so neither a fork nor the Triage role can merge a pull request
 through soothfast-bot. `do-not-merge` counts from anyone, since it only holds
 a merge back. Drafts and pull requests that already have auto-merge enabled
-are skipped. GitHub turns auto-merge off when someone without write access
+are skipped, and the broker logs why. A pull request GitHub would already
+merge (every required check passed or was skipped, which path-filtered checks
+make common) cannot queue auto-merge, so the bot merges it at once, bound to
+the labelled commit and the configured `merge_method`. GitHub turns auto-merge off when someone without write access
 pushes to the branch, so later pushes and sweeps never turn it back on:
 to queue the merge again, remove `soothfast:merge` and add it back. The
 merge is tied to the commit the label was applied to: if the branch moves
@@ -406,6 +409,10 @@ unreachable or refusing broker leaves a warning with the broker's reason.
 - A push or sweep evaluates at most 6 pull requests, most recently updated
   first among those the bot could act on, to stay inside the Workers
   subrequest limit. The broker logs when it truncates.
+- The broker caches each repository's `soothfast.toml` for up to 60 seconds
+  per Worker instance, so a changed `[bot]` table can take that long to apply.
+  A push to the default branch that changes the file, or whose commit list
+  cannot show whether it did, drops the cache first.
 - Branch protection that the App cannot read counts as no required checks, so
   `soothfast:merge` is refused rather than risk an immediate merge.
 - On a merge-queue branch the bot relies on GitHub's auto-merge to enqueue

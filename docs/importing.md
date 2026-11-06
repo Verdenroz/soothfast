@@ -239,8 +239,9 @@ so a flagless check after a flagged init is clean.
 
 Init warns about any other workflow in `.github/workflows` that calls
 soothfast, since its jobs run twice next to the generated ones. A plain init
-that would only add a second Rust workflow next to one of those writes
-nothing unless `--force` is given.
+that would only add a second Rust workflow next to one of those skips the
+workflow file unless `--force` is given. The `[bot]` table and the labels are
+still set up, since they belong to the repository rather than to a workflow.
 
 The docs job waits for the cargo gate, which saves the head measurement as a
 `soothfast-baseline-rust` artifact (one per shard), merges this run's
