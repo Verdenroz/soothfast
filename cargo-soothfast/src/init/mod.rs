@@ -342,6 +342,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut force = false;
     let mut bot = false;
     let mut labels = false;
+    let mut no_labels = false;
     let mut bench: Vec<String> = Vec::new();
     let mut flags = Settings::default();
     let mut dir: Option<String> = None;
@@ -358,6 +359,7 @@ pub fn run(args: &[String]) -> i32 {
             "--force" => force = true,
             "--bot" => bot = true,
             "--labels" => labels = true,
+            "--no-labels" => no_labels = true,
             "-p" | "--package" => match it.next() {
                 Some(p) => bench.push(p.clone()),
                 None => return err("-p needs a package to add a bench target to"),
@@ -408,6 +410,11 @@ pub fn run(args: &[String]) -> i32 {
             other => return err(&format!("unknown init arg {other:?}")),
         }
     }
+    if labels && no_labels {
+        return err("--labels and --no-labels conflict");
+    }
+    let implied = bot && !labels && !no_labels;
+    let labels = labels || implied;
     let (root, mut ws, notes) = match target(flags, dir, ci, tools, &bench, check, bot) {
         Ok(t) => t,
         Err(e) => return err(&e),
@@ -436,9 +443,22 @@ pub fn run(args: &[String]) -> i32 {
     }
     println!("init: done. Next: {}", next_step(ws.rust));
     if labels {
-        return create_labels(&root);
+        return label_exit(create_labels(&root), implied);
     }
     0
+}
+
+/// The exit code of label creation: a failure only warns when `--bot`
+/// implied the labels rather than `--labels` asking for them.
+fn label_exit(created: Result<(), String>, implied: bool) -> i32 {
+    match created {
+        Ok(()) => 0,
+        Err(e) if implied => {
+            println!("warn     {e}; run `cargo soothfast init --labels` once gh works");
+            0
+        }
+        Err(e) => err(&e),
+    }
 }
 
 /// The workflow files besides the one init writes that call soothfast, as
@@ -491,11 +511,11 @@ fn next_step(rust: bool) -> &'static str {
 
 /// Create or refresh the labels on the repository `gh` resolves here, named
 /// as `[bot]` configures them.
-fn create_labels(root: &Path) -> i32 {
+fn create_labels(root: &Path) -> Result<(), String> {
     let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
     let configured = match BotLabels::parse(&text) {
         Ok(labels) => labels,
-        Err(e) => return err(&format!("soothfast.toml: {e}")),
+        Err(e) => return Err(format!("soothfast.toml: {e}")),
     };
     for (name, (color, description)) in label_set(&configured) {
         let status = Command::new("gh")
@@ -504,10 +524,10 @@ fn create_labels(root: &Path) -> i32 {
             .status();
         match status {
             Ok(s) if s.success() => println!("label    {name}"),
-            _ => return err(&format!("could not create label {name} (is gh signed in?)")),
+            _ => return Err(format!("could not create label {name} (is gh signed in?)")),
         }
     }
-    0
+    Ok(())
 }
 
 /// Every label soothfast acts on, with its colour and description.
@@ -840,7 +860,7 @@ fn workflow(ws: &Workspace) -> String {
         .replace("@@schedule@@", if ws.bot { SCHEDULE } else { "" });
     if ws.projects.is_empty() && ws.ci.is_default() {
         text.push_str(&cargo_jobs(ws));
-        if ws.bot {
+        if ws.bot && ws.labels {
             text.push_str(LABELS_JOB);
         }
         text.replace("@@action@@", &ws.action)
@@ -1338,6 +1358,7 @@ cmd = "npm test"
         assert!(!plain.contains("schedule:") && !plain.contains("labels: \"true\""));
         let bot = workflow(&Workspace {
             bot: true,
+            labels: true,
             ..ws(&["a"], None)
         });
         assert!(bot.contains("  schedule:\n    - cron:"));
@@ -1383,6 +1404,29 @@ cmd = "npm test"
         assert_eq!(report(&root, &files, false, false), 0);
         let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
         assert_eq!(text, own);
+    }
+
+    #[test]
+    fn a_bot_without_labels_adds_no_labels_job() {
+        let w = Workspace {
+            bot: true,
+            labels: false,
+            ..ws(&["a"], None)
+        };
+        assert!(!workflow(&w).contains("\n  labels:\n"));
+    }
+
+    #[test]
+    fn labels_and_no_labels_conflict() {
+        assert_eq!(run(&["--labels".into(), "--no-labels".into()]), 2);
+    }
+
+    #[test]
+    fn implied_label_failures_warn_and_explicit_ones_fail() {
+        let failed = || Err("could not create label x".to_string());
+        assert_eq!(label_exit(failed(), true), 0);
+        assert_eq!(label_exit(failed(), false), 2);
+        assert_eq!(label_exit(Ok(()), false), 0);
     }
 
     #[test]
@@ -1736,6 +1780,7 @@ cmd = "npm test"
         assert!(text.contains("\n  test:\n") && text.contains("\n  gate:\n"));
         let bot = workflow(&Workspace {
             bot: true,
+            labels: true,
             ..ws(&[], None)
         });
         assert!(bot.contains("\n  labels:\n") && !bot.contains("version:"));

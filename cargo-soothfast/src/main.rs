@@ -75,7 +75,8 @@ usage: cargo soothfast <command>
        cargo soothfast --version
 
 commands:
-  init     [-p PKG]... [--check] [--force] [--bot] [--labels] [--dir D]
+  init     [-p PKG]... [--check] [--force] [--bot] [--labels] [--no-labels]
+           [--dir D]
            [--runner-labels A,B] [--no-test] [--pin REF]
            [--ecosystem rust|gradle|maven|python|node] [--bench-cmd CMD]
            [--bench-out PATH] [--from FORMAT]
@@ -86,9 +87,10 @@ commands:
            [runner] labels, --no-test saves [test] ci = false, and --pin REF
            makes the workflow use that soothfast commit; -p gives PKG a soothfast bench target; --check reports
            drift and writes nothing; --bot lands regenerated files and
-           acts on pull request labels as soothfast-bot; --labels saves
-           [bot] labels = true and creates the soothfast labels with gh,
-           named as [bot] configures them)
+           acts on pull request labels as soothfast-bot and implies
+           --labels, which saves [bot] labels = true, adds the labels job
+           and creates the soothfast labels with gh, named as [bot]
+           configures them; --no-labels skips all three)
   cache    merge --from DIR
            (folds a restored .soothfast cache layout in DIR into this
            project's: items keep the entries of both, runs and link maps are
