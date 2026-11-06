@@ -10,6 +10,12 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### ✨ Features
+
+- Configure every soothfast label in soothfast.toml (#356)
+- Turn the bot and labels on by default in init (#355)
+- Act on soothfast labels from App webhooks (#354)
+
 ### 📦 Dependencies
 
 - Bump actions and workers-types together (#352)
