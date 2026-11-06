@@ -269,6 +269,17 @@ test("an already-mergeable pull request is merged with the labelled head", async
   assert.deepEqual(logs, ["#5: merged (checks had already passed)"]);
 });
 
+test("an unstable-status rejection also merges", async () => {
+  const { run, calls } = fakeRun({
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    enableError: new GitHubError(200, "Pull request is in unstable status"),
+    ...checks,
+  });
+  await evaluateOne(run, 5, labeledBy("alice"));
+  assert.equal(calls.at(-1), "merge 5@abc123 squash");
+});
+
 test("other enable errors do not merge", async () => {
   const { run, calls } = fakeRun({
     pulls: [pull({ names: [MERGE] })],

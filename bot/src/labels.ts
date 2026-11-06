@@ -308,7 +308,10 @@ async function perform(
         .enableAutoMerge(pr.node_id, config.mergeMethod, pr.head.sha, token)
         .then(() => run.log(`${tag}: auto-merge enabled`))
         .catch(async (e: unknown) => {
-          if (!(e instanceof GitHubError && /clean status/i.test(e.message)))
+          if (!(
+            e instanceof GitHubError &&
+            /(clean|unstable|has_hooks) status/i.test(e.message)
+          ))
             throw e;
           await github.mergePullRequest(
             repository,
