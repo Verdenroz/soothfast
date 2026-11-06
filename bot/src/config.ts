@@ -34,8 +34,6 @@ export function parseBotConfig(toml: string): ConfigResult {
   }
 }
 
-// Splits the document into top-level statements: one per table header or
-// key/value pair, comments removed, multi-line values kept whole.
 function statements(toml: string): string[] {
   const out: string[] = [];
   let current = "";
@@ -80,8 +78,12 @@ function botEntries(statementList: string[]): Map<string, Value> {
   const entries = new Map<string, Value>();
   let inBot = false;
   let seen = false;
+  let root = true;
   for (const statement of statementList) {
+    if (root && /^bot\s*[.=]/.test(statement))
+      throw new ConfigError("write [bot] as a table header");
     if (statement.startsWith("[")) {
+      root = false;
       const isBot = /^\[\s*bot\s*\]$/.test(statement);
       if (isBot && seen) throw new ConfigError("[bot] is defined twice");
       inBot = isBot;

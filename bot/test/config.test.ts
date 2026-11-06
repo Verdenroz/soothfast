@@ -107,3 +107,11 @@ for (const [name, toml, reason] of malformed) {
     assert.match(rejected(toml), reason);
   });
 }
+
+test("a root-level dotted key for bot is rejected", () => {
+  assert.match(rejected("bot.labels = true\n"), /table header/);
+});
+
+test("a root-level inline table for bot is rejected", () => {
+  assert.match(rejected("bot = { labels = true }\n"), /table header/);
+});
