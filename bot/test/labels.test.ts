@@ -147,6 +147,7 @@ interface World {
   compareError?: Error;
   live?: Partial<PullRequest> & { names?: string[] };
   permissionFailures?: number;
+  enableError?: Error;
 }
 
 function fakeRun(world: World) {
@@ -201,6 +202,15 @@ function fakeRun(world: World) {
     },
     async enableAutoMerge(id: string, method: string, oid: string) {
       calls.push(`enable ${id} ${method} ${oid}`);
+      if (world.enableError) throw world.enableError;
+    },
+    async mergePullRequest(
+      _r: string,
+      number: number,
+      sha: string,
+      method: string,
+    ) {
+      calls.push(`merge ${number}@${sha} ${method}`);
     },
     async disableAutoMerge(id: string) {
       calls.push(`disable ${id}`);
@@ -244,6 +254,58 @@ test("a labeled event by a writer enables auto-merge with the configured method"
     "pull 5",
     "enable PR_node5 rebase abc123",
   ]);
+});
+
+test("an already-mergeable pull request is merged with the labelled head", async () => {
+  const { run, calls, logs } = fakeRun({
+    toml: '[bot]\nlabels = true\nmerge_method = "squash"\n',
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    enableError: new GitHubError(200, "Pull request is in clean status"),
+    ...checks,
+  });
+  await evaluateOne(run, 5, labeledBy("alice"));
+  assert.equal(calls.at(-1), "merge 5@abc123 squash");
+  assert.deepEqual(logs, ["#5: merged (checks had already passed)"]);
+});
+
+test("other enable errors do not merge", async () => {
+  const { run, calls } = fakeRun({
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    enableError: new GitHubError(200, "Auto merge is not allowed"),
+    ...checks,
+  });
+  await assert.rejects(evaluateOne(run, 5, labeledBy("alice")));
+  assert.ok(!calls.some((c) => c.startsWith("merge")));
+});
+
+test("a moved head merges nothing even when it would be clean", async () => {
+  const { run, calls } = fakeRun({
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    live: { head: { sha: "def456" } },
+    enableError: new GitHubError(200, "Pull request is in clean status"),
+    ...checks,
+  });
+  await evaluateOne(run, 5, labeledBy("alice"));
+  assert.ok(!calls.some((c) => c.startsWith("merge")));
+  assert.ok(!calls.some((c) => c.startsWith("enable")));
+});
+
+test("a draft or queued pull request logs why it is not merged", async () => {
+  const draft = fakeRun({ pulls: [pull({ names: [MERGE], draft: true })] });
+  await evaluateOne(draft.run, 5, labeledBy("alice"));
+  assert.deepEqual(draft.logs, ["#5: not merging, it is a draft"]);
+  const queued = fakeRun({ pulls: [pull({ names: [MERGE], auto_merge: {} })] });
+  await evaluateOne(queued.run, 5, labeledBy("alice"));
+  assert.deepEqual(queued.logs, ["#5: auto-merge is already enabled"]);
+});
+
+test("a sweep with nothing actionable logs it", async () => {
+  const { run, logs } = fakeRun({ pulls: [pull({ names: [MERGE] })] });
+  await evaluateOpen(run);
+  assert.deepEqual(logs, ["no pull requests to act on"]);
 });
 
 const staleCases = [

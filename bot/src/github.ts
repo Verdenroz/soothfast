@@ -154,6 +154,13 @@ export interface GitHubApi {
     token: string,
   ): Promise<void>;
   disableAutoMerge(nodeId: string, token: string): Promise<void>;
+  mergePullRequest(
+    repository: string,
+    number: number,
+    sha: string,
+    method: MergeMethod,
+    token: string,
+  ): Promise<void>;
   revoke(token: string): Promise<void>;
   appSlug(appJwt: string): Promise<string>;
 }
@@ -445,6 +452,15 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
         `,
         { id: nodeId },
         token,
+      );
+    },
+    async mergePullRequest(repository, number, sha, method, token) {
+      const path = `/repos/${repository}/pulls/${number}/merge`;
+      expectOk(
+        await call<undefined>("PUT", path, token, {
+          sha,
+          merge_method: method,
+        }),
       );
     },
     async revoke(token) {

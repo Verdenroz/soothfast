@@ -103,6 +103,7 @@ export async function evaluateOpen(run: Run): Promise<void> {
     run.token,
   );
   const actionable = open.filter((pr) => canAct(pr, context.config));
+  if (actionable.length === 0) run.log("no pull requests to act on");
   if (actionable.length > MAX_EVALUATIONS)
     run.log(
       `evaluating ${MAX_EVALUATIONS} of ${actionable.length} pull requests`,
@@ -204,16 +205,30 @@ async function evaluate(
   labeler?: Labeler,
 ): Promise<void> {
   const { run, config } = context;
-  const gate = await byWriters(
-    context,
-    pr,
-    gated(pr, config, labeler),
-    labeler,
-  );
+  const initial = gated(pr, config, labeler);
+  declineMerge(run, pr, initial, config, labeler);
+  const gate = await byWriters(context, pr, initial, labeler);
   const checked = gate.merge.length > 0 ? await context.checked() : 0;
   const behind = gate.update.length > 0 && (await isBehind(run, pr));
   for (const action of decide(pr, gate, checked, behind))
     await perform(context, pr, action);
+}
+
+function declineMerge(
+  run: Run,
+  pr: PullRequest,
+  gate: Gated,
+  config: BotConfig,
+  labeler?: Labeler,
+): void {
+  const asked =
+    labeler &&
+    config.mergeLabels.includes(labeler.label) &&
+    present(pr, [labeler.label]).length > 0;
+  if (!asked || gate.ignored || gate.merge.length > 0) return;
+  if (pr.draft) run.log(`#${pr.number}: not merging, it is a draft`);
+  else if (pr.auto_merge !== null)
+    run.log(`#${pr.number}: auto-merge is already enabled`);
 }
 
 async function isBehind(run: Run, pr: PullRequest): Promise<boolean> {
@@ -289,13 +304,21 @@ async function perform(
         );
         return;
       }
-      await github.enableAutoMerge(
-        pr.node_id,
-        config.mergeMethod,
-        pr.head.sha,
-        token,
-      );
-      run.log(`${tag}: auto-merge enabled`);
+      await github
+        .enableAutoMerge(pr.node_id, config.mergeMethod, pr.head.sha, token)
+        .then(() => run.log(`${tag}: auto-merge enabled`))
+        .catch(async (e: unknown) => {
+          if (!(e instanceof GitHubError && /clean status/i.test(e.message)))
+            throw e;
+          await github.mergePullRequest(
+            repository,
+            pr.number,
+            pr.head.sha,
+            config.mergeMethod,
+            token,
+          );
+          run.log(`${tag}: merged (checks had already passed)`);
+        });
       return;
     }
     case "update_branch":
