@@ -225,6 +225,8 @@ test("a push reports whether it touches soothfast.toml", () => {
     false,
   );
   assert.equal(pushed([]).configChanged, true);
+  const unrelated = Array.from({ length: 20 }, () => commit({}));
+  assert.equal(pushed(unrelated).configChanged, true);
   assert.equal(pushed(undefined).configChanged, true);
 });
 

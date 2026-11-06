@@ -91,8 +91,12 @@ export async function verifySignature(
   return crypto.subtle.verify("HMAC", key, expected, body);
 }
 
+// GitHub lists at most 20 commits, so a full list may hide the one that edits it.
+const MAX_LISTED_COMMITS = 20;
+
 const touchesConfig = (commits: Payload["commits"]) =>
   !commits?.length ||
+  commits.length >= MAX_LISTED_COMMITS ||
   commits.some((c) =>
     [...c.added, ...c.modified, ...c.removed].includes("soothfast.toml"),
   );

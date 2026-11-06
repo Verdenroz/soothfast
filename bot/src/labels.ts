@@ -155,6 +155,7 @@ async function load(run: Run): Promise<Context | undefined> {
 async function botConfig(run: Run): Promise<ReturnType<typeof parseBotConfig>> {
   const hit = configs.get(run.repositoryId);
   if (hit && Date.now() - hit.fetchedAt < CONFIG_TTL_MS) return hit.parsed;
+  configs.delete(run.repositoryId);
   const toml = await run.github.fileContents(
     run.repository,
     "soothfast.toml",
