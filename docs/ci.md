@@ -315,11 +315,12 @@ a merge back. Drafts and pull requests that already have auto-merge enabled
 are skipped, and the broker logs why. A pull request GitHub would already
 merge (every required check passed or was skipped, which path-filtered checks
 make common) cannot queue auto-merge, so the bot merges it at once, bound to
-the labelled commit and the configured `merge_method`. GitHub turns auto-merge off when someone without write access
-pushes to the branch, so later pushes and sweeps never turn it back on:
-to queue the merge again, remove `soothfast:merge` and add it back. The
-merge is tied to the commit the label was applied to: if the branch moves
-or the label comes off before the bot acts, it queues nothing. The bot never
+the labelled commit and the configured `merge_method`. GitHub turns
+auto-merge off when someone without write access pushes to the branch, so
+later pushes and sweeps never turn it back on: to queue the merge again,
+remove `soothfast:merge` and add it back. The merge is tied to the commit
+the label was applied to: if the branch moves or the label comes off before
+the bot acts, it neither queues nor merges anything. The bot never
 watches statuses; GitHub's auto-merge, rulesets and merge queue decide when
 the merge happens.
 
