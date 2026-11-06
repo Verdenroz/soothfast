@@ -32,12 +32,20 @@ const target = {
   defaultBranch: "main",
 };
 
+const pullPayload = (extra: Record<string, unknown> = {}) => ({
+  number: 9,
+  node_id: "PR_node9",
+  draft: false,
+  labels: [{ name: "soothfast:merge" }],
+  auto_merge: null,
+  head: { sha: "abc123" },
+  state: "open",
+  base: { ref: "main" },
+  ...extra,
+});
+
 const pr = (action: string, extra: Record<string, unknown> = {}) =>
-  payload({
-    action,
-    pull_request: { number: 9, state: "open", base: { ref: "main" } },
-    ...extra,
-  });
+  payload({ action, pull_request: pullPayload(), ...extra });
 
 async function delivery(
   body: string,
@@ -118,7 +126,12 @@ test("a signed pull_request delivery routes to work", async () => {
   const result = await delivery(JSON.stringify(pr("opened")));
   assert.deepEqual(result, {
     ok: true,
-    work: { kind: "pull_request", target, number: 9, labeler: undefined },
+    work: {
+      kind: "pull_request",
+      target,
+      pr: pullPayload(),
+      labeler: undefined,
+    },
   });
 });
 
@@ -133,7 +146,7 @@ for (const action of [
     assert.deepEqual(route("pull_request", pr(action) as never), {
       kind: "pull_request",
       target,
-      number: 9,
+      pr: pullPayload(),
       labeler: undefined,
     });
   });
@@ -147,16 +160,14 @@ test("pull_request labeled carries the label and the sender", () => {
   assert.deepEqual(work, {
     kind: "pull_request",
     target,
-    number: 9,
+    pr: pullPayload(),
     labeler: { label: "soothfast:merge", login: "alice" },
   });
 });
 
 for (const action of ["closed", "edited", "assigned", "converted_to_draft"]) {
   test(`pull_request ${action} is ignored`, () => {
-    assert.deepEqual(route("pull_request", pr(action) as never), {
-      kind: "ignore",
-    });
+    assert.equal(route("pull_request", pr(action) as never), undefined);
   });
 }
 
@@ -164,17 +175,24 @@ test("a labeled event on a closed pull request is ignored", () => {
   const closed = payload({
     action: "labeled",
     label: { name: "soothfast:merge" },
-    pull_request: { number: 9, state: "closed", base: { ref: "main" } },
+    pull_request: pullPayload({ state: "closed" }),
   });
-  assert.deepEqual(route("pull_request", closed as never), { kind: "ignore" });
+  assert.equal(route("pull_request", closed as never), undefined);
 });
 
 test("a pull request into another base is ignored", () => {
   const other = pr("labeled", {
     label: { name: "soothfast:merge" },
-    pull_request: { number: 9, state: "open", base: { ref: "release/1.x" } },
+    pull_request: pullPayload({ base: { ref: "release/1.x" } }),
   });
-  assert.deepEqual(route("pull_request", other as never), { kind: "ignore" });
+  assert.equal(route("pull_request", other as never), undefined);
+});
+
+test("a pull request with no labels is ignored", () => {
+  const bare = pr("synchronize", {
+    pull_request: pullPayload({ labels: [] }),
+  });
+  assert.equal(route("pull_request", bare as never), undefined);
 });
 
 test("a push to the default branch re-evaluates the base", () => {
@@ -184,17 +202,17 @@ test("a push to the default branch re-evaluates the base", () => {
 
 test("a push to another branch is ignored", () => {
   const work = route("push", payload({ ref: "refs/heads/dev" }) as never);
-  assert.deepEqual(work, { kind: "ignore" });
+  assert.equal(work, undefined);
 });
 
 test("deleting the default branch is ignored", () => {
   const deleted = payload({ ref: "refs/heads/main", deleted: true });
-  assert.deepEqual(route("push", deleted as never), { kind: "ignore" });
+  assert.equal(route("push", deleted as never), undefined);
 });
 
 for (const event of ["ping", "installation", "issues", "check_run"]) {
   test(`${event} is ignored even without a repository`, () => {
     const work = route(event, { zen: "Keep it logically awesome." } as never);
-    assert.deepEqual(work, { kind: "ignore" });
+    assert.equal(work, undefined);
   });
 }

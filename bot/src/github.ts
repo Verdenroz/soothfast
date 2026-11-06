@@ -40,17 +40,17 @@ export interface PullRequest {
   head: { sha: string };
 }
 
-export interface IssueEvent {
+interface IssueEvent {
   event: string;
   label?: { name: string };
   actor?: { login: string };
 }
 
-export interface BranchRule {
+interface BranchRule {
   type: string;
 }
 
-export interface BranchProtection {
+interface BranchProtection {
   protection?: {
     required_status_checks?: { contexts?: string[]; checks?: unknown[] };
   };
@@ -110,21 +110,17 @@ export interface GitHubApi {
     ref: string,
     token: string,
   ): Promise<string | undefined>;
-  pullRequest(
-    repository: string,
-    number: number,
-    token: string,
-  ): Promise<PullRequest>;
   openPullRequests(
     repository: string,
     base: string,
     token: string,
   ): Promise<PullRequest[]>;
-  issueEvents(
+  lastLabeler(
     repository: string,
     issue: number,
+    label: string,
     token: string,
-  ): Promise<IssueEvent[]>;
+  ): Promise<string | undefined>;
   collaboratorPermission(
     repository: string,
     login: string,
@@ -242,6 +238,16 @@ function parseBody(text: string): unknown {
   }
 }
 
+const lastPage = (link: string | null) =>
+  Number(/<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/.exec(link ?? "")?.[1] ?? 1);
+
+function labeledBy(events: IssueEvent[], label: string): string | undefined {
+  return [...events]
+    .reverse()
+    .find((e) => e.event === "labeled" && e.label?.name === label)?.actor
+    ?.login;
+}
+
 export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
   const call = async <T>(
     method: string,
@@ -263,6 +269,7 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
     return {
       status: response.status,
       json: parseBody(await response.text()) as T,
+      link: response.headers.get("link"),
     };
   };
   const expectOk = <T>(result: { status: number; json: T }): T => {
@@ -352,19 +359,26 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
       if (result.status === 404) return undefined;
       return new TextDecoder().decode(base64ToBytes(expectOk(result).content));
     },
-    async pullRequest(repository, number, token) {
-      const path = `/repos/${repository}/pulls/${number}`;
-      return expectOk(await call<PullRequest>("GET", path, token));
-    },
+    // One page of 100 covers the evaluation cap.
     async openPullRequests(repository, base, token) {
       const path = `/repos/${repository}/pulls?state=open&sort=updated&direction=desc&per_page=100&base=${encodeURIComponent(base)}`;
       return expectOk(await call<PullRequest[]>("GET", path, token));
     },
-    async issueEvents(repository, issue, token) {
-      return paginate<IssueEvent>(
-        `/repos/${repository}/issues/${issue}/events`,
-        token,
-      );
+    async lastLabeler(repository, issue, label, token) {
+      const path = `/repos/${repository}/issues/${issue}/events?per_page=100`;
+      const first = await call<IssueEvent[]>("GET", `${path}&page=1`, token);
+      const pages = new Map([[1, expectOk(first)]]);
+      const last = lastPage(first.link);
+      for (const page of [last, last - 1].filter((n) => n >= 1)) {
+        const url = `${path}&page=${page}`;
+        const events =
+          pages.get(page) ??
+          expectOk(await call<IssueEvent[]>("GET", url, token));
+        pages.set(page, events);
+        const login = labeledBy(events, label);
+        if (login) return login;
+      }
+      return undefined;
     },
     async collaboratorPermission(repository, login, token) {
       const path = `/repos/${repository}/collaborators/${encodeURIComponent(login)}/permission`;

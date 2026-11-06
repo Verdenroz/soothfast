@@ -7,18 +7,11 @@ set -euo pipefail
 # shellcheck source=action/oidc.sh
 source "$(dirname "$0")/oidc.sh"
 
-fail() {
-  echo "::error::$1"
-  exit 1
-}
-
 command -v jq >/dev/null || fail "jq must be installed on the runner to mint a soothfast-bot token; see docs/ci.md, Self-hosted runners"
 oidc=$(oidc_token) || fail "soothfast-bot needs 'id-token: write' in the job's permissions"
 
-response=$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "$BROKER/token" -H "Authorization: Bearer $oidc") ||
+broker_post /token -H "Authorization: Bearer $oidc" ||
   fail "could not reach the broker at $BROKER"
-status=${response##*$'\n'}
-body=${response%$'\n'*}
 
 if [ "$status" != 200 ]; then
   fail "soothfast-bot refused (HTTP $status): $(jq -r '.reason // .' <<<"$body")"

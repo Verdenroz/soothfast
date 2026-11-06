@@ -1,9 +1,10 @@
 import { utf8 } from "./encoding.ts";
+import type { PullRequest } from "./github.ts";
 
 // GitHub never delivers more than 25 MiB.
 export const WEBHOOK_MAX_BYTES = 25 * 1024 * 1024;
 
-export const PULL_REQUEST_ACTIONS: readonly string[] = [
+const PULL_REQUEST_ACTIONS: readonly string[] = [
   "opened",
   "reopened",
   "labeled",
@@ -12,7 +13,7 @@ export const PULL_REQUEST_ACTIONS: readonly string[] = [
   "synchronize",
 ];
 
-export interface Target {
+interface Target {
   installation: number;
   repositoryId: number;
   repository: string;
@@ -20,17 +21,16 @@ export interface Target {
 }
 
 export type Work =
-  | { kind: "pull_request"; target: Target; number: number; labeler?: Labeler }
-  | { kind: "push"; target: Target }
-  | { kind: "ignore" };
+  | { kind: "pull_request"; target: Target; pr: PullRequest; labeler?: Labeler }
+  | { kind: "push"; target: Target };
 
 export interface Labeler {
   label: string;
   login: string;
 }
 
-export type Delivery =
-  { ok: true; work: Work } | { ok: false; status: number; reason: string };
+type Delivery =
+  { ok: true; work?: Work } | { ok: false; status: number; reason: string };
 
 interface Payload {
   action?: string;
@@ -40,7 +40,7 @@ interface Payload {
   sender: { login: string };
   installation: { id: number };
   repository: { id: number; full_name: string; default_branch: string };
-  pull_request?: { number: number; state: string; base: { ref: string } };
+  pull_request?: PullRequest & { state: string; base: { ref: string } };
 }
 
 export async function receive(
@@ -90,10 +90,8 @@ export async function verifySignature(
   return crypto.subtle.verify("HMAC", key, expected, body);
 }
 
-const IGNORE: Work = { kind: "ignore" };
-
-export function route(event: string, payload: Payload): Work {
-  if (event !== "push" && event !== "pull_request") return IGNORE;
+export function route(event: string, payload: Payload): Work | undefined {
+  if (event !== "push" && event !== "pull_request") return undefined;
   const target: Target = {
     installation: payload.installation.id,
     repositoryId: payload.repository.id,
@@ -102,15 +100,20 @@ export function route(event: string, payload: Payload): Work {
   };
   if (event === "push") {
     const toDefault = payload.ref === `refs/heads/${target.defaultBranch}`;
-    return toDefault && !payload.deleted ? { kind: "push", target } : IGNORE;
+    return toDefault && !payload.deleted ? { kind: "push", target } : undefined;
   }
   const { action, pull_request: pr } = payload;
-  if (!pr || pr.state !== "open") return IGNORE;
-  if (pr.base.ref !== target.defaultBranch) return IGNORE;
-  if (!action || !PULL_REQUEST_ACTIONS.includes(action)) return IGNORE;
+  const relevant =
+    pr &&
+    action &&
+    PULL_REQUEST_ACTIONS.includes(action) &&
+    pr.state === "open" &&
+    pr.base.ref === target.defaultBranch &&
+    pr.labels.length > 0;
+  if (!relevant) return undefined;
   const labeler =
     action === "labeled" && payload.label
       ? { label: payload.label.name, login: payload.sender.login }
       : undefined;
-  return { kind: "pull_request", target, number: pr.number, labeler };
+  return { kind: "pull_request", target, pr, labeler };
 }

@@ -1,19 +1,15 @@
 import { parseBotConfig, type BotConfig } from "./config.ts";
-import {
-  GitHubError,
-  type GitHubApi,
-  type IssueEvent,
-  type PullRequest,
-} from "./github.ts";
+import { GitHubError, type GitHubApi, type PullRequest } from "./github.ts";
 import type { Labeler } from "./webhook.ts";
 
-export type Action =
+type Action =
   | { kind: "disable_auto_merge" }
   | { kind: "update_branch" }
   | { kind: "enable_auto_merge" }
   | { kind: "skip"; reason: string };
 
-export interface Gated {
+interface Gated {
+  ignored: boolean;
   update: string[];
   merge: string[];
 }
@@ -54,12 +50,13 @@ export function gated(
   labeler?: Labeler,
 ): Gated {
   if (present(pr, config.ignoreLabels).length > 0)
-    return { update: [], merge: [] };
+    return { ignored: true, update: [], merge: [] };
   const mergeable = !pr.draft && pr.auto_merge === null;
   const applied = present(pr, config.mergeLabels).filter(
     (label) => label === labeler?.label,
   );
   return {
+    ignored: false,
     update: present(pr, config.updateLabels),
     merge: mergeable ? applied : [],
   };
@@ -67,18 +64,15 @@ export function gated(
 
 export function decide(
   pr: PullRequest,
-  config: BotConfig,
-  { update, merge }: Gated,
+  { ignored, update, merge }: Gated,
   checked: number,
   behind: boolean,
-  writers: ReadonlySet<string>,
 ): Action[] {
-  if (present(pr, config.ignoreLabels).length > 0)
+  if (ignored)
     return pr.auto_merge === null ? [] : [{ kind: "disable_auto_merge" }];
   const actions: Action[] = [];
-  if (behind && update.some((l) => writers.has(l)))
-    actions.push({ kind: "update_branch" });
-  if (merge.some((l) => writers.has(l))) {
+  if (behind && update.length > 0) actions.push({ kind: "update_branch" });
+  if (merge.length > 0) {
     actions.push(
       checked === 0
         ? {
@@ -91,31 +85,16 @@ export function decide(
   return actions;
 }
 
-export function lastLabeler(
-  events: IssueEvent[],
-  label: string,
-): string | undefined {
-  return [...events]
-    .reverse()
-    .find((e) => e.event === "labeled" && e.label?.name === label)?.actor
-    ?.login;
-}
-
 export async function evaluatePullRequest(
   run: Run,
-  number: number,
+  pr: PullRequest,
   labeler?: Labeler,
 ): Promise<void> {
   const context = await load(run);
-  if (!context) return;
-  const pr = await run.github.pullRequest(run.repository, number, run.token);
-  await evaluate(context, pr, labeler);
+  if (context) await evaluate(context, pr, labeler);
 }
 
-export async function evaluateOpen(
-  run: Run,
-  scope: "update" | "any",
-): Promise<void> {
+export async function evaluateOpen(run: Run): Promise<void> {
   const context = await load(run);
   if (!context) return;
   const open = await run.github.openPullRequests(
@@ -123,7 +102,7 @@ export async function evaluateOpen(
     run.defaultBranch,
     run.token,
   );
-  const actionable = open.filter((pr) => canAct(pr, context.config, scope));
+  const actionable = open.filter((pr) => canAct(pr, context.config));
   if (actionable.length > MAX_EVALUATIONS)
     run.log(
       `evaluating ${MAX_EVALUATIONS} of ${actionable.length} pull requests`,
@@ -135,14 +114,9 @@ export async function evaluateOpen(
   }
 }
 
-function canAct(
-  pr: PullRequest,
-  config: BotConfig,
-  scope: "update" | "any",
-): boolean {
-  if (present(pr, config.ignoreLabels).length > 0)
-    return scope === "any" && pr.auto_merge !== null;
-  return !pr.draft && present(pr, config.updateLabels).length > 0;
+function canAct(pr: PullRequest, config: BotConfig): boolean {
+  const { ignored, update } = gated(pr, config);
+  return ignored ? pr.auto_merge !== null : !pr.draft && update.length > 0;
 }
 
 async function load(run: Run): Promise<Context | undefined> {
@@ -173,32 +147,36 @@ async function load(run: Run): Promise<Context | undefined> {
   };
 }
 
-function memo<T>(compute: () => Promise<T>): () => Promise<T> {
-  let cached: Promise<T> | undefined;
-  return () =>
-    (cached ??= compute().catch((e: unknown) => {
-      cached = undefined;
-      throw e;
-    }));
+function memoBy<T>(compute: (key: string) => Promise<T>) {
+  const cache = new Map<string, Promise<T>>();
+  return (key: string) => {
+    let hit = cache.get(key);
+    if (!hit) {
+      hit = compute(key).catch((e: unknown) => {
+        cache.delete(key);
+        throw e;
+      });
+      cache.set(key, hit);
+    }
+    return hit;
+  };
 }
 
-function memoBy<T>(compute: (key: string) => Promise<T>) {
-  const byKey = new Map<string, () => Promise<T>>();
-  return (key: string) => {
-    const hit = byKey.get(key) ?? memo(() => compute(key));
-    byKey.set(key, hit);
-    return hit();
-  };
+function memo<T>(compute: () => Promise<T>): () => Promise<T> {
+  const once = memoBy(compute);
+  return () => once("");
 }
 
 async function requiredChecks(run: Run): Promise<number> {
   const { github, repository, defaultBranch: branch, token } = run;
-  const rules = await readable(run, "branch rules", [], () =>
-    github.branchRules(repository, branch, token),
-  );
-  const info = await readable(run, "branch protection", {}, () =>
-    github.branchProtection(repository, branch, token),
-  );
+  const [rules, info] = await Promise.all([
+    readable(run, "branch rules", [], () =>
+      github.branchRules(repository, branch, token),
+    ),
+    readable(run, "branch protection", {}, () =>
+      github.branchProtection(repository, branch, token),
+    ),
+  ]);
   const classic = info.protection?.required_status_checks;
   return (
     rules.filter((r) => CHECK_RULES.includes(r.type)).length +
@@ -226,14 +204,15 @@ async function evaluate(
   labeler?: Labeler,
 ): Promise<void> {
   const { run, config } = context;
-  const gate = gated(pr, config, labeler);
-  const { update, merge } = gate;
-  const writers = await writersOf(context, pr, [...update, ...merge], labeler);
-  const needsChecks = merge.some((l) => writers.has(l));
-  const checked = needsChecks ? await context.checked() : 0;
-  const behind =
-    update.some((l) => writers.has(l)) && (await isBehind(run, pr));
-  for (const action of decide(pr, config, gate, checked, behind, writers))
+  const gate = await byWriters(
+    context,
+    pr,
+    gated(pr, config, labeler),
+    labeler,
+  );
+  const checked = gate.merge.length > 0 ? await context.checked() : 0;
+  const behind = gate.update.length > 0 && (await isBehind(run, pr));
+  for (const action of decide(pr, gate, checked, behind))
     await perform(context, pr, action);
 }
 
@@ -247,31 +226,36 @@ async function isBehind(run: Run, pr: PullRequest): Promise<boolean> {
   return status === "behind" || status === "diverged";
 }
 
-async function writersOf(
-  context: Context,
+async function byWriters(
+  { run, permission }: Context,
   pr: PullRequest,
-  labels: string[],
+  gate: Gated,
   labeler?: Labeler,
-): Promise<Set<string>> {
-  const { run } = context;
-  const events = memo(() =>
-    run.github.issueEvents(run.repository, pr.number, run.token),
-  );
-  const writers = new Set<string>();
-  for (const label of labels) {
-    const login =
-      labeler?.label === label
-        ? labeler.login
-        : lastLabeler(await events(), label);
-    if (!login) continue;
-    const permission = await context.permission(login);
-    if (WRITE_PERMISSIONS.includes(permission)) writers.add(label);
-    else
-      run.log(
-        `#${pr.number}: ignoring ${label}, applied by ${login} (${permission}), who cannot write here`,
-      );
-  }
-  return writers;
+): Promise<Gated> {
+  const appliedBy = (label: string) =>
+    labeler?.label === label
+      ? labeler.login
+      : run.github.lastLabeler(run.repository, pr.number, label, run.token);
+  const writes = async (label: string) => {
+    const login = await appliedBy(label);
+    if (!login) return false;
+    const level = await permission(login);
+    if (WRITE_PERMISSIONS.includes(level)) return true;
+    run.log(
+      `#${pr.number}: ignoring ${label}, applied by ${login} (${level}), who cannot write here`,
+    );
+    return false;
+  };
+  const keep = async (labels: string[]) => {
+    const kept: string[] = [];
+    for (const label of labels) if (await writes(label)) kept.push(label);
+    return kept;
+  };
+  return {
+    ...gate,
+    update: await keep(gate.update),
+    merge: await keep(gate.merge),
+  };
 }
 
 async function perform(

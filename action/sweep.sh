@@ -9,11 +9,6 @@ set -euo pipefail
 # shellcheck source=action/oidc.sh
 source "$(dirname "$0")/oidc.sh"
 
-fail() {
-  echo "::error::$1"
-  exit 1
-}
-
 if [ -n "${BOT_TOKEN:-}" ]; then
   echo "::warning::soothfast labels are acted on by the soothfast-bot broker, which a bot-token has no access to, so nothing was swept; see docs/ci.md, Labels"
   exit 0
@@ -22,10 +17,8 @@ fi
 command -v jq >/dev/null || fail "jq must be installed on the runner to sweep labels; see docs/ci.md, Self-hosted runners"
 oidc=$(oidc_token) || fail "sweeping labels needs 'id-token: write' in the job's permissions"
 
-response=$(curl -sS --max-time 60 -w '\n%{http_code}' -X POST "$BROKER/sweep" -H "Authorization: Bearer $oidc") ||
+BROKER_TIMEOUT=60 broker_post /sweep -H "Authorization: Bearer $oidc" ||
   fail "could not reach the broker at $BROKER"
-status=${response##*$'\n'}
-body=${response%$'\n'*}
 
 if [ "$status" != 200 ]; then
   fail "soothfast-bot refused the sweep (HTTP $status): $(jq -r '.reason // .' <<<"$body")"

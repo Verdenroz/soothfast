@@ -28,13 +28,8 @@ impl BotLabels {
     /// The `*_labels` keys of `[bot]` over the defaults.
     pub fn parse(text: &str) -> Result<BotLabels, String> {
         let mut labels = BotLabels::default();
-        let mut in_bot = false;
-        for (lineno, line) in logical_lines(text) {
-            if let Some(name) = table_name(&line) {
-                in_bot = name == "bot";
-                continue;
-            }
-            let Some((key, value)) = line.split_once('=').filter(|_| in_bot) else {
+        for (lineno, line) in bot_keys(text) {
+            let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
             let key = key.trim();
@@ -59,23 +54,35 @@ impl BotLabels {
 
 /// Whether `[bot]` turns the bot on with `labels = true`.
 pub fn bot_enabled(text: &str) -> bool {
-    let mut in_bot = false;
-    for (_, line) in logical_lines(text) {
-        if let Some(name) = table_name(&line) {
-            in_bot = name == "bot";
-        } else if let Some((key, value)) = line.split_once('=')
-            && in_bot
-            && key.trim() == "labels"
-        {
-            return parse_value(value.trim()) == Ok(TomlValue::Bool(true));
-        }
-    }
-    false
+    bot_keys(text)
+        .into_iter()
+        .filter_map(|(_, line)| {
+            line.split_once('=')
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        })
+        .find(|(key, _)| key == "labels")
+        .is_some_and(|(_, value)| parse_value(&value) == Ok(TomlValue::Bool(true)))
 }
 
 /// Whether the text has a `[bot]` table.
 pub fn has_bot_table(text: &str) -> bool {
-    text.lines().any(|l| table_name(l) == Some("bot"))
+    logical_lines(text)
+        .iter()
+        .any(|(_, line)| table_name(line) == Some("bot"))
+}
+
+/// The logical lines under the `[bot]` header, with their line numbers.
+fn bot_keys(text: &str) -> Vec<(usize, String)> {
+    let mut in_bot = false;
+    let mut keys = Vec::new();
+    for (lineno, line) in logical_lines(text) {
+        match table_name(&line) {
+            Some(name) => in_bot = name == "bot",
+            None if in_bot => keys.push((lineno, line)),
+            None => {}
+        }
+    }
+    keys
 }
 
 #[cfg(test)]

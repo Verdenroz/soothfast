@@ -8,7 +8,7 @@ export interface BotConfig {
   mergeMethod: MergeMethod;
 }
 
-export type ConfigResult =
+type ConfigResult =
   { ok: true; config: BotConfig } | { ok: false; reason: string };
 
 type Value = boolean | string | string[];
@@ -102,50 +102,44 @@ function botEntries(statementList: string[]): Map<string, Value> {
 }
 
 function build(entries: Map<string, Value>): BotConfig {
-  const unknown = [...entries.keys()].filter((k) => !KEYS.includes(k));
-  if (unknown.length > 0)
-    throw new ConfigError(`[bot] has unknown keys: ${unknown.join(", ")}`);
-  return {
-    labels: flag(entries, "labels", DEFAULTS.labels),
-    mergeLabels: list(entries, "merge_labels", DEFAULTS.mergeLabels),
-    updateLabels: list(entries, "update_labels", DEFAULTS.updateLabels),
-    ignoreLabels: list(entries, "ignore_labels", DEFAULTS.ignoreLabels),
-    mergeMethod: method(entries, "merge_method", DEFAULTS.mergeMethod),
+  const rest = new Map(entries);
+  const take = <T extends Value>(
+    key: string,
+    fallback: T,
+    valid: (value: Value) => value is T,
+    expected: string,
+  ): T => {
+    const value = rest.get(key);
+    rest.delete(key);
+    if (value === undefined) return fallback;
+    if (!valid(value))
+      throw new ConfigError(`[bot] ${key} must be ${expected}`);
+    return value;
   };
+  const config = {
+    labels: take("labels", DEFAULTS.labels, isFlag, "true or false"),
+    mergeLabels: take("merge_labels", DEFAULTS.mergeLabels, isList, LIST),
+    updateLabels: take("update_labels", DEFAULTS.updateLabels, isList, LIST),
+    ignoreLabels: take("ignore_labels", DEFAULTS.ignoreLabels, isList, LIST),
+    mergeMethod: take(
+      "merge_method",
+      DEFAULTS.mergeMethod,
+      isMethod,
+      "squash, merge or rebase",
+    ),
+  };
+  if (rest.size > 0)
+    throw new ConfigError(
+      `[bot] has unknown keys: ${[...rest.keys()].join(", ")}`,
+    );
+  return config;
 }
 
-const KEYS = [
-  "labels",
-  "merge_labels",
-  "update_labels",
-  "ignore_labels",
-  "merge_method",
-];
-
-function flag(entries: Map<string, Value>, key: string, fallback: boolean) {
-  const value = entries.get(key) ?? fallback;
-  if (typeof value !== "boolean")
-    throw new ConfigError(`[bot] ${key} must be true or false`);
-  return value;
-}
-
-function list(entries: Map<string, Value>, key: string, fallback: string[]) {
-  const value = entries.get(key) ?? fallback;
-  if (!Array.isArray(value))
-    throw new ConfigError(`[bot] ${key} must be an array of strings`);
-  return value;
-}
-
-function method(
-  entries: Map<string, Value>,
-  key: string,
-  fallback: MergeMethod,
-): MergeMethod {
-  const value = entries.get(key) ?? fallback;
-  if (value !== "squash" && value !== "merge" && value !== "rebase")
-    throw new ConfigError(`[bot] ${key} must be squash, merge or rebase`);
-  return value;
-}
+const LIST = "an array of strings";
+const isFlag = (value: Value): value is boolean => typeof value === "boolean";
+const isList = (value: Value): value is string[] => Array.isArray(value);
+const isMethod = (value: Value): value is MergeMethod =>
+  value === "squash" || value === "merge" || value === "rebase";
 
 function parseValue(key: string, raw: string): Value {
   if (raw === "true") return true;

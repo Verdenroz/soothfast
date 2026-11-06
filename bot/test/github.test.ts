@@ -343,3 +343,70 @@ test("a GraphQL error in a 200 response becomes a GitHubError", async () => {
     (e: unknown) => e instanceof GitHubError && /clean status/.test(e.message),
   );
 });
+
+function pagedEvents(pages: Record<number, object[]>, last: number) {
+  const requested: number[] = [];
+  const fetchFn = (async (url: string | URL | Request) => {
+    const page = Number(new URL(String(url)).searchParams.get("page"));
+    requested.push(page);
+    const link = `<https://api.github.com/x?per_page=100&page=2>; rel="next", <https://api.github.com/x?per_page=100&page=${last}>; rel="last"`;
+    return new Response(JSON.stringify(pages[page] ?? []), {
+      status: 200,
+      headers: last > 1 ? { link } : {},
+    });
+  }) as typeof fetch;
+  return { api: githubApi(fetchFn), requested };
+}
+
+const labeled = (label: string, login: string) => ({
+  event: "labeled",
+  label: { name: label },
+  actor: { login },
+});
+
+test("lastLabeler reads only the first page when there is one", async () => {
+  const { api, requested } = pagedEvents(
+    { 1: [labeled("a", "bob"), labeled("a", "alice")] },
+    1,
+  );
+  assert.equal(await api.lastLabeler("acme/mylib", 7, "a", "ghs_x"), "alice");
+  assert.deepEqual(requested, [1]);
+});
+
+test("lastLabeler jumps to the last page and stops when it finds the label", async () => {
+  const { api, requested } = pagedEvents(
+    { 1: [labeled("a", "old")], 9: [labeled("a", "dave"), labeled("b", "x")] },
+    9,
+  );
+  assert.equal(await api.lastLabeler("acme/mylib", 7, "a", "ghs_x"), "dave");
+  assert.deepEqual(requested, [1, 9]);
+});
+
+test("lastLabeler falls back to the page before the last, then gives up", async () => {
+  const { api, requested } = pagedEvents(
+    { 1: [], 8: [labeled("a", "carol")], 9: [labeled("b", "x")] },
+    9,
+  );
+  assert.equal(await api.lastLabeler("acme/mylib", 7, "a", "ghs_x"), "carol");
+  assert.deepEqual(requested, [1, 9, 8]);
+  const none = pagedEvents({ 1: [], 8: [], 9: [] }, 9);
+  assert.equal(
+    await none.api.lastLabeler("acme/mylib", 7, "a", "ghs_x"),
+    undefined,
+  );
+  assert.deepEqual(none.requested, [1, 9, 8]);
+});
+
+test("lastLabeler ignores unlabeled events and other labels", async () => {
+  const { api } = pagedEvents(
+    {
+      1: [
+        labeled("a", "alice"),
+        { event: "unlabeled", label: { name: "a" }, actor: { login: "bob" } },
+        labeled("b", "carol"),
+      ],
+    },
+    1,
+  );
+  assert.equal(await api.lastLabeler("acme/mylib", 7, "a", "ghs_x"), "alice");
+});

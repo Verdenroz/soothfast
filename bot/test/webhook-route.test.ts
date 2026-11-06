@@ -26,9 +26,11 @@ const pullRequest = {
   labels: [{ name: "soothfast:merge" }],
   auto_merge: null,
   head: { sha: "abc123" },
+  state: "open",
+  base: { ref: "main" },
 };
 
-function fakeGitHub(opts: { protection?: Error } = {}) {
+function fakeGitHub(opts: { protection?: Error; open?: object[] } = {}) {
   const calls: string[] = [];
   const minted: { installation: number; repository: number; perms: object }[] =
     [];
@@ -41,12 +43,12 @@ function fakeGitHub(opts: { protection?: Error } = {}) {
     async fileContents() {
       return "[bot]\nlabels = true\n";
     },
-    async pullRequest() {
-      return pullRequest;
-    },
     async openPullRequests(_r: string, base: string) {
       calls.push(`list ${base}`);
-      return [];
+      return opts.open ?? [];
+    },
+    async disableAutoMerge(id: string) {
+      calls.push(`disable ${id}`);
     },
     async collaboratorPermission(_r: string, login: string) {
       return login === "alice" ? "write" : "read";
@@ -80,7 +82,7 @@ const labeled = (login = "alice") => ({
   sender: { login },
   installation: { id: 7 },
   repository,
-  pull_request: { number: 5, state: "open", base: { ref: "main" } },
+  pull_request: pullRequest,
 });
 
 async function deliver(
@@ -153,6 +155,18 @@ test("a synchronize does not re-enable a merge a writer labelled earlier", async
   assert.deepEqual(fake.calls, []);
 });
 
+test("a pull request with no labels costs no token", async () => {
+  const fake = fakeGitHub();
+  const bare = {
+    ...labeled(),
+    action: "synchronize",
+    pull_request: { ...pullRequest, labels: [] },
+  };
+  const result = await deliver(fake, bare);
+  assert.deepEqual(result, { status: 200, pending: 0 });
+  assert.deepEqual(fake.minted, []);
+});
+
 test("a push to the default branch evaluates open pull requests", async () => {
   const fake = fakeGitHub();
   const push = {
@@ -164,6 +178,24 @@ test("a push to the default branch evaluates open pull requests", async () => {
   const result = await deliver(fake, push, { event: "push" });
   assert.equal(result.status, 202);
   assert.deepEqual(fake.calls, ["list main"]);
+});
+
+test("a push cancels a queued merge on a do-not-merge pull request", async () => {
+  const held = {
+    ...pullRequest,
+    node_id: "PR_held",
+    labels: [{ name: "do-not-merge" }],
+    auto_merge: {},
+  };
+  const fake = fakeGitHub({ open: [held] });
+  const push = {
+    ref: "refs/heads/main",
+    sender: { login: "alice" },
+    installation: { id: 7 },
+    repository,
+  };
+  await deliver(fake, push, { event: "push" });
+  assert.deepEqual(fake.calls, ["list main", "disable PR_held"]);
 });
 
 test("a signed ping is acknowledged with no token minted", async () => {

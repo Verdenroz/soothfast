@@ -27,7 +27,7 @@ export interface Env {
   GITHUB_WEBHOOK_SECRET: string;
 }
 
-export interface Deps {
+interface Deps {
   jwks: JwksLookup;
   github: GitHubApi;
   now?: () => number;
@@ -42,8 +42,10 @@ interface CommentRequest {
 interface Minted {
   token: string;
   expires_at: string;
-  slug: string;
+  slug?: string;
 }
+
+type Ctx = Pick<ExecutionContext, "waitUntil">;
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -68,7 +70,7 @@ export async function handle(
   request: Request,
   env: Env,
   deps: Deps,
-  ctx: Pick<ExecutionContext, "waitUntil">,
+  ctx: Ctx,
 ): Promise<Response> {
   if (!env.GITHUB_APP_CLIENT_ID || !env.GITHUB_APP_PRIVATE_KEY) {
     console.error("GITHUB_APP_CLIENT_ID or GITHUB_APP_PRIVATE_KEY is not set");
@@ -121,7 +123,13 @@ export async function handle(
       : undefined;
   if (body instanceof Response) return body;
 
-  const auth = await authenticate(claims, policy.mode, env, deps);
+  const auth = await authenticate(
+    claims,
+    policy.mode,
+    route !== "/sweep",
+    env,
+    deps,
+  );
   if (auth instanceof Response) return auth;
   if (body) return comment(claims, body, auth, deps);
   return route === "/sweep"
@@ -133,7 +141,7 @@ async function webhook(
   request: Request,
   env: Env,
   deps: Deps,
-  ctx: Pick<ExecutionContext, "waitUntil">,
+  ctx: Ctx,
 ): Promise<Response> {
   if (!env.GITHUB_WEBHOOK_SECRET) {
     console.error("GITHUB_WEBHOOK_SECRET is not set");
@@ -146,7 +154,7 @@ async function webhook(
     console.log(JSON.stringify({ denied: delivery.reason, route: "/webhook" }));
     return json(delivery.status, { reason: delivery.reason });
   }
-  if (delivery.work.kind === "ignore") return json(200, {});
+  if (!delivery.work) return json(200, {});
   const done = act(delivery.work, env, deps).catch((e: unknown) =>
     console.error("webhook work failed", e),
   );
@@ -154,11 +162,7 @@ async function webhook(
   return json(202, {});
 }
 
-async function act(
-  work: Exclude<Work, { kind: "ignore" }>,
-  env: Env,
-  deps: Deps,
-): Promise<void> {
+async function act(work: Work, env: Env, deps: Deps): Promise<void> {
   const { target } = work;
   const jwt = await appJwt(
     env.GITHUB_APP_CLIENT_ID,
@@ -171,21 +175,29 @@ async function act(
     PERMISSIONS.land,
     jwt,
   );
-  const run: Run = {
-    github: deps.github,
+  const run = makeRun(
+    deps,
     token,
-    repository: target.repository,
-    defaultBranch: target.defaultBranch,
-    log: (message) => console.log(`${target.repository}: ${message}`),
-  };
+    target.repository,
+    target.defaultBranch,
+    (m) => console.log(`${target.repository}: ${m}`),
+  );
   try {
     if (work.kind === "pull_request")
-      await evaluatePullRequest(run, work.number, work.labeler);
-    else await evaluateOpen(run, "update");
+      await evaluatePullRequest(run, work.pr, work.labeler);
+    else await evaluateOpen(run);
   } finally {
     await revoke(token, deps);
   }
 }
+
+const makeRun = (
+  deps: Deps,
+  token: string,
+  repository: string,
+  defaultBranch: string,
+  log: Run["log"],
+): Run => ({ github: deps.github, token, repository, defaultBranch, log });
 
 let cachedKey: { pem: string; key: CryptoKey } | undefined;
 let cachedSlug: { clientId: string; slug: string } | undefined;
@@ -209,6 +221,7 @@ async function appSlug(
 async function authenticate(
   claims: OidcClaims,
   mode: keyof typeof PERMISSIONS,
+  withSlug: boolean,
   env: Env,
   deps: Deps,
 ): Promise<Minted | Response> {
@@ -234,7 +247,9 @@ async function authenticate(
     PERMISSIONS[mode],
     jwt,
   );
-  const slug = await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt);
+  const slug = withSlug
+    ? await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt)
+    : undefined;
   return { ...minted, slug };
 }
 
@@ -249,14 +264,10 @@ async function land(
   minted: Minted,
   deps: Deps,
 ): Promise<Response> {
-  const repository = await deps.github.repository(
-    claims.repository,
-    minted.token,
-  );
-  const ref = await decideRef(claims, minted.token, deps, repository);
-  if (!ref.ok) {
+  const { decision } = await resolveRef(claims, minted.token, deps);
+  if (!decision.ok) {
     await revoke(minted.token, deps);
-    return denied(403, ref.reason, claims);
+    return denied(403, decision.reason, claims);
   }
   return json(200, {
     token: minted.token,
@@ -265,27 +276,29 @@ async function land(
   });
 }
 
-async function decideRef(
+async function resolveRef(
   claims: OidcClaims,
   token: string,
   deps: Deps,
-  repository: Repository,
-): Promise<Decision> {
-  if (claims.ref.startsWith("refs/tags/")) {
-    // An annotated tag's sha names the tag object; judge the commit under it.
-    // Tag objects are immutable, so peeling keeps the sha claim authoritative.
-    const commit =
-      (await deps.github.tagObject(claims.repository, claims.sha, token)) ??
-      claims.sha;
-    const comparison = await deps.github.compare(
-      claims.repository,
-      repository.default_branch,
-      commit,
-      token,
-    );
-    return decideTag(claims.ref, comparison.status);
-  }
-  return decideBranch(claims.ref, repository.default_branch);
+): Promise<{ decision: Decision; repository: Repository }> {
+  const repository = await deps.github.repository(claims.repository, token);
+  if (!claims.ref.startsWith("refs/tags/"))
+    return {
+      decision: decideBranch(claims.ref, repository.default_branch),
+      repository,
+    };
+  // An annotated tag's sha names the tag object; judge the commit under it.
+  // Tag objects are immutable, so peeling keeps the sha claim authoritative.
+  const commit =
+    (await deps.github.tagObject(claims.repository, claims.sha, token)) ??
+    claims.sha;
+  const comparison = await deps.github.compare(
+    claims.repository,
+    repository.default_branch,
+    commit,
+    token,
+  );
+  return { decision: decideTag(claims.ref, comparison.status), repository };
 }
 
 async function sweep(
@@ -294,23 +307,21 @@ async function sweep(
   deps: Deps,
 ): Promise<Response> {
   try {
-    const repository = await deps.github.repository(
-      claims.repository,
+    const { decision, repository } = await resolveRef(
+      claims,
       minted.token,
+      deps,
     );
-    const ref = await decideRef(claims, minted.token, deps, repository);
-    if (!ref.ok) return denied(403, ref.reason, claims);
+    if (!decision.ok) return denied(403, decision.reason, claims);
     const log: string[] = [];
-    await evaluateOpen(
-      {
-        github: deps.github,
-        token: minted.token,
-        repository: claims.repository,
-        defaultBranch: repository.default_branch,
-        log: (message) => log.push(message),
-      },
-      "any",
+    const run = makeRun(
+      deps,
+      minted.token,
+      claims.repository,
+      repository.default_branch,
+      (message) => log.push(message),
     );
+    await evaluateOpen(run);
     return json(200, { log });
   } finally {
     await revoke(minted.token, deps);
