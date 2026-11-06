@@ -1,13 +1,42 @@
 # Changelog
 
-## Unreleased (draft vs v0.5.3)
+## 0.5.4 - 2026-11-06
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+soothfast-bot now acts on pull request labels the moment they change. GitHub
+delivers the App's webhooks to the broker, which reads a `[bot]` table from
+`soothfast.toml` on the default branch and acts on `soothfast:merge`,
+`soothfast:update` and `do-not-merge` within seconds instead of on the next
+push or schedule. A merge label counts only when someone with write access
+applies it, and only for the commit it was applied to: GitHub drops
+auto-merge when someone without write access pushes, and the bot never turns
+it back on. A pull request whose required checks have already passed is
+merged at once. `cargo soothfast init` turns the bot and its labels on by
+default, sets them up next to workflows of your own that already call
+soothfast, and every label name, including the gate's waiver, is configurable
+in `[bot]`.
+
+### Upgrade notes
+
+- Upgrade any workflow on v0.5.3 or earlier that sets `labels: "true"`. That
+  version's sweep turns auto-merge back on after GitHub drops it; this one
+  never does.
+- The bot acts only on repositories with `[bot] labels = true` in
+  `soothfast.toml` on the default branch. `cargo soothfast init` writes it;
+  `--no-labels` and `--no-bot` opt out.
+- The action's `labels` input now defaults to `"true"`, and the sweep never
+  fails a job. A job without `id-token: write` and the `soothfast-bot`
+  environment gets a notice; set `labels: "false"` there to silence it. With
+  `bot-token` the sweep does nothing.
+- To queue a merge again after GitHub drops auto-merge, remove
+  `soothfast:merge` and add it back.
+- `perf_accepted_labels` in `[bot]` renames the gate's waiver label. It is
+  read from the base branch, never from the pull request. `verdict merge
+  --accepted` now takes the matched label name as its value.
+- `init --check` reports drift on workflows `init` wrote before this
+  release.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
