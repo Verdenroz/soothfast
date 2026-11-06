@@ -37,7 +37,6 @@ export interface PullRequest {
   draft: boolean;
   labels: { name: string }[];
   auto_merge: object | null;
-  mergeable_state?: string;
   head: { sha: string };
 }
 

@@ -28,7 +28,6 @@ function pull(overrides: Partial<PullRequest> & { names?: string[] } = {}) {
     draft: false,
     labels: names.map((name) => ({ name })),
     auto_merge: null,
-    mergeable_state: "clean",
     head: { sha: "abc123" },
     ...rest,
   } satisfies PullRequest;
@@ -38,57 +37,57 @@ const writers = (...labels: string[]) => new Set(labels);
 
 test("a writer's merge label enables auto-merge", () => {
   const pr = pull({ names: [MERGE] });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, writers(MERGE)), [
+  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers(MERGE)), [
     { kind: "enable_auto_merge" },
   ]);
 });
 
 test("a merge label from a non-writer does nothing", () => {
   const pr = pull({ names: [MERGE] });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, writers()), []);
+  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers()), []);
 });
 
 test("a merge label with no required check is skipped with a reason", () => {
   const pr = pull({ names: [MERGE] });
-  const [action] = decide(pr, DEFAULTS, 0, writers(MERGE));
+  const [action] = decide(pr, DEFAULTS, 0, false, writers(MERGE));
   assert.equal(action.kind, "skip");
 });
 
 test("a draft is not merged", () => {
   const pr = pull({ names: [MERGE], draft: true });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, writers(MERGE)), []);
+  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers(MERGE)), []);
 });
 
 test("a pull request already queued is not queued again", () => {
   const pr = pull({ names: [MERGE], auto_merge: {} });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, writers(MERGE)), []);
+  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers(MERGE)), []);
 });
 
 test("do-not-merge cancels a queued auto-merge and nothing else", () => {
   const pr = pull({ names: [MERGE, HOLD], auto_merge: {} });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, writers(MERGE)), [
+  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers(MERGE)), [
     { kind: "disable_auto_merge" },
   ]);
 });
 
 test("do-not-merge on an unqueued pull request does nothing", () => {
-  const pr = pull({ names: [MERGE, HOLD], mergeable_state: "behind" });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, writers(MERGE, UPDATE)), []);
+  const pr = pull({ names: [MERGE, HOLD] });
+  assert.deepEqual(decide(pr, DEFAULTS, 1, true, writers(MERGE, UPDATE)), []);
 });
 
 test("update acts only when the branch is behind", () => {
-  const behind = pull({ names: [UPDATE], mergeable_state: "behind" });
-  assert.deepEqual(decide(behind, DEFAULTS, 0, writers(UPDATE)), [
+  const behind = pull({ names: [UPDATE] });
+  assert.deepEqual(decide(behind, DEFAULTS, 0, true, writers(UPDATE)), [
     { kind: "update_branch" },
   ]);
   const clean = pull({ names: [UPDATE] });
-  assert.deepEqual(decide(clean, DEFAULTS, 0, writers(UPDATE)), []);
+  assert.deepEqual(decide(clean, DEFAULTS, 0, false, writers(UPDATE)), []);
 });
 
 test("update runs before merge", () => {
-  const pr = pull({ names: [UPDATE, MERGE], mergeable_state: "behind" });
+  const pr = pull({ names: [UPDATE, MERGE] });
   assert.deepEqual(
-    decide(pr, DEFAULTS, 1, writers(UPDATE, MERGE)).map((a) => a.kind),
+    decide(pr, DEFAULTS, 1, true, writers(UPDATE, MERGE)).map((a) => a.kind),
     ["update_branch", "enable_auto_merge"],
   );
 });
@@ -119,6 +118,7 @@ interface World {
   rules?: { type: string }[] | Error;
   protection?: object | Error;
   updateError?: Error;
+  compareStatus?: string;
 }
 
 function fakeRun(world: World) {
@@ -156,6 +156,10 @@ function fakeRun(world: World) {
       calls.push("protection");
       if (world.protection instanceof Error) throw world.protection;
       return world.protection ?? {};
+    },
+    async compare(_r: string, base: string, head: string) {
+      calls.push(`compare ${base}...${head}`);
+      return { status: world.compareStatus ?? "identical" };
     },
     async updateBranch(_r: string, number: number, sha: string) {
       calls.push(`update ${number}@${sha}`);
@@ -317,17 +321,52 @@ test("do-not-merge from anyone cancels a queued auto-merge", async () => {
 
 test("update passes the head sha it saw", async () => {
   const { run, calls } = fakeRun({
-    pulls: [pull({ names: [UPDATE], mergeable_state: "behind" })],
+    pulls: [pull({ names: [UPDATE] })],
     permissions: { alice: "write" },
+    compareStatus: "behind",
   });
   await evaluatePullRequest(run, 5, labeledBy("alice", UPDATE));
-  assert.deepEqual(calls.slice(-1), ["update 5@abc123"]);
+  assert.deepEqual(calls.slice(-2), [
+    "compare main...abc123",
+    "update 5@abc123",
+  ]);
+});
+
+for (const [status, updated] of [
+  ["diverged", true],
+  ["behind", true],
+  ["ahead", false],
+  ["identical", false],
+] as const) {
+  test(`compare ${status} ${updated ? "updates" : "leaves"} the branch`, async () => {
+    const { run, calls } = fakeRun({
+      pulls: [pull({ names: [UPDATE] })],
+      permissions: { alice: "write" },
+      compareStatus: status,
+    });
+    await evaluatePullRequest(run, 5, labeledBy("alice", UPDATE));
+    assert.equal(
+      calls.some((c) => c.startsWith("update")),
+      updated,
+    );
+  });
+}
+
+test("the branch is compared only for a writer's update label", async () => {
+  const { run, calls } = fakeRun({
+    pulls: [pull({ names: [UPDATE] })],
+    permissions: { eve: "triage" },
+    compareStatus: "behind",
+  });
+  await evaluatePullRequest(run, 5, labeledBy("eve", UPDATE));
+  assert.ok(!calls.some((c) => c.startsWith("compare")));
 });
 
 test("a refused update is logged and does not fail the run", async () => {
   const { run, logs } = fakeRun({
-    pulls: [pull({ names: [UPDATE], mergeable_state: "behind" })],
+    pulls: [pull({ names: [UPDATE] })],
     permissions: { alice: "write" },
+    compareStatus: "behind",
     updateError: new GitHubError(422, "merge conflict"),
   });
   await evaluatePullRequest(run, 5, labeledBy("alice", UPDATE));
@@ -337,11 +376,12 @@ test("a refused update is logged and does not fail the run", async () => {
 test("a push evaluates only open pull requests with an update label", async () => {
   const { run, calls } = fakeRun({
     pulls: [
-      pull({ number: 1, names: [UPDATE], mergeable_state: "behind" }),
+      pull({ number: 1, names: [UPDATE] }),
       pull({ number: 2, names: [MERGE] }),
       pull({ number: 3 }),
     ],
     permissions: { alice: "write" },
+    compareStatus: "behind",
     events: {
       1: [
         {
@@ -355,7 +395,7 @@ test("a push evaluates only open pull requests with an update label", async () =
   await evaluateOpen(run, "update");
   assert.deepEqual(
     calls.filter((c) => c.startsWith("pull ") || c.startsWith("update")),
-    ["pull 1", "update 1@abc123"],
+    ["update 1@abc123"],
   );
 });
 
@@ -376,19 +416,20 @@ test("a sweep evaluates every pull request carrying a bot label", async () => {
   });
   await evaluateOpen(run, "any");
   assert.ok(calls.includes("disable PR_node5"));
-  assert.ok(calls.includes("pull 1") && calls.includes("pull 2"));
-  assert.ok(!calls.includes("pull 3"));
+  assert.ok(calls.includes("enable PR_node5 squash"));
+  assert.equal(calls.filter((c) => c.startsWith("contents")).length, 1);
+  assert.equal(calls.filter((c) => c.startsWith("pull ")).length, 0);
 });
 
 test("a sweep is bounded and logs the truncation", async () => {
   const total = MAX_EVALUATIONS + 3;
   const pulls = Array.from({ length: total }, (_, i) =>
-    pull({ number: i + 1, names: [HOLD] }),
+    pull({ number: i + 1, names: [HOLD], auto_merge: {} }),
   );
   const { run, calls, logs } = fakeRun({ pulls });
   await evaluateOpen(run, "any");
   assert.equal(
-    calls.filter((c) => c.startsWith("pull ")).length,
+    calls.filter((c) => c.startsWith("disable")).length,
     MAX_EVALUATIONS,
   );
   assert.match(logs[0], new RegExp(`${MAX_EVALUATIONS} of ${total}`));

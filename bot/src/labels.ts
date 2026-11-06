@@ -48,10 +48,9 @@ const present = (pr: PullRequest, wanted: string[]) =>
 export function gated(pr: PullRequest, config: BotConfig): Gated {
   if (present(pr, config.ignoreLabels).length > 0)
     return { update: [], merge: [] };
-  const behind = pr.mergeable_state === "behind";
   const mergeable = !pr.draft && pr.auto_merge === null;
   return {
-    update: behind ? present(pr, config.updateLabels) : [],
+    update: present(pr, config.updateLabels),
     merge: mergeable ? present(pr, config.mergeLabels) : [],
   };
 }
@@ -60,13 +59,14 @@ export function decide(
   pr: PullRequest,
   config: BotConfig,
   checked: number,
+  behind: boolean,
   writers: ReadonlySet<string>,
 ): Action[] {
   if (present(pr, config.ignoreLabels).length > 0)
     return pr.auto_merge === null ? [] : [{ kind: "disable_auto_merge" }];
   const { update, merge } = gated(pr, config);
   const actions: Action[] = [];
-  if (update.some((l) => writers.has(l)))
+  if (behind && update.some((l) => writers.has(l)))
     actions.push({ kind: "update_branch" });
   if (merge.some((l) => writers.has(l))) {
     actions.push(
@@ -123,9 +123,9 @@ export async function evaluateOpen(
     run.log(
       `evaluating ${MAX_EVALUATIONS} of ${matching.length} pull requests`,
     );
-  for (const { number } of matching.slice(0, MAX_EVALUATIONS)) {
-    await evaluatePullRequest(run, number).catch((e: unknown) =>
-      run.log(`#${number}: ${e instanceof Error ? e.message : e}`),
+  for (const pr of matching.slice(0, MAX_EVALUATIONS)) {
+    await evaluate(context, pr).catch((e: unknown) =>
+      run.log(`#${pr.number}: ${e instanceof Error ? e.message : e}`),
     );
   }
 }
@@ -167,8 +167,6 @@ function memoBy<T>(compute: (key: string) => Promise<T>) {
   };
 }
 
-// Auto-merge with no required check merges at once, so a label alone would
-// merge code nothing has verified.
 async function requiredChecks(run: Run): Promise<number> {
   const { github, repository, defaultBranch: branch, token } = run;
   const rules = await readable(run, "branch rules", [], () =>
@@ -208,8 +206,20 @@ async function evaluate(
   const writers = await writersOf(context, pr, [...update, ...merge], labeler);
   const needsChecks = merge.some((l) => writers.has(l));
   const checked = needsChecks ? await context.checked() : 0;
-  for (const action of decide(pr, config, checked, writers))
+  const behind =
+    update.some((l) => writers.has(l)) && (await isBehind(run, pr));
+  for (const action of decide(pr, config, checked, behind, writers))
     await perform(context, pr, action);
+}
+
+async function isBehind(run: Run, pr: PullRequest): Promise<boolean> {
+  const { status } = await run.github.compare(
+    run.repository,
+    run.defaultBranch,
+    pr.head.sha,
+    run.token,
+  );
+  return status === "behind" || status === "diverged";
 }
 
 async function writersOf(
