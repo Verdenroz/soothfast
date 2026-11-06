@@ -37,12 +37,14 @@ function fakeGitHub(
   const minted: { installation: number; repository: number; perms: object }[] =
     [];
   const revoked: string[] = [];
+  const reads: number[] = [];
   const github = {
     async mintToken(installation: number, repository: number, perms: object) {
       minted.push({ installation, repository, perms });
       return { token: "ghs_minted", expires_at: "2026-01-01T01:00:00Z" };
     },
     async fileContents() {
+      reads.push(1);
       return "[bot]\nlabels = true\n";
     },
     async openPullRequests(_r: string, base: string) {
@@ -72,7 +74,7 @@ function fakeGitHub(
       revoked.push(token);
     },
   } as unknown as GitHubApi;
-  return { github, calls, minted, revoked };
+  return { github, calls, minted, revoked, reads };
 }
 
 const repository = {
@@ -189,6 +191,29 @@ test("a push to the default branch evaluates open pull requests", async () => {
   const result = await deliver(fake, push, { event: "push" });
   assert.equal(result.status, 202);
   assert.deepEqual(fake.calls, ["list main"]);
+});
+
+test("a push that changes soothfast.toml drops the cached config", async () => {
+  const fake = fakeGitHub();
+  const base = {
+    ref: "refs/heads/main",
+    sender: { login: "alice" },
+    installation: { id: 7 },
+    repository: { ...repository, id: 4242 },
+  };
+  const quiet = {
+    ...base,
+    commits: [{ added: [], modified: ["a"], removed: [] }],
+  };
+  const edit = {
+    ...base,
+    commits: [{ added: [], modified: ["soothfast.toml"], removed: [] }],
+  };
+  await deliver(fake, quiet, { event: "push" });
+  await deliver(fake, quiet, { event: "push" });
+  assert.equal(fake.reads.length, 1);
+  await deliver(fake, edit, { event: "push" });
+  assert.equal(fake.reads.length, 2);
 });
 
 test("a push cancels a queued merge on a do-not-merge pull request", async () => {

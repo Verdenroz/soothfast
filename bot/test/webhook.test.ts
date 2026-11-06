@@ -197,7 +197,35 @@ test("a pull request with no labels is ignored", () => {
 
 test("a push to the default branch re-evaluates the base", () => {
   const work = route("push", payload({ ref: "refs/heads/main" }) as never);
-  assert.deepEqual(work, { kind: "push", target });
+  assert.deepEqual(work, { kind: "push", target, configChanged: true });
+});
+
+const pushed = (commits?: object[]) =>
+  route("push", payload({ ref: "refs/heads/main", commits }) as never) as {
+    configChanged: boolean;
+  };
+
+test("a push reports whether it touches soothfast.toml", () => {
+  const commit = (files: object) => ({
+    added: [],
+    modified: [],
+    removed: [],
+    ...files,
+  });
+  assert.equal(
+    pushed([commit({ modified: ["soothfast.toml"] })]).configChanged,
+    true,
+  );
+  assert.equal(
+    pushed([commit({ removed: ["soothfast.toml"] })]).configChanged,
+    true,
+  );
+  assert.equal(
+    pushed([commit({ added: ["src/lib.rs"] })]).configChanged,
+    false,
+  );
+  assert.equal(pushed([]).configChanged, true);
+  assert.equal(pushed(undefined).configChanged, true);
 });
 
 test("a push to another branch is ignored", () => {

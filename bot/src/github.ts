@@ -18,6 +18,7 @@ export interface InstallationToken {
 }
 
 export interface Repository {
+  id: number;
   default_branch: string;
 }
 

@@ -6,7 +6,12 @@ import {
   type GitHubApi,
   type Repository,
 } from "./github.ts";
-import { evaluateOpen, evaluatePullRequest, type Run } from "./labels.ts";
+import {
+  evaluateOpen,
+  evaluatePullRequest,
+  forgetConfig,
+  type Run,
+} from "./labels.ts";
 import { githubJwks, OidcError, verifyOidc, type JwksLookup } from "./oidc.ts";
 import {
   AUDIENCE,
@@ -178,11 +183,14 @@ async function act(work: Work, env: Env, deps: Deps): Promise<void> {
   const run = makeRun(
     deps,
     token,
+    target.repositoryId,
     target.repository,
     target.defaultBranch,
     (m) => console.log(`${target.repository}: ${m}`),
   );
   try {
+    if (work.kind === "push" && work.configChanged)
+      forgetConfig(target.repositoryId);
     if (work.kind === "pull_request")
       await evaluatePullRequest(run, work.pr, work.labeler);
     else await evaluateOpen(run);
@@ -194,10 +202,18 @@ async function act(work: Work, env: Env, deps: Deps): Promise<void> {
 const makeRun = (
   deps: Deps,
   token: string,
+  repositoryId: number,
   repository: string,
   defaultBranch: string,
   log: Run["log"],
-): Run => ({ github: deps.github, token, repository, defaultBranch, log });
+): Run => ({
+  github: deps.github,
+  token,
+  repositoryId,
+  repository,
+  defaultBranch,
+  log,
+});
 
 let cachedKey: { pem: string; key: CryptoKey } | undefined;
 let cachedSlug: { clientId: string; slug: string } | undefined;
@@ -317,6 +333,7 @@ async function sweep(
     const run = makeRun(
       deps,
       minted.token,
+      repository.id,
       claims.repository,
       repository.default_branch,
       (message) => log.push(message),

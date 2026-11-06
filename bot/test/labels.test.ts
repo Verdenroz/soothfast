@@ -11,6 +11,7 @@ import {
   decide,
   evaluateOpen,
   evaluatePullRequest,
+  forgetConfig,
   gated,
 } from "../src/labels.ts";
 import type { Labeler } from "../src/webhook.ts";
@@ -148,7 +149,10 @@ interface World {
   live?: Partial<PullRequest> & { names?: string[] };
   permissionFailures?: number;
   enableError?: Error;
+  contentsFailures?: number;
 }
+
+let nextRepositoryId = 0;
 
 function fakeRun(world: World) {
   const calls: string[] = [];
@@ -156,9 +160,11 @@ function fakeRun(world: World) {
   const toml = world.toml === undefined ? "[bot]\nlabels = true\n" : world.toml;
   const pulls = world.pulls ?? [];
   let permissionFailures = world.permissionFailures ?? 0;
+  let contentsFailures = world.contentsFailures ?? 0;
   const github = {
     async fileContents(_r: string, path: string, ref: string) {
       calls.push(`contents ${path}@${ref}`);
+      if (contentsFailures-- > 0) throw new GitHubError(502, "bad gateway");
       return toml ?? undefined;
     },
     async openPullRequests(_r: string, base: string) {
@@ -219,6 +225,7 @@ function fakeRun(world: World) {
   const run = {
     github,
     token: "ghs_x",
+    repositoryId: ++nextRepositoryId,
     repository: "acme/widgets",
     defaultBranch: "main",
     log: (message: string) => logs.push(message),
@@ -647,4 +654,35 @@ test("a successful lookup is shared across pull requests", async () => {
   });
   await evaluateOpen(run);
   assert.equal(calls.filter((c) => c === "permission alice").length, 1);
+});
+
+const fetches = (calls: string[]) =>
+  calls.filter((c) => c.startsWith("contents")).length;
+
+test("deliveries within the ttl read soothfast.toml once", async (t) => {
+  let now = 1_000_000;
+  t.mock.method(Date, "now", () => now);
+  const { run, calls } = fakeRun({ toml: null });
+  await evaluateOpen(run);
+  now += 59_000;
+  await evaluateOpen(run);
+  assert.equal(fetches(calls), 1);
+  now += 2_000;
+  await evaluateOpen(run);
+  assert.equal(fetches(calls), 2);
+});
+
+test("a forgotten config is read again", async () => {
+  const { run, calls } = fakeRun({});
+  await evaluateOpen(run);
+  forgetConfig(run.repositoryId);
+  await evaluateOpen(run);
+  assert.equal(fetches(calls), 2);
+});
+
+test("a failed read is not cached", async () => {
+  const { run, calls } = fakeRun({ contentsFailures: 1 });
+  await assert.rejects(evaluateOpen(run));
+  await evaluateOpen(run);
+  assert.equal(fetches(calls), 2);
 });

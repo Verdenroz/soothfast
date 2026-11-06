@@ -17,6 +17,7 @@ interface Gated {
 export interface Run {
   github: GitHubApi;
   token: string;
+  repositoryId: number;
   repository: string;
   defaultBranch: string;
   log: (message: string) => void;
@@ -32,6 +33,15 @@ interface Context {
 // Each pull request costs up to four subrequests; with the fixed overhead of
 // a delivery, six stay under the free plan's cap of 50.
 export const MAX_EVALUATIONS = 6;
+
+const CONFIG_TTL_MS = 60_000;
+const configs = new Map<
+  number,
+  { fetchedAt: number; parsed: ReturnType<typeof parseBotConfig> }
+>();
+
+export const forgetConfig = (repositoryId: number) =>
+  configs.delete(repositoryId);
 
 const WRITE_PERMISSIONS: readonly string[] = ["admin", "maintain", "write"];
 const CHECK_RULES: readonly string[] = [
@@ -121,13 +131,7 @@ function canAct(pr: PullRequest, config: BotConfig): boolean {
 }
 
 async function load(run: Run): Promise<Context | undefined> {
-  const toml = await run.github.fileContents(
-    run.repository,
-    "soothfast.toml",
-    run.defaultBranch,
-    run.token,
-  );
-  const parsed = parseBotConfig(toml ?? "");
+  const parsed = await botConfig(run);
   if (!parsed.ok) {
     run.log(`ignoring labels: ${parsed.reason}`);
     return undefined;
@@ -146,6 +150,20 @@ async function load(run: Run): Promise<Context | undefined> {
       run.github.collaboratorPermission(run.repository, login, run.token),
     ),
   };
+}
+
+async function botConfig(run: Run): Promise<ReturnType<typeof parseBotConfig>> {
+  const hit = configs.get(run.repositoryId);
+  if (hit && Date.now() - hit.fetchedAt < CONFIG_TTL_MS) return hit.parsed;
+  const toml = await run.github.fileContents(
+    run.repository,
+    "soothfast.toml",
+    run.defaultBranch,
+    run.token,
+  );
+  const parsed = parseBotConfig(toml ?? "");
+  configs.set(run.repositoryId, { fetchedAt: Date.now(), parsed });
+  return parsed;
 }
 
 function memoBy<T>(compute: (key: string) => Promise<T>) {
