@@ -11,11 +11,13 @@ use serde_json::Value;
 
 use crate::{invoke, workspace};
 
+mod bot;
 pub mod ci;
 mod detect;
 pub(crate) mod ecosystem;
 mod textdiff;
 
+use bot::{BotLabels, has_bot_table};
 use ci::Ci;
 use ecosystem::{
     Ecosystem, Entry, Project, Settings, Suite, normalize_dir, parse_projects, parse_suites,
@@ -28,25 +30,13 @@ const CALLER_JOB: &str = include_str!("caller_job.yml.tmpl");
 const DOCS_JOB: &str = include_str!("docs_job.yml.tmpl");
 const LABELS_JOB: &str = include_str!("labels_job.yml.tmpl");
 
-/// The labels soothfast acts on, with their colour and description.
-const LABELS: &[(&str, &str, &str)] = &[
-    (
-        "soothfast:merge",
-        "0e8a16",
-        "Merge once the required checks pass",
-    ),
-    (
-        "soothfast:update",
-        "1d76db",
-        "Keep this branch up to date with the default branch",
-    ),
-    (
-        "soothfast:perf-accepted",
-        "fbca04",
-        "The gate's regressions are intended",
-    ),
-    ("do-not-merge", "b60205", "Cancel any queued merge"),
-];
+const MERGE_LABEL: (&str, &str) = ("0e8a16", "Merge once the required checks pass");
+const UPDATE_LABEL: (&str, &str) = (
+    "1d76db",
+    "Keep this branch up to date with the default branch",
+);
+const IGNORE_LABEL: (&str, &str) = ("b60205", "Cancel any queued merge");
+const PERF_ACCEPTED_LABEL: (&str, &str) = ("fbca04", "The gate's regressions are intended");
 
 /// How often the labels job sweeps when nothing has pushed.
 const SCHEDULE: &str = "  schedule:\n    - cron: \"*/30 * * * *\"\n";
@@ -92,6 +82,8 @@ enum Kind {
     Section,
     /// The `[runner]` table, replaced when its labels change.
     Runner,
+    /// The `[bot]` table, appended when absent, then the repo's own.
+    Bot,
     /// The `ci` key of the `[test]` table, set in place.
     TestCi,
     /// The `package` key of the `[docs]` table, set in place.
@@ -148,10 +140,11 @@ impl Scaffold {
                 State::Current
             }
             Kind::Section => State::Differs,
+            Kind::Bot if has_bot_table(text) => State::Current,
             Kind::Runner if labels(text) == labels(&self.content) => State::Current,
             Kind::TestCi if test_ci(text) == test_ci(&self.content) => State::Current,
             Kind::Docs if docs(text) == docs(&self.content) => State::Current,
-            Kind::Runner | Kind::TestCi | Kind::Docs => State::Differs,
+            Kind::Runner | Kind::TestCi | Kind::Docs | Kind::Bot => State::Differs,
         }
     }
 
@@ -187,6 +180,14 @@ impl Scaffold {
                     .find(|l| l.starts_with("package"))
                     .unwrap_or_default();
                 with_key(current, "docs", "package", line)
+            }
+            Kind::Bot => {
+                let mut text = current.trim_end().to_string();
+                if !text.is_empty() {
+                    text.push_str("\n\n");
+                }
+                text.push_str(&self.content);
+                text
             }
             Kind::Section | Kind::Runner => {
                 let mut text = without_tables(current, self.kind.tables());
@@ -318,6 +319,8 @@ struct Workspace {
     docs_packages: Vec<String>,
     action: String,
     bot: bool,
+    /// Whether `[bot] labels = true` is scaffolded.
+    labels: bool,
     java: String,
     node: String,
 }
@@ -403,10 +406,11 @@ pub fn run(args: &[String]) -> i32 {
             other => return err(&format!("unknown init arg {other:?}")),
         }
     }
-    let (root, ws, notes) = match target(flags, dir, ci, tools, &bench, check, bot) {
+    let (root, mut ws, notes) = match target(flags, dir, ci, tools, &bench, check, bot) {
         Ok(t) => t,
         Err(e) => return err(&e),
     };
+    ws.labels = labels;
     for note in &notes {
         println!("{note}");
     }
@@ -430,7 +434,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     println!("init: done. Next: {}", next_step(ws.rust));
     if labels {
-        return create_labels();
+        return create_labels(&root);
     }
     0
 }
@@ -483,11 +487,17 @@ fn next_step(rust: bool) -> &'static str {
     }
 }
 
-/// Create or refresh the labels on the repository `gh` resolves here.
-fn create_labels() -> i32 {
-    for (name, color, description) in LABELS {
+/// Create or refresh the labels on the repository `gh` resolves here, named
+/// as `[bot]` configures them.
+fn create_labels(root: &Path) -> i32 {
+    let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
+    let configured = match BotLabels::parse(&text) {
+        Ok(labels) => labels,
+        Err(e) => return err(&format!("soothfast.toml: {e}")),
+    };
+    for (name, (color, description)) in label_set(&configured) {
         let status = Command::new("gh")
-            .args(["label", "create", name, "--force", "--color", color])
+            .args(["label", "create", &name, "--force", "--color", color])
             .args(["--description", description])
             .status();
         match status {
@@ -496,6 +506,20 @@ fn create_labels() -> i32 {
         }
     }
     0
+}
+
+/// Every label soothfast acts on, with its colour and description.
+fn label_set(labels: &BotLabels) -> Vec<(String, (&'static str, &'static str))> {
+    let group = |names: &[String], look| -> Vec<(String, (&'static str, &'static str))> {
+        names.iter().map(|n| (n.clone(), look)).collect()
+    };
+    [
+        group(&labels.merge, MERGE_LABEL),
+        group(&labels.update, UPDATE_LABEL),
+        vec![("soothfast:perf-accepted".to_string(), PERF_ACCEPTED_LABEL)],
+        group(&labels.ignore, IGNORE_LABEL),
+    ]
+    .concat()
 }
 
 /// The project root, what its scaffold derives from, and a line per
@@ -558,6 +582,7 @@ fn target(
         docs_packages,
         action: action_ref(&existing, tools.action.as_deref()),
         bot,
+        labels: false,
         java: tools
             .java
             .or_else(|| pinned(&existing, "java"))
@@ -684,6 +709,7 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
         let path = match f.kind {
             Kind::Section => format!("{} [[project]]", f.path.display()),
             Kind::Runner => format!("{} [runner]", f.path.display()),
+            Kind::Bot => format!("{} [bot]", f.path.display()),
             Kind::TestCi => format!("{} [test] ci", f.path.display()),
             Kind::Docs => format!("{} [docs] package", f.path.display()),
             _ => f.path.display().to_string(),
@@ -775,6 +801,13 @@ fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
             path: "soothfast.toml".into(),
             kind: Kind::Runner,
             content: ws.ci.runner_section(),
+        });
+    }
+    if ws.labels {
+        files.push(Scaffold {
+            path: "soothfast.toml".into(),
+            kind: Kind::Bot,
+            content: "[bot]\nlabels = true\n".into(),
         });
     }
     if !ws.docs_packages.is_empty() {
@@ -1157,6 +1190,10 @@ features = "a"
 [[spec]]
 path = "api.yaml"
 
+[bot]
+labels = true
+merge_labels = ["ship"]
+
 [[sdk]]
 spec = "api.yaml"
 out = "sdk"
@@ -1189,6 +1226,7 @@ cmd = "npm test"
             Some("4")
         );
         assert!(crate::changelog_config::parse(SHARED_TOML).is_ok());
+        assert_eq!(BotLabels::parse(SHARED_TOML).unwrap().merge, ["ship"]);
         assert_eq!(
             crate::spec_config::parse(SHARED_TOML)
                 .unwrap()
@@ -1213,6 +1251,7 @@ cmd = "npm test"
             docs_packages: docs.map(String::from).into_iter().collect(),
             action: "Verdenroz/soothfast@v0".into(),
             bot: false,
+            labels: false,
             java: "21".into(),
             node: "22".into(),
         }
@@ -1298,6 +1337,49 @@ cmd = "npm test"
         assert!(bot.contains("\n  labels:\n"));
         assert!(bot.contains("changelog: \"true\""));
         assert!(!bot.contains("@@"));
+    }
+
+    #[test]
+    fn labels_scaffold_a_bot_table_once_and_leave_an_existing_one() {
+        let root = scratch("bot-table");
+        let w = Workspace {
+            labels: true,
+            ..ws(&[], None)
+        };
+        let files = scaffold(&w);
+        assert_eq!(report(&root, &files, true, false), 1);
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert!(text.ends_with("\n\n[bot]\nlabels = true\n"));
+        assert_eq!(report(&root, &files, true, false), 0);
+        let own = "[bot]\nlabels = false\n";
+        std::fs::write(root.join("soothfast.toml"), own).unwrap();
+        assert_eq!(report(&root, &files, false, false), 0);
+        assert_eq!(
+            std::fs::read_to_string(root.join("soothfast.toml")).unwrap(),
+            own
+        );
+    }
+
+    #[test]
+    fn no_labels_flag_scaffolds_no_bot_table() {
+        let files = scaffold(&ws(&[], None));
+        assert!(files.iter().all(|f| f.kind != Kind::Bot));
+    }
+
+    #[test]
+    fn the_label_set_follows_the_configured_names() {
+        let configured = BotLabels::parse("[bot]\nmerge_labels = [\"ship\"]\n").unwrap();
+        let names: Vec<String> = label_set(&configured).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(
+            names,
+            [
+                "ship",
+                "soothfast:update",
+                "soothfast:perf-accepted",
+                "do-not-merge"
+            ]
+        );
     }
 
     #[test]
