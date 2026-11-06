@@ -116,6 +116,7 @@ function build(entries: Map<string, Value>): BotConfig {
       throw new ConfigError(`[bot] ${key} must be ${expected}`);
     return value;
   };
+  // perf_accepted_labels is read by the gate, not the broker.
   const config = {
     labels: take("labels", DEFAULTS.labels, isFlag, "true or false"),
     mergeLabels: take("merge_labels", DEFAULTS.mergeLabels, isList, LIST),
@@ -128,6 +129,7 @@ function build(entries: Map<string, Value>): BotConfig {
       "squash, merge or rebase",
     ),
   };
+  take("perf_accepted_labels", [], isList, LIST);
   if (rest.size > 0)
     throw new ConfigError(
       `[bot] has unknown keys: ${[...rest.keys()].join(", ")}`,
