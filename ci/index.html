@@ -270,7 +270,7 @@ installed on is refused.</p>
 <tr><td><code>bot-token</code></td><td>none</td><td>Bring your own soothfast-bot installation token; skips the broker.</td></tr>
 <tr><td><code>bot-slug</code></td><td><code>soothfast-bot</code></td><td>App slug <code>bot-token</code> belongs to, for the commit author.</td></tr>
 <tr><td><code>broker</code></td><td>built in</td><td>Token broker URL.</td></tr>
-<tr><td><code>labels</code></td><td><code>false</code></td><td>On default-branch pushes and schedules, act on pull request labels as soothfast-bot (see <a href="#labels">Labels</a>).</td></tr>
+<tr><td><code>labels</code></td><td><code>true</code></td><td>On default-branch pushes and schedules, ask the broker to reconcile pull request labels, annotating the run instead of failing when it cannot; <code>&quot;false&quot;</code> turns it off (see <a href="#labels">Labels</a>).</td></tr>
 <tr><td><code>shard</code></td><td>none</td><td><code>I/N</code> to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own.</td></tr>
 <tr><td><code>comment</code></td><td><code>true</code></td><td>Post the pull request gate comment. <code>false</code> posts nothing and records a result per package for <code>cargo soothfast verdict merge</code>.</td></tr>
 <tr><td><code>cache</code></td><td><code>true</code></td><td>Restore and save <code>.soothfast/runs</code>, <code>items</code> and <code>maps</code>, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved.</td></tr>
@@ -386,25 +386,100 @@ macro or build script reads without saying so, the linker and C compiler a
 build script invokes, and anything a bench reads at run time besides its
 working directory and <code>CARGO_MANIFEST_DIR</code>. The store keeps 512 MiB at most.</p>
 <h2 id="labels">Labels<a class="anchor" href="#labels" aria-label="Link to this section">#</a></h2>
-<p>With <code>labels: &quot;true&quot;</code> on a job that runs on default-branch pushes and on a
-schedule, soothfast-bot sweeps the open pull requests:</p>
+<p>soothfast-bot acts on pull request labels the moment they change. GitHub
+delivers the App's webhooks to the broker, which reads <code>[bot]</code> from
+<code>soothfast.toml</code> on the default branch (never the pull request's copy) and
+acts as soothfast-bot:</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Label</th><th>Effect</th></tr></thead>
 <tbody>
-<tr><td><code>soothfast:merge</code></td><td>Queue auto-merge (squash) behind the required checks. Refused when the default branch requires no status check, since the merge would happen at once.</td></tr>
+<tr><td><code>soothfast:merge</code></td><td>Enable auto-merge behind the required checks, when a writer applies the label. Refused when the default branch requires no status check, since the merge would happen at once.</td></tr>
 <tr><td><code>soothfast:update</code></td><td>Merge the default branch into a pull request that fell behind.</td></tr>
 <tr><td><code>do-not-merge</code></td><td>Cancel a queued auto-merge and leave the pull request alone.</td></tr>
 </tbody>
 </table></div>
+<p>A label counts only when the person who last applied it can write to the
+repository, so neither a fork nor the Triage role can merge a pull request
+through soothfast-bot. <code>do-not-merge</code> counts from anyone, since it only holds
+a merge back. Drafts and pull requests that already have auto-merge enabled
+are skipped. GitHub turns auto-merge off when someone without write access
+pushes to the branch, so later pushes and sweeps never turn it back on:
+to queue the merge again, remove <code>soothfast:merge</code> and add it back. The
+merge is tied to the commit the label was applied to: if the branch moves
+or the label comes off before the bot acts, it queues nothing. The bot never
+watches statuses; GitHub's auto-merge, rulesets and merge queue decide when
+the merge happens.</p>
 <p>A pull request gate labelled <code>soothfast:perf-accepted</code> reports its
 regressions in the comment and passes; label the pull request, then re-run
 the failed gate. The label waives regressions only, never a gate that
-errored. A label counts only when the person who last applied it can write
-to the repository, so neither a fork nor the Triage role can merge a pull
-request or waive its regression through soothfast-bot. <code>do-not-merge</code> counts
-from anyone, since it only holds a merge back. The sweep runs on events the
-broker mints tokens for, so no <code>pull_request</code> run gets a write token. <code>cargo soothfast init --bot --labels</code> writes the job and
-creates the labels.</p>
+errored, and it needs a writer too. <code>perf_accepted_labels</code> renames it, and
+the gate reads that list from <code>soothfast.toml</code> on the pull request's base
+branch, never the pull request's copy: a pull request that could rename the
+waiver to a label a maintainer applied for another reason would waive its
+own regressions. When the base branch's table cannot be read (an older
+<code>cargo soothfast</code>, no file there, a malformed table), the gate warns and
+accepts only <code>soothfast:perf-accepted</code>.</p>
+<h3 id="configuration">Configuration<a class="anchor" href="#configuration" aria-label="Link to this section">#</a></h3>
+<p>The broker acts only on a <code>[bot]</code> table with <code>labels = true</code> in
+<code>soothfast.toml</code>; repositories without it are left alone. <code>cargo soothfast
+init</code> turns the bot on: it writes the table, writes the reconcile job and
+creates the labels with <code>gh</code>; if <code>gh</code> cannot, init warns and <code>cargo soothfast
+init --labels</code> creates them later. <code>--no-labels</code> skips those three, and
+<code>--no-bot</code> skips the bot altogether (no schedule, no labels job, no
+changelog regeneration).</p>
+<p>Two one-time steps remain: install the <a href="https://github.com/apps/soothfast-bot">soothfast-bot
+App</a> on the repository, and let the
+first run create the <code>soothfast-bot</code> environment. Until the App is
+installed the broker refuses to mint a token; the action warns and lands
+nothing as the bot instead of failing the job.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[bot]</span>
+<span class="tok-ty">labels </span>= true                       # default false
+<span class="tok-ty">merge_labels </span>=<span class="tok-str"> [&quot;soothfast:merge&quot;]</span>
+<span class="tok-ty">update_labels </span>=<span class="tok-str"> [&quot;soothfast:update&quot;]</span>
+<span class="tok-ty">ignore_labels </span>=<span class="tok-str"> [&quot;do-not-merge&quot;]</span>
+<span class="tok-ty">perf_accepted_labels </span>=<span class="tok-str"> [&quot;soothfast:perf-accepted&quot;]  # read by the gate, not the broker</span>
+<span class="tok-ty">merge_method </span>=<span class="tok-str"> &quot;squash&quot;             # squash | merge | rebase</span>
+
+<span class="tok-kw">[[bot.label]]                       # optional, one per label; read by init only</span>
+<span class="tok-ty">name </span>=<span class="tok-str"> &quot;soothfast:merge&quot;</span>
+<span class="tok-ty">color </span>=<span class="tok-str"> &quot;0e8a16&quot;                    # 6 hex digits, no &#39;#&#39;</span>
+<span class="tok-ty">description </span>=<span class="tok-str"> &quot;Merge once the required checks pass&quot;</span></code></pre></figure>
+<p><code>cargo soothfast init --labels</code> (implied by <code>--bot</code>) creates each label with
+the colour and description of the <code>[[bot.label]]</code> entry that names it, else
+a default for its role. A bad colour fails <code>--labels</code> and only warns when
+<code>--bot</code> implied it; an entry naming a label no role uses warns. The broker
+ignores <code>[[bot.label]]</code>. <code>cargo soothfast labels [--ref REF] [--role ROLE]</code>
+prints the configured names.</p>
+<p>A malformed <code>[bot]</code> table (an unknown key, a wrong type, a duplicate) makes
+the bot act on nothing and log why. Deleting the head branch stays the
+repository's "Automatically delete head branches" setting.</p>
+<h3 id="operator-steps">Operator steps<a class="anchor" href="#operator-steps" aria-label="Link to this section">#</a></h3>
+<p>Once per broker deployment (see <code>bot/</code>):</p>
+<ol>
+<li>In the App's settings, set the webhook URL to <code>https://&lt;worker&gt;/webhook</code>, choose a secret, and subscribe to the Pull request and Push events.</li>
+<li>Store the same secret in the Worker: `wrangler secret put GITHUB_WEBHOOK_SECRET<code>. Without it</code>/webhook` answers 500.</li>
+<li>The App needs Contents write, Pull requests write and Metadata read.</li>
+</ol>
+<h3 id="reconciling-missed-deliveries">Reconciling missed deliveries<a class="anchor" href="#reconciling-missed-deliveries" aria-label="Link to this section">#</a></h3>
+<p>GitHub does not redeliver a webhook that failed. On default-branch pushes and
+schedules the action asks the broker to sweep the open pull requests: it
+cancels queued merges held by <code>do-not-merge</code> and updates labelled branches,
+but never enables a merge. <code>labels</code> defaults to <code>&quot;true&quot;</code>; set <code>labels:
+&quot;false&quot;</code> to turn the sweep off, as the workflows <code>init</code> writes do for every
+job but the labels job.</p>
+<p>The sweep is best effort, since webhooks are the primary path, and it never
+fails the job: a missing <code>jq</code>, a job without <code>id-token: write</code> and
+<code>environment: soothfast-bot</code>, or a <code>bot-token</code> leaves a notice, and an
+unreachable or refusing broker leaves a warning with the broker's reason.</p>
+<h3 id="limits">Limits<a class="anchor" href="#limits" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Only pull requests into the default branch are evaluated. For one retargeted onto it, the next sweep handles its update label; apply <code>soothfast:merge</code> again to queue it.</li>
+<li>A push or sweep evaluates at most 6 pull requests, most recently updated first among those the bot could act on, to stay inside the Workers subrequest limit. The broker logs when it truncates.</li>
+<li>Branch protection that the App cannot read counts as no required checks, so <code>soothfast:merge</code> is refused rather than risk an immediate merge.</li>
+<li>On a merge-queue branch the bot relies on GitHub's auto-merge to enqueue the pull request; this has not been exercised against a live queue.</li>
+</ul>
+<p>With <code>bot-token</code> there is no broker, so the label sweep leaves a notice and
+does nothing; only a broker, hosted or self-hosted, acts on labels.</p>
 <h2 id="bringing-your-own-token">Bringing your own token<a class="anchor" href="#bringing-your-own-token" aria-label="Link to this section">#</a></h2>
 <p>If you would rather not depend on the broker, install your own GitHub App
 with Contents write, Pull requests write, and Metadata read, mint an
@@ -427,8 +502,8 @@ plain pull request gate needs <code>cargo</code> and one of <code>jq</code> or <
 default branch). The rest is needed only by the step that uses it, and each
 fails naming the tool:</p>
 <ul>
-<li><code>gh</code>, to comment with the job token, to act on labels and to land regenerated files. Without it the gate still runs and only skips the <code>soothfast:perf-accepted</code> check, with a warning.</li>
-<li><code>jq</code>, to comment or mint a token as soothfast-bot, and to find the bench packages when none are named.</li>
+<li><code>gh</code>, to comment with the job token and to land regenerated files. Without it the gate still runs and only skips the perf-accepted label check, with a warning.</li>
+<li><code>jq</code>, to comment, sweep labels or mint a token as soothfast-bot, and to find the bench packages when none are named.</li>
 <li><code>valgrind</code>, for the callgrind fallback on machines without hardware performance counters. The step installs it with <code>apt-get</code> when it runs as root or passwordless <code>sudo</code> is available, and otherwise warns and carries on. A runner with performance counters does not need it.</li>
 <li><code>rustup</code>, for a nightly or pinned rustdoc toolchain. <code>dtolnay/rust-toolchain</code> installs it when it is missing.</li>
 </ul>
@@ -591,8 +666,9 @@ evaluated)</code>. <code>run.yml</code> sets <code>CARGO_TERM_COLOR: never</code
 <p>Branch protection needs only the <code>verdict</code> check, named <code>&lt;caller job id&gt; /
 verdict</code>. The caller <code>cargo soothfast init</code> writes names its job <code>soothfast</code>,
 so a repo set up with init requires <code>soothfast / verdict</code>. The check fails when any project
-regressed or errored, or recorded no result; a <code>soothfast:perf-accepted</code> label
-applied by a writer waives regressions, never errors or docs drift.</p>
+regressed or errored, or recorded no result; a perf-accepted label
+(<code>soothfast:perf-accepted</code> unless <code>perf_accepted_labels</code> renames it) applied by
+a writer waives regressions, never errors or docs drift.</p>
 <h2 id="the-gate-on-its-own">The gate on its own<a class="anchor" href="#the-gate-on-its-own" aria-label="Link to this section">#</a></h2>
 <p>The gate, with its comment and triage upload, is also a reusable workflow for
 callers that want it as a separate job or a matrix over packages:</p>
@@ -639,6 +715,14 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l3" href="#cache-budget">Cache budget</a></li>
   
     <li><a class="toc-l2" href="#labels">Labels</a></li>
+  
+    <li><a class="toc-l3" href="#configuration">Configuration</a></li>
+  
+    <li><a class="toc-l3" href="#operator-steps">Operator steps</a></li>
+  
+    <li><a class="toc-l3" href="#reconciling-missed-deliveries">Reconciling missed deliveries</a></li>
+  
+    <li><a class="toc-l3" href="#limits">Limits</a></li>
   
     <li><a class="toc-l2" href="#bringing-your-own-token">Bringing your own token</a></li>
   
