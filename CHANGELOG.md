@@ -16,6 +16,10 @@
 - Turn the bot and labels on by default in init (#355)
 - Act on soothfast labels from App webhooks (#354)
 
+### 🐛 Fixes
+
+- Merge green PRs, cache config, set up labels beside caller workflows (#359)
+
 ### 📦 Dependencies
 
 - Bump actions and workers-types together (#352)
