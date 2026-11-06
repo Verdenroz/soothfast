@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { GitHubApi, IssueComment } from "../src/github.ts";
+import {
+  GitHubError,
+  type GitHubApi,
+  type IssueComment,
+} from "../src/github.ts";
 import { handle, type Env } from "../src/index.ts";
 import {
   KID,
@@ -11,6 +15,8 @@ import {
   toPem,
   type TestKeys,
 } from "./keys.ts";
+
+const ctx = { waitUntil: () => {} };
 
 let keys: TestKeys;
 let env: Env;
@@ -23,6 +29,7 @@ test.before(async () => {
   env = {
     GITHUB_APP_CLIENT_ID: "Iv1.abc",
     GITHUB_APP_PRIVATE_KEY: toPem("PRIVATE KEY", pkcs8),
+    GITHUB_WEBHOOK_SECRET: "hook-secret",
   };
 });
 
@@ -33,6 +40,7 @@ interface Fake {
   compared: string[];
   comments: IssueComment[];
   posted: { kind: "create" | "update"; body: string }[];
+  disabled: string[];
 }
 
 function fakeGitHub(
@@ -42,6 +50,8 @@ function fakeGitHub(
     compareStatus?: string;
     comments?: IssueComment[];
     tagObjects?: Record<string, string>;
+    toml?: string;
+    pulls?: object[];
   } = {},
 ): Fake {
   const fake: Fake = {
@@ -50,6 +60,7 @@ function fakeGitHub(
     compared: [],
     comments: opts.comments ?? [],
     posted: [],
+    disabled: [],
     github: {
       async installationFor() {
         return opts.installed === false ? undefined : { id: 7 };
@@ -88,6 +99,15 @@ function fakeGitHub(
           body,
           html_url: `https://github.com/acme/mylib/pull/7#issuecomment-${id}`,
         };
+      },
+      async fileContents() {
+        return opts.toml;
+      },
+      async openPullRequests() {
+        return (opts.pulls ?? []) as never;
+      },
+      async disableAutoMerge(id) {
+        fake.disabled.push(id);
       },
       async revoke(token) {
         fake.revoked.push(token);
@@ -134,7 +154,7 @@ async function request(
     github: fake.github,
     now: () => NOW,
   };
-  const res = await handle(req, env, deps);
+  const res = await handle(req, env, deps, ctx);
   return { status: res.status, body: (await res.json()) as Body };
 }
 
@@ -340,18 +360,25 @@ test("an invalid signature is 401", async () => {
 test("other routes are 404 and missing bearer is 401", async () => {
   const fake = fakeGitHub();
   const deps = { jwks: async () => undefined, github: fake.github };
-  const get = await handle(new Request("https://bot.example/token"), env, deps);
+  const get = await handle(
+    new Request("https://bot.example/token"),
+    env,
+    deps,
+    ctx,
+  );
   assert.equal(get.status, 404);
   const other = await handle(
     new Request("https://bot.example/other", { method: "POST" }),
     env,
     deps,
+    ctx,
   );
   assert.equal(other.status, 404);
   const noAuth = await handle(
     new Request("https://bot.example/comment", { method: "POST" }),
     env,
     deps,
+    ctx,
   );
   assert.equal(noAuth.status, 401);
 });
@@ -361,12 +388,79 @@ test("a broker without its secrets says so", async () => {
   const deps = { jwks: async () => undefined, github: fake.github };
   const res = await handle(
     new Request("https://bot.example/token", { method: "POST" }),
-    { GITHUB_APP_CLIENT_ID: "", GITHUB_APP_PRIVATE_KEY: "" },
+    {
+      GITHUB_APP_CLIENT_ID: "",
+      GITHUB_APP_PRIVATE_KEY: "",
+      GITHUB_WEBHOOK_SECRET: "",
+    },
     deps,
+    ctx,
   );
   assert.equal(res.status, 500);
   assert.match(
     ((await res.json()) as { reason: string }).reason,
     /not configured/,
   );
+});
+
+const sweepable = {
+  toml: "[bot]\nlabels = true\n",
+  pulls: [
+    {
+      number: 3,
+      node_id: "PR_node3",
+      draft: false,
+      labels: [{ name: "do-not-merge" }],
+      auto_merge: {},
+      head: { sha: "abc123" },
+    },
+  ],
+};
+
+test("a sweep acts on open pull requests, returns its log and revokes", async () => {
+  const fake = fakeGitHub(sweepable);
+  const { status, body } = await request({}, fake, { route: "/sweep" });
+  assert.equal(status, 200);
+  assert.deepEqual((body as { log: string[] }).log, [
+    "#3: auto-merge cancelled",
+  ]);
+  assert.deepEqual(fake.disabled, ["PR_node3"]);
+  assert.deepEqual(fake.minted, [
+    { contents: "write", pull_requests: "write" },
+  ]);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a sweep from a schedule run is served", async () => {
+  const fake = fakeGitHub(sweepable);
+  const { status } = await request({ event_name: "schedule" }, fake, {
+    route: "/sweep",
+  });
+  assert.equal(status, 200);
+});
+
+test("a sweep refuses pull_request runs without minting", async () => {
+  const fake = fakeGitHub(sweepable);
+  const { status, body } = await request(pr, fake, { route: "/sweep" });
+  assert.equal(status, 403);
+  assert.match(body.reason ?? "", /\/sweep serves/);
+  assert.deepEqual(fake.minted, []);
+});
+
+test("a sweep from a non-default branch is refused and revoked", async () => {
+  const fake = fakeGitHub({ ...sweepable, defaultBranch: "master" });
+  const { status, body } = await request({}, fake, { route: "/sweep" });
+  assert.equal(status, 403);
+  assert.match(body.reason ?? "", /not the default branch/);
+  assert.deepEqual(fake.disabled, []);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a sweep revokes its token when evaluation fails", async () => {
+  const fake = fakeGitHub(sweepable);
+  fake.github.openPullRequests = async () => {
+    throw new GitHubError(500, "boom");
+  };
+  await assert.rejects(request({}, fake, { route: "/sweep" }), GitHubError);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
 });

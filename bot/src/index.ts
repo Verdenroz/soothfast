@@ -4,6 +4,7 @@ import {
   githubApi,
   importPrivateKey,
   type GitHubApi,
+  type Repository,
 } from "./github.ts";
 import { evaluateOpen, evaluatePullRequest, type Run } from "./labels.ts";
 import { githubJwks, OidcError, verifyOidc, type JwksLookup } from "./oidc.ts";
@@ -78,7 +79,7 @@ export async function handle(
   }
   const route = request.method === "POST" ? new URL(request.url).pathname : "";
   if (route === "/webhook") return webhook(request, env, deps, ctx);
-  if (route !== "/token" && route !== "/comment")
+  if (route !== "/token" && route !== "/comment" && route !== "/sweep")
     return json(404, { reason: "not found" });
 
   const authorization = request.headers.get("authorization") ?? "";
@@ -96,6 +97,13 @@ export async function handle(
 
   const policy = decideClaims(claims);
   if (!policy.ok) return denied(403, policy.reason, claims);
+  if (route === "/sweep" && policy.mode !== "land") {
+    return denied(
+      403,
+      "/sweep serves push, schedule and workflow_dispatch runs only",
+      claims,
+    );
+  }
   if (route === "/token" && policy.mode !== "land") {
     return denied(
       403,
@@ -115,7 +123,10 @@ export async function handle(
 
   const auth = await authenticate(claims, policy.mode, env, deps);
   if (auth instanceof Response) return auth;
-  return body ? comment(claims, body, auth, deps) : land(claims, auth, deps);
+  if (body) return comment(claims, body, auth, deps);
+  return route === "/sweep"
+    ? sweep(claims, auth, deps)
+    : land(claims, auth, deps);
 }
 
 async function webhook(
@@ -238,7 +249,11 @@ async function land(
   minted: Minted,
   deps: Deps,
 ): Promise<Response> {
-  const ref = await decideRef(claims, minted.token, deps);
+  const repository = await deps.github.repository(
+    claims.repository,
+    minted.token,
+  );
+  const ref = await decideRef(claims, minted.token, deps, repository);
   if (!ref.ok) {
     await revoke(minted.token, deps);
     return denied(403, ref.reason, claims);
@@ -254,8 +269,8 @@ async function decideRef(
   claims: OidcClaims,
   token: string,
   deps: Deps,
+  repository: Repository,
 ): Promise<Decision> {
-  const repository = await deps.github.repository(claims.repository, token);
   if (claims.ref.startsWith("refs/tags/")) {
     // An annotated tag's sha names the tag object; judge the commit under it.
     // Tag objects are immutable, so peeling keeps the sha claim authoritative.
@@ -271,6 +286,35 @@ async function decideRef(
     return decideTag(claims.ref, comparison.status);
   }
   return decideBranch(claims.ref, repository.default_branch);
+}
+
+async function sweep(
+  claims: OidcClaims,
+  minted: Minted,
+  deps: Deps,
+): Promise<Response> {
+  try {
+    const repository = await deps.github.repository(
+      claims.repository,
+      minted.token,
+    );
+    const ref = await decideRef(claims, minted.token, deps, repository);
+    if (!ref.ok) return denied(403, ref.reason, claims);
+    const log: string[] = [];
+    await evaluateOpen(
+      {
+        github: deps.github,
+        token: minted.token,
+        repository: claims.repository,
+        defaultBranch: repository.default_branch,
+        log: (message) => log.push(message),
+      },
+      "any",
+    );
+    return json(200, { log });
+  } finally {
+    await revoke(minted.token, deps);
+  }
 }
 
 // The job never sees this token: the broker posts on its behalf and revokes.
