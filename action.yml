@@ -124,10 +124,12 @@ inputs:
     default: ""
   labels:
     description: >-
-      On default-branch pushes and schedules, act on the soothfast labels of
-      open pull requests as soothfast-bot: `soothfast:merge` queues
-      auto-merge behind the required checks, `do-not-merge` cancels it, and
-      `soothfast:update` brings a pull request that fell behind up to date.
+      On default-branch pushes and schedules, ask the soothfast-bot broker to
+      reconcile the soothfast labels of open pull requests: `do-not-merge`
+      cancels a queued auto-merge and `soothfast:update` brings a pull
+      request that fell behind up to date. `soothfast:merge` acts only when
+      a writer applies it, never on a sweep. Needs the broker, so it does
+      nothing with `bot-token`.
       A pull request gate labelled `soothfast:perf-accepted` reports its
       regressions without failing, whatever this is set to.
     required: false
@@ -614,20 +616,12 @@ runs:
         path: .soothfast/bins
         key: ${{ steps.bin-key.outputs.prefix }}-${{ github.ref_name }}-${{ github.sha }}
 
-    - name: Mint a soothfast-bot token for labels
-      if: steps.prepare.outputs.sweep == 'true' && inputs.bot-token == '' && steps.lanes.outputs.active == 'false'
-      id: sweep-bot
-      shell: bash
-      env:
-        BROKER: ${{ inputs.broker }}
-      run: "$GITHUB_ACTION_PATH/action/bot-token.sh"
-    - name: Act on pull request labels
+    - name: Reconcile pull request labels
       if: steps.prepare.outputs.sweep == 'true' && steps.lanes.outputs.active == 'false'
       shell: bash
       env:
-        TOKEN: ${{ inputs.bot-token || steps.sweep-bot.outputs.token }}
-        DEFAULT_BRANCH: ${{ steps.prepare.outputs.default_branch }}
-        REVOKE: ${{ inputs.bot-token == '' }}
+        BOT_TOKEN: ${{ inputs.bot-token }}
+        BROKER: ${{ inputs.broker }}
       run: "$GITHUB_ACTION_PATH/action/sweep.sh"
 
     - name: Regenerate derived files

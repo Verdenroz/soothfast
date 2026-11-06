@@ -39,7 +39,6 @@ echo "default_branch=$default" >>"$GITHUB_OUTPUT"
 sweep=false
 if [ "${LABELS:-false}" = true ] && [ "${GITHUB_EVENT_NAME:-}" != pull_request ] && [ "$on_default" = true ]; then
   sweep=true
-  need gh
 fi
 echo "sweep=$sweep" >>"$GITHUB_OUTPUT"
 # Shard 1 of a matrix records every item for all of them.

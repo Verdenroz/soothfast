@@ -1,3 +1,4 @@
+import type { MergeMethod } from "./config.ts";
 import {
   base64ToBytes,
   bytesToBase64Url,
@@ -28,6 +29,31 @@ export interface IssueComment {
   id: number;
   body: string;
   html_url: string;
+}
+
+export interface PullRequest {
+  number: number;
+  node_id: string;
+  draft: boolean;
+  labels: { name: string }[];
+  auto_merge: object | null;
+  head: { sha: string };
+}
+
+interface IssueEvent {
+  event: string;
+  label?: { name: string };
+  actor?: { login: string };
+}
+
+interface BranchRule {
+  type: string;
+}
+
+interface BranchProtection {
+  protection?: {
+    required_status_checks?: { contexts?: string[]; checks?: unknown[] };
+  };
 }
 
 export class GitHubError extends Error {
@@ -78,6 +104,56 @@ export interface GitHubApi {
     body: string,
     token: string,
   ): Promise<IssueComment>;
+  fileContents(
+    repository: string,
+    path: string,
+    ref: string,
+    token: string,
+  ): Promise<string | undefined>;
+  pullRequest(
+    repository: string,
+    number: number,
+    token: string,
+  ): Promise<PullRequest>;
+  openPullRequests(
+    repository: string,
+    base: string,
+    token: string,
+  ): Promise<PullRequest[]>;
+  lastLabeler(
+    repository: string,
+    issue: number,
+    label: string,
+    token: string,
+  ): Promise<string | undefined>;
+  collaboratorPermission(
+    repository: string,
+    login: string,
+    token: string,
+  ): Promise<string>;
+  branchRules(
+    repository: string,
+    branch: string,
+    token: string,
+  ): Promise<BranchRule[]>;
+  branchProtection(
+    repository: string,
+    branch: string,
+    token: string,
+  ): Promise<BranchProtection>;
+  updateBranch(
+    repository: string,
+    number: number,
+    expectedHeadSha: string,
+    token: string,
+  ): Promise<void>;
+  enableAutoMerge(
+    nodeId: string,
+    method: MergeMethod,
+    expectedHeadOid: string,
+    token: string,
+  ): Promise<void>;
+  disableAutoMerge(nodeId: string, token: string): Promise<void>;
   revoke(token: string): Promise<void>;
   appSlug(appJwt: string): Promise<string>;
 }
@@ -168,6 +244,16 @@ function parseBody(text: string): unknown {
   }
 }
 
+const lastPage = (link: string | null) =>
+  Number(/<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/.exec(link ?? "")?.[1] ?? 1);
+
+function labeledBy(events: IssueEvent[], label: string): string | undefined {
+  return [...events]
+    .reverse()
+    .find((e) => e.event === "labeled" && e.label?.name === label)?.actor
+    ?.login;
+}
+
 export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
   const call = async <T>(
     method: string,
@@ -189,6 +275,7 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
     return {
       status: response.status,
       json: parseBody(await response.text()) as T,
+      link: response.headers.get("link"),
     };
   };
   const expectOk = <T>(result: { status: number; json: T }): T => {
@@ -198,6 +285,31 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
       throw new GitHubError(result.status, message);
     }
     return result.json;
+  };
+  const paginate = async <T>(path: string, token: string) => {
+    const pages: T[][] = [];
+    for (let page = 1; ; page++) {
+      const separator = path.includes("?") ? "&" : "?";
+      const url = `${path}${separator}per_page=100&page=${page}`;
+      const batch = expectOk(await call<T[]>("GET", url, token));
+      pages.push(batch);
+      if (batch.length < 100) break;
+    }
+    return pages.flat();
+  };
+  const graphql = async (
+    query: string,
+    variables: Record<string, string>,
+    token: string,
+  ) => {
+    const result = await call<{ errors?: { message: string }[] }>(
+      "POST",
+      "/graphql",
+      token,
+      { query, variables },
+    );
+    const errors = expectOk(result)?.errors;
+    if (errors?.length) throw new GitHubError(result.status, errors[0].message);
   };
   return {
     async installationFor(repository, jwt) {
@@ -223,14 +335,10 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
       return expectOk(await call<Comparison>("GET", path, token));
     },
     async listComments(repository, issue, token) {
-      const pages: IssueComment[][] = [];
-      for (let page = 1; ; page++) {
-        const path = `/repos/${repository}/issues/${issue}/comments?per_page=100&page=${page}`;
-        const batch = expectOk(await call<IssueComment[]>("GET", path, token));
-        pages.push(batch);
-        if (batch.length < 100) break;
-      }
-      return pages.flat();
+      return paginate<IssueComment>(
+        `/repos/${repository}/issues/${issue}/comments`,
+        token,
+      );
     },
     async createComment(repository, issue, body, token) {
       const path = `/repos/${repository}/issues/${issue}/comments`;
@@ -247,6 +355,97 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
         token,
       );
       return result.status === 404 ? undefined : expectOk(result).object.sha;
+    },
+    async fileContents(repository, path, ref, token) {
+      const result = await call<{ content: string }>(
+        "GET",
+        `/repos/${repository}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+        token,
+      );
+      if (result.status === 404) return undefined;
+      return new TextDecoder().decode(base64ToBytes(expectOk(result).content));
+    },
+    async pullRequest(repository, number, token) {
+      const path = `/repos/${repository}/pulls/${number}`;
+      return expectOk(await call<PullRequest>("GET", path, token));
+    },
+    // One page of 100 covers the evaluation cap.
+    async openPullRequests(repository, base, token) {
+      const path = `/repos/${repository}/pulls?state=open&sort=updated&direction=desc&per_page=100&base=${encodeURIComponent(base)}`;
+      return expectOk(await call<PullRequest[]>("GET", path, token));
+    },
+    async lastLabeler(repository, issue, label, token) {
+      const path = `/repos/${repository}/issues/${issue}/events?per_page=100`;
+      const first = await call<IssueEvent[]>("GET", `${path}&page=1`, token);
+      const pages = new Map([[1, expectOk(first)]]);
+      const last = lastPage(first.link);
+      for (const page of [last, last - 1].filter((n) => n >= 1)) {
+        const url = `${path}&page=${page}`;
+        const events =
+          pages.get(page) ??
+          expectOk(await call<IssueEvent[]>("GET", url, token));
+        pages.set(page, events);
+        const login = labeledBy(events, label);
+        if (login) return login;
+      }
+      return undefined;
+    },
+    async collaboratorPermission(repository, login, token) {
+      const path = `/repos/${repository}/collaborators/${encodeURIComponent(login)}/permission`;
+      const result = await call<{ permission: string }>("GET", path, token);
+      return result.status === 404 ? "none" : expectOk(result).permission;
+    },
+    async branchRules(repository, branch, token) {
+      const path = `/repos/${repository}/rules/branches/${encodeURIComponent(branch)}`;
+      return expectOk(await call<BranchRule[]>("GET", path, token));
+    },
+    async branchProtection(repository, branch, token) {
+      const path = `/repos/${repository}/branches/${encodeURIComponent(branch)}`;
+      return expectOk(await call<BranchProtection>("GET", path, token));
+    },
+    async updateBranch(repository, number, expectedHeadSha, token) {
+      const path = `/repos/${repository}/pulls/${number}/update-branch`;
+      expectOk(
+        await call<undefined>("PUT", path, token, {
+          expected_head_sha: expectedHeadSha,
+        }),
+      );
+    },
+    async enableAutoMerge(nodeId, method, expectedHeadOid, token) {
+      await graphql(
+        `
+          mutation (
+            $id: ID!
+            $method: PullRequestMergeMethod!
+            $oid: GitObjectID!
+          ) {
+            enablePullRequestAutoMerge(
+              input: {
+                pullRequestId: $id
+                mergeMethod: $method
+                expectedHeadOid: $oid
+              }
+            ) {
+              clientMutationId
+            }
+          }
+        `,
+        { id: nodeId, method: method.toUpperCase(), oid: expectedHeadOid },
+        token,
+      );
+    },
+    async disableAutoMerge(nodeId, token) {
+      await graphql(
+        `
+          mutation ($id: ID!) {
+            disablePullRequestAutoMerge(input: { pullRequestId: $id }) {
+              clientMutationId
+            }
+          }
+        `,
+        { id: nodeId },
+        token,
+      );
     },
     async revoke(token) {
       expectOk(await call<undefined>("DELETE", "/installation/token", token));

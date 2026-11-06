@@ -86,9 +86,9 @@ commands:
            [runner] labels, --no-test saves [test] ci = false, and --pin REF
            makes the workflow use that soothfast commit; -p gives PKG a soothfast bench target; --check reports
            drift and writes nothing; --bot lands regenerated files and
-           acts on pull request labels as soothfast-bot; --labels creates
-           soothfast:merge, soothfast:update, soothfast:perf-accepted and
-           do-not-merge with gh)
+           acts on pull request labels as soothfast-bot; --labels saves
+           [bot] labels = true and creates the soothfast labels with gh,
+           named as [bot] configures them)
   cache    merge --from DIR
            (folds a restored .soothfast cache layout in DIR into this
            project's: items keep the entries of both, runs and link maps are

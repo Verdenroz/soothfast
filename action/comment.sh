@@ -14,10 +14,7 @@ if oidc=$(oidc_token); then
   command -v jq >/dev/null || { echo "::error::jq must be installed on the runner to comment as soothfast-bot; see docs/ci.md, Self-hosted runners"; exit 1; }
   payload=$(jq -n --argjson pr "$PR_NUMBER" --arg marker "$MARKER" --rawfile body "$BODY_FILE" \
     '{pull_request: $pr, marker: $marker, body: $body}')
-  response=$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "$BROKER/comment" \
-    -H "Authorization: Bearer $oidc" -H "content-type: application/json" --data-binary "$payload") || response=$'\n000'
-  status=${response##*$'\n'}
-  body=${response%$'\n'*}
+  broker_post /comment -H "Authorization: Bearer $oidc" -H "content-type: application/json" --data-binary "$payload" || true
   if [ "$status" = 200 ]; then
     echo "commented as $(jq -r .app_slug <<<"$body")"
     exit 0

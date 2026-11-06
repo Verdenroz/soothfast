@@ -154,7 +154,7 @@ installed on is refused.
 | `bot-token` | none | Bring your own soothfast-bot installation token; skips the broker. |
 | `bot-slug` | `soothfast-bot` | App slug `bot-token` belongs to, for the commit author. |
 | `broker` | built in | Token broker URL. |
-| `labels` | `false` | On default-branch pushes and schedules, act on pull request labels as soothfast-bot (see [Labels](#labels)). |
+| `labels` | `false` | On default-branch pushes and schedules, ask the broker to reconcile pull request labels (see [Labels](#labels)). |
 | `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
 | `comment` | `true` | Post the pull request gate comment. `false` posts nothing and records a result per package for `cargo soothfast verdict merge`. |
 | `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved. |
@@ -297,24 +297,88 @@ working directory and `CARGO_MANIFEST_DIR`. The store keeps 512 MiB at most.
 
 ## Labels
 
-With `labels: "true"` on a job that runs on default-branch pushes and on a
-schedule, soothfast-bot sweeps the open pull requests:
+soothfast-bot acts on pull request labels the moment they change. GitHub
+delivers the App's webhooks to the broker, which reads `[bot]` from
+`soothfast.toml` on the default branch (never the pull request's copy) and
+acts as soothfast-bot:
 
 | Label | Effect |
 |---|---|
-| `soothfast:merge` | Queue auto-merge (squash) behind the required checks. Refused when the default branch requires no status check, since the merge would happen at once. |
+| `soothfast:merge` | Enable auto-merge behind the required checks, when a writer applies the label. Refused when the default branch requires no status check, since the merge would happen at once. |
 | `soothfast:update` | Merge the default branch into a pull request that fell behind. |
 | `do-not-merge` | Cancel a queued auto-merge and leave the pull request alone. |
+
+A label counts only when the person who last applied it can write to the
+repository, so neither a fork nor the Triage role can merge a pull request
+through soothfast-bot. `do-not-merge` counts from anyone, since it only holds
+a merge back. Drafts and pull requests that already have auto-merge enabled
+are skipped. GitHub turns auto-merge off when someone without write access
+pushes to the branch, so later pushes and sweeps never turn it back on:
+to queue the merge again, remove `soothfast:merge` and add it back. The
+merge is tied to the commit the label was applied to: if the branch moves
+or the label comes off before the bot acts, it queues nothing. The bot never
+watches statuses; GitHub's auto-merge, rulesets and merge queue decide when
+the merge happens.
 
 A pull request gate labelled `soothfast:perf-accepted` reports its
 regressions in the comment and passes; label the pull request, then re-run
 the failed gate. The label waives regressions only, never a gate that
-errored. A label counts only when the person who last applied it can write
-to the repository, so neither a fork nor the Triage role can merge a pull
-request or waive its regression through soothfast-bot. `do-not-merge` counts
-from anyone, since it only holds a merge back. The sweep runs on events the
-broker mints tokens for, so no `pull_request` run gets a write token. `cargo soothfast init --bot --labels` writes the job and
-creates the labels.
+errored, and it needs a writer too.
+
+### Configuration
+
+Opt in with a `[bot]` table in `soothfast.toml`; repositories without it are
+left alone. `cargo soothfast init --bot --labels` writes it, writes the
+reconcile job and creates the labels.
+
+```toml
+[bot]
+labels = true                       # default false
+merge_labels = ["soothfast:merge"]
+update_labels = ["soothfast:update"]
+ignore_labels = ["do-not-merge"]
+merge_method = "squash"             # squash | merge | rebase
+```
+
+A malformed `[bot]` table (an unknown key, a wrong type, a duplicate) makes
+the bot act on nothing and log why. Deleting the head branch stays the
+repository's "Automatically delete head branches" setting.
+
+### Operator steps
+
+Once per broker deployment (see `bot/`):
+
+1. In the App's settings, set the webhook URL to
+   `https://<worker>/webhook`, choose a secret, and subscribe to the Pull
+   request and Push events.
+2. Store the same secret in the Worker: `wrangler secret put
+   GITHUB_WEBHOOK_SECRET`. Without it `/webhook` answers 500.
+3. The App needs Contents write, Pull requests write and Metadata read.
+
+### Reconciling missed deliveries
+
+GitHub does not redeliver a webhook that failed. With `labels: "true"` on a
+job that runs on default-branch pushes and on a schedule, the action asks the
+broker to sweep the open pull requests: it cancels queued merges held by
+`do-not-merge` and updates labelled branches, but never enables a merge.
+The job needs `id-token: write` and `environment: soothfast-bot`, like any
+step that talks to the broker.
+
+### Limits
+
+- Only pull requests into the default branch are evaluated. For one
+  retargeted onto it, the next sweep handles its update label; apply
+  `soothfast:merge` again to queue it.
+- A push or sweep evaluates at most 6 pull requests, most recently updated
+  first among those the bot could act on, to stay inside the Workers
+  subrequest limit. The broker logs when it truncates.
+- Branch protection that the App cannot read counts as no required checks, so
+  `soothfast:merge` is refused rather than risk an immediate merge.
+- On a merge-queue branch the bot relies on GitHub's auto-merge to enqueue
+  the pull request; this has not been exercised against a live queue.
+
+With `bot-token` there is no broker, so the label sweep warns and does
+nothing; only a broker, hosted or self-hosted, acts on labels.
 
 ## Bringing your own token
 
@@ -352,11 +416,10 @@ plain pull request gate needs `cargo` and one of `jq` or `gh` (to read the
 default branch). The rest is needed only by the step that uses it, and each
 fails naming the tool:
 
-- `gh`, to comment with the job token, to act on labels and to land
-  regenerated files. Without it the gate still runs and only skips the
+- `gh`, to comment with the job token and to land regenerated files. Without it the gate still runs and only skips the
   `soothfast:perf-accepted` check, with a warning.
-- `jq`, to comment or mint a token as soothfast-bot, and to find the bench
-  packages when none are named.
+- `jq`, to comment, sweep labels or mint a token as soothfast-bot, and to find
+  the bench packages when none are named.
 - `valgrind`, for the callgrind fallback on machines without hardware
   performance counters. The step installs it with `apt-get` when it runs as
   root or passwordless `sudo` is available, and otherwise warns and carries on.

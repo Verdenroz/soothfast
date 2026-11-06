@@ -268,3 +268,150 @@ test("tagObject peels an annotated tag and is undefined for a commit", async () 
   assert.equal(await api.tagObject("acme/mylib", "aaaa", "ghs_x"), "bbbb");
   assert.equal(await api.tagObject("acme/mylib", "cccc", "ghs_x"), undefined);
 });
+
+test("fileContents decodes base64 content and is undefined on 404", async () => {
+  const content = Buffer.from("[bot]\nlabels = true\n").toString("base64");
+  const { api, calls } = fakeGitHub({
+    "GET /repos/acme/mylib/contents/soothfast.toml": {
+      status: 200,
+      body: {
+        content: content.replace(/(.{10})/g, "$1\n"),
+        encoding: "base64",
+      },
+    },
+    "GET /repos/acme/mylib/contents/missing.toml": { status: 404 },
+  });
+  assert.equal(
+    await api.fileContents("acme/mylib", "soothfast.toml", "main", "ghs_x"),
+    "[bot]\nlabels = true\n",
+  );
+  assert.match(calls[0].url, /\?ref=main$/);
+  assert.equal(
+    await api.fileContents("acme/mylib", "missing.toml", "main", "ghs_x"),
+    undefined,
+  );
+});
+
+test("collaboratorPermission reads the permission and maps 404 to none", async () => {
+  const { api } = fakeGitHub({
+    "GET /repos/acme/mylib/collaborators/alice/permission": {
+      status: 200,
+      body: { permission: "maintain" },
+    },
+    "GET /repos/acme/mylib/collaborators/ghost/permission": { status: 404 },
+  });
+  assert.equal(
+    await api.collaboratorPermission("acme/mylib", "alice", "ghs_x"),
+    "maintain",
+  );
+  assert.equal(
+    await api.collaboratorPermission("acme/mylib", "ghost", "ghs_x"),
+    "none",
+  );
+});
+
+test("updateBranch sends the expected head sha", async () => {
+  const { api, calls } = fakeGitHub({
+    "PUT /repos/acme/mylib/pulls/7/update-branch": {
+      status: 202,
+      body: { message: "Updating pull request branch." },
+    },
+  });
+  await api.updateBranch("acme/mylib", 7, "abc123", "ghs_x");
+  assert.deepEqual(calls[0].body, { expected_head_sha: "abc123" });
+});
+
+test("enableAutoMerge sends the merge method as a GraphQL enum", async () => {
+  const { api, calls } = fakeGitHub({
+    "POST /graphql": { status: 200, body: { data: {} } },
+  });
+  await api.enableAutoMerge("PR_node", "squash", "abc123", "ghs_x");
+  const body = calls[0].body as { query: string; variables: object };
+  assert.match(body.query, /enablePullRequestAutoMerge/);
+  assert.match(body.query, /expectedHeadOid: \$oid/);
+  assert.deepEqual(body.variables, {
+    id: "PR_node",
+    method: "SQUASH",
+    oid: "abc123",
+  });
+});
+
+test("a GraphQL error in a 200 response becomes a GitHubError", async () => {
+  const { api } = fakeGitHub({
+    "POST /graphql": {
+      status: 200,
+      body: { errors: [{ message: "Pull request is in clean status" }] },
+    },
+  });
+  await assert.rejects(
+    api.disableAutoMerge("PR_node", "ghs_x"),
+    (e: unknown) => e instanceof GitHubError && /clean status/.test(e.message),
+  );
+});
+
+function pagedEvents(pages: Record<number, object[]>, last: number) {
+  const requested: number[] = [];
+  const fetchFn = (async (url: string | URL | Request) => {
+    const page = Number(new URL(String(url)).searchParams.get("page"));
+    requested.push(page);
+    const link = `<https://api.github.com/x?per_page=100&page=2>; rel="next", <https://api.github.com/x?per_page=100&page=${last}>; rel="last"`;
+    return new Response(JSON.stringify(pages[page] ?? []), {
+      status: 200,
+      headers: last > 1 ? { link } : {},
+    });
+  }) as typeof fetch;
+  return { api: githubApi(fetchFn), requested };
+}
+
+const labeled = (label: string, login: string) => ({
+  event: "labeled",
+  label: { name: label },
+  actor: { login },
+});
+
+test("lastLabeler reads only the first page when there is one", async () => {
+  const { api, requested } = pagedEvents(
+    { 1: [labeled("a", "bob"), labeled("a", "alice")] },
+    1,
+  );
+  assert.equal(await api.lastLabeler("acme/mylib", 7, "a", "ghs_x"), "alice");
+  assert.deepEqual(requested, [1]);
+});
+
+test("lastLabeler jumps to the last page and stops when it finds the label", async () => {
+  const { api, requested } = pagedEvents(
+    { 1: [labeled("a", "old")], 9: [labeled("a", "dave"), labeled("b", "x")] },
+    9,
+  );
+  assert.equal(await api.lastLabeler("acme/mylib", 7, "a", "ghs_x"), "dave");
+  assert.deepEqual(requested, [1, 9]);
+});
+
+test("lastLabeler falls back to the page before the last, then gives up", async () => {
+  const { api, requested } = pagedEvents(
+    { 1: [], 8: [labeled("a", "carol")], 9: [labeled("b", "x")] },
+    9,
+  );
+  assert.equal(await api.lastLabeler("acme/mylib", 7, "a", "ghs_x"), "carol");
+  assert.deepEqual(requested, [1, 9, 8]);
+  const none = pagedEvents({ 1: [], 8: [], 9: [] }, 9);
+  assert.equal(
+    await none.api.lastLabeler("acme/mylib", 7, "a", "ghs_x"),
+    undefined,
+  );
+  assert.deepEqual(none.requested, [1, 9, 8]);
+});
+
+test("lastLabeler ignores unlabeled events and other labels", async () => {
+  const { api } = pagedEvents(
+    {
+      1: [
+        labeled("a", "alice"),
+        { event: "unlabeled", label: { name: "a" }, actor: { login: "bob" } },
+        labeled("b", "carol"),
+      ],
+    },
+    1,
+  );
+  assert.equal(await api.lastLabeler("acme/mylib", 7, "a", "ghs_x"), "alice");
+});

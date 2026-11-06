@@ -4,7 +4,9 @@ import {
   githubApi,
   importPrivateKey,
   type GitHubApi,
+  type Repository,
 } from "./github.ts";
+import { evaluateOpen, evaluatePullRequest, type Run } from "./labels.ts";
 import { githubJwks, OidcError, verifyOidc, type JwksLookup } from "./oidc.ts";
 import {
   AUDIENCE,
@@ -17,13 +19,15 @@ import {
   type Decision,
   type OidcClaims,
 } from "./policy.ts";
+import { receive, type Work } from "./webhook.ts";
 
 export interface Env {
   GITHUB_APP_CLIENT_ID: string;
   GITHUB_APP_PRIVATE_KEY: string;
+  GITHUB_WEBHOOK_SECRET: string;
 }
 
-export interface Deps {
+interface Deps {
   jwks: JwksLookup;
   github: GitHubApi;
   now?: () => number;
@@ -38,8 +42,10 @@ interface CommentRequest {
 interface Minted {
   token: string;
   expires_at: string;
-  slug: string;
+  slug?: string;
 }
+
+type Ctx = Pick<ExecutionContext, "waitUntil">;
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -64,6 +70,7 @@ export async function handle(
   request: Request,
   env: Env,
   deps: Deps,
+  ctx: Ctx,
 ): Promise<Response> {
   if (!env.GITHUB_APP_CLIENT_ID || !env.GITHUB_APP_PRIVATE_KEY) {
     console.error("GITHUB_APP_CLIENT_ID or GITHUB_APP_PRIVATE_KEY is not set");
@@ -73,7 +80,8 @@ export async function handle(
     });
   }
   const route = request.method === "POST" ? new URL(request.url).pathname : "";
-  if (route !== "/token" && route !== "/comment")
+  if (route === "/webhook") return webhook(request, env, deps, ctx);
+  if (route !== "/token" && route !== "/comment" && route !== "/sweep")
     return json(404, { reason: "not found" });
 
   const authorization = request.headers.get("authorization") ?? "";
@@ -91,6 +99,13 @@ export async function handle(
 
   const policy = decideClaims(claims);
   if (!policy.ok) return denied(403, policy.reason, claims);
+  if (route === "/sweep" && policy.mode !== "land") {
+    return denied(
+      403,
+      "/sweep serves push, schedule and workflow_dispatch runs only",
+      claims,
+    );
+  }
   if (route === "/token" && policy.mode !== "land") {
     return denied(
       403,
@@ -108,10 +123,81 @@ export async function handle(
       : undefined;
   if (body instanceof Response) return body;
 
-  const auth = await authenticate(claims, policy.mode, env, deps);
+  const auth = await authenticate(
+    claims,
+    policy.mode,
+    route !== "/sweep",
+    env,
+    deps,
+  );
   if (auth instanceof Response) return auth;
-  return body ? comment(claims, body, auth, deps) : land(claims, auth, deps);
+  if (body) return comment(claims, body, auth, deps);
+  return route === "/sweep"
+    ? sweep(claims, auth, deps)
+    : land(claims, auth, deps);
 }
+
+async function webhook(
+  request: Request,
+  env: Env,
+  deps: Deps,
+  ctx: Ctx,
+): Promise<Response> {
+  if (!env.GITHUB_WEBHOOK_SECRET) {
+    console.error("GITHUB_WEBHOOK_SECRET is not set");
+    return json(500, {
+      reason: "broker is not configured: set GITHUB_WEBHOOK_SECRET",
+    });
+  }
+  const delivery = await receive(request, env.GITHUB_WEBHOOK_SECRET);
+  if (!delivery.ok) {
+    console.log(JSON.stringify({ denied: delivery.reason, route: "/webhook" }));
+    return json(delivery.status, { reason: delivery.reason });
+  }
+  if (!delivery.work) return json(200, {});
+  const done = act(delivery.work, env, deps).catch((e: unknown) =>
+    console.error("webhook work failed", e),
+  );
+  ctx.waitUntil(done);
+  return json(202, {});
+}
+
+async function act(work: Work, env: Env, deps: Deps): Promise<void> {
+  const { target } = work;
+  const jwt = await appJwt(
+    env.GITHUB_APP_CLIENT_ID,
+    await privateKey(env.GITHUB_APP_PRIVATE_KEY),
+    deps.now?.(),
+  );
+  const { token } = await deps.github.mintToken(
+    target.installation,
+    target.repositoryId,
+    PERMISSIONS.land,
+    jwt,
+  );
+  const run = makeRun(
+    deps,
+    token,
+    target.repository,
+    target.defaultBranch,
+    (m) => console.log(`${target.repository}: ${m}`),
+  );
+  try {
+    if (work.kind === "pull_request")
+      await evaluatePullRequest(run, work.pr, work.labeler);
+    else await evaluateOpen(run);
+  } finally {
+    await revoke(token, deps);
+  }
+}
+
+const makeRun = (
+  deps: Deps,
+  token: string,
+  repository: string,
+  defaultBranch: string,
+  log: Run["log"],
+): Run => ({ github: deps.github, token, repository, defaultBranch, log });
 
 let cachedKey: { pem: string; key: CryptoKey } | undefined;
 let cachedSlug: { clientId: string; slug: string } | undefined;
@@ -135,6 +221,7 @@ async function appSlug(
 async function authenticate(
   claims: OidcClaims,
   mode: keyof typeof PERMISSIONS,
+  withSlug: boolean,
   env: Env,
   deps: Deps,
 ): Promise<Minted | Response> {
@@ -160,7 +247,9 @@ async function authenticate(
     PERMISSIONS[mode],
     jwt,
   );
-  const slug = await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt);
+  const slug = withSlug
+    ? await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt)
+    : undefined;
   return { ...minted, slug };
 }
 
@@ -175,10 +264,10 @@ async function land(
   minted: Minted,
   deps: Deps,
 ): Promise<Response> {
-  const ref = await decideRef(claims, minted.token, deps);
-  if (!ref.ok) {
+  const { decision } = await resolveRef(claims, minted.token, deps);
+  if (!decision.ok) {
     await revoke(minted.token, deps);
-    return denied(403, ref.reason, claims);
+    return denied(403, decision.reason, claims);
   }
   return json(200, {
     token: minted.token,
@@ -187,27 +276,56 @@ async function land(
   });
 }
 
-async function decideRef(
+async function resolveRef(
   claims: OidcClaims,
   token: string,
   deps: Deps,
-): Promise<Decision> {
+): Promise<{ decision: Decision; repository: Repository }> {
   const repository = await deps.github.repository(claims.repository, token);
-  if (claims.ref.startsWith("refs/tags/")) {
-    // An annotated tag's sha names the tag object; judge the commit under it.
-    // Tag objects are immutable, so peeling keeps the sha claim authoritative.
-    const commit =
-      (await deps.github.tagObject(claims.repository, claims.sha, token)) ??
-      claims.sha;
-    const comparison = await deps.github.compare(
+  if (!claims.ref.startsWith("refs/tags/"))
+    return {
+      decision: decideBranch(claims.ref, repository.default_branch),
+      repository,
+    };
+  // An annotated tag's sha names the tag object; judge the commit under it.
+  // Tag objects are immutable, so peeling keeps the sha claim authoritative.
+  const commit =
+    (await deps.github.tagObject(claims.repository, claims.sha, token)) ??
+    claims.sha;
+  const comparison = await deps.github.compare(
+    claims.repository,
+    repository.default_branch,
+    commit,
+    token,
+  );
+  return { decision: decideTag(claims.ref, comparison.status), repository };
+}
+
+async function sweep(
+  claims: OidcClaims,
+  minted: Minted,
+  deps: Deps,
+): Promise<Response> {
+  try {
+    const { decision, repository } = await resolveRef(
+      claims,
+      minted.token,
+      deps,
+    );
+    if (!decision.ok) return denied(403, decision.reason, claims);
+    const log: string[] = [];
+    const run = makeRun(
+      deps,
+      minted.token,
       claims.repository,
       repository.default_branch,
-      commit,
-      token,
+      (message) => log.push(message),
     );
-    return decideTag(claims.ref, comparison.status);
+    await evaluateOpen(run);
+    return json(200, { log });
+  } finally {
+    await revoke(minted.token, deps);
   }
-  return decideBranch(claims.ref, repository.default_branch);
 }
 
 // The job never sees this token: the broker posts on its behalf and revokes.
@@ -292,8 +410,12 @@ function parseComment(
 const deps: Deps = { jwks: githubJwks(), github: githubApi() };
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return handle(request, env, deps).catch((e: unknown) => {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
+    return handle(request, env, deps, ctx).catch((e: unknown) => {
       if (e instanceof GitHubError)
         return json(502, { reason: `GitHub API ${e.status}: ${e.message}` });
       console.error(e);
