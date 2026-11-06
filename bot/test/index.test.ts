@@ -294,7 +294,8 @@ test("pull_request_target is refused", async () => {
 test("a repo without the app installed is refused", async () => {
   const { status, body } = await request({}, fakeGitHub({ installed: false }));
   assert.equal(status, 403);
-  assert.match(body.reason ?? "", /not installed on acme\/mylib/);
+  // action/bot-token.sh matches this exact prefix to warn instead of failing.
+  assert.equal(body.reason, "soothfast-bot is not installed on acme/mylib");
 });
 
 test("a non-default branch is refused and the minted token revoked", async () => {
