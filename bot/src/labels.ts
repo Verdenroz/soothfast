@@ -332,14 +332,19 @@ async function perform(
             /(clean|unstable|has_hooks) status/i.test(e.message)
           ))
             throw e;
-          await github.mergePullRequest(
-            repository,
-            pr.number,
-            pr.head.sha,
-            config.mergeMethod,
-            token,
-          );
-          run.log(`${tag}: merged (checks had already passed)`);
+          await github
+            .mergePullRequest(
+              repository,
+              pr.number,
+              pr.head.sha,
+              config.mergeMethod,
+              token,
+            )
+            .then(() => run.log(`${tag}: merged (checks had already passed)`))
+            .catch((m: unknown) => {
+              if (!(m instanceof GitHubError)) throw m;
+              run.log(`${tag}: could not merge (${m.status}: ${m.message})`);
+            });
         });
       return;
     }

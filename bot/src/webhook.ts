@@ -36,6 +36,7 @@ interface Payload {
   action?: string;
   ref?: string;
   deleted?: boolean;
+  forced?: boolean;
   commits?: { added: string[]; modified: string[]; removed: string[] }[];
   label?: { name: string };
   sender: { login: string };
@@ -91,10 +92,12 @@ export async function verifySignature(
   return crypto.subtle.verify("HMAC", key, expected, body);
 }
 
-// GitHub lists at most 20 commits, so a full list may hide the one that edits it.
-const MAX_LISTED_COMMITS = 20;
+// A push payload lists at most 2048 commits, so a full list may hide the one
+// that edits it; a force-push can drop that commit from the list entirely.
+const MAX_LISTED_COMMITS = 2048;
 
-const touchesConfig = (commits: Payload["commits"]) =>
+const touchesConfig = ({ commits, forced }: Payload) =>
+  forced === true ||
   !commits?.length ||
   commits.length >= MAX_LISTED_COMMITS ||
   commits.some((c) =>
@@ -112,7 +115,7 @@ export function route(event: string, payload: Payload): Work | undefined {
   if (event === "push") {
     const toDefault = payload.ref === `refs/heads/${target.defaultBranch}`;
     return toDefault && !payload.deleted
-      ? { kind: "push", target, configChanged: touchesConfig(payload.commits) }
+      ? { kind: "push", target, configChanged: touchesConfig(payload) }
       : undefined;
   }
   const { action, pull_request: pr } = payload;

@@ -338,6 +338,7 @@ async function sweep(
       repository.default_branch,
       (message) => log.push(message),
     );
+    forgetConfig(repository.id);
     await evaluateOpen(run);
     return json(200, { log });
   } finally {

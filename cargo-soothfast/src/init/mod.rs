@@ -445,13 +445,13 @@ pub fn run(args: &[String]) -> i32 {
         println!(
             "init: {WORKFLOW_PATH} not written, since it would only duplicate the jobs above; --force writes it"
         );
-        if !bot {
+        if !ws.labels {
             return 0;
         }
     }
     let mut files = scaffold(&ws);
     if skip_workflow {
-        files.retain(|f| f.path != Path::new(WORKFLOW_PATH));
+        files.retain(|f| f.kind == Kind::Bot);
     }
     let rc = report(&root, &files, check, force);
     if check || rc != 0 {
@@ -552,7 +552,9 @@ fn create_labels(root: &Path) -> Result<(), String> {
             .args(["label", "create", &name, "--force", "--color", &color])
             .args(["--description", &description])
             .output()
-            .map_err(|e| format!("could not create label {name}: {e}"))?;
+            .map_err(|e| {
+                format!("could not create label {name}: gh could not run ({e}); is it installed?")
+            })?;
         if !output.status.success() {
             return Err(label_failure(&name, &output.stderr));
         }
@@ -561,10 +563,13 @@ fn create_labels(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The error for a label `gh` refused: its first line of stderr.
+/// The error for a label `gh` refused: its first non-empty line of stderr.
 fn label_failure(name: &str, stderr: &[u8]) -> String {
     let stderr = String::from_utf8_lossy(stderr);
-    let reason = stderr.lines().next().unwrap_or("is gh signed in?");
+    let reason = stderr
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("is gh signed in?");
     format!("could not create label {name}: {reason}")
 }
 
@@ -1507,6 +1512,10 @@ cmd = "npm test"
             "could not create label x: no remotes found"
         );
         assert_eq!(
+            label_failure("x", b"\n  \nlater\n"),
+            "could not create label x: later"
+        );
+        assert_eq!(
             label_failure("x", b""),
             "could not create label x: is gh signed in?"
         );
@@ -1528,13 +1537,14 @@ cmd = "npm test"
             ..ws(&[], None)
         };
         let mut files = scaffold(&w);
-        files.retain(|f| f.path != Path::new(WORKFLOW_PATH));
-        assert!(files.iter().any(|f| f.kind == Kind::Bot));
+        files.retain(|f| f.kind == Kind::Bot);
+        assert_eq!(files.len(), 1);
         assert_eq!(report(&root, &files, true, false), 1);
         assert_eq!(report(&root, &files, false, false), 0);
         let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
-        assert!(text.contains("[bot]\nlabels = true"));
+        assert_eq!(text, "[bot]\nlabels = true\n");
         assert!(!root.join(WORKFLOW_PATH).exists());
+        assert!(!root.join(".gitignore").exists());
         assert_eq!(report(&root, &files, true, false), 0);
     }
 

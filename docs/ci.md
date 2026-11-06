@@ -413,6 +413,11 @@ unreachable or refusing broker leaves a warning with the broker's reason.
   per Worker instance, so a changed `[bot]` table can take that long to apply.
   A push to the default branch that changes the file, or whose commit list
   cannot show whether it did, drops the cache first.
+- A pull request that is already mergeable on a merge-queue branch is not
+  enqueued: GitHub refuses the direct merge, and the broker logs it. Apply
+  `soothfast:merge` before its checks finish.
+- A pull request whose only failing checks are not required is merged at
+  once, the same as native auto-merge, which waits for required checks only.
 - Branch protection that the App cannot read counts as no required checks, so
   `soothfast:merge` is refused rather than risk an immediate merge.
 - On a merge-queue branch the bot relies on GitHub's auto-merge to enqueue

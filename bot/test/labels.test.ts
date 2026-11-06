@@ -149,6 +149,7 @@ interface World {
   live?: Partial<PullRequest> & { names?: string[] };
   permissionFailures?: number;
   enableError?: Error;
+  mergeError?: Error;
   contentsFailures?: number;
 }
 
@@ -217,6 +218,7 @@ function fakeRun(world: World) {
       method: string,
     ) {
       calls.push(`merge ${number}@${sha} ${method}`);
+      if (world.mergeError) throw world.mergeError;
     },
     async disableAutoMerge(id: string) {
       calls.push(`disable ${id}`);
@@ -285,6 +287,20 @@ test("an unstable-status rejection also merges", async () => {
   });
   await evaluateOne(run, 5, labeledBy("alice"));
   assert.equal(calls.at(-1), "merge 5@abc123 squash");
+});
+
+test("a refused merge is logged, not thrown", async () => {
+  const { run, logs } = fakeRun({
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    enableError: new GitHubError(200, "Pull request is in clean status"),
+    mergeError: new GitHubError(405, "Merge queue is required"),
+    ...checks,
+  });
+  await evaluateOne(run, 5, labeledBy("alice"));
+  assert.deepEqual(logs, [
+    "#5: could not merge (405: Merge queue is required)",
+  ]);
 });
 
 test("other enable errors do not merge", async () => {

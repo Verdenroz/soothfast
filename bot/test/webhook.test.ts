@@ -200,8 +200,11 @@ test("a push to the default branch re-evaluates the base", () => {
   assert.deepEqual(work, { kind: "push", target, configChanged: true });
 });
 
-const pushed = (commits?: object[]) =>
-  route("push", payload({ ref: "refs/heads/main", commits }) as never) as {
+const pushed = (commits?: object[], forced = false) =>
+  route(
+    "push",
+    payload({ ref: "refs/heads/main", commits, forced }) as never,
+  ) as {
     configChanged: boolean;
   };
 
@@ -225,8 +228,11 @@ test("a push reports whether it touches soothfast.toml", () => {
     false,
   );
   assert.equal(pushed([]).configChanged, true);
-  const unrelated = Array.from({ length: 20 }, () => commit({}));
-  assert.equal(pushed(unrelated).configChanged, true);
+  const unrelated = (length: number) =>
+    Array.from({ length }, () => commit({}));
+  assert.equal(pushed(unrelated(2047)).configChanged, false);
+  assert.equal(pushed(unrelated(2048)).configChanged, true);
+  assert.equal(pushed(unrelated(1), true).configChanged, true);
   assert.equal(pushed(undefined).configChanged, true);
 });
 
