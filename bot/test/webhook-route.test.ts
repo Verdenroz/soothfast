@@ -145,6 +145,14 @@ test("a labeler without write access is not acted on", async () => {
   assert.deepEqual(fake.calls, []);
 });
 
+test("a synchronize does not re-enable a merge a writer labelled earlier", async () => {
+  const fake = fakeGitHub();
+  const pushed = { ...labeled(), action: "synchronize", label: undefined };
+  const result = await deliver(fake, pushed);
+  assert.equal(result.status, 202);
+  assert.deepEqual(fake.calls, []);
+});
+
 test("a push to the default branch evaluates open pull requests", async () => {
   const fake = fakeGitHub();
   const push = {

@@ -33,8 +33,9 @@ interface Context {
   permission: (login: string) => Promise<string>;
 }
 
-// Stays under the Workers subrequest cap on the free plan.
-export const MAX_EVALUATIONS = 8;
+// Each pull request costs up to four subrequests; with the fixed overhead of
+// a delivery, six stay under the free plan's cap of 50.
+export const MAX_EVALUATIONS = 6;
 
 const WRITE_PERMISSIONS: readonly string[] = ["admin", "maintain", "write"];
 const CHECK_RULES: readonly string[] = [
@@ -45,26 +46,35 @@ const CHECK_RULES: readonly string[] = [
 const present = (pr: PullRequest, wanted: string[]) =>
   pr.labels.map((l) => l.name).filter((name) => wanted.includes(name));
 
-export function gated(pr: PullRequest, config: BotConfig): Gated {
+// GitHub drops auto-merge when someone without write access pushes to the
+// head, so only a writer applying the label may enable it, never a later event.
+export function gated(
+  pr: PullRequest,
+  config: BotConfig,
+  labeler?: Labeler,
+): Gated {
   if (present(pr, config.ignoreLabels).length > 0)
     return { update: [], merge: [] };
   const mergeable = !pr.draft && pr.auto_merge === null;
+  const applied = present(pr, config.mergeLabels).filter(
+    (label) => label === labeler?.label,
+  );
   return {
     update: present(pr, config.updateLabels),
-    merge: mergeable ? present(pr, config.mergeLabels) : [],
+    merge: mergeable ? applied : [],
   };
 }
 
 export function decide(
   pr: PullRequest,
   config: BotConfig,
+  { update, merge }: Gated,
   checked: number,
   behind: boolean,
   writers: ReadonlySet<string>,
 ): Action[] {
   if (present(pr, config.ignoreLabels).length > 0)
     return pr.auto_merge === null ? [] : [{ kind: "disable_auto_merge" }];
-  const { update, merge } = gated(pr, config);
   const actions: Action[] = [];
   if (behind && update.some((l) => writers.has(l)))
     actions.push({ kind: "update_branch" });
@@ -108,26 +118,31 @@ export async function evaluateOpen(
 ): Promise<void> {
   const context = await load(run);
   if (!context) return;
-  const { config } = context;
-  const wanted =
-    scope === "update"
-      ? config.updateLabels
-      : [...config.mergeLabels, ...config.updateLabels, ...config.ignoreLabels];
   const open = await run.github.openPullRequests(
     run.repository,
     run.defaultBranch,
     run.token,
   );
-  const matching = open.filter((pr) => present(pr, wanted).length > 0);
-  if (matching.length > MAX_EVALUATIONS)
+  const actionable = open.filter((pr) => canAct(pr, context.config, scope));
+  if (actionable.length > MAX_EVALUATIONS)
     run.log(
-      `evaluating ${MAX_EVALUATIONS} of ${matching.length} pull requests`,
+      `evaluating ${MAX_EVALUATIONS} of ${actionable.length} pull requests`,
     );
-  for (const pr of matching.slice(0, MAX_EVALUATIONS)) {
+  for (const pr of actionable.slice(0, MAX_EVALUATIONS)) {
     await evaluate(context, pr).catch((e: unknown) =>
       run.log(`#${pr.number}: ${e instanceof Error ? e.message : e}`),
     );
   }
+}
+
+function canAct(
+  pr: PullRequest,
+  config: BotConfig,
+  scope: "update" | "any",
+): boolean {
+  if (present(pr, config.ignoreLabels).length > 0)
+    return scope === "any" && pr.auto_merge !== null;
+  return !pr.draft && present(pr, config.updateLabels).length > 0;
 }
 
 async function load(run: Run): Promise<Context | undefined> {
@@ -142,7 +157,12 @@ async function load(run: Run): Promise<Context | undefined> {
     run.log(`ignoring labels: ${parsed.reason}`);
     return undefined;
   }
-  if (!parsed.config.labels) return undefined;
+  if (!parsed.config.labels) {
+    run.log(
+      `labels are off: set [bot] labels = true in soothfast.toml on ${run.defaultBranch}`,
+    );
+    return undefined;
+  }
   return {
     run,
     config: parsed.config,
@@ -155,15 +175,19 @@ async function load(run: Run): Promise<Context | undefined> {
 
 function memo<T>(compute: () => Promise<T>): () => Promise<T> {
   let cached: Promise<T> | undefined;
-  return () => (cached ??= compute());
+  return () =>
+    (cached ??= compute().catch((e: unknown) => {
+      cached = undefined;
+      throw e;
+    }));
 }
 
 function memoBy<T>(compute: (key: string) => Promise<T>) {
-  const cache = new Map<string, Promise<T>>();
+  const byKey = new Map<string, () => Promise<T>>();
   return (key: string) => {
-    const hit = cache.get(key) ?? compute(key);
-    cache.set(key, hit);
-    return hit;
+    const hit = byKey.get(key) ?? memo(() => compute(key));
+    byKey.set(key, hit);
+    return hit();
   };
 }
 
@@ -202,13 +226,14 @@ async function evaluate(
   labeler?: Labeler,
 ): Promise<void> {
   const { run, config } = context;
-  const { update, merge } = gated(pr, config);
+  const gate = gated(pr, config, labeler);
+  const { update, merge } = gate;
   const writers = await writersOf(context, pr, [...update, ...merge], labeler);
   const needsChecks = merge.some((l) => writers.has(l));
   const checked = needsChecks ? await context.checked() : 0;
   const behind =
     update.some((l) => writers.has(l)) && (await isBehind(run, pr));
-  for (const action of decide(pr, config, checked, behind, writers))
+  for (const action of decide(pr, config, gate, checked, behind, writers))
     await perform(context, pr, action);
 }
 

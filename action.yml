@@ -125,10 +125,11 @@ inputs:
   labels:
     description: >-
       On default-branch pushes and schedules, ask the soothfast-bot broker to
-      reconcile the soothfast labels of open pull requests: `soothfast:merge`
-      queues auto-merge behind the required checks, `do-not-merge` cancels
-      it, and `soothfast:update` brings a pull request that fell behind up to
-      date. Needs the broker, so it does nothing with `bot-token`.
+      reconcile the soothfast labels of open pull requests: `do-not-merge`
+      cancels a queued auto-merge and `soothfast:update` brings a pull
+      request that fell behind up to date. `soothfast:merge` acts only when
+      a writer applies it, never on a sweep. Needs the broker, so it does
+      nothing with `bot-token`.
       A pull request gate labelled `soothfast:perf-accepted` reports its
       regressions without failing, whatever this is set to.
     required: false

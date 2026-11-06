@@ -57,6 +57,22 @@ impl BotLabels {
     }
 }
 
+/// Whether `[bot]` turns the bot on with `labels = true`.
+pub fn bot_enabled(text: &str) -> bool {
+    let mut in_bot = false;
+    for (_, line) in logical_lines(text) {
+        if let Some(name) = table_name(&line) {
+            in_bot = name == "bot";
+        } else if let Some((key, value)) = line.split_once('=')
+            && in_bot
+            && key.trim() == "labels"
+        {
+            return parse_value(value.trim()) == Ok(TomlValue::Bool(true));
+        }
+    }
+    false
+}
+
 /// Whether the text has a `[bot]` table.
 pub fn has_bot_table(text: &str) -> bool {
     text.lines().any(|l| table_name(l) == Some("bot"))
@@ -92,6 +108,15 @@ mod tests {
     fn a_label_list_that_is_not_strings_is_an_error() {
         let err = BotLabels::parse("[bot]\nmerge_labels = \"ship\"\n").unwrap_err();
         assert!(err.contains("merge_labels"));
+    }
+
+    #[test]
+    fn the_bot_is_enabled_only_by_labels_true_under_bot() {
+        assert!(bot_enabled("[bot]\nlabels = true\n"));
+        assert!(!bot_enabled("[bot]\nmerge_labels = [\"ship\"]\n"));
+        assert!(!bot_enabled("[bot]\nlabels = false\n"));
+        assert!(!bot_enabled("[other]\nlabels = true\n"));
+        assert!(!bot_enabled(""));
     }
 
     #[test]

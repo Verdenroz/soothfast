@@ -363,7 +363,8 @@ revokes it. The broker also acts on labels: App webhooks land on `/webhook`
 `waitUntil` with a token minted from the signed payload's installation and
 revoked after), and the action's label sweep POSTs land-mode OIDC to
 `/sweep`, which runs the same evaluator (`labels.ts`) over the open pull
-requests. Both read the `[bot]` table of `soothfast.toml` from the default
+requests but never enables auto-merge: only a writer's `labeled` delivery
+does, since GitHub drops it on a non-writer's push. Both read the `[bot]` table of `soothfast.toml` from the default
 branch and act on nothing for a repo without `labels = true` or with a
 malformed table. Gate comments, `deploy-docs`' gh-pages push, and the GitHub
 Release all carry the bot identity this way; a fork pull request has no OIDC

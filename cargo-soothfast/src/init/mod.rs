@@ -17,7 +17,7 @@ mod detect;
 pub(crate) mod ecosystem;
 mod textdiff;
 
-use bot::{BotLabels, has_bot_table};
+use bot::{BotLabels, bot_enabled, has_bot_table};
 use ci::Ci;
 use ecosystem::{
     Ecosystem, Entry, Project, Settings, Suite, normalize_dir, parse_projects, parse_suites,
@@ -82,7 +82,8 @@ enum Kind {
     Section,
     /// The `[runner]` table, replaced when its labels change.
     Runner,
-    /// The `[bot]` table, appended when absent, then the repo's own.
+    /// `[bot] labels = true`: the table is appended when absent and
+    /// never rewritten once the repo has one.
     Bot,
     /// The `ci` key of the `[test]` table, set in place.
     TestCi,
@@ -140,7 +141,7 @@ impl Scaffold {
                 State::Current
             }
             Kind::Section => State::Differs,
-            Kind::Bot if has_bot_table(text) => State::Current,
+            Kind::Bot if bot_enabled(text) => State::Current,
             Kind::Runner if labels(text) == labels(&self.content) => State::Current,
             Kind::TestCi if test_ci(text) == test_ci(&self.content) => State::Current,
             Kind::Docs if docs(text) == docs(&self.content) => State::Current,
@@ -181,6 +182,7 @@ impl Scaffold {
                     .unwrap_or_default();
                 with_key(current, "docs", "package", line)
             }
+            Kind::Bot if has_bot_table(current) => current.to_string(),
             Kind::Bot => {
                 let mut text = current.trim_end().to_string();
                 if !text.is_empty() {
@@ -741,6 +743,11 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
                 if state == State::Differs && !drifted.contains(&f.path.as_path()) {
                     drifted.push(&f.path);
                 }
+            }
+            (State::Differs, false)
+                if f.kind == Kind::Bot && text.as_deref().is_some_and(has_bot_table) =>
+            {
+                println!("warn     {path} has no `labels = true`, so the bot stays off; set it");
             }
             (State::Differs, false) if f.kind == Kind::Whole && !force => {
                 drift += 1;
@@ -1352,13 +1359,30 @@ cmd = "npm test"
         let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
         assert!(text.ends_with("\n\n[bot]\nlabels = true\n"));
         assert_eq!(report(&root, &files, true, false), 0);
-        let own = "[bot]\nlabels = false\n";
+        let own = "[bot]\nlabels = true\nmerge_labels = [\"ship\"]\n";
         std::fs::write(root.join("soothfast.toml"), own).unwrap();
+        assert_eq!(report(&root, &files, true, false), 0);
         assert_eq!(report(&root, &files, false, false), 0);
         assert_eq!(
             std::fs::read_to_string(root.join("soothfast.toml")).unwrap(),
             own
         );
+    }
+
+    #[test]
+    fn a_bot_table_without_labels_true_differs_and_is_not_rewritten() {
+        let root = scratch("bot-off");
+        let own = "[bot]\nmerge_labels = [\"ship\"]\n";
+        std::fs::write(root.join("soothfast.toml"), own).unwrap();
+        let w = Workspace {
+            labels: true,
+            ..ws(&[], None)
+        };
+        let files = scaffold(&w);
+        assert_eq!(report(&root, &files, true, false), 1);
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert_eq!(text, own);
     }
 
     #[test]

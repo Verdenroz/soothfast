@@ -35,68 +35,100 @@ function pull(overrides: Partial<PullRequest> & { names?: string[] } = {}) {
 
 const writers = (...labels: string[]) => new Set(labels);
 
-test("a writer's merge label enables auto-merge", () => {
+interface Plan {
+  labeler?: { label: string; login: string };
+  checked?: number;
+  behind?: boolean;
+  by?: string[];
+  config?: typeof DEFAULTS;
+}
+
+function plan(pr: PullRequest, opts: Plan = {}) {
+  const { labeler, checked = 1, behind = false, by = [] } = opts;
+  const config = opts.config ?? DEFAULTS;
+  const gate = gated(pr, config, labeler);
+  return decide(pr, config, gate, checked, behind, writers(...by));
+}
+
+const applied = { label: MERGE, login: "alice" };
+
+test("a writer applying the merge label enables auto-merge", () => {
   const pr = pull({ names: [MERGE] });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers(MERGE)), [
+  assert.deepEqual(plan(pr, { labeler: applied, by: [MERGE] }), [
     { kind: "enable_auto_merge" },
   ]);
 });
 
+test("a merge label applied earlier enables nothing", () => {
+  const pr = pull({ names: [MERGE] });
+  assert.deepEqual(plan(pr, { by: [MERGE] }), []);
+});
+
+test("another label being applied does not enable the merge", () => {
+  const pr = pull({ names: [MERGE, UPDATE] });
+  const labeler = { label: UPDATE, login: "alice" };
+  assert.deepEqual(plan(pr, { labeler, by: [MERGE, UPDATE] }), []);
+});
+
 test("a merge label from a non-writer does nothing", () => {
   const pr = pull({ names: [MERGE] });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers()), []);
+  assert.deepEqual(plan(pr, { labeler: applied }), []);
 });
 
 test("a merge label with no required check is skipped with a reason", () => {
   const pr = pull({ names: [MERGE] });
-  const [action] = decide(pr, DEFAULTS, 0, false, writers(MERGE));
+  const [action] = plan(pr, { labeler: applied, checked: 0, by: [MERGE] });
   assert.equal(action.kind, "skip");
 });
 
 test("a draft is not merged", () => {
   const pr = pull({ names: [MERGE], draft: true });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers(MERGE)), []);
+  assert.deepEqual(plan(pr, { labeler: applied, by: [MERGE] }), []);
 });
 
 test("a pull request already queued is not queued again", () => {
   const pr = pull({ names: [MERGE], auto_merge: {} });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers(MERGE)), []);
+  assert.deepEqual(plan(pr, { labeler: applied, by: [MERGE] }), []);
 });
 
 test("do-not-merge cancels a queued auto-merge and nothing else", () => {
   const pr = pull({ names: [MERGE, HOLD], auto_merge: {} });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, false, writers(MERGE)), [
+  assert.deepEqual(plan(pr, { labeler: applied, by: [MERGE] }), [
     { kind: "disable_auto_merge" },
   ]);
 });
 
 test("do-not-merge on an unqueued pull request does nothing", () => {
   const pr = pull({ names: [MERGE, HOLD] });
-  assert.deepEqual(decide(pr, DEFAULTS, 1, true, writers(MERGE, UPDATE)), []);
+  assert.deepEqual(plan(pr, { behind: true, by: [MERGE, UPDATE] }), []);
 });
 
 test("update acts only when the branch is behind", () => {
-  const behind = pull({ names: [UPDATE] });
-  assert.deepEqual(decide(behind, DEFAULTS, 0, true, writers(UPDATE)), [
+  const pr = pull({ names: [UPDATE] });
+  assert.deepEqual(plan(pr, { behind: true, by: [UPDATE] }), [
     { kind: "update_branch" },
   ]);
-  const clean = pull({ names: [UPDATE] });
-  assert.deepEqual(decide(clean, DEFAULTS, 0, false, writers(UPDATE)), []);
+  assert.deepEqual(plan(pr, { by: [UPDATE] }), []);
 });
 
-test("update runs before merge", () => {
+test("update needs no labeler event and runs before merge", () => {
   const pr = pull({ names: [UPDATE, MERGE] });
+  const opts = { labeler: applied, behind: true, by: [UPDATE, MERGE] };
   assert.deepEqual(
-    decide(pr, DEFAULTS, 1, true, writers(UPDATE, MERGE)).map((a) => a.kind),
+    plan(pr, opts).map((a) => a.kind),
     ["update_branch", "enable_auto_merge"],
   );
 });
 
 test("configured label names replace the defaults", () => {
   const config = { ...DEFAULTS, mergeLabels: ["ship"], ignoreLabels: ["hold"] };
-  assert.deepEqual(gated(pull({ names: [MERGE] }), config).merge, []);
-  assert.deepEqual(gated(pull({ names: ["ship"] }), config).merge, ["ship"]);
-  assert.deepEqual(gated(pull({ names: ["ship", "hold"] }), config).merge, []);
+  const ship = { label: "ship", login: "alice" };
+  assert.deepEqual(gated(pull({ names: [MERGE] }), config, applied).merge, []);
+  assert.deepEqual(gated(pull({ names: ["ship"] }), config, ship).merge, [
+    "ship",
+  ]);
+  const held = pull({ names: ["ship", "hold"] });
+  assert.deepEqual(gated(held, config, ship).merge, []);
 });
 
 test("lastLabeler takes the most recent labeled event for the label", () => {
@@ -119,6 +151,8 @@ interface World {
   protection?: object | Error;
   updateError?: Error;
   compareStatus?: string;
+  compareError?: Error;
+  permissionFailures?: number;
 }
 
 function fakeRun(world: World) {
@@ -126,6 +160,7 @@ function fakeRun(world: World) {
   const logs: string[] = [];
   const toml = world.toml === undefined ? "[bot]\nlabels = true\n" : world.toml;
   const pulls = world.pulls ?? [];
+  let permissionFailures = world.permissionFailures ?? 0;
   const github = {
     async fileContents(_r: string, path: string, ref: string) {
       calls.push(`contents ${path}@${ref}`);
@@ -145,6 +180,7 @@ function fakeRun(world: World) {
     },
     async collaboratorPermission(_r: string, login: string) {
       calls.push(`permission ${login}`);
+      if (permissionFailures-- > 0) throw new GitHubError(502, "bad gateway");
       return world.permissions?.[login] ?? "none";
     },
     async branchRules() {
@@ -159,6 +195,7 @@ function fakeRun(world: World) {
     },
     async compare(_r: string, base: string, head: string) {
       calls.push(`compare ${base}...${head}`);
+      if (world.compareError) throw world.compareError;
       return { status: world.compareStatus ?? "identical" };
     },
     async updateBranch(_r: string, number: number, sha: string) {
@@ -203,23 +240,43 @@ test("a labeled event by a writer enables auto-merge with the configured method"
   ]);
 });
 
-test("without a labeled payload the last labeler comes from issue events", async () => {
+test("a merge label applied earlier is not acted on by a later event", async () => {
   const { run, calls } = fakeRun({
     pulls: [pull({ names: [MERGE] })],
     events: {
       5: [
-        { event: "labeled", label: { name: MERGE }, actor: { login: "bob" } },
         { event: "labeled", label: { name: MERGE }, actor: { login: "alice" } },
       ],
     },
-    permissions: { alice: "maintain", bob: "none" },
+    permissions: { alice: "maintain" },
     ...checks,
+  });
+  await evaluatePullRequest(run, 5);
+  assert.ok(!calls.some((c) => c.startsWith("enable")));
+  assert.ok(!calls.includes("events 5"));
+});
+
+test("without a labeled payload the last update labeler comes from issue events", async () => {
+  const { run, calls } = fakeRun({
+    pulls: [pull({ names: [UPDATE] })],
+    events: {
+      5: [
+        { event: "labeled", label: { name: UPDATE }, actor: { login: "bob" } },
+        {
+          event: "labeled",
+          label: { name: UPDATE },
+          actor: { login: "alice" },
+        },
+      ],
+    },
+    permissions: { alice: "maintain", bob: "none" },
+    compareStatus: "behind",
   });
   await evaluatePullRequest(run, 5);
   assert.ok(calls.includes("events 5"));
   assert.ok(calls.includes("permission alice"));
   assert.ok(!calls.includes("permission bob"));
-  assert.ok(calls.some((c) => c.startsWith("enable")));
+  assert.ok(calls.includes("update 5@abc123"));
 });
 
 test("a triage-level labeler is ignored and logged", async () => {
@@ -240,6 +297,14 @@ test("a repository that did not opt in is left alone", async () => {
   });
   await evaluatePullRequest(run, 5, labeledBy("alice"));
   assert.deepEqual(calls, ["contents soothfast.toml@main"]);
+});
+
+test("a repository without labels = true is told how to turn them on", async () => {
+  const { run, logs } = fakeRun({ toml: "[gate]\nwalltime = 'advisory'\n" });
+  await evaluateOpen(run, "any");
+  assert.deepEqual(logs, [
+    "labels are off: set [bot] labels = true in soothfast.toml on main",
+  ]);
 });
 
 test("a missing soothfast.toml is left alone", async () => {
@@ -399,10 +464,10 @@ test("a push evaluates only open pull requests with an update label", async () =
   );
 });
 
-test("a sweep evaluates every pull request carrying a bot label", async () => {
+test("a sweep cancels queued merges but never enables one", async () => {
   const { run, calls } = fakeRun({
     pulls: [
-      pull({ number: 1, names: [HOLD], auto_merge: {} }),
+      pull({ number: 1, node_id: "N1", names: [HOLD], auto_merge: {} }),
       pull({ number: 2, names: [MERGE] }),
       pull({ number: 3 }),
     ],
@@ -415,10 +480,39 @@ test("a sweep evaluates every pull request carrying a bot label", async () => {
     ...checks,
   });
   await evaluateOpen(run, "any");
-  assert.ok(calls.includes("disable PR_node5"));
-  assert.ok(calls.includes("enable PR_node5 squash"));
+  assert.deepEqual(
+    calls.filter((c) => /^(enable|disable)/.test(c)),
+    ["disable N1"],
+  );
   assert.equal(calls.filter((c) => c.startsWith("contents")).length, 1);
   assert.equal(calls.filter((c) => c.startsWith("pull ")).length, 0);
+});
+
+test("pull requests that cannot act do not use up the sweep's slots", async () => {
+  const idle = Array.from({ length: MAX_EVALUATIONS + 2 }, (_, i) =>
+    pull({ number: i + 1, names: i % 2 ? [MERGE] : [HOLD] }),
+  );
+  const queued = pull({
+    number: 99,
+    node_id: "N99",
+    names: [HOLD],
+    auto_merge: {},
+  });
+  const { run, calls, logs } = fakeRun({ pulls: [...idle, queued] });
+  await evaluateOpen(run, "any");
+  assert.deepEqual(
+    calls.filter((c) => c.startsWith("disable")),
+    ["disable N99"],
+  );
+  assert.deepEqual(logs, ["#99: auto-merge cancelled"]);
+});
+
+test("a draft with an update label is left alone", async () => {
+  const { run, calls } = fakeRun({
+    pulls: [pull({ names: [UPDATE], draft: true })],
+  });
+  await evaluateOpen(run, "update");
+  assert.ok(!calls.some((c) => c.startsWith("events")));
 });
 
 test("a sweep is bounded and logs the truncation", async () => {
@@ -438,18 +532,58 @@ test("a sweep is bounded and logs the truncation", async () => {
 test("one failing pull request does not stop the sweep", async () => {
   const { run, calls, logs } = fakeRun({
     pulls: [
-      pull({ number: 1, names: [MERGE] }),
+      pull({ number: 1, names: [UPDATE] }),
       pull({ number: 2, names: [HOLD], auto_merge: {} }),
     ],
     events: {
       1: [
-        { event: "labeled", label: { name: MERGE }, actor: { login: "alice" } },
+        {
+          event: "labeled",
+          label: { name: UPDATE },
+          actor: { login: "alice" },
+        },
       ],
     },
     permissions: { alice: "write" },
-    protection: new GitHubError(500, "boom"),
+    compareError: new GitHubError(500, "boom"),
   });
   await evaluateOpen(run, "any");
   assert.match(logs[0], /#1: boom/);
   assert.ok(calls.some((c) => c.startsWith("disable")));
+});
+
+test("a failed lookup is retried by the next pull request, not cached", async () => {
+  const events = [
+    { event: "labeled", label: { name: UPDATE }, actor: { login: "alice" } },
+  ];
+  const { run, calls, logs } = fakeRun({
+    pulls: [
+      pull({ number: 1, names: [UPDATE] }),
+      pull({ number: 2, names: [UPDATE] }),
+    ],
+    events: { 1: events, 2: events },
+    permissions: { alice: "write" },
+    compareStatus: "behind",
+    permissionFailures: 1,
+  });
+  await evaluateOpen(run, "update");
+  assert.match(logs[0], /#1: bad gateway/);
+  assert.ok(calls.includes("update 2@abc123"));
+  assert.equal(calls.filter((c) => c === "permission alice").length, 2);
+});
+
+test("a successful lookup is shared across pull requests", async () => {
+  const events = [
+    { event: "labeled", label: { name: UPDATE }, actor: { login: "alice" } },
+  ];
+  const { run, calls } = fakeRun({
+    pulls: [
+      pull({ number: 1, names: [UPDATE] }),
+      pull({ number: 2, names: [UPDATE] }),
+    ],
+    events: { 1: events, 2: events },
+    permissions: { alice: "write" },
+  });
+  await evaluateOpen(run, "update");
+  assert.equal(calls.filter((c) => c === "permission alice").length, 1);
 });
