@@ -439,13 +439,20 @@ pub fn run(args: &[String]) -> i32 {
         );
     }
     let duplicate_only = ws.projects.is_empty() && ws.ci.is_default();
-    if !callers.is_empty() && duplicate_only && !force && !root.join(WORKFLOW_PATH).exists() {
+    let skip_workflow =
+        !callers.is_empty() && duplicate_only && !force && !root.join(WORKFLOW_PATH).exists();
+    if skip_workflow {
         println!(
-            "init: nothing written, since {WORKFLOW_PATH} would only duplicate the jobs above; --force writes it"
+            "init: {WORKFLOW_PATH} not written, since it would only duplicate the jobs above; --force writes it"
         );
+    }
+    let files: Vec<_> = scaffold(&ws)
+        .into_iter()
+        .filter(|f| !skip_workflow || f.kind == Kind::Bot)
+        .collect();
+    if files.is_empty() {
         return 0;
     }
-    let files = scaffold(&ws);
     let rc = report(&root, &files, check, force);
     if check || rc != 0 {
         return rc;
@@ -541,16 +548,29 @@ fn create_labels(root: &Path) -> Result<(), String> {
         }
     }
     for (name, color, description) in set {
-        let status = Command::new("gh")
+        let output = Command::new("gh")
             .args(["label", "create", &name, "--force", "--color", &color])
             .args(["--description", &description])
-            .status();
-        match status {
-            Ok(s) if s.success() => println!("label    {name}"),
-            _ => return Err(format!("could not create label {name} (is gh signed in?)")),
+            .output()
+            .map_err(|e| {
+                format!("could not create label {name}: gh could not run ({e}); is it installed?")
+            })?;
+        if !output.status.success() {
+            return Err(label_failure(&name, &output.stderr));
         }
+        println!("label    {name}");
     }
     Ok(())
+}
+
+/// The error for a label `gh` refused: its first non-empty line of stderr.
+fn label_failure(name: &str, stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let reason = stderr
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("is gh signed in?");
+    format!("could not create label {name}: {reason}")
 }
 
 /// Every label soothfast acts on, with its colour and description: a
@@ -1482,6 +1502,50 @@ cmd = "npm test"
         assert_eq!(label_exit(failed(), true), 0);
         assert_eq!(label_exit(failed(), false), 2);
         assert_eq!(label_exit(Ok(()), false), 0);
+    }
+
+    #[test]
+    fn a_gh_failure_keeps_only_its_first_line() {
+        let stderr = b"no remotes found\nrun gh repo set-default\n";
+        assert_eq!(
+            label_failure("x", stderr),
+            "could not create label x: no remotes found"
+        );
+        assert_eq!(
+            label_failure("x", b"\n  \nlater\n"),
+            "could not create label x: later"
+        );
+        assert_eq!(
+            label_failure("x", b""),
+            "could not create label x: is gh signed in?"
+        );
+    }
+
+    #[test]
+    fn a_repo_with_a_caller_workflow_still_gets_the_bot_table() {
+        let root = scratch("caller-bot");
+        let dir = root.join(".github/workflows");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("ci.yml"),
+            "      - uses: Verdenroz/soothfast@abc\n",
+        )
+        .unwrap();
+        let w = Workspace {
+            bot: true,
+            labels: true,
+            ..ws(&[], None)
+        };
+        let mut files = scaffold(&w);
+        files.retain(|f| f.kind == Kind::Bot);
+        assert_eq!(files.len(), 1);
+        assert_eq!(report(&root, &files, true, false), 1);
+        assert_eq!(report(&root, &files, false, false), 0);
+        let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap();
+        assert_eq!(text, "[bot]\nlabels = true\n");
+        assert!(!root.join(WORKFLOW_PATH).exists());
+        assert!(!root.join(".gitignore").exists());
+        assert_eq!(report(&root, &files, true, false), 0);
     }
 
     #[test]

@@ -10,6 +10,7 @@ type Action =
 
 interface Gated {
   ignored: boolean;
+  declined?: string;
   update: string[];
   merge: string[];
 }
@@ -17,8 +18,10 @@ interface Gated {
 export interface Run {
   github: GitHubApi;
   token: string;
+  repositoryId: number;
   repository: string;
   defaultBranch: string;
+  fresh: boolean;
   log: (message: string) => void;
 }
 
@@ -32,6 +35,10 @@ interface Context {
 // Each pull request costs up to four subrequests; with the fixed overhead of
 // a delivery, six stay under the free plan's cap of 50.
 export const MAX_EVALUATIONS = 6;
+
+const CONFIG_TTL_MS = 60_000;
+type Parsed = ReturnType<typeof parseBotConfig>;
+const configs = new Map<number, { fetchedAt: number; parsed: Parsed }>();
 
 const WRITE_PERMISSIONS: readonly string[] = ["admin", "maintain", "write"];
 const CHECK_RULES: readonly string[] = [
@@ -55,8 +62,15 @@ export function gated(
   const applied = present(pr, config.mergeLabels).filter(
     (label) => label === labeler?.label,
   );
+  const declined =
+    applied.length > 0 && !mergeable
+      ? pr.draft
+        ? "it is a draft"
+        : "auto-merge is already enabled"
+      : undefined;
   return {
     ignored: false,
+    declined,
     update: present(pr, config.updateLabels),
     merge: mergeable ? applied : [],
   };
@@ -103,6 +117,7 @@ export async function evaluateOpen(run: Run): Promise<void> {
     run.token,
   );
   const actionable = open.filter((pr) => canAct(pr, context.config));
+  if (actionable.length === 0) run.log("no pull requests to act on");
   if (actionable.length > MAX_EVALUATIONS)
     run.log(
       `evaluating ${MAX_EVALUATIONS} of ${actionable.length} pull requests`,
@@ -120,21 +135,9 @@ function canAct(pr: PullRequest, config: BotConfig): boolean {
 }
 
 async function load(run: Run): Promise<Context | undefined> {
-  const toml = await run.github.fileContents(
-    run.repository,
-    "soothfast.toml",
-    run.defaultBranch,
-    run.token,
-  );
-  const parsed = parseBotConfig(toml ?? "");
-  if (!parsed.ok) {
-    run.log(`ignoring labels: ${parsed.reason}`);
-    return undefined;
-  }
-  if (!parsed.config.labels) {
-    run.log(
-      `labels are off: set [bot] labels = true in soothfast.toml on ${run.defaultBranch}`,
-    );
+  const parsed = await botConfig(run);
+  if (!parsed.ok || !parsed.config.labels) {
+    run.log(offNotice(parsed, run.defaultBranch));
     return undefined;
   }
   return {
@@ -145,6 +148,42 @@ async function load(run: Run): Promise<Context | undefined> {
       run.github.collaboratorPermission(run.repository, login, run.token),
     ),
   };
+}
+
+const offNotice = (parsed: Parsed, defaultBranch: string) =>
+  parsed.ok
+    ? `labels are off: set [bot] labels = true in soothfast.toml on ${defaultBranch}`
+    : `ignoring labels: ${parsed.reason}`;
+
+function cachedConfig(repositoryId: number): Parsed | undefined {
+  const hit = configs.get(repositoryId);
+  if (!hit) return undefined;
+  if (Date.now() - hit.fetchedAt < CONFIG_TTL_MS) return hit.parsed;
+  configs.delete(repositoryId);
+  return undefined;
+}
+
+export function cachedOff(
+  repositoryId: number,
+  defaultBranch: string,
+): string | undefined {
+  const parsed = cachedConfig(repositoryId);
+  const off = parsed && (!parsed.ok || !parsed.config.labels);
+  return off ? offNotice(parsed, defaultBranch) : undefined;
+}
+
+async function botConfig(run: Run): Promise<Parsed> {
+  const cached = run.fresh ? undefined : cachedConfig(run.repositoryId);
+  if (cached) return cached;
+  const toml = await run.github.fileContents(
+    run.repository,
+    "soothfast.toml",
+    run.defaultBranch,
+    run.token,
+  );
+  const parsed = parseBotConfig(toml ?? "");
+  configs.set(run.repositoryId, { fetchedAt: Date.now(), parsed });
+  return parsed;
 }
 
 function memoBy<T>(compute: (key: string) => Promise<T>) {
@@ -204,12 +243,10 @@ async function evaluate(
   labeler?: Labeler,
 ): Promise<void> {
   const { run, config } = context;
-  const gate = await byWriters(
-    context,
-    pr,
-    gated(pr, config, labeler),
-    labeler,
-  );
+  const initial = gated(pr, config, labeler);
+  if (initial.declined)
+    run.log(`#${pr.number}: not merging, ${initial.declined}`);
+  const gate = await byWriters(context, pr, initial, labeler);
   const checked = gate.merge.length > 0 ? await context.checked() : 0;
   const behind = gate.update.length > 0 && (await isBehind(run, pr));
   for (const action of decide(pr, gate, checked, behind))
@@ -269,6 +306,10 @@ function unchanged(current: PullRequest, seen: PullRequest, label: string) {
   );
 }
 
+const isAlreadyMergeable = (e: unknown) =>
+  e instanceof GitHubError &&
+  /(clean|unstable|has_hooks) status/i.test(e.message);
+
 async function perform(
   { run, config }: Context,
   pr: PullRequest,
@@ -289,13 +330,31 @@ async function perform(
         );
         return;
       }
-      await github.enableAutoMerge(
-        pr.node_id,
-        config.mergeMethod,
-        pr.head.sha,
-        token,
-      );
-      run.log(`${tag}: auto-merge enabled`);
+      try {
+        await github.enableAutoMerge(
+          pr.node_id,
+          config.mergeMethod,
+          pr.head.sha,
+          token,
+        );
+        run.log(`${tag}: auto-merge enabled`);
+        return;
+      } catch (e) {
+        if (!isAlreadyMergeable(e)) throw e;
+      }
+      try {
+        await github.mergePullRequest(
+          repository,
+          pr.number,
+          pr.head.sha,
+          config.mergeMethod,
+          token,
+        );
+        run.log(`${tag}: merged (checks had already passed)`);
+      } catch (e) {
+        if (!(e instanceof GitHubError)) throw e;
+        run.log(`${tag}: could not merge (${e.status}: ${e.message})`);
+      }
       return;
     }
     case "update_branch":

@@ -336,6 +336,14 @@ test("enableAutoMerge sends the merge method as a GraphQL enum", async () => {
   });
 });
 
+test("mergePullRequest binds the merge to the head sha", async () => {
+  const { api, calls } = fakeGitHub({
+    "PUT /repos/acme/widgets/pulls/5/merge": { status: 200, body: {} },
+  });
+  await api.mergePullRequest("acme/widgets", 5, "abc123", "squash", "ghs_x");
+  assert.deepEqual(calls[0].body, { sha: "abc123", merge_method: "squash" });
+});
+
 test("a GraphQL error in a 200 response becomes a GitHubError", async () => {
   const { api } = fakeGitHub({
     "POST /graphql": {

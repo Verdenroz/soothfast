@@ -147,7 +147,12 @@ interface World {
   compareError?: Error;
   live?: Partial<PullRequest> & { names?: string[] };
   permissionFailures?: number;
+  enableError?: Error;
+  mergeError?: Error;
+  contentsFailures?: number;
 }
+
+let nextRepositoryId = 0;
 
 function fakeRun(world: World) {
   const calls: string[] = [];
@@ -155,9 +160,11 @@ function fakeRun(world: World) {
   const toml = world.toml === undefined ? "[bot]\nlabels = true\n" : world.toml;
   const pulls = world.pulls ?? [];
   let permissionFailures = world.permissionFailures ?? 0;
+  let contentsFailures = world.contentsFailures ?? 0;
   const github = {
     async fileContents(_r: string, path: string, ref: string) {
       calls.push(`contents ${path}@${ref}`);
+      if (contentsFailures-- > 0) throw new GitHubError(502, "bad gateway");
       return toml ?? undefined;
     },
     async openPullRequests(_r: string, base: string) {
@@ -201,6 +208,16 @@ function fakeRun(world: World) {
     },
     async enableAutoMerge(id: string, method: string, oid: string) {
       calls.push(`enable ${id} ${method} ${oid}`);
+      if (world.enableError) throw world.enableError;
+    },
+    async mergePullRequest(
+      _r: string,
+      number: number,
+      sha: string,
+      method: string,
+    ) {
+      calls.push(`merge ${number}@${sha} ${method}`);
+      if (world.mergeError) throw world.mergeError;
     },
     async disableAutoMerge(id: string) {
       calls.push(`disable ${id}`);
@@ -209,8 +226,10 @@ function fakeRun(world: World) {
   const run = {
     github,
     token: "ghs_x",
+    repositoryId: ++nextRepositoryId,
     repository: "acme/widgets",
     defaultBranch: "main",
+    fresh: false,
     log: (message: string) => logs.push(message),
   };
   return { run: { ...run, pulls }, calls, logs };
@@ -244,6 +263,85 @@ test("a labeled event by a writer enables auto-merge with the configured method"
     "pull 5",
     "enable PR_node5 rebase abc123",
   ]);
+});
+
+test("an already-mergeable pull request is merged with the labelled head", async () => {
+  const { run, calls, logs } = fakeRun({
+    toml: '[bot]\nlabels = true\nmerge_method = "squash"\n',
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    enableError: new GitHubError(200, "Pull request is in clean status"),
+    ...checks,
+  });
+  await evaluateOne(run, 5, labeledBy("alice"));
+  assert.equal(calls.at(-1), "merge 5@abc123 squash");
+  assert.deepEqual(logs, ["#5: merged (checks had already passed)"]);
+});
+
+test("an unstable-status rejection also merges", async () => {
+  const { run, calls } = fakeRun({
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    enableError: new GitHubError(200, "Pull request is in unstable status"),
+    ...checks,
+  });
+  await evaluateOne(run, 5, labeledBy("alice"));
+  assert.equal(calls.at(-1), "merge 5@abc123 squash");
+});
+
+test("a refused merge is logged, not thrown", async () => {
+  const { run, logs } = fakeRun({
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    enableError: new GitHubError(200, "Pull request is in clean status"),
+    mergeError: new GitHubError(405, "Merge queue is required"),
+    ...checks,
+  });
+  await evaluateOne(run, 5, labeledBy("alice"));
+  assert.deepEqual(logs, [
+    "#5: could not merge (405: Merge queue is required)",
+  ]);
+});
+
+test("other enable errors do not merge", async () => {
+  const { run, calls } = fakeRun({
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    enableError: new GitHubError(200, "Auto merge is not allowed"),
+    ...checks,
+  });
+  await assert.rejects(evaluateOne(run, 5, labeledBy("alice")));
+  assert.ok(!calls.some((c) => c.startsWith("merge")));
+});
+
+test("a moved head merges nothing even when it would be clean", async () => {
+  const { run, calls } = fakeRun({
+    pulls: [pull({ names: [MERGE] })],
+    permissions: { alice: "write" },
+    live: { head: { sha: "def456" } },
+    enableError: new GitHubError(200, "Pull request is in clean status"),
+    ...checks,
+  });
+  await evaluateOne(run, 5, labeledBy("alice"));
+  assert.ok(!calls.some((c) => c.startsWith("merge")));
+  assert.ok(!calls.some((c) => c.startsWith("enable")));
+});
+
+test("a draft or queued pull request logs why it is not merged", async () => {
+  const draft = fakeRun({ pulls: [pull({ names: [MERGE], draft: true })] });
+  await evaluateOne(draft.run, 5, labeledBy("alice"));
+  assert.deepEqual(draft.logs, ["#5: not merging, it is a draft"]);
+  const queued = fakeRun({ pulls: [pull({ names: [MERGE], auto_merge: {} })] });
+  await evaluateOne(queued.run, 5, labeledBy("alice"));
+  assert.deepEqual(queued.logs, [
+    "#5: not merging, auto-merge is already enabled",
+  ]);
+});
+
+test("a sweep with nothing actionable logs it", async () => {
+  const { run, logs } = fakeRun({ pulls: [pull({ names: [MERGE] })] });
+  await evaluateOpen(run);
+  assert.deepEqual(logs, ["no pull requests to act on"]);
 });
 
 const staleCases = [
@@ -574,4 +672,34 @@ test("a successful lookup is shared across pull requests", async () => {
   });
   await evaluateOpen(run);
   assert.equal(calls.filter((c) => c === "permission alice").length, 1);
+});
+
+const fetches = (calls: string[]) =>
+  calls.filter((c) => c.startsWith("contents")).length;
+
+test("deliveries within the ttl read soothfast.toml once", async (t) => {
+  let now = 1_000_000;
+  t.mock.method(Date, "now", () => now);
+  const { run, calls } = fakeRun({ toml: null });
+  await evaluateOpen(run);
+  now += 59_000;
+  await evaluateOpen(run);
+  assert.equal(fetches(calls), 1);
+  now += 2_000;
+  await evaluateOpen(run);
+  assert.equal(fetches(calls), 2);
+});
+
+test("a fresh run reads the config again", async () => {
+  const { run, calls } = fakeRun({});
+  await evaluateOpen(run);
+  await evaluateOpen({ ...run, fresh: true });
+  assert.equal(fetches(calls), 2);
+});
+
+test("a failed read is not cached", async () => {
+  const { run, calls } = fakeRun({ contentsFailures: 1 });
+  await assert.rejects(evaluateOpen(run));
+  await evaluateOpen(run);
+  assert.equal(fetches(calls), 2);
 });

@@ -22,7 +22,7 @@ interface Target {
 
 export type Work =
   | { kind: "pull_request"; target: Target; pr: PullRequest; labeler?: Labeler }
-  | { kind: "push"; target: Target };
+  | { kind: "push"; target: Target; configChanged: boolean };
 
 export interface Labeler {
   label: string;
@@ -36,6 +36,8 @@ interface Payload {
   action?: string;
   ref?: string;
   deleted?: boolean;
+  forced?: boolean;
+  commits?: { added: string[]; modified: string[]; removed: string[] }[];
   label?: { name: string };
   sender: { login: string };
   installation: { id: number };
@@ -90,6 +92,18 @@ export async function verifySignature(
   return crypto.subtle.verify("HMAC", key, expected, body);
 }
 
+// A push payload lists at most 2048 commits, so a full list may hide the one
+// that edits it; a force-push can drop that commit from the list entirely.
+const MAX_LISTED_COMMITS = 2048;
+
+const touchesConfig = ({ commits, forced }: Payload) =>
+  forced === true ||
+  !commits?.length ||
+  commits.length >= MAX_LISTED_COMMITS ||
+  commits.some((c) =>
+    [...c.added, ...c.modified, ...c.removed].includes("soothfast.toml"),
+  );
+
 export function route(event: string, payload: Payload): Work | undefined {
   if (event !== "push" && event !== "pull_request") return undefined;
   const target: Target = {
@@ -100,7 +114,9 @@ export function route(event: string, payload: Payload): Work | undefined {
   };
   if (event === "push") {
     const toDefault = payload.ref === `refs/heads/${target.defaultBranch}`;
-    return toDefault && !payload.deleted ? { kind: "push", target } : undefined;
+    return toDefault && !payload.deleted
+      ? { kind: "push", target, configChanged: touchesConfig(payload) }
+      : undefined;
   }
   const { action, pull_request: pr } = payload;
   const relevant =

@@ -6,7 +6,12 @@ import {
   type GitHubApi,
   type Repository,
 } from "./github.ts";
-import { evaluateOpen, evaluatePullRequest, type Run } from "./labels.ts";
+import {
+  evaluateOpen,
+  evaluatePullRequest,
+  cachedOff,
+  type Run,
+} from "./labels.ts";
 import { githubJwks, OidcError, verifyOidc, type JwksLookup } from "./oidc.ts";
 import {
   AUDIENCE,
@@ -164,6 +169,14 @@ async function webhook(
 
 async function act(work: Work, env: Env, deps: Deps): Promise<void> {
   const { target } = work;
+  const fresh = work.kind === "push" && work.configChanged;
+  const off = fresh
+    ? undefined
+    : cachedOff(target.repositoryId, target.defaultBranch);
+  if (off) {
+    console.log(`${target.repository}: ${off}`);
+    return;
+  }
   const jwt = await appJwt(
     env.GITHUB_APP_CLIENT_ID,
     await privateKey(env.GITHUB_APP_PRIVATE_KEY),
@@ -178,8 +191,10 @@ async function act(work: Work, env: Env, deps: Deps): Promise<void> {
   const run = makeRun(
     deps,
     token,
+    target.repositoryId,
     target.repository,
     target.defaultBranch,
+    fresh,
     (m) => console.log(`${target.repository}: ${m}`),
   );
   try {
@@ -194,10 +209,20 @@ async function act(work: Work, env: Env, deps: Deps): Promise<void> {
 const makeRun = (
   deps: Deps,
   token: string,
+  repositoryId: number,
   repository: string,
   defaultBranch: string,
+  fresh: boolean,
   log: Run["log"],
-): Run => ({ github: deps.github, token, repository, defaultBranch, log });
+): Run => ({
+  github: deps.github,
+  token,
+  repositoryId,
+  repository,
+  defaultBranch,
+  fresh,
+  log,
+});
 
 let cachedKey: { pem: string; key: CryptoKey } | undefined;
 let cachedSlug: { clientId: string; slug: string } | undefined;
@@ -317,8 +342,10 @@ async function sweep(
     const run = makeRun(
       deps,
       minted.token,
+      repository.id,
       claims.repository,
       repository.default_branch,
+      true,
       (message) => log.push(message),
     );
     await evaluateOpen(run);
