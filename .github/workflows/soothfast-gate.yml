@@ -92,6 +92,7 @@ jobs:
         with:
           gate: "false"
           changelog: "false"
+          labels: "false"
       - name: Run gate
         id: gate
         # bash, not the default `bash -e`: pipefail keeps the gate's exit code

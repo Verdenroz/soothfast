@@ -128,12 +128,14 @@ inputs:
       reconcile the soothfast labels of open pull requests: `do-not-merge`
       cancels a queued auto-merge and `soothfast:update` brings a pull
       request that fell behind up to date. `soothfast:merge` acts only when
-      a writer applies it, never on a sweep. Needs the broker, so it does
-      nothing with `bot-token`.
+      a writer applies it, never on a sweep. Needs the broker and a job with
+      `id-token: write` and the `soothfast-bot` environment; without them, or
+      with `bot-token`, the sweep only annotates the run. Set "false" in jobs
+      that have neither.
       A pull request gate labelled `soothfast:perf-accepted` reports its
       regressions without failing, whatever this is set to.
     required: false
-    default: "false"
+    default: "true"
   shard:
     description: >-
       `I/N` to gate only the items shard I of N owns, for a job matrix that

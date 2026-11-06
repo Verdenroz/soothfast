@@ -1407,6 +1407,18 @@ cmd = "npm test"
     }
 
     #[test]
+    fn only_the_labels_job_sweeps() {
+        let text = workflow(&Workspace {
+            bot: true,
+            labels: true,
+            docs_packages: vec!["a".into()],
+            ..ws(&["a"], None)
+        });
+        assert_eq!(text.matches("labels: \"false\"").count(), 3);
+        assert_eq!(text.matches("labels: \"true\"").count(), 1);
+    }
+
+    #[test]
     fn a_bot_without_labels_adds_no_labels_job() {
         let w = Workspace {
             bot: true,
