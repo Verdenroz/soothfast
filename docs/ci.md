@@ -315,8 +315,10 @@ a merge back. Drafts and pull requests that already have auto-merge enabled
 are skipped. GitHub turns auto-merge off when someone without write access
 pushes to the branch, so later pushes and sweeps never turn it back on:
 to queue the merge again, remove `soothfast:merge` and add it back. The
-bot never watches statuses: GitHub's auto-merge, rulesets
-and merge queue decide when the merge happens.
+merge is tied to the commit the label was applied to: if the branch moves
+or the label comes off before the bot acts, it queues nothing. The bot never
+watches statuses; GitHub's auto-merge, rulesets and merge queue decide when
+the merge happens.
 
 A pull request gate labelled `soothfast:perf-accepted` reports its
 regressions in the comment and passes; label the pull request, then re-run
@@ -359,24 +361,24 @@ GitHub does not redeliver a webhook that failed. With `labels: "true"` on a
 job that runs on default-branch pushes and on a schedule, the action asks the
 broker to sweep the open pull requests: it cancels queued merges held by
 `do-not-merge` and updates labelled branches, but never enables a merge.
-The job needs
-`id-token: write` and `environment: soothfast-bot`, like any step that talks
-to the broker.
+The job needs `id-token: write` and `environment: soothfast-bot`, like any
+step that talks to the broker.
 
 ### Limits
 
-- Only pull requests into the default branch are evaluated. A pull request
-  retargeted onto it is picked up by the next sweep.
-- At most 6 pull requests are evaluated per push or sweep (the most recently
-  updated first, among those the bot could act on), to stay inside the Workers subrequest limit. The broker
-  logs when it truncates.
+- Only pull requests into the default branch are evaluated. For one
+  retargeted onto it, the next sweep handles its update label; apply
+  `soothfast:merge` again to queue it.
+- A push or sweep evaluates at most 6 pull requests, most recently updated
+  first among those the bot could act on, to stay inside the Workers
+  subrequest limit. The broker logs when it truncates.
 - Branch protection that the App cannot read counts as no required checks, so
   `soothfast:merge` is refused rather than risk an immediate merge.
 - On a merge-queue branch the bot relies on GitHub's auto-merge to enqueue
   the pull request; this has not been exercised against a live queue.
 
 With `bot-token` there is no broker, so the label sweep warns and does
-nothing; labels are only acted on through the hosted or self-hosted broker.
+nothing; only a broker, hosted or self-hosted, acts on labels.
 
 ## Bringing your own token
 
