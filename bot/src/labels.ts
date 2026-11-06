@@ -5,7 +5,7 @@ import type { Labeler } from "./webhook.ts";
 type Action =
   | { kind: "disable_auto_merge" }
   | { kind: "update_branch" }
-  | { kind: "enable_auto_merge" }
+  | { kind: "enable_auto_merge"; label: string }
   | { kind: "skip"; reason: string };
 
 interface Gated {
@@ -79,7 +79,7 @@ export function decide(
             kind: "skip",
             reason: "the default branch requires no status check",
           }
-        : { kind: "enable_auto_merge" },
+        : { kind: "enable_auto_merge", label: merge[0] },
     );
   }
   return actions;
@@ -258,6 +258,17 @@ async function byWriters(
   };
 }
 
+// A delivery can be late, replayed or overtaken by a label removal, and its
+// payload is only a snapshot: enabling needs the live state to still match it.
+function unchanged(current: PullRequest, seen: PullRequest, label: string) {
+  return (
+    current.labels.some((l) => l.name === label) &&
+    current.auto_merge === null &&
+    !current.draft &&
+    current.head.sha === seen.head.sha
+  );
+}
+
 async function perform(
   { run, config }: Context,
   pr: PullRequest,
@@ -270,10 +281,23 @@ async function perform(
       await github.disableAutoMerge(pr.node_id, token);
       run.log(`${tag}: auto-merge cancelled`);
       return;
-    case "enable_auto_merge":
-      await github.enableAutoMerge(pr.node_id, config.mergeMethod, token);
+    case "enable_auto_merge": {
+      const current = await github.pullRequest(repository, pr.number, token);
+      if (!unchanged(current, pr, action.label)) {
+        run.log(
+          `${tag}: not merging, it changed since ${action.label} was applied`,
+        );
+        return;
+      }
+      await github.enableAutoMerge(
+        pr.node_id,
+        config.mergeMethod,
+        pr.head.sha,
+        token,
+      );
       run.log(`${tag}: auto-merge enabled`);
       return;
+    }
     case "update_branch":
       await github
         .updateBranch(repository, pr.number, pr.head.sha, token)

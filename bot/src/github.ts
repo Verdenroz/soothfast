@@ -110,6 +110,11 @@ export interface GitHubApi {
     ref: string,
     token: string,
   ): Promise<string | undefined>;
+  pullRequest(
+    repository: string,
+    number: number,
+    token: string,
+  ): Promise<PullRequest>;
   openPullRequests(
     repository: string,
     base: string,
@@ -145,6 +150,7 @@ export interface GitHubApi {
   enableAutoMerge(
     nodeId: string,
     method: MergeMethod,
+    expectedHeadOid: string,
     token: string,
   ): Promise<void>;
   disableAutoMerge(nodeId: string, token: string): Promise<void>;
@@ -359,6 +365,10 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
       if (result.status === 404) return undefined;
       return new TextDecoder().decode(base64ToBytes(expectOk(result).content));
     },
+    async pullRequest(repository, number, token) {
+      const path = `/repos/${repository}/pulls/${number}`;
+      return expectOk(await call<PullRequest>("GET", path, token));
+    },
     // One page of 100 covers the evaluation cap.
     async openPullRequests(repository, base, token) {
       const path = `/repos/${repository}/pulls?state=open&sort=updated&direction=desc&per_page=100&base=${encodeURIComponent(base)}`;
@@ -401,18 +411,26 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
         }),
       );
     },
-    async enableAutoMerge(nodeId, method, token) {
+    async enableAutoMerge(nodeId, method, expectedHeadOid, token) {
       await graphql(
         `
-          mutation ($id: ID!, $method: PullRequestMergeMethod!) {
+          mutation (
+            $id: ID!
+            $method: PullRequestMergeMethod!
+            $oid: GitObjectID!
+          ) {
             enablePullRequestAutoMerge(
-              input: { pullRequestId: $id, mergeMethod: $method }
+              input: {
+                pullRequestId: $id
+                mergeMethod: $method
+                expectedHeadOid: $oid
+              }
             ) {
               clientMutationId
             }
           }
         `,
-        { id: nodeId, method: method.toUpperCase() },
+        { id: nodeId, method: method.toUpperCase(), oid: expectedHeadOid },
         token,
       );
     },

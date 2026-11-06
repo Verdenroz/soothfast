@@ -24,4 +24,4 @@ if [ "$status" != 200 ]; then
   fail "soothfast-bot refused the sweep (HTTP $status): $(jq -r '.reason // .' <<<"$body")"
 fi
 
-jq -r '.log[] | "sweep: " + .' <<<"$body"
+jq -r '.log[] | gsub("[\r\n]"; " ") | "sweep: " + .' <<<"$body"

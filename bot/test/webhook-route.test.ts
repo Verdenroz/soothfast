@@ -30,7 +30,9 @@ const pullRequest = {
   base: { ref: "main" },
 };
 
-function fakeGitHub(opts: { protection?: Error; open?: object[] } = {}) {
+function fakeGitHub(
+  opts: { protection?: Error; open?: object[]; live?: object } = {},
+) {
   const calls: string[] = [];
   const minted: { installation: number; repository: number; perms: object }[] =
     [];
@@ -60,8 +62,11 @@ function fakeGitHub(opts: { protection?: Error; open?: object[] } = {}) {
       if (opts.protection) throw opts.protection;
       return {};
     },
-    async enableAutoMerge(id: string, method: string) {
-      calls.push(`enable ${id} ${method}`);
+    async pullRequest() {
+      return { ...pullRequest, ...opts.live };
+    },
+    async enableAutoMerge(id: string, method: string, oid: string) {
+      calls.push(`enable ${id} ${method} ${oid}`);
     },
     async revoke(token: string) {
       revoked.push(token);
@@ -112,7 +117,7 @@ test("a labeled event by a writer is acknowledged and acted on", async () => {
   const fake = fakeGitHub();
   const result = await deliver(fake, labeled());
   assert.deepEqual(result, { status: 202, pending: 1 });
-  assert.deepEqual(fake.calls, ["enable PR_node5 squash"]);
+  assert.deepEqual(fake.calls, ["enable PR_node5 squash abc123"]);
 });
 
 test("the token is scoped to the payload's installation and repository", async () => {
@@ -144,6 +149,12 @@ test("the token is revoked when the work fails", async () => {
 test("a labeler without write access is not acted on", async () => {
   const fake = fakeGitHub();
   await deliver(fake, labeled("mallory"));
+  assert.deepEqual(fake.calls, []);
+});
+
+test("a redelivered labeled event does not queue a head that moved", async () => {
+  const fake = fakeGitHub({ live: { head: { sha: "def456" } } });
+  await deliver(fake, labeled());
   assert.deepEqual(fake.calls, []);
 });
 

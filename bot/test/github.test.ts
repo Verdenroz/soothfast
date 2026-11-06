@@ -325,10 +325,15 @@ test("enableAutoMerge sends the merge method as a GraphQL enum", async () => {
   const { api, calls } = fakeGitHub({
     "POST /graphql": { status: 200, body: { data: {} } },
   });
-  await api.enableAutoMerge("PR_node", "squash", "ghs_x");
+  await api.enableAutoMerge("PR_node", "squash", "abc123", "ghs_x");
   const body = calls[0].body as { query: string; variables: object };
   assert.match(body.query, /enablePullRequestAutoMerge/);
-  assert.deepEqual(body.variables, { id: "PR_node", method: "SQUASH" });
+  assert.match(body.query, /expectedHeadOid: \$oid/);
+  assert.deepEqual(body.variables, {
+    id: "PR_node",
+    method: "SQUASH",
+    oid: "abc123",
+  });
 });
 
 test("a GraphQL error in a 200 response becomes a GitHubError", async () => {

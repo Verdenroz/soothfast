@@ -59,7 +59,7 @@ const applied = { label: MERGE, login: "alice" };
 test("a writer applying the merge label enables auto-merge", () => {
   const pr = pull({ names: [MERGE] });
   assert.deepEqual(plan(pr, { labeler: applied, by: [MERGE] }), [
-    { kind: "enable_auto_merge" },
+    { kind: "enable_auto_merge", label: MERGE },
   ]);
 });
 
@@ -145,6 +145,7 @@ interface World {
   updateError?: Error;
   compareStatus?: string;
   compareError?: Error;
+  live?: Partial<PullRequest> & { names?: string[] };
   permissionFailures?: number;
 }
 
@@ -191,8 +192,15 @@ function fakeRun(world: World) {
       calls.push(`update ${number}@${sha}`);
       if (world.updateError) throw world.updateError;
     },
-    async enableAutoMerge(id: string, method: string) {
-      calls.push(`enable ${id} ${method}`);
+    async pullRequest(_r: string, number: number) {
+      calls.push(`pull ${number}`);
+      const { names, ...live } = world.live ?? {};
+      const labels = names?.map((name) => ({ name }));
+      const seen = pulls.find((p) => p.number === number)!;
+      return { ...seen, ...(labels && { labels }), ...live };
+    },
+    async enableAutoMerge(id: string, method: string, oid: string) {
+      calls.push(`enable ${id} ${method} ${oid}`);
     },
     async disableAutoMerge(id: string) {
       calls.push(`disable ${id}`);
@@ -233,9 +241,32 @@ test("a labeled event by a writer enables auto-merge with the configured method"
     "permission alice",
     "rules",
     "protection",
-    "enable PR_node5 rebase",
+    "pull 5",
+    "enable PR_node5 rebase abc123",
   ]);
 });
+
+const staleCases = [
+  ["the label was removed before evaluation", { names: [] }],
+  ["the head moved since it was labelled", { head: { sha: "def456" } }],
+  ["auto-merge was queued meanwhile", { auto_merge: {} }],
+  ["the pull request became a draft", { draft: true }],
+] as const;
+
+for (const [name, live] of staleCases) {
+  test(`auto-merge is not enabled when ${name}`, async () => {
+    const { run, calls, logs } = fakeRun({
+      pulls: [pull({ names: [MERGE] })],
+      permissions: { alice: "write" },
+      live,
+      ...checks,
+    });
+    await evaluateOne(run, 5, labeledBy("alice"));
+    assert.ok(calls.includes("pull 5"));
+    assert.ok(!calls.some((c) => c.startsWith("enable")));
+    assert.match(logs[0], /changed since soothfast:merge was applied/);
+  });
+}
 
 test("a merge label applied earlier is not acted on by a later event", async () => {
   const { run, calls } = fakeRun({
