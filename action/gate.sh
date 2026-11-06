@@ -57,11 +57,13 @@ mkdir -p "$out_dir"
 
 # shellcheck source=action/labels.sh
 source "$(dirname "$0")/labels.sh"
-if [ "$regressed" = true ] && [ "$errored" = false ] && perf_accepted "$PR_NUMBER"; then
-  echo "::notice::regressions accepted by the soothfast:perf-accepted label"
-  # shellcheck disable=SC2016 # literal backticks, nothing to expand
-  echo 'Regressions accepted by the `soothfast:perf-accepted` label.' >>"${out_dir}/comment.md"
-  regressed=false
+if [ "$regressed" = true ] && [ "$errored" = false ]; then
+  mapfile -t waivers < <(perf_accepted_names)
+  if perf_accepted "$PR_NUMBER" "${waivers[@]}"; then
+    echo "::notice::regressions accepted by the ${accepted_label} label"
+    echo "Regressions accepted by the \`${accepted_label}\` label." >>"${out_dir}/comment.md"
+    regressed=false
+  fi
 fi
 failed=false
 if [ "$regressed" = true ] || [ "$errored" = true ]; then

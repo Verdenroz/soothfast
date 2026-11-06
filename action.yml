@@ -132,8 +132,9 @@ inputs:
       `id-token: write` and the `soothfast-bot` environment; without them, or
       with `bot-token`, the sweep only annotates the run. Set "false" in jobs
       that have neither.
-      A pull request gate labelled `soothfast:perf-accepted` reports its
-      regressions without failing, whatever this is set to.
+      A pull request gate labelled with a `perf_accepted_labels` name
+      (`soothfast:perf-accepted` by default) reports its regressions without
+      failing, whatever this is set to.
     required: false
     default: "true"
   shard:

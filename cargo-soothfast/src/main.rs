@@ -180,7 +180,7 @@ commands:
            (--from-baseline reads a saved baseline instead of re-measuring)
   verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE
            [--seconds S] [--out FILE]
-  verdict  merge DIR --out FILE [--accepted] [--expect NAME:KIND]..
+  verdict  merge DIR --out FILE [--accepted LABEL] [--expect NAME:KIND]..
            (one job's result, then the pull request's single comment;
            exits 1 on a regression or error)
   docs     check|accept|gen-tests -p PKG [--baseline NAME] [--skip-claims] [--features F] [PATHS...]
