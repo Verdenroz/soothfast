@@ -445,13 +445,13 @@ pub fn run(args: &[String]) -> i32 {
         println!(
             "init: {WORKFLOW_PATH} not written, since it would only duplicate the jobs above; --force writes it"
         );
-        if !ws.labels {
-            return 0;
-        }
     }
-    let mut files = scaffold(&ws);
-    if skip_workflow {
-        files.retain(|f| f.kind == Kind::Bot);
+    let files: Vec<_> = scaffold(&ws)
+        .into_iter()
+        .filter(|f| !skip_workflow || f.kind == Kind::Bot)
+        .collect();
+    if files.is_empty() {
+        return 0;
     }
     let rc = report(&root, &files, check, force);
     if check || rc != 0 {

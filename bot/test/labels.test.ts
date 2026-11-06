@@ -11,7 +11,6 @@ import {
   decide,
   evaluateOpen,
   evaluatePullRequest,
-  forgetConfig,
   gated,
 } from "../src/labels.ts";
 import type { Labeler } from "../src/webhook.ts";
@@ -230,6 +229,7 @@ function fakeRun(world: World) {
     repositoryId: ++nextRepositoryId,
     repository: "acme/widgets",
     defaultBranch: "main",
+    fresh: false,
     log: (message: string) => logs.push(message),
   };
   return { run: { ...run, pulls }, calls, logs };
@@ -333,7 +333,9 @@ test("a draft or queued pull request logs why it is not merged", async () => {
   assert.deepEqual(draft.logs, ["#5: not merging, it is a draft"]);
   const queued = fakeRun({ pulls: [pull({ names: [MERGE], auto_merge: {} })] });
   await evaluateOne(queued.run, 5, labeledBy("alice"));
-  assert.deepEqual(queued.logs, ["#5: auto-merge is already enabled"]);
+  assert.deepEqual(queued.logs, [
+    "#5: not merging, auto-merge is already enabled",
+  ]);
 });
 
 test("a sweep with nothing actionable logs it", async () => {
@@ -688,11 +690,10 @@ test("deliveries within the ttl read soothfast.toml once", async (t) => {
   assert.equal(fetches(calls), 2);
 });
 
-test("a forgotten config is read again", async () => {
+test("a fresh run reads the config again", async () => {
   const { run, calls } = fakeRun({});
   await evaluateOpen(run);
-  forgetConfig(run.repositoryId);
-  await evaluateOpen(run);
+  await evaluateOpen({ ...run, fresh: true });
   assert.equal(fetches(calls), 2);
 });
 

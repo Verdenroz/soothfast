@@ -9,7 +9,7 @@ import {
 import {
   evaluateOpen,
   evaluatePullRequest,
-  forgetConfig,
+  cachedOff,
   type Run,
 } from "./labels.ts";
 import { githubJwks, OidcError, verifyOidc, type JwksLookup } from "./oidc.ts";
@@ -169,6 +169,14 @@ async function webhook(
 
 async function act(work: Work, env: Env, deps: Deps): Promise<void> {
   const { target } = work;
+  const fresh = work.kind === "push" && work.configChanged;
+  const off = fresh
+    ? undefined
+    : cachedOff(target.repositoryId, target.defaultBranch);
+  if (off) {
+    console.log(`${target.repository}: ${off}`);
+    return;
+  }
   const jwt = await appJwt(
     env.GITHUB_APP_CLIENT_ID,
     await privateKey(env.GITHUB_APP_PRIVATE_KEY),
@@ -186,11 +194,10 @@ async function act(work: Work, env: Env, deps: Deps): Promise<void> {
     target.repositoryId,
     target.repository,
     target.defaultBranch,
+    fresh,
     (m) => console.log(`${target.repository}: ${m}`),
   );
   try {
-    if (work.kind === "push" && work.configChanged)
-      forgetConfig(target.repositoryId);
     if (work.kind === "pull_request")
       await evaluatePullRequest(run, work.pr, work.labeler);
     else await evaluateOpen(run);
@@ -205,6 +212,7 @@ const makeRun = (
   repositoryId: number,
   repository: string,
   defaultBranch: string,
+  fresh: boolean,
   log: Run["log"],
 ): Run => ({
   github: deps.github,
@@ -212,6 +220,7 @@ const makeRun = (
   repositoryId,
   repository,
   defaultBranch,
+  fresh,
   log,
 });
 
@@ -336,9 +345,9 @@ async function sweep(
       repository.id,
       claims.repository,
       repository.default_branch,
+      true,
       (message) => log.push(message),
     );
-    forgetConfig(repository.id);
     await evaluateOpen(run);
     return json(200, { log });
   } finally {

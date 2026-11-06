@@ -10,6 +10,7 @@ type Action =
 
 interface Gated {
   ignored: boolean;
+  declined?: string;
   update: string[];
   merge: string[];
 }
@@ -20,6 +21,7 @@ export interface Run {
   repositoryId: number;
   repository: string;
   defaultBranch: string;
+  fresh: boolean;
   log: (message: string) => void;
 }
 
@@ -35,13 +37,8 @@ interface Context {
 export const MAX_EVALUATIONS = 6;
 
 const CONFIG_TTL_MS = 60_000;
-const configs = new Map<
-  number,
-  { fetchedAt: number; parsed: ReturnType<typeof parseBotConfig> }
->();
-
-export const forgetConfig = (repositoryId: number) =>
-  configs.delete(repositoryId);
+type Parsed = ReturnType<typeof parseBotConfig>;
+const configs = new Map<number, { fetchedAt: number; parsed: Parsed }>();
 
 const WRITE_PERMISSIONS: readonly string[] = ["admin", "maintain", "write"];
 const CHECK_RULES: readonly string[] = [
@@ -65,8 +62,15 @@ export function gated(
   const applied = present(pr, config.mergeLabels).filter(
     (label) => label === labeler?.label,
   );
+  const declined =
+    applied.length > 0 && !mergeable
+      ? pr.draft
+        ? "it is a draft"
+        : "auto-merge is already enabled"
+      : undefined;
   return {
     ignored: false,
+    declined,
     update: present(pr, config.updateLabels),
     merge: mergeable ? applied : [],
   };
@@ -132,14 +136,8 @@ function canAct(pr: PullRequest, config: BotConfig): boolean {
 
 async function load(run: Run): Promise<Context | undefined> {
   const parsed = await botConfig(run);
-  if (!parsed.ok) {
-    run.log(`ignoring labels: ${parsed.reason}`);
-    return undefined;
-  }
-  if (!parsed.config.labels) {
-    run.log(
-      `labels are off: set [bot] labels = true in soothfast.toml on ${run.defaultBranch}`,
-    );
+  if (!parsed.ok || !parsed.config.labels) {
+    run.log(offNotice(parsed, run.defaultBranch));
     return undefined;
   }
   return {
@@ -152,10 +150,31 @@ async function load(run: Run): Promise<Context | undefined> {
   };
 }
 
-async function botConfig(run: Run): Promise<ReturnType<typeof parseBotConfig>> {
-  const hit = configs.get(run.repositoryId);
-  if (hit && Date.now() - hit.fetchedAt < CONFIG_TTL_MS) return hit.parsed;
-  configs.delete(run.repositoryId);
+const offNotice = (parsed: Parsed, defaultBranch: string) =>
+  parsed.ok
+    ? `labels are off: set [bot] labels = true in soothfast.toml on ${defaultBranch}`
+    : `ignoring labels: ${parsed.reason}`;
+
+function cachedConfig(repositoryId: number): Parsed | undefined {
+  const hit = configs.get(repositoryId);
+  if (!hit) return undefined;
+  if (Date.now() - hit.fetchedAt < CONFIG_TTL_MS) return hit.parsed;
+  configs.delete(repositoryId);
+  return undefined;
+}
+
+export function cachedOff(
+  repositoryId: number,
+  defaultBranch: string,
+): string | undefined {
+  const parsed = cachedConfig(repositoryId);
+  const off = parsed && (!parsed.ok || !parsed.config.labels);
+  return off ? offNotice(parsed, defaultBranch) : undefined;
+}
+
+async function botConfig(run: Run): Promise<Parsed> {
+  const cached = run.fresh ? undefined : cachedConfig(run.repositoryId);
+  if (cached) return cached;
   const toml = await run.github.fileContents(
     run.repository,
     "soothfast.toml",
@@ -225,29 +244,13 @@ async function evaluate(
 ): Promise<void> {
   const { run, config } = context;
   const initial = gated(pr, config, labeler);
-  declineMerge(run, pr, initial, config, labeler);
+  if (initial.declined)
+    run.log(`#${pr.number}: not merging, ${initial.declined}`);
   const gate = await byWriters(context, pr, initial, labeler);
   const checked = gate.merge.length > 0 ? await context.checked() : 0;
   const behind = gate.update.length > 0 && (await isBehind(run, pr));
   for (const action of decide(pr, gate, checked, behind))
     await perform(context, pr, action);
-}
-
-function declineMerge(
-  run: Run,
-  pr: PullRequest,
-  gate: Gated,
-  config: BotConfig,
-  labeler?: Labeler,
-): void {
-  const asked =
-    labeler &&
-    config.mergeLabels.includes(labeler.label) &&
-    present(pr, [labeler.label]).length > 0;
-  if (!asked || gate.ignored || gate.merge.length > 0) return;
-  if (pr.draft) run.log(`#${pr.number}: not merging, it is a draft`);
-  else if (pr.auto_merge !== null)
-    run.log(`#${pr.number}: auto-merge is already enabled`);
 }
 
 async function isBehind(run: Run, pr: PullRequest): Promise<boolean> {
@@ -303,6 +306,10 @@ function unchanged(current: PullRequest, seen: PullRequest, label: string) {
   );
 }
 
+const isAlreadyMergeable = (e: unknown) =>
+  e instanceof GitHubError &&
+  /(clean|unstable|has_hooks) status/i.test(e.message);
+
 async function perform(
   { run, config }: Context,
   pr: PullRequest,
@@ -323,29 +330,31 @@ async function perform(
         );
         return;
       }
-      await github
-        .enableAutoMerge(pr.node_id, config.mergeMethod, pr.head.sha, token)
-        .then(() => run.log(`${tag}: auto-merge enabled`))
-        .catch(async (e: unknown) => {
-          if (!(
-            e instanceof GitHubError &&
-            /(clean|unstable|has_hooks) status/i.test(e.message)
-          ))
-            throw e;
-          await github
-            .mergePullRequest(
-              repository,
-              pr.number,
-              pr.head.sha,
-              config.mergeMethod,
-              token,
-            )
-            .then(() => run.log(`${tag}: merged (checks had already passed)`))
-            .catch((m: unknown) => {
-              if (!(m instanceof GitHubError)) throw m;
-              run.log(`${tag}: could not merge (${m.status}: ${m.message})`);
-            });
-        });
+      try {
+        await github.enableAutoMerge(
+          pr.node_id,
+          config.mergeMethod,
+          pr.head.sha,
+          token,
+        );
+        run.log(`${tag}: auto-merge enabled`);
+        return;
+      } catch (e) {
+        if (!isAlreadyMergeable(e)) throw e;
+      }
+      try {
+        await github.mergePullRequest(
+          repository,
+          pr.number,
+          pr.head.sha,
+          config.mergeMethod,
+          token,
+        );
+        run.log(`${tag}: merged (checks had already passed)`);
+      } catch (e) {
+        if (!(e instanceof GitHubError)) throw e;
+        run.log(`${tag}: could not merge (${e.status}: ${e.message})`);
+      }
       return;
     }
     case "update_branch":

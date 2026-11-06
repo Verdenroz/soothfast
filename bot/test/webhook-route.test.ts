@@ -31,7 +31,12 @@ const pullRequest = {
 };
 
 function fakeGitHub(
-  opts: { protection?: Error; open?: object[]; live?: object } = {},
+  opts: {
+    protection?: Error;
+    open?: object[];
+    live?: object;
+    toml?: string;
+  } = {},
 ) {
   const calls: string[] = [];
   const minted: { installation: number; repository: number; perms: object }[] =
@@ -45,7 +50,7 @@ function fakeGitHub(
     },
     async fileContents() {
       reads.push(1);
-      return "[bot]\nlabels = true\n";
+      return opts.toml ?? "[bot]\nlabels = true\n";
     },
     async openPullRequests(_r: string, base: string) {
       calls.push(`list ${base}`);
@@ -214,6 +219,15 @@ test("a push that changes soothfast.toml drops the cached config", async () => {
   assert.equal(fake.reads.length, 1);
   await deliver(fake, edit, { event: "push" });
   assert.equal(fake.reads.length, 2);
+});
+
+test("an opted-out repository is not minted for again within the ttl", async () => {
+  const fake = fakeGitHub({ toml: "[bot]\nlabels = false\n" });
+  const off = { ...labeled(), repository: { ...repository, id: 7777 } };
+  await deliver(fake, off);
+  await deliver(fake, off);
+  assert.equal(fake.minted.length, 1);
+  assert.equal(fake.reads.length, 1);
 });
 
 test("a push cancels a queued merge on a do-not-merge pull request", async () => {
