@@ -268,3 +268,78 @@ test("tagObject peels an annotated tag and is undefined for a commit", async () 
   assert.equal(await api.tagObject("acme/mylib", "aaaa", "ghs_x"), "bbbb");
   assert.equal(await api.tagObject("acme/mylib", "cccc", "ghs_x"), undefined);
 });
+
+test("fileContents decodes base64 content and is undefined on 404", async () => {
+  const content = Buffer.from("[bot]\nlabels = true\n").toString("base64");
+  const { api, calls } = fakeGitHub({
+    "GET /repos/acme/mylib/contents/soothfast.toml": {
+      status: 200,
+      body: {
+        content: content.replace(/(.{10})/g, "$1\n"),
+        encoding: "base64",
+      },
+    },
+    "GET /repos/acme/mylib/contents/missing.toml": { status: 404 },
+  });
+  assert.equal(
+    await api.fileContents("acme/mylib", "soothfast.toml", "main", "ghs_x"),
+    "[bot]\nlabels = true\n",
+  );
+  assert.match(calls[0].url, /\?ref=main$/);
+  assert.equal(
+    await api.fileContents("acme/mylib", "missing.toml", "main", "ghs_x"),
+    undefined,
+  );
+});
+
+test("collaboratorPermission reads the permission and maps 404 to none", async () => {
+  const { api } = fakeGitHub({
+    "GET /repos/acme/mylib/collaborators/alice/permission": {
+      status: 200,
+      body: { permission: "maintain" },
+    },
+    "GET /repos/acme/mylib/collaborators/ghost/permission": { status: 404 },
+  });
+  assert.equal(
+    await api.collaboratorPermission("acme/mylib", "alice", "ghs_x"),
+    "maintain",
+  );
+  assert.equal(
+    await api.collaboratorPermission("acme/mylib", "ghost", "ghs_x"),
+    "none",
+  );
+});
+
+test("updateBranch sends the expected head sha", async () => {
+  const { api, calls } = fakeGitHub({
+    "PUT /repos/acme/mylib/pulls/7/update-branch": {
+      status: 202,
+      body: { message: "Updating pull request branch." },
+    },
+  });
+  await api.updateBranch("acme/mylib", 7, "abc123", "ghs_x");
+  assert.deepEqual(calls[0].body, { expected_head_sha: "abc123" });
+});
+
+test("enableAutoMerge sends the merge method as a GraphQL enum", async () => {
+  const { api, calls } = fakeGitHub({
+    "POST /graphql": { status: 200, body: { data: {} } },
+  });
+  await api.enableAutoMerge("PR_node", "squash", "ghs_x");
+  const body = calls[0].body as { query: string; variables: object };
+  assert.match(body.query, /enablePullRequestAutoMerge/);
+  assert.deepEqual(body.variables, { id: "PR_node", method: "SQUASH" });
+});
+
+test("a GraphQL error in a 200 response becomes a GitHubError", async () => {
+  const { api } = fakeGitHub({
+    "POST /graphql": {
+      status: 200,
+      body: { errors: [{ message: "Pull request is in clean status" }] },
+    },
+  });
+  await assert.rejects(
+    api.disableAutoMerge("PR_node", "ghs_x"),
+    (e: unknown) => e instanceof GitHubError && /clean status/.test(e.message),
+  );
+});
