@@ -329,9 +329,17 @@ errored, and it needs a writer too.
 
 The broker acts only on a `[bot]` table with `labels = true` in
 `soothfast.toml`; repositories without it are left alone. `cargo soothfast
-init --bot` writes the table, writes the reconcile job and creates the labels
-with `gh`; if `gh` cannot, init warns and `cargo soothfast init --labels`
-creates them later. `--no-labels` skips all three.
+init` turns the bot on: it writes the table, writes the reconcile job and
+creates the labels with `gh`; if `gh` cannot, init warns and `cargo soothfast
+init --labels` creates them later. `--no-labels` skips those three, and
+`--no-bot` skips the bot altogether (no schedule, no labels job, no
+changelog regeneration).
+
+Two one-time steps remain: install the [soothfast-bot
+App](https://github.com/apps/soothfast-bot) on the repository, and let the
+first run create the `soothfast-bot` environment. Until the App is
+installed the broker refuses to mint a token; the action warns and lands
+nothing as the bot instead of failing the job.
 
 ```toml
 [bot]

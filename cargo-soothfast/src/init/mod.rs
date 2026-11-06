@@ -341,6 +341,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut check = false;
     let mut force = false;
     let mut bot = false;
+    let mut no_bot = false;
     let mut labels = false;
     let mut no_labels = false;
     let mut bench: Vec<String> = Vec::new();
@@ -358,6 +359,7 @@ pub fn run(args: &[String]) -> i32 {
             "--check" => check = true,
             "--force" => force = true,
             "--bot" => bot = true,
+            "--no-bot" => no_bot = true,
             "--labels" => labels = true,
             "--no-labels" => no_labels = true,
             "-p" | "--package" => match it.next() {
@@ -410,6 +412,13 @@ pub fn run(args: &[String]) -> i32 {
             other => return err(&format!("unknown init arg {other:?}")),
         }
     }
+    if bot && no_bot {
+        return err("--bot and --no-bot conflict");
+    }
+    if labels && no_bot {
+        return err("--labels needs the bot, which --no-bot turns off");
+    }
+    let bot = !no_bot;
     if labels && no_labels {
         return err("--labels and --no-labels conflict");
     }
@@ -442,6 +451,11 @@ pub fn run(args: &[String]) -> i32 {
         return rc;
     }
     println!("init: done. Next: {}", next_step(ws.rust));
+    if bot {
+        println!(
+            "init: the bot needs the App installed once (https://github.com/apps/soothfast-bot); the soothfast-bot environment is created on the first run. --no-bot skips both."
+        );
+    }
     if labels {
         return label_exit(create_labels(&root), implied);
     }
@@ -1426,6 +1440,12 @@ cmd = "npm test"
             ..ws(&["a"], None)
         };
         assert!(!workflow(&w).contains("\n  labels:\n"));
+    }
+
+    #[test]
+    fn the_bot_flags_conflict_with_each_other_and_with_labels() {
+        assert_eq!(run(&["--bot".into(), "--no-bot".into()]), 2);
+        assert_eq!(run(&["--labels".into(), "--no-bot".into()]), 2);
     }
 
     #[test]

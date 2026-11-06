@@ -13,6 +13,11 @@ oidc=$(oidc_token) || fail "soothfast-bot needs 'id-token: write' in the job's p
 broker_post /token -H "Authorization: Bearer $oidc" ||
   fail "could not reach the broker at $BROKER"
 
+if [ "$status" = 403 ] && [[ "$(jq -r '.reason // empty' <<<"$body")" == "soothfast-bot is not installed on "* ]]; then
+  echo "::warning::$(jq -r .reason <<<"$body"), so nothing was landed as the bot; install it at https://github.com/apps/soothfast-bot or run init --no-bot"
+  exit 0
+fi
+
 if [ "$status" != 200 ]; then
   fail "soothfast-bot refused (HTTP $status): $(jq -r '.reason // .' <<<"$body")"
 fi
