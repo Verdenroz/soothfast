@@ -32,3 +32,6 @@ pages = ["perf/summary.md", "coverage.md"]
 # No Rust test reads these; anything else outside a package selects every package.
 [test]
 ignore = ["*.md", "docs/**", "llms.txt", "LICENSE", ".github/**", "action/**", "action.yml", "assets/**", "bot/**"]
+
+[bot]
+labels = true
