@@ -154,7 +154,7 @@ installed on is refused.
 | `bot-token` | none | Bring your own soothfast-bot installation token; skips the broker. |
 | `bot-slug` | `soothfast-bot` | App slug `bot-token` belongs to, for the commit author. |
 | `broker` | built in | Token broker URL. |
-| `labels` | `false` | On default-branch pushes and schedules, ask the broker to reconcile pull request labels (see [Labels](#labels)). |
+| `labels` | `true` | On default-branch pushes and schedules, ask the broker to reconcile pull request labels, annotating the run instead of failing when it cannot; `"false"` turns it off (see [Labels](#labels)). |
 | `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
 | `comment` | `true` | Post the pull request gate comment. `false` posts nothing and records a result per package for `cargo soothfast verdict merge`. |
 | `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved. |
@@ -327,9 +327,19 @@ errored, and it needs a writer too.
 
 ### Configuration
 
-Opt in with a `[bot]` table in `soothfast.toml`; repositories without it are
-left alone. `cargo soothfast init --bot --labels` writes it, writes the
-reconcile job and creates the labels.
+The broker acts only on a `[bot]` table with `labels = true` in
+`soothfast.toml`; repositories without it are left alone. `cargo soothfast
+init` turns the bot on: it writes the table, writes the reconcile job and
+creates the labels with `gh`; if `gh` cannot, init warns and `cargo soothfast
+init --labels` creates them later. `--no-labels` skips those three, and
+`--no-bot` skips the bot altogether (no schedule, no labels job, no
+changelog regeneration).
+
+Two one-time steps remain: install the [soothfast-bot
+App](https://github.com/apps/soothfast-bot) on the repository, and let the
+first run create the `soothfast-bot` environment. Until the App is
+installed the broker refuses to mint a token; the action warns and lands
+nothing as the bot instead of failing the job.
 
 ```toml
 [bot]
@@ -357,12 +367,17 @@ Once per broker deployment (see `bot/`):
 
 ### Reconciling missed deliveries
 
-GitHub does not redeliver a webhook that failed. With `labels: "true"` on a
-job that runs on default-branch pushes and on a schedule, the action asks the
-broker to sweep the open pull requests: it cancels queued merges held by
-`do-not-merge` and updates labelled branches, but never enables a merge.
-The job needs `id-token: write` and `environment: soothfast-bot`, like any
-step that talks to the broker.
+GitHub does not redeliver a webhook that failed. On default-branch pushes and
+schedules the action asks the broker to sweep the open pull requests: it
+cancels queued merges held by `do-not-merge` and updates labelled branches,
+but never enables a merge. `labels` defaults to `"true"`; set `labels:
+"false"` to turn the sweep off, as the workflows `init` writes do for every
+job but the labels job.
+
+The sweep is best effort, since webhooks are the primary path, and it never
+fails the job: a missing `jq`, a job without `id-token: write` and
+`environment: soothfast-bot`, or a `bot-token` leaves a notice, and an
+unreachable or refusing broker leaves a warning with the broker's reason.
 
 ### Limits
 
@@ -377,8 +392,8 @@ step that talks to the broker.
 - On a merge-queue branch the bot relies on GitHub's auto-merge to enqueue
   the pull request; this has not been exercised against a live queue.
 
-With `bot-token` there is no broker, so the label sweep warns and does
-nothing; only a broker, hosted or self-hosted, acts on labels.
+With `bot-token` there is no broker, so the label sweep leaves a notice and
+does nothing; only a broker, hosted or self-hosted, acts on labels.
 
 ## Bringing your own token
 

@@ -180,6 +180,7 @@ jobs:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
           changelog: "false"
+          labels: "false"
           prebuild: bench
           prebuild-shards: ${{ github.event_name == 'pull_request' && inputs.shard || 1 }}
           prebuild-stage: ${{ runner.temp }}/store
@@ -258,6 +259,7 @@ jobs:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
           changelog: "false"
+          labels: "false"
           prebuild: rustdoc
           prebuild-docs: ${{ needs.plan.outputs.docs_package }}
           prebuild-stage: ${{ runner.temp }}/store
@@ -530,6 +532,7 @@ jobs:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
           changelog: ${{ inputs.bot && 'true' || 'false' }}
+          labels: "false"
           comment: "false"
           shard: ${{ matrix.shard }}
           # Each pull-request leg saves the items its shard owns; the docs job
