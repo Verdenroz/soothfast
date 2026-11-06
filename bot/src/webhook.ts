@@ -40,7 +40,7 @@ interface Payload {
   sender: { login: string };
   installation: { id: number };
   repository: { id: number; full_name: string; default_branch: string };
-  pull_request?: { number: number; state: string };
+  pull_request?: { number: number; state: string; base: { ref: string } };
 }
 
 export async function receive(
@@ -106,6 +106,7 @@ export function route(event: string, payload: Payload): Work {
   }
   const { action, pull_request: pr } = payload;
   if (!pr || pr.state !== "open") return IGNORE;
+  if (pr.base.ref !== target.defaultBranch) return IGNORE;
   if (!action || !PULL_REQUEST_ACTIONS.includes(action)) return IGNORE;
   const labeler =
     action === "labeled" && payload.label

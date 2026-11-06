@@ -49,7 +49,11 @@ const target = {
 };
 
 const pr = (action: string, extra: Record<string, unknown> = {}) =>
-  payload({ action, pull_request: { number: 9, state: "open" }, ...extra });
+  payload({
+    action,
+    pull_request: { number: 9, state: "open", base: { ref: "main" } },
+    ...extra,
+  });
 
 async function delivery(
   body: string,
@@ -176,9 +180,17 @@ test("a labeled event on a closed pull request is ignored", () => {
   const closed = payload({
     action: "labeled",
     label: { name: "soothfast:merge" },
-    pull_request: { number: 9, state: "closed" },
+    pull_request: { number: 9, state: "closed", base: { ref: "main" } },
   });
   assert.deepEqual(route("pull_request", closed as never), { kind: "ignore" });
+});
+
+test("a pull request into another base is ignored", () => {
+  const other = pr("labeled", {
+    label: { name: "soothfast:merge" },
+    pull_request: { number: 9, state: "open", base: { ref: "release/1.x" } },
+  });
+  assert.deepEqual(route("pull_request", other as never), { kind: "ignore" });
 });
 
 test("a push to the default branch re-evaluates the base", () => {
