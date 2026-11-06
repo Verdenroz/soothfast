@@ -5,6 +5,7 @@ import {
   importPrivateKey,
   type GitHubApi,
 } from "./github.ts";
+import { evaluateOpen, evaluatePullRequest, type Run } from "./labels.ts";
 import { githubJwks, OidcError, verifyOidc, type JwksLookup } from "./oidc.ts";
 import {
   AUDIENCE,
@@ -17,10 +18,12 @@ import {
   type Decision,
   type OidcClaims,
 } from "./policy.ts";
+import { receive, type Work } from "./webhook.ts";
 
 export interface Env {
   GITHUB_APP_CLIENT_ID: string;
   GITHUB_APP_PRIVATE_KEY: string;
+  GITHUB_WEBHOOK_SECRET: string;
 }
 
 export interface Deps {
@@ -64,6 +67,7 @@ export async function handle(
   request: Request,
   env: Env,
   deps: Deps,
+  ctx: Pick<ExecutionContext, "waitUntil">,
 ): Promise<Response> {
   if (!env.GITHUB_APP_CLIENT_ID || !env.GITHUB_APP_PRIVATE_KEY) {
     console.error("GITHUB_APP_CLIENT_ID or GITHUB_APP_PRIVATE_KEY is not set");
@@ -73,6 +77,7 @@ export async function handle(
     });
   }
   const route = request.method === "POST" ? new URL(request.url).pathname : "";
+  if (route === "/webhook") return webhook(request, env, deps, ctx);
   if (route !== "/token" && route !== "/comment")
     return json(404, { reason: "not found" });
 
@@ -111,6 +116,64 @@ export async function handle(
   const auth = await authenticate(claims, policy.mode, env, deps);
   if (auth instanceof Response) return auth;
   return body ? comment(claims, body, auth, deps) : land(claims, auth, deps);
+}
+
+async function webhook(
+  request: Request,
+  env: Env,
+  deps: Deps,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+): Promise<Response> {
+  if (!env.GITHUB_WEBHOOK_SECRET) {
+    console.error("GITHUB_WEBHOOK_SECRET is not set");
+    return json(500, {
+      reason: "broker is not configured: set GITHUB_WEBHOOK_SECRET",
+    });
+  }
+  const delivery = await receive(request, env.GITHUB_WEBHOOK_SECRET);
+  if (!delivery.ok) {
+    console.log(JSON.stringify({ denied: delivery.reason, route: "/webhook" }));
+    return json(delivery.status, { reason: delivery.reason });
+  }
+  if (delivery.work.kind === "ignore") return json(200, {});
+  const done = act(delivery.work, env, deps).catch((e: unknown) =>
+    console.error("webhook work failed", e),
+  );
+  ctx.waitUntil(done);
+  return json(202, {});
+}
+
+async function act(
+  work: Exclude<Work, { kind: "ignore" }>,
+  env: Env,
+  deps: Deps,
+): Promise<void> {
+  const { target } = work;
+  const jwt = await appJwt(
+    env.GITHUB_APP_CLIENT_ID,
+    await privateKey(env.GITHUB_APP_PRIVATE_KEY),
+    deps.now?.(),
+  );
+  const { token } = await deps.github.mintToken(
+    target.installation,
+    target.repositoryId,
+    PERMISSIONS.land,
+    jwt,
+  );
+  const run: Run = {
+    github: deps.github,
+    token,
+    repository: target.repository,
+    defaultBranch: target.defaultBranch,
+    log: (message) => console.log(`${target.repository}: ${message}`),
+  };
+  try {
+    if (work.kind === "pull_request")
+      await evaluatePullRequest(run, work.number, work.labeler);
+    else await evaluateOpen(run, "update");
+  } finally {
+    await revoke(token, deps);
+  }
 }
 
 let cachedKey: { pem: string; key: CryptoKey } | undefined;
@@ -292,8 +355,12 @@ function parseComment(
 const deps: Deps = { jwks: githubJwks(), github: githubApi() };
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return handle(request, env, deps).catch((e: unknown) => {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
+    return handle(request, env, deps, ctx).catch((e: unknown) => {
       if (e instanceof GitHubError)
         return json(502, { reason: `GitHub API ${e.status}: ${e.message}` });
       console.error(e);

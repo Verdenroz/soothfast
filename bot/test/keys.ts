@@ -63,3 +63,19 @@ export function toPem(label: string, der: Uint8Array): string {
   const lines = base64.match(/.{1,64}/g) ?? [];
   return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
 }
+
+export async function signWebhook(
+  body: string,
+  secret: string,
+): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    utf8(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, utf8(body)));
+  const hex = Array.from(mac, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `sha256=${hex}`;
+}

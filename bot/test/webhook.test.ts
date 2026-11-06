@@ -6,27 +6,11 @@ import {
   route,
   verifySignature,
 } from "../src/webhook.ts";
+import { signWebhook } from "./keys.ts";
 
 const SECRET = "hunter2";
 
-async function sign(body: string, secret = SECRET): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const mac = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(body),
-  );
-  const hex = Array.from(new Uint8Array(mac), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
-  return `sha256=${hex}`;
-}
+const sign = (body: string, secret = SECRET) => signWebhook(body, secret);
 
 const repository = {
   id: 42,
