@@ -52,7 +52,10 @@ measure|docs`, `spec gen|gate|check|check-proto`, `sdk gen|gate|publish`,
 `report render|changelog`,
 `mcp`.
 
-Before pushing, run what CI runs: `make check` and `make gate BASE=master`.
+Before pushing, run `make check`. Leave the perf gate to CI: the `gate` job
+runs it on every pull request with warm run and item caches and reports in
+the PR comment. Run `make gate BASE=master` locally only when its answer
+decides what to write next.
 The dogfood gate (`make gate`) measures the merge-base of the current branch
 against `origin/master` in a temporary git worktree — there are no committed
 baseline files to go stale.
