@@ -494,6 +494,12 @@ status = 201
 body = "{\"strategy\": \"sma_crossover\"}"      # sent as application/json
 ```
 
+`skip_status` names one status that reports a probe as skipped instead of
+failed, for an upstream that throttles a shared CI address on its own:
+`skip_status = 429`. A skipped probe prints a `SKIP` line, is listed in the
+run's summary, and leaves its lock entry as it was. Any other unexpected
+status still fails.
+
 `method` and `body` cover a non-`GET` route. A body spans more lines than
 the manifest parser joins, so an array of fragments is accepted too:
 `body = ["{", "\"strategy\": \"sma_crossover\"", "}"]`. A response with no
