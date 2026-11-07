@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.5.5)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### ✨ Features
+
+- Keep every open PR up to date with update_all (#369)
+
+
 ## 0.5.5 - 2026-11-07
 
 <!-- soothfast:notes -->
