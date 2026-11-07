@@ -58,6 +58,9 @@ struct Probe {
     /// Request body, sent as `application/json`. Absent means no body.
     body: Option<String>,
     status: u16,
+    /// A status reported as a skip instead of a failure, for an upstream
+    /// that throttles shared CI addresses.
+    skip_status: Option<u16>,
     /// Fields pinned intermittent by the operator; `*` suffix matches a
     /// prefix.
     sometimes: Vec<String>,
@@ -220,6 +223,7 @@ fn probe_in(
 
     let mut probed = 0usize;
     let mut accepted = 0usize;
+    let mut skipped: Vec<&str> = Vec::new();
     for entry in &manifest.probes {
         if let Some(f) = filter
             && !entry.name.contains(f)
@@ -238,6 +242,14 @@ fn probe_in(
                 continue;
             }
         };
+        if entry.skip_status == Some(status) {
+            skipped.push(&entry.name);
+            println!(
+                "SKIP  {}: {} answered {status} (skip_status)",
+                entry.name, entry.path
+            );
+            continue;
+        }
         if status != entry.status {
             failures += 1;
             println!(
@@ -353,6 +365,13 @@ fn probe_in(
             routes.len()
         );
     }
+    if !skipped.is_empty() {
+        println!(
+            "spec probe: {} skipped by skip_status: {}",
+            skipped.len(),
+            skipped.join(", ")
+        );
+    }
     if accepting {
         if failures > 0 && !accept_passing {
             println!("spec probe: NOT accepted ({failures} problem(s))");
@@ -420,6 +439,7 @@ fn parse_manifest(text: &str) -> Result<Manifest, String> {
                 method: "GET".to_string(),
                 body: None,
                 status: 200,
+                skip_status: None,
                 sometimes: Vec::new(),
                 asserts: Vec::new(),
                 shape: true,
@@ -454,6 +474,12 @@ fn parse_manifest(text: &str) -> Result<Manifest, String> {
         }
         if entry.path.is_empty() {
             return Err(format!("probe `{}` has no path", entry.name));
+        }
+        if entry.skip_status == Some(entry.status) {
+            return Err(format!(
+                "probe `{}`: skip_status {} is its expected status",
+                entry.name, entry.status
+            ));
         }
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -496,6 +522,9 @@ fn set_probe(entry: &mut Probe, key: &str, value: TomlValue) -> Result<(), Strin
         ("body", TomlValue::Str(s)) => entry.body = Some(s),
         ("body", TomlValue::StrArray(a)) => entry.body = Some(a.join("\n")),
         ("status", TomlValue::Int(n)) if (100..=599).contains(&n) => entry.status = n as u16,
+        ("skip_status", TomlValue::Int(n)) if (100..=599).contains(&n) => {
+            entry.skip_status = Some(n as u16);
+        }
         ("sometimes", TomlValue::StrArray(a)) => entry.sometimes = a,
         ("shape", TomlValue::Bool(b)) => entry.shape = b,
         ("assert", TomlValue::StrArray(a)) => {
@@ -824,6 +853,50 @@ status = 404
         assert!(seen[0].contains("Content-Length: 8"));
         assert!(seen[0].ends_with("{\"n\": 1}"), "{}", seen[0]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_skip_status_answer_passes_without_touching_the_lock() {
+        let lock =
+            "{\"version\": 1, \"probes\": {\"news\": {\"fields\": {\"title\": \"always\"}}}}";
+        let server = fake_server(vec![("/news", 429, "slow down")], 2);
+        let dir = pkg_with(
+            "[[probe]]\nname = \"news\"\npath = \"/news\"\nskip_status = 429\n",
+            Some(lock),
+        );
+        assert_eq!(
+            probe_in(&dir, false, false, false, Some(&server.base), None).unwrap(),
+            0
+        );
+        assert_eq!(
+            probe_in(&dir, true, false, false, Some(&server.base), None).unwrap(),
+            0
+        );
+        let after = std::fs::read_to_string(dir.join("probes.lock")).unwrap();
+        assert!(after.contains("\"title\": \"always\""), "{after}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_status_other_than_skip_status_still_fails() {
+        let server = fake_server(vec![("/news", 503, "")], 1);
+        let dir = pkg_with(
+            "[[probe]]\nname = \"news\"\npath = \"/news\"\nskip_status = 429\n",
+            None,
+        );
+        assert_eq!(
+            probe_in(&dir, false, false, false, Some(&server.base), None).unwrap(),
+            1
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn skip_status_cannot_be_the_expected_status() {
+        let err = parse_manifest("[[probe]]\nname = \"a\"\npath = \"/a\"\nskip_status = 200\n")
+            .err()
+            .unwrap();
+        assert!(err.contains("skip_status 200"), "{err}");
     }
 
     #[test]
