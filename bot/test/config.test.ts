@@ -31,6 +31,7 @@ test("every key can be overridden", () => {
 labels = true
 merge_labels = ["ship", 'land']
 update_labels = []
+update_all = true
 ignore_labels = ["hold"] # trailing comment
 merge_method = "rebase"
 `);
@@ -38,6 +39,7 @@ merge_method = "rebase"
     labels: true,
     mergeLabels: ["ship", "land"],
     updateLabels: [],
+    updateAll: true,
     ignoreLabels: ["hold"],
     mergeMethod: "rebase",
   });
@@ -115,6 +117,7 @@ const malformed = [
     '[bot]\nmerge_method = "ff"\n',
     /squash, merge or rebase/,
   ],
+  ["update_all not a flag", '[bot]\nupdate_all = "yes"\n', /update_all must be true or false/],
   ["repeated key", "[bot]\nlabels = true\nlabels = false\n", /repeats labels/],
   ["repeated table", "[bot]\n[site]\n[bot]\n", /defined twice/],
   ["line without =", "[bot]\nlabels\n", /invalid line/],
