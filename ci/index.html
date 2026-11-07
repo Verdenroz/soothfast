@@ -440,6 +440,7 @@ nothing as the bot instead of failing the job.</p>
 <span class="tok-ty">labels </span>= true                       # default false
 <span class="tok-ty">merge_labels </span>=<span class="tok-str"> [&quot;soothfast:merge&quot;]</span>
 <span class="tok-ty">update_labels </span>=<span class="tok-str"> [&quot;soothfast:update&quot;]</span>
+<span class="tok-ty">update_all </span>= false                  # true: keep every open, non-draft PR up to date
 <span class="tok-ty">ignore_labels </span>=<span class="tok-str"> [&quot;do-not-merge&quot;]</span>
 <span class="tok-ty">perf_accepted_labels </span>=<span class="tok-str"> [&quot;soothfast:perf-accepted&quot;]  # read by the gate, not the broker</span>
 <span class="tok-ty">merge_method </span>=<span class="tok-str"> &quot;squash&quot;             # squash | merge | rebase</span>
@@ -454,6 +455,11 @@ a default for its role. A bad colour fails <code>--labels</code> and only warns 
 <code>--bot</code> implied it; an entry naming a label no role uses warns. The broker
 ignores <code>[[bot.label]]</code>. <code>cargo soothfast labels [--ref REF] [--role ROLE]</code>
 prints the configured names.</p>
+<p><code>update_all = true</code> brings every open, non-draft pull request against the
+default branch up to date on each push to it, as if each carried an update
+label. An ignore label (<code>do-not-merge</code> by default) still opts one out. It
+needs no writer to apply anything, because the setting is read from the
+default branch. Each push evaluates at most six pull requests.</p>
 <p>A malformed <code>[bot]</code> table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the
 repository's "Automatically delete head branches" setting.</p>
