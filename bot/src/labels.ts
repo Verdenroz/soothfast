@@ -11,6 +11,7 @@ type Action =
 interface Gated {
   ignored: boolean;
   declined?: string;
+  updateAll: boolean;
   update: string[];
   merge: string[];
 }
@@ -57,7 +58,7 @@ export function gated(
   labeler?: Labeler,
 ): Gated {
   if (present(pr, config.ignoreLabels).length > 0)
-    return { ignored: true, update: [], merge: [] };
+    return { ignored: true, updateAll: false, update: [], merge: [] };
   const mergeable = !pr.draft && pr.auto_merge === null;
   const applied = present(pr, config.mergeLabels).filter(
     (label) => label === labeler?.label,
@@ -71,21 +72,27 @@ export function gated(
   return {
     ignored: false,
     declined,
+    updateAll: config.updateAll && !pr.draft,
     update: present(pr, config.updateLabels),
     merge: mergeable ? applied : [],
   };
 }
 
+// update_all is read from the default branch, which only writers can change,
+// so it needs no labeler check.
+const wantsUpdate = (gate: Gated) => gate.updateAll || gate.update.length > 0;
+
 export function decide(
   pr: PullRequest,
-  { ignored, update, merge }: Gated,
+  gate: Gated,
   checked: number,
   behind: boolean,
 ): Action[] {
+  const { ignored, merge } = gate;
   if (ignored)
     return pr.auto_merge === null ? [] : [{ kind: "disable_auto_merge" }];
   const actions: Action[] = [];
-  if (behind && update.length > 0) actions.push({ kind: "update_branch" });
+  if (behind && wantsUpdate(gate)) actions.push({ kind: "update_branch" });
   if (merge.length > 0) {
     actions.push(
       checked === 0
@@ -130,8 +137,8 @@ export async function evaluateOpen(run: Run): Promise<void> {
 }
 
 function canAct(pr: PullRequest, config: BotConfig): boolean {
-  const { ignored, update } = gated(pr, config);
-  return ignored ? pr.auto_merge !== null : !pr.draft && update.length > 0;
+  const gate = gated(pr, config);
+  return gate.ignored ? pr.auto_merge !== null : !pr.draft && wantsUpdate(gate);
 }
 
 async function load(run: Run): Promise<Context | undefined> {
@@ -248,7 +255,7 @@ async function evaluate(
     run.log(`#${pr.number}: not merging, ${initial.declined}`);
   const gate = await byWriters(context, pr, initial, labeler);
   const checked = gate.merge.length > 0 ? await context.checked() : 0;
-  const behind = gate.update.length > 0 && (await isBehind(run, pr));
+  const behind = wantsUpdate(gate) && (await isBehind(run, pr));
   for (const action of decide(pr, gate, checked, behind))
     await perform(context, pr, action);
 }

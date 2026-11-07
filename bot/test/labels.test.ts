@@ -124,6 +124,20 @@ test("update needs no labeler event and runs before merge", () => {
   );
 });
 
+test("update_all updates an unlabelled branch that is behind", () => {
+  const config = { ...DEFAULTS, updateAll: true };
+  assert.deepEqual(plan(pull(), { config, behind: true }), [
+    { kind: "update_branch" },
+  ]);
+  assert.deepEqual(plan(pull(), { config }), []);
+});
+
+test("update_all skips drafts and do-not-merge", () => {
+  const config = { ...DEFAULTS, updateAll: true };
+  assert.deepEqual(plan(pull({ draft: true }), { config, behind: true }), []);
+  assert.deepEqual(plan(pull({ names: [HOLD] }), { config, behind: true }), []);
+});
+
 test("configured label names replace the defaults", () => {
   const config = { ...DEFAULTS, mergeLabels: ["ship"], ignoreLabels: ["hold"] };
   const ship = { label: "ship", login: "alice" };
@@ -564,6 +578,19 @@ test("a push evaluates only open pull requests with an update label", async () =
   await evaluateOpen(run);
   assert.deepEqual(
     calls.filter((c) => c.startsWith("pull ") || c.startsWith("update")),
+    ["update 1@abc123"],
+  );
+});
+
+test("a push with update_all updates every open pull request without a label lookup", async () => {
+  const { run, calls } = fakeRun({
+    toml: "[bot]\nlabels = true\nupdate_all = true\n",
+    pulls: [pull({ number: 1 }), pull({ number: 2, draft: true })],
+    compareStatus: "behind",
+  });
+  await evaluateOpen(run);
+  assert.deepEqual(
+    calls.filter((c) => c.startsWith("update") || c.startsWith("labeler")),
     ["update 1@abc123"],
   );
 });

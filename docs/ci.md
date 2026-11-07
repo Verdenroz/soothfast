@@ -356,6 +356,7 @@ nothing as the bot instead of failing the job.
 labels = true                       # default false
 merge_labels = ["soothfast:merge"]
 update_labels = ["soothfast:update"]
+update_all = false                  # true: keep every open, non-draft PR up to date
 ignore_labels = ["do-not-merge"]
 perf_accepted_labels = ["soothfast:perf-accepted"]  # read by the gate, not the broker
 merge_method = "squash"             # squash | merge | rebase
@@ -372,6 +373,12 @@ a default for its role. A bad colour fails `--labels` and only warns when
 `--bot` implied it; an entry naming a label no role uses warns. The broker
 ignores `[[bot.label]]`. `cargo soothfast labels [--ref REF] [--role ROLE]`
 prints the configured names.
+
+`update_all = true` brings every open, non-draft pull request against the
+default branch up to date on each push to it, as if each carried an update
+label. An ignore label (`do-not-merge` by default) still opts one out. It
+needs no writer to apply anything, because the setting is read from the
+default branch. Each push evaluates at most six pull requests.
 
 A malformed `[bot]` table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the

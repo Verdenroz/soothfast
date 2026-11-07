@@ -4,6 +4,7 @@ export interface BotConfig {
   labels: boolean;
   mergeLabels: string[];
   updateLabels: string[];
+  updateAll: boolean;
   ignoreLabels: string[];
   mergeMethod: MergeMethod;
 }
@@ -19,6 +20,7 @@ export const DEFAULTS: BotConfig = {
   labels: false,
   mergeLabels: ["soothfast:merge"],
   updateLabels: ["soothfast:update"],
+  updateAll: false,
   ignoreLabels: ["do-not-merge"],
   mergeMethod: "squash",
 };
@@ -121,6 +123,7 @@ function build(entries: Map<string, Value>): BotConfig {
     labels: take("labels", DEFAULTS.labels, isFlag, "true or false"),
     mergeLabels: take("merge_labels", DEFAULTS.mergeLabels, isList, LIST),
     updateLabels: take("update_labels", DEFAULTS.updateLabels, isList, LIST),
+    updateAll: take("update_all", DEFAULTS.updateAll, isFlag, "true or false"),
     ignoreLabels: take("ignore_labels", DEFAULTS.ignoreLabels, isList, LIST),
     mergeMethod: take(
       "merge_method",
