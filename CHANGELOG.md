@@ -1,13 +1,22 @@
 # Changelog
 
-## Unreleased (draft vs v0.5.4)
+## 0.5.5 - 2026-11-07
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+A `spec probe` entry can name a `skip_status`: when the endpoint answers with
+that status, the probe is reported as skipped instead of failed. This is for
+upstreams that throttle by client address, where a shared CI runner gets a
+429 before it has sent anything of its own. A skipped probe prints a `SKIP`
+line, the run's summary lists every skipped probe, and the lock is left as it
+was. Any other unexpected status still fails.
+
+### Upgrade notes
+
+- Nothing. `skip_status` is opt-in, one status per `[[probe]]`, and must
+  differ from the probe's `status`. Earlier versions reject the key as
+  unknown, so bump before adding it.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
