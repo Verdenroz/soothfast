@@ -523,6 +523,11 @@ method = &quot;POST&quot;                             # defaults to GET
 status = 201
 body = &quot;{\&quot;strategy\&quot;: \&quot;sma_crossover\&quot;}&quot;      # sent as application/json
 </code></pre></figure>
+<p><code>skip_status</code> names one status that reports a probe as skipped instead of
+failed, for an upstream that throttles a shared CI address on its own:
+<code>skip_status = 429</code>. A skipped probe prints a <code>SKIP</code> line, is listed in the
+run's summary, and leaves its lock entry as it was. Any other unexpected
+status still fails.</p>
 <p><code>method</code> and <code>body</code> cover a non-<code>GET</code> route. A body spans more lines than
 the manifest parser joins, so an array of fragments is accepted too:
 <code>body = [&quot;{&quot;, &quot;\&quot;strategy\&quot;: \&quot;sma_crossover\&quot;&quot;, &quot;}&quot;]</code>. A response with no
