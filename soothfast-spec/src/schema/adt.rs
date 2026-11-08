@@ -370,8 +370,7 @@ impl<'a> Resolver<'a> {
         for id in ids {
             let Some(ty) = self
                 .item(id)
-                .and_then(|v| v["inner"]["variant"]["kind"]["tuple"][0].as_u64())
-                .and_then(|f| self.item(&json!(f)))
+                .and_then(|v| self.item(&v["inner"]["variant"]["kind"]["tuple"][0]))
                 .map(|f| f["inner"]["struct_field"].clone())
             else {
                 continue;
@@ -382,6 +381,9 @@ impl<'a> Resolver<'a> {
                 { "type": "object", "properties": { "__typename": { "const": typename } } },
                 payload,
             ] }));
+        }
+        if branches.is_empty() {
+            return json!({});
         }
         json!({ "oneOf": branches })
     }

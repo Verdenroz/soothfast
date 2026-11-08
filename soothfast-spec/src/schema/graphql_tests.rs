@@ -520,3 +520,14 @@ fn a_graphql_enum_is_still_a_string_enum() {
     let e = extract_named(&d, &TypeTable::builtin(), "Item").expect("extracts");
     assert_eq!(e.components["Item"]["enum"], json!(["OPEN", "CLOSED"]));
 }
+
+#[test]
+fn a_union_variant_with_a_string_field_id_still_resolves() {
+    let mut d = union_doc(&[("Holiday", "GqlHoliday", &[])]);
+    d["index"]["10"]["inner"]["variant"]["kind"]["tuple"] = json!(["20"]);
+    let e = extract_named(&d, &TypeTable::builtin(), "Kind").expect("extracts");
+    assert_eq!(
+        e.components["Kind"]["oneOf"][0]["allOf"][1]["$ref"],
+        "#/components/schemas/GqlHoliday"
+    );
+}
