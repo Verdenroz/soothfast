@@ -7,7 +7,7 @@ import {
   type PullRequest,
 } from "../src/github.ts";
 import {
-  MAX_EVALUATIONS,
+  SUBREQUEST_BUDGET,
   decide,
   evaluateOpen,
   evaluatePullRequest,
@@ -28,6 +28,7 @@ function pull(overrides: Partial<PullRequest> & { names?: string[] } = {}) {
     labels: names.map((name) => ({ name })),
     auto_merge: null,
     head: { sha: "abc123" },
+    updated_at: "2026-01-01T00:00:00Z",
     ...rest,
   } satisfies PullRequest;
 }
@@ -616,7 +617,7 @@ test("a sweep cancels queued merges but never enables one", async () => {
 });
 
 test("pull requests that cannot act do not use up the sweep's slots", async () => {
-  const idle = Array.from({ length: MAX_EVALUATIONS + 2 }, (_, i) =>
+  const idle = Array.from({ length: 60 }, (_, i) =>
     pull({ number: i + 1, names: i % 2 ? [MERGE] : [HOLD] }),
   );
   const queued = pull({
@@ -642,18 +643,47 @@ test("a draft with an update label is left alone", async () => {
   assert.ok(!calls.some((c) => c.startsWith("labeler")));
 });
 
-test("a sweep is bounded and logs the truncation", async () => {
-  const total = MAX_EVALUATIONS + 3;
-  const pulls = Array.from({ length: total }, (_, i) =>
-    pull({ number: i + 1, names: [HOLD], auto_merge: {} }),
-  );
-  const { run, calls, logs } = fakeRun({ pulls });
+test("a sweep logs how many pull requests it reached", async () => {
+  const pulls = Array.from({ length: 30 }, (_, i) => pull({ number: i + 1 }));
+  const { run, calls, logs } = fakeRun({
+    toml: "[bot]\nlabels = true\nupdate_all = true\n",
+    pulls,
+    compareStatus: "behind",
+  });
   await evaluateOpen(run);
-  assert.equal(
-    calls.filter((c) => c.startsWith("disable")).length,
-    MAX_EVALUATIONS,
+  const reached = calls.filter((c) => c.startsWith("update")).length;
+  assert.equal(logs.at(-1), `evaluating ${reached} of 30 pull requests`);
+});
+
+test("a sweep with update_all reaches more than six pull requests within the subrequest cap", async () => {
+  const pulls = Array.from({ length: 30 }, (_, i) => pull({ number: i + 1 }));
+  const { run, calls } = fakeRun({
+    toml: "[bot]\nlabels = true\nupdate_all = true\n",
+    pulls,
+    compareStatus: "behind",
+  });
+  await evaluateOpen(run);
+  const updates = calls.filter((c) => c.startsWith("update")).length;
+  assert.ok(updates > 6, `${updates} updated`);
+  assert.ok(updates < 30, "the budget stops the sweep");
+  assert.ok(calls.length <= SUBREQUEST_BUDGET, `${calls.length} subrequests`);
+});
+
+test("a sweep evaluates the least recently updated pull requests first", async () => {
+  const day = (n: number) => `2026-01-${String(n).padStart(2, "0")}T00:00:00Z`;
+  const pulls = Array.from({ length: 20 }, (_, i) =>
+    pull({ number: i + 1, updated_at: day(20 - i) }),
   );
-  assert.match(logs[0], new RegExp(`${MAX_EVALUATIONS} of ${total}`));
+  const { run, calls } = fakeRun({
+    toml: "[bot]\nlabels = true\nupdate_all = true\n",
+    pulls,
+    compareStatus: "behind",
+  });
+  await evaluateOpen(run);
+  const updated = calls
+    .filter((c) => c.startsWith("update"))
+    .map((c) => Number(c.slice(7, c.indexOf("@"))));
+  assert.deepEqual(updated.slice(0, 3), [20, 19, 18]);
 });
 
 test("one failing pull request does not stop the sweep", async () => {

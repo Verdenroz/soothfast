@@ -378,7 +378,9 @@ prints the configured names.
 default branch up to date on each push to it, as if each carried an update
 label. An ignore label (`do-not-merge` by default) still opts one out. It
 needs no writer to apply anything, because the setting is read from the
-default branch. Each push evaluates at most six pull requests.
+default branch. Each push evaluates as many pull requests as the Workers
+subrequest budget allows, least recently updated first, so successive
+pushes reach every open pull request.
 
 A malformed `[bot]` table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the
@@ -414,9 +416,9 @@ unreachable or refusing broker leaves a warning with the broker's reason.
 - Only pull requests into the default branch are evaluated. For one
   retargeted onto it, the next sweep handles its update label; apply
   `soothfast:merge` again to queue it.
-- A push or sweep evaluates at most 6 pull requests, most recently updated
-  first among those the bot could act on, to stay inside the Workers
-  subrequest limit. The broker logs when it truncates.
+- A push or sweep stops starting pull requests when its remaining Workers
+  subrequest budget cannot cover another, taking the least recently updated
+  first among those the bot could act on. The broker logs when it truncates.
 - The broker caches each repository's `soothfast.toml` for up to 60 seconds
   per Worker instance, so a changed `[bot]` table can take that long to apply.
   A push to the default branch that changes the file, or whose commit list

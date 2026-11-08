@@ -26,6 +26,7 @@ const pullRequest = {
   labels: [{ name: "soothfast:merge" }],
   auto_merge: null,
   head: { sha: "abc123" },
+  updated_at: "2026-01-01T00:00:00Z",
   state: "open",
   base: { ref: "main" },
 };

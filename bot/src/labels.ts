@@ -33,9 +33,10 @@ interface Context {
   permission: (login: string) => Promise<string>;
 }
 
-// Each pull request costs up to four subrequests; with the fixed overhead of
-// a delivery, six stay under the free plan's cap of 50.
-export const MAX_EVALUATIONS = 6;
+// Free plan cap of 50, minus the action sweep's worst case outside the count:
+// OIDC 2, app slug, installation, mint, ref 3, revoke.
+export const SUBREQUEST_BUDGET = 41;
+const WORST_CASE_PER_PULL_REQUEST = 4;
 
 const CONFIG_TTL_MS = 60_000;
 type Parsed = ReturnType<typeof parseBotConfig>;
@@ -115,7 +116,9 @@ export async function evaluatePullRequest(
   if (context) await evaluate(context, pr, labeler);
 }
 
-export async function evaluateOpen(run: Run): Promise<void> {
+export async function evaluateOpen(source: Run): Promise<void> {
+  let spent = 0;
+  const run = { ...source, github: counted(source.github, () => spent++) };
   const context = await load(run);
   if (!context) return;
   const open = await run.github.openPullRequests(
@@ -123,17 +126,33 @@ export async function evaluateOpen(run: Run): Promise<void> {
     run.defaultBranch,
     run.token,
   );
-  const actionable = open.filter((pr) => canAct(pr, context.config));
+  const actionable = open
+    .filter((pr) => canAct(pr, context.config))
+    .sort((a, b) => a.updated_at.localeCompare(b.updated_at));
   if (actionable.length === 0) run.log("no pull requests to act on");
-  if (actionable.length > MAX_EVALUATIONS)
-    run.log(
-      `evaluating ${MAX_EVALUATIONS} of ${actionable.length} pull requests`,
-    );
-  for (const pr of actionable.slice(0, MAX_EVALUATIONS)) {
+  let reached = 0;
+  for (const pr of actionable) {
+    if (SUBREQUEST_BUDGET - spent < WORST_CASE_PER_PULL_REQUEST) break;
+    reached++;
     await evaluate(context, pr).catch((e: unknown) =>
       run.log(`#${pr.number}: ${e instanceof Error ? e.message : e}`),
     );
   }
+  if (reached < actionable.length)
+    run.log(`evaluating ${reached} of ${actionable.length} pull requests`);
+}
+
+function counted(github: GitHubApi, spend: () => void): GitHubApi {
+  return new Proxy(github, {
+    get(target, name) {
+      const member = Reflect.get(target, name);
+      if (typeof member !== "function") return member;
+      return (...args: unknown[]) => {
+        spend();
+        return member.apply(target, args);
+      };
+    },
+  });
 }
 
 function canAct(pr: PullRequest, config: BotConfig): boolean {
