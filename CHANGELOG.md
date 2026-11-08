@@ -14,6 +14,29 @@
 
 - Keep every open PR up to date with update_all (#369)
 
+### 🐛 Fixes
+
+- Model GraphQL unions by __typename in specs (#372)
+- Budget the bot's sweep by subrequests (#371)
+
+### 📝 Documentation
+
+- Leave the perf gate to CI in CLAUDE.md (#365)
+
+### 🔧 Internal
+
+- Skip bot runs by author, not actor (#374)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-spec
+CHANGED  soothfast_spec::schema::graphql_attrs::ContainerAttrs (signature)
+CHANGED  soothfast_spec::schema::graphql_attrs::container (body)
+```
+
 
 ## 0.5.5 - 2026-11-07
 
