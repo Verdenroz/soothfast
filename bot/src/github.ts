@@ -39,6 +39,7 @@ export interface PullRequest {
   labels: { name: string }[];
   auto_merge: object | null;
   head: { sha: string };
+  updated_at: string;
 }
 
 interface IssueEvent {
@@ -377,7 +378,6 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
       const path = `/repos/${repository}/pulls/${number}`;
       return expectOk(await call<PullRequest>("GET", path, token));
     },
-    // One page of 100 covers the evaluation cap.
     async openPullRequests(repository, base, token) {
       const path = `/repos/${repository}/pulls?state=open&sort=updated&direction=desc&per_page=100&base=${encodeURIComponent(base)}`;
       return expectOk(await call<PullRequest[]>("GET", path, token));
