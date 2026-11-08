@@ -10,7 +10,8 @@ permissions: {}
 
 jobs:
   changelog:
-    if: ${{ !endsWith(github.actor, '[bot]') }}
+    # The bot merges labelled PRs too, so skip only its own regeneration commits.
+    if: github.event.head_commit.author.name != 'soothfast-bot[bot]'
     runs-on: ubuntu-latest
     # Only the newest regeneration may land: an older one sees a stale tree.
     # A cancel between mint and land leaves its one-hour token unrevoked.
