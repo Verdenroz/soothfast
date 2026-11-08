@@ -327,6 +327,12 @@ impl<'a> Resolver<'a> {
             .map(|a| a.to_vec())
             .unwrap_or_default();
 
+        if self.is_graphql_union(item) {
+            let mut schema = self.walk_union(&ids, subst, at);
+            Self::describe(item, &mut schema);
+            return schema;
+        }
+
         // A C-like enum has no per-variant shape to distinguish, so the
         // tag-free representations collapse to the one scalar schema.
         if names.serde.tag.is_none()
@@ -355,6 +361,44 @@ impl<'a> Resolver<'a> {
         let mut schema = json!({ "oneOf": branches });
         Self::describe(item, &mut schema);
         schema
+    }
+
+    /// A GraphQL union: one branch per member object, tagged by the
+    /// `__typename` GraphQL sends when the query selects it.
+    fn walk_union(&mut self, ids: &[Value], subst: &Subst, at: &str) -> Value {
+        let mut branches = Vec::new();
+        for id in ids {
+            let Some(ty) = self
+                .item(id)
+                .and_then(|v| self.item(&v["inner"]["variant"]["kind"]["tuple"][0]))
+                .map(|f| f["inner"]["struct_field"].clone())
+            else {
+                continue;
+            };
+            let typename = self.graphql_type_name(&ty);
+            let payload = self.resolve(&ty, subst, at);
+            branches.push(json!({ "allOf": [
+                { "type": "object", "properties": { "__typename": { "const": typename } } },
+                payload,
+            ] }));
+        }
+        if branches.is_empty() {
+            return json!({});
+        }
+        json!({ "oneOf": branches })
+    }
+
+    /// The GraphQL name of a member type: its `#[graphql(name)]`, else its
+    /// Rust name.
+    fn graphql_type_name(&self, ty: &Value) -> String {
+        let path = ty["resolved_path"]["path"].as_str().unwrap_or_default();
+        let rust = path.rsplit("::").next().unwrap_or(path);
+        self.item(&ty["resolved_path"]["id"])
+            .and_then(|m| {
+                let attrs = m["attrs"].as_array()?;
+                graphql_attrs::container(attrs).name
+            })
+            .unwrap_or_else(|| rust.to_string())
     }
 
     /// Wire names of every variant in declaration order, or `None` unless the

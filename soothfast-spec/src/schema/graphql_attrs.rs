@@ -131,6 +131,7 @@ fn neighbour_is_lower(chars: &[char], i: usize) -> bool {
 /// Container-level `#[graphql(...)]` options that change wire names.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ContainerAttrs {
+    pub name: Option<String>,
     pub rename_fields: Option<Rename>,
     pub rename_items: Option<Rename>,
     /// An unrecognised rule value; the caller reports it as a gap rather than
@@ -171,6 +172,10 @@ pub fn container(raw: &[Value]) -> ContainerAttrs {
         out.present = true;
         for item in attrs::split_items(&args) {
             let (key, value) = attrs::key_value(item);
+            if key == "name" {
+                out.name = value;
+                continue;
+            }
             let slot = match key {
                 "rename_fields" => &mut out.rename_fields,
                 "rename_items" => &mut out.rename_items,

@@ -147,6 +147,19 @@ impl<'a> Doc<'a> {
             .any(|path| is_graphql_container_trait(&path))
     }
 
+    /// True when the type implements async-graphql's `UnionType`, whose wire
+    /// shape is the selected member object rather than an enum item.
+    pub(super) fn is_graphql_union(&self, item: &Value) -> bool {
+        let Some(impls) = item["inner"]["enum"]["impls"].as_array() else {
+            return false;
+        };
+        impls
+            .iter()
+            .filter_map(|id| self.item(id))
+            .filter_map(|im| self.canonical(&im["inner"]["impl"]["trait"]["id"]))
+            .any(|path| path.starts_with("async_graphql::") && path.ends_with("::UnionType"))
+    }
+
     /// Locate a type this document defines, given the canonical path another
     /// document reported for it.
     ///

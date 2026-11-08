@@ -81,6 +81,10 @@ impl<'a> Resolver<'a> {
         self.docs[self.cur].item(id)
     }
 
+    pub(super) fn is_graphql_union(&self, item: &Value) -> bool {
+        self.docs[self.cur].is_graphql_union(item)
+    }
+
     /// Find a struct or enum by its plain name, for attribute overrides that
     /// name a type rather than pointing at a signature.
     pub fn find_type_id(&self, name: &str) -> Option<Value> {

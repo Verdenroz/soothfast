@@ -425,3 +425,109 @@ fn a_required_resolver_argument_is_a_gap_not_a_guess() {
         "an unresolvable resolver drops the field rather than guessing its shape"
     );
 }
+
+const UNION_IMPL_ID: u64 = 94;
+const UNION_TRAIT_ID: u64 = 95;
+
+/// A `Kind` union of newtype variants over object members, each given as
+/// `(variant, member struct, member `#[graphql(...)]` attrs)`.
+fn union_doc(members: &[(&str, &str, &[&str])]) -> Value {
+    let n = members.len() as u64;
+    let mut index = vec![(
+        1,
+        json!({
+            "name": "Kind", "docs": Value::Null, "attrs": [],
+            "inner": { "enum": {
+                "variants": (0..n).map(|i| 10 + i).collect::<Vec<_>>(),
+                "generics": { "params": [], "where_predicates": [] },
+                "impls": [UNION_IMPL_ID] } },
+        }),
+    )];
+    for (i, (variant, member, attrs)) in members.iter().enumerate() {
+        let i = i as u64;
+        let (variant_id, tuple_id, struct_id, field_id) = (10 + i, 20 + i, 30 + i, 40 + i);
+        index.push((
+            variant_id,
+            json!({ "name": variant, "docs": Value::Null, "attrs": [],
+                    "inner": { "variant": { "kind": { "tuple": [tuple_id] } } } }),
+        ));
+        index.push((
+            tuple_id,
+            json!({ "name": "0", "docs": Value::Null, "attrs": [],
+                    "inner": { "struct_field": path(member, struct_id, &[]) } }),
+        ));
+        index.push((
+            struct_id,
+            json!({
+                "name": member, "docs": Value::Null, "attrs": attrs_of(attrs),
+                "inner": { "struct": {
+                    "kind": { "plain": { "fields": [field_id], "has_stripped_fields": false } },
+                    "generics": { "params": [], "where_predicates": [] },
+                    "impls": [IMPL_ID] } },
+            }),
+        ));
+        index.push((field_id, field("value", &[])));
+    }
+    let mut d = doc(index);
+    d["index"][UNION_IMPL_ID.to_string()] = json!({
+        "name": Value::Null, "docs": Value::Null, "attrs": [],
+        "inner": { "impl": { "trait": { "path": "UnionType", "id": UNION_TRAIT_ID } } } });
+    d["paths"][UNION_TRAIT_ID.to_string()] = json!({
+        "crate_id": 2, "kind": "trait", "path": ["async_graphql", "base", "UnionType"] });
+    d
+}
+
+#[test]
+fn a_union_is_a_one_of_of_its_members_with_typename_consts() {
+    let d = union_doc(&[
+        ("Earnings", "GqlEarningsEvent", &[]),
+        ("Holiday", "GqlHoliday", &[]),
+    ]);
+    let e = extract_named(&d, &TypeTable::builtin(), "Kind").expect("extracts");
+    assert_eq!(
+        e.components["Kind"]["oneOf"],
+        json!([
+            { "allOf": [
+                { "type": "object",
+                  "properties": { "__typename": { "const": "GqlEarningsEvent" } } },
+                { "$ref": "#/components/schemas/GqlEarningsEvent" } ] },
+            { "allOf": [
+                { "type": "object",
+                  "properties": { "__typename": { "const": "GqlHoliday" } } },
+                { "$ref": "#/components/schemas/GqlHoliday" } ] },
+        ])
+    );
+}
+
+#[test]
+fn a_union_member_name_override_is_the_typename() {
+    let d = union_doc(&[("Holiday", "GqlHoliday", &["#[graphql(name = \"Renamed\")]"])]);
+    let e = extract_named(&d, &TypeTable::builtin(), "Kind").expect("extracts");
+    let branch = &e.components["Kind"]["oneOf"][0];
+    assert_eq!(
+        branch["allOf"][0]["properties"]["__typename"]["const"],
+        "Renamed"
+    );
+    assert_eq!(
+        branch["allOf"][1]["$ref"],
+        "#/components/schemas/GqlHoliday"
+    );
+}
+
+#[test]
+fn a_graphql_enum_is_still_a_string_enum() {
+    let d = enum_doc(&[], &[("Open", &[]), ("Closed", &[])], true);
+    let e = extract_named(&d, &TypeTable::builtin(), "Item").expect("extracts");
+    assert_eq!(e.components["Item"]["enum"], json!(["OPEN", "CLOSED"]));
+}
+
+#[test]
+fn a_union_variant_with_a_string_field_id_still_resolves() {
+    let mut d = union_doc(&[("Holiday", "GqlHoliday", &[])]);
+    d["index"]["10"]["inner"]["variant"]["kind"]["tuple"] = json!(["20"]);
+    let e = extract_named(&d, &TypeTable::builtin(), "Kind").expect("extracts");
+    assert_eq!(
+        e.components["Kind"]["oneOf"][0]["allOf"][1]["$ref"],
+        "#/components/schemas/GqlHoliday"
+    );
+}
