@@ -1,13 +1,26 @@
 # Changelog
 
-## Unreleased (draft vs v0.5.5)
+## 0.5.6 - 2026-11-08
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+Generated specs now describe async-graphql unions the way GraphQL sends
+them. A `#[derive(Union)]` enum becomes a `oneOf` of its member object
+types, each with an optional `__typename` const set to the member's GraphQL
+name, where it used to come out externally tagged by SCREAMING_SNAKE variant
+names that no response ever has. Regenerating a spec corrects those schemas
+and the SDKs built from them. soothfast-bot's `update_all` now reaches every
+open pull request: a sweep spends a Workers subrequest budget instead of
+stopping at six, oldest-updated first.
+
+### Upgrade notes
+
+- Regenerate specs and SDKs. Schemas for GraphQL union types change shape;
+  nothing else in a generated spec moves.
+- `soothfast_spec::schema::graphql_attrs::ContainerAttrs` gains a public
+  `name` field. Code that builds it with a struct literal needs to add it.
+- The bot changes are already live in the broker; no workflow edits needed.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
