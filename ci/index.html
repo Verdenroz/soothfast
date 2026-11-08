@@ -459,7 +459,9 @@ prints the configured names.</p>
 default branch up to date on each push to it, as if each carried an update
 label. An ignore label (<code>do-not-merge</code> by default) still opts one out. It
 needs no writer to apply anything, because the setting is read from the
-default branch. Each push evaluates at most six pull requests.</p>
+default branch. Each push evaluates as many pull requests as the Workers
+subrequest budget allows, least recently updated first, so successive
+pushes reach every open pull request.</p>
 <p>A malformed <code>[bot]</code> table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the
 repository's "Automatically delete head branches" setting.</p>
@@ -484,7 +486,7 @@ unreachable or refusing broker leaves a warning with the broker's reason.</p>
 <h3 id="limits">Limits<a class="anchor" href="#limits" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Only pull requests into the default branch are evaluated. For one retargeted onto it, the next sweep handles its update label; apply <code>soothfast:merge</code> again to queue it.</li>
-<li>A push or sweep evaluates at most 6 pull requests, most recently updated first among those the bot could act on, to stay inside the Workers subrequest limit. The broker logs when it truncates.</li>
+<li>A push or sweep stops starting pull requests when its remaining Workers subrequest budget cannot cover another, taking the least recently updated first among those the bot could act on. The broker logs when it truncates.</li>
 <li>The broker caches each repository's <code>soothfast.toml</code> for up to 60 seconds per Worker instance, so a changed <code>[bot]</code> table can take that long to apply. A push to the default branch that changes the file, or whose commit list cannot show whether it did, drops the cache first.</li>
 <li>A pull request that is already mergeable on a merge-queue branch is not enqueued: GitHub refuses the direct merge, and the broker logs it. Apply <code>soothfast:merge</code> before its checks finish.</li>
 <li>A pull request whose only failing checks are not required is merged at once, the same as native auto-merge, which waits for required checks only.</li>
