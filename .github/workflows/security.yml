@@ -16,7 +16,7 @@ jobs:
   # and allowed sources (typosquat / dependency-confusion defense).
   cargo-deny:
     name: cargo-deny
-    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
+    if: github.event_name != 'pull_request' || !endsWith(github.event.pull_request.user.login, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -34,7 +34,7 @@ jobs:
   # Static analysis of the GitHub Actions workflows themselves.
   zizmor:
     name: zizmor
-    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
+    if: github.event_name != 'pull_request' || !endsWith(github.event.pull_request.user.login, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       security-events: write # upload SARIF to code scanning
@@ -58,7 +58,7 @@ jobs:
   # The image is pinned by digest; composite actions are left to zizmor.
   actionlint:
     name: actionlint
-    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
+    if: github.event_name != 'pull_request' || !endsWith(github.event.pull_request.user.login, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read

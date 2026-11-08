@@ -13,7 +13,7 @@ permissions: {}
 
 jobs:
   check:
-    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
+    if: github.event_name != 'pull_request' || !endsWith(github.event.pull_request.user.login, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout (a private repo needs it)
@@ -58,7 +58,7 @@ jobs:
           key: soothfast-tests-${{ github.ref_name }}-${{ github.sha }}
 
   msrv:
-    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
+    if: github.event_name != 'pull_request' || !endsWith(github.event.pull_request.user.login, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout (a private repo needs it)
@@ -81,7 +81,7 @@ jobs:
   # docs-regen, the gate matrix, and deploy-docs would otherwise each
   # rebuild it from source in release mode.
   build-cli:
-    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
+    if: github.event_name != 'pull_request' || !endsWith(github.event.pull_request.user.login, '[bot]')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout (a private repo needs it)
@@ -106,7 +106,7 @@ jobs:
   # Dogfood: measure the self-bench crates, then gate every bind, claim, and
   # captured output against this build's own run.
   docs:
-    if: github.event_name != 'pull_request' || !endsWith(github.actor, '[bot]')
+    if: github.event_name != 'pull_request' || !endsWith(github.event.pull_request.user.login, '[bot]')
     needs: [build-cli]
     runs-on: ubuntu-latest
     permissions:
@@ -219,8 +219,8 @@ jobs:
   # Keep this package list in sync with Makefile's BENCH_CRATES.
   gate:
     if: >-
-      (github.event_name == 'pull_request' && !endsWith(github.actor, '[bot]'))
-      || (github.event_name == 'push' && github.ref == 'refs/heads/master' && !endsWith(github.actor, '[bot]'))
+      (github.event_name == 'pull_request' && !endsWith(github.event.pull_request.user.login, '[bot]'))
+      || (github.event_name == 'push' && github.ref == 'refs/heads/master' && github.event.head_commit.author.name != 'soothfast-bot[bot]')
     needs: [build-cli]
     strategy:
       matrix:
