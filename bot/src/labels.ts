@@ -33,9 +33,9 @@ interface Context {
   permission: (login: string) => Promise<string>;
 }
 
-// The free plan allows 50 subrequests per invocation; a delivery spends a
-// few more than the sweep counts (token mint and revoke).
-export const SUBREQUEST_BUDGET = 44;
+// Free plan cap of 50, minus the action sweep's worst case outside the count:
+// OIDC 2, app slug, installation, mint, ref 3, revoke.
+export const SUBREQUEST_BUDGET = 41;
 const WORST_CASE_PER_PULL_REQUEST = 4;
 
 const CONFIG_TTL_MS = 60_000;

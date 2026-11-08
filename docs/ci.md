@@ -378,9 +378,9 @@ prints the configured names.
 default branch up to date on each push to it, as if each carried an update
 label. An ignore label (`do-not-merge` by default) still opts one out. It
 needs no writer to apply anything, because the setting is read from the
-default branch. Each push evaluates as many pull requests as the Workers subrequest
-budget allows, least recently updated first, so successive pushes reach
-every open pull request.
+default branch. Each push evaluates as many pull requests as the Workers
+subrequest budget allows, least recently updated first, so successive
+pushes reach every open pull request.
 
 A malformed `[bot]` table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the
