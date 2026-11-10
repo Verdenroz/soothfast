@@ -71,7 +71,7 @@ fn report_warnings(report: &soothfast_site::BuildReport) {
 /// Writes the trend series into the built site root as `trend.jsonl`, so
 /// publishing the built directory keeps it on the Pages branch.
 fn carry_series(root: &Path, out_dir: &Path) -> Result<(), String> {
-    if let Some(text) = trend::load(root)? {
+    if let Some(text) = trend::publishable(root)? {
         let path = out_dir.join("trend.jsonl");
         std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     }
@@ -96,6 +96,11 @@ pub fn build_cmd(baseline: &str, out: Option<&Path>) -> i32 {
             report_warnings(&report);
             let out_dir = root.join(&input.config.out_dir);
             if let Err(e) = carry_series(&root, &out_dir) {
+                // Publishing the built directory replaces the Pages branch, so
+                // a CI build must not go on without the series.
+                if std::env::var_os("CI").is_some() {
+                    return err(&format!("cannot carry the trend series into the site: {e}"));
+                }
                 eprintln!("warning: trend series not copied into the site: {e}");
             }
             println!(

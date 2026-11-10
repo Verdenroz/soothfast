@@ -88,6 +88,12 @@ fn read_branch(
     branch: &str,
     fresh: bool,
 ) -> Result<Option<String>, String> {
+    if !git_output(root, &["remote", "get-url", remote])?
+        .status
+        .success()
+    {
+        return Ok(None);
+    }
     let tip = format!("refs/remotes/{remote}/{branch}");
     let verify = ["rev-parse", "--verify", "--quiet", &tip];
     if fresh || !git_output(root, &verify)?.status.success() {
@@ -218,19 +224,33 @@ fn append(args: &[String]) -> i32 {
     0
 }
 
-/// Appends `line` to the working copy, seeded from the freshly fetched Pages
-/// tip. A working copy outranks the branch only when the branch has no series
-/// (a stale restored copy must not drop points published since). A branch
-/// that cannot be read is an error: appending to an empty series would let
-/// the next publish erase history.
+/// The series to publish or to extend: the freshly fetched Pages series,
+/// except that the working copy wins when the branch has no series or the
+/// working copy extends it (the branch text is a prefix: points appended
+/// locally and not yet published). A stale working copy, such as one restored
+/// from an old cache, loses to the branch. A branch that cannot be read is an
+/// error, since continuing with an empty series would let a publish erase
+/// history.
+pub fn publishable(root: &Path) -> Result<Option<String>, String> {
+    publishable_from(root, PAGES_REMOTE, PAGES_BRANCH)
+}
+
+fn publishable_from(root: &Path, remote: &str, branch: &str) -> Result<Option<String>, String> {
+    let published = read_branch(root, remote, branch, true)?;
+    let local = std::fs::read_to_string(working_copy(root)).ok();
+    Ok(match (published, local) {
+        (Some(b), Some(l)) if l.starts_with(&b) => Some(l),
+        (Some(b), _) => Some(b),
+        (None, local) => local,
+    })
+}
+
+/// Appends `line` to the working copy, seeded from `publishable_from`.
 fn append_line(root: &Path, remote: &str, branch: &str, line: &str) -> Result<PathBuf, String> {
+    let existing = publishable_from(root, remote, branch)
+        .map_err(|e| format!("cannot read the existing trend series: {e}"))?
+        .unwrap_or_default();
     let path = working_copy(root);
-    let published = read_branch(root, remote, branch, true)
-        .map_err(|e| format!("cannot read the existing trend series: {e}"))?;
-    let existing = match published {
-        Some(text) => text,
-        None => std::fs::read_to_string(&path).unwrap_or_default(),
-    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
@@ -347,7 +367,7 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{append_line, load_from, point_from_baseline, working_copy};
+    use super::{append_line, load_from, point_from_baseline, publishable_from, working_copy};
 
     fn git(dir: &Path, args: &[&str]) {
         let out = Command::new("git")
@@ -486,6 +506,40 @@ mod tests {
             std::fs::read_to_string(path).unwrap(),
             "{\"b\":2}\n{\"c\":3}\n"
         );
+    }
+
+    #[test]
+    fn publishable_series_is_the_branch_when_the_working_copy_is_stale() {
+        let root = repo_with_origin("pubstale", Some("{\"b\":2}\n{\"d\":4}\n"));
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n").unwrap();
+        let text = publishable_from(&root, "origin", "gh-pages").unwrap();
+        assert_eq!(text.as_deref(), Some("{\"b\":2}\n{\"d\":4}\n"));
+    }
+
+    #[test]
+    fn publishable_series_is_the_working_copy_when_it_extends_the_branch() {
+        let root = repo_with_origin("pubahead", Some("{\"b\":2}\n"));
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n{\"c\":3}\n").unwrap();
+        let text = publishable_from(&root, "origin", "gh-pages").unwrap();
+        assert_eq!(text.as_deref(), Some("{\"b\":2}\n{\"c\":3}\n"));
+    }
+
+    #[test]
+    fn publishable_series_is_the_working_copy_when_the_branch_has_none() {
+        let root = repo_with_origin("pubnone", None);
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n").unwrap();
+        let text = publishable_from(&root, "origin", "gh-pages").unwrap();
+        assert_eq!(text.as_deref(), Some("{\"b\":2}\n"));
+    }
+
+    #[test]
+    fn a_repo_without_the_remote_has_no_series() {
+        let root = scratch("noremote");
+        git(&root, &["init", "-q"]);
+        assert_eq!(publishable_from(&root, "origin", "gh-pages").unwrap(), None);
     }
 
     #[test]

@@ -74,14 +74,17 @@ The series lives on the Pages branch (`gh-pages` on `origin`, the branch
 default branch. Everything that reads it goes through one loader: the working
 copy `.soothfast/trend.jsonl` when it exists, otherwise the file at the tip of
 the Pages branch, fetched when needed. `trend append` fetches the Pages
-branch's current tip and seeds the working copy from the series there, so a
-working copy restored from an older cache cannot drop published points. It
-keeps the working copy only when the branch has no series. It fails if the
+branch's current tip before adding its line. It fails if the
 branch exists but cannot be read, since appending to an empty series would
 erase history on the next publish. A branch that does not exist yet is an
 empty series.
 
-`docs build` copies the series into the site root as `trend.jsonl`, so
+What gets appended to and published is the Pages branch's series, except that
+the working copy wins when the branch has no series or when the working copy
+extends it (the branch's text is a prefix of it); a stale working copy, such as
+one restored from an old cache, never overwrites the branch.
+
+`docs build` copies that series into the site root as `trend.jsonl`, so
 `docs gh-deploy` and any publish of the built directory carry it onto the
 Pages branch. A repo that still has `.soothfast/trend.jsonl` committed on its
 default branch needs no migration step: that file is read as the working copy,
