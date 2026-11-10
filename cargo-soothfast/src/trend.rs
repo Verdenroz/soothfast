@@ -195,22 +195,35 @@ fn append(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let path = working_copy(&root);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
     let mut line = record.to_string();
     line.push('\n');
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    if std::fs::write(&path, existing + &line).is_err() {
-        eprintln!("soothfast: failed to write {}", path.display());
-        return 1;
-    }
+    let path = match append_line(&root, PAGES_REMOTE, PAGES_BRANCH, &line) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 1;
+        }
+    };
     println!(
         "trend: appended {count} item(s) at commit {commit} -> {}",
         path.display()
     );
     0
+}
+
+/// Appends `line` to the working copy, first seeding it from the Pages
+/// branch when no copy exists. A branch that cannot be read is an error:
+/// appending to an empty series would let the next publish erase history.
+fn append_line(root: &Path, remote: &str, branch: &str, line: &str) -> Result<PathBuf, String> {
+    let existing = load_from(root, remote, branch)
+        .map_err(|e| format!("cannot read the existing trend series: {e}"))?
+        .unwrap_or_default();
+    let path = working_copy(root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&path, existing + line).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
 }
 
 /// A trend point built from a saved baseline instead of a fresh measurement.
@@ -322,7 +335,7 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{load_from, point_from_baseline, working_copy};
+    use super::{append_line, load_from, point_from_baseline, working_copy};
 
     fn git(dir: &Path, args: &[&str]) {
         let out = Command::new("git")
@@ -399,6 +412,27 @@ mod tests {
             &["remote", "set-url", "origin", "/nonexistent/origin.git"],
         );
         assert!(load_from(&root, "origin", "gh-pages").is_err());
+    }
+
+    #[test]
+    fn append_seeds_the_working_copy_from_the_branch() {
+        let root = repo_with_origin("seed", Some("{\"b\":2}\n"));
+        let path = append_line(&root, "origin", "gh-pages", "{\"c\":3}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"b\":2}\n{\"c\":3}\n"
+        );
+    }
+
+    #[test]
+    fn append_fails_without_writing_when_the_branch_cannot_be_read() {
+        let root = repo_with_origin("noappend", None);
+        git(
+            &root,
+            &["remote", "set-url", "origin", "/nonexistent/origin.git"],
+        );
+        assert!(append_line(&root, "origin", "gh-pages", "{}\n").is_err());
+        assert!(!working_copy(&root).exists());
     }
 
     fn baseline() -> serde_json::Value {
