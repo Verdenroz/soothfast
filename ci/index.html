@@ -185,6 +185,26 @@ since only a job in the environment can obtain a bot token.</p>
 </ul>
 <p>A ruleset that requires approving reviews applies to the bot too: its PR
 waits for a human.</p>
+<h2 id="setting-up-and-pinning">Setting up and pinning<a class="anchor" href="#setting-up-and-pinning" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast init</code> writes the workflow, <code>soothfast.toml</code> and the
+<code>.gitignore</code> entry for any repository. A repository with no Cargo manifest
+is set up from the Gradle, Maven, Python and Node projects it tracks, as
+<code>[[project]]</code> tables; the Rust-only steps are skipped.</p>
+<p>A repository pins soothfast in several places that must agree: the
+<code>soothfast*</code> requirements in <code>Cargo.toml</code> and their entries in <code>Cargo.lock</code>,
+the <code>uses: &lt;owner&gt;/soothfast...@&lt;sha&gt; # vX.Y.Z</code> refs in its workflows, a
+<code>soothfast_ref</code> input, and a literal <code>cargo install cargo-soothfast
+--version X.Y.Z</code>. <code>cargo soothfast bump [--to VERSION]</code> moves all of them to
+one release, the running CLI's own unless <code>--to</code> says otherwise. It resolves
+each tag to its commit with <code>git ls-remote</code>, keeps the version comment in
+step with the SHA, updates <code>Cargo.lock</code> for just the packages it moved, and
+prints one line per file it changed. A requirement the release already
+satisfies, such as <code>&quot;0.5&quot;</code> against 0.5.7, is left as written.</p>
+<p><code>cargo soothfast bump --check</code> writes nothing and needs no network. It
+prints <code>file:line  found X, want Y</code> for each stale pin and exits 1 when there
+is one, so it can gate a pull request. A line that names <code>cargo-soothfast</code>
+with a version it cannot read is printed as unrecognised and does not fail
+the check.</p>
 <h2 id="checking-the-setup">Checking the setup<a class="anchor" href="#checking-the-setup" aria-label="Link to this section">#</a></h2>
 <p><code>cargo soothfast status</code> prints what state the setup is in, from what is
 already on disk and in git. It builds, measures and fetches nothing. Each
@@ -733,6 +753,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
   <ul class="toc-list" id="toc">
   
     <li><a class="toc-l2" href="#setup">Setup</a></li>
+  
+    <li><a class="toc-l2" href="#setting-up-and-pinning">Setting up and pinning</a></li>
   
     <li><a class="toc-l2" href="#checking-the-setup">Checking the setup</a></li>
   
