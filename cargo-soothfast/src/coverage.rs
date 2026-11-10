@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::config::{self, Group};
 use crate::coverage_lang::{self, Target};
 use crate::invoke::{self, CommonArgs};
 
@@ -38,6 +39,10 @@ fn measure(args: &[String]) -> i32 {
         eprintln!("soothfast: coverage measure requires -p PKG");
         return 2;
     };
+    if let Err(e) = config::apply(&mut common, Group::Docs) {
+        eprintln!("soothfast: {e}");
+        return 2;
+    }
 
     // What is measured: registry list, attributing `covers` where set.
     let records = match invoke::run_discovery(&common, &["--list"]) {
@@ -116,6 +121,13 @@ fn docs(args: &[String]) -> i32 {
             }
         }
     }
+    let features = match config::defaults(&pkgs, Group::Docs) {
+        Ok(defaults) => features.or(defaults.features),
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
     let targets = match lang_targets(&pkgs, &dirs, lang.as_deref()) {
         Ok(t) => t,
         Err(e) => {

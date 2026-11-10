@@ -3,8 +3,6 @@
 //! `soothfast.toml` is shared with the site, spec and gate engines, so this
 //! parser skips every table it doesn't own.
 
-use std::path::Path;
-
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
 /// Repo-level `docs` settings. PATHS on the command line override them.
@@ -24,17 +22,6 @@ impl Default for DocsConfig {
             paths: vec!["README.md".into(), "docs".into()],
             package: None,
         }
-    }
-}
-
-/// Read `[docs]` from a directory's `soothfast.toml`. An absent file just
-/// means defaults.
-pub fn load(dir: &Path) -> Result<DocsConfig, String> {
-    let path = dir.join("soothfast.toml");
-    match std::fs::read_to_string(&path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(DocsConfig::default()),
-        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
-        Ok(text) => parse(&text).map_err(|e| format!("{}: {e}", path.display())),
     }
 }
 

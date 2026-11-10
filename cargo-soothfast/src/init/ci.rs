@@ -1,6 +1,6 @@
 //! Where the reusable workflow runs and whether it runs the repo's tests:
 //! `[runner] labels` and `[test] ci` in `soothfast.toml`, and the packages
-//! `[docs] package` names for `docs check` (read by `docs_config`).
+//! `[docs] package` names for `docs check` (read by `config::docs`).
 
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
@@ -57,7 +57,7 @@ impl Ci {
                 _ => {}
             }
         }
-        ci.docs = crate::docs_config::parse(text)?.package;
+        ci.docs = crate::config::docs::parse(text)?.package;
         Ok(ci)
     }
 

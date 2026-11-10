@@ -26,6 +26,7 @@ use serde_json::Value;
 use soothfast_spec::SpecKind;
 use soothfast_spec::dialect::Info;
 
+use crate::config::{self, Group};
 use crate::invoke::{self, CommonArgs};
 use crate::spec::escape;
 use crate::spec_config;
@@ -52,6 +53,10 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("soothfast: unknown spec html arg {a:?}");
             return 2;
         }
+    }
+    if let Err(e) = config::apply(&mut common, Group::Spec) {
+        eprintln!("soothfast: {e}");
+        return 2;
     }
     let Some(pkg) = common.pkg.clone() else {
         eprintln!("soothfast: spec html requires -p PKG");
