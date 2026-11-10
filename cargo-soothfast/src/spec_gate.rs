@@ -21,6 +21,7 @@
 
 use soothfast_spec::compat::Severity;
 
+use crate::config::{self, Group};
 use crate::invoke::{self, CommonArgs};
 use crate::spec_config;
 use crate::spec_gen;
@@ -50,6 +51,10 @@ pub fn run(args: &[String]) -> i32 {
                 }
             }
         }
+    }
+    if let Err(e) = config::apply(&mut common, Group::Spec) {
+        eprintln!("soothfast: {e}");
+        return 2;
     }
     let Some(pkg) = common.pkg.clone() else {
         eprintln!("soothfast: spec gate requires -p PKG");

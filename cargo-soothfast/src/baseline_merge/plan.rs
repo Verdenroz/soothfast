@@ -8,7 +8,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::fail;
-use crate::config::gate as gate_config;
+use crate::config::{self, Group};
 use crate::{benchexe, invoke};
 
 /// The key marking a plan file, `{"plan": true, "listed": {pkg: [ids]}}`.
@@ -31,7 +31,7 @@ pub fn cmd(args: &[String]) -> i32 {
     let (Some(out), Some(pkg)) = (out, common.pkg.clone()) else {
         return fail("baseline plan needs --out FILE and -p PKG");
     };
-    if let Err(e) = gate_config::apply(&mut common) {
+    if let Err(e) = config::apply(&mut common, Group::Gate) {
         return fail(&e);
     }
     let exe = if benchexe::storable(&common, invoke::Build::Measure) {

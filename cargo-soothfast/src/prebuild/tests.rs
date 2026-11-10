@@ -7,7 +7,6 @@ use super::select::{
 };
 use super::stage::stage_entry;
 use super::*;
-use crate::config::gate as gate_config;
 use crate::invoke::CommonArgs;
 
 #[derive(Default)]
@@ -242,7 +241,7 @@ fn staging_copies_the_resolved_entry_and_what_belongs_to_it() {
 
 #[test]
 fn a_gate_table_feature_keys_the_spec_rustdoc_but_not_the_docs_check_one() {
-    let gate = gate_config::parse("[gate]\nfeatures = \"bench-gate\"\n").unwrap();
+    let gate = crate::config::gate::parse("[gate]\nfeatures = \"bench-gate\"\n").unwrap();
     let fake = Fake {
         generated: BTreeMap::from([("server".to_string(), Vec::new())]),
         ..Fake::default()

@@ -316,7 +316,7 @@ fn cmd_measure(args: &[String]) -> i32 {
         }
     }
 
-    if let Err(e) = config::gate::apply(&mut common) {
+    if let Err(e) = config::apply(&mut common, config::Group::Gate) {
         return arg_err(&e);
     }
     if save.is_some() && common.backend.as_deref() != Some("buildcost") {

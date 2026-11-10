@@ -9,8 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::buildstamp;
-use crate::config::Config;
-use crate::config::gate as gate_config;
+use crate::config::{self, Config, Group};
 use crate::gate_lock;
 use crate::gate_save::{HeadRun, bench_packages, configure_save, save_errored, save_head};
 use crate::headrun::{
@@ -200,9 +199,18 @@ pub fn run(args: &[String]) -> i32 {
         return run_imported(&g, &invoke::project_root());
     }
     let saving = g.save_baseline.is_some();
-    let configured = configure_save(&mut g.common, saving, bench_packages, gate_config::apply);
+    let configured = configure_save(&mut g.common, saving, bench_packages, |common| {
+        config::apply(common, Group::Gate)
+    });
     let walltime_advisory = match configured {
-        Ok(Ok(cfg)) => cfg.walltime_advisory,
+        Ok(Ok(applied)) => {
+            if !g.import.baseline_given
+                && let Some(baseline) = applied.settings.baseline
+            {
+                g.baseline = baseline;
+            }
+            applied.gate.walltime_advisory
+        }
         Ok(Err(e)) => return errored_unbuilt(&g, &e),
         Err(e) => return err(&e),
     };
@@ -549,7 +557,7 @@ fn run_each(args: &[String], packages: &[String]) -> i32 {
     common.pkg = None;
     // A config error is left to each package's leg, which reports it and
     // marks the package gate-failed in its baseline.
-    if gate_config::apply(&mut common).is_ok() && common.features.is_none() {
+    if config::apply_to(&mut common, Group::Gate, packages).is_ok() && common.features.is_none() {
         // `--features` names one package's features; across several cargo
         // wants `pkg/feature`, so leave those builds to the per-package legs.
         prebuild_both_sides(packages, &common, args);
@@ -717,7 +725,7 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
 
 struct AcceptArgs {
     common: CommonArgs,
-    baseline: String,
+    baseline: Option<String>,
     against_ref: Option<String>,
     matrix: String,
     justification: Option<String>,
@@ -739,8 +747,11 @@ fn accept_cmd(args: &[String]) -> i32 {
         Ok(a) => a,
         Err(e) => return err(&e),
     };
-    let walltime_advisory = match gate_config::apply(&mut a.common) {
-        Ok(cfg) => cfg.walltime_advisory,
+    let walltime_advisory = match config::apply(&mut a.common, Group::Gate) {
+        Ok(applied) => {
+            a.baseline = a.baseline.or(applied.settings.baseline);
+            applied.gate.walltime_advisory
+        }
         Err(e) => return err(&e),
     };
     accept_parsed(a, walltime_advisory)
@@ -750,7 +761,7 @@ fn accept_cmd(args: &[String]) -> i32 {
 fn accept_args(args: &[String]) -> Result<AcceptArgs, String> {
     let mut a = AcceptArgs {
         common: CommonArgs::default(),
-        baseline: "base".into(),
+        baseline: None,
         against_ref: None,
         matrix: "default".into(),
         justification: None,
@@ -764,7 +775,7 @@ fn accept_args(args: &[String]) -> Result<AcceptArgs, String> {
         }
         match arg.as_str() {
             "--baseline" => match it.next() {
-                Some(n) => a.baseline = n.clone(),
+                Some(n) => a.baseline = Some(n.clone()),
                 None => return Err("--baseline needs a name".into()),
             },
             "--against-ref" => match it.next() {
@@ -806,7 +817,7 @@ fn accept_parsed(a: AcceptArgs, walltime_advisory: bool) -> i32 {
 
     let g = GateArgs {
         common: a.common,
-        baseline: a.baseline,
+        baseline: a.baseline.unwrap_or_else(|| "base".into()),
         ratchet: None,
         against_ref: a.against_ref,
         deps: false,

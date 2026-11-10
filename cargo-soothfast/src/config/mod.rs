@@ -12,7 +12,37 @@ pub mod package;
 
 pub use package::{Group, Settings};
 
+use crate::invoke::{self, CommonArgs};
 use crate::test::config as test;
+
+/// What a command read from `soothfast.toml` beyond the flags it filled.
+#[derive(Default)]
+pub struct Applied {
+    pub gate: gate::GateConfig,
+    pub settings: Settings,
+}
+
+/// Fill the flags `common` leaves unset from the defaults of its `-p`
+/// package in `group`, and return what was read. Without a workspace there is
+/// no file and nothing to fill.
+pub fn apply(common: &mut CommonArgs, group: Group) -> Result<Applied, String> {
+    let pkgs: Vec<String> = common.pkg.iter().cloned().collect();
+    apply_to(common, group, &pkgs)
+}
+
+/// [`apply`] for a command that works on `pkgs` together.
+pub fn apply_to(common: &mut CommonArgs, group: Group, pkgs: &[String]) -> Result<Applied, String> {
+    let Ok(root) = invoke::workspace_root() else {
+        return Ok(Applied::default());
+    };
+    Config::load(&root)?.fill(common, group, pkgs)
+}
+
+/// The defaults of `pkgs` in `group` from the project's `soothfast.toml`, for
+/// a command that has no [`CommonArgs`] to fill.
+pub fn defaults(pkgs: &[String], group: Group) -> Result<Settings, String> {
+    Config::load(&invoke::project_root())?.resolve(pkgs, group)
+}
 
 /// A root `soothfast.toml`'s text. Sections parse on demand, so a malformed
 /// table only fails the commands that read it.
@@ -32,6 +62,29 @@ impl Config {
             Ok(text) => text,
         };
         Ok(Self { path, text })
+    }
+
+    /// Fill the flags `common` leaves unset from the defaults of `pkgs` in
+    /// `group`. `--bench` takes the group's `target` only in `gate`: the
+    /// other groups' targets are not bench targets.
+    pub fn fill(
+        &self,
+        common: &mut CommonArgs,
+        group: Group,
+        pkgs: &[String],
+    ) -> Result<Applied, String> {
+        let gate = self.gate()?;
+        let settings = self.resolve(pkgs, group)?;
+        if common.codegen_units.is_none() {
+            common.codegen_units = gate.codegen_units.clone();
+        }
+        if common.features.is_none() {
+            common.features = settings.features.clone();
+        }
+        if group == Group::Gate && common.target.is_none() {
+            common.target = settings.target.clone();
+        }
+        Ok(Applied { gate, settings })
     }
 
     /// The `[gate]` section.
@@ -157,8 +210,8 @@ mod tests {
     }
 
     #[test]
-    fn an_absent_docs_section_leaves_paths_to_the_command() {
-        let docs = config("[gate]\nfeatures = \"a\"\n")
+    fn an_empty_docs_paths_leaves_the_scope_to_the_command() {
+        let docs = config("[docs]\npaths = []\n")
             .resolve(&[], Group::Docs)
             .unwrap();
         assert_eq!(docs.paths, None);
@@ -179,5 +232,63 @@ mod tests {
         let cfg = config("");
         let settings = cfg.resolve(&[], Group::Gate).unwrap();
         assert_eq!(settings, Settings::default());
+    }
+
+    const FLAGLESS: &str = "[package.core]\nfeatures = \"all\"\nbaseline = \"main\"\n\n[package.core.gate]\nfeatures = \"bench\"\ntarget = \"perf\"\n\n[package.core.spec]\ntarget = \"x86_64-unknown-linux-gnu\"\n";
+
+    fn core() -> CommonArgs {
+        CommonArgs {
+            pkg: Some("core".into()),
+            ..CommonArgs::default()
+        }
+    }
+
+    #[test]
+    fn the_gate_group_fills_features_and_the_bench_target() {
+        let mut common = core();
+        let applied = config(FLAGLESS)
+            .fill(&mut common, Group::Gate, &pkgs(&["core"]))
+            .unwrap();
+        assert_eq!(common.features.as_deref(), Some("bench"));
+        assert_eq!(common.target.as_deref(), Some("perf"));
+        assert_eq!(applied.settings.baseline.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn a_flag_beats_every_table() {
+        let mut common = CommonArgs {
+            features: Some("cli".into()),
+            target: Some("mine".into()),
+            ..core()
+        };
+        config(FLAGLESS)
+            .fill(&mut common, Group::Gate, &pkgs(&["core"]))
+            .unwrap();
+        assert_eq!(common.features.as_deref(), Some("cli"));
+        assert_eq!(common.target.as_deref(), Some("mine"));
+    }
+
+    #[test]
+    fn the_spec_group_leaves_the_bench_target_alone() {
+        let mut common = core();
+        let applied = config(FLAGLESS)
+            .fill(&mut common, Group::Spec, &pkgs(&["core"]))
+            .unwrap();
+        assert_eq!(common.features.as_deref(), Some("all"));
+        assert_eq!(common.target, None);
+        assert_eq!(
+            applied.settings.target.as_deref(),
+            Some("x86_64-unknown-linux-gnu")
+        );
+    }
+
+    #[test]
+    fn the_docs_group_fills_features_but_not_the_bench_target() {
+        let mut common = core();
+        config(FLAGLESS)
+            .fill(&mut common, Group::Docs, &pkgs(&["core"]))
+            .unwrap();
+        assert_eq!(common.features.as_deref(), Some("all"));
+        assert_eq!(common.target, None);
     }
 }

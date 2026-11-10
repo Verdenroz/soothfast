@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use soothfast_spec::{RouteDecl, SpecKind, providers, reconcile, sniff_kind};
 
+use crate::config::{self, Group};
 use crate::invoke::{self, CommonArgs};
 
 /// One spec file's declared surface reconciled against the route registry.
@@ -90,6 +91,10 @@ fn run_check(args: &[String]) -> i32 {
             eprintln!("soothfast: unknown spec arg {a:?}");
             return 2;
         }
+    }
+    if let Err(e) = config::apply(&mut common, Group::Spec) {
+        eprintln!("soothfast: {e}");
+        return 2;
     }
     let Some(pkg) = common.pkg.clone() else {
         eprintln!("soothfast: spec check requires -p PKG");

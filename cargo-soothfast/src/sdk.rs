@@ -8,6 +8,7 @@ use soothfast_sdk::target::Target;
 use soothfast_sdk::{SdkFileSet, SdkKind, SdkOptions};
 use soothfast_spec::schema::Docs;
 
+use crate::config::{self, Group};
 use crate::invoke::{self, CommonArgs};
 use crate::sdk_build;
 use crate::sdk_config::{self, SdkEntry};
@@ -59,6 +60,16 @@ fn run_build(args: &[String]) -> i32 {
                 return 2;
             }
         }
+    }
+    let applied = match config::apply(&mut common, Group::Spec) {
+        Ok(applied) => applied,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    if targets.is_empty() {
+        targets.extend(applied.settings.target);
     }
     let Some(pkg) = common.pkg.clone() else {
         eprintln!("soothfast: sdk build requires -p PKG");
@@ -154,6 +165,10 @@ fn run_gen(args: &[String]) -> i32 {
             eprintln!("soothfast: unknown sdk gen arg {a:?}");
             return 2;
         }
+    }
+    if let Err(e) = config::apply(&mut common, Group::Spec) {
+        eprintln!("soothfast: {e}");
+        return 2;
     }
     let Some(pkg) = common.pkg.clone() else {
         eprintln!("soothfast: sdk gen requires -p PKG");
@@ -353,6 +368,10 @@ fn run_publish(args: &[String]) -> i32 {
                 return 2;
             }
         }
+    }
+    if let Err(e) = config::apply(&mut common, Group::Spec) {
+        eprintln!("soothfast: {e}");
+        return 2;
     }
     let Some(pkg) = common.pkg.clone() else {
         eprintln!("soothfast: sdk publish requires -p PKG");

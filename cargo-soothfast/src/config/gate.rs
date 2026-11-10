@@ -5,9 +5,6 @@
 
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
-use super::Config;
-use crate::invoke::{self, CommonArgs};
-
 /// Repo-level gate settings. CLI flags override these.
 #[derive(Default, Debug, PartialEq)]
 pub struct GateConfig {
@@ -17,22 +14,6 @@ pub struct GateConfig {
     /// `walltime = "advisory"`: a walltime overrun prints as SOFT and never
     /// fails the gate. Deterministic counters gate as usual.
     pub walltime_advisory: bool,
-}
-
-/// Fill in what the CLI did not set from the repo's `soothfast.toml`, and
-/// return the file's settings.
-pub fn apply(common: &mut CommonArgs) -> Result<GateConfig, String> {
-    let Ok(root) = invoke::workspace_root() else {
-        return Ok(GateConfig::default());
-    };
-    let cfg = Config::load(&root)?.gate()?;
-    if common.codegen_units.is_none() {
-        common.codegen_units = cfg.codegen_units.clone();
-    }
-    if common.features.is_none() {
-        common.features = cfg.features.clone();
-    }
-    Ok(cfg)
 }
 
 /// Parse the `[gate]` section of a `soothfast.toml`.
