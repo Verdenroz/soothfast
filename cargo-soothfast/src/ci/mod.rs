@@ -39,7 +39,7 @@ const KINDS: &[Kind] = &[
     },
     Kind {
         name: "gate-import",
-        run: None,
+        run: Some(import::run),
         applies: |_| true,
     },
     Kind {
