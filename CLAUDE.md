@@ -253,8 +253,7 @@ soothfast-macros                      soothfast-spec → soothfast-sdk
   (`perf_table.rs`), SVG trend charts (`trend_chart.rs`), badges
   (`badges.rs`), living `CHANGELOG.md` draft generation (`changelog.rs`,
   idempotent — regenerates the Unreleased section in place, preserves
-  Released sections), and `llms.txt` (agent-facing docs derived from rustdoc
-  + baseline measurements, `llms.rs`).
+  Released sections).
 - **`soothfast-site`** — the native docs-site engine behind `cargo soothfast docs
   build` (no mkdocs, zero new dependencies). Hand-rolled markdown→HTML
   renderer for a strict subset (`md.rs`), build-time syntax highlighting
@@ -309,7 +308,7 @@ claim being enforced, not a bug in the check.
 
 - `ci.yml` — `check` (fmt/clippy/test), `msrv` (pins to Rust 1.88), `docs`
   (dogfood: `make baselines` then `docs check`/`docs capture` against the
-  fresh baseline, plus the `llms-gate` drift gate), `deploy-docs`
+  fresh baseline), `deploy-docs`
   (master-only: rebuilds and publishes the native site build to `gh-pages`),
   `gate` (pull requests gate each self-bench crate against the merge-base;
   a master push records HEAD against `HEAD^` so the next pull request finds

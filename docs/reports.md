@@ -45,7 +45,6 @@ $ cargo soothfast report render -p mylib --baseline self
 report: wrote docs/perf/summary.md
 report: wrote docs/perf/summary.html
 report: wrote docs/perf/badges/gate.json
-report: wrote docs/perf/llms.txt
 ```
 
 `summary.md` and `summary.html` are `perf_table::markdown` and `html` over
@@ -57,18 +56,10 @@ The trend SVGs (`trend-instructions.svg`, `trend-walltime_median_ns.svg`,
 two points for that metric. Below that `trend_chart::render` returns `None`
 and `report render` skips the file rather than draw an empty axis.
 
-`llms.txt` is written only when `-p PKG` is given. It is `PKG`'s public
-surface, meaning each signature and its first doc line, joined against the
-baseline by id and falling back to `covers=`. An agent reading it can answer
-"what does `X` measure right now" without guessing from a README that may be
-out of date.
-
 Items brought in by `import` get their own section per import prefix in the
 perf tables, with walltime median, mad and p99 under the harness name. Each
 one also draws as a line in the trend charts, apart from the Rust fleet's
-band. When the repo has non-Rust `[[project]]` entries (or `--dir D --lang L`
-is given), `llms.txt` adds a section per project listing its documented
-public symbols and their measured walltime.
+band.
 
 ## Trend and changelog
 
