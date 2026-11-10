@@ -39,7 +39,7 @@ pub fn working_copy(root: &Path) -> PathBuf {
 /// means one may exist but could not be read, which callers must not treat
 /// as empty.
 pub fn load(root: &Path) -> Result<Option<String>, String> {
-    load_from(root, PAGES_REMOTE, PAGES_BRANCH)
+    load_from(root, PAGES_REMOTE, PAGES_BRANCH, false)
 }
 
 /// The parsed series points, in recorded order.
@@ -47,25 +47,32 @@ pub fn load_points(root: &Path) -> Result<Vec<Value>, String> {
     Ok(parse_points(&load(root)?.unwrap_or_default()))
 }
 
+/// The points in `text`, skipping lines that are not JSON.
 pub fn parse_points(text: &str) -> Vec<Value> {
     text.lines()
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect()
 }
 
-fn load_from(root: &Path, remote: &str, branch: &str) -> Result<Option<String>, String> {
+/// With `fresh`, the branch tip is always fetched instead of trusting an
+/// existing remote-tracking ref, which may lag the remote.
+fn load_from(
+    root: &Path,
+    remote: &str,
+    branch: &str,
+    fresh: bool,
+) -> Result<Option<String>, String> {
     let local = working_copy(root);
     if local.exists() {
         return std::fs::read_to_string(&local)
             .map(Some)
             .map_err(|e| format!("{}: {e}", local.display()));
     }
-    read_branch(root, remote, branch)
+    read_branch(root, remote, branch, fresh)
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Result<Output, String> {
     Command::new("git")
-        .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
         .args(args)
         .current_dir(root)
         .output()
@@ -80,10 +87,15 @@ fn git_failure(args: &[&str], out: &Output) -> String {
     )
 }
 
-fn read_branch(root: &Path, remote: &str, branch: &str) -> Result<Option<String>, String> {
+fn read_branch(
+    root: &Path,
+    remote: &str,
+    branch: &str,
+    fresh: bool,
+) -> Result<Option<String>, String> {
     let tip = format!("refs/remotes/{remote}/{branch}");
     let verify = ["rev-parse", "--verify", "--quiet", &tip];
-    if !git_output(root, &verify)?.status.success() {
+    if fresh || !git_output(root, &verify)?.status.success() {
         let ls = ["ls-remote", "--exit-code", "--heads", remote, branch];
         let out = git_output(root, &ls)?;
         match out.status.code() {
@@ -215,7 +227,7 @@ fn append(args: &[String]) -> i32 {
 /// branch when no copy exists. A branch that cannot be read is an error:
 /// appending to an empty series would let the next publish erase history.
 fn append_line(root: &Path, remote: &str, branch: &str, line: &str) -> Result<PathBuf, String> {
-    let existing = load_from(root, remote, branch)
+    let existing = load_from(root, remote, branch, true)
         .map_err(|e| format!("cannot read the existing trend series: {e}"))?
         .unwrap_or_default();
     let path = working_copy(root);
@@ -387,21 +399,21 @@ mod tests {
         let root = scratch("local");
         std::fs::create_dir_all(root.join(".soothfast")).unwrap();
         std::fs::write(working_copy(&root), "{\"a\":1}\n").unwrap();
-        let text = load_from(&root, "origin", "gh-pages").unwrap();
+        let text = load_from(&root, "origin", "gh-pages", false).unwrap();
         assert_eq!(text.as_deref(), Some("{\"a\":1}\n"));
     }
 
     #[test]
     fn the_branch_tip_is_fetched_when_there_is_no_local_copy() {
         let root = repo_with_origin("tip", Some("{\"b\":2}\n"));
-        let text = load_from(&root, "origin", "gh-pages").unwrap();
+        let text = load_from(&root, "origin", "gh-pages", false).unwrap();
         assert_eq!(text.as_deref(), Some("{\"b\":2}\n"));
     }
 
     #[test]
     fn a_missing_branch_is_an_empty_series() {
         let root = repo_with_origin("missing", None);
-        assert_eq!(load_from(&root, "origin", "gh-pages").unwrap(), None);
+        assert_eq!(load_from(&root, "origin", "gh-pages", false).unwrap(), None);
     }
 
     #[test]
@@ -411,7 +423,7 @@ mod tests {
             &root,
             &["remote", "set-url", "origin", "/nonexistent/origin.git"],
         );
-        assert!(load_from(&root, "origin", "gh-pages").is_err());
+        assert!(load_from(&root, "origin", "gh-pages", false).is_err());
     }
 
     #[test]
@@ -421,6 +433,34 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
             "{\"b\":2}\n{\"c\":3}\n"
+        );
+    }
+
+    #[test]
+    fn append_seeds_from_the_remote_tip_not_a_stale_tracking_ref() {
+        let root = repo_with_origin("stale", Some("{\"b\":2}\n"));
+        load_from(&root, "origin", "gh-pages", false).unwrap();
+        let origin = root.parent().unwrap().join("origin.git");
+        let other = scratch("stale-pusher");
+        git(
+            &other,
+            &[
+                "clone",
+                "-q",
+                "-b",
+                "gh-pages",
+                origin.to_str().unwrap(),
+                "w",
+            ],
+        );
+        let w = other.join("w");
+        std::fs::write(w.join("trend.jsonl"), "{\"b\":2}\n{\"d\":4}\n").unwrap();
+        git(&w, &["commit", "-q", "-am", "newer"]);
+        git(&w, &["push", "-q", "origin", "gh-pages"]);
+        let path = append_line(&root, "origin", "gh-pages", "{\"c\":3}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"b\":2}\n{\"d\":4}\n{\"c\":3}\n"
         );
     }
 
