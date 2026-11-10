@@ -16,7 +16,9 @@ const SPEC_PATHS: [&str; 3] = ["*.yaml", "*.yml", "*.json"];
 #[derive(Debug, Default, PartialEq)]
 struct Inputs {
     baseline: String,
-    changelog: Vec<String>,
+    changelog: bool,
+    gated: Vec<String>,
+    changelog_packages: Vec<String>,
     specs: Vec<String>,
     sdks: Vec<Sdk>,
     hook: Option<Hook>,
@@ -55,14 +57,15 @@ trait Host {
     fn changed(&self, paths: &[String]) -> bool;
 }
 
-/// Entry point for `ci regen`: `[--paths-out FILE] [--baseline NAME]`.
+/// Entry point for `ci regen`: `[--paths-out FILE] [--baseline NAME]
+/// [--no-changelog]`.
 pub fn run(_env: &CiEnv, args: &[String]) -> i32 {
-    let (paths_out, baseline) = match parse(args) {
-        Ok(parsed) => parsed,
+    let flags = match parse(args) {
+        Ok(flags) => flags,
         Err(e) => return crate::arg_err(&e),
     };
     let vars: BTreeMap<String, String> = std::env::vars().collect();
-    let inputs = match discover(baseline, &vars) {
+    let inputs = match discover(&flags, &vars) {
         Ok(inputs) => inputs,
         Err(e) => return crate::arg_err(&e),
     };
@@ -70,7 +73,7 @@ pub fn run(_env: &CiEnv, args: &[String]) -> i32 {
         return 1;
     };
     print!("{report}");
-    match paths_out {
+    match flags.paths_out {
         Some(file) => match std::fs::write(&file, &report) {
             Ok(()) => 0,
             Err(e) => crate::arg_err(&format!("{}: {e}", file.display())),
@@ -79,8 +82,19 @@ pub fn run(_env: &CiEnv, args: &[String]) -> i32 {
     }
 }
 
-fn parse(args: &[String]) -> Result<(Option<PathBuf>, String), String> {
-    let (mut paths_out, mut baseline) = (None, DEFAULT_BASELINE.to_string());
+#[derive(Debug, PartialEq)]
+struct Flags {
+    paths_out: Option<PathBuf>,
+    baseline: String,
+    changelog: bool,
+}
+
+fn parse(args: &[String]) -> Result<Flags, String> {
+    let mut flags = Flags {
+        paths_out: None,
+        baseline: DEFAULT_BASELINE.to_string(),
+        changelog: true,
+    };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || {
@@ -89,17 +103,19 @@ fn parse(args: &[String]) -> Result<(Option<PathBuf>, String), String> {
                 .ok_or_else(|| format!("{a} needs a value"))
         };
         match a.as_str() {
-            "--paths-out" => paths_out = Some(PathBuf::from(value()?)),
-            "--baseline" => baseline = value()?,
+            "--paths-out" => flags.paths_out = Some(PathBuf::from(value()?)),
+            "--baseline" => flags.baseline = value()?,
+            "--no-changelog" => flags.changelog = false,
             other => return Err(format!("unknown regen argument {other:?}")),
         }
     }
-    Ok((paths_out, baseline))
+    Ok(flags)
 }
 
-fn discover(baseline: String, vars: &BTreeMap<String, String>) -> Result<Inputs, String> {
+fn discover(flags: &Flags, vars: &BTreeMap<String, String>) -> Result<Inputs, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-    let changelog = Config::load(&root)?.changelog()?.packages;
+    let changelog_packages = Config::load(&root)?.changelog()?.packages;
+    let gated = workspace::bench_crates("soothfast", Some(&root))?;
     let members = workspace::members(Some(&root)).map_err(|e| e.to_string())?;
     let mut specs = Vec::new();
     let mut sdks = Vec::new();
@@ -115,8 +131,10 @@ fn discover(baseline: String, vars: &BTreeMap<String, String>) -> Result<Inputs,
     }
     let hook = hook(vars)?;
     Ok(Inputs {
-        baseline,
-        changelog,
+        baseline: flags.baseline.clone(),
+        changelog: flags.changelog,
+        gated,
+        changelog_packages,
         specs,
         sdks,
         hook,
@@ -148,9 +166,13 @@ fn hook(vars: &BTreeMap<String, String>) -> Result<Option<Hook>, String> {
 fn plan(inputs: &Inputs) -> (Vec<Step>, Vec<String>) {
     let mut steps = Vec::new();
     let mut paths = Vec::new();
-    if !inputs.changelog.is_empty() {
-        steps.extend(inputs.changelog.iter().cloned().map(Step::Measure));
-        steps.push(Step::Changelog(inputs.changelog.clone()));
+    let listed = match inputs.changelog_packages.is_empty() {
+        true => &inputs.gated,
+        false => &inputs.changelog_packages,
+    };
+    if inputs.changelog && !listed.is_empty() {
+        steps.extend(inputs.gated.iter().cloned().map(Step::Measure));
+        steps.push(Step::Changelog(listed.clone()));
         paths.push("CHANGELOG.md".to_string());
     }
     if !inputs.specs.is_empty() {
@@ -319,13 +341,15 @@ mod tests {
     fn inputs() -> Inputs {
         Inputs {
             baseline: "base".into(),
+            changelog: true,
             ..Inputs::default()
         }
     }
 
     fn everything() -> Inputs {
         Inputs {
-            changelog: strings(&["core", "docs"]),
+            gated: strings(&["core", "docs", "tools"]),
+            changelog_packages: strings(&["core", "docs"]),
             specs: strings(&["api"]),
             sdks: vec![Sdk {
                 package: "api".into(),
@@ -353,11 +377,13 @@ mod tests {
         let only = |inputs: Inputs| plan(&inputs).0;
         assert_eq!(
             only(Inputs {
-                changelog: strings(&["core"]),
+                gated: strings(&["core", "tools"]),
+                changelog_packages: strings(&["core"]),
                 ..inputs()
             }),
             [
                 Step::Measure("core".into()),
+                Step::Measure("tools".into()),
                 Step::Changelog(strings(&["core"]))
             ]
         );
@@ -402,6 +428,7 @@ mod tests {
             [
                 "measure -p core --save-baseline base",
                 "measure -p docs --save-baseline base",
+                "measure -p tools --save-baseline base",
                 "report changelog -p core -p docs --against-ref v1.2.0 --baseline base",
                 "spec gen -p api",
                 "sdk gen -p api",
@@ -414,12 +441,57 @@ mod tests {
     fn a_changelog_with_no_tag_lists_the_initial_surface() {
         let host = Fake::new();
         let inputs = Inputs {
-            changelog: strings(&["core"]),
+            gated: strings(&["core"]),
             baseline: "main".into(),
-            ..Inputs::default()
+            ..inputs()
         };
         regenerate(&inputs, &host).unwrap();
         assert_eq!(host.calls()[1], "report changelog -p core --baseline main");
+    }
+
+    #[test]
+    fn the_changelog_covers_the_gated_packages_unless_it_lists_its_own() {
+        let gated = Inputs {
+            gated: strings(&["core", "tools"]),
+            ..inputs()
+        };
+        assert_eq!(
+            plan(&gated).0.last(),
+            Some(&Step::Changelog(strings(&["core", "tools"])))
+        );
+        let listed = Inputs {
+            changelog_packages: strings(&["core"]),
+            ..gated
+        };
+        assert_eq!(
+            plan(&listed).0.last(),
+            Some(&Step::Changelog(strings(&["core"])))
+        );
+    }
+
+    #[test]
+    fn no_changelog_skips_measuring_and_the_changelog() {
+        let off = Inputs {
+            changelog: false,
+            ..everything()
+        };
+        let (steps, paths) = plan(&off);
+        assert!(
+            !steps
+                .iter()
+                .any(|s| matches!(s, Step::Measure(_) | Step::Changelog(_)))
+        );
+        assert!(!paths.contains(&"CHANGELOG.md".to_string()));
+    }
+
+    #[test]
+    fn a_repository_with_nothing_gated_or_listed_has_no_changelog_step() {
+        assert!(plan(&inputs()).0.is_empty());
+        let listed = Inputs {
+            changelog_packages: strings(&["core"]),
+            ..inputs()
+        };
+        assert_eq!(plan(&listed).0, [Step::Changelog(strings(&["core"]))]);
     }
 
     #[test]
@@ -468,10 +540,17 @@ mod tests {
     }
 
     #[test]
-    fn arguments_take_a_paths_file_and_a_baseline() {
-        assert_eq!(parse(&[]), Ok((None, "base".to_string())));
+    fn arguments_take_a_paths_file_a_baseline_and_no_changelog() {
+        let flags = |paths_out: Option<&str>, baseline: &str, changelog| Flags {
+            paths_out: paths_out.map(Into::into),
+            baseline: baseline.into(),
+            changelog,
+        };
+        assert_eq!(parse(&[]), Ok(flags(None, "base", true)));
         let args = strings(&["--paths-out", "out.txt", "--baseline", "main"]);
-        assert_eq!(parse(&args), Ok((Some("out.txt".into()), "main".into())));
+        assert_eq!(parse(&args), Ok(flags(Some("out.txt"), "main", true)));
+        let off = strings(&["--no-changelog"]);
+        assert_eq!(parse(&off), Ok(flags(None, "base", false)));
         assert!(parse(&strings(&["--nope"])).is_err());
         assert!(parse(&strings(&["--paths-out"])).is_err());
     }

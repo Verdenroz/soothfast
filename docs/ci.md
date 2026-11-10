@@ -735,8 +735,10 @@ directory, and its job output stays inside the code fence. Posting it is left
 to the caller. A `check` record is a job whose every non-zero exit is an
 error, so nothing waives it.
 
-`ci regen` is the regeneration a default-branch push lands. It measures and
-regenerates `CHANGELOG.md` when `[changelog]` names packages, runs `spec gen`
+`ci regen` is the regeneration a default-branch push lands. It measures every
+package with a `soothfast` bench target and regenerates `CHANGELOG.md` over
+the `[changelog]` packages, or those same packages when it names none
+(`--no-changelog` skips both), runs `spec gen`
 for each package with a `mode = "generate"` spec and `sdk gen` for each with
 `[[sdk]]`, then runs the `REGEN_RUN` command with `$SOOTHFAST` set when that
 variable is set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`

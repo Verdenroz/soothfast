@@ -116,8 +116,8 @@ commands:
            request comment body, written to FILE or <results>/verdict-comment.md;
            exits 1 on an error, a missing expected record, or a regression
            no --accepted label waives)
-  ci       regen [--paths-out FILE] [--baseline NAME]
-           (regenerates the changelog, generate-mode specs and SDKs the
+  ci       regen [--paths-out FILE] [--baseline NAME] [--no-changelog]
+           (regenerates the changelog (--no-changelog skips it), generate-mode specs and SDKs the
            project configures, then REGEN_RUN with REGEN_PATHS; prints
            paths= and changed= lines for the landing step, and writes them
            to FILE; never commits)
