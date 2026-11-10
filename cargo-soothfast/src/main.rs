@@ -14,6 +14,7 @@ mod binstore;
 mod buildcost;
 mod buildstamp;
 mod cache;
+mod ci;
 mod codekey;
 mod config;
 mod coverage;
@@ -271,6 +272,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "plan" => plan::run(rest),
         "prebuild" => prebuild::run(rest),
         "cache" => cache::run(rest),
+        "ci" => ci::run(rest),
         "import" => import::run(rest),
         "gate" => gate::run(rest),
         "baseline" => baseline_merge::run(rest),
