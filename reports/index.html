@@ -156,7 +156,6 @@ passing, failing or unknown for a gate verdict.</p>
 report: wrote docs/perf/summary.md
 report: wrote docs/perf/summary.html
 report: wrote docs/perf/badges/gate.json
-report: wrote docs/perf/llms.txt
 </code></pre></figure>
 <p><code>summary.md</code> and <code>summary.html</code> are <code>perf_table::markdown</code> and <code>html</code> over
 the baseline. <code>badges/gate.json</code> reads <code>.soothfast/gate-status.json</code>, written
@@ -165,23 +164,35 @@ by the last <code>gate</code> run, through <code>badges::gate_badge</code>.</p>
 <code>trend-allocs.svg</code>) only appear once <code>.soothfast/trend.jsonl</code> holds at least
 two points for that metric. Below that <code>trend_chart::render</code> returns <code>None</code>
 and <code>report render</code> skips the file rather than draw an empty axis.</p>
-<p><code>llms.txt</code> is written only when <code>-p PKG</code> is given. It is <code>PKG</code>'s public
-surface, meaning each signature and its first doc line, joined against the
-baseline by id and falling back to <code>covers=</code>. An agent reading it can answer
-"what does <code>X</code> measure right now" without guessing from a README that may be
-out of date.</p>
 <p>Items brought in by <code>import</code> get their own section per import prefix in the
 perf tables, with walltime median, mad and p99 under the harness name. Each
 one also draws as a line in the trend charts, apart from the Rust fleet's
-band. When the repo has non-Rust <code>[[project]]</code> entries (or <code>--dir D --lang L</code>
-is given), <code>llms.txt</code> adds a section per project listing its documented
-public symbols and their measured walltime.</p>
+band.</p>
 <h2 id="trend-and-changelog">Trend and changelog<a class="anchor" href="#trend-and-changelog" aria-label="Link to this section">#</a></h2>
 <p><code>cargo soothfast trend append -p mylib</code> appends one line per run
-(<code>{unix, commit, noise_pct, items}</code>) to <code>.soothfast/trend.jsonl</code>. That file
-feeds both the SVG charts above and <code>trend render</code>, which prints each
-metric's drift from first to last point straight to stdout. It writes no
-file of its own, since charting is <code>report render</code>'s job.</p>
+(<code>{unix, commit, noise_pct, items}</code>) to the series. That series feeds both
+the SVG charts above and <code>trend render</code>, which prints each metric's drift
+from first to last point straight to stdout. It writes no file of its own,
+since charting is <code>report render</code>'s job.</p>
+<p>The series lives on the Pages branch (<code>gh-pages</code> on <code>origin</code>, the branch
+<code>docs gh-deploy</code> publishes to) as <code>trend.jsonl</code> at its root, not on the
+default branch. Everything that reads it goes through one loader: the working
+copy <code>.soothfast/trend.jsonl</code> when it exists, otherwise the file at the tip of
+the Pages branch, fetched when needed. <code>trend append</code> fetches the Pages
+branch's current tip before adding its line. It fails if the
+branch exists but cannot be read, since appending to an empty series would
+erase history on the next publish. A branch that does not exist yet is an
+empty series.</p>
+<p>What gets appended to and published is the Pages branch's series, except that
+the working copy wins when the branch has no series or when the working copy
+extends it (the branch's text is a prefix of it); a stale working copy, such as
+one restored from an old cache, never overwrites the branch.</p>
+<p><code>docs build</code> copies that series into the site root as <code>trend.jsonl</code>, so
+<code>docs gh-deploy</code> and any publish of the built directory carry it onto the
+Pages branch. A repo that still has <code>.soothfast/trend.jsonl</code> committed on its
+default branch needs no migration step: that file is read as the working copy,
+the next site publish puts it on the Pages branch, and the committed file can
+then be deleted.</p>
 <p><code>--from-baseline NAME</code> builds the point from a saved baseline instead of
 measuring again — a pipeline whose gate already ran with <code>--save-baseline</code>
 appends the very numbers it just verified. <code>-p PKG</code> scopes the point the
