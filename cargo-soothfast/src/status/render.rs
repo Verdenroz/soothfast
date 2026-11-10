@@ -19,7 +19,8 @@ pub(super) fn text(rows: &[Row], all: bool) -> String {
         }
     }
     if ok > 0 {
-        out.push_str(&format!("{:<7} {ok} subject(s)\n", State::Ok.word()));
+        let noun = if ok == 1 { "check" } else { "checks" };
+        out.push_str(&format!("{:<7} {ok} {noun}\n", State::Ok.word()));
     }
     out
 }
@@ -37,7 +38,7 @@ pub(super) fn json(rows: &[Row]) -> String {
             })
         })
         .collect();
-    serde_json::to_string_pretty(&rows).unwrap_or_default()
+    serde_json::to_string(&rows).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -55,7 +56,7 @@ mod tests {
     fn ok_rows_collapse_into_a_count() {
         assert_eq!(
             text(&rows(), false),
-            "stale   b  old  -> cargo soothfast fix\nok      1 subject(s)\n"
+            "stale   b  old  -> cargo soothfast fix\nok      1 check\n"
         );
     }
 
@@ -63,7 +64,7 @@ mod tests {
     fn all_lists_the_ok_rows() {
         let out = text(&rows(), true);
         assert!(out.starts_with("ok      a  fine\n"), "{out}");
-        assert!(!out.contains("subject(s)"));
+        assert!(!out.contains("check"));
     }
 
     #[test]
