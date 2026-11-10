@@ -14,6 +14,26 @@
 
 - Per-package defaults in soothfast.toml (#379)
 
+### 🔧 Internal
+
+- Drop llms.txt, keep the trend series on the Pages branch (#378)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-report
+ADDED    soothfast_report::surface
+ADDED    soothfast_report::surface::SurfaceEntry
+REMOVED  soothfast_report::llms
+REMOVED  soothfast_report::llms::ProjectEntry
+REMOVED  soothfast_report::llms::ProjectSurface
+REMOVED  soothfast_report::llms::SurfaceEntry
+REMOVED  soothfast_report::llms::render
+REMOVED  soothfast_report::llms::render_projects
+```
+
 
 ## 0.5.6 - 2026-11-08
 
