@@ -128,7 +128,16 @@ commands:
            the head and, on a pull request, its merge base, and gates the
            imported results; every project when none is named, exiting with
            the worst; --accepted waives a regression, never an error)
-  plan     [--github]
+  ci       verdict [--expect NAME:KIND]... [--accepted LABEL] [--out FILE]
+           (merges the records under the results directory into the pull
+           request comment body, written to FILE or <results>/verdict-comment.md;
+           exits 1 on an error, a missing expected record, or a regression
+           no --accepted label waives)
+  ci       regen [--paths-out FILE] [--baseline NAME] [--no-changelog]
+           (regenerates the changelog (--no-changelog skips it), generate-mode specs and SDKs the
+           project configures, then REGEN_RUN with REGEN_PATHS; prints
+           paths= and changed= lines for the landing step, and writes them
+           to FILE; never commits)
   ci       build LANE [-p PKG]... [--shards N] [--stage DIR] [--plan-out FILE]
            [--listing-out FILE]
            (the workflow's build-once job: `prebuild --only LANE` per package,
@@ -136,7 +145,7 @@ commands:
            counts only on a pull request; --plan-out adds each package's
            items to a plan file; --listing-out writes the checksum of
            .soothfast/bins before and after)
-  plan    [--github]
+  plan     [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
            --github prints $GITHUB_OUTPUT lines)
@@ -213,7 +222,7 @@ commands:
            built when the store cannot hold it, and never builds)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
-  verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE
+  verdict  record --name N --kind rust|import|docs|test|check --exit CODE --output FILE
            [--seconds S] [--out FILE]
   verdict  merge DIR --out FILE [--accepted LABEL] [--expect NAME:KIND]..
            (one job's result, then the pull request's single comment;

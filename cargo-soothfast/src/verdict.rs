@@ -12,7 +12,7 @@ const REUSE_LINE: &str = "items a stored measurement covers";
 const REUSE_ONE_SIDED: &str = "items run code a stored measurement covers";
 const NOTHING_TO_COMPARE: &str = "nothing to compare";
 const CLAIMS_SKIPPED: &str = "claims not evaluated";
-const KINDS: [&str; 4] = ["rust", "import", "docs", "test"];
+const KINDS: [&str; 5] = ["rust", "import", "docs", "test", "check"];
 /// GitHub rejects a comment over 65,536 characters; the rest is the marker.
 const BODY_LIMIT: usize = 65_000;
 const TRUNCATED: &str = "output truncated";
@@ -270,8 +270,8 @@ fn build(name: String, kind: String, code: i32, output: &str, seconds: u64) -> R
     }
 }
 
-/// A docs failure is drift, not a perf regression, so it is never one the
-/// perf label may waive.
+/// A docs or check failure is drift or breakage, not a perf regression, so
+/// it is never one the perf label may waive.
 fn classify(code: i32, kind: &str, output: &str) -> Verdict {
     match code {
         0 if output.contains(NOTHING_TO_COMPARE) => Verdict::NothingToCompare,
@@ -389,16 +389,30 @@ fn merge(args: &[String]) -> Result<i32, String> {
     }
     let dir = dir.ok_or("merge needs a results directory")?;
     let out = out.ok_or("merge needs --out")?;
-    let raw = read_records(&dir);
+    merge_dir(&dir, Path::new(&out), accepted.as_deref(), &expect)
+}
+
+/// Folds the records under `dir` into the comment body at `out`. Each
+/// `expect` entry is a `(name, kind)` that must have a record, and a
+/// regression is waived when `accepted` names the label that waived it.
+/// Returns 1 when the run fails.
+pub(crate) fn merge_dir(
+    dir: &Path,
+    out: &Path,
+    accepted: Option<&str>,
+    expect: &[(String, String)],
+) -> Result<i32, String> {
+    let raw = read_records(dir);
     let seen: BTreeSet<String> = raw.iter().map(|r| r.name.clone()).collect();
     let mut records = fold(raw);
     for (name, kind) in expect {
-        if !seen.contains(&name) {
-            records.push(errored(name, kind, "the job recorded no result".into()));
+        if !seen.contains(name) {
+            let tail = "the job recorded no result".into();
+            records.push(errored(name.clone(), kind.clone(), tail));
         }
     }
     records.sort_by(|a, b| (a.verdict, &a.name).cmp(&(b.verdict, &b.name)));
-    fs::write(&out, fit(&records, accepted.as_deref())).map_err(|e| format!("{out}: {e}"))?;
+    fs::write(out, fit(&records, accepted)).map_err(|e| format!("{}: {e}", out.display()))?;
     Ok(i32::from(fails(&records, accepted.is_some())))
 }
 
@@ -416,7 +430,7 @@ fn errored(name: String, kind: String, tail: String) -> Record {
 }
 
 /// `NAME:KIND`, the kind a missing result is shown with.
-fn expected(arg: &str) -> Result<(String, String), String> {
+pub(crate) fn expected(arg: &str) -> Result<(String, String), String> {
     match arg.split_once(':') {
         Some((name, kind)) if KINDS.contains(&kind) => Ok((name.to_string(), kind.to_string())),
         _ => Err(format!(
@@ -581,6 +595,16 @@ mod tests {
         assert_eq!(classify(2, "rust", ""), Verdict::Errored);
         assert_eq!(classify(3, "import", ""), Verdict::Errored);
         assert_eq!(classify(1, "docs", ""), Verdict::Errored);
+    }
+
+    #[test]
+    fn a_check_fails_on_any_non_zero_exit_and_is_never_waivable() {
+        assert_eq!(classify(0, "check", "ok"), Verdict::Pass);
+        assert_eq!(classify(1, "check", ""), Verdict::Errored);
+        assert_eq!(classify(2, "check", ""), Verdict::Errored);
+        let failed = [build("spec".into(), "check".into(), 1, "drift", 1)];
+        assert!(fails(&failed, true));
+        assert_eq!(expected("spec:check"), Ok(("spec".into(), "check".into())));
     }
 
     #[test]

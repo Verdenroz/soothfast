@@ -11,9 +11,11 @@ mod env;
 mod gate;
 mod import;
 mod record;
+mod regen;
 mod test;
+mod verdict;
 
-use env::{CiEnv, split_flags};
+use env::{CiEnv, Event, split_flags};
 
 /// A job `ci` can run. `run` is `None` while the name is reserved and the job
 /// still lives in the workflow.
@@ -52,13 +54,13 @@ const KINDS: &[Kind] = &[
     },
     Kind {
         name: "verdict",
-        run: None,
-        applies: in_a_run,
+        run: Some(verdict::run),
+        applies: |e| e.event == Event::PullRequest,
     },
     Kind {
         name: "regen",
-        run: None,
-        applies: in_a_run,
+        run: Some(regen::run),
+        applies: |e| e.event == Event::Push && e.default_branch,
     },
 ];
 

@@ -812,9 +812,29 @@ A build that fails is an error exit, not a regression. The remaining
 packages still build and the plan and listing are still written, and the
 exit code is that of the first failure. The job records no verdict.
 Bare `ci` does not run it, since it needs a lane.
+`ci verdict` folds the records in the results directory into the pull request
+comment and the run's verdict. `--expect NAME:KIND` names a job that must have
+recorded a result (a missing one errors the verdict), with `KIND` one of
+`rust`, `import`, `docs`, `test` or `check`. `--accepted LABEL` waives
+regressions, the way the perf-accepted label does, and never errors. The body
+is written to `--out`, by default `verdict-comment.md` in the results
+directory, and its job output stays inside the code fence. Posting it is left
+to the caller. A `check` record is a job whose every non-zero exit is an
+error, so nothing waives it.
+
+`ci regen` is the regeneration a default-branch push lands. It measures every
+package with a `soothfast` bench target and regenerates `CHANGELOG.md` over
+the `[changelog]` packages, or those same packages when it names none
+(`--no-changelog` skips both), runs `spec gen`
+for each package with a `mode = "generate"` spec and `sdk gen` for each with
+`[[sdk]]`, then runs the `REGEN_RUN` command with `$SOOTHFAST` set when that
+variable is set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
+lines, also written to `--paths-out`, and never commits or pushes.
+`--baseline NAME` names the baseline it measures into (default `base`).
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
-in order, and stops at the first failure.
+in order, and stops at the first failure. `verdict` applies to pull requests
+and `regen` to pushes to the default branch.
 
 ## The gate on its own
 
