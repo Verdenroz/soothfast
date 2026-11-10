@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use soothfast_report::{badges, changelog, perf_table, trend_chart};
 
+use crate::config::{self, Config, Group, Settings};
 use crate::{coverage_lang, docs_support, invoke, project_surface, trend, workspace};
 
 pub fn run(args: &[String]) -> i32 {
@@ -24,7 +25,7 @@ pub fn run(args: &[String]) -> i32 {
 
 struct ReportArgs {
     pkg: Vec<String>,
-    baseline: String,
+    baseline: Option<String>,
     out: Option<PathBuf>,
     against_ref: Option<String>,
     features: Option<String>,
@@ -34,10 +35,22 @@ struct ReportArgs {
     lang: Option<String>,
 }
 
+impl ReportArgs {
+    fn baseline_name(&self) -> &str {
+        self.baseline.as_deref().unwrap_or("base")
+    }
+
+    /// Fill the flags the command line left unset from the resolved defaults.
+    fn use_defaults(&mut self, defaults: Settings) {
+        self.baseline = self.baseline.take().or(defaults.baseline);
+        self.features = self.features.take().or(defaults.features);
+    }
+}
+
 fn parse(args: &[String]) -> Result<ReportArgs, String> {
     let mut a = ReportArgs {
         pkg: Vec::new(),
-        baseline: "base".into(),
+        baseline: None,
         out: None,
         against_ref: None,
         features: None,
@@ -51,7 +64,7 @@ fn parse(args: &[String]) -> Result<ReportArgs, String> {
             "-p" | "--package" => a
                 .pkg
                 .push(it.next().cloned().ok_or("-p needs a package name")?),
-            "--baseline" => a.baseline = it.next().cloned().ok_or("--baseline needs a name")?,
+            "--baseline" => a.baseline = Some(it.next().cloned().ok_or("--baseline needs a name")?),
             "--out" => a.out = it.next().map(PathBuf::from),
             "--against-ref" => a.against_ref = it.next().cloned(),
             "--features" => a.features = it.next().cloned(),
@@ -75,11 +88,15 @@ fn load_baseline_required(name: &str) -> Result<Value, String> {
 }
 
 fn render(args: &[String]) -> i32 {
-    let a = match parse(args) {
+    let mut a = match parse(args) {
         Ok(a) => a,
         Err(e) => return err(&e),
     };
-    let baseline = match load_baseline_required(&a.baseline) {
+    match config::defaults(&a.pkg, Group::Docs) {
+        Ok(defaults) => a.use_defaults(defaults),
+        Err(e) => return err(&e),
+    }
+    let baseline = match load_baseline_required(a.baseline_name()) {
         Ok(b) => b,
         Err(e) => return err(&e),
     };
@@ -209,7 +226,11 @@ fn changelog_cmd(args: &[String]) -> i32 {
         Ok(r) => r,
         Err(e) => return err(&e.to_string()),
     };
-    let cfg = match crate::changelog_config::load(&root) {
+    let config = match Config::load(&root) {
+        Ok(c) => c,
+        Err(e) => return err(&e),
+    };
+    let cfg = match config.changelog() {
         Ok(c) => c,
         Err(e) => return err(&e),
     };
@@ -219,10 +240,14 @@ fn changelog_cmd(args: &[String]) -> i32 {
     if a.pkg.is_empty() {
         return err("report changelog needs -p PKG");
     }
-    let gate_cfg = match crate::gate_config::load(&root) {
+    let gate_cfg = match config.gate() {
         Ok(g) => g,
         Err(e) => return err(&e),
     };
+    match config.resolve(&a.pkg, Group::Docs) {
+        Ok(defaults) => a.use_defaults(defaults),
+        Err(e) => return err(&e),
+    }
     a.features = resolve_features(
         a.features.take(),
         cfg.features.as_deref(),
@@ -271,7 +296,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
         return err(&msg);
     }
 
-    let baseline = match load_baseline_required(&a.baseline) {
+    let baseline = match load_baseline_required(a.baseline_name()) {
         Ok(b) => b,
         Err(e) => return err(&e),
     };

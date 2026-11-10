@@ -1271,6 +1271,16 @@ codegen-units = 4
 [changelog]
 features = "a"
 
+[package.x]
+features = "all"
+
+[package.x.gate]
+features = "bench"
+target = "perf"
+
+[package.x.docs]
+paths = ["book"]
+
 [[spec]]
 path = "api.yaml"
 
@@ -1296,20 +1306,20 @@ cmd = "npm test"
             "x"
         );
         assert_eq!(
-            crate::docs_config::parse(SHARED_TOML).unwrap().package,
+            crate::config::docs::parse(SHARED_TOML).unwrap().package,
             Some(vec!["x".into()])
         );
         assert_eq!(Ci::parse(SHARED_TOML).unwrap().test, Some(false));
         assert_eq!(parse_projects_tolerant(SHARED_TOML).unwrap().len(), 1);
         assert_eq!(parse_suites(SHARED_TOML).unwrap().len(), 1);
         assert_eq!(
-            crate::gate_config::parse(SHARED_TOML)
+            crate::config::gate::parse(SHARED_TOML)
                 .unwrap()
                 .codegen_units
                 .as_deref(),
             Some("4")
         );
-        assert!(crate::changelog_config::parse(SHARED_TOML).is_ok());
+        assert!(crate::config::changelog::parse(SHARED_TOML).is_ok());
         assert_eq!(BotLabels::parse(SHARED_TOML).unwrap().merge, ["ship"]);
         assert_eq!(
             crate::spec_config::parse(SHARED_TOML)
@@ -1323,6 +1333,29 @@ cmd = "npm test"
             1
         );
         assert!(crate::test::config::parse(SHARED_TOML).is_ok());
+        assert_eq!(
+            crate::config::package::parse(SHARED_TOML).unwrap()["x"]
+                .base
+                .features
+                .as_deref(),
+            Some("all")
+        );
+    }
+
+    #[test]
+    fn package_tables_are_not_drift() {
+        let root = scratch("package-tables");
+        let own = "[package.x]\nfeatures = \"all\"\n\n[package.x.gate]\nfeatures = \"bench\"\n\n[docs]\npackage = \"x\"\n";
+        std::fs::write(root.join("soothfast.toml"), own).unwrap();
+        let mut files = scaffold(&ws(&[], Some("x")));
+        files.retain(|f| f.path == Path::new("soothfast.toml"));
+        assert!(files.len() > 1);
+        assert_eq!(report(&root, &files, true, false), 0);
+        assert_eq!(report(&root, &files, false, false), 0);
+        assert_eq!(
+            std::fs::read_to_string(root.join("soothfast.toml")).unwrap(),
+            own
+        );
     }
 
     fn ws(benched: &[&str], docs: Option<&str>) -> Workspace {

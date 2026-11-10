@@ -14,18 +14,16 @@ mod binstore;
 mod buildcost;
 mod buildstamp;
 mod cache;
-mod changelog_config;
 mod codekey;
+mod config;
 mod coverage;
 mod coverage_lang;
 mod docs;
 mod docs_binds;
 mod docs_claims;
-mod docs_config;
 mod docs_generated;
 mod docs_support;
 mod gate;
-mod gate_config;
 mod gate_lock;
 mod gate_save;
 mod glob;
@@ -318,7 +316,7 @@ fn cmd_measure(args: &[String]) -> i32 {
         }
     }
 
-    if let Err(e) = gate_config::apply(&mut common) {
+    if let Err(e) = config::apply(&mut common, config::Group::Gate) {
         return arg_err(&e);
     }
     if save.is_some() && common.backend.as_deref() != Some("buildcost") {

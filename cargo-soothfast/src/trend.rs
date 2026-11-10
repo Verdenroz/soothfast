@@ -7,6 +7,7 @@ use std::process::{Command, Output};
 
 use serde_json::{Value, json};
 
+use crate::config::{self, Group};
 use crate::invoke::{self, CommonArgs};
 
 pub fn run(args: &[String]) -> i32 {
@@ -150,6 +151,10 @@ fn append(args: &[String]) -> i32 {
                 return 2;
             }
         }
+    }
+    if let Err(e) = config::apply(&mut common, Group::Gate) {
+        eprintln!("soothfast: {e}");
+        return 2;
     }
 
     let commit =

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::select::{Lane, SpecPackage, Wanted};
-use crate::gate_config;
+use crate::config::{self, Group};
 use crate::invoke::CommonArgs;
 
 pub(super) struct Args {
@@ -90,7 +90,7 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
             }
         }
     }
-    gate_config::apply(&mut common)?;
+    config::apply_to(&mut common, Group::Gate, &wanted.packages)?;
     wanted.features = common.features.clone();
     wanted.lanes = if lanes.is_empty() {
         BTreeSet::from([Lane::Bench, Lane::Routes, Lane::Rustdoc])
