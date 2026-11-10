@@ -8,12 +8,19 @@ use std::process::Command;
 use super::scan::{Fix, Pin};
 use super::{LOCK, Scanned};
 
+/// A `(package, version)` entry of Cargo.lock.
+pub type Locked = (String, String);
+
+/// The commit a release tag names in a repository: `(slug, tag)`.
+pub type Resolve<'a> = &'a dyn Fn(&str, &str) -> Option<String>;
+
+/// Moves the repository's Cargo.lock entries to the target.
+pub type UpdateLock<'a> = &'a dyn Fn(&Path, &[Locked], &str) -> Result<(), String>;
+
 /// What rewriting needs from outside the repository.
 pub struct Tools<'a> {
-    /// The commit a release tag names in a repository: `(slug, tag)`.
-    pub resolve: &'a dyn Fn(&str, &str) -> Option<String>,
-    /// Moves Cargo.lock's `(package, version)` entries to the target.
-    pub update_lock: &'a dyn Fn(&Path, &[(String, String)], &str) -> Result<(), String>,
+    pub resolve: Resolve<'a>,
+    pub update_lock: UpdateLock<'a>,
 }
 
 impl Tools<'_> {
@@ -41,7 +48,7 @@ pub fn rewrite(
         }
         let path = root.join(&file.path);
         if file.path == LOCK {
-            let from: Vec<(String, String)> = stale
+            let from: Vec<Locked> = stale
                 .iter()
                 .filter_map(|p| Some((p.package.clone()?, p.found.clone())))
                 .collect();
@@ -62,7 +69,7 @@ pub fn rewrite(
 fn commits(
     scanned: &[Scanned],
     target: &str,
-    resolve: &dyn Fn(&str, &str) -> Option<String>,
+    resolve: Resolve,
 ) -> Result<BTreeMap<String, String>, String> {
     let tag = format!("v{target}");
     let mut commits = BTreeMap::new();
@@ -110,7 +117,7 @@ fn apply(
     Ok(out)
 }
 
-fn cargo_update(root: &Path, packages: &[(String, String)], target: &str) -> Result<(), String> {
+fn cargo_update(root: &Path, packages: &[Locked], target: &str) -> Result<(), String> {
     for (name, from) in packages {
         let out = Command::new("cargo")
             .current_dir(root)
