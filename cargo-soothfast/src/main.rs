@@ -59,6 +59,7 @@ mod spec_gate;
 mod spec_gen;
 mod spec_html;
 mod spec_probe;
+mod status;
 mod store;
 mod test;
 mod trend;
@@ -221,6 +222,12 @@ commands:
            (drop-in for `cargo test`: builds and runs only the packages a change
            can affect, and skips test binaries whose code and inputs match a
            stored pass; doc tests always run)
+  status   [--all] [--json]
+           (reads what is already on disk and in git, runs nothing, and prints
+           one line per subject: ok, stale, failed or missing, with the command
+           that addresses it; ok lines collapse into a count unless --all;
+           --json prints the rows as an array of state, subject, detail, fix;
+           exits 1 when any row needs action)
   mcp      -p PKG [--baseline NAME] [--features F]   (agent-facing server on stdio)
 
 `--features F` builds the bench binary / rustdoc surface with those cargo
@@ -275,6 +282,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "sdk" => sdk::run(rest),
         "report" => report::run(rest),
         "mcp" => mcp::run(rest),
+        "status" => status::run(rest),
         "test" => test::run(rest),
         test::shim::SUBCOMMAND => test::shim::run(rest),
         "help" | "--help" | "-h" => {
