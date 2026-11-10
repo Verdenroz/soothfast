@@ -2,9 +2,13 @@
 //! picks what `docs check` compares against and whether it evaluates claims,
 //! then checks.
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use super::env::{CiEnv, Event};
+use super::record::run_recorded;
+use crate::{init, invoke};
 
 /// What `ci docs` takes on the command line.
 #[derive(Debug, Default, PartialEq)]
@@ -142,10 +146,130 @@ fn merge_args(env: &CiEnv, opts: &Options, sit: &Situation) -> Vec<String> {
     args
 }
 
+/// Runs the steps through `run`, which takes a command's arguments and
+/// returns its exit code. A merge that fails still leaves binds and examples
+/// to check, so the check runs without claims and the merge's code wins.
+fn execute(steps: &Steps, mut run: impl FnMut(&[String]) -> i32) -> i32 {
+    if let Some(reason) = steps.skip_reason {
+        println!("claims not evaluated: {reason}");
+    }
+    let mut check = steps.check.clone();
+    let mut merged = 0;
+    if let Some(merge) = &steps.merge {
+        merged = run(merge);
+        let claims: &[&str] = if merged == 0 {
+            &["--baseline", "head"]
+        } else {
+            &["--skip-claims"]
+        };
+        check.extend(claims.iter().map(|a| a.to_string()));
+    }
+    let checked = run(&check);
+    if merged != 0 { merged } else { checked }
+}
+
+/// Entry point for `ci docs`.
+pub fn run(env: &CiEnv, args: &[String]) -> i32 {
+    let opts = match parse(args) {
+        Ok(opts) => opts,
+        Err(e) => return crate::arg_err(&e),
+    };
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    if !opts.unrecorded {
+        let mut cmd = Command::new(exe);
+        cmd.args(["ci", "--event", event_name(env.event)]);
+        cmd.args(env.base.iter().flat_map(|b| ["--base", b.as_str()]));
+        cmd.arg("docs").args(args).arg("--unrecorded");
+        return run_recorded(env, "docs", "docs", &mut cmd);
+    }
+    match situation(env, &opts) {
+        Ok(sit) => execute(&assemble(env, &opts, &sit), |args| spawn(&exe, args)),
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            2
+        }
+    }
+}
+
+fn spawn(exe: &Path, args: &[String]) -> i32 {
+    match Command::new(exe).args(args).status() {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            2
+        }
+    }
+}
+
+fn event_name(event: Event) -> &'static str {
+    match event {
+        Event::PullRequest => "pull_request",
+        Event::Push => "push",
+        Event::Other => "other",
+    }
+}
+
+fn situation(env: &CiEnv, opts: &Options) -> Result<Situation, String> {
+    let root = invoke::project_root();
+    let rust = root
+        .join("Cargo.toml")
+        .is_file()
+        .then(|| init::rust_plan(&root))
+        .transpose()?;
+    let projects = init::manifest(&root)?.iter().any(|p| p.bench.is_some());
+    let (gate_packages, docs_packages) =
+        rust.map_or_else(Default::default, |r| (r.packages, r.docs_packages));
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let has_parent = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "HEAD^"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    Ok(Situation {
+        in_ci: var("GITHUB_ACTIONS").is_some(),
+        event_name: var("GITHUB_EVENT_NAME").unwrap_or_else(|| event_name(env.event).into()),
+        base_ref: var("GITHUB_BASE_REF"),
+        has_parent,
+        gate_packages,
+        projects,
+        docs_packages,
+        baseline_files: opts
+            .baselines
+            .as_deref()
+            .map(baseline_files)
+            .unwrap_or_default(),
+        plan: opts.plan.clone().filter(|p| p.is_file()),
+    })
+}
+
+/// The `*.json` files one directory down from `dir`, which is where each
+/// downloaded artifact lands.
+fn baseline_files(dir: &Path) -> Vec<PathBuf> {
+    let subdirs = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir());
+    let mut files: Vec<PathBuf> = subdirs
+        .flat_map(|d| fs::read_dir(d).into_iter().flatten().flatten())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    files.sort();
+    files
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ci::env::Flags;
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
 
     fn env(event: Event, base: Option<&str>, default_branch: bool) -> CiEnv {
@@ -357,6 +481,64 @@ mod tests {
     fn no_baselines_means_no_merge() {
         let env = env(Event::Push, Some("pr3v"), true);
         assert_eq!(assemble(&env, &opts(&[]), &ci("push")).merge, None);
+    }
+
+    fn steps(merge: bool) -> Steps {
+        Steps {
+            merge: merge.then(|| argv(&["baseline", "merge"])),
+            check: argv(&["docs", "check"]),
+            skip_reason: None,
+        }
+    }
+
+    fn run_with(steps: &Steps, codes: &[i32]) -> (i32, Vec<Vec<String>>) {
+        let ran = RefCell::new(Vec::new());
+        let mut codes = codes.iter();
+        let code = execute(steps, |args| {
+            ran.borrow_mut().push(args.to_vec());
+            *codes.next().unwrap()
+        });
+        (code, ran.into_inner())
+    }
+
+    #[test]
+    fn a_merged_baseline_is_what_the_check_reads() {
+        let (code, ran) = run_with(&steps(true), &[0, 1]);
+        assert_eq!(code, 1);
+        assert_eq!(ran[0], ["baseline", "merge"]);
+        assert_eq!(ran[1], ["docs", "check", "--baseline", "head"]);
+    }
+
+    #[test]
+    fn a_failed_merge_checks_without_claims_and_keeps_its_code() {
+        let (code, ran) = run_with(&steps(true), &[3, 0]);
+        assert_eq!(code, 3);
+        assert_eq!(ran[1], ["docs", "check", "--skip-claims"]);
+    }
+
+    #[test]
+    fn without_a_merge_the_check_is_the_only_command() {
+        let (code, ran) = run_with(&steps(false), &[1]);
+        assert_eq!(code, 1);
+        assert_eq!(ran, [["docs", "check"]]);
+    }
+
+    #[test]
+    fn baselines_are_the_json_files_one_directory_down() {
+        let dir = std::env::temp_dir().join(format!("soothfast-ci-docs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        for leg in ["b", "a"] {
+            fs::create_dir_all(dir.join(leg)).unwrap();
+            fs::write(dir.join(leg).join("x.json"), "{}").unwrap();
+        }
+        fs::write(dir.join("a").join("note.txt"), "").unwrap();
+        fs::write(dir.join("top.json"), "{}").unwrap();
+        assert_eq!(
+            baseline_files(&dir),
+            [dir.join("a").join("x.json"), dir.join("b").join("x.json")]
+        );
+        assert!(baseline_files(&dir.join("missing")).is_empty());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

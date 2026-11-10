@@ -44,7 +44,7 @@ const KINDS: &[Kind] = &[
     },
     Kind {
         name: "docs",
-        run: None,
+        run: Some(docs::run),
         applies: |_| true,
     },
     Kind {
