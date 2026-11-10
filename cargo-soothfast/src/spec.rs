@@ -4,11 +4,13 @@
 //! rendered from the same reconciliation.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use soothfast_spec::{RouteDecl, SpecKind, providers, reconcile, sniff_kind};
 
 use crate::config::{self, Group};
 use crate::invoke::{self, CommonArgs};
+use crate::spec_config::{self, ProtoEntry};
 
 /// One spec file's declared surface reconciled against the route registry.
 struct SpecReport {
@@ -74,7 +76,7 @@ pub fn run(args: &[String]) -> i32 {
                 "soothfast: usage: cargo soothfast spec gen -p PKG [--check]\n\
                  cargo soothfast spec gate -p PKG [--base REF] [--from-committed]\n\
                  cargo soothfast spec check -p PKG\n\
-                 cargo soothfast spec check-proto -p PKG --proto FILE --message NAME --source FILE --struct NAME\n\
+                 cargo soothfast spec check-proto -p PKG [--proto FILE --message NAME --source FILE --struct NAME]\n\
                  cargo soothfast spec html -p PKG [--features F] [--target NAME] [--out DIR]\n\
                  cargo soothfast spec probe -p PKG [--accept] [--accept-passing] [--allow-gone] [--base-url URL] [--filter SUBSTR]"
             );
@@ -147,22 +149,20 @@ fn run_check(args: &[String]) -> i32 {
     }
 }
 
-/// `cargo soothfast spec check-proto -p PKG --proto FILE --message NAME
-/// --source FILE --struct NAME` — see `soothfast_spec::proto`.
+/// `cargo soothfast spec check-proto -p PKG [--proto FILE --message NAME
+/// --source FILE --struct NAME]` — see `soothfast_spec::proto`. Without the
+/// four flags it runs every `[[proto]]` entry of the package.
 fn run_check_proto(args: &[String]) -> i32 {
     let mut pkg: Option<String> = None;
-    let mut proto_path: Option<String> = None;
-    let mut message: Option<String> = None;
-    let mut source_path: Option<String> = None;
-    let mut struct_name: Option<String> = None;
+    let mut flags = ProtoFlags::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let slot = match a.as_str() {
             "-p" | "--package" => &mut pkg,
-            "--proto" => &mut proto_path,
-            "--message" => &mut message,
-            "--source" => &mut source_path,
-            "--struct" => &mut struct_name,
+            "--proto" => &mut flags.proto,
+            "--message" => &mut flags.message,
+            "--source" => &mut flags.source,
+            "--struct" => &mut flags.struct_name,
             other => {
                 eprintln!("soothfast: unknown spec check-proto arg {other:?}");
                 return 2;
@@ -170,16 +170,10 @@ fn run_check_proto(args: &[String]) -> i32 {
         };
         *slot = it.next().cloned();
     }
-    let (Some(pkg), Some(proto_path), Some(message), Some(source_path), Some(struct_name)) =
-        (pkg, proto_path, message, source_path, struct_name)
-    else {
-        eprintln!(
-            "soothfast: usage: cargo soothfast spec check-proto -p PKG --proto FILE \
-             --message NAME --source FILE --struct NAME"
-        );
+    let Some(pkg) = pkg else {
+        eprintln!("{CHECK_PROTO_USAGE}");
         return 2;
     };
-
     let pkg_dir = match invoke::pkg_dir(&pkg) {
         Ok(d) => d,
         Err(e) => {
@@ -187,6 +181,59 @@ fn run_check_proto(args: &[String]) -> i32 {
             return 1;
         }
     };
+    let configured = match spec_config::load(&pkg_dir) {
+        Ok(cfg) => cfg.protos,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 1;
+        }
+    };
+    let Some(entries) = proto_entries(flags, configured) else {
+        eprintln!("{CHECK_PROTO_USAGE}");
+        return 2;
+    };
+    let failed = entries
+        .iter()
+        .map(|entry| check_proto_entry(&pkg_dir, entry))
+        .fold(false, |failed, code| failed | (code != 0));
+    i32::from(failed)
+}
+
+const CHECK_PROTO_USAGE: &str = "soothfast: usage: cargo soothfast spec check-proto -p PKG \
+    [--proto FILE --message NAME --source FILE --struct NAME]\n\
+    without the four flags, every [[proto]] entry of PKG is checked";
+
+#[derive(Default)]
+struct ProtoFlags {
+    proto: Option<String>,
+    message: Option<String>,
+    source: Option<String>,
+    struct_name: Option<String>,
+}
+
+/// The entries to check: the one the flags name, or the package's `[[proto]]`
+/// entries when no flag is given. `None` when the flags are partial or there
+/// is nothing to check.
+fn proto_entries(flags: ProtoFlags, configured: Vec<ProtoEntry>) -> Option<Vec<ProtoEntry>> {
+    match (flags.proto, flags.message, flags.source, flags.struct_name) {
+        (None, None, None, None) => Some(configured).filter(|e| !e.is_empty()),
+        (Some(proto), Some(message), Some(source), Some(struct_name)) => Some(vec![ProtoEntry {
+            proto,
+            message,
+            source,
+            struct_name,
+        }]),
+        _ => None,
+    }
+}
+
+fn check_proto_entry(pkg_dir: &Path, entry: &ProtoEntry) -> i32 {
+    let ProtoEntry {
+        proto: proto_path,
+        message,
+        source: source_path,
+        struct_name,
+    } = entry;
     let proto_text = match std::fs::read_to_string(pkg_dir.join(&proto_path)) {
         Ok(t) => t,
         Err(e) => {
@@ -570,4 +617,56 @@ pub(crate) fn escape(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(name: &str) -> ProtoEntry {
+        ProtoEntry {
+            proto: format!("{name}.proto"),
+            message: name.into(),
+            source: format!("src/{name}.rs"),
+            struct_name: name.into(),
+        }
+    }
+
+    fn flags() -> ProtoFlags {
+        ProtoFlags {
+            proto: Some("f.proto".into()),
+            message: Some("F".into()),
+            source: Some("src/f.rs".into()),
+            struct_name: Some("S".into()),
+        }
+    }
+
+    #[test]
+    fn no_flags_check_every_configured_entry() {
+        let configured = vec![entry("a"), entry("b")];
+        let got = proto_entries(ProtoFlags::default(), configured.clone());
+        assert_eq!(got, Some(configured));
+    }
+
+    #[test]
+    fn flags_check_only_the_entry_they_name() {
+        let got = proto_entries(flags(), vec![entry("a")]).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].proto, "f.proto");
+        assert_eq!(got[0].struct_name, "S");
+    }
+
+    #[test]
+    fn no_flags_and_no_entries_is_a_usage_error() {
+        assert_eq!(proto_entries(ProtoFlags::default(), Vec::new()), None);
+    }
+
+    #[test]
+    fn partial_flags_are_a_usage_error() {
+        let partial = ProtoFlags {
+            struct_name: None,
+            ..flags()
+        };
+        assert_eq!(proto_entries(partial, vec![entry("a")]), None);
+    }
 }
