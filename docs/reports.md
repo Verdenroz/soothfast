@@ -64,10 +64,29 @@ band.
 ## Trend and changelog
 
 `cargo soothfast trend append -p mylib` appends one line per run
-(`{unix, commit, noise_pct, items}`) to `.soothfast/trend.jsonl`. That file
-feeds both the SVG charts above and `trend render`, which prints each
-metric's drift from first to last point straight to stdout. It writes no
-file of its own, since charting is `report render`'s job.
+(`{unix, commit, noise_pct, items}`) to the series. That series feeds both
+the SVG charts above and `trend render`, which prints each metric's drift
+from first to last point straight to stdout. It writes no file of its own,
+since charting is `report render`'s job.
+
+The series lives on the Pages branch (`gh-pages` on `origin`, the branch
+`docs gh-deploy` publishes to) as `trend.jsonl` at its root, not on the
+default branch. Everything that reads it goes through one loader: the working
+copy `.soothfast/trend.jsonl` when it exists, otherwise the file at the tip of
+the Pages branch, fetched when needed. `trend append` fetches the Pages
+branch's current tip and seeds the working copy from the series there, so a
+working copy restored from an older cache cannot drop published points. It
+keeps the working copy only when the branch has no series. It fails if the
+branch exists but cannot be read, since appending to an empty series would
+erase history on the next publish. A branch that does not exist yet is an
+empty series.
+
+`docs build` copies the series into the site root as `trend.jsonl`, so
+`docs gh-deploy` and any publish of the built directory carry it onto the
+Pages branch. A repo that still has `.soothfast/trend.jsonl` committed on its
+default branch needs no migration step: that file is read as the working copy,
+the next site publish puts it on the Pages branch, and the committed file can
+then be deleted.
 
 `--from-baseline NAME` builds the point from a saved baseline instead of
 measuring again — a pipeline whose gate already ran with `--save-baseline`
