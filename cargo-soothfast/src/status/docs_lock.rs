@@ -18,16 +18,19 @@ pub(super) fn check(ctx: &Ctx) -> Vec<Row> {
     if ctx.root.join(LOCKFILE).is_file() {
         return vec![Row::ok(SUBJECT, format!("{LOCKFILE} present"))];
     }
-    let package = docs_config::load(&ctx.root)
+    let fix = match docs_config::load(&ctx.root)
         .ok()
         .and_then(|c| c.package)
         .and_then(|p| p.into_iter().next())
-        .unwrap_or_else(|| "PKG".into());
+    {
+        Some(package) => format!("cargo soothfast docs check -p {package}"),
+        None => "cargo soothfast docs check".into(),
+    };
     vec![Row::needs(
         State::Missing,
         SUBJECT,
         format!("markdown carries bind markers but {LOCKFILE} is absent"),
-        format!("cargo soothfast docs check -p {package}"),
+        fix,
     )]
 }
 
@@ -68,10 +71,7 @@ mod tests {
         let ctx = repo("docs-missing", "<!-- soothfast:bind a::b -->\n");
         let rows = check(&ctx);
         assert_eq!(rows[0].state, State::Missing);
-        assert_eq!(
-            rows[0].fix.as_deref(),
-            Some("cargo soothfast docs check -p PKG")
-        );
+        assert_eq!(rows[0].fix.as_deref(), Some("cargo soothfast docs check"));
     }
 
     #[test]

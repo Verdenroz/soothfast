@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::{Ctx, Row, State};
+use super::{Ctx, Row};
 use crate::invoke::load_baseline_in;
 
-/// A saved baseline for each package with a bench target.
+/// Which packages with a bench target have a baseline saved locally. Never
+/// needs action: CI measures the baselines a pull request is gated on.
 pub(super) fn check(ctx: &Ctx) -> Vec<Row> {
     let saved = saved_packages(&ctx.root);
     ctx.packages
@@ -14,16 +15,12 @@ pub(super) fn check(ctx: &Ctx) -> Vec<Row> {
 }
 
 fn row(pkg: &str, saved: bool) -> Row {
-    let subject = format!("baseline {pkg}");
-    if saved {
-        return Row::ok(&subject, "saved under .soothfast/baselines");
-    }
-    Row::needs(
-        State::Missing,
-        &subject,
-        "no saved baseline",
-        format!("cargo soothfast measure -p {pkg} --save-baseline main"),
-    )
+    let detail = if saved {
+        "saved under .soothfast/baselines"
+    } else {
+        "no baseline saved locally"
+    };
+    Row::ok(&format!("baseline {pkg}"), detail)
 }
 
 /// The packages any baseline file under `root` holds items saved by.
@@ -53,7 +50,7 @@ fn saved_packages(root: &Path) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::status::scratch;
+    use crate::status::{State, scratch};
 
     fn ctx(tag: &str, packages: &[&str]) -> Ctx {
         Ctx {
@@ -62,9 +59,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_package_with_a_saved_item_is_ok() {
-        let ctx = ctx("baseline-ok", &["a"]);
+    fn saved_main(ctx: &Ctx) {
         let dir = ctx.root.join(".soothfast/baselines");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -72,28 +67,25 @@ mod tests {
             r#"{"items":{"a::f":{"saved_by":"a"}}}"#,
         )
         .unwrap();
-        let rows = check(&ctx);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].state, State::Ok);
     }
 
     #[test]
-    fn a_package_without_a_baseline_is_missing_with_the_measure_command() {
-        let ctx = ctx("baseline-missing", &["a", "b"]);
-        let dir = ctx.root.join(".soothfast/baselines");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("main.json"),
-            r#"{"items":{"a::f":{"saved_by":"a"}}}"#,
-        )
-        .unwrap();
+    fn a_package_with_a_saved_item_reports_it() {
+        let ctx = ctx("baseline-saved", &["a"]);
+        saved_main(&ctx);
         let rows = check(&ctx);
-        assert_eq!(rows[0].state, State::Ok);
-        assert_eq!(rows[1].state, State::Missing);
-        assert_eq!(
-            rows[1].fix.as_deref(),
-            Some("cargo soothfast measure -p b --save-baseline main")
-        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].detail, "saved under .soothfast/baselines");
+    }
+
+    #[test]
+    fn a_package_without_a_baseline_is_ok_and_says_none_is_saved() {
+        let ctx = ctx("baseline-none-saved", &["a", "b"]);
+        saved_main(&ctx);
+        let rows = check(&ctx);
+        assert_eq!(rows[1].state, State::Ok);
+        assert!(rows[1].fix.is_none());
+        assert_eq!(rows[1].detail, "no baseline saved locally");
     }
 
     #[test]

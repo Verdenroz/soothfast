@@ -15,7 +15,7 @@ pub(super) fn check(ctx: &Ctx) -> Vec<Row> {
 
 fn verdict(root: &Path, text: Option<&str>) -> Row {
     let Some(text) = text else {
-        return Row::needs(State::Missing, SUBJECT, "no gate run recorded", RERUN);
+        return Row::ok(SUBJECT, "no gate run recorded locally");
     };
     let Ok(doc) = serde_json::from_str::<Value>(text) else {
         return Row::needs(
@@ -71,14 +71,14 @@ mod tests {
     }
 
     #[test]
-    fn no_recorded_run_is_missing() {
+    fn no_recorded_run_is_ok() {
         let root = scratch("gate-missing");
         let rows = check(&Ctx {
             root,
             packages: Vec::new(),
         });
-        assert_eq!(rows[0].state, State::Missing);
-        assert_eq!(rows[0].fix.as_deref(), Some(RERUN));
+        assert_eq!(rows[0].state, State::Ok);
+        assert!(rows[0].fix.is_none());
     }
 
     #[test]

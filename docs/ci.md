@@ -70,13 +70,14 @@ unless it is `ok`, the command that addresses it:
 
 ```text
 failed  gate  2 failure(s); triage: a_item.txt  -> cat .soothfast/triage/a_item.txt
-missing baseline mylib  no saved baseline  -> cargo soothfast measure -p mylib --save-baseline main
+stale   cli version  cli 0.5.6, Cargo.lock pins 0.5.5  -> cargo install --locked cargo-soothfast --version 0.5.5
 ok      2 checks
 ```
 
 The checks cover the CLI against the `soothfast` version Cargo.lock pins, the
-last `gate` verdict and its triage, a saved baseline for each package with a
-bench target, and `soothfast.lock` once markdown carries `bind` markers.
+last `gate` verdict and its triage, and `soothfast.lock` once markdown
+carries `bind` markers. Gate runs and baselines that are not recorded locally
+read as `ok`, since CI measures them; `--all` shows which.
 `--all` lists the `ok` lines instead of counting them, and `--json` prints
 the rows as an array of `state`, `subject`, `detail` and `fix`. The exit code
 is 0 when every row is `ok` and 1 otherwise. A failed gate points at its
