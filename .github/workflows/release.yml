@@ -284,7 +284,6 @@ jobs:
         run: |
           ASSETS=""
           [ -f target/release-report/summary.md ] && ASSETS="$ASSETS target/release-report/summary.md"
-          [ -f target/release-report/llms.txt ] && ASSETS="$ASSETS target/release-report/llms.txt"
           if [ "$USE_AUTO" = "true" ]; then
             gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes $ASSETS
           else

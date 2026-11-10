@@ -9,7 +9,7 @@ use serde_json::Value;
 use soothfast_docs::lockfile;
 use soothfast_site::{BuildInput, SiteConfig, build, config, evidence, nav, search, serve};
 
-use crate::invoke;
+use crate::{invoke, trend};
 
 /// Load config + baseline + lockfile into a ready BuildInput. Re-run per
 /// rebuild in serve mode so config/baseline edits are picked up.
@@ -68,6 +68,16 @@ fn report_warnings(report: &soothfast_site::BuildReport) {
     }
 }
 
+/// Writes the trend series into the built site root as `trend.jsonl`, so
+/// publishing the built directory keeps it on the Pages branch.
+fn carry_series(root: &Path, out_dir: &Path) -> Result<(), String> {
+    if let Some(text) = trend::publishable(root)? {
+        let path = out_dir.join("trend.jsonl");
+        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
 /// One-shot static build.
 pub fn build_cmd(baseline: &str, out: Option<&Path>) -> i32 {
     let root = match invoke::workspace_root() {
@@ -84,11 +94,20 @@ pub fn build_cmd(baseline: &str, out: Option<&Path>) -> i32 {
     match build(&input) {
         Ok(report) => {
             report_warnings(&report);
+            let out_dir = root.join(&input.config.out_dir);
+            if let Err(e) = carry_series(&root, &out_dir) {
+                // Publishing the built directory replaces the Pages branch, so
+                // a CI build must not go on without the series.
+                if std::env::var_os("CI").is_some() {
+                    return err(&format!("cannot carry the trend series into the site: {e}"));
+                }
+                eprintln!("warning: trend series not copied into the site: {e}");
+            }
             println!(
                 "docs build: {} page(s), {} asset(s) → {}",
                 report.pages,
                 report.assets,
-                root.join(&input.config.out_dir).display()
+                out_dir.display()
             );
             0
         }
@@ -170,6 +189,11 @@ pub fn gh_deploy_cmd(baseline: &str, branch: &str, remote: &str, message: Option
         Err(e) => return err(&e),
     };
     report_warnings(&report);
+    if let Err(e) = carry_series(&root, &build_dir) {
+        return err(&format!(
+            "cannot carry the trend series into the deploy: {e}"
+        ));
+    }
 
     let wt = root.join(".soothfast").join("gh-deploy-worktree");
     let wt_str = match wt.to_str() {

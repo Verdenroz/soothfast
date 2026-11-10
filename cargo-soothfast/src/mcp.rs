@@ -10,10 +10,10 @@ use std::collections::BTreeMap;
 use std::io::BufRead;
 
 use serde_json::{Value, json};
-use soothfast_report::llms::SurfaceEntry;
+use soothfast_report::surface::SurfaceEntry;
 
 use crate::config::{self, Group};
-use crate::{docs_support, invoke};
+use crate::{docs_support, invoke, trend};
 
 struct State {
     pkg: String,
@@ -60,14 +60,12 @@ pub fn run(args: &[String]) -> i32 {
         .flatten()
         .unwrap_or_else(|| json!({ "items": {} }));
     let trend = invoke::workspace_root()
-        .ok()
-        .and_then(|r| std::fs::read_to_string(r.join(".soothfast/trend.jsonl")).ok())
-        .map(|t| {
-            t.lines()
-                .filter_map(|l| serde_json::from_str(l).ok())
-                .collect()
-        })
-        .unwrap_or_default();
+        .map_err(|e| e.to_string())
+        .and_then(|root| trend::load_points(&root))
+        .unwrap_or_else(|e| {
+            eprintln!("soothfast mcp: no trend series: {e}");
+            Vec::new()
+        });
     let state = State {
         pkg,
         entries,
@@ -184,11 +182,26 @@ fn measurements_for(state: &State, path: &str) -> Vec<String> {
     facts
 }
 
+fn surface_summary(state: &State) -> String {
+    let mut out = format!("# {}\n\n", state.pkg);
+    for e in state.entries.iter().filter(|e| e.kind != "module") {
+        let head = if e.signature.is_empty() {
+            e.path.as_str()
+        } else {
+            e.signature.as_str()
+        };
+        out.push_str(&format!("`{head}`"));
+        for f in measurements_for(state, &e.path) {
+            out.push_str(&format!("\n  measured: {f}"));
+        }
+        out.push('\n');
+    }
+    out
+}
+
 fn tool_call(state: &State, name: &str, args: &Value) -> Result<String, String> {
     Ok(match name {
-        "surface_summary" => {
-            soothfast_report::llms::render(&state.pkg, &state.entries, &state.baseline)
-        }
+        "surface_summary" => surface_summary(state),
         "get_item" => {
             let path = args["path"].as_str().unwrap_or("");
             match state.entries.iter().find(|e| e.path == path) {
