@@ -6,6 +6,7 @@
 //! `mod` line and its entry in [`KINDS`].
 
 mod env;
+mod gate;
 mod record;
 mod test;
 
@@ -33,7 +34,7 @@ const KINDS: &[Kind] = &[
     },
     Kind {
         name: "gate",
-        run: None,
+        run: Some(gate::run),
         applies: |_| true,
     },
     Kind {

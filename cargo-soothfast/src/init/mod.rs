@@ -990,7 +990,7 @@ fn pinned(workflow: &str, key: &str) -> Option<String> {
 }
 
 /// Members with a `soothfast` bench target.
-fn benched(meta: &Value) -> Vec<String> {
+pub(crate) fn benched(meta: &Value) -> Vec<String> {
     let mut names: Vec<String> = packages(meta)
         .filter_map(|p| p["name"].as_str())
         .filter(|name| workspace::bench_target_in(meta, name, "soothfast"))
