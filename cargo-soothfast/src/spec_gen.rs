@@ -13,7 +13,7 @@ use serde_json::Value;
 use soothfast_spec::dialect::{Info, Operation};
 use soothfast_spec::schema::{self, Docs, TypeTable, route_sig};
 
-use crate::gate_config;
+use crate::config::{self, Group};
 use crate::invoke::{self, CommonArgs, Visibility};
 use crate::spec_config::{self, Mode, SpecEntry};
 use crate::workspace;
@@ -59,7 +59,7 @@ pub fn run(args: &[String]) -> i32 {
             return 2;
         }
     }
-    if let Err(e) = gate_config::apply(&mut common) {
+    if let Err(e) = config::apply(&mut common, Group::Spec) {
         eprintln!("soothfast: {e}");
         return 2;
     }

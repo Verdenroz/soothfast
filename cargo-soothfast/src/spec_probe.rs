@@ -31,6 +31,7 @@ use soothfast_spec::probe::baseline::Baseline;
 use soothfast_spec::probe::{coverage, population, shape};
 use soothfast_spec::serialize;
 
+use crate::config::{self, Group};
 use crate::invoke::{self, CommonArgs};
 
 /// The `[probes]` header: how to reach a server and which spec file the
@@ -113,6 +114,10 @@ pub fn run(args: &[String]) -> i32 {
                 }
             }
         }
+    }
+    if let Err(e) = config::apply(&mut common, Group::Spec) {
+        eprintln!("soothfast: {e}");
+        return 2;
     }
     let Some(pkg) = common.pkg.clone() else {
         eprintln!("soothfast: spec probe requires -p PKG");
