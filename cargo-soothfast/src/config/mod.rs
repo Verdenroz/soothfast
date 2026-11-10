@@ -109,7 +109,7 @@ impl Config {
 
     /// The `[ci]` table's `skip` list: the CI job kinds not to run.
     /// `[test] ci = false` adds `"test"` when the list doesn't name it.
-    #[expect(dead_code, reason = "read by the CI job planner")]
+    #[allow(dead_code, reason = "read by the CI job planner")]
     pub fn ci(&self) -> Result<Vec<String>, String> {
         let mut skip = ci::parse(&self.text).map_err(|e| self.located(e))?;
         let test_off = self.test()?.ci == Some(false);

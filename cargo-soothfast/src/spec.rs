@@ -234,21 +234,21 @@ fn check_proto_entry(pkg_dir: &Path, entry: &ProtoEntry) -> i32 {
         source: source_path,
         struct_name,
     } = entry;
-    let proto_text = match std::fs::read_to_string(pkg_dir.join(&proto_path)) {
+    let proto_text = match std::fs::read_to_string(pkg_dir.join(proto_path)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("soothfast: cannot read {proto_path}: {e}");
             return 1;
         }
     };
-    let source_text = match std::fs::read_to_string(pkg_dir.join(&source_path)) {
+    let source_text = match std::fs::read_to_string(pkg_dir.join(source_path)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("soothfast: cannot read {source_path}: {e}");
             return 1;
         }
     };
-    let spec_fields = match soothfast_spec::proto::parse_proto_message(&proto_text, &message) {
+    let spec_fields = match soothfast_spec::proto::parse_proto_message(&proto_text, message) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("soothfast: {proto_path}: {e}");
@@ -256,7 +256,7 @@ fn check_proto_entry(pkg_dir: &Path, entry: &ProtoEntry) -> i32 {
         }
     };
     let code_fields =
-        match soothfast_spec::proto::parse_struct_prost_fields(&source_text, &struct_name) {
+        match soothfast_spec::proto::parse_struct_prost_fields(&source_text, struct_name) {
             Ok(f) => f,
             Err(e) => {
                 eprintln!("soothfast: {source_path}: {e}");
