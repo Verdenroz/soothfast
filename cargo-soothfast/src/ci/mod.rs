@@ -7,6 +7,7 @@
 
 mod env;
 mod record;
+mod test;
 
 use env::{CiEnv, split_flags};
 
@@ -22,7 +23,7 @@ struct Kind {
 const KINDS: &[Kind] = &[
     Kind {
         name: "test",
-        run: None,
+        run: Some(test::run),
         applies: |_| true,
     },
     Kind {
