@@ -8,6 +8,7 @@
 mod env;
 mod record;
 mod test;
+mod verdict;
 
 use env::{CiEnv, split_flags};
 
@@ -48,7 +49,7 @@ const KINDS: &[Kind] = &[
     },
     Kind {
         name: "verdict",
-        run: None,
+        run: Some(verdict::run),
         applies: |_| true,
     },
     Kind {

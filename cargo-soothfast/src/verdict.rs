@@ -389,16 +389,30 @@ fn merge(args: &[String]) -> Result<i32, String> {
     }
     let dir = dir.ok_or("merge needs a results directory")?;
     let out = out.ok_or("merge needs --out")?;
-    let raw = read_records(&dir);
+    merge_dir(&dir, Path::new(&out), accepted.as_deref(), &expect)
+}
+
+/// Folds the records under `dir` into the comment body at `out`. Each
+/// `expect` entry is a `(name, kind)` that must have a record, and a
+/// regression is waived when `accepted` names the label that waived it.
+/// Returns 1 when the run fails.
+pub(crate) fn merge_dir(
+    dir: &Path,
+    out: &Path,
+    accepted: Option<&str>,
+    expect: &[(String, String)],
+) -> Result<i32, String> {
+    let raw = read_records(dir);
     let seen: BTreeSet<String> = raw.iter().map(|r| r.name.clone()).collect();
     let mut records = fold(raw);
     for (name, kind) in expect {
-        if !seen.contains(&name) {
-            records.push(errored(name, kind, "the job recorded no result".into()));
+        if !seen.contains(name) {
+            let tail = "the job recorded no result".into();
+            records.push(errored(name.clone(), kind.clone(), tail));
         }
     }
     records.sort_by(|a, b| (a.verdict, &a.name).cmp(&(b.verdict, &b.name)));
-    fs::write(&out, fit(&records, accepted.as_deref())).map_err(|e| format!("{out}: {e}"))?;
+    fs::write(out, fit(&records, accepted)).map_err(|e| format!("{}: {e}", out.display()))?;
     Ok(i32::from(fails(&records, accepted.is_some())))
 }
 
@@ -416,7 +430,7 @@ fn errored(name: String, kind: String, tail: String) -> Record {
 }
 
 /// `NAME:KIND`, the kind a missing result is shown with.
-fn expected(arg: &str) -> Result<(String, String), String> {
+pub(crate) fn expected(arg: &str) -> Result<(String, String), String> {
     match arg.split_once(':') {
         Some((name, kind)) if KINDS.contains(&kind) => Ok((name.to_string(), kind.to_string())),
         _ => Err(format!(
