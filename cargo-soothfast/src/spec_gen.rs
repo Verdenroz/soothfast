@@ -13,7 +13,7 @@ use serde_json::Value;
 use soothfast_spec::dialect::{Info, Operation};
 use soothfast_spec::schema::{self, Docs, TypeTable, route_sig};
 
-use crate::gate_config;
+use crate::config::gate as gate_config;
 use crate::invoke::{self, CommonArgs, Visibility};
 use crate::spec_config::{self, Mode, SpecEntry};
 use crate::workspace;

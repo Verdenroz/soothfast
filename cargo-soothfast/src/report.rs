@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use soothfast_report::{badges, changelog, llms, perf_table, trend_chart};
 
+use crate::config::Config;
 use crate::{coverage_lang, docs_support, invoke, project_surface, workspace};
 
 pub fn run(args: &[String]) -> i32 {
@@ -262,7 +263,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
         Ok(r) => r,
         Err(e) => return err(&e.to_string()),
     };
-    let cfg = match crate::changelog_config::load(&root) {
+    let cfg = match Config::load(&root).and_then(|c| c.changelog()) {
         Ok(c) => c,
         Err(e) => return err(&e),
     };
@@ -272,7 +273,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
     if a.pkg.is_empty() {
         return err("report changelog needs -p PKG");
     }
-    let gate_cfg = match crate::gate_config::load(&root) {
+    let gate_cfg = match Config::load(&root).and_then(|c| c.gate()) {
         Ok(g) => g,
         Err(e) => return err(&e),
     };

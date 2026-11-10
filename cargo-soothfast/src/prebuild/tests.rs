@@ -7,7 +7,7 @@ use super::select::{
 };
 use super::stage::stage_entry;
 use super::*;
-use crate::gate_config;
+use crate::config::gate as gate_config;
 use crate::invoke::CommonArgs;
 
 #[derive(Default)]

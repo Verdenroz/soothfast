@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
+use crate::config::gate as gate_config;
 use crate::invoke::{self, Shard};
 use crate::unmeasured::{self, Reason, Unmeasured};
-use crate::{benchexe, gate_config, gate_save, import};
+use crate::{benchexe, gate_save, import};
 
 mod plan;
 

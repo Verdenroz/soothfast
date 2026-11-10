@@ -8,7 +8,8 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::fail;
-use crate::{benchexe, gate_config, invoke};
+use crate::config::gate as gate_config;
+use crate::{benchexe, invoke};
 
 /// The key marking a plan file, `{"plan": true, "listed": {pkg: [ids]}}`.
 pub const PLAN_KEY: &str = "plan";

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use super::select::{Lane, SpecPackage, Wanted};
-use crate::gate_config;
+use crate::config::gate as gate_config;
 use crate::invoke::CommonArgs;
 
 pub(super) struct Args {

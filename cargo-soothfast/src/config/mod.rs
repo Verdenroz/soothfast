@@ -1,0 +1,93 @@
+//! The root `soothfast.toml`, read once and resolved per section.
+//!
+//! The file is shared with the site and spec engines, so each section parser
+//! skips every table it doesn't own.
+
+use std::path::{Path, PathBuf};
+
+pub mod changelog;
+pub mod docs;
+pub mod gate;
+
+use crate::test::config as test;
+
+/// A root `soothfast.toml`'s text. Sections parse on demand, so a malformed
+/// table only fails the commands that read it.
+pub struct Config {
+    path: PathBuf,
+    text: String,
+}
+
+impl Config {
+    /// Read `soothfast.toml` from a directory. An absent file reads as empty,
+    /// so every section is its default.
+    pub fn load(dir: &Path) -> Result<Self, String> {
+        let path = dir.join("soothfast.toml");
+        let text = match std::fs::read_to_string(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+            Ok(text) => text,
+        };
+        Ok(Self { path, text })
+    }
+
+    /// The `[gate]` section.
+    pub fn gate(&self) -> Result<gate::GateConfig, String> {
+        gate::parse(&self.text).map_err(|e| self.located(e))
+    }
+
+    /// The `[docs]` section.
+    pub fn docs(&self) -> Result<docs::DocsConfig, String> {
+        docs::parse(&self.text).map_err(|e| self.located(e))
+    }
+
+    /// The `[changelog]` and `[changelog.icons]` tables.
+    pub fn changelog(&self) -> Result<changelog::ChangelogConfig, String> {
+        changelog::parse(&self.text).map_err(|e| self.located(e))
+    }
+
+    /// The `[test]` section and its `[test.packages.NAME]` tables.
+    pub fn test(&self) -> Result<test::TestConfig, String> {
+        test::parse(&self.text).map_err(|e| self.located(e))
+    }
+
+    fn located(&self, e: String) -> String {
+        format!("{}: {e}", self.path.display())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(text: &str) -> Config {
+        Config {
+            path: PathBuf::from("soothfast.toml"),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn an_absent_file_is_every_default() {
+        let dir = std::env::temp_dir().join("soothfast-config-absent");
+        let cfg = Config::load(&dir).unwrap();
+        assert_eq!(cfg.gate().unwrap(), gate::GateConfig::default());
+        assert_eq!(cfg.docs().unwrap(), docs::DocsConfig::default());
+        assert_eq!(cfg.test().unwrap(), test::TestConfig::default());
+    }
+
+    #[test]
+    fn sections_parse_from_one_text() {
+        let cfg = config("[gate]\nfeatures = \"a\"\n\n[docs]\npaths = [\"x\"]\n");
+        assert_eq!(cfg.gate().unwrap().features.as_deref(), Some("a"));
+        assert_eq!(cfg.docs().unwrap().paths, ["x"]);
+    }
+
+    #[test]
+    fn a_malformed_section_only_fails_its_reader() {
+        let cfg = config("[gate]\nfeatures = 3\n\n[docs]\npaths = [\"x\"]\n");
+        assert!(cfg.docs().is_ok());
+        let e = cfg.gate().unwrap_err();
+        assert!(e.starts_with("soothfast.toml: line 2"), "{e}");
+    }
+}

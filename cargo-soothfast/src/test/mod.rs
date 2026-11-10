@@ -106,7 +106,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
     let started = Instant::now();
     let args = parse_args(args)?;
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-    let cfg = config::load(&root)?;
+    let cfg = crate::config::Config::load(&root)?.test()?;
     let retries = cfg.retries;
     let pkgs = select::packages(&root).map_err(|e| e.to_string())?;
     cfg.check_packages(pkgs.iter().map(|p| p.name.as_str()))?;

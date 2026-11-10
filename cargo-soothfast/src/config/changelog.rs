@@ -4,7 +4,6 @@
 //! parser skips every table it doesn't own.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use soothfast_report::changelog::Icons;
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
@@ -30,17 +29,6 @@ enum Table {
     Changelog,
     Icons,
     Other,
-}
-
-/// Read `[changelog]` and `[changelog.icons]` from a directory's
-/// `soothfast.toml`. An absent file just means defaults.
-pub fn load(dir: &Path) -> Result<ChangelogConfig, String> {
-    let path = dir.join("soothfast.toml");
-    match std::fs::read_to_string(&path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ChangelogConfig::default()),
-        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
-        Ok(text) => parse(&text).map_err(|e| format!("{}: {e}", path.display())),
-    }
 }
 
 /// Parse the `[changelog]` and `[changelog.icons]` tables of a

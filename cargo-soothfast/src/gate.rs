@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::buildstamp;
-use crate::gate_config;
+use crate::config::Config;
+use crate::config::gate as gate_config;
 use crate::gate_lock;
 use crate::gate_save::{HeadRun, bench_packages, configure_save, save_errored, save_head};
 use crate::headrun::{
@@ -376,7 +377,10 @@ fn run_imported(g: &GateArgs, root: &std::path::Path) -> i32 {
     if g.common.shard.is_some() || g.common.pkg.is_some() {
         return err("--import gates a result file whole; --shard and -p do not apply");
     }
-    let walltime_advisory = match (&g.import.walltime, gate_config::load(root)) {
+    let walltime_advisory = match (
+        &g.import.walltime,
+        Config::load(root).and_then(|c| c.gate()),
+    ) {
         (Some(mode), _) => mode == "advisory",
         (None, Ok(cfg)) => cfg.walltime_advisory,
         (None, Err(e)) => return err(&e),

@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use soothfast_docs::{diff, gentests, lockfile, markdown, reference, surface};
 
-use crate::{docs_binds, docs_claims, docs_config, docs_generated, docs_support, glob, invoke};
+use crate::config::Config;
+use crate::{docs_binds, docs_claims, docs_generated, docs_support, glob, invoke};
 
 #[derive(Default)]
 struct DocsArgs {
@@ -134,7 +135,7 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     if a.pkgs.is_empty() && takes_package(&sub) {
-        match docs_config::load(&invoke::project_root()) {
+        match Config::load(&invoke::project_root()).and_then(|c| c.docs()) {
             Ok(cfg) => {
                 if let Err(e) = a.use_configured(cfg.package, single_package(&sub)) {
                     return err(&e);
@@ -326,7 +327,7 @@ fn scan_all(a: &DocsArgs) -> Result<Scanned, String> {
 
 fn scan_at(a: &DocsArgs, root: PathBuf) -> Result<Scanned, String> {
     let mut docs = Vec::new();
-    let scope = docs_config::load(&root)?.paths;
+    let scope = Config::load(&root)?.docs()?.paths;
     for file in md_files(a, &root, &scope) {
         let text =
             std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;

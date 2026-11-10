@@ -3,10 +3,9 @@
 //! `soothfast.toml` is shared with the site and spec engines, so this parser
 //! skips every table it doesn't own.
 
-use std::path::Path;
-
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
+use super::Config;
 use crate::invoke::{self, CommonArgs};
 
 /// Repo-level gate settings. CLI flags override these.
@@ -20,24 +19,13 @@ pub struct GateConfig {
     pub walltime_advisory: bool,
 }
 
-/// Read `soothfast.toml` from a directory. An absent file just means
-/// defaults.
-pub fn load(dir: &Path) -> Result<GateConfig, String> {
-    let path = dir.join("soothfast.toml");
-    match std::fs::read_to_string(&path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(GateConfig::default()),
-        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
-        Ok(text) => parse(&text).map_err(|e| format!("{}: {e}", path.display())),
-    }
-}
-
 /// Fill in what the CLI did not set from the repo's `soothfast.toml`, and
 /// return the file's settings.
 pub fn apply(common: &mut CommonArgs) -> Result<GateConfig, String> {
     let Ok(root) = invoke::workspace_root() else {
         return Ok(GateConfig::default());
     };
-    let cfg = load(&root)?;
+    let cfg = Config::load(&root)?.gate()?;
     if common.codegen_units.is_none() {
         common.codegen_units = cfg.codegen_units.clone();
     }
