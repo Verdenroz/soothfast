@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Add cargo soothfast status (#377)
 - Per-package defaults in soothfast.toml (#379)
 
 ### 🔧 Internal
