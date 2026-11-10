@@ -105,8 +105,21 @@ jobs:
             exit 0
           fi
           REF="${INPUTS_BASE_REF:-origin/${GITHUB_BASE_REF:-master}}"
-          "$CLI" gate -p "$INPUTS_PACKAGE" --against-ref "$REF" | tee gate-output.txt
+          rc=0
+          "$CLI" gate -p "$INPUTS_PACKAGE" --against-ref "$REF" | tee gate-output.txt || rc=$?
+          if [ "$rc" = 1 ] && [ "$EVENT_NAME" = pull_request ]; then
+            # shellcheck source=action/labels.sh
+            source .soothfast-action/action/labels.sh
+            mapfile -t waivers < <(CLI="$CLI" BASE_REF="$GITHUB_BASE_REF" perf_accepted_names)
+            if perf_accepted "$PR_NUMBER" "${waivers[@]}"; then
+              echo "Regressions accepted by the ${accepted_label} label." | tee -a gate-output.txt
+              rc=0
+            fi
+          fi
+          exit "$rc"
         env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           EVENT_NAME: ${{ github.event_name }}
           INPUTS_BASE_REF: ${{ inputs.base-ref }}
           INPUTS_PACKAGE: ${{ inputs.package }}

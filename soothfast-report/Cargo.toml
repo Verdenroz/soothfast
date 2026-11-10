@@ -1,6 +1,6 @@
 [package]
 name = "soothfast-report"
-description = "Soothfast report engine: perf tables, trend charts, changelog drafts, badges, llms.txt"
+description = "Soothfast report engine: perf tables, trend charts, changelog drafts, badges"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

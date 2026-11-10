@@ -1,11 +1,11 @@
-//! The public surface of non-Rust projects as `report` consumes it: listed
-//! in `llms.txt`, inventoried or diffed in the changelog.
+//! The public surface of non-Rust projects as `report` consumes it:
+//! inventoried or diffed in the changelog.
 
 use std::path::Path;
 
 use soothfast_docs::diff;
 use soothfast_docs::surface::{ItemInfo, Surface};
-use soothfast_report::llms::{ProjectEntry, ProjectSurface, SurfaceEntry};
+use soothfast_report::surface::SurfaceEntry;
 
 use crate::coverage_lang::{self, Entry, Target};
 use crate::invoke;
@@ -96,21 +96,6 @@ pub fn inventory(target: &Target) -> Result<Vec<SurfaceEntry>, String> {
             docs: String::new(),
         })
         .collect())
-}
-
-/// The project's symbols as an `llms.txt` section.
-pub fn llms_section(target: &Target) -> Result<ProjectSurface, String> {
-    Ok(ProjectSurface {
-        name: target.label.clone(),
-        entries: current(target)?
-            .into_iter()
-            .map(|e| ProjectEntry {
-                id: e.id,
-                kind: e.kind,
-                documented: e.documented,
-            })
-            .collect(),
-    })
 }
 
 #[cfg(test)]

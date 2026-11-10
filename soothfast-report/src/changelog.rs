@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::llms::SurfaceEntry;
+use crate::surface::SurfaceEntry;
 
 /// What the API section has to report.
 ///
@@ -380,7 +380,7 @@ mod tests {
         ApiSection, Change, DraftInputs, Icons, PerfThresholds, changes_from_subjects, draft,
         sections, unparsed_subjects,
     };
-    use crate::llms::SurfaceEntry;
+    use crate::surface::SurfaceEntry;
 
     /// The values `cargo-soothfast` passes from its gate constants.
     fn gate_thresholds() -> PerfThresholds {

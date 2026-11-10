@@ -84,6 +84,27 @@ prints `file:line  found X, want Y` for each stale pin and exits 1 when there
 is one, so it can gate a pull request. A line that names `cargo-soothfast`
 with a version it cannot read is printed as unrecognised and does not fail
 the check.
+## Checking the setup
+
+`cargo soothfast status` prints what state the setup is in, from what is
+already on disk and in git. It builds, measures and fetches nothing. Each
+line is a state word (`ok`, `stale`, `failed` or `missing`), the subject and,
+unless it is `ok`, the command that addresses it:
+
+```text
+failed  gate  2 failure(s); triage: a_item.txt  -> cat .soothfast/triage/a_item.txt
+stale   cli version  cli 0.5.6, Cargo.lock pins 0.5.5  -> cargo install --locked cargo-soothfast --version 0.5.5
+ok      2 checks
+```
+
+The checks cover the CLI against the `soothfast` version Cargo.lock pins, the
+last `gate` verdict and its triage, and `soothfast.lock` once markdown
+carries `bind` markers. Gate runs and baselines that are not recorded locally
+read as `ok`, since CI measures them; `--all` shows which.
+`--all` lists the `ok` lines instead of counting them, and `--json` prints
+the rows as an array of `state`, `subject`, `detail` and `fix`. The exit code
+is 0 when every row is `ok` and 1 otherwise. A failed gate points at its
+triage file; accepting a regression stays a decision for a reviewer.
 
 ## What the step does
 
