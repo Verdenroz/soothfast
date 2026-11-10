@@ -111,6 +111,11 @@ commands:
            [cargo test args...]
            (the workflow's test job: --base from the event, else every
            package; --project tests one project outside the workspace)
+  ci       gate-import [--project DIR [--name N]] [--accepted LABEL]
+           (the perf gate of a [[project]] with a benchmark command: benches
+           the head and, on a pull request, its merge base, and gates the
+           imported results; every project when none is named, exiting with
+           the worst; --accepted waives a regression, never an error)
   plan     [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
