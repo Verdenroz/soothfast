@@ -6,6 +6,7 @@
 //! `mod` line and its entry in [`KINDS`].
 
 mod env;
+mod import;
 mod record;
 mod test;
 
