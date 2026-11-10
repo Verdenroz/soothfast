@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.5.6)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### ✨ Features
+
+- Per-package defaults in soothfast.toml (#379)
+
+
 ## 0.5.6 - 2026-11-08
 
 <!-- soothfast:notes -->
