@@ -725,6 +725,26 @@ full, taking `--suite`, `--toolchain` and `--name` (default `test-` and the
 directory). The record is named `test-rust` for the workspace, so its section
 of the pull request comment is the one the workflow writes.
 
+`ci gate` is the gate job. With no `-p` it gates every package that has a
+`soothfast` bench target, each on its own, so its features and bench target
+come from that package's `gate` defaults in `soothfast.toml`. On a pull
+request it runs `cargo soothfast gate --against-ref` the base commit. On a push
+to the default branch it gates HEAD against its parent with `SOOTHFAST_RECORD=1`,
+which stores the run for later pull requests, and never fails; a HEAD with no
+parent lists each package's items as `no-parent` instead when `--save-baseline`
+names a baseline. A local run gates against `--base`, or leaves the reference
+to `gate`. `--shard I/N` and `--save-baseline NAME` are passed on, and a shard
+records as `PKG#I/N`.
+
+Each package records a `rust` verdict named for it, and the last 40 lines of
+every package's output are written to `gate-comment.md` in the results
+directory, with any run of three or more backticks spaced out so the output
+cannot close the comment's code fence. The exit code is 1 when a package
+regressed and 2 when one errored. `--accepted LABEL` turns a regression into
+a pass and adds a line to the comment naming the label, but never waives an
+error. Who may apply the label is for the workflow to decide before it passes
+the flag.
+
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure.
 

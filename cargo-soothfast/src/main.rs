@@ -111,7 +111,14 @@ commands:
            [cargo test args...]
            (the workflow's test job: --base from the event, else every
            package; --project tests one project outside the workspace)
-  plan     [--github]
+  ci       gate [-p PKG]... [--shard I/N] [--save-baseline NAME]
+           [--accepted LABEL]
+           (the workflow's gate job, one package at a time, every package
+           with a soothfast bench target without -p: a pull request gates
+           against its base, a default-branch push records HEAD against its
+           parent; --accepted waives regressions, never errors, and the
+           comment lands in DIR/gate-comment.md)
+  plan    [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
            --github prints $GITHUB_OUTPUT lines)
