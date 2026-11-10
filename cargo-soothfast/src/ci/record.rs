@@ -12,7 +12,17 @@ use crate::verdict;
 
 /// Where the job `name` leaves its record under `dir`.
 pub fn result_path(dir: &Path, name: &str) -> PathBuf {
-    dir.join(format!("{name}.json"))
+    dir.join(format!("{}.json", file_stem(name)))
+}
+
+/// Where the job `name`'s output is saved under `dir`.
+pub fn log_path(dir: &Path, name: &str) -> PathBuf {
+    dir.join(format!("{}.log", file_stem(name)))
+}
+
+/// A shard's name (`pkg#1/2`) holds a slash, which must not become a path.
+fn file_stem(name: &str) -> String {
+    name.replace('/', "-")
 }
 
 /// Runs `cmd` and returns its exit code. With a results directory the output
@@ -23,7 +33,7 @@ pub fn run_recorded(env: &CiEnv, name: &str, kind: &str, cmd: &mut Command) -> i
         return exit_code(cmd.status());
     };
     let started = Instant::now();
-    let log = dir.join(format!("{name}.log"));
+    let log = log_path(dir, name);
     let result = result_path(dir, name);
     if let Err(e) = fs::create_dir_all(dir) {
         eprintln!("soothfast: {}: {e}", dir.display());
@@ -164,6 +174,16 @@ mod tests {
             run_recorded(&ci_env(None), "job", "test", &mut sh("exit 5")),
             5
         );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_shard_name_stays_in_the_results_directory() {
+        let dir = scratch("shard");
+        let env = ci_env(Some(&dir));
+        run_recorded(&env, "core#1/2", "rust", &mut sh("echo hi"));
+        assert_eq!(record(&dir, "core#1/2")["name"], "core#1/2");
+        assert!(log_path(&dir, "core#1/2").is_file());
         fs::remove_dir_all(dir).unwrap();
     }
 

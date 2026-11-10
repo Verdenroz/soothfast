@@ -5,6 +5,7 @@
 use std::process::Command;
 
 use super::env::{CiEnv, Event};
+use super::record::run_recorded;
 use crate::invoke::Shard;
 
 const NO_PARENT: &str = "no-parent";
@@ -14,6 +15,7 @@ struct Options {
     packages: Vec<String>,
     shard: Option<Shard>,
     save: Option<String>,
+    accepted: Option<String>,
 }
 
 /// What the run does with each package.
@@ -59,13 +61,18 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
         }
         cmd.status().map_or(2, |s| s.code().unwrap_or(1))
     };
+    let gate = |name: &str, args: &[String]| {
+        let mut cmd = Command::new(&exe);
+        cmd.args(args);
+        run_recorded(env, name, "rust", &mut cmd)
+    };
     match plan(env, has_parent()) {
         Plan::Skip => {
             println!("soothfast: ci gate has nothing to do for this event");
             0
         }
         Plan::Record { parent } => record(&opts, &packages, parent, invoke),
-        Plan::Compare { against } => compare(&opts, &packages, against.as_deref(), invoke),
+        Plan::Compare { against } => compare(&opts, &packages, against.as_deref(), gate),
     }
 }
 
@@ -82,6 +89,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "-p" | "--package" => opts.packages.push(value()?),
             "--shard" => opts.shard = Some(Shard::parse(&value()?)?),
             "--save-baseline" => opts.save = Some(value()?),
+            "--accepted" => opts.accepted = Some(value()?),
             _ => return Err(format!("unknown ci gate argument {a:?}")),
         }
     }
@@ -149,20 +157,56 @@ fn mark_args(pkg: &str, into: &str) -> Vec<String> {
     args
 }
 
+/// A package's name in the verdict record, which the merged comment groups
+/// shards by.
+fn record_name(pkg: &str, shard: Option<Shard>) -> String {
+    match shard {
+        Some(shard) => format!("{pkg}#{shard}"),
+        None => pkg.to_string(),
+    }
+}
+
+/// How the packages' exit codes settle: a regression (exit 1) is waived by
+/// an accepted label, an error (any other non-zero exit) never is.
+#[derive(Debug, PartialEq)]
+struct Outcome {
+    exit: i32,
+    waived_by: Option<String>,
+}
+
+fn settle(codes: &[i32], accepted: Option<&str>) -> Outcome {
+    let errored = codes.iter().any(|c| !matches!(c, 0 | 1));
+    let regressed = codes.contains(&1);
+    let waived = regressed && !errored && accepted.is_some();
+    let exit = match (errored, regressed && !waived) {
+        (true, _) => 2,
+        (false, true) => 1,
+        (false, false) => 0,
+    };
+    Outcome {
+        exit,
+        waived_by: accepted.filter(|_| waived).map(String::from),
+    }
+}
+
 fn compare(
     opts: &Options,
     packages: &[String],
     against: Option<&str>,
-    invoke: impl Fn(&[String], bool) -> i32,
+    gate: impl Fn(&str, &[String]) -> i32,
 ) -> i32 {
-    packages
+    let codes: Vec<i32> = packages
         .iter()
         .map(|pkg| {
             let args = gate_args(pkg, against, opts.save.as_deref(), opts.shard);
-            invoke(&args, false)
+            gate(&record_name(pkg, opts.shard), &args)
         })
-        .max()
-        .unwrap_or(0)
+        .collect();
+    let outcome = settle(&codes, opts.accepted.as_deref());
+    if let Some(label) = &outcome.waived_by {
+        println!("soothfast: regressions accepted by the {label} label");
+    }
+    outcome.exit
 }
 
 /// Never fails: the commit is already merged, and what runs after still
@@ -323,6 +367,82 @@ mod tests {
     }
 
     #[test]
+    fn a_shard_record_is_named_after_its_package_and_shard() {
+        assert_eq!(record_name("core", None), "core");
+        assert_eq!(record_name("core", shard(2, 3)), "core#2/3");
+    }
+
+    #[test]
+    fn each_package_is_gated_and_recorded_on_its_own() {
+        let seen = RefCell::new(Vec::new());
+        let opts = Options {
+            shard: shard(1, 2),
+            ..Options::default()
+        };
+        let gate = |name: &str, args: &[String]| {
+            seen.borrow_mut().push((name.to_string(), args[2].clone()));
+            [0, 1][seen.borrow().len() - 1]
+        };
+        let code = compare(&opts, &argv(&["a", "b"]), Some("b4se"), gate);
+        assert_eq!(code, 1);
+        assert_eq!(
+            seen.into_inner(),
+            [("a#1/2".into(), "a".into()), ("b#1/2".into(), "b".into())]
+        );
+    }
+
+    fn waived(by: &str) -> Option<String> {
+        Some(by.into())
+    }
+
+    #[test]
+    fn a_regression_is_waived_by_an_accepted_label() {
+        let accepted = settle(&[0, 1, 1], Some("perf"));
+        assert_eq!(
+            accepted,
+            Outcome {
+                exit: 0,
+                waived_by: waived("perf")
+            }
+        );
+        let plain = settle(&[0, 1], None);
+        assert_eq!(
+            plain,
+            Outcome {
+                exit: 1,
+                waived_by: None
+            }
+        );
+    }
+
+    #[test]
+    fn an_error_is_never_waived() {
+        for codes in [&[2][..], &[1, 2], &[101, 1], &[-1]] {
+            let outcome = settle(codes, Some("perf"));
+            assert_eq!(
+                outcome,
+                Outcome {
+                    exit: 2,
+                    waived_by: None
+                },
+                "{codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn passing_packages_exit_zero_whatever_is_accepted() {
+        assert_eq!(
+            settle(&[0, 0], Some("perf")),
+            Outcome {
+                exit: 0,
+                waived_by: None
+            }
+        );
+        assert_eq!(settle(&[], None).exit, 0);
+    }
+
+    #[test]
     fn arguments_parse_and_reject_the_unknown() {
         let opts = parse(&argv(&[
             "-p",
@@ -333,11 +453,14 @@ mod tests {
             "2/3",
             "--save-baseline",
             "n",
+            "--accepted",
+            "perf",
         ]))
         .unwrap();
         assert_eq!(opts.packages, ["a", "b"]);
         assert_eq!(opts.shard, shard(2, 3));
         assert_eq!(opts.save.as_deref(), Some("n"));
+        assert_eq!(opts.accepted, waived("perf"));
         assert!(parse(&argv(&["--shard", "0/2"])).is_err());
         assert!(parse(&argv(&["-p"])).is_err());
         assert!(parse(&argv(&["--nope"])).is_err());
