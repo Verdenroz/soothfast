@@ -29,8 +29,8 @@ const KINDS: &[Kind] = &[
     },
     Kind {
         name: "build",
-        run: None,
-        applies: |_| true,
+        run: Some(build::run),
+        applies: |_| false,
     },
     Kind {
         name: "gate",

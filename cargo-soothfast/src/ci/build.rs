@@ -1,10 +1,16 @@
 //! `ci build`: the build-once job, which prebuilds into the stores what later
 //! jobs read: bench executables, routes executables or rustdoc JSON.
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use soothfast_registry::fnv1a;
 
 use super::env::{CiEnv, Event};
-use crate::init::RustPlan;
+use crate::config::{self, Group};
+use crate::init::{self, RustPlan};
+use crate::invoke;
 
 /// What `ci build` was asked for.
 #[derive(Debug, PartialEq)]
@@ -125,6 +131,160 @@ fn invocations(
             Ok(args)
         })
         .collect()
+}
+
+/// Entry point for `ci build`.
+pub fn run(env: &CiEnv, args: &[String]) -> i32 {
+    let job = match parse(args) {
+        Ok(job) => job,
+        Err(e) => return crate::arg_err(&e),
+    };
+    let packages = match resolve_packages(&job) {
+        Ok(packages) => packages,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    if packages.is_empty() {
+        println!("ci build: no packages for the {} lane", job.lane);
+        return 0;
+    }
+    let has_parent = || invoke::git(&["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok();
+    let shape = shape(env, job.shards, has_parent);
+    let docs_features = |pkg: &str| {
+        config::defaults(&[pkg.to_string()], Group::Docs).map(|settings| settings.features)
+    };
+    let calls = match invocations(&job, &packages, &shape, docs_features) {
+        Ok(calls) => calls,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    let bins = invoke::project_root().join(".soothfast").join("bins");
+    execute(
+        &job,
+        &packages,
+        &calls,
+        &bins,
+        &mut |args| match Command::new(&exe).args(args).status() {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(e) => {
+                eprintln!("soothfast: {e}");
+                2
+            }
+        },
+    )
+}
+
+fn resolve_packages(job: &Job) -> Result<Vec<String>, String> {
+    if !job.packages.is_empty() {
+        return Ok(job.packages.clone());
+    }
+    let plan = init::rust_plan(&invoke::project_root())?;
+    Ok(default_packages(&job.lane, &plan))
+}
+
+/// Runs every call, then lists the built items and the store's checksums as
+/// the job asks. The first failing call's exit code is the result, after the
+/// rest have run and the outputs are written, since a later job reads what
+/// did build.
+fn execute(
+    job: &Job,
+    packages: &[String],
+    calls: &[Vec<String>],
+    bins: &Path,
+    exec: &mut dyn FnMut(&[String]) -> i32,
+) -> i32 {
+    let before = listing(bins);
+    let mut code = 0;
+    for call in calls {
+        let status = exec(call);
+        if code == 0 {
+            code = status;
+        }
+    }
+    if let Some(out) = &job.plan_out {
+        list_items(out, packages, exec);
+    }
+    if let Some(out) = &job.listing_out
+        && let Err(e) = write_listing(out, &before, &listing(bins))
+    {
+        eprintln!("soothfast: {}: {e}", out.display());
+        code = if code == 0 { 2 } else { code };
+    }
+    code
+}
+
+/// A package whose items cannot be listed, because its build failed, is
+/// skipped with a warning.
+fn list_items(out: &Path, packages: &[String], exec: &mut dyn FnMut(&[String]) -> i32) {
+    if let Some(dir) = out.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    for pkg in packages {
+        let args = [
+            "baseline".into(),
+            "plan".into(),
+            "--out".into(),
+            out.display().to_string(),
+            "-p".into(),
+            pkg.clone(),
+        ];
+        if exec(&args) != 0 {
+            eprintln!("soothfast: could not list {pkg}'s items for the docs check");
+        }
+    }
+}
+
+fn write_listing(out: &Path, before: &str, after: &str) -> std::io::Result<()> {
+    if let Some(dir) = out.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(out, format!("before {before}\nafter {after}\n"))
+}
+
+/// A checksum over the names, relative to `dir`, and sizes of the files under
+/// it, so two listings differ when a file is added, replaced or removed and
+/// not when one is only read. It is the FNV-1a hash of the sorted
+/// `name size` lines as 16 hex digits, `none` for a directory that does not
+/// exist. Files ending in `.tmp` are not part of it.
+fn listing(dir: &Path) -> String {
+    if !dir.is_dir() {
+        return "none".into();
+    }
+    let mut files = Vec::new();
+    collect(dir, dir, &mut files);
+    files.sort();
+    let lines: String = files
+        .iter()
+        .map(|(name, size)| format!("{name} {size}\n"))
+        .collect();
+    format!("{:016x}", fnv1a(lines.as_bytes()))
+}
+
+fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect(root, &path, out);
+        } else if !path.to_string_lossy().ends_with(".tmp")
+            && let (Ok(rel), Ok(meta)) = (path.strip_prefix(root), entry.metadata())
+        {
+            out.push((rel.display().to_string(), meta.len()));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -334,5 +494,161 @@ mod tests {
         let failing = |_: &str| Err("bad table".to_string());
         let calls = invocations(&job("rustdoc", None), &argv(&["d"]), &shape, failing);
         assert_eq!(calls, Err("bad table".to_string()));
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-build-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn with_outputs(plan: Option<&Path>, listing: Option<&Path>) -> Job {
+        Job {
+            plan_out: plan.map(Into::into),
+            listing_out: listing.map(Into::into),
+            ..job("bench", None)
+        }
+    }
+
+    #[test]
+    fn every_call_runs_and_the_first_failure_is_the_result() {
+        let calls = [argv(&["a"]), argv(&["b"]), argv(&["c"])];
+        let mut seen = Vec::new();
+        let codes = [0, 3, 4];
+        let code = execute(
+            &job("bench", None),
+            &[],
+            &calls,
+            Path::new("missing"),
+            &mut |args| {
+                seen.push(args.to_vec());
+                codes[seen.len() - 1]
+            },
+        );
+        assert_eq!(code, 3);
+        assert_eq!(seen, calls);
+    }
+
+    #[test]
+    fn the_plan_loop_lists_each_package_and_skips_one_that_fails() {
+        let dir = scratch("plan");
+        let out = dir.join("nested").join("plan.json");
+        let mut seen = Vec::new();
+        let code = execute(
+            &with_outputs(Some(&out), None),
+            &argv(&["a", "b"]),
+            &[],
+            &dir.join("bins"),
+            &mut |args| {
+                seen.push(args.to_vec());
+                (args.last().unwrap() == "a") as i32
+            },
+        );
+        assert_eq!(code, 0);
+        let plan = |pkg: &str| {
+            argv(&[
+                "baseline",
+                "plan",
+                "--out",
+                &out.display().to_string(),
+                "-p",
+                pkg,
+            ])
+        };
+        assert_eq!(seen, [plan("a"), plan("b")]);
+        assert!(out.parent().unwrap().is_dir());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_build_still_writes_the_plan_and_listing() {
+        let dir = scratch("failed");
+        let (plan, listed) = (dir.join("plan.json"), dir.join("listing"));
+        let mut seen = Vec::new();
+        let code = execute(
+            &with_outputs(Some(&plan), Some(&listed)),
+            &argv(&["a"]),
+            &[argv(&["prebuild"])],
+            &dir.join("bins"),
+            &mut |args| {
+                seen.push(args[0].clone());
+                7
+            },
+        );
+        assert_eq!(code, 7);
+        assert_eq!(seen, ["prebuild", "baseline"]);
+        let text = fs::read_to_string(listed).unwrap();
+        assert_eq!(text, "before none\nafter none\n");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_listing_file_holds_the_store_before_and_after_the_build() {
+        let dir = scratch("both");
+        let (bins, listed) = (dir.join("bins"), dir.join("listing"));
+        fs::create_dir_all(&bins).unwrap();
+        let before = listing(&bins);
+        let code = execute(
+            &with_outputs(None, Some(&listed)),
+            &argv(&["a"]),
+            &[argv(&["prebuild"])],
+            &bins,
+            &mut |_| {
+                fs::write(bins.join("exe"), "code").unwrap();
+                0
+            },
+        );
+        assert_eq!(code, 0);
+        let after = listing(&bins);
+        assert_ne!(before, after);
+        let text = fs::read_to_string(listed).unwrap();
+        assert_eq!(text, format!("before {before}\nafter {after}\n"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_unwritable_listing_is_an_error_exit() {
+        let dir = scratch("unwritable");
+        let blocker = dir.join("file");
+        fs::write(&blocker, "").unwrap();
+        let code = execute(
+            &with_outputs(None, Some(&blocker.join("listing"))),
+            &argv(&["a"]),
+            &[],
+            &dir,
+            &mut |_| 0,
+        );
+        assert_eq!(code, 2);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_listing_is_stable_and_follows_names_and_sizes() {
+        let dir = scratch("listing");
+        assert_eq!(listing(&dir.join("absent")), "none");
+        let empty = listing(&dir);
+        fs::write(dir.join("a"), "12").unwrap();
+        let one = listing(&dir);
+        assert_ne!(one, empty);
+        assert_eq!(listing(&dir), one);
+        assert_eq!(one.len(), 16);
+
+        fs::write(dir.join("a"), "123").unwrap();
+        let resized = listing(&dir);
+        assert_ne!(resized, one);
+        fs::write(dir.join("a"), "xyz").unwrap();
+        assert_eq!(listing(&dir), resized);
+
+        fs::rename(dir.join("a"), dir.join("b")).unwrap();
+        assert_ne!(listing(&dir), resized);
+
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub").join("c"), "1").unwrap();
+        let nested = listing(&dir);
+        fs::write(dir.join("partial.tmp"), "1234").unwrap();
+        assert_eq!(listing(&dir), nested);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
