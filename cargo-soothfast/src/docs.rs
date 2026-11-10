@@ -90,8 +90,8 @@ pub fn run(args: &[String]) -> i32 {
         features: None,
         target: None,
         addr: None,
-        branch: "gh-pages".into(),
-        remote: "origin".into(),
+        branch: crate::trend::PAGES_BRANCH.into(),
+        remote: crate::trend::PAGES_REMOTE.into(),
         message: None,
         paths: Vec::new(),
     };

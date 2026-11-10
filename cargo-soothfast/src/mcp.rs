@@ -12,7 +12,7 @@ use std::io::BufRead;
 use serde_json::{Value, json};
 use soothfast_report::surface::SurfaceEntry;
 
-use crate::{docs_support, invoke};
+use crate::{docs_support, invoke, trend};
 
 struct State {
     pkg: String,
@@ -51,14 +51,12 @@ pub fn run(args: &[String]) -> i32 {
         .flatten()
         .unwrap_or_else(|| json!({ "items": {} }));
     let trend = invoke::workspace_root()
-        .ok()
-        .and_then(|r| std::fs::read_to_string(r.join(".soothfast/trend.jsonl")).ok())
-        .map(|t| {
-            t.lines()
-                .filter_map(|l| serde_json::from_str(l).ok())
-                .collect()
-        })
-        .unwrap_or_default();
+        .map_err(|e| e.to_string())
+        .and_then(|root| trend::load_points(&root))
+        .unwrap_or_else(|e| {
+            eprintln!("soothfast mcp: no trend series: {e}");
+            Vec::new()
+        });
     let state = State {
         pkg,
         entries,

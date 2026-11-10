@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 use soothfast_report::{badges, changelog, perf_table, trend_chart};
 
-use crate::{coverage_lang, docs_support, invoke, project_surface, workspace};
+use crate::{coverage_lang, docs_support, invoke, project_surface, trend, workspace};
 
 pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
@@ -96,19 +96,16 @@ fn render(args: &[String]) -> i32 {
     summary.push_str(&perf_table::markdown(&baseline));
 
     // Trend charts from the series, when it exists.
-    let trend_path = root.join(".soothfast").join("trend.jsonl");
-    if let Ok(text) = std::fs::read_to_string(&trend_path) {
-        let points: Vec<Value> = text
-            .lines()
-            .filter_map(|l| serde_json::from_str(l).ok())
-            .collect();
-        for (key, name, threshold, rel) in trend_chart::METRICS {
-            if let Some(svg) = trend_chart::render(&points, key, name, *threshold, *rel) {
-                let file = format!("trend-{name}.svg");
-                if std::fs::write(out_dir.join(&file), svg).is_ok() {
-                    summary.push_str(&format!("\n![{name} trend]({file})\n"));
-                    println!("report: wrote {}", out_dir.join(&file).display());
-                }
+    let points = trend::load_points(&root).unwrap_or_else(|e| {
+        eprintln!("report: no trend charts: {e}");
+        Vec::new()
+    });
+    for (key, name, threshold, rel) in trend_chart::METRICS {
+        if let Some(svg) = trend_chart::render(&points, key, name, *threshold, *rel) {
+            let file = format!("trend-{name}.svg");
+            if std::fs::write(out_dir.join(&file), svg).is_ok() {
+                summary.push_str(&format!("\n![{name} trend]({file})\n"));
+                println!("report: wrote {}", out_dir.join(&file).display());
             }
         }
     }
