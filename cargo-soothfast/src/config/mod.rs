@@ -146,10 +146,14 @@ impl Config {
                 features: self.gate()?.features,
                 ..Settings::default()
             },
-            Group::Docs => Settings {
-                paths: Some(self.docs()?.paths).filter(|p| !p.is_empty()),
-                ..Settings::default()
-            },
+            Group::Docs => {
+                let docs = self.docs()?;
+                Settings {
+                    paths: Some(docs.paths).filter(|p| !p.is_empty()),
+                    coverage: docs.coverage,
+                    ..Settings::default()
+                }
+            }
             Group::Test => Settings::default(),
         })
     }
@@ -236,6 +240,21 @@ mod tests {
             .resolve(&[], Group::Docs)
             .unwrap();
         assert_eq!(docs.paths, None);
+    }
+
+    #[test]
+    fn coverage_resolves_group_then_repo_wide_for_docs_only() {
+        let text = "[docs]\ncoverage = 70\n\n[package.core.docs]\ncoverage = 90\n";
+        let cfg = config(text);
+        let docs = |p: &[&str]| cfg.resolve(&pkgs(p), Group::Docs).unwrap().coverage;
+        assert_eq!(docs(&["core"]), Some(90));
+        assert_eq!(docs(&["other"]), Some(70));
+        assert_eq!(docs(&[]), Some(70));
+        assert_eq!(
+            cfg.resolve(&pkgs(&["core"]), Group::Gate).unwrap().coverage,
+            None
+        );
+        assert_eq!(config("").resolve(&[], Group::Docs).unwrap().coverage, None);
     }
 
     #[test]

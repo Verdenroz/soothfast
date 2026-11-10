@@ -121,8 +121,8 @@ fn docs(args: &[String]) -> i32 {
             }
         }
     }
-    let features = match config::defaults(&pkgs, Group::Docs) {
-        Ok(defaults) => features.or(defaults.features),
+    let (features, min) = match config::defaults(&pkgs, Group::Docs) {
+        Ok(defaults) => (features.or(defaults.features), min.or(defaults.coverage)),
         Err(e) => {
             eprintln!("soothfast: {e}");
             return 2;
