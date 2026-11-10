@@ -416,6 +416,31 @@ Four provider dialects, sniffed from the file automatically:
 | GraphQL SDL | `type Query/Mutation/Subscription { ... }` fields |
 | MCP tool schema | a `tools[]` array, matched by `name` |
 
+## Wire formats with no handler
+
+`cargo soothfast spec check-proto -p PKG --proto FILE --message NAME --source
+FILE --struct NAME` matches a `.proto` message's fields against the
+`#[prost(..)]` fields of a Rust struct by tag, for a wire format the crate
+consumes rather than serves. Both paths are relative to the package
+directory. A field the message declares that the struct lacks, one the struct
+adds, and a tag whose type or label differs are each a failure.
+
+The four flags can live in the package directory's `soothfast.toml` instead,
+one `[[proto]]` entry per message, with the flag names as keys:
+
+```toml ignore
+[[proto]]
+proto = "proto/events.proto"
+message = "Event"
+source = "src/wire.rs"
+struct = "Event"
+```
+
+`spec check-proto -p PKG` with none of the four flags checks every entry of
+that package and fails if any does. With the flags it checks only the message
+they name, as before. A package with neither is a usage error. An older
+`cargo soothfast` skips the `[[proto]]` table.
+
 ## Where route markers live
 
 `#[route]` only works inside a binary that links the registry, and
