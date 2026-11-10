@@ -111,6 +111,16 @@ commands:
            [cargo test args...]
            (the workflow's test job: --base from the event, else every
            package; --project tests one project outside the workspace)
+  ci       verdict [--expect NAME:KIND]... [--accepted LABEL] [--out FILE]
+           (merges the records under the results directory into the pull
+           request comment body, written to FILE or <results>/verdict-comment.md;
+           exits 1 on an error, a missing expected record, or a regression
+           no --accepted label waives)
+  ci       regen [--paths-out FILE] [--baseline NAME]
+           (regenerates the changelog, generate-mode specs and SDKs the
+           project configures, then REGEN_RUN with REGEN_PATHS; prints
+           paths= and changed= lines for the landing step, and writes them
+           to FILE; never commits)
   plan     [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
