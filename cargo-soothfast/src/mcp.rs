@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::io::BufRead;
 
 use serde_json::{Value, json};
-use soothfast_report::llms::SurfaceEntry;
+use soothfast_report::surface::SurfaceEntry;
 
 use crate::{docs_support, invoke};
 
@@ -175,11 +175,26 @@ fn measurements_for(state: &State, path: &str) -> Vec<String> {
     facts
 }
 
+fn surface_summary(state: &State) -> String {
+    let mut out = format!("# {}\n\n", state.pkg);
+    for e in state.entries.iter().filter(|e| e.kind != "module") {
+        let head = if e.signature.is_empty() {
+            e.path.as_str()
+        } else {
+            e.signature.as_str()
+        };
+        out.push_str(&format!("`{head}`"));
+        for f in measurements_for(state, &e.path) {
+            out.push_str(&format!("\n  measured: {f}"));
+        }
+        out.push('\n');
+    }
+    out
+}
+
 fn tool_call(state: &State, name: &str, args: &Value) -> Result<String, String> {
     Ok(match name {
-        "surface_summary" => {
-            soothfast_report::llms::render(&state.pkg, &state.entries, &state.baseline)
-        }
+        "surface_summary" => surface_summary(state),
         "get_item" => {
             let path = args["path"].as_str().unwrap_or("");
             match state.entries.iter().find(|e| e.path == path) {

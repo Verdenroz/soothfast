@@ -1,11 +1,11 @@
 //! `cargo soothfast report render|changelog` — doc fragments produced from
-//! recorded data: perf tables, trend charts, badges, llms.txt, and a living
+//! recorded data: perf tables, trend charts, badges, and a living
 //! CHANGELOG.md whose Unreleased section is regenerated in place.
 
 use std::path::PathBuf;
 
 use serde_json::Value;
-use soothfast_report::{badges, changelog, llms, perf_table, trend_chart};
+use soothfast_report::{badges, changelog, perf_table, trend_chart};
 
 use crate::{coverage_lang, docs_support, invoke, project_surface, workspace};
 
@@ -23,9 +23,6 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 struct ReportArgs {
-    // Repeatable: `report render` accepts multiple `-p PKG` to combine
-    // several crates' surfaces into one llms.txt (a facade crate's own
-    // surface is typically too thin on its own — see llms.rs docs).
     pkg: Vec<String>,
     baseline: String,
     out: Option<PathBuf>,
@@ -133,53 +130,6 @@ fn render(args: &[String]) -> i32 {
             return err(&format!("cannot write {file}"));
         }
         println!("report: wrote {}", out_dir.join(file).display());
-    }
-
-    // llms.txt needs the public surface (nightly rustdoc); skip with a note
-    // when there is neither a package nor a non-Rust project. Multiple -p
-    // flags combine into one digest — a single facade crate's own surface is
-    // typically too thin alone.
-    let targets = match coverage_lang::targets(&root, &a.dirs, a.lang.as_deref()) {
-        Ok(t) => t,
-        Err(e) => return err(&e),
-    };
-    if a.pkg.is_empty() && targets.is_empty() {
-        println!(
-            "report: skipped llms.txt (pass -p PKG to generate; repeat -p for multiple crates)"
-        );
-    } else {
-        let mut entries = Vec::new();
-        for pkg in &a.pkg {
-            match docs_support::surface_entries(pkg, a.features.as_deref()) {
-                Ok(e) => entries.extend(e),
-                Err(e) => return err(&format!("llms.txt needs the API surface of {pkg}: {e}")),
-            }
-        }
-        let label = if a.pkg.len() == 1 {
-            a.pkg[0].clone()
-        } else if a.pkg.is_empty() {
-            targets
-                .iter()
-                .map(|t| t.label.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        } else {
-            a.pkg.join(", ")
-        };
-        let mut text = llms::render(&label, &entries, &baseline);
-        let mut projects = Vec::new();
-        for target in &targets {
-            match project_surface::llms_section(target) {
-                Ok(p) => projects.push(p),
-                Err(e) => return err(&e),
-            }
-        }
-        text.push_str(&llms::render_projects(&projects, &baseline));
-        let path = out_dir.join("llms.txt");
-        if std::fs::write(&path, text).is_err() {
-            return err("cannot write llms.txt");
-        }
-        println!("report: wrote {}", path.display());
     }
     0
 }
