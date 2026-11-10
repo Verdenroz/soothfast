@@ -61,6 +61,29 @@ Two repository settings decide what happens to the bot's pull request:
 A ruleset that requires approving reviews applies to the bot too: its PR
 waits for a human.
 
+## Setting up and pinning
+
+`cargo soothfast init` writes the workflow, `soothfast.toml` and the
+`.gitignore` entry for any repository. A repository with no Cargo manifest
+is set up from the Gradle, Maven, Python and Node projects it tracks, as
+`[[project]]` tables; the Rust-only steps are skipped.
+
+A repository pins soothfast in several places that must agree: the
+`soothfast*` requirements in `Cargo.toml` and their entries in `Cargo.lock`,
+the `uses: <owner>/soothfast...@<sha> # vX.Y.Z` refs in its workflows, a
+`soothfast_ref` input, and a literal `cargo install cargo-soothfast
+--version X.Y.Z`. `cargo soothfast bump [--to VERSION]` moves all of them to
+one release, the running CLI's own unless `--to` says otherwise. It resolves
+each tag to its commit with `git ls-remote`, keeps the version comment in
+step with the SHA, updates `Cargo.lock` for just the packages it moved, and
+prints one line per file it changed. A requirement the release already
+satisfies, such as `"0.5"` against 0.5.7, is left as written.
+
+`cargo soothfast bump --check` writes nothing and needs no network. It
+prints `file:line  found X, want Y` for each stale pin and exits 1 when there
+is one, so it can gate a pull request. A line that names `cargo-soothfast`
+with a version it cannot read is printed as unrecognised and does not fail
+the check.
 ## Checking the setup
 
 `cargo soothfast status` prints what state the setup is in, from what is

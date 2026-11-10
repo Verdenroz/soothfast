@@ -1774,7 +1774,7 @@ pub(crate) struct LockPkg {
     pub(crate) version: String,
     /// Registry entries carry a `source` line; path dependencies don't and
     /// cannot be re-pinned.
-    registry: bool,
+    pub(crate) registry: bool,
 }
 
 pub(crate) fn lock_packages(lock: &str) -> Vec<LockPkg> {

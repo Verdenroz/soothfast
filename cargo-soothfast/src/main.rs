@@ -4,7 +4,7 @@
 //! `import` (other harnesses' results as runs and baselines),
 //! `gate` (baseline / merge-base worktree / ratchet comparison with
 //! thresholds + triage artifacts), `trend append|render`, `coverage`,
-//! `docs`, `spec`, `sdk`, `report`, `site`, and `mcp`.
+//! `docs`, `spec`, `sdk`, `report`, `site`, `bump`, and `mcp`.
 //! Fully synchronous; everything is subprocess + file I/O.
 
 mod agreement;
@@ -13,6 +13,7 @@ mod benchexe;
 mod binstore;
 mod buildcost;
 mod buildstamp;
+mod bump;
 mod cache;
 mod ci;
 mod codekey;
@@ -62,6 +63,7 @@ mod spec_html;
 mod spec_probe;
 mod status;
 mod store;
+mod tagref;
 mod test;
 mod trend;
 mod unitgraph;
@@ -92,6 +94,14 @@ commands:
            soothfast-bot, and implies --labels, which saves [bot] labels = true, adds the labels job
            and creates the soothfast labels with gh, named as [bot]
            configures them; --no-labels skips all three)
+  bump     [--to VERSION] [--check]
+           (moves every soothfast pin in the repository to one release, the
+           running CLI's unless --to names another: soothfast* requirements
+           in Cargo.toml and their Cargo.lock entries, workflow uses: refs of
+           any <owner>/soothfast with their # vX.Y.Z comments, soothfast_ref
+           inputs and literal cargo-soothfast install versions; prints a line
+           per file changed. --check changes nothing, works offline, prints
+           file:line  found X, want Y per stale pin and exits 1 when any)
   labels   [--ref REF] [--role merge|update|ignore|perf-accepted]
            (prints the label names [bot] in soothfast.toml configures, as
            role<TAB>name lines or, with --role, one name per line; --ref
@@ -312,6 +322,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
     match cmd.as_str() {
         "measure" => cmd_measure(rest),
         "init" => init::run(rest),
+        "bump" => bump::run(rest),
         "labels" => labels::run(rest),
         "plan" => plan::run(rest),
         "prebuild" => prebuild::run(rest),

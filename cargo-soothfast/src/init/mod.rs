@@ -9,13 +9,16 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::{invoke, workspace};
+use crate::{invoke, tagref, workspace};
 
 pub(crate) mod bot;
 pub mod ci;
 mod detect;
 pub(crate) mod ecosystem;
 mod textdiff;
+
+#[cfg(test)]
+mod no_cargo_tests;
 
 use bot::{BotLabels, bot_enabled, has_bot_table};
 use ci::Ci;
@@ -338,6 +341,10 @@ struct Pins {
 }
 
 pub fn run(args: &[String]) -> i32 {
+    run_at(&invoke::project_root(), args)
+}
+
+fn run_at(root: &Path, args: &[String]) -> i32 {
     let mut check = false;
     let mut force = false;
     let mut bot = false;
@@ -424,7 +431,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     let implied = bot && !labels && !no_labels;
     let labels = labels || implied;
-    let (root, mut ws, notes) = match target(flags, dir, ci, tools, &bench, check, bot) {
+    let (mut ws, notes) = match target(root, flags, dir, ci, tools, &bench, check, bot) {
         Ok(t) => t,
         Err(e) => return err(&e),
     };
@@ -432,7 +439,7 @@ pub fn run(args: &[String]) -> i32 {
     for note in &notes {
         println!("{note}");
     }
-    let callers = other_callers(&root);
+    let callers = other_callers(root);
     for caller in &callers {
         println!(
             "warn     {caller} calls soothfast; its jobs run twice until it or {WORKFLOW_PATH} is removed"
@@ -453,7 +460,7 @@ pub fn run(args: &[String]) -> i32 {
     if files.is_empty() {
         return 0;
     }
-    let rc = report(&root, &files, check, force);
+    let rc = report(root, &files, check, force);
     if check || rc != 0 {
         return rc;
     }
@@ -464,7 +471,7 @@ pub fn run(args: &[String]) -> i32 {
         );
     }
     if labels {
-        return label_exit(create_labels(&root), implied);
+        return label_exit(create_labels(root), implied);
     }
     0
 }
@@ -601,9 +608,11 @@ fn label_set(labels: &BotLabels) -> Result<Vec<(String, String, String)>, String
     .concat())
 }
 
-/// The project root, what its scaffold derives from, and a line per
-/// project found.
+/// What the scaffold under `root` derives from, and a line per project
+/// found.
+#[allow(clippy::too_many_arguments)]
 fn target(
+    root: &Path,
     flags: Settings,
     dir: Option<String>,
     ci: Ci,
@@ -611,8 +620,7 @@ fn target(
     bench: &[String],
     check: bool,
     bot: bool,
-) -> Result<(PathBuf, Workspace, Vec<String>), String> {
-    let root = invoke::project_root();
+) -> Result<(Workspace, Vec<String>), String> {
     let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
     let stored = parse_projects(&text).map_err(|e| format!("soothfast.toml: {e}"))?;
     let ci = ci.over(Ci::parse(&text).map_err(|e| format!("soothfast.toml: {e}"))?);
@@ -626,7 +634,7 @@ fn target(
         flags
     };
     let rust = root_is_rust || root.join("Cargo.toml").is_file();
-    let (projects, notes) = plan(&root, stored, flags, dir)?;
+    let (projects, notes) = plan(root, stored, flags, dir)?;
     if !rust && projects.is_empty() {
         return Err(if notes.is_empty() {
             "no Cargo.toml, build.gradle(.kts), pom.xml, pyproject.toml, setup.py or \
@@ -636,12 +644,12 @@ fn target(
             notes.join("\n")
         });
     }
-    let markers = has_markers(&root);
+    let markers = has_markers(root);
     let (benched, docs_packages) = if rust {
         invoke::workspace_root().map_err(|e| format!("not in a cargo workspace: {e}"))?;
-        let meta = rust_meta(&root, bench, check)?;
+        let meta = rust_meta(root, bench, check)?;
         let docs = if markers {
-            docs_packages(&root, &meta, &ci)
+            docs_packages(root, &meta, &ci)
         } else {
             Vec::new()
         };
@@ -656,7 +664,7 @@ fn target(
         rust,
         projects,
         ci,
-        default_branch: default_branch(&root, &existing),
+        default_branch: default_branch(root, &existing),
         benched,
         docs_packages,
         action: action_ref(&existing, tools.action.as_deref()),
@@ -671,7 +679,7 @@ fn target(
             .or_else(|| pinned(&existing, "node"))
             .unwrap_or("22".into()),
     };
-    Ok((root, ws, notes))
+    Ok((ws, notes))
 }
 
 /// The non-Rust projects to gate, and a line per project found: saved
@@ -1114,32 +1122,10 @@ fn action_ref(existing: &str, pin: Option<&str>) -> String {
     if let Some(pin) = pinned {
         return pin;
     }
-    let sha = Command::new("git")
-        .args(["ls-remote", "https://github.com/Verdenroz/soothfast"])
-        .arg(format!("refs/tags/{tag}"))
-        .arg(format!("refs/tags/{tag}^{{}}"))
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| tag_commit(&String::from_utf8_lossy(&o.stdout)));
-    match sha {
+    match tagref::tag_sha("Verdenroz/soothfast", &tag) {
         Some(sha) => format!("Verdenroz/soothfast@{sha} # {tag}"),
         None => format!("Verdenroz/soothfast@{tag}"),
     }
-}
-
-/// The commit in `ls-remote` output: an annotated tag's peeled `^{}` line,
-/// else the lightweight tag's own.
-fn tag_commit(listing: &str) -> Option<String> {
-    let refs: Vec<(&str, &str)> = listing
-        .lines()
-        .filter_map(|l| l.split_once('\t'))
-        .filter(|(sha, _)| sha.len() == 40)
-        .collect();
-    refs.iter()
-        .find(|(_, r)| r.ends_with("^{}"))
-        .or_else(|| refs.first())
-        .map(|(sha, _)| sha.to_string())
 }
 
 /// Give `pkg` a `soothfast` bench target: the dev-dependency, the
@@ -1447,19 +1433,6 @@ cmd = "npm test"
             action_ref(&existing, None),
             format!("Verdenroz/soothfast@{sha}")
         );
-    }
-
-    #[test]
-    fn an_annotated_tag_pins_the_commit_it_peels_to() {
-        let tag = "a".repeat(40);
-        let commit = "b".repeat(40);
-        let listing = format!("{tag}\trefs/tags/v1\n{commit}\trefs/tags/v1^{{}}\n");
-        assert_eq!(tag_commit(&listing), Some(commit.clone()));
-        assert_eq!(
-            tag_commit(&format!("{commit}\trefs/tags/v1\n")),
-            Some(commit)
-        );
-        assert_eq!(tag_commit(""), None);
     }
 
     #[test]
