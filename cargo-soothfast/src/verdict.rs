@@ -219,23 +219,36 @@ fn record(args: &[String]) -> Result<i32, String> {
     }
     let name = name.ok_or("record needs --name")?;
     let kind = kind.ok_or("record needs --kind")?;
-    if !KINDS.contains(&kind.as_str()) {
-        return Err(format!("--kind is one of {}", KINDS.join(", ")));
-    }
     let code: i32 = code
         .ok_or("record needs --exit")?
         .parse()
         .map_err(|_| "--exit is not a number")?;
     let output = output.ok_or("record needs --output")?;
+    write_record(name, kind, code, Path::new(&output), seconds, &out)?;
+    Ok(0)
+}
+
+/// Writes one job's record to `out`, read from the job's exit code and the
+/// output saved in `output`.
+pub(crate) fn write_record(
+    name: String,
+    kind: String,
+    code: i32,
+    output: &Path,
+    seconds: u64,
+    out: &Path,
+) -> Result<(), String> {
+    if !KINDS.contains(&kind.as_str()) {
+        return Err(format!("--kind is one of {}", KINDS.join(", ")));
+    }
     // A job that died before the gate wrote anything still records an error.
-    let output = fs::read_to_string(&output).unwrap_or_default();
+    let output = fs::read_to_string(output).unwrap_or_default();
     let rec = build(name, kind, code, &output, seconds);
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let text = serde_json::to_string_pretty(&rec.to_json()).map_err(|e| e.to_string())?;
-    fs::write(&out, text).map_err(|e| format!("{}: {e}", out.display()))?;
-    Ok(0)
+    fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
 }
 
 fn build(name: String, kind: String, code: i32, output: &str, seconds: u64) -> Record {

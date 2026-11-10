@@ -6,6 +6,7 @@
 //! `mod` line and its entry in [`KINDS`].
 
 mod env;
+mod record;
 
 use env::{CiEnv, split_flags};
 
