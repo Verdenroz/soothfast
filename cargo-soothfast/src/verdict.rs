@@ -12,7 +12,7 @@ const REUSE_LINE: &str = "items a stored measurement covers";
 const REUSE_ONE_SIDED: &str = "items run code a stored measurement covers";
 const NOTHING_TO_COMPARE: &str = "nothing to compare";
 const CLAIMS_SKIPPED: &str = "claims not evaluated";
-const KINDS: [&str; 4] = ["rust", "import", "docs", "test"];
+const KINDS: [&str; 5] = ["rust", "import", "docs", "test", "check"];
 /// GitHub rejects a comment over 65,536 characters; the rest is the marker.
 const BODY_LIMIT: usize = 65_000;
 const TRUNCATED: &str = "output truncated";
@@ -270,8 +270,8 @@ fn build(name: String, kind: String, code: i32, output: &str, seconds: u64) -> R
     }
 }
 
-/// A docs failure is drift, not a perf regression, so it is never one the
-/// perf label may waive.
+/// A docs or check failure is drift or breakage, not a perf regression, so
+/// it is never one the perf label may waive.
 fn classify(code: i32, kind: &str, output: &str) -> Verdict {
     match code {
         0 if output.contains(NOTHING_TO_COMPARE) => Verdict::NothingToCompare,
@@ -581,6 +581,16 @@ mod tests {
         assert_eq!(classify(2, "rust", ""), Verdict::Errored);
         assert_eq!(classify(3, "import", ""), Verdict::Errored);
         assert_eq!(classify(1, "docs", ""), Verdict::Errored);
+    }
+
+    #[test]
+    fn a_check_fails_on_any_non_zero_exit_and_is_never_waivable() {
+        assert_eq!(classify(0, "check", "ok"), Verdict::Pass);
+        assert_eq!(classify(1, "check", ""), Verdict::Errored);
+        assert_eq!(classify(2, "check", ""), Verdict::Errored);
+        let failed = [build("spec".into(), "check".into(), 1, "drift", 1)];
+        assert!(fails(&failed, true));
+        assert_eq!(expected("spec:check"), Ok(("spec".into(), "check".into())));
     }
 
     #[test]

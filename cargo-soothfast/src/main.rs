@@ -188,7 +188,7 @@ commands:
            built when the store cannot hold it, and never builds)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
-  verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE
+  verdict  record --name N --kind rust|import|docs|test|check --exit CODE --output FILE
            [--seconds S] [--out FILE]
   verdict  merge DIR --out FILE [--accepted LABEL] [--expect NAME:KIND]..
            (one job's result, then the pull request's single comment;
