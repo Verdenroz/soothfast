@@ -46,7 +46,8 @@ impl Group {
     /// Whether the group's commands have a flag for `key`.
     fn takes(self, key: &str) -> bool {
         match key {
-            "features" | "target" => true,
+            "features" => true,
+            "target" => self != Group::Test,
             "baseline" => matches!(self, Group::Gate | Group::Docs),
             "paths" => self == Group::Docs,
             _ => false,
@@ -60,8 +61,8 @@ impl Group {
 pub struct Settings {
     /// Cargo features, in the form `--features` takes.
     pub features: Option<String>,
-    /// What the group's `--target` takes, so only a group table sets it: the
-    /// bench target for `gate`, a Rust triple for `sdk build` and `test`.
+    /// The bench target a command builds and runs, as `--bench` takes it. Only
+    /// a group table sets it, and `test` has none.
     pub target: Option<String>,
     /// The baseline a command compares against or saves to.
     pub baseline: Option<String>,
@@ -266,6 +267,12 @@ mod tests {
     fn target_belongs_to_a_group_table() {
         let e = parse("[package.a]\ntarget = \"t\"\n").unwrap_err();
         assert_eq!(e, "line 2: unknown or mistyped `target` under [package.a]");
+    }
+
+    #[test]
+    fn the_test_group_has_no_target() {
+        assert!(parse("[package.a.test]\ntarget = \"t\"\n").is_err());
+        assert!(parse("[package.a.test]\nfeatures = \"f\"\n").is_ok());
     }
 
     #[test]

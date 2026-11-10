@@ -61,15 +61,9 @@ fn run_build(args: &[String]) -> i32 {
             }
         }
     }
-    let applied = match config::apply(&mut common, Group::Spec) {
-        Ok(applied) => applied,
-        Err(e) => {
-            eprintln!("soothfast: {e}");
-            return 2;
-        }
-    };
-    if targets.is_empty() {
-        targets.extend(applied.settings.target);
+    if let Err(e) = config::apply(&mut common, Group::Spec) {
+        eprintln!("soothfast: {e}");
+        return 2;
     }
     let Some(pkg) = common.pkg.clone() else {
         eprintln!("soothfast: sdk build requires -p PKG");

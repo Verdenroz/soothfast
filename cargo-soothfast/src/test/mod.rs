@@ -86,8 +86,8 @@ pub fn parse_args(args: &[String]) -> Result<TestArgs, String> {
     Ok(out)
 }
 
-/// `cargo_args` plus the package defaults' `--features` and `--target`, for
-/// each one the command line did not give.
+/// `cargo_args` plus the package defaults' `--features`, unless the command
+/// line gave them.
 fn with_defaults(mut cargo_args: Vec<String>, defaults: Settings) -> Vec<String> {
     let given = |names: &[&str]| {
         cargo_args.iter().any(|a| {
@@ -99,9 +99,6 @@ fn with_defaults(mut cargo_args: Vec<String>, defaults: Settings) -> Vec<String>
     let mut extra = Vec::new();
     if let Some(features) = defaults.features.filter(|_| !given(&["--features", "-F"])) {
         extra.extend(["--features".to_string(), features]);
-    }
-    if let Some(target) = defaults.target.filter(|_| !given(&["--target"])) {
-        extra.extend(["--target".to_string(), target]);
     }
     cargo_args.extend(extra);
     cargo_args
@@ -597,17 +594,16 @@ mod tests {
     fn package_defaults_add_the_cargo_flags_the_command_line_lacks() {
         let defaults = Settings {
             features: Some("all".into()),
-            target: Some("t".into()),
             ..Settings::default()
         };
         let argv = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
             with_defaults(argv(&["--release"]), defaults.clone()),
-            ["--release", "--features", "all", "--target", "t"]
+            ["--release", "--features", "all"]
         );
         assert_eq!(
-            with_defaults(argv(&["--features=x", "--target", "u"]), defaults),
-            ["--features=x", "--target", "u"]
+            with_defaults(argv(&["--features=x"]), defaults),
+            ["--features=x"]
         );
     }
 

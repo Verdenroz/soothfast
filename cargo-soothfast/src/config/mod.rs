@@ -65,8 +65,7 @@ impl Config {
     }
 
     /// Fill the flags `common` leaves unset from the defaults of `pkgs` in
-    /// `group`. `--bench` takes the group's `target` only in `gate`: the
-    /// other groups' targets are not bench targets.
+    /// `group`. `target` fills `--bench`, the bench target the command builds.
     pub fn fill(
         &self,
         common: &mut CommonArgs,
@@ -81,7 +80,7 @@ impl Config {
         if common.features.is_none() {
             common.features = settings.features.clone();
         }
-        if group == Group::Gate && common.target.is_none() {
+        if common.target.is_none() {
             common.target = settings.target.clone();
         }
         Ok(Applied { gate, settings })
@@ -234,7 +233,7 @@ mod tests {
         assert_eq!(settings, Settings::default());
     }
 
-    const FLAGLESS: &str = "[package.core]\nfeatures = \"all\"\nbaseline = \"main\"\n\n[package.core.gate]\nfeatures = \"bench\"\ntarget = \"perf\"\n\n[package.core.spec]\ntarget = \"x86_64-unknown-linux-gnu\"\n";
+    const FLAGLESS: &str = "[package.core]\nfeatures = \"all\"\nbaseline = \"main\"\n\n[package.core.gate]\nfeatures = \"bench\"\ntarget = \"perf\"\n\n[package.core.spec]\ntarget = \"routes\"\n";
 
     fn core() -> CommonArgs {
         CommonArgs {
@@ -269,21 +268,18 @@ mod tests {
     }
 
     #[test]
-    fn the_spec_group_leaves_the_bench_target_alone() {
+    fn the_spec_group_fills_the_bench_target() {
         let mut common = core();
         let applied = config(FLAGLESS)
             .fill(&mut common, Group::Spec, &pkgs(&["core"]))
             .unwrap();
         assert_eq!(common.features.as_deref(), Some("all"));
-        assert_eq!(common.target, None);
-        assert_eq!(
-            applied.settings.target.as_deref(),
-            Some("x86_64-unknown-linux-gnu")
-        );
+        assert_eq!(common.target.as_deref(), Some("routes"));
+        assert_eq!(applied.settings.target.as_deref(), Some("routes"));
     }
 
     #[test]
-    fn the_docs_group_fills_features_but_not_the_bench_target() {
+    fn the_docs_group_fills_features_and_leaves_an_unset_target() {
         let mut common = core();
         config(FLAGLESS)
             .fill(&mut common, Group::Docs, &pkgs(&["core"]))
