@@ -1769,15 +1769,15 @@ fn forget_missing_worktree_in(repo: &Path, wt: &Path) {
 }
 
 /// One `[[package]]` entry from a Cargo.lock.
-struct LockPkg {
-    name: String,
-    version: String,
+pub(crate) struct LockPkg {
+    pub(crate) name: String,
+    pub(crate) version: String,
     /// Registry entries carry a `source` line; path dependencies don't and
     /// cannot be re-pinned.
     registry: bool,
 }
 
-fn lock_packages(lock: &str) -> Vec<LockPkg> {
+pub(crate) fn lock_packages(lock: &str) -> Vec<LockPkg> {
     lock.split("[[package]]")
         .skip(1)
         .filter_map(|block| {
