@@ -1,6 +1,7 @@
 //! `cargo soothfast bump`: move every soothfast pin in a repository to one
 //! release, or with `--check` report the pins that are behind it.
 
+mod rewrite;
 mod scan;
 
 use std::collections::BTreeSet;
@@ -8,16 +9,19 @@ use std::path::{Path, PathBuf};
 
 use crate::invoke;
 
+use rewrite::Tools;
 use scan::Scan;
 
 /// Directories whose manifests belong to someone else.
 const SKIPPED: &[&str] = &["target", "node_modules", "vendor"];
 
 const WORKFLOWS: &str = ".github/workflows";
+const LOCK: &str = "Cargo.lock";
 
 /// A file with the pins it holds.
 struct Scanned {
     path: String,
+    text: String,
     scan: Scan,
 }
 
@@ -35,17 +39,26 @@ pub fn run(args: &[String]) -> i32 {
             other => return crate::arg_err(&format!("unknown bump arg {other:?}")),
         }
     }
-    let scanned = match scan_repo(&invoke::project_root(), &target) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("soothfast: bump: {e}");
-            return 2;
-        }
+    let root = invoke::project_root();
+    let done = if check {
+        scan_repo(&root, &target).map(|scanned| report(&scanned, &target))
+    } else {
+        bump(&root, &target, &Tools::real()).map(|changed| {
+            for path in changed {
+                println!("bumped   {path}");
+            }
+            0
+        })
     };
-    if !check {
-        return crate::arg_err("bump without --check is not available yet");
-    }
-    report(&scanned, &target)
+    done.unwrap_or_else(|e| {
+        eprintln!("soothfast: bump: {e}");
+        2
+    })
+}
+
+/// Rewrite the repository's pins to `target`; the paths that changed.
+fn bump(root: &Path, target: &str, tools: &Tools) -> Result<Vec<String>, String> {
+    rewrite::rewrite(root, &scan_repo(root, target)?, target, tools)
 }
 
 fn report(scanned: &[Scanned], target: &str) -> i32 {
@@ -90,26 +103,31 @@ fn scan_repo(root: &Path, target: &str) -> Result<Vec<Scanned>, String> {
     let mut files = Vec::new();
     let mut packages = BTreeSet::new();
     for path in manifests(root) {
-        let scan = scan::cargo(&read(&path)?, target);
+        let text = read(&path)?;
+        let scan = scan::cargo(&text, target);
         packages.extend(scan.pins.iter().filter_map(|p| p.package.clone()));
         files.push(Scanned {
             path: rel(&path),
+            text,
             scan,
         });
     }
-    if let Ok(text) = std::fs::read_to_string(root.join("Cargo.lock")) {
+    if let Ok(text) = std::fs::read_to_string(root.join(LOCK)) {
         files.push(Scanned {
-            path: "Cargo.lock".into(),
+            path: LOCK.into(),
             scan: Scan {
                 pins: scan::lock(&text, &packages, target),
                 ..Scan::default()
             },
+            text,
         });
     }
     for path in workflows(root) {
+        let text = read(&path)?;
         files.push(Scanned {
             path: rel(&path),
-            scan: scan::workflow(&read(&path)?, target),
+            scan: scan::workflow(&text, target),
+            text,
         });
     }
     Ok(files)
@@ -146,5 +164,7 @@ fn workflows(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+#[cfg(test)]
+mod rewrite_tests;
 #[cfg(test)]
 mod tests;

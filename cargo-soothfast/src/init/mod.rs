@@ -9,7 +9,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::{invoke, workspace};
+use crate::{invoke, tagref, workspace};
 
 pub(crate) mod bot;
 pub mod ci;
@@ -1114,32 +1114,10 @@ fn action_ref(existing: &str, pin: Option<&str>) -> String {
     if let Some(pin) = pinned {
         return pin;
     }
-    let sha = Command::new("git")
-        .args(["ls-remote", "https://github.com/Verdenroz/soothfast"])
-        .arg(format!("refs/tags/{tag}"))
-        .arg(format!("refs/tags/{tag}^{{}}"))
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| tag_commit(&String::from_utf8_lossy(&o.stdout)));
-    match sha {
+    match tagref::tag_sha("Verdenroz/soothfast", &tag) {
         Some(sha) => format!("Verdenroz/soothfast@{sha} # {tag}"),
         None => format!("Verdenroz/soothfast@{tag}"),
     }
-}
-
-/// The commit in `ls-remote` output: an annotated tag's peeled `^{}` line,
-/// else the lightweight tag's own.
-fn tag_commit(listing: &str) -> Option<String> {
-    let refs: Vec<(&str, &str)> = listing
-        .lines()
-        .filter_map(|l| l.split_once('\t'))
-        .filter(|(sha, _)| sha.len() == 40)
-        .collect();
-    refs.iter()
-        .find(|(_, r)| r.ends_with("^{}"))
-        .or_else(|| refs.first())
-        .map(|(sha, _)| sha.to_string())
 }
 
 /// Give `pkg` a `soothfast` bench target: the dev-dependency, the
@@ -1394,19 +1372,6 @@ cmd = "npm test"
             action_ref(&existing, None),
             format!("Verdenroz/soothfast@{sha}")
         );
-    }
-
-    #[test]
-    fn an_annotated_tag_pins_the_commit_it_peels_to() {
-        let tag = "a".repeat(40);
-        let commit = "b".repeat(40);
-        let listing = format!("{tag}\trefs/tags/v1\n{commit}\trefs/tags/v1^{{}}\n");
-        assert_eq!(tag_commit(&listing), Some(commit.clone()));
-        assert_eq!(
-            tag_commit(&format!("{commit}\trefs/tags/v1\n")),
-            Some(commit)
-        );
-        assert_eq!(tag_commit(""), None);
     }
 
     #[test]

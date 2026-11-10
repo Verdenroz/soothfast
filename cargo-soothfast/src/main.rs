@@ -63,6 +63,7 @@ mod spec_gen;
 mod spec_html;
 mod spec_probe;
 mod store;
+mod tagref;
 mod test;
 mod trend;
 mod unitgraph;

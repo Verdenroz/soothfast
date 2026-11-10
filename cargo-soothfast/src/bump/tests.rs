@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use super::*;
 
-const OLD: &str = "0.4.9";
-const NEW: &str = "0.5.7";
+pub(super) const OLD: &str = "0.4.9";
+pub(super) const NEW: &str = "0.5.7";
 
-fn fixture(tag: &str, files: &[(&str, &str)]) -> PathBuf {
+pub(super) fn fixture(tag: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!("soothfast-bump-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     for (path, text) in files {
@@ -16,11 +16,15 @@ fn fixture(tag: &str, files: &[(&str, &str)]) -> PathBuf {
     root
 }
 
-fn sha(c: char) -> String {
+pub(super) fn read(root: &Path, path: &str) -> String {
+    std::fs::read_to_string(root.join(path)).unwrap()
+}
+
+pub(super) fn sha(c: char) -> String {
     c.to_string().repeat(40)
 }
 
-fn check(root: &Path) -> (Vec<String>, bool) {
+pub(super) fn check(root: &Path) -> (Vec<String>, bool) {
     findings(&scan_repo(root, NEW).unwrap(), NEW)
 }
 
