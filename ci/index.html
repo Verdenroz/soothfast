@@ -185,6 +185,23 @@ since only a job in the environment can obtain a bot token.</p>
 </ul>
 <p>A ruleset that requires approving reviews applies to the bot too: its PR
 waits for a human.</p>
+<h2 id="checking-the-setup">Checking the setup<a class="anchor" href="#checking-the-setup" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast status</code> prints what state the setup is in, from what is
+already on disk and in git. It builds, measures and fetches nothing. Each
+line is a state word (<code>ok</code>, <code>stale</code>, <code>failed</code> or <code>missing</code>), the subject and,
+unless it is <code>ok</code>, the command that addresses it:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>failed  gate  2 failure(s); triage: a_item.txt  -&gt; cat .soothfast/triage/a_item.txt
+stale   cli version  cli 0.5.6, Cargo.lock pins 0.5.5  -&gt; cargo install --locked cargo-soothfast --version 0.5.5
+ok      2 checks
+</code></pre></figure>
+<p>The checks cover the CLI against the <code>soothfast</code> version Cargo.lock pins, the
+last <code>gate</code> verdict and its triage, and <code>soothfast.lock</code> once markdown
+carries <code>bind</code> markers. Gate runs and baselines that are not recorded locally
+read as <code>ok</code>, since CI measures them; <code>--all</code> shows which.
+<code>--all</code> lists the <code>ok</code> lines instead of counting them, and <code>--json</code> prints
+the rows as an array of <code>state</code>, <code>subject</code>, <code>detail</code> and <code>fix</code>. The exit code
+is 0 when every row is <code>ok</code> and 1 otherwise. A failed gate points at its
+triage file; accepting a regression stays a decision for a reviewer.</p>
 <h2 id="what-the-step-does">What the step does<a class="anchor" href="#what-the-step-does" aria-label="Link to this section">#</a></h2>
 <p>Every run installs <code>cargo-soothfast</code> pinned to the <code>soothfast</code> version in
 your <code>Cargo.lock</code>, cached across runs. The binary is downloaded from the
@@ -716,6 +733,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
   <ul class="toc-list" id="toc">
   
     <li><a class="toc-l2" href="#setup">Setup</a></li>
+  
+    <li><a class="toc-l2" href="#checking-the-setup">Checking the setup</a></li>
   
     <li><a class="toc-l2" href="#what-the-step-does">What the step does</a></li>
   
