@@ -7,6 +7,7 @@
 
 mod env;
 mod record;
+mod regen;
 mod test;
 mod verdict;
 
@@ -54,7 +55,7 @@ const KINDS: &[Kind] = &[
     },
     Kind {
         name: "regen",
-        run: None,
+        run: Some(regen::run),
         applies: |_| true,
     },
 ];
