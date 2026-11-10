@@ -1,7 +1,8 @@
 use soothfast_docs::lockfile::LOCKFILE;
 
 use super::{Ctx, Row, State};
-use crate::{docs_config, invoke};
+use crate::config::Config;
+use crate::invoke;
 
 const SUBJECT: &str = "docs lock";
 
@@ -18,7 +19,8 @@ pub(super) fn check(ctx: &Ctx) -> Vec<Row> {
     if ctx.root.join(LOCKFILE).is_file() {
         return vec![Row::ok(SUBJECT, format!("{LOCKFILE} present"))];
     }
-    let fix = match docs_config::load(&ctx.root)
+    let fix = match Config::load(&ctx.root)
+        .and_then(|c| c.docs())
         .ok()
         .and_then(|c| c.package)
         .and_then(|p| p.into_iter().next())
