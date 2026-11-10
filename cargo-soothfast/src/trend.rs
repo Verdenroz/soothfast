@@ -39,7 +39,7 @@ pub fn working_copy(root: &Path) -> PathBuf {
 /// means one may exist but could not be read, which callers must not treat
 /// as empty.
 pub fn load(root: &Path) -> Result<Option<String>, String> {
-    load_from(root, PAGES_REMOTE, PAGES_BRANCH, false)
+    load_from(root, PAGES_REMOTE, PAGES_BRANCH)
 }
 
 /// The parsed series points, in recorded order.
@@ -54,21 +54,14 @@ pub fn parse_points(text: &str) -> Vec<Value> {
         .collect()
 }
 
-/// With `fresh`, the branch tip is always fetched instead of trusting an
-/// existing remote-tracking ref, which may lag the remote.
-fn load_from(
-    root: &Path,
-    remote: &str,
-    branch: &str,
-    fresh: bool,
-) -> Result<Option<String>, String> {
+fn load_from(root: &Path, remote: &str, branch: &str) -> Result<Option<String>, String> {
     let local = working_copy(root);
     if local.exists() {
         return std::fs::read_to_string(&local)
             .map(Some)
             .map_err(|e| format!("{}: {e}", local.display()));
     }
-    read_branch(root, remote, branch, fresh)
+    read_branch(root, remote, branch, false)
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Result<Output, String> {
@@ -87,6 +80,8 @@ fn git_failure(args: &[&str], out: &Output) -> String {
     )
 }
 
+/// With `fresh`, the branch tip is always fetched instead of trusting an
+/// existing remote-tracking ref, which may lag the remote.
 fn read_branch(
     root: &Path,
     remote: &str,
@@ -223,14 +218,19 @@ fn append(args: &[String]) -> i32 {
     0
 }
 
-/// Appends `line` to the working copy, first seeding it from the Pages
-/// branch when no copy exists. A branch that cannot be read is an error:
-/// appending to an empty series would let the next publish erase history.
+/// Appends `line` to the working copy, seeded from the freshly fetched Pages
+/// tip. A working copy outranks the branch only when the branch has no series
+/// (a stale restored copy must not drop points published since). A branch
+/// that cannot be read is an error: appending to an empty series would let
+/// the next publish erase history.
 fn append_line(root: &Path, remote: &str, branch: &str, line: &str) -> Result<PathBuf, String> {
-    let existing = load_from(root, remote, branch, true)
-        .map_err(|e| format!("cannot read the existing trend series: {e}"))?
-        .unwrap_or_default();
     let path = working_copy(root);
+    let published = read_branch(root, remote, branch, true)
+        .map_err(|e| format!("cannot read the existing trend series: {e}"))?;
+    let existing = match published {
+        Some(text) => text,
+        None => std::fs::read_to_string(&path).unwrap_or_default(),
+    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
@@ -399,21 +399,21 @@ mod tests {
         let root = scratch("local");
         std::fs::create_dir_all(root.join(".soothfast")).unwrap();
         std::fs::write(working_copy(&root), "{\"a\":1}\n").unwrap();
-        let text = load_from(&root, "origin", "gh-pages", false).unwrap();
+        let text = load_from(&root, "origin", "gh-pages").unwrap();
         assert_eq!(text.as_deref(), Some("{\"a\":1}\n"));
     }
 
     #[test]
     fn the_branch_tip_is_fetched_when_there_is_no_local_copy() {
         let root = repo_with_origin("tip", Some("{\"b\":2}\n"));
-        let text = load_from(&root, "origin", "gh-pages", false).unwrap();
+        let text = load_from(&root, "origin", "gh-pages").unwrap();
         assert_eq!(text.as_deref(), Some("{\"b\":2}\n"));
     }
 
     #[test]
     fn a_missing_branch_is_an_empty_series() {
         let root = repo_with_origin("missing", None);
-        assert_eq!(load_from(&root, "origin", "gh-pages", false).unwrap(), None);
+        assert_eq!(load_from(&root, "origin", "gh-pages").unwrap(), None);
     }
 
     #[test]
@@ -423,7 +423,7 @@ mod tests {
             &root,
             &["remote", "set-url", "origin", "/nonexistent/origin.git"],
         );
-        assert!(load_from(&root, "origin", "gh-pages", false).is_err());
+        assert!(load_from(&root, "origin", "gh-pages").is_err());
     }
 
     #[test]
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn append_seeds_from_the_remote_tip_not_a_stale_tracking_ref() {
         let root = repo_with_origin("stale", Some("{\"b\":2}\n"));
-        load_from(&root, "origin", "gh-pages", false).unwrap();
+        load_from(&root, "origin", "gh-pages").unwrap();
         let origin = root.parent().unwrap().join("origin.git");
         let other = scratch("stale-pusher");
         git(
@@ -461,6 +461,30 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
             "{\"b\":2}\n{\"d\":4}\n{\"c\":3}\n"
+        );
+    }
+
+    #[test]
+    fn append_prefers_the_branch_series_over_a_stale_working_copy() {
+        let root = repo_with_origin("stalelocal", Some("{\"b\":2}\n{\"d\":4}\n"));
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n").unwrap();
+        let path = append_line(&root, "origin", "gh-pages", "{\"c\":3}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"b\":2}\n{\"d\":4}\n{\"c\":3}\n"
+        );
+    }
+
+    #[test]
+    fn append_keeps_the_working_copy_when_the_branch_has_no_series() {
+        let root = repo_with_origin("migrate", None);
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n").unwrap();
+        let path = append_line(&root, "origin", "gh-pages", "{\"c\":3}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"b\":2}\n{\"c\":3}\n"
         );
     }
 
