@@ -744,6 +744,20 @@ regressed and 2 when one errored. `--accepted LABEL` turns a regression into
 a pass and adds a line to the comment naming the label, but never waives an
 error. Who may apply the label is for the workflow to decide before it passes
 the flag.
+`ci docs` is the `Docs check` job. It checks the `[docs] package`s, or the
+`-p` ones given, with the defaults each package resolves in `soothfast.toml`.
+On a pull request `docs check` compares against `origin/` the base branch, and
+elsewhere in a run against `HEAD^`; a local run compares against nothing.
+`--baselines DIR` is where the gate legs' baselines were downloaded, one
+directory per leg: they are merged into the `head` baseline, which the check
+then reads. `--expect-shards N` is the shard count the gate ran with, and
+applies to pull requests only, since a push records in one leg. `--plan FILE`
+names the item listing the gate wrote. A run the gate does not measure on
+merges as not gated. When no gate measures the repository, claims are skipped
+and the output says so. When the merge fails, claims are skipped, binds and
+examples are still checked, and the job exits with the merge's code. Without
+`--baselines` nothing is merged and the check reads whatever baseline exists
+locally. The record is named `docs`.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure.

@@ -118,7 +118,12 @@ commands:
            against its base, a default-branch push records HEAD against its
            parent; --accepted waives regressions, never errors, and the
            comment lands in DIR/gate-comment.md)
-  plan    [--github]
+  ci       docs [-p PKG]... [--baselines DIR [--expect-shards N] [--plan FILE]]
+           (the workflow's docs job: merges the gate legs' baselines in DIR,
+           then runs docs check against the pull request's base or the
+           previous commit; with no --baselines it checks against whatever
+           baseline exists locally)
+  plan     [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
            --github prints $GITHUB_OUTPUT lines)
