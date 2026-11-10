@@ -1295,7 +1295,7 @@ pub(crate) const RUSTDOC_FORMAT_VERSION: u64 = 61;
 /// Toolchain that builds rustdoc JSON, `SOOTHFAST_RUSTDOC_TOOLCHAIN` or
 /// plain `nightly`.
 ///
-/// Pin a dated nightly to keep committed artifacts (`llms.txt`, generated
+/// Pin a dated nightly to keep committed artifacts (generated
 /// specs) reproducible: on a floating `nightly` they are only valid until
 /// rustdoc next changes its output.
 fn rustdoc_toolchain() -> String {

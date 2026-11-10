@@ -118,7 +118,7 @@ $ cargo soothfast docs capture -p mylib                   # run examples, splice
 $ cargo soothfast docs check -p mylib                     # binds + claims + generated-artifact manifest
 $ cargo soothfast docs accept -p mylib                    # re-lock soothfast.lock after verifying prose
 $ cargo soothfast spec check -p myserver                  # #[route] vs OpenAPI/GraphQL/MCP specs
-$ cargo soothfast report render -p mylib                  # perf tables, trend SVGs, badges, llms.txt
+$ cargo soothfast report render -p mylib                  # perf tables, trend SVGs, badges
 $ cargo soothfast mcp -p mylib                            # agent-facing server on stdio
 ```
 
@@ -220,7 +220,7 @@ of allocations per call. Eight is the gated ceiling.
 | `soothfast-docs` | rustdoc JSON ingestion, bind blocks, doc-test generation |
 | `soothfast-spec` | Declared-surface reconciliation: OpenAPI/AsyncAPI/GraphQL/MCP |
 | `soothfast-sdk` | Python and TypeScript client emitters, with optional embedded servers |
-| `soothfast-report` | Renderers: perf tables, trend charts, changelogs, llms.txt |
+| `soothfast-report` | Renderers: perf tables, trend charts, changelogs |
 | `soothfast-site` | The docs-site engine behind `docs build` |
 | `cargo-soothfast` | The CLI: everything CI calls |
 

@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 use soothfast_docs::{diff, surface};
-use soothfast_report::llms::SurfaceEntry;
+use soothfast_report::surface::SurfaceEntry;
 
 use crate::invoke;
 
@@ -33,7 +33,7 @@ pub fn docs_text(doc: &Value) -> std::collections::BTreeMap<String, String> {
     out
 }
 
-/// llms.txt entries: every public item with signature + full doc comment.
+/// Surface entries: every public item with signature + full doc comment.
 pub fn surface_entries(pkg: &str, features: Option<&str>) -> Result<Vec<SurfaceEntry>, String> {
     let (surf, doc) = load(pkg, features)?;
     let docs = docs_text(&doc);

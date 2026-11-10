@@ -45,7 +45,6 @@ $ cargo soothfast report render -p mylib --baseline self
 report: wrote docs/perf/summary.md
 report: wrote docs/perf/summary.html
 report: wrote docs/perf/badges/gate.json
-report: wrote docs/perf/llms.txt
 ```
 
 `summary.md` and `summary.html` are `perf_table::markdown` and `html` over
@@ -57,26 +56,40 @@ The trend SVGs (`trend-instructions.svg`, `trend-walltime_median_ns.svg`,
 two points for that metric. Below that `trend_chart::render` returns `None`
 and `report render` skips the file rather than draw an empty axis.
 
-`llms.txt` is written only when `-p PKG` is given. It is `PKG`'s public
-surface, meaning each signature and its first doc line, joined against the
-baseline by id and falling back to `covers=`. An agent reading it can answer
-"what does `X` measure right now" without guessing from a README that may be
-out of date.
-
 Items brought in by `import` get their own section per import prefix in the
 perf tables, with walltime median, mad and p99 under the harness name. Each
 one also draws as a line in the trend charts, apart from the Rust fleet's
-band. When the repo has non-Rust `[[project]]` entries (or `--dir D --lang L`
-is given), `llms.txt` adds a section per project listing its documented
-public symbols and their measured walltime.
+band.
 
 ## Trend and changelog
 
 `cargo soothfast trend append -p mylib` appends one line per run
-(`{unix, commit, noise_pct, items}`) to `.soothfast/trend.jsonl`. That file
-feeds both the SVG charts above and `trend render`, which prints each
-metric's drift from first to last point straight to stdout. It writes no
-file of its own, since charting is `report render`'s job.
+(`{unix, commit, noise_pct, items}`) to the series. That series feeds both
+the SVG charts above and `trend render`, which prints each metric's drift
+from first to last point straight to stdout. It writes no file of its own,
+since charting is `report render`'s job.
+
+The series lives on the Pages branch (`gh-pages` on `origin`, the branch
+`docs gh-deploy` publishes to) as `trend.jsonl` at its root, not on the
+default branch. Everything that reads it goes through one loader: the working
+copy `.soothfast/trend.jsonl` when it exists, otherwise the file at the tip of
+the Pages branch, fetched when needed. `trend append` fetches the Pages
+branch's current tip before adding its line. It fails if the
+branch exists but cannot be read, since appending to an empty series would
+erase history on the next publish. A branch that does not exist yet is an
+empty series.
+
+What gets appended to and published is the Pages branch's series, except that
+the working copy wins when the branch has no series or when the working copy
+extends it (the branch's text is a prefix of it); a stale working copy, such as
+one restored from an old cache, never overwrites the branch.
+
+`docs build` copies that series into the site root as `trend.jsonl`, so
+`docs gh-deploy` and any publish of the built directory carry it onto the
+Pages branch. A repo that still has `.soothfast/trend.jsonl` committed on its
+default branch needs no migration step: that file is read as the working copy,
+the next site publish puts it on the Pages branch, and the committed file can
+then be deleted.
 
 `--from-baseline NAME` builds the point from a saved baseline instead of
 measuring again — a pipeline whose gate already ran with `--save-baseline`
