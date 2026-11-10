@@ -13,6 +13,7 @@ mod benchexe;
 mod binstore;
 mod buildcost;
 mod buildstamp;
+mod bump;
 mod cache;
 mod changelog_config;
 mod codekey;
@@ -262,6 +263,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
     match cmd.as_str() {
         "measure" => cmd_measure(rest),
         "init" => init::run(rest),
+        "bump" => bump::run(rest),
         "labels" => labels::run(rest),
         "plan" => plan::run(rest),
         "prebuild" => prebuild::run(rest),
