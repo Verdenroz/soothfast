@@ -616,6 +616,45 @@ once, for <code>gate</code>, <code>measure</code> and <code>spec gen</code> alik
 the command line left unset. The action's <code>features</code> input sets the same thing
 for CI, so a repository that configures the file gets one behaviour from a
 hand-run <code>cargo soothfast gate</code> and from the action.</p>
+<h2 id="per-package-defaults">Per-package defaults<a class="anchor" href="#per-package-defaults" aria-label="Link to this section">#</a></h2>
+<p>A repository with several packages, or one package that builds with
+different features per command, repeats <code>-p</code>, <code>--features</code>, <code>--bench</code> and
+<code>--baseline</code> wherever it calls soothfast. A <code>[package.NAME]</code> table holds
+those once. <code>[package.NAME.GROUP]</code> overrides it for one group of commands:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[package.server]</span>
+<span class="tok-ty">features </span>=<span class="tok-str"> &quot;full&quot;</span>
+
+<span class="tok-kw">[package.server.gate]</span>
+<span class="tok-ty">features </span>=<span class="tok-str"> &quot;bench-gate&quot;</span>
+<span class="tok-ty">baseline </span>=<span class="tok-str"> &quot;release&quot;</span>
+
+<span class="tok-kw">[package.server.spec]</span>
+<span class="tok-ty">target </span>=<span class="tok-str"> &quot;routes&quot;</span>
+
+<span class="tok-kw">[package.server.docs]</span>
+<span class="tok-ty">paths </span>=<span class="tok-str"> [&quot;README.md&quot;, &quot;docs/server&quot;]</span></code></pre></figure>
+<div class="tablewrap"><table>
+<thead><tr><th>Group</th><th>Commands</th><th>Keys</th></tr></thead>
+<tbody>
+<tr><td><code>gate</code></td><td><code>gate</code>, <code>measure</code>, <code>baseline</code>, <code>prebuild</code>, <code>trend append</code>, <code>buildcost</code></td><td><code>features</code>, <code>target</code>, <code>baseline</code></td></tr>
+<tr><td><code>docs</code></td><td><code>docs *</code>, <code>coverage</code>, <code>report</code>, <code>mcp</code></td><td><code>features</code>, <code>target</code>, <code>baseline</code>, <code>paths</code></td></tr>
+<tr><td><code>spec</code></td><td><code>spec *</code>, <code>sdk *</code></td><td><code>features</code>, <code>target</code></td></tr>
+<tr><td><code>test</code></td><td><code>test</code></td><td><code>features</code></td></tr>
+</tbody>
+</table></div>
+<p><code>features</code> takes what <code>--features</code> takes. <code>target</code> is the bench target a
+command builds, what <code>--bench</code> takes, and only a group table sets it.
+<code>baseline</code> is the baseline <code>--baseline</code> names. <code>paths</code> replaces <code>[docs] paths</code>
+as the PATHS <code>docs</code> commands scan when none are given. A key a group's
+commands have no flag for is an error naming its line.</p>
+<p>From highest precedence: the command-line flag, <code>[package.NAME.GROUP]</code>,
+<code>[package.NAME]</code>, the repo-wide section (<code>[gate] features</code>, <code>[docs] paths</code>),
+then the built-in default. A file with no <code>[package.*]</code> table behaves as
+before. The package is the command's <code>-p</code> (<code>docs</code> also takes <code>[docs]
+package</code>); a command with none reads only the repo-wide section. Given
+several packages, they must resolve to the same defaults, or the command asks
+to be run once per package. Any package name works, quoted when it contains a
+dot, and one the workspace lacks is not an error.</p>
 <h2 id="ratchets">Ratchets<a class="anchor" href="#ratchets" aria-label="Link to this section">#</a></h2>
 <div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_measure::sweep::evaluate"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">evaluate</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
 <p><code>--ratchet NAME</code> runs a second comparison against a long-lived baseline,
@@ -752,6 +791,8 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l2" href="#when-the-harness-moves-under-a-pr">When the harness moves under a PR</a></li>
   
     <li><a class="toc-l2" href="#features">Features</a></li>
+  
+    <li><a class="toc-l2" href="#per-package-defaults">Per-package defaults</a></li>
   
     <li><a class="toc-l2" href="#ratchets">Ratchets</a></li>
   
