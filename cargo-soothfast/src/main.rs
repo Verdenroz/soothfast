@@ -213,7 +213,7 @@ commands:
            the SDK surface is the linked generate-mode spec surface)
   sdk      publish -p PKG [--only LANG] [--dry-run]   (refuses stale output;
            python publishes via `uv build` + `uv publish`)
-  report   render -p PKG [--out DIR] [--baseline NAME] [--features F] [--dir D --lang L]
+  report   render [--out DIR] [--baseline NAME]
   report   changelog -p PKG [-p PKG ...] [--against-ref REF] [--features F]
            [--bot-author NAME]
            (no --against-ref: first release, lists the surface it ships)

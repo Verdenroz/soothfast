@@ -10,7 +10,7 @@ drifts from what the code actually does.
 ## This site is the dogfood
 
 Every page here is either produced by soothfast from the current code (the
-API reference, performance tables, coverage, `llms.txt`) or gated by it.
+API reference, performance tables, coverage) or gated by it.
 This page and the guide carry bind and claim markers that fail CI when the
 code or the numbers change underneath them. Nothing here is maintained by
 hand.
@@ -44,7 +44,7 @@ costs under five thousand allocations.
 - **[SDKs](sdk.md)**: Python and TypeScript clients emitted from the same
   handlers, and how to bundle a server inside one.
 - **[Reports](reports.md)**: perf tables, SVG trend charts, badges,
-  changelog drafts, and `llms.txt`, all produced from a baseline.
+  and changelog drafts, all produced from a baseline.
 - **[API reference](reference/soothfast.md)**: generated from rustdoc JSON
   on every build. Items show their verified claims and measured cost.
 - **[Performance](perf/summary.md)**: the latest measurement run as tables

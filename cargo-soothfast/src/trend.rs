@@ -2,6 +2,9 @@
 //! merge to main), rendered as first→last drift per item. Chart rendering
 //! lives in `soothfast-report`; the series format is the contract.
 
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
 use serde_json::{Value, json};
 
 use crate::config::{self, Group};
@@ -20,10 +23,111 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-fn trend_path() -> std::io::Result<std::path::PathBuf> {
-    Ok(invoke::workspace_root()?
-        .join(".soothfast")
-        .join("trend.jsonl"))
+/// Branch the built site is published to; the series lives at its root.
+pub const PAGES_BRANCH: &str = "gh-pages";
+/// Remote `PAGES_BRANCH` is fetched from.
+pub const PAGES_REMOTE: &str = "origin";
+
+const SERIES_FILE: &str = "trend.jsonl";
+
+/// The local working copy of the series.
+pub fn working_copy(root: &Path) -> PathBuf {
+    root.join(".soothfast").join(SERIES_FILE)
+}
+
+/// The series text: the working copy when it exists, otherwise the file at
+/// the tip of the Pages branch. `None` means no series exists yet. An error
+/// means one may exist but could not be read, which callers must not treat
+/// as empty.
+pub fn load(root: &Path) -> Result<Option<String>, String> {
+    load_from(root, PAGES_REMOTE, PAGES_BRANCH)
+}
+
+/// The parsed series points, in recorded order.
+pub fn load_points(root: &Path) -> Result<Vec<Value>, String> {
+    Ok(parse_points(&load(root)?.unwrap_or_default()))
+}
+
+/// The points in `text`, skipping lines that are not JSON.
+pub fn parse_points(text: &str) -> Vec<Value> {
+    text.lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+fn load_from(root: &Path, remote: &str, branch: &str) -> Result<Option<String>, String> {
+    let local = working_copy(root);
+    if local.exists() {
+        return std::fs::read_to_string(&local)
+            .map(Some)
+            .map_err(|e| format!("{}: {e}", local.display()));
+    }
+    read_branch(root, remote, branch, false)
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Result<Output, String> {
+    Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("git {}: {e}", args.join(" ")))
+}
+
+fn git_failure(args: &[&str], out: &Output) -> String {
+    format!(
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&out.stderr).trim()
+    )
+}
+
+/// With `fresh`, the branch tip is always fetched instead of trusting an
+/// existing remote-tracking ref, which may lag the remote.
+fn read_branch(
+    root: &Path,
+    remote: &str,
+    branch: &str,
+    fresh: bool,
+) -> Result<Option<String>, String> {
+    if !git_output(root, &["remote", "get-url", remote])?
+        .status
+        .success()
+    {
+        return Ok(None);
+    }
+    let tip = format!("refs/remotes/{remote}/{branch}");
+    let verify = ["rev-parse", "--verify", "--quiet", &tip];
+    if fresh || !git_output(root, &verify)?.status.success() {
+        let ls = ["ls-remote", "--exit-code", "--heads", remote, branch];
+        let out = git_output(root, &ls)?;
+        match out.status.code() {
+            Some(0) => {}
+            // `--exit-code` reports 2 when the remote answered and has no such branch.
+            Some(2) => return Ok(None),
+            _ => return Err(git_failure(&ls, &out)),
+        }
+        let spec = format!("+refs/heads/{branch}:{tip}");
+        let fetch = ["fetch", "--depth", "1", remote, &spec];
+        let out = git_output(root, &fetch)?;
+        if !out.status.success() {
+            return Err(git_failure(&fetch, &out));
+        }
+    }
+    let path = format!("{tip}:{SERIES_FILE}");
+    let ls_tree = ["ls-tree", "--name-only", &tip, SERIES_FILE];
+    let out = git_output(root, &ls_tree)?;
+    if !out.status.success() {
+        return Err(git_failure(&ls_tree, &out));
+    }
+    if out.stdout.is_empty() {
+        return Ok(None);
+    }
+    let show = ["show", &path];
+    let out = git_output(root, &show)?;
+    if !out.status.success() {
+        return Err(git_failure(&show, &out));
+    }
+    Ok(Some(String::from_utf8_lossy(&out.stdout).into_owned()))
 }
 
 fn append(args: &[String]) -> i32 {
@@ -102,28 +206,61 @@ fn append(args: &[String]) -> i32 {
         (record, run.items.len())
     };
 
-    let path = match trend_path() {
+    let root = match invoke::workspace_root() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 1;
+        }
+    };
+    let mut line = record.to_string();
+    line.push('\n');
+    let path = match append_line(&root, PAGES_REMOTE, PAGES_BRANCH, &line) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("soothfast: {e}");
             return 1;
         }
     };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let mut line = record.to_string();
-    line.push('\n');
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    if std::fs::write(&path, existing + &line).is_err() {
-        eprintln!("soothfast: failed to write {}", path.display());
-        return 1;
-    }
     println!(
         "trend: appended {count} item(s) at commit {commit} -> {}",
         path.display()
     );
     0
+}
+
+/// The series to publish or to extend: the freshly fetched Pages series,
+/// except that the working copy wins when the branch has no series or the
+/// working copy extends it (the branch text is a prefix: points appended
+/// locally and not yet published). A stale working copy, such as one restored
+/// from an old cache, loses to the branch. A branch that cannot be read is an
+/// error, since continuing with an empty series would let a publish erase
+/// history.
+pub fn publishable(root: &Path) -> Result<Option<String>, String> {
+    publishable_from(root, PAGES_REMOTE, PAGES_BRANCH)
+}
+
+fn publishable_from(root: &Path, remote: &str, branch: &str) -> Result<Option<String>, String> {
+    let published = read_branch(root, remote, branch, true)?;
+    let local = std::fs::read_to_string(working_copy(root)).ok();
+    Ok(match (published, local) {
+        (Some(b), Some(l)) if l.starts_with(&b) => Some(l),
+        (Some(b), _) => Some(b),
+        (None, local) => local,
+    })
+}
+
+/// Appends `line` to the working copy, seeded from `publishable_from`.
+fn append_line(root: &Path, remote: &str, branch: &str, line: &str) -> Result<PathBuf, String> {
+    let existing = publishable_from(root, remote, branch)
+        .map_err(|e| format!("cannot read the existing trend series: {e}"))?
+        .unwrap_or_default();
+    let path = working_copy(root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::write(&path, existing + line).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
 }
 
 /// A trend point built from a saved baseline instead of a fresh measurement.
@@ -166,21 +303,16 @@ fn point_from_baseline(
 }
 
 fn render() -> i32 {
-    let path = match trend_path() {
+    let points = match invoke::workspace_root()
+        .map_err(|e| e.to_string())
+        .and_then(|root| load_points(&root))
+    {
         Ok(p) => p,
         Err(e) => {
             eprintln!("soothfast: {e}");
             return 1;
         }
     };
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        eprintln!("soothfast: no trend series yet — run `cargo soothfast trend append` first");
-        return 2;
-    };
-    let points: Vec<Value> = text
-        .lines()
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect();
     if points.is_empty() {
         eprintln!("soothfast: trend series is empty");
         return 2;
@@ -235,8 +367,196 @@ fn render() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::point_from_baseline;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
     use serde_json::json;
+
+    use super::{append_line, load_from, point_from_baseline, publishable_from, working_copy};
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-trend-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A work repo whose `origin` is a bare repo; `series` is committed as
+    /// `trend.jsonl` on its `gh-pages` branch when given.
+    fn repo_with_origin(name: &str, series: Option<&str>) -> PathBuf {
+        let base = scratch(name);
+        let origin = base.join("origin.git");
+        let work = base.join("work");
+        std::fs::create_dir_all(&origin).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        git(&origin, &["init", "-q", "--bare"]);
+        git(&work, &["init", "-q"]);
+        git(
+            &work,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        git(&work, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        if let Some(text) = series {
+            git(&work, &["checkout", "-q", "--orphan", "gh-pages"]);
+            std::fs::write(work.join("trend.jsonl"), text).unwrap();
+            git(&work, &["add", "trend.jsonl"]);
+            git(&work, &["commit", "-q", "-m", "series"]);
+            git(&work, &["push", "-q", "origin", "gh-pages"]);
+            git(&work, &["update-ref", "-d", "refs/remotes/origin/gh-pages"]);
+        }
+        work
+    }
+
+    #[test]
+    fn the_local_copy_is_read_without_touching_the_remote() {
+        let root = scratch("local");
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"a\":1}\n").unwrap();
+        let text = load_from(&root, "origin", "gh-pages").unwrap();
+        assert_eq!(text.as_deref(), Some("{\"a\":1}\n"));
+    }
+
+    #[test]
+    fn the_branch_tip_is_fetched_when_there_is_no_local_copy() {
+        let root = repo_with_origin("tip", Some("{\"b\":2}\n"));
+        let text = load_from(&root, "origin", "gh-pages").unwrap();
+        assert_eq!(text.as_deref(), Some("{\"b\":2}\n"));
+    }
+
+    #[test]
+    fn a_missing_branch_is_an_empty_series() {
+        let root = repo_with_origin("missing", None);
+        assert_eq!(load_from(&root, "origin", "gh-pages").unwrap(), None);
+    }
+
+    #[test]
+    fn an_unreachable_remote_is_an_error() {
+        let root = repo_with_origin("unreadable", None);
+        git(
+            &root,
+            &["remote", "set-url", "origin", "/nonexistent/origin.git"],
+        );
+        assert!(load_from(&root, "origin", "gh-pages").is_err());
+    }
+
+    #[test]
+    fn append_seeds_the_working_copy_from_the_branch() {
+        let root = repo_with_origin("seed", Some("{\"b\":2}\n"));
+        let path = append_line(&root, "origin", "gh-pages", "{\"c\":3}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"b\":2}\n{\"c\":3}\n"
+        );
+    }
+
+    #[test]
+    fn append_seeds_from_the_remote_tip_not_a_stale_tracking_ref() {
+        let root = repo_with_origin("stale", Some("{\"b\":2}\n"));
+        load_from(&root, "origin", "gh-pages").unwrap();
+        let origin = root.parent().unwrap().join("origin.git");
+        let other = scratch("stale-pusher");
+        git(
+            &other,
+            &[
+                "clone",
+                "-q",
+                "-b",
+                "gh-pages",
+                origin.to_str().unwrap(),
+                "w",
+            ],
+        );
+        let w = other.join("w");
+        std::fs::write(w.join("trend.jsonl"), "{\"b\":2}\n{\"d\":4}\n").unwrap();
+        git(&w, &["commit", "-q", "-am", "newer"]);
+        git(&w, &["push", "-q", "origin", "gh-pages"]);
+        let path = append_line(&root, "origin", "gh-pages", "{\"c\":3}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"b\":2}\n{\"d\":4}\n{\"c\":3}\n"
+        );
+    }
+
+    #[test]
+    fn append_prefers_the_branch_series_over_a_stale_working_copy() {
+        let root = repo_with_origin("stalelocal", Some("{\"b\":2}\n{\"d\":4}\n"));
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n").unwrap();
+        let path = append_line(&root, "origin", "gh-pages", "{\"c\":3}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"b\":2}\n{\"d\":4}\n{\"c\":3}\n"
+        );
+    }
+
+    #[test]
+    fn append_keeps_the_working_copy_when_the_branch_has_no_series() {
+        let root = repo_with_origin("migrate", None);
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n").unwrap();
+        let path = append_line(&root, "origin", "gh-pages", "{\"c\":3}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"b\":2}\n{\"c\":3}\n"
+        );
+    }
+
+    #[test]
+    fn publishable_series_is_the_branch_when_the_working_copy_is_stale() {
+        let root = repo_with_origin("pubstale", Some("{\"b\":2}\n{\"d\":4}\n"));
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n").unwrap();
+        let text = publishable_from(&root, "origin", "gh-pages").unwrap();
+        assert_eq!(text.as_deref(), Some("{\"b\":2}\n{\"d\":4}\n"));
+    }
+
+    #[test]
+    fn publishable_series_is_the_working_copy_when_it_extends_the_branch() {
+        let root = repo_with_origin("pubahead", Some("{\"b\":2}\n"));
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n{\"c\":3}\n").unwrap();
+        let text = publishable_from(&root, "origin", "gh-pages").unwrap();
+        assert_eq!(text.as_deref(), Some("{\"b\":2}\n{\"c\":3}\n"));
+    }
+
+    #[test]
+    fn publishable_series_is_the_working_copy_when_the_branch_has_none() {
+        let root = repo_with_origin("pubnone", None);
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(working_copy(&root), "{\"b\":2}\n").unwrap();
+        let text = publishable_from(&root, "origin", "gh-pages").unwrap();
+        assert_eq!(text.as_deref(), Some("{\"b\":2}\n"));
+    }
+
+    #[test]
+    fn a_repo_without_the_remote_has_no_series() {
+        let root = scratch("noremote");
+        git(&root, &["init", "-q"]);
+        assert_eq!(publishable_from(&root, "origin", "gh-pages").unwrap(), None);
+    }
+
+    #[test]
+    fn append_fails_without_writing_when_the_branch_cannot_be_read() {
+        let root = repo_with_origin("noappend", None);
+        git(
+            &root,
+            &["remote", "set-url", "origin", "/nonexistent/origin.git"],
+        );
+        assert!(append_line(&root, "origin", "gh-pages", "{}\n").is_err());
+        assert!(!working_copy(&root).exists());
+    }
 
     fn baseline() -> serde_json::Value {
         json!({

@@ -193,15 +193,6 @@ jobs:
           bin/cargo-soothfast docs capture -p soothfast-spec docs/spec.md
           bin/cargo-soothfast docs capture -p soothfast-report docs/reports.md
           make docs-pages
-      - name: Keep llms.txt only when the documented surface moved
-        # Measured lines change every run; committing them would make this
-        # job re-trigger itself off its own merges forever
-        run: |
-          if git diff --quiet -- llms.txt; then exit 0; fi
-          mkdir -p target/llms-churn
-          sed '/^\*\*Measured:\*\*/d' llms.txt > target/llms-churn/new.txt
-          git show HEAD:llms.txt | sed '/^\*\*Measured:\*\*/d' > target/llms-churn/old.txt
-          cmp -s target/llms-churn/old.txt target/llms-churn/new.txt && git checkout -- llms.txt || true
       - name: Mint a soothfast-bot token
         id: bot
         run: action/bot-token.sh
@@ -212,7 +203,7 @@ jobs:
           BRANCH: bot/docs-update
           TITLE: "docs: regenerate derived docs"
           BODY: Automated regeneration of captured output and reference pages.
-          PATHS: llms.txt README.md docs
+          PATHS: README.md docs
         run: action/land.sh
 
   # Dogfood: gate each self-bench crate's perf against the PR's merge-base.
