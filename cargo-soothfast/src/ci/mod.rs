@@ -5,6 +5,7 @@
 //! returns the job's exit code. Adding one is a file with that function, a
 //! `mod` line and its entry in [`KINDS`].
 
+mod docs;
 mod env;
 mod record;
 mod test;
