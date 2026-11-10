@@ -15,7 +15,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("changelog") => changelog_cmd(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast report render|changelog -p PKG [-p PKG ...] [--out DIR|FILE] [--against-ref REF]"
+                "soothfast: usage: cargo soothfast report render [--out DIR] | changelog -p PKG [-p PKG ...] [--against-ref REF]"
             );
             2
         }
