@@ -2,13 +2,16 @@
 //! its base, and a push to the default branch records HEAD against its parent
 //! so later pull requests find a reference run.
 
+use std::path::Path;
 use std::process::Command;
 
 use super::env::{CiEnv, Event};
-use super::record::run_recorded;
+use super::record::{log_path, run_recorded};
 use crate::invoke::Shard;
 
 const NO_PARENT: &str = "no-parent";
+const TAIL_LINES: usize = 40;
+const COMMENT_FILE: &str = "gate-comment.md";
 
 #[derive(Debug, Default, PartialEq)]
 struct Options {
@@ -72,7 +75,10 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
             0
         }
         Plan::Record { parent } => record(&opts, &packages, parent, invoke),
-        Plan::Compare { against } => compare(&opts, &packages, against.as_deref(), gate),
+        Plan::Compare { against } => {
+            let outcome = compare(&opts, &packages, against.as_deref(), gate);
+            report(env, &opts, &packages, &outcome)
+        }
     }
 }
 
@@ -194,7 +200,7 @@ fn compare(
     packages: &[String],
     against: Option<&str>,
     gate: impl Fn(&str, &[String]) -> i32,
-) -> i32 {
+) -> Outcome {
     let codes: Vec<i32> = packages
         .iter()
         .map(|pkg| {
@@ -202,11 +208,86 @@ fn compare(
             gate(&record_name(pkg, opts.shard), &args)
         })
         .collect();
-    let outcome = settle(&codes, opts.accepted.as_deref());
-    if let Some(label) = &outcome.waived_by {
-        println!("soothfast: regressions accepted by the {label} label");
+    settle(&codes, opts.accepted.as_deref())
+}
+
+fn report(env: &CiEnv, opts: &Options, packages: &[String], outcome: &Outcome) -> i32 {
+    let accepted = outcome.waived_by.as_deref().map(acceptance);
+    if let Some(line) = &accepted {
+        println!("soothfast: {line}");
     }
-    outcome.exit
+    let Some(dir) = &env.results else {
+        return outcome.exit;
+    };
+    let sections: Vec<(&str, String)> = packages
+        .iter()
+        .map(|pkg| {
+            let log = log_path(dir, &record_name(pkg, opts.shard));
+            (pkg.as_str(), read_output(&log))
+        })
+        .collect();
+    let body = comment(opts.shard, &sections, accepted.as_deref());
+    match std::fs::write(dir.join(COMMENT_FILE), body) {
+        Ok(()) => outcome.exit,
+        Err(e) => {
+            eprintln!("soothfast: {}: {e}", dir.join(COMMENT_FILE).display());
+            2
+        }
+    }
+}
+
+fn read_output(log: &Path) -> String {
+    let bytes = std::fs::read(log).unwrap_or_default();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn acceptance(label: &str) -> String {
+    format!("Regressions accepted by the `{label}` label.")
+}
+
+/// The pull request comment: each package's last lines of output in a code
+/// fence. The output comes from the pull request's own binaries and the
+/// comment is posted by a trusted identity, so nothing in it may end the
+/// fence.
+fn comment(shard: Option<Shard>, sections: &[(&str, String)], accepted: Option<&str>) -> String {
+    let mut body = match shard {
+        Some(shard) => format!("## soothfast gate (shard {shard})\n"),
+        None => "## soothfast gate\n".to_string(),
+    };
+    for (pkg, output) in sections {
+        body.push_str(&format!("### {pkg}\n```\n"));
+        for line in tail(output, TAIL_LINES) {
+            body.push_str(&neutralise(line));
+            body.push('\n');
+        }
+        body.push_str("```\n");
+    }
+    if let Some(line) = accepted {
+        body.push_str(line);
+        body.push('\n');
+    }
+    body
+}
+
+fn tail(output: &str, count: usize) -> impl Iterator<Item = &str> {
+    let lines: Vec<&str> = output.lines().collect();
+    let from = lines.len().saturating_sub(count);
+    lines.into_iter().skip(from)
+}
+
+/// Spaces out every run of three or more backticks, so no line can close a
+/// fence.
+fn neutralise(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(start) = rest.find("```") {
+        out.push_str(&rest[..start]);
+        let run = rest[start..].chars().take_while(|&c| c == '`').count();
+        out.push_str(&vec!["`"; run].join(" "));
+        rest = &rest[start + run..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Never fails: the commit is already merged, and what runs after still
@@ -383,8 +464,8 @@ mod tests {
             seen.borrow_mut().push((name.to_string(), args[2].clone()));
             [0, 1][seen.borrow().len() - 1]
         };
-        let code = compare(&opts, &argv(&["a", "b"]), Some("b4se"), gate);
-        assert_eq!(code, 1);
+        let outcome = compare(&opts, &argv(&["a", "b"]), Some("b4se"), gate);
+        assert_eq!(outcome.exit, 1);
         assert_eq!(
             seen.into_inner(),
             [("a#1/2".into(), "a".into()), ("b#1/2".into(), "b".into())]
@@ -440,6 +521,68 @@ mod tests {
             }
         );
         assert_eq!(settle(&[], None).exit, 0);
+    }
+
+    #[test]
+    fn output_cannot_close_the_fence() {
+        assert_eq!(neutralise("plain `code` text"), "plain `code` text");
+        assert_eq!(neutralise("``` evil"), "` ` ` evil");
+        for line in ["```", "``````", "`````", "  ```md", "a```b````c", "` `````"] {
+            assert!(!neutralise(line).contains("```"), "{line}");
+        }
+    }
+
+    fn sections() -> Vec<(&'static str, String)> {
+        vec![("core", "ok\n".into()), ("web", "slow\n```\nfree\n".into())]
+    }
+
+    #[test]
+    fn the_comment_has_a_fenced_section_per_package() {
+        let body = comment(None, &sections(), None);
+        assert_eq!(
+            body,
+            "## soothfast gate\n### core\n```\nok\n```\n### web\n```\nslow\n` ` `\nfree\n```\n"
+        );
+    }
+
+    #[test]
+    fn the_comment_keeps_the_last_forty_lines() {
+        let output: String = (1..=50).map(|n| format!("line {n}\n")).collect();
+        let body = comment(None, &[("core", output)], None);
+        assert!(body.contains("\nline 11\n") && body.contains("\nline 50\n"));
+        assert!(!body.contains("line 10\n"));
+        assert_eq!(body.lines().count(), 1 + 1 + 1 + 40 + 1);
+    }
+
+    #[test]
+    fn a_shard_comment_names_its_shard_and_an_acceptance_ends_it() {
+        let accepted = acceptance("perf");
+        let body = comment(shard(1, 2), &sections()[..1], Some(&accepted));
+        assert!(body.starts_with("## soothfast gate (shard 1/2)\n"));
+        assert!(body.ends_with("```\nRegressions accepted by the `perf` label.\n"));
+    }
+
+    #[test]
+    fn the_comment_is_written_beside_the_records() {
+        let dir = std::env::temp_dir().join(format!("soothfast-ci-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(log_path(&dir, "core#1/2"), "slow\n").unwrap();
+        let flags = Flags {
+            results: Some(dir.clone()),
+            ..Flags::default()
+        };
+        let env = CiEnv::parse(&BTreeMap::new(), None, &flags);
+        let opts = Options {
+            shard: shard(1, 2),
+            ..Options::default()
+        };
+        let outcome = settle(&[1], Some("perf"));
+        assert_eq!(report(&env, &opts, &argv(&["core"]), &outcome), 0);
+        let body = std::fs::read_to_string(dir.join(COMMENT_FILE)).unwrap();
+        assert!(body.contains("### core\n```\nslow\n```\n"), "{body}");
+        assert!(body.contains("`perf`"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
