@@ -737,9 +737,10 @@ cargo soothfast ci build rustdoc --stage "$RUNNER_TEMP/store"
 
 Without `-p` it builds the packages the lane applies to, found the way `plan`
 finds them: the benched packages for `bench`, the `[docs] package`s for
-`rustdoc`. `routes` needs its packages named, as `PKG[:TARGET]`. Each package
-is its own `prebuild` call, so it takes its own features from
-`soothfast.toml`. On a pull request the call compares with the base commit,
+`rustdoc`. `routes` needs its packages named, as `PKG[:TARGET]`. Packages
+that resolve the same `soothfast.toml` defaults share one `prebuild` call, and
+each set that resolves differently gets its own, in the order they first
+appear. On a pull request the call compares with the base commit,
 and `--shards` is the leg count the gate will read the stores with; on a push
 it builds one unsharded lane, comparing with the previous commit on the
 default branch. `--stage` is where the stores are copied for upload.

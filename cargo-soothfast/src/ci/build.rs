@@ -8,7 +8,7 @@ use std::process::Command;
 use soothfast_registry::fnv1a;
 
 use super::env::{CiEnv, Event};
-use crate::config::{self, Group};
+use crate::config::{self, Group, Settings};
 use crate::init::{self, RustPlan};
 use crate::invoke;
 
@@ -85,33 +85,74 @@ fn shape(env: &CiEnv, asked: u64, has_parent: impl Fn() -> bool) -> Shape {
     }
 }
 
+/// How `prebuild` takes a lane's packages and which defaults they resolve.
+struct LaneKind {
+    name: &'static str,
+    flag: &'static str,
+    group: Group,
+    packages: fn(&RustPlan) -> Vec<String>,
+}
+
+const LANES: &[LaneKind] = &[
+    LaneKind {
+        name: "bench",
+        flag: "-p",
+        group: Group::Gate,
+        packages: |plan| plan.packages.clone(),
+    },
+    LaneKind {
+        name: "routes",
+        flag: "--spec",
+        group: Group::Spec,
+        packages: |_| Vec::new(),
+    },
+    LaneKind {
+        name: "rustdoc",
+        flag: "--docs",
+        group: Group::Docs,
+        packages: |plan| plan.docs_packages.clone(),
+    },
+];
+
+/// A lane `prebuild` has not heard of is passed on with `-p`, for it to
+/// reject.
+const UNKNOWN: LaneKind = LaneKind {
+    name: "",
+    flag: "-p",
+    group: Group::Gate,
+    packages: |_| Vec::new(),
+};
+
+fn lane_kind(name: &str) -> &'static LaneKind {
+    LANES.iter().find(|l| l.name == name).unwrap_or(&UNKNOWN)
+}
+
 /// The packages a lane applies to when none are named.
 fn default_packages(lane: &str, plan: &RustPlan) -> Vec<String> {
-    match lane {
-        "bench" => plan.packages.clone(),
-        "rustdoc" => plan.docs_packages.clone(),
-        _ => Vec::new(),
-    }
+    (lane_kind(lane).packages)(plan)
 }
 
-fn package_flag(lane: &str) -> &'static str {
-    match lane {
-        "rustdoc" => "--docs",
-        "routes" => "--spec",
-        _ => "-p",
-    }
-}
-
-/// One `prebuild` call per package, so each resolves its own features.
+/// One `prebuild` call for each set of packages that resolve the same
+/// defaults, in the order they first appear, since a call takes one set of
+/// features.
 fn invocations(
     job: &Job,
     packages: &[String],
     shape: &Shape,
-    docs_features: impl Fn(&str) -> Result<Option<String>, String>,
+    resolve: impl Fn(&str, Group) -> Result<Settings, String>,
 ) -> Result<Vec<Vec<String>>, String> {
-    packages
-        .iter()
-        .map(|pkg| {
+    let kind = lane_kind(&job.lane);
+    let mut buckets: Vec<(Settings, Vec<&String>)> = Vec::new();
+    for pkg in packages {
+        let settings = resolve(pkg, kind.group)?;
+        match buckets.iter_mut().find(|(s, _)| *s == settings) {
+            Some((_, group)) => group.push(pkg),
+            None => buckets.push((settings, vec![pkg])),
+        }
+    }
+    Ok(buckets
+        .into_iter()
+        .map(|(settings, group)| {
             let mut args = vec!["prebuild".into(), "--only".into(), job.lane.clone()];
             if let Some(stage) = &job.stage {
                 args.extend(["--stage".into(), stage.display().to_string()]);
@@ -119,18 +160,18 @@ fn invocations(
             if shape.shards > 1 {
                 args.extend(["--shards".into(), shape.shards.to_string()]);
             }
-            args.extend([package_flag(&job.lane).into(), pkg.clone()]);
-            if job.lane == "rustdoc"
-                && let Some(features) = docs_features(pkg)?
-            {
+            for pkg in group {
+                args.extend([kind.flag.into(), pkg.clone()]);
+            }
+            if let (Group::Docs, Some(features)) = (kind.group, settings.features) {
                 args.extend(["--docs-features".into(), features]);
             }
             if let Some(against) = &shape.against {
                 args.extend(["--against-ref".into(), against.clone()]);
             }
-            Ok(args)
+            args
         })
-        .collect()
+        .collect())
 }
 
 /// Entry point for `ci build`.
@@ -152,10 +193,8 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     }
     let has_parent = || invoke::git(&["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok();
     let shape = shape(env, job.shards, has_parent);
-    let docs_features = |pkg: &str| {
-        config::defaults(&[pkg.to_string()], Group::Docs).map(|settings| settings.features)
-    };
-    let calls = match invocations(&job, &packages, &shape, docs_features) {
+    let resolve = |pkg: &str, group| config::defaults(&[pkg.to_string()], group);
+    let calls = match invocations(&job, &packages, &shape, resolve) {
         Ok(calls) => calls,
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -320,8 +359,20 @@ mod tests {
         }
     }
 
-    fn no_features(_: &str) -> Result<Option<String>, String> {
-        Ok(None)
+    fn no_features(_: &str, _: Group) -> Result<Settings, String> {
+        Ok(Settings::default())
+    }
+
+    fn features(
+        of: &'static str,
+        set: &'static str,
+    ) -> impl Fn(&str, Group) -> Result<Settings, String> {
+        move |pkg, _| {
+            Ok(Settings {
+                features: (pkg == of).then(|| set.to_string()),
+                ..Settings::default()
+            })
+        }
     }
 
     #[test]
@@ -417,17 +468,18 @@ mod tests {
     }
 
     #[test]
-    fn bench_builds_one_package_per_call_against_the_base() {
+    fn packages_that_resolve_alike_build_in_one_call() {
         let shape = shape(&env(Event::PullRequest, Some("b4se"), false), 2, || true);
         let calls = invocations(
             &job("bench", Some("store")),
-            &argv(&["a", "b"]),
+            &argv(&["a", "b", "c"]),
             &shape,
             no_features,
         )
         .unwrap();
-        let call = |pkg: &str| {
-            argv(&[
+        assert_eq!(
+            calls,
+            [argv(&[
                 "prebuild",
                 "--only",
                 "bench",
@@ -436,12 +488,48 @@ mod tests {
                 "--shards",
                 "2",
                 "-p",
-                pkg,
+                "a",
+                "-p",
+                "b",
+                "-p",
+                "c",
                 "--against-ref",
                 "b4se",
-            ])
-        };
-        assert_eq!(calls, [call("a"), call("b")]);
+            ])]
+        );
+    }
+
+    #[test]
+    fn packages_that_resolve_differently_build_apart_in_first_seen_order() {
+        let shape = shape(&env(Event::Other, None, false), 1, || false);
+        let calls = invocations(
+            &job("bench", None),
+            &argv(&["a", "b", "c"]),
+            &shape,
+            features("b", "full"),
+        )
+        .unwrap();
+        assert_eq!(
+            calls,
+            [
+                argv(&["prebuild", "--only", "bench", "-p", "a", "-p", "c"]),
+                argv(&["prebuild", "--only", "bench", "-p", "b"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn each_lane_resolves_its_own_group() {
+        let shape = shape(&env(Event::Other, None, false), 1, || false);
+        let seen = std::cell::RefCell::new(Vec::new());
+        for lane in ["bench", "routes", "rustdoc"] {
+            let resolve = |_: &str, group| {
+                seen.borrow_mut().push(group);
+                Ok(Settings::default())
+            };
+            invocations(&job(lane, None), &argv(&["p"]), &shape, resolve).unwrap();
+        }
+        assert_eq!(seen.into_inner(), [Group::Gate, Group::Spec, Group::Docs]);
     }
 
     #[test]
@@ -454,8 +542,12 @@ mod tests {
     #[test]
     fn rustdoc_names_docs_packages_and_their_features() {
         let shape = shape(&env(Event::Other, None, false), 1, || false);
-        let features = |pkg: &str| Ok((pkg == "d").then(|| "full".to_string()));
-        let calls = invocations(&job("rustdoc", None), &argv(&["d", "e"]), &shape, features);
+        let calls = invocations(
+            &job("rustdoc", None),
+            &argv(&["d", "e"]),
+            &shape,
+            features("d", "full"),
+        );
         assert_eq!(
             calls.unwrap(),
             [
@@ -491,7 +583,7 @@ mod tests {
     #[test]
     fn a_features_lookup_error_is_reported() {
         let shape = shape(&env(Event::Other, None, false), 1, || false);
-        let failing = |_: &str| Err("bad table".to_string());
+        let failing = |_: &str, _| Err("bad table".to_string());
         let calls = invocations(&job("rustdoc", None), &argv(&["d"]), &shape, failing);
         assert_eq!(calls, Err("bad table".to_string()));
     }
