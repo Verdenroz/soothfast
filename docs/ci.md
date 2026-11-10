@@ -61,6 +61,27 @@ Two repository settings decide what happens to the bot's pull request:
 A ruleset that requires approving reviews applies to the bot too: its PR
 waits for a human.
 
+## Checking the setup
+
+`cargo soothfast status` prints what state the setup is in, from what is
+already on disk and in git. It builds, measures and fetches nothing. Each
+line is a state word (`ok`, `stale`, `failed` or `missing`), the subject and,
+unless it is `ok`, the command that addresses it:
+
+```text
+failed  gate  2 failure(s); triage: a_item.txt  -> cat .soothfast/triage/a_item.txt
+missing baseline mylib  no saved baseline  -> cargo soothfast measure -p mylib --save-baseline main
+ok      2 checks
+```
+
+The checks cover the CLI against the `soothfast` version Cargo.lock pins, the
+last `gate` verdict and its triage, a saved baseline for each package with a
+bench target, and `soothfast.lock` once markdown carries `bind` markers.
+`--all` lists the `ok` lines instead of counting them, and `--json` prints
+the rows as an array of `state`, `subject`, `detail` and `fix`. The exit code
+is 0 when every row is `ok` and 1 otherwise. A failed gate points at its
+triage file; accepting a regression stays a decision for a reviewer.
+
 ## What the step does
 
 Every run installs `cargo-soothfast` pinned to the `soothfast` version in
