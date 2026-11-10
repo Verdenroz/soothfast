@@ -758,6 +758,27 @@ and the output says so. When the merge fails, claims are skipped, binds and
 examples are still checked, and the job exits with the merge's code. Without
 `--baselines` nothing is merged and the check reads whatever baseline exists
 locally. The record is named `docs`.
+`ci gate-import` is the perf gate of a project outside the cargo workspace,
+the `[[project]]` tables with a benchmark command. It benches the head with
+the project's own command, benches the merge base of a pull request in a
+worktree of its own, and gates the imported results with `gate --import`.
+A push, or a run with no base, only benches the head. Each project is gated
+on its own, `--project DIR` picks one and `--name` renames its record (the
+ecosystem, plus the directory when two share one). Without `--project` every
+project runs and the exit code is the worst.
+
+```sh ignore
+cargo soothfast ci gate-import
+cargo soothfast ci gate-import --project web --accepted soothfast:perf-accepted
+```
+
+A head that fails or leaves no results errors the job, after the base is
+benched so the items it names are known. A base that fails or leaves no
+results has nothing to compare and passes. A regression exits 1 and an
+error anything else; the head's items are saved for the docs check unless
+the gate errored, and a pass that cannot save them errors. `--accepted
+LABEL` waives a regression, which then exits 0, and never an error. The
+worktree is removed whether or not the bench fails.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure.

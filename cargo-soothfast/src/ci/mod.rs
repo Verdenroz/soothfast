@@ -8,6 +8,7 @@
 mod docs;
 mod env;
 mod gate;
+mod import;
 mod record;
 mod test;
 
@@ -31,34 +32,40 @@ const KINDS: &[Kind] = &[
     Kind {
         name: "build",
         run: None,
-        applies: |_| true,
+        applies: in_a_run,
     },
     Kind {
         name: "gate",
         run: Some(gate::run),
-        applies: |_| true,
+        applies: in_a_run,
     },
     Kind {
         name: "gate-import",
-        run: None,
-        applies: |_| true,
+        run: Some(import::run),
+        applies: in_a_run,
     },
     Kind {
         name: "docs",
         run: Some(docs::run),
-        applies: |_| true,
+        applies: in_a_run,
     },
     Kind {
         name: "verdict",
         run: None,
-        applies: |_| true,
+        applies: in_a_run,
     },
     Kind {
         name: "regen",
         run: None,
-        applies: |_| true,
+        applies: in_a_run,
     },
 ];
+
+/// Whether the run came from a pull request or a push. Measuring, building
+/// and docs jobs belong to those; a bare local `ci` runs only what is cheap.
+fn in_a_run(env: &CiEnv) -> bool {
+    env.event != env::Event::Other
+}
 
 /// Entry point for `cargo soothfast ci`.
 pub fn run(args: &[String]) -> i32 {
