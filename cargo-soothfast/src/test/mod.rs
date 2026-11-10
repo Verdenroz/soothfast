@@ -14,6 +14,7 @@ pub(crate) mod shim;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::config::{Config, Group, Settings};
 use crate::{buildstamp, invoke, runcache};
 use cargo::TestBin;
 use config::TestConfig;
@@ -85,6 +86,24 @@ pub fn parse_args(args: &[String]) -> Result<TestArgs, String> {
     Ok(out)
 }
 
+/// `cargo_args` plus the package defaults' `--features`, unless the command
+/// line gave them.
+fn with_defaults(mut cargo_args: Vec<String>, defaults: Settings) -> Vec<String> {
+    let given = |names: &[&str]| {
+        cargo_args.iter().any(|a| {
+            names
+                .iter()
+                .any(|n| a == n || a.strip_prefix(n).is_some_and(|rest| rest.starts_with('=')))
+        })
+    };
+    let mut extra = Vec::new();
+    if let Some(features) = defaults.features.filter(|_| !given(&["--features", "-F"])) {
+        extra.extend(["--features".to_string(), features]);
+    }
+    cargo_args.extend(extra);
+    cargo_args
+}
+
 /// Entry point for `cargo soothfast test`.
 pub fn run(args: &[String]) -> i32 {
     if args
@@ -104,9 +123,12 @@ pub fn run(args: &[String]) -> i32 {
 
 fn drive(args: &[String]) -> Result<i32, String> {
     let started = Instant::now();
-    let args = parse_args(args)?;
+    let mut args = parse_args(args)?;
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-    let cfg = config::load(&root)?;
+    let config = Config::load(&root)?;
+    let cfg = config.test()?;
+    let defaults = config.resolve(&args.only, Group::Test)?;
+    args.cargo_args = with_defaults(args.cargo_args, defaults);
     let retries = cfg.retries;
     let pkgs = select::packages(&root).map_err(|e| e.to_string())?;
     cfg.check_packages(pkgs.iter().map(|p| p.name.as_str()))?;
@@ -566,6 +588,23 @@ mod tests {
     fn parse(list: &[&str]) -> TestArgs {
         let argv: Vec<String> = list.iter().map(|s| s.to_string()).collect();
         parse_args(&argv).unwrap()
+    }
+
+    #[test]
+    fn package_defaults_add_the_cargo_flags_the_command_line_lacks() {
+        let defaults = Settings {
+            features: Some("all".into()),
+            ..Settings::default()
+        };
+        let argv = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            with_defaults(argv(&["--release"]), defaults.clone()),
+            ["--release", "--features", "all"]
+        );
+        assert_eq!(
+            with_defaults(argv(&["--features=x"]), defaults),
+            ["--features=x"]
+        );
     }
 
     fn pkg(name: &str) -> Package {

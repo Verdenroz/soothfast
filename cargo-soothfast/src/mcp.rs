@@ -12,6 +12,7 @@ use std::io::BufRead;
 use serde_json::{Value, json};
 use soothfast_report::llms::SurfaceEntry;
 
+use crate::config::{self, Group};
 use crate::{docs_support, invoke};
 
 struct State {
@@ -23,14 +24,14 @@ struct State {
 
 pub fn run(args: &[String]) -> i32 {
     let mut pkg: Option<String> = None;
-    let mut baseline_name = String::from("base");
+    let mut baseline_name: Option<String> = None;
     let mut features: Option<String> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "-p" | "--package" => pkg = it.next().cloned(),
             "--baseline" => match it.next() {
-                Some(n) => baseline_name = n.clone(),
+                Some(n) => baseline_name = Some(n.clone()),
                 None => return err("--baseline needs a name"),
             },
             "--features" => features = it.next().cloned(),
@@ -40,6 +41,14 @@ pub fn run(args: &[String]) -> i32 {
     let Some(pkg) = pkg else {
         return err("mcp requires -p PKG");
     };
+    let defaults = match config::defaults(std::slice::from_ref(&pkg), Group::Docs) {
+        Ok(d) => d,
+        Err(e) => return err(&e),
+    };
+    let features = features.or(defaults.features);
+    let baseline_name = baseline_name
+        .or(defaults.baseline)
+        .unwrap_or_else(|| "base".into());
 
     // Build state once at startup; the server is a read-only view.
     let entries = match docs_support::surface_entries(&pkg, features.as_deref()) {

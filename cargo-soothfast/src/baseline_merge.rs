@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
+use crate::config::{self, Group};
 use crate::invoke::{self, Shard};
 use crate::unmeasured::{self, Reason, Unmeasured};
-use crate::{benchexe, gate_config, gate_save, import};
+use crate::{benchexe, gate_save, import};
 
 mod plan;
 
@@ -117,7 +118,7 @@ fn mark_cmd(args: &[String]) -> i32 {
     let (Some(into), Some(_), Some(reason)) = (into, &common.pkg, reason) else {
         return fail("baseline mark needs --into NAME, -p PKG and a known --reason");
     };
-    let listed = gate_config::apply(&mut common).and_then(|_| {
+    let listed = config::apply(&mut common, Group::Gate).and_then(|_| {
         let exe = invoke::bench_executable(&common, None, None);
         benchexe::listing(&common, exe.as_deref())
     });

@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use soothfast_docs::{diff, gentests, lockfile, markdown, reference, surface};
 
-use crate::{docs_binds, docs_claims, docs_config, docs_generated, docs_support, glob, invoke};
+use crate::config::{Config, Group, Settings};
+use crate::{docs_binds, docs_claims, docs_generated, docs_support, glob, invoke};
 
 #[derive(Default)]
 struct DocsArgs {
@@ -33,9 +34,22 @@ struct DocsArgs {
     /// `docs gh-deploy` commit message (default: "docs: publish site for <sha>").
     message: Option<String>,
     paths: Vec<PathBuf>,
+    /// The markdown scope when no PATHS are given. `None` reads `[docs] paths`
+    /// from the scanned root.
+    scope: Option<Vec<String>>,
 }
 
 impl DocsArgs {
+    /// Fill the flags the command line left unset from the resolved defaults.
+    fn use_defaults(&mut self, baseline_given: bool, defaults: Settings) {
+        self.features = self.features.take().or(defaults.features);
+        self.target = self.target.take().or(defaults.target);
+        if !baseline_given && let Some(baseline) = defaults.baseline {
+            self.baseline = baseline;
+        }
+        self.scope = defaults.paths;
+    }
+
     /// Fill the packages from `[docs] package` when no `-p` was given.
     fn use_configured(
         &mut self,
@@ -94,7 +108,9 @@ pub fn run(args: &[String]) -> i32 {
         remote: "origin".into(),
         message: None,
         paths: Vec::new(),
+        scope: None,
     };
+    let mut baseline_given = false;
     let mut it = args[1..].iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -103,7 +119,10 @@ pub fn run(args: &[String]) -> i32 {
                 a.pkgs.extend(a.pkg.clone());
             }
             "--baseline" => match it.next() {
-                Some(n) => a.baseline = n.clone(),
+                Some(n) => {
+                    a.baseline = n.clone();
+                    baseline_given = true;
+                }
                 None => return err("--baseline needs a name"),
             },
             "--against-ref" => a.against_ref = it.next().cloned(),
@@ -133,15 +152,23 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
 
+    let cfg = match Config::load(&invoke::project_root()) {
+        Ok(cfg) => cfg,
+        Err(e) => return err(&e),
+    };
     if a.pkgs.is_empty() && takes_package(&sub) {
-        match docs_config::load(&invoke::project_root()) {
-            Ok(cfg) => {
-                if let Err(e) = a.use_configured(cfg.package, single_package(&sub)) {
+        match cfg.docs() {
+            Ok(docs) => {
+                if let Err(e) = a.use_configured(docs.package, single_package(&sub)) {
                     return err(&e);
                 }
             }
             Err(e) => return err(&e),
         }
+    }
+    match cfg.resolve(&a.pkgs, Group::Docs) {
+        Ok(defaults) => a.use_defaults(baseline_given, defaults),
+        Err(e) => return err(&e),
     }
 
     match sub.as_str() {
@@ -326,7 +353,10 @@ fn scan_all(a: &DocsArgs) -> Result<Scanned, String> {
 
 fn scan_at(a: &DocsArgs, root: PathBuf) -> Result<Scanned, String> {
     let mut docs = Vec::new();
-    let scope = docs_config::load(&root)?.paths;
+    let scope = match &a.scope {
+        Some(scope) => scope.clone(),
+        None => Config::load(&root)?.docs()?.paths,
+    };
     for file in md_files(a, &root, &scope) {
         let text =
             std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -949,6 +979,32 @@ mod tests {
         a.use_configured(Some(vec!["a".into()]), true).unwrap();
         assert_eq!(a.pkgs, ["x"]);
         assert_eq!(a.pkg.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn docs_defaults_fill_what_the_command_line_left_unset() {
+        let defaults = crate::config::Settings {
+            features: Some("all".into()),
+            target: Some("t".into()),
+            baseline: Some("main".into()),
+            paths: Some(vec!["book".into()]),
+        };
+        let mut a = DocsArgs {
+            baseline: "base".into(),
+            features: Some("cli".into()),
+            ..DocsArgs::default()
+        };
+        a.use_defaults(false, defaults.clone());
+        assert_eq!(a.features.as_deref(), Some("cli"));
+        assert_eq!(a.target.as_deref(), Some("t"));
+        assert_eq!(a.baseline, "main");
+        assert_eq!(a.scope, Some(vec!["book".into()]));
+        let mut given = DocsArgs {
+            baseline: "mine".into(),
+            ..DocsArgs::default()
+        };
+        given.use_defaults(true, defaults);
+        assert_eq!(given.baseline, "mine");
     }
 
     #[test]
