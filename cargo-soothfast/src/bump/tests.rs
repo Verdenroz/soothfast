@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::*;
 
-const OLD: &str = "0.5.5";
+const OLD: &str = "0.4.9";
 const NEW: &str = "0.5.7";
 
 fn fixture(tag: &str, files: &[(&str, &str)]) -> PathBuf {
@@ -53,15 +53,49 @@ fn a_stale_cargo_requirement_is_reported_in_each_dependency_form() {
 }
 
 #[test]
-fn a_requirement_on_the_target_is_not_stale() {
+fn a_requirement_the_target_satisfies_is_not_stale() {
     let root = fixture(
         "cargo-current",
         &[(
             "Cargo.toml",
-            &format!("[workspace.dependencies]\nsoothfast = \"{NEW}\"\n"),
+            "[workspace.dependencies]\nsoothfast = \"0.5\"\n\
+             soothfast-docs = \"^0.5.2\"\nsoothfast-sdk = \"~0.5\"\n\
+             soothfast-spec = \"=0.5.7\"\n",
         )],
     );
     assert_eq!(check(&root), (Vec::new(), false));
+}
+
+#[test]
+fn a_requirement_the_target_does_not_satisfy_is_stale() {
+    let root = fixture(
+        "cargo-behind",
+        &[(
+            "Cargo.toml",
+            "[dependencies]\nsoothfast = \"0.4\"\n\
+             soothfast-docs = \"=0.5.6\"\nsoothfast-sdk = \"~0.4.2\"\n\
+             soothfast-lang = \"1\"\n",
+        )],
+    );
+    let (lines, stale) = check(&root);
+    assert!(stale);
+    assert_eq!(lines.len(), 4);
+}
+
+#[test]
+fn a_prerelease_target_is_met_only_by_itself() {
+    let root = fixture(
+        "pre",
+        &[(
+            "Cargo.toml",
+            "[dependencies]\nsoothfast = \"0.6.0-rc.1\"\nsoothfast-docs = \"0.6\"\n",
+        )],
+    );
+    let pre = scan_repo(&root, "0.6.0-rc.1").unwrap();
+    assert_eq!(
+        findings(&pre, "0.6.0-rc.1").0,
+        ["Cargo.toml:3  found 0.6, want 0.6.0-rc.1"]
+    );
 }
 
 #[test]

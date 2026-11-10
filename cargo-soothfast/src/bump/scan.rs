@@ -156,16 +156,58 @@ pub fn cargo(text: &str, target: &str) -> Scan {
             continue;
         }
         let start = offset(text, literal) + prefix;
+        let operator = literal[..prefix].trim();
         scan.pins.push(Pin {
             line,
             span: start..start + version.len(),
             found: version.to_string(),
-            current: version == target,
-            fix: Fix::Text(target.to_string()),
+            current: satisfies(operator, version, target),
+            fix: Fix::Text(at_precision(target, version)),
             package: Some(name.to_string()),
         });
     }
     scan
+}
+
+fn numbers(version: &str) -> Vec<u64> {
+    version.split('.').filter_map(|n| n.parse().ok()).collect()
+}
+
+/// `target` cut to as many components as `like` has, whole when it is a
+/// pre-release.
+fn at_precision(target: &str, like: &str) -> String {
+    if target.contains(['-', '+']) {
+        return target.to_string();
+    }
+    let kept: Vec<&str> = target.split('.').take(like.split('.').count()).collect();
+    kept.join(".")
+}
+
+/// Whether `target` meets the requirement `operator` `version` under
+/// cargo's rules. A pre-release target meets only its own exact version.
+fn satisfies(operator: &str, version: &str, target: &str) -> bool {
+    if version == target {
+        return true;
+    }
+    if version.contains(['-', '+']) || target.contains(['-', '+']) {
+        return false;
+    }
+    let (want, have) = (numbers(version), numbers(target));
+    let shared = |n: usize| have[..n] == want[..n];
+    let mut floor = want.clone();
+    floor.resize(3, 0);
+    let ordered = have >= floor;
+    match operator {
+        "=" => shared(want.len()),
+        "~" => ordered && shared(want.len().min(2)),
+        _ => {
+            let leading = want
+                .iter()
+                .position(|&n| n != 0)
+                .map_or(want.len(), |i| i + 1);
+            ordered && shared(leading.min(want.len()))
+        }
+    }
 }
 
 /// The registry entries of `packages` in a Cargo.lock.
