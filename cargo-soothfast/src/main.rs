@@ -101,6 +101,16 @@ commands:
            (folds a restored .soothfast cache layout in DIR into this
            project's: items keep the entries of both, runs and link maps are
            copied when absent)
+  ci       [KIND [ARGS]] [--event pull_request|push|other] [--base REF]
+           [--results DIR]
+           (runs one CI job the way the workflow does and records its verdict
+           in DIR, read from the runner's environment unless a flag says
+           otherwise; with no KIND, every kind that applies to the event, in
+           order, stopping at the first failure)
+  ci       test [--all] [--project DIR [--suite S] [--toolchain T] [--name N]]
+           [cargo test args...]
+           (the workflow's test job: --base from the event, else every
+           package; --project tests one project outside the workspace)
   plan     [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;

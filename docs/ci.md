@@ -693,6 +693,41 @@ regressed or errored, or recorded no result; a perf-accepted label
 (`soothfast:perf-accepted` unless `perf_accepted_labels` renames it) applied by
 a writer waives regressions, never errors or docs drift.
 
+## One command per job
+
+`cargo soothfast ci <kind>` runs one CI job: the flags, the choice of base
+and the verdict record that a workflow step would otherwise assemble in
+shell. It runs the same on a runner and on your machine.
+
+```sh ignore
+cargo soothfast ci test
+cargo soothfast ci test --project web --toolchain node-20
+cargo soothfast ci
+```
+
+The run is read from the runner's environment (`GITHUB_EVENT_NAME`, the
+event payload, `GITHUB_REF`, `RUNNER_TEMP`). Where there is none, or to
+override it, three flags apply to every kind: `--event pull_request|push|other`,
+`--base REF` and `--results DIR`. Flags win. A job records its verdict as
+`<name>.json` in the results directory, `$RUNNER_TEMP/soothfast-results`
+on a runner, next to its output as `<name>.log`; without a results directory
+nothing is recorded, which is what a local run does. The exit code is the
+job's own.
+
+`ci test` is the `Test` job of `run.yml`. On a pull request it runs
+`cargo soothfast test --base` the pull request's base commit, and on a push
+the previous head, both read from the event. A base that is unknown or is not
+in the checkout runs every package. `--all` runs every package and ignores
+stored passes. Features come from the `test` defaults of each package in
+`soothfast.toml`, and anything else is passed on to `cargo soothfast test`.
+With `--project DIR` it runs one project outside the workspace, always in
+full, taking `--suite`, `--toolchain` and `--name` (default `test-` and the
+directory). The record is named `test-rust` for the workspace, so its section
+of the pull request comment is the one the workflow writes.
+
+`cargo soothfast ci` with no kind runs every kind that applies to the event,
+in order, and stops at the first failure.
+
 ## The gate on its own
 
 The gate, with its comment and triage upload, is also a reusable workflow for
