@@ -129,6 +129,14 @@ commands:
            imported results; every project when none is named, exiting with
            the worst; --accepted waives a regression, never an error)
   plan     [--github]
+  ci       build LANE [-p PKG]... [--shards N] [--stage DIR] [--plan-out FILE]
+           [--listing-out FILE]
+           (the workflow's build-once job: `prebuild --only LANE` per package,
+           the packages the lane applies to when none are named; --shards
+           counts only on a pull request; --plan-out adds each package's
+           items to a plan file; --listing-out writes the checksum of
+           .soothfast/bins before and after)
+  plan    [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
            --github prints $GITHUB_OUTPUT lines)

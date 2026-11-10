@@ -5,6 +5,7 @@
 //! returns the job's exit code. Adding one is a file with that function, a
 //! `mod` line and its entry in [`KINDS`].
 
+mod build;
 mod docs;
 mod env;
 mod gate;
@@ -31,8 +32,8 @@ const KINDS: &[Kind] = &[
     },
     Kind {
         name: "build",
-        run: None,
-        applies: in_a_run,
+        run: Some(build::run),
+        applies: |_| false,
     },
     Kind {
         name: "gate",

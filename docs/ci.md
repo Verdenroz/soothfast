@@ -779,6 +779,39 @@ error anything else; the head's items are saved for the docs check unless
 the gate errored, and a pass that cannot save them errors. `--accepted
 LABEL` waives a regression, which then exits 0, and never an error. The
 worktree is removed whether or not the bench fails.
+`ci build LANE` is the build-once job: it prebuilds into the stores what later
+jobs read, with `cargo soothfast prebuild --only LANE`, which decides which
+lanes exist (`bench`, `routes`, `rustdoc`).
+
+```sh ignore
+cargo soothfast ci build bench --shards 3 --stage "$RUNNER_TEMP/store" \
+  --plan-out "$RUNNER_TEMP/soothfast-plan/plan.json" --listing-out listing.txt
+cargo soothfast ci build rustdoc --stage "$RUNNER_TEMP/store"
+```
+
+Without `-p` it builds the packages the lane applies to, found the way `plan`
+finds them: the benched packages for `bench`, the `[docs] package`s for
+`rustdoc`. `routes` needs its packages named, as `PKG[:TARGET]`. Packages
+that resolve the same `soothfast.toml` defaults share one `prebuild` call, and
+each set that resolves differently gets its own, in the order they first
+appear. On a pull request the call compares with the base commit,
+and `--shards` is the leg count the gate will read the stores with; on a push
+it builds one unsharded lane, comparing with the previous commit on the
+default branch. `--stage` is where the stores are copied for upload.
+
+`--plan-out` adds each package's planned items to a plan file once the build
+is done, as `baseline plan` does, and a package that cannot be listed is
+skipped with a warning. `--listing-out` writes two lines,
+`before DIGEST` and `after DIGEST`, the checksum of the names and sizes of the
+files under `.soothfast/bins` when the job started and when it ended, so a
+job that saves the executables cache saves it when the two differ. The digest
+is the FNV-1a hash of the sorted `name size` lines in 16 hex digits, `none`
+when the directory does not exist, and ignores files ending in `.tmp`.
+
+A build that fails is an error exit, not a regression. The remaining
+packages still build and the plan and listing are still written, and the
+exit code is that of the first failure. The job records no verdict.
+Bare `ci` does not run it, since it needs a lane.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure.
