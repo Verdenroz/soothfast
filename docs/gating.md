@@ -622,6 +622,50 @@ the command line left unset. The action's `features` input sets the same thing
 for CI, so a repository that configures the file gets one behaviour from a
 hand-run `cargo soothfast gate` and from the action.
 
+## Per-package defaults
+
+A repository with several packages, or one package that builds with
+different features per command, repeats `-p`, `--features`, `--bench` and
+`--baseline` wherever it calls soothfast. A `[package.NAME]` table holds
+those once. `[package.NAME.GROUP]` overrides it for one group of commands:
+
+```toml ignore
+[package.server]
+features = "full"
+
+[package.server.gate]
+features = "bench-gate"
+baseline = "release"
+
+[package.server.spec]
+target = "routes"
+
+[package.server.docs]
+paths = ["README.md", "docs/server"]
+```
+
+| Group | Commands | Keys |
+| --- | --- | --- |
+| `gate` | `gate`, `measure`, `baseline`, `prebuild`, `trend append`, `buildcost` | `features`, `target`, `baseline` |
+| `docs` | `docs *`, `coverage`, `report`, `mcp` | `features`, `target`, `baseline`, `paths` |
+| `spec` | `spec *`, `sdk *` | `features`, `target` |
+| `test` | `test` | `features` |
+
+`features` takes what `--features` takes. `target` is the bench target a
+command builds, what `--bench` takes, and only a group table sets it.
+`baseline` is the baseline `--baseline` names. `paths` replaces `[docs] paths`
+as the PATHS `docs` commands scan when none are given. A key a group's
+commands have no flag for is an error naming its line.
+
+From highest precedence: the command-line flag, `[package.NAME.GROUP]`,
+`[package.NAME]`, the repo-wide section (`[gate] features`, `[docs] paths`),
+then the built-in default. A file with no `[package.*]` table behaves as
+before. The package is the command's `-p` (`docs` also takes `[docs]
+package`); a command with none reads only the repo-wide section. Given
+several packages, they must resolve to the same defaults, or the command asks
+to be run once per package. Any package name works, quoted when it contains a
+dot, and one the workspace lacks is not an error.
+
 ## Ratchets
 
 <!-- soothfast:bind soothfast_measure::sweep::evaluate -->
