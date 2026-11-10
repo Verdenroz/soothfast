@@ -14,6 +14,8 @@ pub struct DocsConfig {
     /// Workspace packages `docs check` reads, when named. `None` leaves the
     /// choice to whoever runs it.
     pub package: Option<Vec<String>>,
+    /// The minimum percent `coverage docs` requires when `--min` is absent.
+    pub coverage: Option<u32>,
 }
 
 impl Default for DocsConfig {
@@ -21,6 +23,7 @@ impl Default for DocsConfig {
         Self {
             paths: vec!["README.md".into(), "docs".into()],
             package: None,
+            coverage: None,
         }
     }
 }
@@ -49,6 +52,9 @@ pub fn parse(text: &str) -> Result<DocsConfig, String> {
             ("package", TomlValue::Str(name)) => cfg.package = Some(vec![name]),
             ("package", TomlValue::StrArray(names)) if !names.is_empty() => {
                 cfg.package = Some(names)
+            }
+            ("coverage", TomlValue::Int(n)) if (0..=100).contains(&n) => {
+                cfg.coverage = Some(n as u32)
             }
             (k, _) => {
                 return Err(format!(
@@ -87,6 +93,15 @@ mod tests {
         assert_eq!(many.package, Some(vec!["a".into(), "b".into()]));
         assert_eq!(parse("[site]\n").unwrap().package, None);
         assert!(parse("[docs]\npackage = []\n").is_err());
+    }
+
+    #[test]
+    fn coverage_is_a_percent() {
+        assert_eq!(parse("[docs]\ncoverage = 90\n").unwrap().coverage, Some(90));
+        assert_eq!(parse("[site]\n").unwrap().coverage, None);
+        assert!(parse("[docs]\ncoverage = 101\n").is_err());
+        assert!(parse("[docs]\ncoverage = -1\n").is_err());
+        assert!(parse("[docs]\ncoverage = \"90\"\n").is_err());
     }
 
     #[test]

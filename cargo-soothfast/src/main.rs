@@ -211,7 +211,7 @@ commands:
   spec     gen -p PKG [--features F] [--check]
   spec     gate -p PKG [--base REF] [--allow-breaking]
   spec     check -p PKG [--features F] [--target NAME]
-  spec     check-proto -p PKG --proto FILE --message NAME --source FILE --struct NAME
+  spec     check-proto -p PKG [--proto FILE --message NAME --source FILE --struct NAME]
            (reconciles a .proto message's fields against a Rust struct's
            #[prost(..)] fields by tag — for consumed, not served, wire formats)
   spec     html -p PKG [--features F] [--target NAME] [--out DIR]

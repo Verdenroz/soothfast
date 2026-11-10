@@ -1256,6 +1256,7 @@ pages = ["index.md"]
 [docs]
 paths = ["README.md"]
 package = "x"
+coverage = 80
 
 [[project]]
 dir = "web"
@@ -1280,6 +1281,7 @@ target = "perf"
 
 [package.x.docs]
 paths = ["book"]
+coverage = 90
 
 [[spec]]
 path = "api.yaml"
@@ -1287,6 +1289,15 @@ path = "api.yaml"
 [bot]
 labels = true
 merge_labels = ["ship"]
+
+[[proto]]
+proto = "wire.proto"
+message = "Wire"
+source = "src/wire.rs"
+struct = "Wire"
+
+[ci]
+skip = ["sdk"]
 
 [[sdk]]
 spec = "api.yaml"
@@ -1334,6 +1345,15 @@ cmd = "npm test"
         );
         assert!(crate::test::config::parse(SHARED_TOML).is_ok());
         assert_eq!(
+            crate::config::docs::parse(SHARED_TOML).unwrap().coverage,
+            Some(80)
+        );
+        assert_eq!(crate::config::ci::parse(SHARED_TOML).unwrap(), ["sdk"]);
+        assert_eq!(
+            crate::spec_config::parse(SHARED_TOML).unwrap().protos.len(),
+            1
+        );
+        assert_eq!(
             crate::config::package::parse(SHARED_TOML).unwrap()["x"]
                 .base
                 .features
@@ -1343,9 +1363,9 @@ cmd = "npm test"
     }
 
     #[test]
-    fn package_tables_are_not_drift() {
+    fn package_ci_proto_and_coverage_tables_are_not_drift() {
         let root = scratch("package-tables");
-        let own = "[package.x]\nfeatures = \"all\"\n\n[package.x.gate]\nfeatures = \"bench\"\n\n[docs]\npackage = \"x\"\n";
+        let own = "[package.x]\nfeatures = \"all\"\n\n[package.x.gate]\nfeatures = \"bench\"\n\n[docs]\npackage = \"x\"\ncoverage = 80\n\n[ci]\nskip = [\"sdk\"]\n\n[[proto]]\nproto = \"w.proto\"\nmessage = \"W\"\nsource = \"w.rs\"\nstruct = \"W\"\n";
         std::fs::write(root.join("soothfast.toml"), own).unwrap();
         let mut files = scaffold(&ws(&[], Some("x")));
         files.retain(|f| f.path == Path::new("soothfast.toml"));
