@@ -69,7 +69,7 @@ impl Config {
             && let Some((other, _)) = each.find(|(_, s)| s != first)
         {
             return Err(self.located(format!(
-                "packages {name} and {other} resolve different {group} defaults; pass the flags"
+                "packages {name} and {other} resolve different {group} defaults; run it once per package"
             )));
         }
         let own = first.map(|(_, s)| s).unwrap_or_default();
@@ -83,7 +83,7 @@ impl Config {
                 ..Settings::default()
             },
             Group::Docs => Settings {
-                capture: Some(self.docs()?.paths),
+                paths: Some(self.docs()?.paths).filter(|p| !p.is_empty()),
                 ..Settings::default()
             },
             Group::Test => Settings::default(),
@@ -134,7 +134,7 @@ mod tests {
         names.iter().map(|n| n.to_string()).collect()
     }
 
-    const TEXT: &str = "[gate]\nfeatures = \"repo\"\n\n[package.core]\nfeatures = \"all\"\ntarget = \"t\"\n\n[package.core.gate]\nfeatures = \"bench\"\n\n[package.core.docs]\nbaseline = \"main\"\n\n[package.other]\nfeatures = \"x\"\n";
+    const TEXT: &str = "[gate]\nfeatures = \"repo\"\n\n[package.core]\nfeatures = \"all\"\n\n[package.core.gate]\nfeatures = \"bench\"\ntarget = \"t\"\n\n[package.core.docs]\nbaseline = \"main\"\n\n[package.other]\nfeatures = \"x\"\n";
 
     #[test]
     fn precedence_is_group_then_package_then_repo_wide() {
@@ -150,10 +150,18 @@ mod tests {
     }
 
     #[test]
-    fn repo_wide_docs_paths_are_the_capture_default() {
+    fn repo_wide_docs_paths_are_the_paths_default() {
         let cfg = config("[docs]\npaths = [\"book\"]\n");
         let docs = cfg.resolve(&[], Group::Docs).unwrap();
-        assert_eq!(docs.capture, Some(vec!["book".into()]));
+        assert_eq!(docs.paths, Some(vec!["book".into()]));
+    }
+
+    #[test]
+    fn an_absent_docs_section_leaves_paths_to_the_command() {
+        let docs = config("[gate]\nfeatures = \"a\"\n")
+            .resolve(&[], Group::Docs)
+            .unwrap();
+        assert_eq!(docs.paths, None);
     }
 
     #[test]

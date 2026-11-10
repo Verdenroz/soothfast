@@ -48,7 +48,7 @@ impl Group {
         match key {
             "features" | "target" => true,
             "baseline" => matches!(self, Group::Gate | Group::Docs),
-            "capture" => self == Group::Docs,
+            "paths" => self == Group::Docs,
             _ => false,
         }
     }
@@ -60,13 +60,14 @@ impl Group {
 pub struct Settings {
     /// Cargo features, in the form `--features` takes.
     pub features: Option<String>,
-    /// What the group's `--target` takes: the bench target for `gate`, a
-    /// Rust triple for `sdk build` and `test`.
+    /// What the group's `--target` takes, so only a group table sets it: the
+    /// bench target for `gate`, a Rust triple for `sdk build` and `test`.
     pub target: Option<String>,
     /// The baseline a command compares against or saves to.
     pub baseline: Option<String>,
-    /// Files, directories and globs `docs` scans, in place of `[docs] paths`.
-    pub capture: Option<Vec<String>>,
+    /// The PATHS `docs` commands scan when none are given, in place of
+    /// `[docs] paths`.
+    pub paths: Option<Vec<String>>,
 }
 
 impl Settings {
@@ -76,7 +77,7 @@ impl Settings {
             features: self.features.or(lower.features),
             target: self.target.or(lower.target),
             baseline: self.baseline.or(lower.baseline),
-            capture: self.capture.or(lower.capture),
+            paths: self.paths.or(lower.paths),
         }
     }
 }
@@ -195,9 +196,9 @@ fn set(
     }
     match (key, value) {
         ("features", TomlValue::Str(s)) => settings.features = Some(s),
-        ("target", TomlValue::Str(s)) => settings.target = Some(s),
+        ("target", TomlValue::Str(s)) if group.is_some() => settings.target = Some(s),
         ("baseline", TomlValue::Str(s)) => settings.baseline = Some(s),
-        ("capture", TomlValue::StrArray(v)) => settings.capture = Some(v),
+        ("paths", TomlValue::StrArray(v)) => settings.paths = Some(v),
         _ => return Err(()),
     }
     Ok(())
@@ -209,23 +210,25 @@ mod tests {
 
     #[test]
     fn reads_a_package_and_its_groups() {
-        let text = "[package.core]\nfeatures = \"a\"\nbaseline = \"main\"\n\n[package.core.gate]\nfeatures = \"bench\"\n\n[package.core.docs]\ncapture = [\"book/**\"]\n";
+        let text = "[package.core]\nfeatures = \"a\"\nbaseline = \"main\"\n\n[package.core.gate]\nfeatures = \"bench\"\n\n[package.core.docs]\npaths = [\"book/**\"]\n";
         let core = &parse(text).unwrap()["core"];
         assert_eq!(core.base.features.as_deref(), Some("a"));
         assert_eq!(core.groups[&Group::Gate].features.as_deref(), Some("bench"));
         assert_eq!(
-            core.groups[&Group::Docs].capture,
+            core.groups[&Group::Docs].paths,
             Some(vec!["book/**".into()])
         );
     }
 
     #[test]
     fn a_group_overrides_the_package_key_by_key() {
-        let text = "[package.core]\nfeatures = \"a\"\ntarget = \"t\"\n\n[package.core.gate]\nfeatures = \"bench\"\n";
+        let text = "[package.core]\nfeatures = \"a\"\nbaseline = \"b\"\n\n[package.core.gate]\nfeatures = \"bench\"\ntarget = \"t\"\n";
         let core = &parse(text).unwrap()["core"];
         let gate = core.settings(Group::Gate);
         assert_eq!(gate.features.as_deref(), Some("bench"));
+        assert_eq!(gate.baseline.as_deref(), Some("b"));
         assert_eq!(gate.target.as_deref(), Some("t"));
+        assert_eq!(core.settings(Group::Docs).target, None);
         assert_eq!(core.settings(Group::Docs).features.as_deref(), Some("a"));
     }
 
@@ -255,8 +258,14 @@ mod tests {
     #[test]
     fn a_key_the_group_has_no_flag_for_is_an_error() {
         assert!(parse("[package.a.spec]\nbaseline = \"b\"\n").is_err());
-        assert!(parse("[package.a.gate]\ncapture = [\"x\"]\n").is_err());
+        assert!(parse("[package.a.gate]\npaths = [\"x\"]\n").is_err());
         assert!(parse("[package.a.test]\nbaseline = \"b\"\n").is_err());
+    }
+
+    #[test]
+    fn target_belongs_to_a_group_table() {
+        let e = parse("[package.a]\ntarget = \"t\"\n").unwrap_err();
+        assert_eq!(e, "line 2: unknown or mistyped `target` under [package.a]");
     }
 
     #[test]
