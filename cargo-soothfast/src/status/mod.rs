@@ -4,6 +4,9 @@
 
 use std::path::PathBuf;
 
+mod baselines;
+mod docs_lock;
+mod gate;
 mod render;
 mod version;
 
@@ -64,12 +67,19 @@ impl Row {
 /// What a check reads from.
 pub(crate) struct Ctx {
     pub(crate) root: PathBuf,
+    /// Packages with a bench target.
+    pub(crate) packages: Vec<String>,
 }
 
 /// One independent check: a new one is a function added to [`CHECKS`].
 type Check = fn(&Ctx) -> Vec<Row>;
 
-const CHECKS: &[Check] = &[version::check];
+const CHECKS: &[Check] = &[
+    version::check,
+    gate::check,
+    baselines::check,
+    docs_lock::check,
+];
 
 pub fn run(args: &[String]) -> i32 {
     let mut all = false;
@@ -81,9 +91,9 @@ pub fn run(args: &[String]) -> i32 {
             other => return crate::arg_err(&format!("unknown status arg {other:?}")),
         }
     }
-    let ctx = Ctx {
-        root: crate::invoke::project_root(),
-    };
+    let root = crate::invoke::project_root();
+    let packages = crate::workspace::bench_crates("soothfast", Some(&root)).unwrap_or_default();
+    let ctx = Ctx { root, packages };
     let rows: Vec<Row> = CHECKS.iter().flat_map(|check| check(&ctx)).collect();
     if json {
         println!("{}", render::json(&rows));

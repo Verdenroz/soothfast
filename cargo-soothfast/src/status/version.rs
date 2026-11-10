@@ -60,7 +60,10 @@ mod tests {
     fn the_check_reads_cargo_lock_under_the_root() {
         let root = crate::status::scratch("version");
         std::fs::write(root.join("Cargo.lock"), LOCK).unwrap();
-        let rows = check(&Ctx { root });
+        let rows = check(&Ctx {
+            root,
+            packages: Vec::new(),
+        });
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].state, State::Stale);
     }
