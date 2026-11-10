@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased (draft vs v0.5.6)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### ✨ Features
+
+- Per-package defaults in soothfast.toml (#379)
+
+### 🔧 Internal
+
+- Drop llms.txt, keep the trend series on the Pages branch (#378)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-report
+ADDED    soothfast_report::surface
+ADDED    soothfast_report::surface::SurfaceEntry
+REMOVED  soothfast_report::llms
+REMOVED  soothfast_report::llms::ProjectEntry
+REMOVED  soothfast_report::llms::ProjectSurface
+REMOVED  soothfast_report::llms::SurfaceEntry
+REMOVED  soothfast_report::llms::render
+REMOVED  soothfast_report::llms::render_projects
+```
+
+
 ## 0.5.6 - 2026-11-08
 
 <!-- soothfast:notes -->
