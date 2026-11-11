@@ -25,6 +25,7 @@ mod docs_binds;
 mod docs_claims;
 mod docs_generated;
 mod docs_support;
+mod every_package;
 mod gate;
 mod gate_lock;
 mod gate_save;
@@ -323,6 +324,9 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         eprint!("{USAGE}");
         return 2;
     };
+    if let Some(rc) = every_package::dispatch(&argv) {
+        return rc;
+    }
     let rest = &argv[1..];
     match cmd.as_str() {
         "measure" => cmd_measure(rest),

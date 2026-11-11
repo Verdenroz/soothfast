@@ -102,6 +102,12 @@ impl Config {
         changelog::parse(&self.text).map_err(|e| self.located(e))
     }
 
+    /// The names of the `[package.NAME]` tables, in name order.
+    pub fn package_names(&self) -> Result<Vec<String>, String> {
+        let tables = package::parse(&self.text).map_err(|e| self.located(e))?;
+        Ok(tables.into_keys().collect())
+    }
+
     /// The `[test]` section and its `[test.packages.NAME]` tables.
     pub fn test(&self) -> Result<test::TestConfig, String> {
         test::parse(&self.text).map_err(|e| self.located(e))
@@ -266,6 +272,18 @@ mod tests {
         assert!(e.contains("core and other") && e.contains("docs"), "{e}");
         let same = config(TEXT).resolve(&pkgs(&["core", "core"]), Group::Docs);
         assert!(same.is_ok());
+    }
+
+    #[test]
+    fn package_names_are_the_tables_in_name_order() {
+        let cfg = config("[package.b.gate]\nfeatures = \"x\"\n\n[package.a]\nfeatures = \"y\"\n");
+        assert_eq!(cfg.package_names().unwrap(), ["a", "b"]);
+        assert!(
+            config("[gate]\nfeatures = \"x\"\n")
+                .package_names()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
