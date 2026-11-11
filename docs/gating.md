@@ -673,23 +673,23 @@ dot, and one the workspace lacks is not an error.
 
 ### Every package at once
 
-With `[package.*]` tables in the file, `measure`, `gate`, `spec gen`,
-`spec gate`, `spec check`, `sdk gen`, `sdk gate`, `coverage measure` and
-`coverage docs` run once for each package table when given no `-p`, each run
-resolving that package's own defaults. The packages run in name order. Each
+With a `[package.*]` table in the file, `measure`, `gate`, `spec gen`,
+`spec gate`, `spec check`, `sdk gen`, `sdk gate` and `coverage measure` run
+once per package when given no `-p`, each run resolving that package's own
+defaults. The packages are the workspace members the command means something
+for, whether or not a member has a table of its own, in name order. Each
 run's output follows a `soothfast: package NAME` line, every package runs even
 after one fails, and the exit code is the highest any run returned.
 
-A package takes part only where the command means something for it, and a
-package that does not is skipped without a word. `measure`, `gate` and
+A member the command means nothing for is skipped without a word. `measure`, `gate` and
 `coverage measure` need a bench target, the one `--bench` names, else the
 group's `target`, else `soothfast`. `spec` commands and `sdk gate` need a
 `[[spec]]` entry in the package's own `soothfast.toml`, and `sdk gen` an
-`[[sdk]]` entry. When no package qualifies, or `-p` or `--dir` is given, the
-command runs as it does without package tables: `gate` and `measure` over the
+`[[sdk]]` entry. When no member qualifies, or `-p` is given, the command runs
+as it does without package tables: `gate` and `measure` over the
 workspace, the others asking for `-p`.
 
-`gate accept`, `gate --import`, `docs *`, `test`, `ci *`, `prebuild`,
+`gate accept`, `gate --import`, `coverage docs`, `docs *`, `test`, `ci *`, `prebuild`,
 `baseline`, `trend`, `report`, `mcp`, `spec html`, `spec probe`, `sdk build`
 and `sdk publish` keep their own meaning without `-p`.
 

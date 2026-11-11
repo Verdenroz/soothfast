@@ -291,11 +291,11 @@ commands:
            exits 1 when any row needs action)
   mcp      -p PKG [--baseline NAME] [--features F]   (agent-facing server on stdio)
 
-With no -p, measure, gate, coverage measure|docs, spec gen|gate|check and sdk
-gen|gate run once for every [package.NAME] table of soothfast.toml that
-qualifies (a bench target, or a [[spec]] / [[sdk]] entry in the package's own
-soothfast.toml), in name order, each under a `soothfast: package NAME` line,
-exiting with the worst code. Without such tables, -p is as before.
+With no -p and a [package.NAME] table in soothfast.toml, measure, gate,
+coverage measure, spec gen|gate|check and sdk gen|gate run once for every
+workspace member that qualifies (a bench target, or a [[spec]] / [[sdk]]
+entry in the package's own soothfast.toml), in name order, each under a
+`soothfast: package NAME` line, exiting with the worst code. Without such tables, -p is as before.
 
 `--features F` builds the bench binary / rustdoc surface with those cargo
 features enabled (feature-gated items are otherwise invisible).

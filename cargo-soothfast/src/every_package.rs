@@ -1,9 +1,10 @@
-//! A command that takes one package and is given none runs once for every
-//! package with a `[package.NAME]` table in the root `soothfast.toml`.
+//! A command that takes one package and is given none runs once per package
+//! when the root `soothfast.toml` has a `[package.NAME]` table.
 //!
 //! Each run is the same command re-executed with `-p NAME`, so it resolves
-//! that package's own defaults. Packages run in name order, since the table
-//! parser keys them by name.
+//! that package's own defaults. The packages are every workspace member the
+//! command means something for, with or without a table of its own, in name
+//! order.
 
 use std::process::Command;
 
@@ -20,7 +21,6 @@ enum Needs {
     SpecEntry,
     /// An `[[sdk]]` entry in the package's own `soothfast.toml`.
     SdkEntry,
-    Anything,
 }
 
 /// A command that runs per package: the defaults group its flags come from
@@ -36,8 +36,12 @@ struct Scope {
 /// package table qualifies. The caller then runs it as it always has.
 pub fn dispatch(argv: &[String]) -> Option<i32> {
     let scope = scope(argv)?;
-    let config = Config::load(&invoke::project_root()).ok()?;
-    let names = config.package_names().ok()?;
+    let root = invoke::project_root();
+    let config = Config::load(&root).ok()?;
+    if config.package_names().ok()?.is_empty() {
+        return None;
+    }
+    let names = crate::workspace::members(Some(&root)).ok()?;
     let packages = chosen(&names, |pkg| qualifies(&config, scope, argv, pkg));
     if packages.is_empty() {
         return None;
@@ -76,8 +80,6 @@ fn scope(argv: &[String]) -> Option<Scope> {
         ("spec", Some("gen" | "check")) => (Group::Spec, Needs::SpecEntry),
         ("sdk", Some("gen")) => (Group::Spec, Needs::SdkEntry),
         ("coverage", Some("measure")) => (Group::Docs, Needs::Bench),
-        ("coverage", Some("docs")) if has("--dir") || has("--lang") => return None,
-        ("coverage", Some("docs")) => (Group::Docs, Needs::Anything),
         _ => return None,
     };
     Some(Scope { group, needs })
@@ -85,7 +87,6 @@ fn scope(argv: &[String]) -> Option<Scope> {
 
 fn qualifies(config: &Config, scope: Scope, argv: &[String], pkg: &str) -> bool {
     match scope.needs {
-        Needs::Anything => true,
         Needs::Bench => {
             let table = config.resolve(&[pkg.to_string()], scope.group);
             let target = flag_value(argv, &["--bench", "--target"])
@@ -158,10 +159,6 @@ mod tests {
         assert_eq!(of(&["sdk", "gate"]), Some((Group::Spec, Needs::SpecEntry)));
         assert_eq!(of(&["sdk", "gen"]), Some((Group::Spec, Needs::SdkEntry)));
         assert_eq!(
-            of(&["coverage", "docs"]),
-            Some((Group::Docs, Needs::Anything))
-        );
-        assert_eq!(
             of(&["coverage", "measure"]),
             Some((Group::Docs, Needs::Bench))
         );
@@ -172,6 +169,7 @@ mod tests {
         for a in [
             &["gate", "accept"][..],
             &["gate", "--import", "jmh", "f"],
+            &["coverage", "docs"],
             &["coverage", "docs", "--dir", "d", "--lang", "py"],
             &["docs", "check"],
             &["test"],
