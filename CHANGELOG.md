@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Run each CI job as cargo soothfast ci <kind> (#384)
 - Add cargo soothfast bump (#380)
 - Add cargo soothfast status (#377)
 - Per-package defaults in soothfast.toml (#379)
