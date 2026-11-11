@@ -833,6 +833,11 @@ With nothing configured it says so and records nothing.
 `-p` ones given, and fails when a package documents less than its minimum.
 Each package records a `check` verdict named `coverage-PKG`. With nothing
 configured it says so and records nothing.
+`ci capture` runs `docs capture --check` for every docs package, or the `-p`
+ones given, which fails when the output recorded beside a capture block no
+longer matches what the block prints. A package with no capture block passes.
+Each package records a `check` verdict named `capture-PKG`. With no docs
+package it says so and records nothing.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
 jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
 `routes` or `rustdoc` lane. With no package named, `bench` builds the gated

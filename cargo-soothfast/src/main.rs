@@ -151,6 +151,9 @@ commands:
   ci       coverage [-p PKG]...
            (coverage docs for each package, recorded as coverage-PKG; with
            no -p, every docs package that sets a coverage minimum)
+  ci       capture [-p PKG]...
+           (docs capture --check for each package, recorded as capture-PKG;
+           with no -p, every docs package)
   ci       verdict [--expect NAME:KIND]... [--accepted LABEL] [--out FILE]
            (merges the records under the results directory into the pull
            request comment body, written to FILE or <results>/verdict-comment.md;
