@@ -1,6 +1,6 @@
 //! The `prebuild` command line.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use super::select::{Lane, SpecPackage, Wanted};
@@ -21,12 +21,22 @@ pub(super) fn take<'a>(
         .ok_or_else(|| format!("{flag} needs a value"))
 }
 
-fn spec_package(arg: &str) -> SpecPackage {
-    let (pkg, target) = arg.split_once(':').unwrap_or((arg, "soothfast"));
-    SpecPackage {
+/// `PKG[:TARGET]`. What the argument and `--features` leave unset comes from
+/// the package's `spec` defaults in `soothfast.toml`.
+fn spec_package(arg: &str, features: Option<&str>) -> Result<SpecPackage, String> {
+    let (pkg, target) = match arg.split_once(':') {
+        Some((pkg, target)) => (pkg, Some(target)),
+        None => (arg, None),
+    };
+    let defaults = config::defaults(&[pkg.to_string()], Group::Spec)?;
+    Ok(SpecPackage {
         pkg: pkg.to_string(),
-        target: target.to_string(),
-    }
+        target: target
+            .map(String::from)
+            .or(defaults.target)
+            .unwrap_or_else(|| "soothfast".into()),
+        features: features.map(String::from).or(defaults.features),
+    })
 }
 
 fn lane(name: &str) -> Result<Lane, String> {
@@ -48,14 +58,15 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
         packages: Vec::new(),
         docs: Vec::new(),
         spec: Vec::new(),
-        features: None,
         docs_features: None,
+        docs_defaults: BTreeMap::new(),
         docs_paths: Vec::new(),
         against_ref: None,
         reuse_base: true,
         stage: None,
         shards: 1,
     };
+    let mut spec = Vec::new();
     let mut it = args.iter().peekable();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -71,7 +82,7 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
                     return Err(format!("{a} needs a value"));
                 }
             }
-            "--spec" => wanted.spec.push(spec_package(&take(&mut it, a)?)),
+            "--spec" => spec.push(take(&mut it, a)?),
             "--against-ref" => wanted.against_ref = Some(take(&mut it, a)?),
             "--no-reuse-base" => wanted.reuse_base = false,
             "--stage" => wanted.stage = Some(PathBuf::from(take(&mut it, a)?)),
@@ -90,8 +101,20 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
             }
         }
     }
+    for arg in &spec {
+        wanted
+            .spec
+            .push(spec_package(arg, common.features.as_deref())?);
+    }
+    if wanted.docs_features.is_none() {
+        for pkg in &wanted.docs {
+            let defaults = config::defaults(std::slice::from_ref(pkg), Group::Docs)?;
+            wanted
+                .docs_defaults
+                .extend(defaults.features.map(|f| (pkg.clone(), f)));
+        }
+    }
     config::apply_to(&mut common, Group::Gate, &wanted.packages)?;
-    wanted.features = common.features.clone();
     wanted.lanes = if lanes.is_empty() {
         BTreeSet::from([Lane::Bench, Lane::Routes, Lane::Rustdoc])
     } else {

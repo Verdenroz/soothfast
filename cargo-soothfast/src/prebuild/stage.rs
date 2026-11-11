@@ -35,8 +35,13 @@ pub(super) fn stage_item(item: &Item, built: Option<PathBuf>, live: &Live, stage
     };
     match item {
         Item::Bench { .. } => from_exe(built),
-        Item::Routes { pkg, target } => from_exe(built.or_else(|| {
-            benchexe::executable(&live.one(pkg, Some(target)), None, None, Build::Discover)
+        Item::Routes {
+            pkg,
+            target,
+            features,
+        } => from_exe(built.or_else(|| {
+            let one = live.routes(pkg, target, features.as_deref());
+            benchexe::executable(&one, None, None, Build::Discover)
         })),
         Item::Rustdoc { .. } => {
             let (Some(key), Some(store), Ok(root)) = (

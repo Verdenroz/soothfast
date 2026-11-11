@@ -55,6 +55,15 @@ impl Live<'_> {
         }
     }
 
+    /// The arguments a routes executable is built and looked up with.
+    pub(super) fn routes(&self, pkg: &str, target: &str, features: Option<&str>) -> CommonArgs {
+        let one = self.one(pkg, Some(target));
+        CommonArgs {
+            features: features.map(String::from).or(one.features.clone()),
+            ..one
+        }
+    }
+
     /// The run files that cover the merge-base of `pkg` for every gate leg,
     /// or `None` when some leg would not find one.
     pub(super) fn reference_files(&self, pkg: &str) -> Option<Vec<PathBuf>> {
@@ -159,8 +168,13 @@ impl State for Live<'_> {
                 let (dir, target_dir) = self.tree(*side);
                 benchexe::is_stored(&self.one(pkg, None), dir, target_dir, Build::Measure)
             }
-            Item::Routes { pkg, target } => {
-                benchexe::is_stored(&self.one(pkg, Some(target)), None, None, Build::Discover)
+            Item::Routes {
+                pkg,
+                target,
+                features,
+            } => {
+                let one = self.routes(pkg, target, features.as_deref());
+                benchexe::is_stored(&one, None, None, Build::Discover)
             }
             Item::Rustdoc { .. } => self
                 .rustdoc_key(item)

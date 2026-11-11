@@ -618,9 +618,9 @@ features = "bench-gate"
 ```
 
 An explicit `--features` on the command line wins; the file only fills in what
-the command line left unset. The action's `features` input sets the same thing
-for CI, so a repository that configures the file gets one behaviour from a
-hand-run `cargo soothfast gate` and from the action.
+the command line left unset. The action passes no features of its own, so a
+repository that configures the file gets one behaviour from a hand-run
+`cargo soothfast gate` and from the action.
 
 ## Per-package defaults
 

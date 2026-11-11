@@ -43,9 +43,7 @@ inputs:
     required: false
     default: "true"
   spec:
-    description: >-
-      Space-separated packages whose generate-mode specs are regenerated on
-      pushes to the default branch.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   baseline:
@@ -78,10 +76,7 @@ inputs:
     required: false
     default: ""
   features:
-    description: >-
-      Cargo features passed as `--features` to the gate, the baseline
-      measurement, and spec generation. A bench target with
-      `required-features` needs them here.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   save-baseline:
@@ -97,23 +92,23 @@ inputs:
     required: false
     default: ""
   changelog-features:
-    description: >-
-      Features for `report changelog`, which decide what the API surface
-      contains. Empty uses `features`.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   changelog-packages:
-    description: >-
-      Space-separated packages whose API surface `report changelog` diffs.
-      Empty uses `packages`; set it when crates without a bench target
-      still ship an API.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
+  regen:
+    description: >-
+      Run the regeneration on pushes to the default branch even with
+      `changelog: "false"`, for the generate-mode specs and SDKs alone.
+    required: false
+    default: "false"
   regen-run:
     description: >-
       Shell run on the default branch after the built-in regeneration, for
-      derived files the inputs above do not cover (an `sdk gen`, a rendered
-      report). `$SOOTHFAST` names the cargo-soothfast this step installed.
+      derived files it does not cover (a rendered report). `$SOOTHFAST` names the cargo-soothfast this step installed.
       Whatever it changes under `regen-paths` lands in the same pull
       request; `regen-paths` is required with it.
     required: false
@@ -194,34 +189,31 @@ inputs:
   prebuild:
     description: >-
       Lanes (`bench`, `routes`, `rustdoc`, space-separated) to build into the
-      stores with `cargo soothfast prebuild` in place of the gate, so a later
-      job reads them. `prebuild-spec` implies `routes` and `rustdoc`, and
-      `prebuild-docs` implies `rustdoc`, so those two alone are enough. The
-      cache inputs restore and save the stores as for a gate. Empty, with
-      neither of the others set, runs the gate.
+      stores with `cargo soothfast ci build` in place of the gate, so a later
+      job reads them. `routes` builds for every package with a `[[spec]]`
+      entry, and `rustdoc` for the docs packages and every package that
+      generates a spec. `prebuild-docs` implies `rustdoc`. The cache inputs
+      restore and save the stores as for a gate. Empty, with `prebuild-docs`
+      unset, runs the gate.
     required: false
     default: ""
   prebuild-docs:
-    description: Space-separated packages whose rustdoc JSON `docs check` reads. Builds the `rustdoc` lane.
+    description: >-
+      Space-separated packages whose rustdoc JSON `docs check` reads, in
+      place of the ones `soothfast.toml` configures. Builds the `rustdoc`
+      lane.
     required: false
     default: ""
   prebuild-docs-paths:
-    description: >-
-      The PATHS `docs check` is given, one per line, which decide whether it
-      builds rustdoc at all. Empty means the `[docs] paths` scope.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   prebuild-docs-features:
-    description: >-
-      The `--features` `docs check` is given, which key its rustdoc JSON.
-      Empty means none: `docs check` never reads the `features` input.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   prebuild-spec:
-    description: >-
-      Space-separated `PKG` or `PKG:TARGET` that `spec` commands run on.
-      Builds the `routes` lane, and the `rustdoc` lane for a package whose
-      spec is generated.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   prebuild-shards:
@@ -247,6 +239,33 @@ outputs:
 runs:
   using: composite
   steps:
+    # `ci` kinds read these from soothfast.toml, so a value here would be ignored.
+    - name: Reject retired inputs
+      shell: bash
+      env:
+        FEATURES: ${{ inputs.features }}
+        SPEC: ${{ inputs.spec }}
+        CHANGELOG_FEATURES: ${{ inputs.changelog-features }}
+        CHANGELOG_PACKAGES: ${{ inputs.changelog-packages }}
+        DOCS_PATHS: ${{ inputs.prebuild-docs-paths }}
+        DOCS_FEATURES: ${{ inputs.prebuild-docs-features }}
+        PREBUILD_SPEC: ${{ inputs.prebuild-spec }}
+      run: |
+        failed=false
+        retired() {
+          if [ -n "$2" ]; then
+            echo "::error::the $1 input is retired: $3 in soothfast.toml"
+            failed=true
+          fi
+        }
+        retired features "$FEATURES" 'set features under [gate] or [package.NAME]'
+        retired spec "$SPEC" 'ci regen finds the generate-mode [[spec]] entries'
+        retired changelog-features "$CHANGELOG_FEATURES" 'set features under [changelog]'
+        retired changelog-packages "$CHANGELOG_PACKAGES" 'set packages under [changelog]'
+        retired prebuild-docs-paths "$DOCS_PATHS" 'set paths under [docs]'
+        retired prebuild-docs-features "$DOCS_FEATURES" 'set features under [package.NAME.docs]'
+        retired prebuild-spec "$PREBUILD_SPEC" 'add routes to the prebuild input and set target and features under [package.NAME.spec]'
+        [ "$failed" = false ]
     - name: Resolve cargo-soothfast
       id: resolve
       shell: bash
@@ -315,10 +334,8 @@ runs:
       env:
         PREBUILD: ${{ inputs.prebuild }}
         DOCS: ${{ inputs.prebuild-docs }}
-        SPEC: ${{ inputs.prebuild-spec }}
       run: |
         lanes=$PREBUILD
-        [ -n "$SPEC" ] && lanes="$lanes routes rustdoc"
         [ -n "$DOCS" ] && lanes="$lanes rustdoc"
         read -ra all <<<"$lanes"
         lanes=$(printf '%s\n' "${all[@]}" | sort -u | paste -sd' ' -)
@@ -335,7 +352,7 @@ runs:
         # Only the bench lane gates, so the others skip the package search,
         # the history fetch and the callgrind install.
         GATE: ${{ inputs.gate == 'true' && (steps.lanes.outputs.active == 'false' || steps.lanes.outputs.bench == 'true') }}
-        REGEN: ${{ inputs.changelog == 'true' || inputs.spec != '' || inputs.regen-run != '' }}
+        REGEN: ${{ inputs.changelog == 'true' || inputs.regen == 'true' || inputs.regen-run != '' }}
         PACKAGES: ${{ inputs.packages }}
         RUSTDOC_TOOLCHAIN: ${{ inputs.rustdoc-toolchain }}
         LABELS: ${{ inputs.labels }}
@@ -525,14 +542,7 @@ runs:
         STAGE: ${{ inputs.prebuild-stage }}
         SHARDS: ${{ inputs.prebuild-shards }}
         PACKAGES: ${{ steps.prepare.outputs.packages }}
-        FEATURES: ${{ inputs.features }}
-        BASE_REF: ${{ github.base_ref }}
-        EVENT: ${{ github.event_name }}
-        ON_DEFAULT: ${{ steps.prepare.outputs.on_default_branch }}
         DOCS: ${{ inputs.prebuild-docs }}
-        DOCS_PATHS: ${{ inputs.prebuild-docs-paths }}
-        DOCS_FEATURES: ${{ inputs.prebuild-docs-features }}
-        SPEC: ${{ inputs.prebuild-spec }}
       run: "$GITHUB_ACTION_PATH/action/prebuild.sh"
 
     # A pull request is gated against its base. A default-branch push records
@@ -551,7 +561,6 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         BROKER: ${{ inputs.broker }}
-        FEATURES: ${{ inputs.features }}
         SAVE_BASELINE: ${{ inputs.save-baseline }}
         SHARD: ${{ inputs.shard }}
         COMMENT: ${{ inputs.comment }}
@@ -615,21 +624,20 @@ runs:
       run: "$GITHUB_ACTION_PATH/action/sweep.sh"
 
     - name: Regenerate derived files
-      if: github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true' && steps.lanes.outputs.active == 'false'
+      if: steps.prepare.outputs.regenerating == 'true' && steps.lanes.outputs.active == 'false'
       id: regen
       shell: bash
       env:
         CLI: ${{ steps.resolve.outputs.bin }}
-        PACKAGES: ${{ steps.prepare.outputs.packages }}
         BASELINE: ${{ inputs.baseline }}
         CHANGELOG: ${{ inputs.changelog }}
-        SPEC: ${{ inputs.spec }}
-        FEATURES: ${{ inputs.features }}
-        CHANGELOG_FEATURES: ${{ inputs.changelog-features }}
-        CHANGELOG_PACKAGES: ${{ inputs.changelog-packages }}
         REGEN_RUN: ${{ inputs.regen-run }}
         REGEN_PATHS: ${{ inputs.regen-paths }}
-      run: "$GITHUB_ACTION_PATH/action/regen.sh"
+      run: |
+        args=(--baseline "$BASELINE" --paths-out "$RUNNER_TEMP/soothfast-regen")
+        [ "$CHANGELOG" = true ] || args+=(--no-changelog)
+        "$CLI" ci regen "${args[@]}"
+        cat "$RUNNER_TEMP/soothfast-regen" >>"$GITHUB_OUTPUT"
     # Minted after everything that compiles the tree has run.
     - name: Mint a soothfast-bot token
       if: steps.regen.outputs.changed == 'true' && inputs.bot-token == ''

@@ -177,6 +177,25 @@ pub fn generating(pkg: &str) -> Option<SpecConfig> {
         .filter(SpecConfig::generates)
 }
 
+/// The workspace members with a `[[spec]]` entry, and those of them that
+/// generate one from the code.
+pub fn configured(root: &Path) -> Result<(Vec<String>, Vec<String>), String> {
+    let members = crate::workspace::member_dirs(Some(root)).map_err(|e| e.to_string())?;
+    let mut all = Vec::new();
+    let mut generating = Vec::new();
+    for (package, dir) in members {
+        let config = load(&dir)?;
+        if config.entries.is_empty() {
+            continue;
+        }
+        if config.generates() {
+            generating.push(package.clone());
+        }
+        all.push(package);
+    }
+    Ok((all, generating))
+}
+
 /// Read `soothfast.toml` from a directory. An absent file is not an error —
 /// it just means nothing is configured for generation.
 pub fn load(dir: &Path) -> Result<SpecConfig, String> {

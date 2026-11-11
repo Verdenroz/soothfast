@@ -9,16 +9,15 @@ use soothfast_registry::fnv1a;
 
 use super::env::{CiEnv, Event};
 use crate::config::{self, Group, Settings};
-use crate::init::{self, RustPlan};
-use crate::invoke;
+use crate::init;
+use crate::{invoke, spec_config, workspace};
 
 /// What `ci build` was asked for.
 #[derive(Debug, PartialEq)]
 struct Job {
-    /// A lane name, handed to `prebuild --only` as given so it decides what
-    /// is valid.
     lane: String,
-    packages: Vec<String>,
+    /// The packages named, each with the flag that named it.
+    named: Vec<(String, String)>,
     shards: u64,
     stage: Option<PathBuf>,
     plan_out: Option<PathBuf>,
@@ -35,7 +34,7 @@ struct Shape {
 fn parse(args: &[String]) -> Result<Job, String> {
     let mut job = Job {
         lane: String::new(),
-        packages: Vec::new(),
+        named: Vec::new(),
         shards: 1,
         stage: None,
         plan_out: None,
@@ -49,7 +48,8 @@ fn parse(args: &[String]) -> Result<Job, String> {
                 .ok_or_else(|| format!("{a} needs a value"))
         };
         match a.as_str() {
-            "-p" | "--package" => job.packages.push(value()?),
+            "-p" | "--package" => job.named.push(("-p".into(), value()?)),
+            "--docs" | "--spec" => job.named.push((a.clone(), value()?)),
             "--shards" => match value()?.parse() {
                 Ok(n) if n >= 1 => job.shards = n,
                 _ => return Err("--shards wants a count of at least 1".into()),
@@ -63,6 +63,20 @@ fn parse(args: &[String]) -> Result<Job, String> {
     }
     if job.lane.is_empty() {
         return Err("ci build needs a lane".into());
+    }
+    let flags: Vec<&str> = entries(&job.lane).map(|kind| kind.flag).collect();
+    if flags.is_empty() {
+        return Err(format!(
+            "ci build wants bench, routes or rustdoc, got {:?}",
+            job.lane
+        ));
+    }
+    if let Some((flag, _)) = job.named.iter().find(|(f, _)| !flags.contains(&f.as_str())) {
+        return Err(format!(
+            "ci build {} takes {}, not {flag}",
+            job.lane,
+            flags.join(" and ")
+        ));
     }
     Ok(job)
 }
@@ -85,12 +99,25 @@ fn shape(env: &CiEnv, asked: u64, has_parent: impl Fn() -> bool) -> Shape {
     }
 }
 
+/// Where a lane's packages come from when none are named.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Source {
+    Gated,
+    Docs,
+    /// Packages with a `[[spec]]` entry.
+    Spec,
+    /// Packages that generate a spec from the code.
+    Generating,
+}
+
 /// How `prebuild` takes a lane's packages and which defaults they resolve.
+/// A lane with several entries builds for each. Naming packages for one entry
+/// leaves the others with none.
 struct LaneKind {
     name: &'static str,
     flag: &'static str,
     group: Group,
-    packages: fn(&RustPlan) -> Vec<String>,
+    source: Source,
 }
 
 const LANES: &[LaneKind] = &[
@@ -98,53 +125,48 @@ const LANES: &[LaneKind] = &[
         name: "bench",
         flag: "-p",
         group: Group::Gate,
-        packages: |plan| plan.packages.clone(),
+        source: Source::Gated,
     },
     LaneKind {
         name: "routes",
         flag: "--spec",
         group: Group::Spec,
-        packages: |_| Vec::new(),
+        source: Source::Spec,
     },
     LaneKind {
         name: "rustdoc",
         flag: "--docs",
         group: Group::Docs,
-        packages: |plan| plan.docs_packages.clone(),
+        source: Source::Docs,
+    },
+    LaneKind {
+        name: "rustdoc",
+        flag: "--spec",
+        group: Group::Spec,
+        source: Source::Generating,
     },
 ];
 
-/// A lane `prebuild` has not heard of is passed on with `-p`, for it to
-/// reject.
-const UNKNOWN: LaneKind = LaneKind {
-    name: "",
-    flag: "-p",
-    group: Group::Gate,
-    packages: |_| Vec::new(),
-};
-
-fn lane_kind(name: &str) -> &'static LaneKind {
-    LANES.iter().find(|l| l.name == name).unwrap_or(&UNKNOWN)
+fn entries(lane: &str) -> impl Iterator<Item = &'static LaneKind> {
+    LANES.iter().filter(move |kind| kind.name == lane)
 }
 
-/// The packages a lane applies to when none are named.
-fn default_packages(lane: &str, plan: &RustPlan) -> Vec<String> {
-    (lane_kind(lane).packages)(plan)
-}
-
-/// One `prebuild` call for each set of packages that resolve the same
-/// defaults, in the order they first appear, since a call takes one set of
-/// features.
+/// The `prebuild` calls for one entry's packages. Gated packages that resolve
+/// different defaults build apart, in the order they first appear, since a
+/// call takes one set of features. `prebuild` resolves the rest per package.
 fn invocations(
     job: &Job,
+    kind: &LaneKind,
     packages: &[String],
     shape: &Shape,
     resolve: impl Fn(&str, Group) -> Result<Settings, String>,
 ) -> Result<Vec<Vec<String>>, String> {
-    let kind = lane_kind(&job.lane);
     let mut buckets: Vec<(Settings, Vec<&String>)> = Vec::new();
     for pkg in packages {
-        let settings = resolve(pkg, kind.group)?;
+        let settings = match kind.group {
+            Group::Gate => resolve(pkg, kind.group)?,
+            _ => Settings::default(),
+        };
         match buckets.iter_mut().find(|(s, _)| *s == settings) {
             Some((_, group)) => group.push(pkg),
             None => buckets.push((settings, vec![pkg])),
@@ -152,7 +174,7 @@ fn invocations(
     }
     Ok(buckets
         .into_iter()
-        .map(|(settings, group)| {
+        .map(|(_, group)| {
             let mut args = vec!["prebuild".into(), "--only".into(), job.lane.clone()];
             if let Some(stage) = &job.stage {
                 args.extend(["--stage".into(), stage.display().to_string()]);
@@ -162,9 +184,6 @@ fn invocations(
             }
             for pkg in group {
                 args.extend([kind.flag.into(), pkg.clone()]);
-            }
-            if let (Group::Docs, Some(features)) = (kind.group, settings.features) {
-                args.extend(["--docs-features".into(), features]);
             }
             if let Some(against) = &shape.against {
                 args.extend(["--against-ref".into(), against.clone()]);
@@ -180,8 +199,11 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
         Ok(job) => job,
         Err(e) => return crate::arg_err(&e),
     };
-    let packages = match resolve_packages(&job) {
-        Ok(packages) => packages,
+    let has_parent = || invoke::git(&["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok();
+    let shape = shape(env, job.shards, has_parent);
+    let resolve = |pkg: &str, group| config::defaults(&[pkg.to_string()], group);
+    let (packages, calls) = match plan(&job, &shape, load, resolve) {
+        Ok(planned) => planned,
         Err(e) => {
             eprintln!("soothfast: {e}");
             return 2;
@@ -191,16 +213,6 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
         println!("ci build: no packages for the {} lane", job.lane);
         return 0;
     }
-    let has_parent = || invoke::git(&["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok();
-    let shape = shape(env, job.shards, has_parent);
-    let resolve = |pkg: &str, group| config::defaults(&[pkg.to_string()], group);
-    let calls = match invocations(&job, &packages, &shape, resolve) {
-        Ok(calls) => calls,
-        Err(e) => {
-            eprintln!("soothfast: {e}");
-            return 2;
-        }
-    };
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
@@ -224,12 +236,37 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     )
 }
 
-fn resolve_packages(job: &Job) -> Result<Vec<String>, String> {
-    if !job.packages.is_empty() {
-        return Ok(job.packages.clone());
+/// The packages the job builds for and the `prebuild` calls that build them.
+/// With no package named, each entry of the lane builds its own defaults.
+fn plan(
+    job: &Job,
+    shape: &Shape,
+    load: impl Fn(Source) -> Result<Vec<String>, String>,
+    resolve: impl Fn(&str, Group) -> Result<Settings, String>,
+) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+    let mut packages = Vec::new();
+    let mut calls = Vec::new();
+    for kind in entries(&job.lane) {
+        let chosen = if job.named.is_empty() {
+            load(kind.source)?
+        } else {
+            let named = job.named.iter().filter(|(flag, _)| flag == kind.flag);
+            named.map(|(_, pkg)| pkg.clone()).collect()
+        };
+        calls.extend(invocations(job, kind, &chosen, shape, &resolve)?);
+        packages.extend(chosen);
     }
-    let plan = init::rust_plan(&invoke::project_root())?;
-    Ok(default_packages(&job.lane, &plan))
+    Ok((packages, calls))
+}
+
+fn load(source: Source) -> Result<Vec<String>, String> {
+    let root = invoke::project_root();
+    match source {
+        Source::Gated => workspace::bench_crates("soothfast", Some(&root)),
+        Source::Docs => Ok(init::rust_plan(&root)?.docs_packages),
+        Source::Spec => Ok(spec_config::configured(&root)?.0),
+        Source::Generating => Ok(spec_config::configured(&root)?.1),
+    }
 }
 
 /// Runs every call, then lists the built items and the store's checksums as
@@ -351,12 +388,32 @@ mod tests {
     fn job(lane: &str, stage: Option<&str>) -> Job {
         Job {
             lane: lane.into(),
-            packages: Vec::new(),
+            named: Vec::new(),
             shards: 1,
             stage: stage.map(Into::into),
             plan_out: None,
             listing_out: None,
         }
+    }
+
+    /// The calls for `packages` named under the lane's first flag.
+    fn invocations(
+        job: &Job,
+        packages: &[String],
+        shape: &Shape,
+        resolve: impl Fn(&str, Group) -> Result<Settings, String>,
+    ) -> Result<Vec<Vec<String>>, String> {
+        let flag = entries(&job.lane).next().unwrap().flag;
+        let job = Job {
+            named: packages.iter().map(|p| (flag.into(), p.clone())).collect(),
+            lane: job.lane.clone(),
+            stage: job.stage.clone(),
+            shards: job.shards,
+            plan_out: None,
+            listing_out: None,
+        };
+        let unused = |_| Err("named packages need no defaults".to_string());
+        plan(&job, shape, unused, resolve).map(|(_, calls)| calls)
     }
 
     fn no_features(_: &str, _: Group) -> Result<Settings, String> {
@@ -394,7 +451,10 @@ mod tests {
         ]);
         let parsed = parse(&args).unwrap();
         assert_eq!(parsed.lane, "bench");
-        assert_eq!(parsed.packages, ["a", "b"]);
+        assert_eq!(
+            parsed.named,
+            [("-p".into(), "a".into()), ("-p".into(), "b".into())]
+        );
         assert_eq!(parsed.shards, 3);
         assert_eq!(parsed.stage, Some("store".into()));
         assert_eq!(parsed.plan_out, Some("plan.json".into()));
@@ -402,8 +462,15 @@ mod tests {
     }
 
     #[test]
-    fn a_lane_name_is_left_for_prebuild_to_judge() {
-        assert_eq!(parse(&argv(&["whatever"])).unwrap().lane, "whatever");
+    fn a_lane_takes_only_its_own_package_flags() {
+        let named = |args: &[&str]| parse(&argv(args)).map(|job| job.named);
+        assert_eq!(
+            named(&["rustdoc", "--docs", "d", "--spec", "g"]).unwrap(),
+            [("--docs".into(), "d".into()), ("--spec".into(), "g".into())]
+        );
+        assert!(named(&["rustdoc", "-p", "d"]).is_err());
+        assert!(named(&["bench", "--docs", "d"]).is_err());
+        assert!(named(&["whatever"]).is_err());
     }
 
     #[test]
@@ -456,15 +523,57 @@ mod tests {
         );
     }
 
+    fn configured(source: Source) -> Result<Vec<String>, String> {
+        Ok(match source {
+            Source::Gated => argv(&["a", "b"]),
+            Source::Docs => argv(&["d"]),
+            Source::Spec => argv(&["s", "g"]),
+            Source::Generating => argv(&["g"]),
+        })
+    }
+
     #[test]
-    fn each_lane_applies_to_its_own_packages() {
-        let plan = RustPlan {
-            packages: vec!["a".into(), "b".into()],
-            docs_packages: vec!["d".into()],
+    fn each_lane_builds_its_own_packages_when_none_are_named() {
+        let shape = shape(&env(Event::Other, None, false), 1, || false);
+        let of = |lane| plan(&job(lane, None), &shape, configured, no_features).unwrap();
+        assert_eq!(
+            of("bench"),
+            (
+                argv(&["a", "b"]),
+                vec![argv(&["prebuild", "--only", "bench", "-p", "a", "-p", "b"])]
+            )
+        );
+        assert_eq!(
+            of("routes").1,
+            [argv(&[
+                "prebuild", "--only", "routes", "--spec", "s", "--spec", "g"
+            ])]
+        );
+        assert_eq!(
+            of("rustdoc"),
+            (
+                argv(&["d", "g"]),
+                vec![
+                    argv(&["prebuild", "--only", "rustdoc", "--docs", "d"]),
+                    argv(&["prebuild", "--only", "rustdoc", "--spec", "g"]),
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn naming_packages_for_one_entry_leaves_the_others_with_none() {
+        let shape = shape(&env(Event::Other, None, false), 1, || false);
+        let job = Job {
+            named: vec![("--docs".into(), "x".into())],
+            ..job("rustdoc", None)
         };
-        assert_eq!(default_packages("bench", &plan), ["a", "b"]);
-        assert_eq!(default_packages("rustdoc", &plan), ["d"]);
-        assert!(default_packages("routes", &plan).is_empty());
+        let (packages, calls) = plan(&job, &shape, configured, no_features).unwrap();
+        assert_eq!(packages, ["x"]);
+        assert_eq!(
+            calls,
+            [argv(&["prebuild", "--only", "rustdoc", "--docs", "x"])]
+        );
     }
 
     #[test]
@@ -519,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn each_lane_resolves_its_own_group() {
+    fn only_gated_packages_resolve_defaults_here() {
         let shape = shape(&env(Event::Other, None, false), 1, || false);
         let seen = std::cell::RefCell::new(Vec::new());
         for lane in ["bench", "routes", "rustdoc"] {
@@ -529,7 +638,7 @@ mod tests {
             };
             invocations(&job(lane, None), &argv(&["p"]), &shape, resolve).unwrap();
         }
-        assert_eq!(seen.into_inner(), [Group::Gate, Group::Spec, Group::Docs]);
+        assert_eq!(seen.into_inner(), [Group::Gate]);
     }
 
     #[test]
@@ -540,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    fn rustdoc_names_docs_packages_and_their_features() {
+    fn docs_packages_build_in_one_call_whatever_their_features() {
         let shape = shape(&env(Event::Other, None, false), 1, || false);
         let calls = invocations(
             &job("rustdoc", None),
@@ -550,18 +659,9 @@ mod tests {
         );
         assert_eq!(
             calls.unwrap(),
-            [
-                argv(&[
-                    "prebuild",
-                    "--only",
-                    "rustdoc",
-                    "--docs",
-                    "d",
-                    "--docs-features",
-                    "full"
-                ]),
-                argv(&["prebuild", "--only", "rustdoc", "--docs", "e"]),
-            ]
+            [argv(&[
+                "prebuild", "--only", "rustdoc", "--docs", "d", "--docs", "e"
+            ])]
         );
     }
 
@@ -584,7 +684,7 @@ mod tests {
     fn a_features_lookup_error_is_reported() {
         let shape = shape(&env(Event::Other, None, false), 1, || false);
         let failing = |_: &str, _| Err("bad table".to_string());
-        let calls = invocations(&job("rustdoc", None), &argv(&["d"]), &shape, failing);
+        let calls = invocations(&job("bench", None), &argv(&["a"]), &shape, failing);
         assert_eq!(calls, Err("bad table".to_string()));
     }
 

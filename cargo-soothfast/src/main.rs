@@ -148,10 +148,13 @@ commands:
            project configures, then REGEN_RUN with REGEN_PATHS; prints
            paths= and changed= lines for the landing step, and writes them
            to FILE; never commits)
-  ci       build LANE [-p PKG]... [--shards N] [--stage DIR] [--plan-out FILE]
-           [--listing-out FILE]
-           (the workflow's build-once job: `prebuild --only LANE` per package,
-           the packages the lane applies to when none are named; --shards
+  ci       build LANE [-p PKG]... [--docs PKG]... [--spec PKG[:TARGET]]...
+           [--shards N] [--stage DIR] [--plan-out FILE] [--listing-out FILE]
+           (the workflow's build-once job: `prebuild --only LANE` for the
+           packages named, -p for bench, --spec for routes, --docs and
+           --spec for rustdoc; with none named, bench builds the gated
+           packages, routes every package with a [[spec]] entry, and rustdoc
+           the docs packages and those that generate a spec; --shards
            counts only on a pull request; --plan-out adds each package's
            items to a plan file; --listing-out writes the checksum of
            .soothfast/bins before and after)
@@ -168,8 +171,10 @@ commands:
            executables of the --spec packages and rustdoc JSON for --docs
            when the docs `docs check` scans (--docs-paths, else the [docs]
            paths) bind a Rust item, and for the --spec packages that
-           generate a spec; prints what
-           it built against what was already stored)
+           generate a spec; a --spec package's target and features and a
+           --docs package's features come from its [package.NAME] tables
+           unless :TARGET, --features or --docs-features names them; prints
+           what it built against what was already stored)
   import   --from jmh|pyperf|pytest-benchmark|vitest FILE [--prefix P]
            (--save-baseline NAME | --out FILE)
            [--failed [--save-failed] [--base-results FILE] [--prior-baseline NAME]]

@@ -180,15 +180,12 @@ installed on is refused.
 
 | Input | Default | Meaning |
 |---|---|---|
-| `packages` | every package with a bench target named `soothfast` | Space-separated packages to gate and measure. `report changelog` uses the same list unless `changelog-packages` says otherwise. |
+| `packages` | every package with a bench target named `soothfast` | Space-separated packages to gate and measure. `report changelog` uses the same list unless `[changelog] packages` in `soothfast.toml` says otherwise. |
 | `gate` | `true` | Run the gate on pull requests, and record a reference run on default-branch pushes. |
-| `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes. |
-| `spec` | none | Space-separated packages whose `mode = "generate"` specs to regenerate. |
-| `features` | none | Cargo features for the gate, the baseline measurement, and spec generation. A bench target with `required-features` needs them here. |
+| `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes, along with `mode = "generate"` specs and `[[sdk]]` packages. |
+| `regen` | `false` | Run the regeneration on default-branch pushes even with `changelog: "false"`, for the specs and SDKs alone. |
 | `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. Counters measured from code proven identical to HEAD's (the item cache, a run stored for the same binary, a run-cache hit on HEAD) are saved with their `reused` marker; walltime from those sources is listed as `unmeasured` (`reused-walltime`) instead. A gate whose claims failed, or that errored, saves no numbers and lists the package's items as `gate-failed`; one that failed only on regressions saves HEAD's numbers, and its verdict or the `soothfast:perf-accepted` label decides. With `shard`, each leg's file holds its shard's items; merge them with `cargo soothfast baseline merge`. |
-| `changelog-packages` | `packages` | Packages whose API surface `report changelog` diffs. Set it when a crate without a bench target still ships an API. |
-| `changelog-features` | `features` | Features for `report changelog`, which decide what the API surface diff contains. Set it wider than `features` when gating under the full feature set is too heavy. |
-| `regen-run` | none | Shell run on the default branch after the built-in regeneration, for derived files the inputs above do not cover. `$SOOTHFAST` is the `cargo-soothfast` this step installed, so `"$SOOTHFAST" sdk gen -p mylib` works whether the CLI came from the install or from `binary`. Requires `regen-paths`. |
+| `regen-run` | none | Shell run on the default branch after the built-in regeneration, for derived files it does not cover. `$SOOTHFAST` is the `cargo-soothfast` this step installed, so `"$SOOTHFAST" report render` works whether the CLI came from the install or from `binary`. Requires `regen-paths`. |
 | `regen-paths` | none | Space-separated pathspecs `regen-run` may change; they land in the same pull request. Required with `regen-run`; without it the step fails rather than discarding the changes. |
 | `baseline` | `base` | Baseline name the regeneration measures into. |
 | `rustdoc-toolchain` | the nightly the release was tested with | Toolchain for rustdoc JSON. A floating `nightly` can change the JSON format under the API diff. |
@@ -206,13 +203,26 @@ installed on is refused.
 | `rustdoc-cache` | `false` | Restore and save `.soothfast/rustdoc` for a job that runs `spec` or `docs` commands. A hit skips the nightly rustdoc build; see [Rustdoc cache](#rustdoc-cache). |
 | `bin-cache` | `false` | Restore `.soothfast/bins`, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See [Bench executable cache](#bench-executable-cache). |
 | `cache-suffix` | none | Tells apart the legs of a job matrix that share a job name, so each keeps its own `rustdoc-cache` and `bin-cache`. |
-| `prebuild` | none | Lanes (`bench`, `routes`, `rustdoc`, space-separated) to build into the stores in place of the gate (see [One build](#one-build)). |
-| `prebuild-docs` | none | Packages whose rustdoc JSON `docs check` reads. Alone, it builds the `rustdoc` lane. They are built only when the docs bind a Rust item, as `docs check` builds them. |
-| `prebuild-docs-paths` | none | The PATHS `docs check` is given, one per line, which decide whether it binds a Rust item. Empty means the `[docs] paths` scope. |
-| `prebuild-docs-features` | none | The `--features` `docs check` is given, which key the docs package's rustdoc JSON. Empty means none, since `docs check` never reads `features`. |
-| `prebuild-spec` | none | `PKG` or `PKG:TARGET` that `spec` commands run on. Alone, it builds the `routes` lane, and the `rustdoc` lane for a package whose spec is generated. |
+| `prebuild` | none | Lanes (`bench`, `routes`, `rustdoc`, space-separated) to build into the stores in place of the gate (see [One build](#one-build)). `routes` builds for every package with a `[[spec]]` entry. |
+| `prebuild-docs` | none | Packages whose rustdoc JSON `docs check` reads, in place of the ones `soothfast.toml` configures. Alone, it builds the `rustdoc` lane. They are built only when the docs bind a Rust item, as `docs check` builds them. |
 | `prebuild-shards` | none | The `shard` count of the legs that read the stores, so a merge-base whose run every leg has stored is not built. |
 | `prebuild-stage` | none | A directory to copy just the entries the lanes built or found into, for a job to upload. |
+
+### Retired inputs
+
+The inputs `features`, `spec`, `changelog-features`, `changelog-packages`,
+`prebuild-docs-paths`, `prebuild-docs-features` and `prebuild-spec` are
+retired, and the step fails when one is set. The `ci` commands the action runs
+read the same settings from `soothfast.toml`:
+
+| Retired input | In `soothfast.toml` |
+|---|---|
+| `features` | `features` under `[gate]`, or under `[package.NAME]` for one package |
+| `spec` | nothing to set: `ci regen` finds each package's `mode = "generate"` `[[spec]]` entries |
+| `changelog-features`, `changelog-packages` | `features` and `packages` under `[changelog]` |
+| `prebuild-docs-paths` | `paths` under `[docs]` |
+| `prebuild-docs-features` | `features` under `[package.NAME.docs]` |
+| `prebuild-spec` | `routes` in `prebuild`, with `target` and `features` under `[package.NAME.spec]` |
 
 Outputs are `version` and `cache-hit`.
 
@@ -555,8 +565,8 @@ When the docs bind no Rust item, `docs check` builds no rustdoc, so neither
 | Lane | Builds | Into |
 |---|---|---|
 | `bench` | HEAD's bench executable of each gated package, its link map, and the merge-base's executable and map when the run cache holds no run for the merge-base | `.soothfast/bins` |
-| `routes` | The dev-profile executable behind `spec check`, for each package named in `prebuild-spec` | `.soothfast/bins` |
-| `rustdoc` | Rustdoc JSON for the docs package and, for each `prebuild-spec` package that generates a spec, for it and the workspace crates its types come from | `.soothfast/rustdoc` |
+| `routes` | The dev-profile executable behind `spec check`, for each package with a `[[spec]]` entry | `.soothfast/bins` |
+| `rustdoc` | Rustdoc JSON for the docs package and, for each package that generates a spec, for it and the workspace crates its types come from | `.soothfast/rustdoc` |
 
 `run.yml` builds the `bench` and `rustdoc` lanes. It has no `spec` job, so it
 builds no `routes` lane. A job is skipped when its lane has nothing to build,
@@ -688,8 +698,8 @@ packages, `--against-ref REF` for the merge-base, `--docs PKG`, `--spec
 PKG[:TARGET]`, `--only bench|routes|rustdoc`, `--stage DIR` and `--shards N`.
 
 A spec job of the caller's builds its own lane with the action:
-`prebuild-spec: PKG:TARGET` alone runs the `routes` lane (and `rustdoc` for a
-generated spec) in place of the gate, and `prebuild-docs: PKG` alone runs
+`prebuild: routes rustdoc` runs those lanes in place of the gate, for the
+packages with `[[spec]]` entries, and `prebuild-docs: PKG` alone runs
 `rustdoc`. A later job downloads the staged directory into `.soothfast/` before
 `spec check`. A `spec` job inside `run.yml` is a follow-up.
 
@@ -721,8 +731,8 @@ a writer waives regressions, never errors or docs drift.
 `cargo soothfast ci <kind>` runs one CI job: the flags, the choice of base
 and the verdict record that a workflow step would otherwise assemble in
 shell. It runs the same on a runner and on your machine. `run.yml` calls
-`ci test`, `ci gate`, `ci gate-import`, `ci docs` and `ci verdict`. Its build
-jobs and the action's regeneration assemble their flags in shell.
+`ci test`, `ci build`, `ci gate`, `ci gate-import`, `ci docs` and `ci verdict`,
+and the action's regeneration is `ci regen`.
 
 ```sh ignore
 cargo soothfast ci test
@@ -806,8 +816,16 @@ the gate errored, and a pass that cannot save them errors. `--accepted
 LABEL` waives a regression, which then exits 0, and never an error. The
 worktree is removed whether or not the bench fails.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
-jobs read, with `cargo soothfast prebuild --only LANE`, which decides which
-lanes exist (`bench`, `routes`, `rustdoc`).
+jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
+`routes` or `rustdoc` lane. With no package named, `bench` builds the gated
+packages, `routes` every package with a `[[spec]]` entry, and `rustdoc` the
+docs packages and every package that generates a spec. `-p PKG` names the
+packages of `bench`, `--spec PKG[:TARGET]` those of `routes`, and `--docs PKG`
+and `--spec PKG` those of `rustdoc`; naming any leaves the rest of the lane
+unbuilt. `prebuild` reads a spec package's `target` and `features` from its
+`[package.NAME.spec]` table and a docs package's `features` from
+`[package.NAME.docs]`, unless `:TARGET`, `--features` or `--docs-features`
+says otherwise.
 
 ```sh ignore
 cargo soothfast ci build bench --shards 3 --stage "$RUNNER_TEMP/store" \
