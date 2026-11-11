@@ -19,6 +19,7 @@
 
 ### 🔧 Internal
 
+- Run workflow jobs as cargo soothfast ci kinds (#387)
 - Drop llms.txt, keep the trend series on the Pages branch (#378)
 
 ---
