@@ -104,12 +104,13 @@ report, and the last `test` run. The `init` check reads without the network,
 so a release pin that is not already in the workflow reads as the tag. Its
 row is `missing` when the workflow is absent and `stale` with the drifted file
 names otherwise. The `test` row is `failed`, `stale` when the last pass was on
-a different tree, or `missing` when no run is recorded. Gate runs and baselines that are not recorded locally
-read as `ok`, since CI measures them; `--all` shows which.
-`--all` lists the `ok` lines instead of counting them, and `--json` prints
-the rows as an array of `state`, `subject`, `detail` and `fix`. The exit code
-is 0 when every row is `ok` and 1 otherwise. A failed gate points at its
-triage file; accepting a regression stays a decision for a reviewer.
+a different tree, or `missing` when no run is recorded. Gate runs and
+baselines that are not recorded locally read as `ok`, since CI measures them;
+`--all` shows which. `--all` lists the `ok` lines instead of counting them,
+and `--json` prints the rows as an array of `state`, `subject`, `detail` and
+`fix`. The exit code is 0 when every row is `ok` and 1 otherwise. A failed
+gate points at its triage file; accepting a regression stays a decision for a
+reviewer.
 
 ## What the step does
 
