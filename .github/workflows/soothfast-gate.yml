@@ -93,60 +93,24 @@ jobs:
           gate: "false"
           changelog: "false"
           labels: "false"
+      # The pull request comment is marked per package: the matrix legs
+      # would overwrite each other. A fork pull request has no OIDC token and
+      # the comment falls back to github.token.
       - name: Run gate
         id: gate
-        # bash, not the default `bash -e`: pipefail keeps the gate's exit code
-        # through tee.
-        shell: bash
-        run: |
-          if [ -x bin/cargo-soothfast ]; then CLI=bin/cargo-soothfast; else CLI=cargo-soothfast; fi
-          if [ "$EVENT_NAME" = push ] && [ -z "$INPUTS_BASE_REF" ]; then
-            CLI="$CLI" PACKAGES="$INPUTS_PACKAGE" .soothfast-action/action/record.sh
-            exit 0
-          fi
-          REF="${INPUTS_BASE_REF:-origin/${GITHUB_BASE_REF:-master}}"
-          rc=0
-          "$CLI" gate -p "$INPUTS_PACKAGE" --against-ref "$REF" | tee gate-output.txt || rc=$?
-          if [ "$rc" = 1 ] && [ "$EVENT_NAME" = pull_request ]; then
-            # shellcheck source=action/labels.sh
-            source .soothfast-action/action/labels.sh
-            mapfile -t waivers < <(CLI="$CLI" BASE_REF="$GITHUB_BASE_REF" perf_accepted_names)
-            if perf_accepted "$PR_NUMBER" "${waivers[@]}"; then
-              echo "Regressions accepted by the ${accepted_label} label." | tee -a gate-output.txt
-              rc=0
-            fi
-          fi
-          exit "$rc"
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          EVENT_NAME: ${{ github.event_name }}
-          INPUTS_BASE_REF: ${{ inputs.base-ref }}
-          INPUTS_PACKAGE: ${{ inputs.package }}
+          AGAINST_REF: ${{ inputs.base-ref }}
+          PACKAGES: ${{ inputs.package }}
+          GATE_MARKER: "<!-- soothfast-gate-${{ inputs.package }} -->"
+        run: |
+          if [ -x bin/cargo-soothfast ]; then CLI=bin/cargo-soothfast; else CLI=cargo-soothfast; fi
+          CLI="$CLI" .soothfast-action/action/gate.sh
       - name: Upload triage artifacts
-        if: failure()
+        if: failure() && steps.gate.conclusion == 'failure'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: soothfast-triage-${{ inputs.package }}
           path: .soothfast/triage/
           if-no-files-found: ignore
-      # The broker posts the comment as soothfast-bot; a fork pull request has
-      # no OIDC token and falls back to github.token. Best effort either way.
-      - name: PR comment with gate results
-        if: always() && github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          # One comment per package: the matrix legs would overwrite each other.
-          MARKER: "<!-- soothfast-gate-${{ inputs.package }} -->"
-          PACKAGE: ${{ inputs.package }}
-          BODY_FILE: ${{ runner.temp }}/soothfast-gate-comment.md
-        run: |
-          {
-            echo "## soothfast gate: ${PACKAGE}"
-            echo '```'
-            tail -n 60 gate-output.txt | sed 's/```/` ` `/g'
-            echo '```'
-          } > "$BODY_FILE"
-          .soothfast-action/action/comment.sh

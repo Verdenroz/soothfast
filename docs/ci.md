@@ -117,10 +117,10 @@ understands. Runs that have nothing to do (a push to another branch, a pull
 request with `gate: false`) stop there. Otherwise the checkout is unshallowed
 so merge-base and tag lookups work.
 
-**On `pull_request`.** For each package (see `packages` below) it runs `cargo
-soothfast gate -p PKG --against-ref origin/<base>` and appends the output to
-one comment on the pull request, updated in place on later pushes. The
-comment shows the last forty lines per package. On a regression it uploads
+**On `pull_request`.** It runs `cargo soothfast ci gate`, which gates each
+package (see `packages` below) against the pull request's base commit, and
+posts the output as one comment on the pull request, updated in place on
+later pushes. The comment shows the last forty lines per package. On a regression it uploads
 `.soothfast/triage/` as the `soothfast-triage` artifact and fails the step.
 The comment is posted as soothfast-bot by the broker itself: the job sends
 the text over its OIDC identity and never holds a token, so a pull request
@@ -131,7 +131,7 @@ warning where that token is read-only, and the gate result still decides the
 step.
 
 **On a push to the default branch.** With `gate: true` it first runs `cargo
-soothfast gate -p PKG --against-ref HEAD^` for each package, which stores
+soothfast ci gate`, which gates each package against `HEAD^` and stores
 HEAD's run in `.soothfast/runs/` so the next pull request whose merge-base is
 this commit, or builds the same bench binary, reuses it instead of measuring
 its merge-base in a worktree. A regression or an error here is a warning: the
@@ -201,7 +201,7 @@ installed on is refused.
 | `broker` | built in | Token broker URL. |
 | `labels` | `true` | On default-branch pushes and schedules, ask the broker to reconcile pull request labels, annotating the run instead of failing when it cannot; `"false"` turns it off (see [Labels](#labels)). |
 | `shard` | none | `I/N` to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own. |
-| `comment` | `true` | Post the pull request gate comment. `false` posts nothing and records a result per package for `cargo soothfast verdict merge`. |
+| `comment` | `true` | Post the pull request gate comment. `false` posts nothing; `cargo soothfast ci verdict` merges the result `ci gate` records for each package. |
 | `cache` | `true` | Restore and save `.soothfast/runs`, `items` and `maps`, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved. |
 | `rustdoc-cache` | `false` | Restore and save `.soothfast/rustdoc` for a job that runs `spec` or `docs` commands. A hit skips the nightly rustdoc build; see [Rustdoc cache](#rustdoc-cache). |
 | `bin-cache` | `false` | Restore `.soothfast/bins`, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See [Bench executable cache](#bench-executable-cache). |
@@ -697,10 +697,10 @@ generated spec) in place of the gate, and `prebuild-docs: PKG` alone runs
 
 The reusable `run.yml` workflow gives a pull request one soothfast comment and
 one check, however many projects or shards it gates. Every gate job, the test
-job and the docs check records a `result.json` (project, kind, verdict, the last forty
+job and the docs check records a result (project, kind, verdict, the last forty
 lines of output, reuse counts, seconds) and uploads it as
 `soothfast-result-<name>`. The `verdict` job downloads them all, runs
-`cargo soothfast verdict merge`, and posts one comment marked
+`cargo soothfast ci verdict`, and posts one comment marked
 `<!-- soothfast-verdict -->` with a section per project, regressed and
 errored first. Shards of one project fold into one section.
 
@@ -720,7 +720,9 @@ a writer waives regressions, never errors or docs drift.
 
 `cargo soothfast ci <kind>` runs one CI job: the flags, the choice of base
 and the verdict record that a workflow step would otherwise assemble in
-shell. It runs the same on a runner and on your machine.
+shell. It runs the same on a runner and on your machine. `run.yml` calls
+`ci test`, `ci gate`, `ci gate-import`, `ci docs` and `ci verdict`. Its build
+jobs and the action's regeneration assemble their flags in shell.
 
 ```sh ignore
 cargo soothfast ci test
@@ -756,8 +758,9 @@ to the default branch it gates HEAD against its parent with `SOOTHFAST_RECORD=1`
 which stores the run for later pull requests, and never fails; a HEAD with no
 parent lists each package's items as `no-parent` instead when `--save-baseline`
 names a baseline. A local run gates against `--base`, or leaves the reference
-to `gate`. `--shard I/N` and `--save-baseline NAME` are passed on, and a shard
-records as `PKG#I/N`.
+to `gate`. `--against REF` gates against REF on any event. `--shard I/N`,
+`--save-baseline NAME` and `--features F` are passed on, and a shard records
+as `PKG#I/N`.
 
 Each package records a `rust` verdict named for it, and the last 40 lines of
 every package's output are written to `gate-comment.md` in the results

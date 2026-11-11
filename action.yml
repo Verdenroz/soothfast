@@ -148,9 +148,9 @@ inputs:
   comment:
     description: >-
       Post the pull request gate comment. Set "false" when a caller folds
-      the gate into a comment of its own; the gate then records its result
-      under `$RUNNER_TEMP/soothfast-results` for `cargo soothfast verdict
-      merge`.
+      the gate into a comment of its own. `ci gate` records each package's
+      result under `$RUNNER_TEMP/soothfast-results` either way, and `cargo
+      soothfast ci verdict` merges them.
     required: false
     default: "true"
   cache:
@@ -535,14 +535,19 @@ runs:
         SPEC: ${{ inputs.prebuild-spec }}
       run: "$GITHUB_ACTION_PATH/action/prebuild.sh"
 
-    - name: Gate against the base branch
-      if: github.event_name == 'pull_request' && inputs.gate == 'true' && steps.lanes.outputs.active == 'false'
+    # A pull request is gated against its base. A default-branch push records
+    # HEAD against its parent, in the first leg only, and never fails.
+    - name: Gate
+      if: >-
+        inputs.gate == 'true' && steps.lanes.outputs.active == 'false'
+        && (github.event_name == 'pull_request'
+        || (github.event_name == 'push' && steps.prepare.outputs.on_default_branch == 'true'
+        && steps.prepare.outputs.records == 'true'))
       id: gate
       shell: bash
       env:
         CLI: ${{ steps.resolve.outputs.bin }}
         PACKAGES: ${{ steps.prepare.outputs.packages }}
-        BASE_REF: ${{ github.base_ref }}
         GH_TOKEN: ${{ inputs.token }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         BROKER: ${{ inputs.broker }}
@@ -552,37 +557,19 @@ runs:
         COMMENT: ${{ inputs.comment }}
       run: "$GITHUB_ACTION_PATH/action/gate.sh"
     - name: Name the triage artifact
-      if: steps.gate.outputs.failed == 'true'
+      if: failure() && steps.gate.conclusion == 'failure'
       id: triage
       shell: bash
       env:
         SHARD: ${{ inputs.shard }}
       run: echo "name=soothfast-triage${SHARD:+-shard-${SHARD%/*}-of-${SHARD#*/}}" >>"$GITHUB_OUTPUT"
     - name: Upload triage artifacts
-      if: steps.gate.outputs.failed == 'true'
+      if: failure() && steps.gate.conclusion == 'failure'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ steps.triage.outputs.name }}
         path: .soothfast/triage/
         if-no-files-found: ignore
-    - name: Fail on a regression
-      if: steps.gate.outputs.failed == 'true'
-      shell: bash
-      run: |
-        echo "::error::soothfast gate failed; see the pull request comment and the soothfast-triage artifact"
-        exit 1
-
-    - name: Record a reference run
-      if: >-
-        github.event_name == 'push' && steps.prepare.outputs.on_default_branch == 'true' && inputs.gate == 'true'
-        && steps.prepare.outputs.records == 'true' && steps.lanes.outputs.active == 'false'
-      shell: bash
-      env:
-        CLI: ${{ steps.resolve.outputs.bin }}
-        PACKAGES: ${{ steps.prepare.outputs.packages }}
-        FEATURES: ${{ inputs.features }}
-        SAVE_BASELINE: ${{ inputs.save-baseline }}
-      run: "$GITHUB_ACTION_PATH/action/record.sh"
     # A push saves under the plain key a pull request asks for; only the leg
     # that recorded has anything to save. A pull request's shards each save
     # their own items, for a rerun of the same shard.
