@@ -721,6 +721,131 @@ so a repo set up with init requires <code>soothfast / verdict</code>. The check 
 regressed or errored, or recorded no result; a perf-accepted label
 (<code>soothfast:perf-accepted</code> unless <code>perf_accepted_labels</code> renames it) applied by
 a writer waives regressions, never errors or docs drift.</p>
+<h2 id="one-command-per-job">One command per job<a class="anchor" href="#one-command-per-job" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast ci &lt;kind&gt;</code> runs one CI job: the flags, the choice of base
+and the verdict record that a workflow step would otherwise assemble in
+shell. It runs the same on a runner and on your machine.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">sh · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>cargo soothfast ci test
+cargo soothfast ci test --project web --toolchain node-20
+cargo soothfast ci
+</code></pre></figure>
+<p>The run is read from the runner's environment (<code>GITHUB_EVENT_NAME</code>, the
+event payload, <code>GITHUB_REF</code>, <code>RUNNER_TEMP</code>). Where there is none, or to
+override it, three flags apply to every kind: <code>--event pull_request|push|other</code>,
+<code>--base REF</code> and <code>--results DIR</code>. Flags win. A job records its verdict as
+<code>&lt;name&gt;.json</code> in the results directory, <code>$RUNNER_TEMP/soothfast-results</code>
+on a runner, next to its output as <code>&lt;name&gt;.log</code>; without a results directory
+nothing is recorded, which is what a local run does. The exit code is the
+job's own.</p>
+<p><code>ci test</code> is the <code>Test</code> job of <code>run.yml</code>. On a pull request it runs
+<code>cargo soothfast test --base</code> the pull request's base commit, and on a push
+the previous head, both read from the event. A base that is unknown or is not
+in the checkout runs every package. <code>--all</code> runs every package and ignores
+stored passes. Features come from the <code>test</code> defaults of each package in
+<code>soothfast.toml</code>, and anything else is passed on to <code>cargo soothfast test</code>.
+With <code>--project DIR</code> it runs one project outside the workspace, always in
+full, taking <code>--suite</code>, <code>--toolchain</code> and <code>--name</code> (default <code>test-</code> and the
+directory). The record is named <code>test-rust</code> for the workspace, so its section
+of the pull request comment is the one the workflow writes.</p>
+<p><code>ci gate</code> is the gate job. With no <code>-p</code> it gates every package that has a
+<code>soothfast</code> bench target, each on its own, so its features and bench target
+come from that package's <code>gate</code> defaults in <code>soothfast.toml</code>. On a pull
+request it runs <code>cargo soothfast gate --against-ref</code> the base commit. On a push
+to the default branch it gates HEAD against its parent with <code>SOOTHFAST_RECORD=1</code>,
+which stores the run for later pull requests, and never fails; a HEAD with no
+parent lists each package's items as <code>no-parent</code> instead when <code>--save-baseline</code>
+names a baseline. A local run gates against <code>--base</code>, or leaves the reference
+to <code>gate</code>. <code>--shard I/N</code> and <code>--save-baseline NAME</code> are passed on, and a shard
+records as <code>PKG#I/N</code>.</p>
+<p>Each package records a <code>rust</code> verdict named for it, and the last 40 lines of
+every package's output are written to <code>gate-comment.md</code> in the results
+directory, with any run of three or more backticks spaced out so the output
+cannot close the comment's code fence. The exit code is 1 when a package
+regressed and 2 when one errored. <code>--accepted LABEL</code> turns a regression into
+a pass and adds a line to the comment naming the label, but never waives an
+error. Who may apply the label is for the workflow to decide before it passes
+the flag.
+<code>ci docs</code> is the <code>Docs check</code> job. It checks the <code>[docs] package</code>s, or the
+<code>-p</code> ones given, with the defaults each package resolves in <code>soothfast.toml</code>.
+On a pull request <code>docs check</code> compares against <code>origin/</code> the base branch, and
+elsewhere in a run against <code>HEAD^</code>; a local run compares against nothing.
+<code>--baselines DIR</code> is where the gate legs' baselines were downloaded, one
+directory per leg: they are merged into the <code>head</code> baseline, which the check
+then reads. <code>--expect-shards N</code> is the shard count the gate ran with, and
+applies to pull requests only, since a push records in one leg. <code>--plan FILE</code>
+names the item listing the gate wrote. A run the gate does not measure on
+merges as not gated. When no gate measures the repository, claims are skipped
+and the output says so. When the merge fails, claims are skipped, binds and
+examples are still checked, and the job exits with the merge's code. Without
+<code>--baselines</code> nothing is merged and the check reads whatever baseline exists
+locally. The record is named <code>docs</code>.
+<code>ci gate-import</code> is the perf gate of a project outside the cargo workspace,
+the <code>[[project]]</code> tables with a benchmark command. It benches the head with
+the project's own command, benches the merge base of a pull request in a
+worktree of its own, and gates the imported results with <code>gate --import</code>.
+A push, or a run with no base, only benches the head. Each project is gated
+on its own, <code>--project DIR</code> picks one and <code>--name</code> renames its record (the
+ecosystem, plus the directory when two share one). Without <code>--project</code> every
+project runs and the exit code is the worst.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">sh · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>cargo soothfast ci gate-import
+cargo soothfast ci gate-import --project web --accepted soothfast:perf-accepted
+</code></pre></figure>
+<p>A head that fails or leaves no results errors the job, after the base is
+benched so the items it names are known. A base that fails or leaves no
+results has nothing to compare and passes. A regression exits 1 and an
+error anything else; the head's items are saved for the docs check unless
+the gate errored, and a pass that cannot save them errors. <code>--accepted
+LABEL</code> waives a regression, which then exits 0, and never an error. The
+worktree is removed whether or not the bench fails.
+<code>ci build LANE</code> is the build-once job: it prebuilds into the stores what later
+jobs read, with <code>cargo soothfast prebuild --only LANE</code>, which decides which
+lanes exist (<code>bench</code>, <code>routes</code>, <code>rustdoc</code>).</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">sh · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>cargo soothfast ci build bench --shards 3 --stage &quot;$RUNNER_TEMP/store&quot; \
+  --plan-out &quot;$RUNNER_TEMP/soothfast-plan/plan.json&quot; --listing-out listing.txt
+cargo soothfast ci build rustdoc --stage &quot;$RUNNER_TEMP/store&quot;
+</code></pre></figure>
+<p>Without <code>-p</code> it builds the packages the lane applies to, found the way <code>plan</code>
+finds them: the benched packages for <code>bench</code>, the <code>[docs] package</code>s for
+<code>rustdoc</code>. <code>routes</code> needs its packages named, as <code>PKG[:TARGET]</code>. Packages
+that resolve the same <code>soothfast.toml</code> defaults share one <code>prebuild</code> call, and
+each set that resolves differently gets its own, in the order they first
+appear. On a pull request the call compares with the base commit,
+and <code>--shards</code> is the leg count the gate will read the stores with; on a push
+it builds one unsharded lane, comparing with the previous commit on the
+default branch. <code>--stage</code> is where the stores are copied for upload.</p>
+<p><code>--plan-out</code> adds each package's planned items to a plan file once the build
+is done, as <code>baseline plan</code> does, and a package that cannot be listed is
+skipped with a warning. <code>--listing-out</code> writes two lines,
+<code>before DIGEST</code> and <code>after DIGEST</code>, the checksum of the names and sizes of the
+files under <code>.soothfast/bins</code> when the job started and when it ended, so a
+job that saves the executables cache saves it when the two differ. The digest
+is the FNV-1a hash of the sorted <code>name size</code> lines in 16 hex digits, <code>none</code>
+when the directory does not exist, and ignores files ending in <code>.tmp</code>.</p>
+<p>A build that fails is an error exit, not a regression. The remaining
+packages still build and the plan and listing are still written, and the
+exit code is that of the first failure. The job records no verdict.
+Bare <code>ci</code> does not run it, since it needs a lane.
+<code>ci verdict</code> folds the records in the results directory into the pull request
+comment and the run's verdict. <code>--expect NAME:KIND</code> names a job that must have
+recorded a result (a missing one errors the verdict), with <code>KIND</code> one of
+<code>rust</code>, <code>import</code>, <code>docs</code>, <code>test</code> or <code>check</code>. <code>--accepted LABEL</code> waives
+regressions, the way the perf-accepted label does, and never errors. The body
+is written to <code>--out</code>, by default <code>verdict-comment.md</code> in the results
+directory, and its job output stays inside the code fence. Posting it is left
+to the caller. A <code>check</code> record is a job whose every non-zero exit is an
+error, so nothing waives it.</p>
+<p><code>ci regen</code> is the regeneration a default-branch push lands. It measures every
+package with a <code>soothfast</code> bench target and regenerates <code>CHANGELOG.md</code> over
+the <code>[changelog]</code> packages, or those same packages when it names none
+(<code>--no-changelog</code> skips both), runs <code>spec gen</code>
+for each package with a <code>mode = &quot;generate&quot;</code> spec and <code>sdk gen</code> for each with
+<code>[[sdk]]</code>, then runs the <code>REGEN_RUN</code> command with <code>$SOOTHFAST</code> set when that
+variable is set (it needs <code>REGEN_PATHS</code>). It prints <code>paths=</code> and <code>changed=</code>
+lines, also written to <code>--paths-out</code>, and never commits or pushes.
+<code>--baseline NAME</code> names the baseline it measures into (default <code>base</code>).</p>
+<p><code>cargo soothfast ci</code> with no kind runs every kind that applies to the event,
+in order, and stops at the first failure. <code>verdict</code> applies to pull requests
+and <code>regen</code> to pushes to the default branch.</p>
 <h2 id="the-gate-on-its-own">The gate on its own<a class="anchor" href="#the-gate-on-its-own" aria-label="Link to this section">#</a></h2>
 <p>The gate, with its comment and triage upload, is also a reusable workflow for
 callers that want it as a separate job or a matrix over packages:</p>
@@ -789,6 +914,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l3" href="#sharding">Sharding</a></li>
   
     <li><a class="toc-l2" href="#one-verdict">One verdict</a></li>
+  
+    <li><a class="toc-l2" href="#one-command-per-job">One command per job</a></li>
   
     <li><a class="toc-l2" href="#the-gate-on-its-own">The gate on its own</a></li>
   

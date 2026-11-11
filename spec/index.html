@@ -464,6 +464,24 @@ skips just that one cross-check.</p>
 <tr><td>MCP tool schema</td><td>a <code>tools[]</code> array, matched by <code>name</code></td></tr>
 </tbody>
 </table></div>
+<h2 id="wire-formats-with-no-handler">Wire formats with no handler<a class="anchor" href="#wire-formats-with-no-handler" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast spec check-proto -p PKG --proto FILE --message NAME --source
+FILE --struct NAME</code> matches a <code>.proto</code> message's fields against the
+<code>#[prost(..)]</code> fields of a Rust struct by tag, for a wire format the crate
+consumes rather than serves. Both paths are relative to the package
+directory. A field the message declares that the struct lacks, one the struct
+adds, and a tag whose type or label differs are each a failure.</p>
+<p>The four flags can live in the package directory's <code>soothfast.toml</code> instead,
+one <code>[[proto]]</code> entry per message, with the flag names as keys:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[[proto]]</span>
+<span class="tok-ty">proto </span>=<span class="tok-str"> &quot;proto/events.proto&quot;</span>
+<span class="tok-ty">message </span>=<span class="tok-str"> &quot;Event&quot;</span>
+<span class="tok-ty">source </span>=<span class="tok-str"> &quot;src/wire.rs&quot;</span>
+<span class="tok-ty">struct </span>=<span class="tok-str"> &quot;Event&quot;</span></code></pre></figure>
+<p><code>spec check-proto -p PKG</code> with none of the four flags checks every entry of
+that package and fails if any does. With the flags it checks only the message
+they name, as before. A package with neither is a usage error. An older
+<code>cargo soothfast</code> skips the <code>[[proto]]</code> table.</p>
 <h2 id="where-route-markers-live">Where route markers live<a class="anchor" href="#where-route-markers-live" aria-label="Link to this section">#</a></h2>
 <p><code>#[route]</code> only works inside a binary that links the registry, and
 <code>soothfast</code> is meant to stay a dev-dependency so it usually can't sit directly on the real handler
@@ -597,6 +615,8 @@ scheduled workflow that files an issue on failure, not in PR CI.</p>
     <li><a class="toc-l2" href="#gating">Gating</a></li>
   
     <li><a class="toc-l2" href="#reconciliation">Reconciliation</a></li>
+  
+    <li><a class="toc-l2" href="#wire-formats-with-no-handler">Wire formats with no handler</a></li>
   
     <li><a class="toc-l2" href="#where-route-markers-live">Where route markers live</a></li>
   

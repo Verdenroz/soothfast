@@ -637,7 +637,7 @@ those once. <code>[package.NAME.GROUP]</code> overrides it for one group of comm
 <thead><tr><th>Group</th><th>Commands</th><th>Keys</th></tr></thead>
 <tbody>
 <tr><td><code>gate</code></td><td><code>gate</code>, <code>measure</code>, <code>baseline</code>, <code>prebuild</code>, <code>trend append</code>, <code>buildcost</code></td><td><code>features</code>, <code>target</code>, <code>baseline</code></td></tr>
-<tr><td><code>docs</code></td><td><code>docs *</code>, <code>coverage</code>, <code>report</code>, <code>mcp</code></td><td><code>features</code>, <code>target</code>, <code>baseline</code>, <code>paths</code></td></tr>
+<tr><td><code>docs</code></td><td><code>docs *</code>, <code>coverage</code>, <code>report</code>, <code>mcp</code></td><td><code>features</code>, <code>target</code>, <code>baseline</code>, <code>paths</code>, <code>coverage</code></td></tr>
 <tr><td><code>spec</code></td><td><code>spec *</code>, <code>sdk *</code></td><td><code>features</code>, <code>target</code></td></tr>
 <tr><td><code>test</code></td><td><code>test</code></td><td><code>features</code></td></tr>
 </tbody>
@@ -645,16 +645,31 @@ those once. <code>[package.NAME.GROUP]</code> overrides it for one group of comm
 <p><code>features</code> takes what <code>--features</code> takes. <code>target</code> is the bench target a
 command builds, what <code>--bench</code> takes, and only a group table sets it.
 <code>baseline</code> is the baseline <code>--baseline</code> names. <code>paths</code> replaces <code>[docs] paths</code>
-as the PATHS <code>docs</code> commands scan when none are given. A key a group's
+as the PATHS <code>docs</code> commands scan when none are given. <code>coverage</code> is a whole
+percent from 0 to 100, the <code>--min</code> of <code>coverage docs</code> when the flag is absent;
+it is also a key of the repo-wide <code>[docs]</code> table. An older <code>cargo soothfast</code>
+rejects <code>coverage</code> as an unknown key of <code>[docs]</code>, so adopt it once every
+runner has updated. A key a group's
 commands have no flag for is an error naming its line.</p>
 <p>From highest precedence: the command-line flag, <code>[package.NAME.GROUP]</code>,
-<code>[package.NAME]</code>, the repo-wide section (<code>[gate] features</code>, <code>[docs] paths</code>),
+<code>[package.NAME]</code>, the repo-wide section (<code>[gate] features</code>, <code>[docs] paths</code>,
+<code>[docs] coverage</code>),
 then the built-in default. A file with no <code>[package.*]</code> table behaves as
 before. The package is the command's <code>-p</code> (<code>docs</code> also takes <code>[docs]
 package</code>); a command with none reads only the repo-wide section. Given
 several packages, they must resolve to the same defaults, or the command asks
 to be run once per package. Any package name works, quoted when it contains a
 dot, and one the workspace lacks is not an error.</p>
+<h2 id="skipping-ci-jobs">Skipping CI jobs<a class="anchor" href="#skipping-ci-jobs" aria-label="Link to this section">#</a></h2>
+<p><code>[ci] skip</code> in the root <code>soothfast.toml</code> names the kinds of CI job not to run:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[ci]</span>
+<span class="tok-ty">skip </span>=<span class="tok-str"> [&quot;sdk&quot;]</span></code></pre></figure>
+<p>The names are free-form strings, and <code>cargo soothfast</code> does not check them
+against the jobs it knows. <code>[test] ci = false</code> keeps working and means the
+same as <code>skip</code> naming <code>&quot;test&quot;</code>; setting both is not an error. An older
+<code>cargo soothfast</code> skips the <code>[ci]</code> table, so it is safe in a shared file.</p>
+<p>Wire-format reconciliation reads <code>[[proto]]</code> entries from the package
+directory's <code>soothfast.toml</code>; see <a href="../spec/">Spec</a>.</p>
 <h2 id="ratchets">Ratchets<a class="anchor" href="#ratchets" aria-label="Link to this section">#</a></h2>
 <div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_measure::sweep::evaluate"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">evaluate</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
 <p><code>--ratchet NAME</code> runs a second comparison against a long-lived baseline,
@@ -793,6 +808,8 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l2" href="#features">Features</a></li>
   
     <li><a class="toc-l2" href="#per-package-defaults">Per-package defaults</a></li>
+  
+    <li><a class="toc-l2" href="#skipping-ci-jobs">Skipping CI jobs</a></li>
   
     <li><a class="toc-l2" href="#ratchets">Ratchets</a></li>
   
