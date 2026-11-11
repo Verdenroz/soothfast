@@ -50,6 +50,7 @@ fn routes(pkg: &str, target: &str) -> Item {
     Item::Routes {
         pkg: pkg.into(),
         target: target.into(),
+        features: None,
     }
 }
 
@@ -79,9 +80,10 @@ fn wanted() -> Wanted {
         spec: vec![SpecPackage {
             pkg: "server".into(),
             target: "routes".into(),
+            features: None,
         }],
-        features: None,
         docs_features: None,
+        docs_defaults: BTreeMap::new(),
         docs_paths: Vec::new(),
         against_ref: Some("origin/main".into()),
         reuse_base: true,
@@ -180,6 +182,7 @@ fn a_crate_two_specs_share_is_built_once() {
     let spec = |pkg: &str| SpecPackage {
         pkg: pkg.into(),
         target: "soothfast".into(),
+        features: None,
     };
     let wanted = Wanted {
         lanes: BTreeSet::from([Lane::Rustdoc]),
@@ -240,15 +243,18 @@ fn staging_copies_the_resolved_entry_and_what_belongs_to_it() {
 }
 
 #[test]
-fn a_gate_table_feature_keys_the_spec_rustdoc_but_not_the_docs_check_one() {
-    let gate = crate::config::gate::parse("[gate]\nfeatures = \"bench-gate\"\n").unwrap();
+fn a_spec_package_feature_keys_its_rustdoc_but_not_the_docs_check_one() {
     let fake = Fake {
         generated: BTreeMap::from([("server".to_string(), Vec::new())]),
         ..Fake::default()
     };
     let wanted = Wanted {
         lanes: BTreeSet::from([Lane::Rustdoc]),
-        features: gate.features,
+        spec: vec![SpecPackage {
+            pkg: "server".into(),
+            target: "routes".into(),
+            features: Some("bench-gate".into()),
+        }],
         ..wanted()
     };
     let features: Vec<_> = select(&wanted, &fake)
@@ -273,6 +279,7 @@ fn a_crate_wanted_whole_by_one_spec_and_as_aux_by_another_is_not_aux() {
     let spec = |pkg: &str| SpecPackage {
         pkg: pkg.into(),
         target: "soothfast".into(),
+        features: None,
     };
     let wanted = Wanted {
         lanes: BTreeSet::from([Lane::Rustdoc]),
@@ -419,10 +426,7 @@ fn a_docs_package_without_rust_binds_is_skipped_and_never_keyed() {
 #[test]
 fn a_docs_package_is_keyed_as_docs_check_looks_it_up() {
     let pkg = "soothfast-registry";
-    let wanted = Wanted {
-        features: Some("bench-gate".into()),
-        ..rustdoc_lane(&[pkg])
-    };
+    let wanted = rustdoc_lane(&[pkg]);
     let steps = select(&wanted, &Fake::default());
     let Item::Rustdoc {
         private, features, ..
@@ -504,4 +508,50 @@ fn the_docs_are_not_scanned_without_the_rustdoc_lane() {
     };
     select(&wanted, &fake);
     assert_eq!(fake.scanned.get(), 0);
+}
+
+#[test]
+fn a_docs_package_takes_its_default_features_unless_the_flag_names_some() {
+    let defaults = BTreeMap::from([("core".to_string(), "full".to_string())]);
+    let features = |wanted: &Wanted| match &select(wanted, &Fake::default())[0].item {
+        Item::Rustdoc { features, .. } => features.clone(),
+        other => panic!("{other}"),
+    };
+    let from_file = Wanted {
+        docs_defaults: defaults.clone(),
+        ..rustdoc_lane(&["core"])
+    };
+    assert_eq!(features(&from_file).as_deref(), Some("full"));
+    let from_flag = Wanted {
+        docs_features: Some("lean".into()),
+        docs_defaults: defaults,
+        ..rustdoc_lane(&["core"])
+    };
+    assert_eq!(features(&from_flag).as_deref(), Some("lean"));
+}
+
+#[test]
+fn a_spec_package_names_its_target_and_takes_the_features_flag() {
+    let w = parse(&argv(&[
+        "--spec",
+        "a:routes",
+        "--spec",
+        "b",
+        "--features",
+        "full",
+    ]))
+    .unwrap()
+    .wanted;
+    let named: Vec<_> = w
+        .spec
+        .iter()
+        .map(|s| (s.pkg.as_str(), s.target.as_str(), s.features.as_deref()))
+        .collect();
+    assert_eq!(
+        named,
+        [
+            ("a", "routes", Some("full")),
+            ("b", "soothfast", Some("full"))
+        ]
+    );
 }

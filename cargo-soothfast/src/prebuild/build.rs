@@ -84,8 +84,13 @@ pub(super) fn build_item(step: &Step, live: &Live) -> Result<Option<PathBuf>, St
             }
             Ok(Some(exe))
         }
-        Item::Routes { pkg, target } => {
-            benchexe::executable(&live.one(pkg, Some(target)), None, None, Build::Discover)
+        Item::Routes {
+            pkg,
+            target,
+            features,
+        } => {
+            let one = live.routes(pkg, target, features.as_deref());
+            benchexe::executable(&one, None, None, Build::Discover)
                 .map(Some)
                 .ok_or_else(|| missing(pkg))
         }

@@ -13,13 +13,17 @@ common=()
 rc=0
 read -ra chosen <<<"$LANES"
 for lane in "${chosen[@]}"; do
+  flag=-p
+  packages=()
   case "$lane" in
   bench) read -ra packages <<<"${PACKAGES:-}" ;;
-  rustdoc) read -ra packages <<<"${DOCS:-}" ;;
-  *) packages=() ;;
+  rustdoc)
+    flag=--docs
+    read -ra packages <<<"${DOCS:-}"
+    ;;
   esac
   named=()
-  for pkg in "${packages[@]}"; do named+=(-p "$pkg"); done
+  for pkg in "${packages[@]}"; do named+=("$flag" "$pkg"); done
   status=0
   "$CLI" ci build "$lane" "${common[@]}" "${named[@]}" || status=$?
   [ "$rc" -ne 0 ] || rc=$status

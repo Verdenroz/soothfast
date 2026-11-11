@@ -816,11 +816,16 @@ the gate errored, and a pass that cannot save them errors. `--accepted
 LABEL` waives a regression, which then exits 0, and never an error. The
 worktree is removed whether or not the bench fails.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
-jobs read, with `cargo soothfast prebuild --only LANE`, which decides which
-lanes exist (`bench`, `routes`, `rustdoc`). With no `-p`, `bench` builds the
-gated packages, `routes` every package with a `[[spec]]` entry, and `rustdoc`
-the docs packages and every package that generates a spec. A spec package is
-built with the `target` and `features` of its `[package.NAME.spec]` table.
+jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
+`routes` or `rustdoc` lane. With no package named, `bench` builds the gated
+packages, `routes` every package with a `[[spec]]` entry, and `rustdoc` the
+docs packages and every package that generates a spec. `-p PKG` names the
+packages of `bench`, `--spec PKG[:TARGET]` those of `routes`, and `--docs PKG`
+and `--spec PKG` those of `rustdoc`; naming any leaves the rest of the lane
+unbuilt. `prebuild` reads a spec package's `target` and `features` from its
+`[package.NAME.spec]` table and a docs package's `features` from
+`[package.NAME.docs]`, unless `:TARGET`, `--features` or `--docs-features`
+says otherwise.
 
 ```sh ignore
 cargo soothfast ci build bench --shards 3 --stage "$RUNNER_TEMP/store" \

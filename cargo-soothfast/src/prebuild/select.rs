@@ -28,6 +28,7 @@ pub(super) enum Item {
     Routes {
         pkg: String,
         target: String,
+        features: Option<String>,
     },
     Rustdoc {
         pkg: String,
@@ -76,7 +77,7 @@ impl fmt::Display for Item {
                 };
                 write!(f, "bench executable {pkg} ({side})")
             }
-            Item::Routes { pkg, target } => write!(f, "routes executable {pkg} ({target})"),
+            Item::Routes { pkg, target, .. } => write!(f, "routes executable {pkg} ({target})"),
             Item::Rustdoc { pkg, private, .. } => {
                 let scope = if *private { "private" } else { "public" };
                 write!(f, "rustdoc json {pkg} ({scope} items)")
@@ -103,6 +104,8 @@ pub(super) struct Step {
 pub(super) struct SpecPackage {
     pub(super) pkg: String,
     pub(super) target: String,
+    /// `--features`, else the package's `spec` defaults.
+    pub(super) features: Option<String>,
 }
 
 /// What the caller asked to have ready.
@@ -112,10 +115,12 @@ pub(super) struct Wanted {
     pub(super) packages: Vec<String>,
     pub(super) docs: Vec<String>,
     pub(super) spec: Vec<SpecPackage>,
-    pub(super) features: Option<String>,
     /// The `--features` `docs check` is given: `--docs-features`, never the
     /// gate's own.
     pub(super) docs_features: Option<String>,
+    /// Each docs package's `docs` default features, read when
+    /// `--docs-features` is absent.
+    pub(super) docs_defaults: BTreeMap<String, String>,
     /// The PATHS `docs check` is given; empty means the `[docs] paths` scope.
     pub(super) docs_paths: Vec<PathBuf>,
     pub(super) against_ref: Option<String>,
@@ -162,6 +167,7 @@ pub(super) fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
         items.extend(wanted.spec.iter().map(|s| Item::Routes {
             pkg: s.pkg.clone(),
             target: s.target.clone(),
+            features: s.features.clone(),
         }));
     }
     if wanted.lanes.contains(&Lane::Rustdoc) {
@@ -172,17 +178,18 @@ pub(super) fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
                 features,
                 aux,
             };
-        items.extend(
-            wanted
-                .docs
-                .iter()
-                .map(|pkg| rustdoc(pkg, false, wanted.docs_features.clone(), false)),
-        );
+        items.extend(wanted.docs.iter().map(|pkg| {
+            let features = wanted
+                .docs_features
+                .clone()
+                .or_else(|| wanted.docs_defaults.get(pkg).cloned());
+            rustdoc(pkg, false, features, false)
+        }));
         for s in &wanted.spec {
             let Some(aux) = state.generated_from(&s.pkg) else {
                 continue;
             };
-            items.push(rustdoc(&s.pkg, true, wanted.features.clone(), false));
+            items.push(rustdoc(&s.pkg, true, s.features.clone(), false));
             items.extend(aux.iter().map(|pkg| rustdoc(pkg, true, None, true)));
         }
     }
