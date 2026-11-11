@@ -288,15 +288,12 @@ installed on is refused.</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Input</th><th>Default</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td><code>packages</code></td><td>every package with a bench target named <code>soothfast</code></td><td>Space-separated packages to gate and measure. <code>report changelog</code> uses the same list unless <code>changelog-packages</code> says otherwise.</td></tr>
+<tr><td><code>packages</code></td><td>every package with a bench target named <code>soothfast</code></td><td>Space-separated packages to gate and measure. <code>report changelog</code> uses the same list unless <code>[changelog] packages</code> in <code>soothfast.toml</code> says otherwise.</td></tr>
 <tr><td><code>gate</code></td><td><code>true</code></td><td>Run the gate on pull requests, and record a reference run on default-branch pushes.</td></tr>
-<tr><td><code>changelog</code></td><td><code>true</code></td><td>Regenerate <code>CHANGELOG.md</code> on default-branch pushes.</td></tr>
-<tr><td><code>spec</code></td><td>none</td><td>Space-separated packages whose <code>mode = &quot;generate&quot;</code> specs to regenerate.</td></tr>
-<tr><td><code>features</code></td><td>none</td><td>Cargo features for the gate, the baseline measurement, and spec generation. A bench target with <code>required-features</code> needs them here.</td></tr>
+<tr><td><code>changelog</code></td><td><code>true</code></td><td>Regenerate <code>CHANGELOG.md</code> on default-branch pushes, along with <code>mode = &quot;generate&quot;</code> specs and <code>[[sdk]]</code> packages.</td></tr>
+<tr><td><code>regen</code></td><td><code>false</code></td><td>Run the regeneration on default-branch pushes even with <code>changelog: &quot;false&quot;</code>, for the specs and SDKs alone.</td></tr>
 <tr><td><code>save-baseline</code></td><td>none</td><td>Baseline name a passing pull-request gate saves its HEAD measurement under, in <code>.soothfast/baselines/</code>. Upload that directory as an artifact and a later job (a <code>docs check</code> of claims) reads HEAD's numbers without measuring again. Counters measured from code proven identical to HEAD's (the item cache, a run stored for the same binary, a run-cache hit on HEAD) are saved with their <code>reused</code> marker; walltime from those sources is listed as <code>unmeasured</code> (<code>reused-walltime</code>) instead. A gate whose claims failed, or that errored, saves no numbers and lists the package's items as <code>gate-failed</code>; one that failed only on regressions saves HEAD's numbers, and its verdict or the <code>soothfast:perf-accepted</code> label decides. With <code>shard</code>, each leg's file holds its shard's items; merge them with <code>cargo soothfast baseline merge</code>.</td></tr>
-<tr><td><code>changelog-packages</code></td><td><code>packages</code></td><td>Packages whose API surface <code>report changelog</code> diffs. Set it when a crate without a bench target still ships an API.</td></tr>
-<tr><td><code>changelog-features</code></td><td><code>features</code></td><td>Features for <code>report changelog</code>, which decide what the API surface diff contains. Set it wider than <code>features</code> when gating under the full feature set is too heavy.</td></tr>
-<tr><td><code>regen-run</code></td><td>none</td><td>Shell run on the default branch after the built-in regeneration, for derived files the inputs above do not cover. <code>$SOOTHFAST</code> is the <code>cargo-soothfast</code> this step installed, so <code>&quot;$SOOTHFAST&quot; sdk gen -p mylib</code> works whether the CLI came from the install or from <code>binary</code>. Requires <code>regen-paths</code>.</td></tr>
+<tr><td><code>regen-run</code></td><td>none</td><td>Shell run on the default branch after the built-in regeneration, for derived files it does not cover. <code>$SOOTHFAST</code> is the <code>cargo-soothfast</code> this step installed, so <code>&quot;$SOOTHFAST&quot; report render</code> works whether the CLI came from the install or from <code>binary</code>. Requires <code>regen-paths</code>.</td></tr>
 <tr><td><code>regen-paths</code></td><td>none</td><td>Space-separated pathspecs <code>regen-run</code> may change; they land in the same pull request. Required with <code>regen-run</code>; without it the step fails rather than discarding the changes.</td></tr>
 <tr><td><code>baseline</code></td><td><code>base</code></td><td>Baseline name the regeneration measures into.</td></tr>
 <tr><td><code>rustdoc-toolchain</code></td><td>the nightly the release was tested with</td><td>Toolchain for rustdoc JSON. A floating <code>nightly</code> can change the JSON format under the API diff.</td></tr>
@@ -314,13 +311,26 @@ installed on is refused.</p>
 <tr><td><code>rustdoc-cache</code></td><td><code>false</code></td><td>Restore and save <code>.soothfast/rustdoc</code> for a job that runs <code>spec</code> or <code>docs</code> commands. A hit skips the nightly rustdoc build; see <a href="#rustdoc-cache">Rustdoc cache</a>.</td></tr>
 <tr><td><code>bin-cache</code></td><td><code>false</code></td><td>Restore <code>.soothfast/bins</code>, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See <a href="#bench-executable-cache">Bench executable cache</a>.</td></tr>
 <tr><td><code>cache-suffix</code></td><td>none</td><td>Tells apart the legs of a job matrix that share a job name, so each keeps its own <code>rustdoc-cache</code> and <code>bin-cache</code>.</td></tr>
-<tr><td><code>prebuild</code></td><td>none</td><td>Lanes (<code>bench</code>, <code>routes</code>, <code>rustdoc</code>, space-separated) to build into the stores in place of the gate (see <a href="#one-build">One build</a>).</td></tr>
-<tr><td><code>prebuild-docs</code></td><td>none</td><td>Packages whose rustdoc JSON <code>docs check</code> reads. Alone, it builds the <code>rustdoc</code> lane. They are built only when the docs bind a Rust item, as <code>docs check</code> builds them.</td></tr>
-<tr><td><code>prebuild-docs-paths</code></td><td>none</td><td>The PATHS <code>docs check</code> is given, one per line, which decide whether it binds a Rust item. Empty means the <code>[docs] paths</code> scope.</td></tr>
-<tr><td><code>prebuild-docs-features</code></td><td>none</td><td>The <code>--features</code> <code>docs check</code> is given, which key the docs package's rustdoc JSON. Empty means none, since <code>docs check</code> never reads <code>features</code>.</td></tr>
-<tr><td><code>prebuild-spec</code></td><td>none</td><td><code>PKG</code> or <code>PKG:TARGET</code> that <code>spec</code> commands run on. Alone, it builds the <code>routes</code> lane, and the <code>rustdoc</code> lane for a package whose spec is generated.</td></tr>
+<tr><td><code>prebuild</code></td><td>none</td><td>Lanes (<code>bench</code>, <code>routes</code>, <code>rustdoc</code>, space-separated) to build into the stores in place of the gate (see <a href="#one-build">One build</a>). <code>routes</code> builds for every package with a <code>[[spec]]</code> entry.</td></tr>
+<tr><td><code>prebuild-docs</code></td><td>none</td><td>Packages whose rustdoc JSON <code>docs check</code> reads, in place of the ones <code>soothfast.toml</code> configures. Alone, it builds the <code>rustdoc</code> lane. They are built only when the docs bind a Rust item, as <code>docs check</code> builds them.</td></tr>
 <tr><td><code>prebuild-shards</code></td><td>none</td><td>The <code>shard</code> count of the legs that read the stores, so a merge-base whose run every leg has stored is not built.</td></tr>
 <tr><td><code>prebuild-stage</code></td><td>none</td><td>A directory to copy just the entries the lanes built or found into, for a job to upload.</td></tr>
+</tbody>
+</table></div>
+<h3 id="retired-inputs">Retired inputs<a class="anchor" href="#retired-inputs" aria-label="Link to this section">#</a></h3>
+<p>The inputs <code>features</code>, <code>spec</code>, <code>changelog-features</code>, <code>changelog-packages</code>,
+<code>prebuild-docs-paths</code>, <code>prebuild-docs-features</code> and <code>prebuild-spec</code> are
+retired, and the step fails when one is set. The <code>ci</code> commands the action runs
+read the same settings from <code>soothfast.toml</code>:</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Retired input</th><th>In <code>soothfast.toml</code></th></tr></thead>
+<tbody>
+<tr><td><code>features</code></td><td><code>features</code> under <code>[gate]</code>, or under <code>[package.NAME]</code> for one package</td></tr>
+<tr><td><code>spec</code></td><td>nothing to set: <code>ci regen</code> finds each package's <code>mode = &quot;generate&quot;</code> <code>[[spec]]</code> entries</td></tr>
+<tr><td><code>changelog-features</code>, <code>changelog-packages</code></td><td><code>features</code> and <code>packages</code> under <code>[changelog]</code></td></tr>
+<tr><td><code>prebuild-docs-paths</code></td><td><code>paths</code> under <code>[docs]</code></td></tr>
+<tr><td><code>prebuild-docs-features</code></td><td><code>features</code> under <code>[package.NAME.docs]</code></td></tr>
+<tr><td><code>prebuild-spec</code></td><td><code>routes</code> in <code>prebuild</code>, with <code>target</code> and <code>features</code> under <code>[package.NAME.spec]</code></td></tr>
 </tbody>
 </table></div>
 <p>Outputs are <code>version</code> and <code>cache-hit</code>.</p>
@@ -579,8 +589,8 @@ When the docs bind no Rust item, <code>docs check</code> builds no rustdoc, so n
 <thead><tr><th>Lane</th><th>Builds</th><th>Into</th></tr></thead>
 <tbody>
 <tr><td><code>bench</code></td><td>HEAD's bench executable of each gated package, its link map, and the merge-base's executable and map when the run cache holds no run for the merge-base</td><td><code>.soothfast/bins</code></td></tr>
-<tr><td><code>routes</code></td><td>The dev-profile executable behind <code>spec check</code>, for each package named in <code>prebuild-spec</code></td><td><code>.soothfast/bins</code></td></tr>
-<tr><td><code>rustdoc</code></td><td>Rustdoc JSON for the docs package and, for each <code>prebuild-spec</code> package that generates a spec, for it and the workspace crates its types come from</td><td><code>.soothfast/rustdoc</code></td></tr>
+<tr><td><code>routes</code></td><td>The dev-profile executable behind <code>spec check</code>, for each package with a <code>[[spec]]</code> entry</td><td><code>.soothfast/bins</code></td></tr>
+<tr><td><code>rustdoc</code></td><td>Rustdoc JSON for the docs package and, for each package that generates a spec, for it and the workspace crates its types come from</td><td><code>.soothfast/rustdoc</code></td></tr>
 </tbody>
 </table></div>
 <p><code>run.yml</code> builds the <code>bench</code> and <code>rustdoc</code> lanes. It has no <code>spec</code> job, so it
@@ -698,8 +708,8 @@ the check says to re-save them.</p>
 packages, <code>--against-ref REF</code> for the merge-base, <code>--docs PKG</code>, <code>--spec
 PKG[:TARGET]</code>, <code>--only bench|routes|rustdoc</code>, <code>--stage DIR</code> and <code>--shards N</code>.</p>
 <p>A spec job of the caller's builds its own lane with the action:
-<code>prebuild-spec: PKG:TARGET</code> alone runs the <code>routes</code> lane (and <code>rustdoc</code> for a
-generated spec) in place of the gate, and <code>prebuild-docs: PKG</code> alone runs
+<code>prebuild: routes rustdoc</code> runs those lanes in place of the gate, for the
+packages with <code>[[spec]]</code> entries, and <code>prebuild-docs: PKG</code> alone runs
 <code>rustdoc</code>. A later job downloads the staged directory into <code>.soothfast/</code> before
 <code>spec check</code>. A <code>spec</code> job inside <code>run.yml</code> is a follow-up.</p>
 <h2 id="one-verdict">One verdict<a class="anchor" href="#one-verdict" aria-label="Link to this section">#</a></h2>
@@ -725,8 +735,8 @@ a writer waives regressions, never errors or docs drift.</p>
 <p><code>cargo soothfast ci &lt;kind&gt;</code> runs one CI job: the flags, the choice of base
 and the verdict record that a workflow step would otherwise assemble in
 shell. It runs the same on a runner and on your machine. <code>run.yml</code> calls
-<code>ci test</code>, <code>ci gate</code>, <code>ci gate-import</code>, <code>ci docs</code> and <code>ci verdict</code>. Its build
-jobs and the action's regeneration assemble their flags in shell.</p>
+<code>ci test</code>, <code>ci build</code>, <code>ci gate</code>, <code>ci gate-import</code>, <code>ci docs</code> and <code>ci verdict</code>,
+and the action's regeneration is <code>ci regen</code>.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">sh · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>cargo soothfast ci test
 cargo soothfast ci test --project web --toolchain node-20
 cargo soothfast ci
@@ -801,8 +811,16 @@ the gate errored, and a pass that cannot save them errors. <code>--accepted
 LABEL</code> waives a regression, which then exits 0, and never an error. The
 worktree is removed whether or not the bench fails.
 <code>ci build LANE</code> is the build-once job: it prebuilds into the stores what later
-jobs read, with <code>cargo soothfast prebuild --only LANE</code>, which decides which
-lanes exist (<code>bench</code>, <code>routes</code>, <code>rustdoc</code>).</p>
+jobs read, with <code>cargo soothfast prebuild --only LANE</code> for the <code>bench</code>,
+<code>routes</code> or <code>rustdoc</code> lane. With no package named, <code>bench</code> builds the gated
+packages, <code>routes</code> every package with a <code>[[spec]]</code> entry, and <code>rustdoc</code> the
+docs packages and every package that generates a spec. <code>-p PKG</code> names the
+packages of <code>bench</code>, <code>--spec PKG[:TARGET]</code> those of <code>routes</code>, and <code>--docs PKG</code>
+and <code>--spec PKG</code> those of <code>rustdoc</code>; naming any leaves the rest of the lane
+unbuilt. <code>prebuild</code> reads a spec package's <code>target</code> and <code>features</code> from its
+<code>[package.NAME.spec]</code> table and a docs package's <code>features</code> from
+<code>[package.NAME.docs]</code>, unless <code>:TARGET</code>, <code>--features</code> or <code>--docs-features</code>
+says otherwise.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">sh · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>cargo soothfast ci build bench --shards 3 --stage &quot;$RUNNER_TEMP/store&quot; \
   --plan-out &quot;$RUNNER_TEMP/soothfast-plan/plan.json&quot; --listing-out listing.txt
 cargo soothfast ci build rustdoc --stage &quot;$RUNNER_TEMP/store&quot;
@@ -891,6 +909,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l2" href="#why-the-environment">Why the environment</a></li>
   
     <li><a class="toc-l2" href="#inputs">Inputs</a></li>
+  
+    <li><a class="toc-l3" href="#retired-inputs">Retired inputs</a></li>
   
     <li><a class="toc-l2" href="#rustdoc-cache">Rustdoc cache</a></li>
   
