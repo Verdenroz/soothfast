@@ -19,6 +19,8 @@ struct Options {
     shard: Option<Shard>,
     save: Option<String>,
     accepted: Option<String>,
+    features: Option<String>,
+    against: Option<String>,
 }
 
 /// What the run does with each package.
@@ -69,7 +71,7 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
         cmd.args(args);
         run_recorded(env, name, "rust", &mut cmd)
     };
-    match plan(env, has_parent()) {
+    match chosen(&opts, env, has_parent) {
         Plan::Skip => {
             println!("soothfast: ci gate has nothing to do for this event");
             0
@@ -96,6 +98,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--shard" => opts.shard = Some(Shard::parse(&value()?)?),
             "--save-baseline" => opts.save = Some(value()?),
             "--accepted" => opts.accepted = Some(value()?),
+            "--features" => opts.features = Some(value()?),
+            "--against" => opts.against = Some(value()?),
             _ => return Err(format!("unknown ci gate argument {a:?}")),
         }
     }
@@ -119,6 +123,17 @@ fn has_parent() -> bool {
         .args(["rev-parse", "--verify", "--quiet", "HEAD^"])
         .output()
         .is_ok_and(|o| o.status.success())
+}
+
+/// `--against REF` compares with REF whatever the event; otherwise the event
+/// decides.
+fn chosen(opts: &Options, env: &CiEnv, has_parent: impl Fn() -> bool) -> Plan {
+    match &opts.against {
+        Some(against) => Plan::Compare {
+            against: Some(against.clone()),
+        },
+        None => plan(env, has_parent()),
+    }
 }
 
 fn plan(env: &CiEnv, has_parent: bool) -> Plan {
@@ -146,6 +161,14 @@ fn gate_args(
     }
     if let Some(shard) = shard {
         args.extend(["--shard".into(), shard.to_string()]);
+    }
+    args
+}
+
+/// An explicit `--features` wins over the package's `soothfast.toml` defaults.
+fn with_features(mut args: Vec<String>, features: Option<&str>) -> Vec<String> {
+    if let Some(features) = features {
+        args.extend(["--features".into(), features.into()]);
     }
     args
 }
@@ -205,6 +228,7 @@ fn compare(
         .iter()
         .map(|pkg| {
             let args = gate_args(pkg, against, opts.save.as_deref(), opts.shard);
+            let args = with_features(args, opts.features.as_deref());
             gate(&record_name(pkg, opts.shard), &args)
         })
         .collect();
@@ -307,6 +331,7 @@ fn record(
             (false, Some(into)) => (mark_args(pkg, into), false),
             (false, None) => continue,
         };
+        let args = with_features(args, opts.features.as_deref());
         let code = invoke(&args, record);
         if code != 0 {
             eprintln!("soothfast: {} for {pkg} exited {code}", args[..2].join(" "));
@@ -445,6 +470,51 @@ mod tests {
             ]
         );
         assert!(recorded(false, None).1.is_empty());
+    }
+
+    #[test]
+    fn an_explicit_ref_is_compared_with_on_any_event() {
+        let opts = parse(&argv(&["--against", "v1"])).unwrap();
+        let push = env(Event::Push, Some("pr3v"), true);
+        assert_eq!(
+            chosen(&opts, &push, || true),
+            Plan::Compare {
+                against: Some("v1".into())
+            }
+        );
+        assert_eq!(
+            chosen(&Options::default(), &push, || true),
+            Plan::Record { parent: true }
+        );
+    }
+
+    #[test]
+    fn explicit_features_reach_every_gate_and_mark() {
+        let opts = parse(&argv(&["-p", "a", "--features", "bench-gate"])).unwrap();
+        assert_eq!(opts.features.as_deref(), Some("bench-gate"));
+        let last_two = |args: &[String]| args[args.len() - 2..].to_vec();
+
+        let gated = RefCell::new(Vec::new());
+        let gate = |_: &str, args: &[String]| {
+            gated.borrow_mut().push(last_two(args));
+            0
+        };
+        compare(&opts, &argv(&["a"]), Some("b4se"), gate);
+        assert_eq!(gated.into_inner(), [["--features", "bench-gate"]]);
+
+        let saving = Options {
+            save: Some("main".into()),
+            ..opts
+        };
+        for parent in [true, false] {
+            let recorded = RefCell::new(Vec::new());
+            let invoke = |args: &[String], _: bool| {
+                recorded.borrow_mut().push(last_two(args));
+                0
+            };
+            record(&saving, &argv(&["a"]), parent, invoke);
+            assert_eq!(recorded.into_inner(), [["--features", "bench-gate"]]);
+        }
     }
 
     #[test]
