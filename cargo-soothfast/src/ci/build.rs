@@ -10,7 +10,7 @@ use soothfast_registry::fnv1a;
 use super::env::{CiEnv, Event};
 use crate::config::{self, Group, Settings};
 use crate::init::{self, RustPlan};
-use crate::invoke;
+use crate::{invoke, spec_config, workspace};
 
 /// What `ci build` was asked for.
 #[derive(Debug, PartialEq)]
@@ -85,12 +85,24 @@ fn shape(env: &CiEnv, asked: u64, has_parent: impl Fn() -> bool) -> Shape {
     }
 }
 
+/// The packages the repository configures for each kind of work.
+#[derive(Debug, Default)]
+struct Found {
+    gated: Vec<String>,
+    docs: Vec<String>,
+    /// Packages with a `[[spec]]` entry, and those of them that generate one.
+    spec: Vec<String>,
+    generating: Vec<String>,
+}
+
 /// How `prebuild` takes a lane's packages and which defaults they resolve.
+/// A lane with several entries builds for each; `-p` names packages for the
+/// first.
 struct LaneKind {
     name: &'static str,
     flag: &'static str,
     group: Group,
-    packages: fn(&RustPlan) -> Vec<String>,
+    packages: fn(&Found) -> Vec<String>,
 }
 
 const LANES: &[LaneKind] = &[
@@ -98,19 +110,25 @@ const LANES: &[LaneKind] = &[
         name: "bench",
         flag: "-p",
         group: Group::Gate,
-        packages: |plan| plan.packages.clone(),
+        packages: |found| found.gated.clone(),
     },
     LaneKind {
         name: "routes",
         flag: "--spec",
         group: Group::Spec,
-        packages: |_| Vec::new(),
+        packages: |found| found.spec.clone(),
     },
     LaneKind {
         name: "rustdoc",
         flag: "--docs",
         group: Group::Docs,
-        packages: |plan| plan.docs_packages.clone(),
+        packages: |found| found.docs.clone(),
+    },
+    LaneKind {
+        name: "rustdoc",
+        flag: "--spec",
+        group: Group::Spec,
+        packages: |found| found.generating.clone(),
     },
 ];
 
@@ -127,21 +145,25 @@ fn lane_kind(name: &str) -> &'static LaneKind {
     LANES.iter().find(|l| l.name == name).unwrap_or(&UNKNOWN)
 }
 
-/// The packages a lane applies to when none are named.
-fn default_packages(lane: &str, plan: &RustPlan) -> Vec<String> {
-    (lane_kind(lane).packages)(plan)
+/// Every entry of a lane with the packages it applies to when none are named.
+fn default_packages(lane: &str, found: &Found) -> Vec<(&'static LaneKind, Vec<String>)> {
+    LANES
+        .iter()
+        .filter(|kind| kind.name == lane)
+        .map(|kind| (kind, (kind.packages)(found)))
+        .collect()
 }
 
 /// One `prebuild` call for each set of packages that resolve the same
 /// defaults, in the order they first appear, since a call takes one set of
 /// features.
-fn invocations(
+fn invocations_for(
     job: &Job,
+    kind: &LaneKind,
     packages: &[String],
     shape: &Shape,
     resolve: impl Fn(&str, Group) -> Result<Settings, String>,
 ) -> Result<Vec<Vec<String>>, String> {
-    let kind = lane_kind(&job.lane);
     let mut buckets: Vec<(Settings, Vec<&String>)> = Vec::new();
     for pkg in packages {
         let settings = resolve(pkg, kind.group)?;
@@ -161,10 +183,19 @@ fn invocations(
                 args.extend(["--shards".into(), shape.shards.to_string()]);
             }
             for pkg in group {
-                args.extend([kind.flag.into(), pkg.clone()]);
+                let named = match (kind.group, &settings.target) {
+                    (Group::Spec, Some(target)) => format!("{pkg}:{target}"),
+                    _ => pkg.clone(),
+                };
+                args.extend([kind.flag.into(), named]);
             }
-            if let (Group::Docs, Some(features)) = (kind.group, settings.features) {
-                args.extend(["--docs-features".into(), features]);
+            let features_flag = match kind.group {
+                Group::Docs => Some("--docs-features"),
+                Group::Spec => Some("--features"),
+                Group::Gate | Group::Test => None,
+            };
+            if let (Some(flag), Some(features)) = (features_flag, settings.features) {
+                args.extend([flag.into(), features]);
             }
             if let Some(against) = &shape.against {
                 args.extend(["--against-ref".into(), against.clone()]);
@@ -180,8 +211,19 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
         Ok(job) => job,
         Err(e) => return crate::arg_err(&e),
     };
-    let packages = match resolve_packages(&job) {
-        Ok(packages) => packages,
+    let has_parent = || invoke::git(&["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok();
+    let shape = shape(env, job.shards, has_parent);
+    let resolve = |pkg: &str, group| config::defaults(&[pkg.to_string()], group);
+    let planned = resolve_packages(&job).and_then(|sources| {
+        let mut all = Vec::new();
+        for (kind, packages) in &sources {
+            all.extend(invocations_for(&job, kind, packages, &shape, resolve)?);
+        }
+        let packages: Vec<String> = sources.into_iter().flat_map(|(_, p)| p).collect();
+        Ok((packages, all))
+    });
+    let (packages, calls) = match planned {
+        Ok(planned) => planned,
         Err(e) => {
             eprintln!("soothfast: {e}");
             return 2;
@@ -191,16 +233,6 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
         println!("ci build: no packages for the {} lane", job.lane);
         return 0;
     }
-    let has_parent = || invoke::git(&["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok();
-    let shape = shape(env, job.shards, has_parent);
-    let resolve = |pkg: &str, group| config::defaults(&[pkg.to_string()], group);
-    let calls = match invocations(&job, &packages, &shape, resolve) {
-        Ok(calls) => calls,
-        Err(e) => {
-            eprintln!("soothfast: {e}");
-            return 2;
-        }
-    };
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
@@ -224,12 +256,39 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     )
 }
 
-fn resolve_packages(job: &Job) -> Result<Vec<String>, String> {
+fn resolve_packages(job: &Job) -> Result<Vec<(&'static LaneKind, Vec<String>)>, String> {
     if !job.packages.is_empty() {
-        return Ok(job.packages.clone());
+        return Ok(vec![(lane_kind(&job.lane), job.packages.clone())]);
     }
-    let plan = init::rust_plan(&invoke::project_root())?;
-    Ok(default_packages(&job.lane, &plan))
+    Ok(default_packages(&job.lane, &found()?))
+}
+
+fn found() -> Result<Found, String> {
+    let root = invoke::project_root();
+    let RustPlan {
+        packages: gated,
+        docs_packages: docs,
+    } = init::rust_plan(&root)?;
+    let members = workspace::members(Some(&root)).map_err(|e| e.to_string())?;
+    let mut spec = Vec::new();
+    let mut generating = Vec::new();
+    for package in members {
+        let dir = invoke::pkg_dir(&package).map_err(|e| e.to_string())?;
+        let config = spec_config::load(&dir)?;
+        if config.entries.is_empty() {
+            continue;
+        }
+        if config.generates() {
+            generating.push(package.clone());
+        }
+        spec.push(package);
+    }
+    Ok(Found {
+        gated,
+        docs,
+        spec,
+        generating,
+    })
 }
 
 /// Runs every call, then lists the built items and the store's checksums as
@@ -359,6 +418,15 @@ mod tests {
         }
     }
 
+    fn invocations(
+        job: &Job,
+        packages: &[String],
+        shape: &Shape,
+        resolve: impl Fn(&str, Group) -> Result<Settings, String>,
+    ) -> Result<Vec<Vec<String>>, String> {
+        invocations_for(job, lane_kind(&job.lane), packages, shape, resolve)
+    }
+
     fn no_features(_: &str, _: Group) -> Result<Settings, String> {
         Ok(Settings::default())
     }
@@ -458,13 +526,53 @@ mod tests {
 
     #[test]
     fn each_lane_applies_to_its_own_packages() {
-        let plan = RustPlan {
-            packages: vec!["a".into(), "b".into()],
-            docs_packages: vec!["d".into()],
+        let found = Found {
+            gated: argv(&["a", "b"]),
+            docs: argv(&["d"]),
+            spec: argv(&["s", "g"]),
+            generating: argv(&["g"]),
         };
-        assert_eq!(default_packages("bench", &plan), ["a", "b"]);
-        assert_eq!(default_packages("rustdoc", &plan), ["d"]);
-        assert!(default_packages("routes", &plan).is_empty());
+        let of = |lane| -> Vec<(&str, Vec<String>)> {
+            default_packages(lane, &found)
+                .into_iter()
+                .map(|(kind, packages)| (kind.flag, packages))
+                .collect()
+        };
+        assert_eq!(of("bench"), [("-p", argv(&["a", "b"]))]);
+        assert_eq!(of("routes"), [("--spec", argv(&["s", "g"]))]);
+        assert_eq!(
+            of("rustdoc"),
+            [("--docs", argv(&["d"])), ("--spec", argv(&["g"]))]
+        );
+        assert!(of("whatever").is_empty());
+    }
+
+    #[test]
+    fn a_spec_package_is_named_with_its_target_and_features() {
+        let shape = shape(&env(Event::Other, None, false), 1, || false);
+        let resolve = |pkg: &str, _: Group| {
+            Ok(Settings {
+                features: (pkg == "s").then(|| "full".to_string()),
+                target: (pkg == "s").then(|| "routes".to_string()),
+                ..Settings::default()
+            })
+        };
+        let calls = invocations(&job("routes", None), &argv(&["s", "g"]), &shape, resolve);
+        assert_eq!(
+            calls.unwrap(),
+            [
+                argv(&[
+                    "prebuild",
+                    "--only",
+                    "routes",
+                    "--spec",
+                    "s:routes",
+                    "--features",
+                    "full"
+                ]),
+                argv(&["prebuild", "--only", "routes", "--spec", "g"]),
+            ]
+        );
     }
 
     #[test]

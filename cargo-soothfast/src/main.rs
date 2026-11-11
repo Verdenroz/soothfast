@@ -151,7 +151,9 @@ commands:
   ci       build LANE [-p PKG]... [--shards N] [--stage DIR] [--plan-out FILE]
            [--listing-out FILE]
            (the workflow's build-once job: `prebuild --only LANE` per package,
-           the packages the lane applies to when none are named; --shards
+           the packages the lane applies to when none are named (routes:
+           every package with a [[spec]] entry; rustdoc: the docs packages
+           and those that generate a spec); --shards
            counts only on a pull request; --plan-out adds each package's
            items to a plan file; --listing-out writes the checksum of
            .soothfast/bins before and after)
