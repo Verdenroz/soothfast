@@ -70,6 +70,9 @@ jobs:
       test_all: ${{ steps.plan.outputs.test_all }}
       test_expect: ${{ steps.plan.outputs.test_expect }}
       shards: ${{ steps.plan.outputs.shards }}
+      checks: ${{ steps.plan.outputs.checks }}
+      checks_any: ${{ steps.plan.outputs.checks_any }}
+      checks_expect: ${{ steps.plan.outputs.checks_expect }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -713,9 +716,64 @@ jobs:
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
 
+  # One job per spec, proto, coverage, capture and site check the plan found
+  # in soothfast.toml. Each is `cargo soothfast ci KIND`, so its flags and
+  # packages come from the file.
+  check:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.checks_any == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.checks) }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      # History for the base a spec is gated against.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: check-${{ matrix.kind }}
+      - uses: ./.soothfast-action/action/install
+      - name: Install the pinned rustdoc toolchain
+        if: matrix.rustdoc
+        run: ./.soothfast-action/action/rustdoc-toolchain.sh
+      - name: Check
+        env:
+          KIND: ${{ matrix.kind }}
+          PACKAGE: ${{ matrix.package }}
+        run: cargo soothfast ci "$KIND" ${PACKAGE:+-p "$PACKAGE"}
+      - name: Upload the check result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-result-${{ matrix.name }}
+          path: ${{ runner.temp }}/soothfast-results
+          if-no-files-found: ignore
+
   verdict:
     name: verdict
-    needs: [plan, test, test-projects, gate-rust, gate, docs]
+    needs: [plan, test, test-projects, gate-rust, gate, docs, check]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ fromJSON(inputs.runs_on) }}
     environment: soothfast-bot
@@ -765,6 +823,7 @@ jobs:
           EXPECT_IMPORT: ${{ join(fromJSON(needs.plan.outputs.matrix).include.*.name, ' ') }}
           EXPECT_DOCS: ${{ needs.plan.outputs.docs == 'true' && 'docs' || '' }}
           EXPECT_TEST: ${{ needs.plan.outputs.test == 'true' && 'test-rust' || '' }} ${{ needs.plan.outputs.test_expect }}
+          EXPECT_CHECK: ${{ needs.plan.outputs.checks_expect }}
         run: ./.soothfast-action/action/verdict.sh
 
   labels:

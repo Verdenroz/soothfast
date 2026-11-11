@@ -2,9 +2,10 @@
 # Fold every gate job's result into the pull request's one comment and exit
 # status. Results are untrusted text; `ci verdict` neutralises the fences.
 # Inputs: CLI RESULTS PR_NUMBER BASE_REF GH_TOKEN GITHUB_REPOSITORY, BROKER and
-# EXPECT_RUST, EXPECT_IMPORT, EXPECT_DOCS, EXPECT_TEST (space-separated names
-# of the results each kind must have) and EXPECT_SHARDS (I/N of each Rust
-# gate leg, which expects every package once per leg) (optional).
+# EXPECT_RUST, EXPECT_IMPORT, EXPECT_DOCS, EXPECT_TEST, EXPECT_CHECK
+# (space-separated names of the results each kind must have) and EXPECT_SHARDS
+# (I/N of each Rust gate leg, which expects every package once per leg)
+# (optional).
 set -euo pipefail
 
 # shellcheck source=action/labels.sh
@@ -12,7 +13,7 @@ source "$(dirname "$0")/labels.sh"
 
 expect=()
 read -ra shards <<<"${EXPECT_SHARDS:-}"
-for kind in rust import docs test; do
+for kind in rust import docs test check; do
   names=EXPECT_${kind^^}
   for name in ${!names:-}; do
     if [ "$kind" = rust ] && [ "${#shards[@]}" -gt 0 ]; then
