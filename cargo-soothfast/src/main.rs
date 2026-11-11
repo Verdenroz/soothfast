@@ -154,6 +154,10 @@ commands:
   ci       capture [-p PKG]...
            (docs capture --check for each package, recorded as capture-PKG;
            with no -p, every docs package)
+  ci       site [--out DIR]
+           (docs build into DIR, default target/soothfast-site, against the
+           head baseline when one exists; only when soothfast.toml has a
+           [site] table; recorded as site)
   ci       verdict [--expect NAME:KIND]... [--accepted LABEL] [--out FILE]
            (merges the records under the results directory into the pull
            request comment body, written to FILE or <results>/verdict-comment.md;

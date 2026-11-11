@@ -838,6 +838,11 @@ ones given, which fails when the output recorded beside a capture block no
 longer matches what the block prints. A package with no capture block passes.
 Each package records a `check` verdict named `capture-PKG`. With no docs
 package it says so and records nothing.
+`ci site` builds the docs site with `docs build --out DIR`, where DIR is
+`target/soothfast-site` unless `--out` says otherwise. It builds against the
+`head` baseline when `.soothfast/baselines/head.json` exists. It runs only when
+the root `soothfast.toml` has a `[site]` table; without one it says so and
+records nothing. The record is a `check` verdict named `site`.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
 jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
 `routes` or `rustdoc` lane. With no package named, `bench` builds the gated
