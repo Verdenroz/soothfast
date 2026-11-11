@@ -5,6 +5,7 @@ pub(crate) mod config;
 #[cfg(test)]
 pub(crate) mod fixture;
 mod key;
+pub(crate) mod last;
 pub(crate) mod project;
 mod runner;
 pub(crate) mod rustdoc;
@@ -137,6 +138,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
     let mut tally = Tally::default();
     if selected.is_empty() {
         println!("{}", tally.summary(0, total));
+        last::record(&root, tally.failed.len());
         write_result(&args, &tally, 0, total, started)?;
         return Ok(0);
     }
@@ -198,6 +200,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
             .map_err(|e| format!("{label}: {e}"))
     })?;
     println!("{}", tally.summary(selected.len(), total));
+    last::record(&root, tally.failed.len());
     write_result(&args, &tally, selected.len(), total, started)?;
     Ok(i32::from(!tally.failed.is_empty()))
 }

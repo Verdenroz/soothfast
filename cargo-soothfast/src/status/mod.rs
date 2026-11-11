@@ -9,6 +9,7 @@ mod docs_lock;
 mod gate;
 mod init;
 mod render;
+mod test_run;
 mod version;
 
 /// How a subject stands. `Ok` rows need nothing; the rest carry a fix.
@@ -81,6 +82,7 @@ const CHECKS: &[Check] = &[
     baselines::check,
     docs_lock::check,
     init::check,
+    test_run::check,
 ];
 
 pub fn run(args: &[String]) -> i32 {
