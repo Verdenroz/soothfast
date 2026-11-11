@@ -24,7 +24,7 @@ fn with_minimum(
     Ok(kept)
 }
 
-fn configured() -> Result<Vec<String>, String> {
+pub(super) fn configured() -> Result<Vec<String>, String> {
     let docs = init::rust_plan(&invoke::project_root())?.docs_packages;
     with_minimum(docs, |pkg| {
         Ok(config::defaults(&[pkg.to_string()], Group::Docs)?.coverage)

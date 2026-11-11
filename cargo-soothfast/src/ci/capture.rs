@@ -11,7 +11,7 @@ fn command(pkg: &str) -> Vec<String> {
         .to_vec()
 }
 
-fn configured() -> Result<Vec<String>, String> {
+pub(super) fn configured() -> Result<Vec<String>, String> {
     Ok(init::rust_plan(&invoke::project_root())?.docs_packages)
 }
 
