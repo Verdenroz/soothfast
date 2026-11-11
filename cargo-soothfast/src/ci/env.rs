@@ -42,6 +42,8 @@ pub struct CiEnv {
     /// The commit changes are measured from: a pull request's base, a push's
     /// previous head.
     pub base: Option<String>,
+    /// Whether `base` came from `--base` rather than the event.
+    pub base_given: bool,
     pub head: Option<String>,
     pub default_branch: bool,
     /// Where jobs record their verdicts. A run with none records nothing.
@@ -117,6 +119,7 @@ impl CiEnv {
         CiEnv {
             event,
             base: flags.base.clone().or(from_event),
+            base_given: flags.base.is_some(),
             head: text(&["pull_request", "head", "sha"]).or_else(|| var("GITHUB_SHA").cloned()),
             default_branch,
             results: flags
@@ -165,6 +168,7 @@ mod tests {
             CiEnv {
                 event: Event::PullRequest,
                 base: Some("b4se".into()),
+                base_given: false,
                 head: Some("h3ad".into()),
                 default_branch: false,
                 results: Some("/tmp/r/soothfast-results".into()),

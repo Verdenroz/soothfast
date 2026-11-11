@@ -7,11 +7,13 @@
 
 mod build;
 mod docs;
+mod each;
 mod env;
 mod gate;
 mod import;
 mod record;
 mod regen;
+mod spec;
 mod test;
 mod verdict;
 
@@ -50,6 +52,11 @@ const KINDS: &[Kind] = &[
     Kind {
         name: "docs",
         run: Some(docs::run),
+        applies: in_a_run,
+    },
+    Kind {
+        name: "spec",
+        run: Some(spec::run),
         applies: in_a_run,
     },
     Kind {
@@ -207,6 +214,7 @@ mod tests {
                 "gate",
                 "gate-import",
                 "docs",
+                "spec",
                 "verdict",
                 "regen"
             ]

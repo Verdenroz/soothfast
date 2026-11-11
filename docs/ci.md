@@ -815,6 +815,15 @@ error anything else; the head's items are saved for the docs check unless
 the gate errored, and a pass that cannot save them errors. `--accepted
 LABEL` waives a regression, which then exits 0, and never an error. The
 worktree is removed whether or not the bench fails.
+`ci spec` is the spec checks of every package with a `[[spec]]` entry, or
+the `-p` ones given, with the `spec` defaults each package resolves in
+`soothfast.toml`. A package that generates a spec runs `spec gen --check`,
+which fails on a stale committed spec. On a pull request, and on any run given
+`--base`, `spec gate` compares with the base; a push alone has none. A package
+with a spec that is not generated runs `spec check`, and one with an `[[sdk]]`
+entry runs `sdk gen --check`. Every step runs even after one fails, and each
+package records a `check` verdict named `spec-PKG` with the worst exit code.
+With nothing configured it says so and records nothing.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
 jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
 `routes` or `rustdoc` lane. With no package named, `bench` builds the gated

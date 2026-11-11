@@ -138,6 +138,13 @@ commands:
            the head and, on a pull request, its merge base, and gates the
            imported results; every project when none is named, exiting with
            the worst; --accepted waives a regression, never an error)
+  ci       spec [-p PKG]...
+           (the workflow's spec checks, one record per package, spec-PKG:
+           spec gen --check for a generated spec, spec gate against the
+           pull request's base or --base, spec check for a hand-written
+           spec and sdk gen --check for an SDK; every step runs and the
+           exit code is the worst; with no -p, every package with a
+           [[spec]] entry)
   ci       verdict [--expect NAME:KIND]... [--accepted LABEL] [--out FILE]
            (merges the records under the results directory into the pull
            request comment body, written to FILE or <results>/verdict-comment.md;
