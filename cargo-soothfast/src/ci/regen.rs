@@ -116,14 +116,9 @@ fn discover(flags: &Flags, vars: &BTreeMap<String, String>) -> Result<Inputs, St
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let changelog_packages = Config::load(&root)?.changelog()?.packages;
     let gated = workspace::bench_crates("soothfast", Some(&root))?;
-    let members = workspace::members(Some(&root)).map_err(|e| e.to_string())?;
-    let mut specs = Vec::new();
+    let (_, specs) = spec_config::configured(&root)?;
     let mut sdks = Vec::new();
-    for package in members {
-        if spec_config::generating(&package).is_some() {
-            specs.push(package.clone());
-        }
-        let dir = invoke::pkg_dir(&package).map_err(|e| e.to_string())?;
+    for (package, dir) in workspace::member_dirs(Some(&root)).map_err(|e| e.to_string())? {
         let paths = sdk_paths(&root, &dir, &sdk_config::load(&dir)?);
         if !paths.is_empty() {
             sdks.push(Sdk { package, paths });

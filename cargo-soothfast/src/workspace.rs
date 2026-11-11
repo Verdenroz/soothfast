@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
@@ -70,6 +70,23 @@ pub fn members(dir: Option<&Path>) -> io::Result<Vec<String>> {
         .collect();
     names.sort();
     Ok(names)
+}
+
+/// Every workspace member with the directory of its manifest, in name order,
+/// from one `cargo metadata` call.
+pub fn member_dirs(dir: Option<&Path>) -> io::Result<Vec<(String, PathBuf)>> {
+    let md = metadata(dir, true)?;
+    let mut members: Vec<(String, PathBuf)> = md["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| {
+            let manifest = Path::new(p["manifest_path"].as_str()?);
+            Some((p["name"].as_str()?.to_string(), manifest.parent()?.into()))
+        })
+        .collect();
+    members.sort();
+    Ok(members)
 }
 
 /// Workspace members `pkg` depends on, transitively, in name order.

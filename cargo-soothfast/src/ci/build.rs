@@ -9,7 +9,7 @@ use soothfast_registry::fnv1a;
 
 use super::env::{CiEnv, Event};
 use crate::config::{self, Group, Settings};
-use crate::init::{self, RustPlan};
+use crate::init;
 use crate::{invoke, spec_config, workspace};
 
 /// What `ci build` was asked for.
@@ -85,14 +85,15 @@ fn shape(env: &CiEnv, asked: u64, has_parent: impl Fn() -> bool) -> Shape {
     }
 }
 
-/// The packages the repository configures for each kind of work.
-#[derive(Debug, Default)]
-struct Found {
-    gated: Vec<String>,
-    docs: Vec<String>,
-    /// Packages with a `[[spec]]` entry, and those of them that generate one.
-    spec: Vec<String>,
-    generating: Vec<String>,
+/// Where a lane's packages come from when none are named.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Source {
+    Gated,
+    Docs,
+    /// Packages with a `[[spec]]` entry.
+    Spec,
+    /// Packages that generate a spec from the code.
+    Generating,
 }
 
 /// How `prebuild` takes a lane's packages and which defaults they resolve.
@@ -102,7 +103,7 @@ struct LaneKind {
     name: &'static str,
     flag: &'static str,
     group: Group,
-    packages: fn(&Found) -> Vec<String>,
+    source: Source,
 }
 
 const LANES: &[LaneKind] = &[
@@ -110,25 +111,25 @@ const LANES: &[LaneKind] = &[
         name: "bench",
         flag: "-p",
         group: Group::Gate,
-        packages: |found| found.gated.clone(),
+        source: Source::Gated,
     },
     LaneKind {
         name: "routes",
         flag: "--spec",
         group: Group::Spec,
-        packages: |found| found.spec.clone(),
+        source: Source::Spec,
     },
     LaneKind {
         name: "rustdoc",
         flag: "--docs",
         group: Group::Docs,
-        packages: |found| found.docs.clone(),
+        source: Source::Docs,
     },
     LaneKind {
         name: "rustdoc",
         flag: "--spec",
         group: Group::Spec,
-        packages: |found| found.generating.clone(),
+        source: Source::Generating,
     },
 ];
 
@@ -138,7 +139,7 @@ const UNKNOWN: LaneKind = LaneKind {
     name: "",
     flag: "-p",
     group: Group::Gate,
-    packages: |_| Vec::new(),
+    source: Source::Gated,
 };
 
 fn lane_kind(name: &str) -> &'static LaneKind {
@@ -146,11 +147,14 @@ fn lane_kind(name: &str) -> &'static LaneKind {
 }
 
 /// Every entry of a lane with the packages it applies to when none are named.
-fn default_packages(lane: &str, found: &Found) -> Vec<(&'static LaneKind, Vec<String>)> {
+fn default_packages(
+    lane: &str,
+    load: impl Fn(Source) -> Result<Vec<String>, String>,
+) -> Result<Vec<(&'static LaneKind, Vec<String>)>, String> {
     LANES
         .iter()
         .filter(|kind| kind.name == lane)
-        .map(|kind| (kind, (kind.packages)(found)))
+        .map(|kind| Ok((kind, load(kind.source)?)))
         .collect()
 }
 
@@ -214,15 +218,7 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     let has_parent = || invoke::git(&["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok();
     let shape = shape(env, job.shards, has_parent);
     let resolve = |pkg: &str, group| config::defaults(&[pkg.to_string()], group);
-    let planned = resolve_packages(&job).and_then(|sources| {
-        let mut all = Vec::new();
-        for (kind, packages) in &sources {
-            all.extend(invocations_for(&job, kind, packages, &shape, resolve)?);
-        }
-        let packages: Vec<String> = sources.into_iter().flat_map(|(_, p)| p).collect();
-        Ok((packages, all))
-    });
-    let (packages, calls) = match planned {
+    let (packages, calls) = match plan(&job, &shape, resolve) {
         Ok(planned) => planned,
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -256,39 +252,32 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     )
 }
 
-fn resolve_packages(job: &Job) -> Result<Vec<(&'static LaneKind, Vec<String>)>, String> {
-    if !job.packages.is_empty() {
-        return Ok(vec![(lane_kind(&job.lane), job.packages.clone())]);
+/// The packages the job builds for and the `prebuild` calls that build them.
+fn plan(
+    job: &Job,
+    shape: &Shape,
+    resolve: impl Fn(&str, Group) -> Result<Settings, String>,
+) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+    let sources = if job.packages.is_empty() {
+        default_packages(&job.lane, load)?
+    } else {
+        vec![(lane_kind(&job.lane), job.packages.clone())]
+    };
+    let mut calls = Vec::new();
+    for (kind, packages) in &sources {
+        calls.extend(invocations_for(job, kind, packages, shape, &resolve)?);
     }
-    Ok(default_packages(&job.lane, &found()?))
+    Ok((sources.into_iter().flat_map(|(_, p)| p).collect(), calls))
 }
 
-fn found() -> Result<Found, String> {
+fn load(source: Source) -> Result<Vec<String>, String> {
     let root = invoke::project_root();
-    let RustPlan {
-        packages: gated,
-        docs_packages: docs,
-    } = init::rust_plan(&root)?;
-    let members = workspace::members(Some(&root)).map_err(|e| e.to_string())?;
-    let mut spec = Vec::new();
-    let mut generating = Vec::new();
-    for package in members {
-        let dir = invoke::pkg_dir(&package).map_err(|e| e.to_string())?;
-        let config = spec_config::load(&dir)?;
-        if config.entries.is_empty() {
-            continue;
-        }
-        if config.generates() {
-            generating.push(package.clone());
-        }
-        spec.push(package);
+    match source {
+        Source::Gated => workspace::bench_crates("soothfast", Some(&root)),
+        Source::Docs => Ok(init::rust_plan(&root)?.docs_packages),
+        Source::Spec => Ok(spec_config::configured(&root)?.0),
+        Source::Generating => Ok(spec_config::configured(&root)?.1),
     }
-    Ok(Found {
-        gated,
-        docs,
-        spec,
-        generating,
-    })
 }
 
 /// Runs every call, then lists the built items and the store's checksums as
@@ -526,14 +515,17 @@ mod tests {
 
     #[test]
     fn each_lane_applies_to_its_own_packages() {
-        let found = Found {
-            gated: argv(&["a", "b"]),
-            docs: argv(&["d"]),
-            spec: argv(&["s", "g"]),
-            generating: argv(&["g"]),
+        let load = |source| {
+            Ok(match source {
+                Source::Gated => argv(&["a", "b"]),
+                Source::Docs => argv(&["d"]),
+                Source::Spec => argv(&["s", "g"]),
+                Source::Generating => argv(&["g"]),
+            })
         };
         let of = |lane| -> Vec<(&str, Vec<String>)> {
-            default_packages(lane, &found)
+            default_packages(lane, load)
+                .unwrap()
                 .into_iter()
                 .map(|(kind, packages)| (kind.flag, packages))
                 .collect()

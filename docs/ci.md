@@ -183,7 +183,7 @@ installed on is refused.
 | `packages` | every package with a bench target named `soothfast` | Space-separated packages to gate and measure. `report changelog` uses the same list unless `[changelog] packages` in `soothfast.toml` says otherwise. |
 | `gate` | `true` | Run the gate on pull requests, and record a reference run on default-branch pushes. |
 | `changelog` | `true` | Regenerate `CHANGELOG.md` on default-branch pushes, along with `mode = "generate"` specs and `[[sdk]]` packages. |
-| `regen` | `false` | Regenerate the specs and SDKs on default-branch pushes even with `changelog: "false"`. |
+| `regen` | `false` | Run the regeneration on default-branch pushes even with `changelog: "false"`, for the specs and SDKs alone. |
 | `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. Counters measured from code proven identical to HEAD's (the item cache, a run stored for the same binary, a run-cache hit on HEAD) are saved with their `reused` marker; walltime from those sources is listed as `unmeasured` (`reused-walltime`) instead. A gate whose claims failed, or that errored, saves no numbers and lists the package's items as `gate-failed`; one that failed only on regressions saves HEAD's numbers, and its verdict or the `soothfast:perf-accepted` label decides. With `shard`, each leg's file holds its shard's items; merge them with `cargo soothfast baseline merge`. |
 | `regen-run` | none | Shell run on the default branch after the built-in regeneration, for derived files it does not cover. `$SOOTHFAST` is the `cargo-soothfast` this step installed, so `"$SOOTHFAST" report render` works whether the CLI came from the install or from `binary`. Requires `regen-paths`. |
 | `regen-paths` | none | Space-separated pathspecs `regen-run` may change; they land in the same pull request. Required with `regen-run`; without it the step fails rather than discarding the changes. |
@@ -208,6 +208,8 @@ installed on is refused.
 | `prebuild-shards` | none | The `shard` count of the legs that read the stores, so a merge-base whose run every leg has stored is not built. |
 | `prebuild-stage` | none | A directory to copy just the entries the lanes built or found into, for a job to upload. |
 
+### Retired inputs
+
 The inputs `features`, `spec`, `changelog-features`, `changelog-packages`,
 `prebuild-docs-paths`, `prebuild-docs-features` and `prebuild-spec` are
 retired, and the step fails when one is set. The `ci` commands the action runs
@@ -216,7 +218,7 @@ read the same settings from `soothfast.toml`:
 | Retired input | In `soothfast.toml` |
 |---|---|
 | `features` | `features` under `[gate]`, or under `[package.NAME]` for one package |
-| `spec` | nothing: a package's `mode = "generate"` `[[spec]]` entries are found |
+| `spec` | nothing to set: `ci regen` finds each package's `mode = "generate"` `[[spec]]` entries |
 | `changelog-features`, `changelog-packages` | `features` and `packages` under `[changelog]` |
 | `prebuild-docs-paths` | `paths` under `[docs]` |
 | `prebuild-docs-features` | `features` under `[package.NAME.docs]` |

@@ -5,7 +5,7 @@
 # A default-branch push with the gate on records a reference run.
 # Inputs: GATE REGEN LABELS CACHE (true|false) SHARD PACKAGES RUSTDOC_TOOLCHAIN
 # GH_TOKEN (also authenticates the fetches), RUSTDOC_LANE (true|false, optional).
-# Outputs: on_default_branch, default_branch, packages, sweep (act on labels),
+# Outputs: on_default_branch, default_branch, packages, regenerating, sweep (act on labels),
 # records (this leg records the reference), reference (the commit whose
 # recorded runs the gate compares against) and cache_runs.
 set -euo pipefail
@@ -54,20 +54,23 @@ recording=false
 [ "${GITHUB_EVENT_NAME:-}" = push ] && [ "$on_default" = true ] && [ "$GATE" = true ] && recording=true
 regenerating=false
 [ "${GITHUB_EVENT_NAME:-}" != pull_request ] && [ "$on_default" = true ] && [ "$REGEN" = true ] && regenerating=true
+echo "regenerating=$regenerating" >>"$GITHUB_OUTPUT"
 if [ "$gating" = false ] && [ "$recording" = false ] && [ "$regenerating" = false ]; then
   echo "packages=" >>"$GITHUB_OUTPUT"
   [ "${RUSTDOC_LANE:-false}" = true ] && install_rustdoc_toolchain
   exit 0
 fi
 
-if [ -z "$PACKAGES" ]; then
-  need jq
-  PACKAGES=$(cargo metadata --format-version 1 --no-deps |
-    jq -r '[.packages[] | select(any(.targets[]; .kind == ["bench"] and .name == "soothfast")) | .name] | join(" ")')
-fi
-if [ -z "$PACKAGES" ]; then
-  echo "::error::no package has a bench target named soothfast; pass the packages input"
-  exit 1
+if [ "$gating" = true ] || [ "$recording" = true ]; then
+  if [ -z "$PACKAGES" ]; then
+    need jq
+    PACKAGES=$(cargo metadata --format-version 1 --no-deps |
+      jq -r '[.packages[] | select(any(.targets[]; .kind == ["bench"] and .name == "soothfast")) | .name] | join(" ")')
+  fi
+  if [ -z "$PACKAGES" ]; then
+    echo "::error::no package has a bench target named soothfast; pass the packages input"
+    exit 1
+  fi
 fi
 echo "packages=$PACKAGES" >>"$GITHUB_OUTPUT"
 

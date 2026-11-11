@@ -43,9 +43,7 @@ inputs:
     required: false
     default: "true"
   spec:
-    description: >-
-      Retired. A package's `mode = "generate"` specs are found from its
-      `[[spec]]` entries.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   baseline:
@@ -78,9 +76,7 @@ inputs:
     required: false
     default: ""
   features:
-    description: >-
-      Retired. Set `features` under `[gate]` or `[package.NAME]` in
-      `soothfast.toml`.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   save-baseline:
@@ -96,17 +92,17 @@ inputs:
     required: false
     default: ""
   changelog-features:
-    description: Retired. Set `features` under `[changelog]` in `soothfast.toml`.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   changelog-packages:
-    description: Retired. Set `packages` under `[changelog]` in `soothfast.toml`.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   regen:
     description: >-
-      Regenerate generate-mode specs and SDKs on pushes to the default
-      branch even with `changelog: "false"`.
+      Run the regeneration on pushes to the default branch even with
+      `changelog: "false"`, for the generate-mode specs and SDKs alone.
     required: false
     default: "false"
   regen-run:
@@ -209,17 +205,15 @@ inputs:
     required: false
     default: ""
   prebuild-docs-paths:
-    description: Retired. Set `paths` under `[docs]` in `soothfast.toml`.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   prebuild-docs-features:
-    description: Retired. Set `features` under `[package.NAME.docs]` in `soothfast.toml`.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   prebuild-spec:
-    description: >-
-      Retired. Add `routes` to `prebuild`; a package's bench target and
-      features come from `[package.NAME.spec]` in `soothfast.toml`.
+    description: Retired. See docs/ci.md, Retired inputs.
     required: false
     default: ""
   prebuild-shards:
@@ -257,21 +251,21 @@ runs:
         DOCS_FEATURES: ${{ inputs.prebuild-docs-features }}
         PREBUILD_SPEC: ${{ inputs.prebuild-spec }}
       run: |
-        set=false
+        failed=false
         retired() {
           if [ -n "$2" ]; then
             echo "::error::the $1 input is retired: $3 in soothfast.toml"
-            set=true
+            failed=true
           fi
         }
         retired features "$FEATURES" 'set features under [gate] or [package.NAME]'
-        retired spec "$SPEC" 'generate-mode [[spec]] entries are found'
+        retired spec "$SPEC" 'ci regen finds the generate-mode [[spec]] entries'
         retired changelog-features "$CHANGELOG_FEATURES" 'set features under [changelog]'
         retired changelog-packages "$CHANGELOG_PACKAGES" 'set packages under [changelog]'
         retired prebuild-docs-paths "$DOCS_PATHS" 'set paths under [docs]'
         retired prebuild-docs-features "$DOCS_FEATURES" 'set features under [package.NAME.docs]'
         retired prebuild-spec "$PREBUILD_SPEC" 'add routes to the prebuild input and set target and features under [package.NAME.spec]'
-        [ "$set" = false ]
+        [ "$failed" = false ]
     - name: Resolve cargo-soothfast
       id: resolve
       shell: bash
@@ -630,10 +624,7 @@ runs:
       run: "$GITHUB_ACTION_PATH/action/sweep.sh"
 
     - name: Regenerate derived files
-      if: >-
-        github.event_name != 'pull_request' && steps.prepare.outputs.on_default_branch == 'true'
-        && steps.lanes.outputs.active == 'false'
-        && (inputs.changelog == 'true' || inputs.regen == 'true' || inputs.regen-run != '')
+      if: steps.prepare.outputs.regenerating == 'true' && steps.lanes.outputs.active == 'false'
       id: regen
       shell: bash
       env:
