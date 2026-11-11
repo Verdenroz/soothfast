@@ -231,10 +231,10 @@ than that version: the scripts pass flags the CLI at the action's ref
 understands. Runs that have nothing to do (a push to another branch, a pull
 request with <code>gate: false</code>) stop there. Otherwise the checkout is unshallowed
 so merge-base and tag lookups work.</p>
-<p><strong>On <code>pull_request</code>.</strong> For each package (see <code>packages</code> below) it runs <code>cargo
-soothfast gate -p PKG --against-ref origin/&lt;base&gt;</code> and appends the output to
-one comment on the pull request, updated in place on later pushes. The
-comment shows the last forty lines per package. On a regression it uploads
+<p><strong>On <code>pull_request</code>.</strong> It runs <code>cargo soothfast ci gate</code>, which gates each
+package (see <code>packages</code> below) against the pull request's base commit, and
+posts the output as one comment on the pull request, updated in place on
+later pushes. The comment shows the last forty lines per package. On a regression it uploads
 <code>.soothfast/triage/</code> as the <code>soothfast-triage</code> artifact and fails the step.
 The comment is posted as soothfast-bot by the broker itself: the job sends
 the text over its OIDC identity and never holds a token, so a pull request
@@ -244,7 +244,7 @@ comment falls back to <code>github.token</code> (github-actions), or is skipped 
 warning where that token is read-only, and the gate result still decides the
 step.</p>
 <p><strong>On a push to the default branch.</strong> With <code>gate: true</code> it first runs <code>cargo
-soothfast gate -p PKG --against-ref HEAD^</code> for each package, which stores
+soothfast ci gate</code>, which gates each package against <code>HEAD^</code> and stores
 HEAD's run in <code>.soothfast/runs/</code> so the next pull request whose merge-base is
 this commit, or builds the same bench binary, reuses it instead of measuring
 its merge-base in a worktree. A regression or an error here is a warning: the
@@ -309,7 +309,7 @@ installed on is refused.</p>
 <tr><td><code>broker</code></td><td>built in</td><td>Token broker URL.</td></tr>
 <tr><td><code>labels</code></td><td><code>true</code></td><td>On default-branch pushes and schedules, ask the broker to reconcile pull request labels, annotating the run instead of failing when it cannot; <code>&quot;false&quot;</code> turns it off (see <a href="#labels">Labels</a>).</td></tr>
 <tr><td><code>shard</code></td><td>none</td><td><code>I/N</code> to gate only the items shard I of N owns, from a job matrix. Each shard comments on its own.</td></tr>
-<tr><td><code>comment</code></td><td><code>true</code></td><td>Post the pull request gate comment. <code>false</code> posts nothing and records a result per package for <code>cargo soothfast verdict merge</code>.</td></tr>
+<tr><td><code>comment</code></td><td><code>true</code></td><td>Post the pull request gate comment. <code>false</code> posts nothing; <code>cargo soothfast ci verdict</code> merges the result <code>ci gate</code> records for each package.</td></tr>
 <tr><td><code>cache</code></td><td><code>true</code></td><td>Restore and save <code>.soothfast/runs</code>, <code>items</code> and <code>maps</code>, keyed so a pull request restores what its merge-base recorded, merged with the latest entry its own earlier pushes saved.</td></tr>
 <tr><td><code>rustdoc-cache</code></td><td><code>false</code></td><td>Restore and save <code>.soothfast/rustdoc</code> for a job that runs <code>spec</code> or <code>docs</code> commands. A hit skips the nightly rustdoc build; see <a href="#rustdoc-cache">Rustdoc cache</a>.</td></tr>
 <tr><td><code>bin-cache</code></td><td><code>false</code></td><td>Restore <code>.soothfast/bins</code>, the built bench executables, before the gate and save them after it when the gate changed them, so a job whose sources a change leaves alone (a docs-only pull request) runs the binary an earlier job built. See <a href="#bench-executable-cache">Bench executable cache</a>.</td></tr>
@@ -705,10 +705,10 @@ generated spec) in place of the gate, and <code>prebuild-docs: PKG</code> alone 
 <h2 id="one-verdict">One verdict<a class="anchor" href="#one-verdict" aria-label="Link to this section">#</a></h2>
 <p>The reusable <code>run.yml</code> workflow gives a pull request one soothfast comment and
 one check, however many projects or shards it gates. Every gate job, the test
-job and the docs check records a <code>result.json</code> (project, kind, verdict, the last forty
+job and the docs check records a result (project, kind, verdict, the last forty
 lines of output, reuse counts, seconds) and uploads it as
 <code>soothfast-result-&lt;name&gt;</code>. The <code>verdict</code> job downloads them all, runs
-<code>cargo soothfast verdict merge</code>, and posts one comment marked
+<code>cargo soothfast ci verdict</code>, and posts one comment marked
 <code>&lt;!-- soothfast-verdict --&gt;</code> with a section per project, regressed and
 errored first. Shards of one project fold into one section.</p>
 <p>Each section keeps the output of its job without terminal colour codes, and
@@ -724,7 +724,9 @@ a writer waives regressions, never errors or docs drift.</p>
 <h2 id="one-command-per-job">One command per job<a class="anchor" href="#one-command-per-job" aria-label="Link to this section">#</a></h2>
 <p><code>cargo soothfast ci &lt;kind&gt;</code> runs one CI job: the flags, the choice of base
 and the verdict record that a workflow step would otherwise assemble in
-shell. It runs the same on a runner and on your machine.</p>
+shell. It runs the same on a runner and on your machine. <code>run.yml</code> calls
+<code>ci test</code>, <code>ci gate</code>, <code>ci gate-import</code>, <code>ci docs</code> and <code>ci verdict</code>. Its build
+jobs and the action's regeneration assemble their flags in shell.</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">sh · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>cargo soothfast ci test
 cargo soothfast ci test --project web --toolchain node-20
 cargo soothfast ci
@@ -755,8 +757,9 @@ to the default branch it gates HEAD against its parent with <code>SOOTHFAST_RECO
 which stores the run for later pull requests, and never fails; a HEAD with no
 parent lists each package's items as <code>no-parent</code> instead when <code>--save-baseline</code>
 names a baseline. A local run gates against <code>--base</code>, or leaves the reference
-to <code>gate</code>. <code>--shard I/N</code> and <code>--save-baseline NAME</code> are passed on, and a shard
-records as <code>PKG#I/N</code>.</p>
+to <code>gate</code>. <code>--against REF</code> gates against REF on any event. <code>--shard I/N</code>,
+<code>--save-baseline NAME</code> and <code>--features F</code> are passed on, and a shard records
+as <code>PKG#I/N</code>.</p>
 <p>Each package records a <code>rust</code> verdict named for it, and the last 40 lines of
 every package's output are written to <code>gate-comment.md</code> in the results
 directory, with any run of three or more backticks spaced out so the output
