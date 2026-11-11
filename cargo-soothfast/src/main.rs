@@ -122,7 +122,7 @@ commands:
            (the workflow's test job: --base from the event, else every
            package; --project tests one project outside the workspace)
   ci       gate [-p PKG]... [--shard I/N] [--save-baseline NAME]
-           [--accepted LABEL]
+           [--accepted LABEL] [--features F] [--against REF]
            (the workflow's gate job, one package at a time, every package
            with a soothfast bench target without -p: a pull request gates
            against its base, a default-branch push records HEAD against its
