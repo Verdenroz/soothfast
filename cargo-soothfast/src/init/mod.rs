@@ -431,7 +431,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
     }
     let implied = bot && !labels && !no_labels;
     let labels = labels || implied;
-    let (mut ws, notes) = match target(root, flags, dir, ci, tools, &bench, check, bot) {
+    let (mut ws, notes) = match target(root, flags, dir, ci, tools, &bench, check, bot, false) {
         Ok(t) => t,
         Err(e) => return err(&e),
     };
@@ -446,8 +446,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
         );
     }
     let duplicate_only = ws.projects.is_empty() && ws.ci.is_default();
-    let skip_workflow =
-        !callers.is_empty() && duplicate_only && !force && !root.join(WORKFLOW_PATH).exists();
+    let skip_workflow = skips_workflow(root, &callers, duplicate_only, force);
     if skip_workflow {
         println!(
             "init: {WORKFLOW_PATH} not written, since it would only duplicate the jobs above; --force writes it"
@@ -620,6 +619,7 @@ fn target(
     bench: &[String],
     check: bool,
     bot: bool,
+    offline: bool,
 ) -> Result<(Workspace, Vec<String>), String> {
     let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
     let stored = parse_projects(&text).map_err(|e| format!("soothfast.toml: {e}"))?;
@@ -664,10 +664,10 @@ fn target(
         rust,
         projects,
         ci,
-        default_branch: default_branch(root, &existing),
+        default_branch: default_branch(root, &existing, offline),
         benched,
         docs_packages,
-        action: action_ref(&existing, tools.action.as_deref()),
+        action: action_ref(&existing, tools.action.as_deref(), offline),
         bot,
         labels: false,
         java: tools
@@ -775,6 +775,63 @@ fn rust_meta(root: &Path, bench: &[String], check: bool) -> Result<Value, String
     load()
 }
 
+fn label(f: &Scaffold) -> String {
+    match f.kind {
+        Kind::Section => format!("{} [[project]]", f.path.display()),
+        Kind::Runner => format!("{} [runner]", f.path.display()),
+        Kind::Bot => format!("{} [bot]", f.path.display()),
+        Kind::TestCi => format!("{} [test] ci", f.path.display()),
+        Kind::Docs => format!("{} [docs] package", f.path.display()),
+        _ => f.path.display().to_string(),
+    }
+}
+
+fn skips_workflow(root: &Path, callers: &[String], duplicate_only: bool, force: bool) -> bool {
+    !callers.is_empty() && duplicate_only && !force && !root.join(WORKFLOW_PATH).exists()
+}
+
+/// The files a flagless `init --check` reports, by path.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Drift {
+    pub(crate) missing: Vec<String>,
+    pub(crate) differs: Vec<String>,
+}
+
+/// What `init --check` finds, computed without the network and without
+/// printing or writing.
+pub(crate) fn drift(root: &Path) -> Result<Drift, String> {
+    let (mut ws, _) = target(
+        root,
+        Settings::default(),
+        None,
+        Ci::default(),
+        Pins::default(),
+        &[],
+        true,
+        true,
+        true,
+    )?;
+    ws.labels = true;
+    let duplicate_only = ws.projects.is_empty() && ws.ci.is_default();
+    let skip = skips_workflow(root, &other_callers(root), duplicate_only, false);
+    let mut out = Drift::default();
+    for f in scaffold(&ws)
+        .iter()
+        .filter(|f| !skip || f.kind == Kind::Bot)
+    {
+        let bucket = match f.state(read_text(root, &f.path)?.as_deref()) {
+            State::Current => continue,
+            State::Missing => &mut out.missing,
+            State::Differs => &mut out.differs,
+        };
+        let path = f.path.display().to_string();
+        if !bucket.contains(&path) {
+            bucket.push(path);
+        }
+    }
+    Ok(out)
+}
+
 fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
     let mut texts: BTreeMap<&Path, Result<Option<String>, String>> = BTreeMap::new();
     for f in files {
@@ -793,14 +850,7 @@ fn report(root: &Path, files: &[Scaffold], check: bool, force: bool) -> i32 {
     let mut unreadable = BTreeSet::new();
     let mut drifted: Vec<&Path> = Vec::new();
     for f in files {
-        let path = match f.kind {
-            Kind::Section => format!("{} [[project]]", f.path.display()),
-            Kind::Runner => format!("{} [runner]", f.path.display()),
-            Kind::Bot => format!("{} [bot]", f.path.display()),
-            Kind::TestCi => format!("{} [test] ci", f.path.display()),
-            Kind::Docs => format!("{} [docs] package", f.path.display()),
-            _ => f.path.display().to_string(),
-        };
+        let path = label(f);
         let Some(text) = current(&texts, f) else {
             if unreadable.insert(&f.path)
                 && let Err(e) = &texts[f.path.as_path()]
@@ -1069,13 +1119,17 @@ pub fn has_markers(root: &Path) -> bool {
 }
 
 /// The remote's HEAD, else the branch the workflow already pushes on, else
-/// `main`. CI checkouts have no `origin/HEAD`, so the remote is asked.
-fn default_branch(root: &Path, existing: &str) -> String {
+/// `main`. CI checkouts have no `origin/HEAD`, so the remote is asked unless
+/// `offline`.
+fn default_branch(root: &Path, existing: &str, offline: bool) -> String {
     let git = |args: &[&str]| invoke::git_in(root, args).ok();
     git(&["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
         .and_then(|h| h.strip_prefix("origin/").map(String::from))
         .or_else(|| {
-            git(&["ls-remote", "--symref", "origin", "HEAD"]).and_then(|t| symref_branch(&t))
+            (!offline)
+                .then(|| git(&["ls-remote", "--symref", "origin", "HEAD"]))
+                .flatten()
+                .and_then(|t| symref_branch(&t))
         })
         .or_else(|| pushed_branch(existing))
         .unwrap_or_else(|| "main".into())
@@ -1099,9 +1153,9 @@ fn pushed_branch(workflow: &str) -> Option<String> {
 }
 
 /// The `--pin` ref, else the workflow's existing pin of this release or of a
-/// bare commit, else the commit this release's tag names on the remote, else
-/// the tag.
-fn action_ref(existing: &str, pin: Option<&str>) -> String {
+/// bare commit, else the commit this release's tag names on the remote (not
+/// asked when `offline`), else the tag.
+fn action_ref(existing: &str, pin: Option<&str>, offline: bool) -> String {
     if let Some(pin) = pin {
         return format!("Verdenroz/soothfast@{pin}");
     }
@@ -1122,7 +1176,10 @@ fn action_ref(existing: &str, pin: Option<&str>) -> String {
     if let Some(pin) = pinned {
         return pin;
     }
-    match tagref::tag_sha("Verdenroz/soothfast", &tag) {
+    let sha = (!offline)
+        .then(|| tagref::tag_sha("Verdenroz/soothfast", &tag))
+        .flatten();
+    match sha {
         Some(sha) => format!("Verdenroz/soothfast@{sha} # {tag}"),
         None => format!("Verdenroz/soothfast@{tag}"),
     }
@@ -1421,16 +1478,19 @@ cmd = "npm test"
         let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
         let pin = format!("Verdenroz/soothfast@{} # {tag}", "c".repeat(40));
         let existing = format!("    steps:\n      - uses: {pin}\n");
-        assert_eq!(action_ref(&existing, None), pin);
+        assert_eq!(action_ref(&existing, None, true), pin);
     }
 
     #[test]
     fn a_pin_overrides_and_a_bare_commit_pin_is_kept() {
-        assert_eq!(action_ref("", Some("abc123")), "Verdenroz/soothfast@abc123");
+        assert_eq!(
+            action_ref("", Some("abc123"), true),
+            "Verdenroz/soothfast@abc123"
+        );
         let sha = "e".repeat(40);
         let existing = format!("    uses: Verdenroz/soothfast/.github/workflows/run.yml@{sha}\n");
         assert_eq!(
-            action_ref(&existing, None),
+            action_ref(&existing, None, true),
             format!("Verdenroz/soothfast@{sha}")
         );
     }
@@ -1959,7 +2019,7 @@ cmd = "npm test"
             action: action.clone(),
             ..mixed_ws(false, vec![project(Ecosystem::Python, ".")])
         };
-        assert_eq!(action_ref(&workflow(&w), None), action);
+        assert_eq!(action_ref(&workflow(&w), None, true), action);
     }
 
     #[test]

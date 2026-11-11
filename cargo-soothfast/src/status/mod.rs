@@ -7,6 +7,7 @@ use std::path::PathBuf;
 mod baselines;
 mod docs_lock;
 mod gate;
+mod init;
 mod render;
 mod version;
 
@@ -79,6 +80,7 @@ const CHECKS: &[Check] = &[
     gate::check,
     baselines::check,
     docs_lock::check,
+    init::check,
 ];
 
 pub fn run(args: &[String]) -> i32 {
