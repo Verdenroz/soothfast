@@ -828,6 +828,11 @@ With nothing configured it says so and records nothing.
 entry, or the `-p` ones given, which reconciles each message's fields against
 its Rust struct. Each package records a `check` verdict named `proto-PKG`.
 With nothing configured it says so and records nothing.
+`ci coverage` runs `coverage docs` for every docs package that sets a
+`coverage` minimum, in its `[package.NAME.docs]` table or in `[docs]`, or the
+`-p` ones given, and fails when a package documents less than its minimum.
+Each package records a `check` verdict named `coverage-PKG`. With nothing
+configured it says so and records nothing.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
 jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
 `routes` or `rustdoc` lane. With no package named, `bench` builds the gated

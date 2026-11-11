@@ -148,6 +148,9 @@ commands:
   ci       proto [-p PKG]...
            (spec check-proto for each package, recorded as proto-PKG; with
            no -p, every package with a [[proto]] entry)
+  ci       coverage [-p PKG]...
+           (coverage docs for each package, recorded as coverage-PKG; with
+           no -p, every docs package that sets a coverage minimum)
   ci       verdict [--expect NAME:KIND]... [--accepted LABEL] [--out FILE]
            (merges the records under the results directory into the pull
            request comment body, written to FILE or <results>/verdict-comment.md;
