@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 pub mod changelog;
+pub mod ci;
 pub mod docs;
 pub mod gate;
 pub mod package;
@@ -106,6 +107,18 @@ impl Config {
         test::parse(&self.text).map_err(|e| self.located(e))
     }
 
+    /// The `[ci]` table's `skip` list: the CI job kinds not to run.
+    /// `[test] ci = false` adds `"test"` when the list doesn't name it.
+    #[allow(dead_code, reason = "read by the CI job planner")]
+    pub fn ci(&self) -> Result<Vec<String>, String> {
+        let mut skip = ci::parse(&self.text).map_err(|e| self.located(e))?;
+        let test_off = self.test()?.ci == Some(false);
+        if test_off && !skip.iter().any(|k| k == "test") {
+            skip.push("test".into());
+        }
+        Ok(skip)
+    }
+
     /// What the flags of `group`'s commands default to for `pkgs`: the
     /// package's group table, then its own table, then the repo-wide section.
     /// Packages the file doesn't list resolve to the repo-wide defaults. A
@@ -134,10 +147,14 @@ impl Config {
                 features: self.gate()?.features,
                 ..Settings::default()
             },
-            Group::Docs => Settings {
-                paths: Some(self.docs()?.paths).filter(|p| !p.is_empty()),
-                ..Settings::default()
-            },
+            Group::Docs => {
+                let docs = self.docs()?;
+                Settings {
+                    paths: Some(docs.paths).filter(|p| !p.is_empty()),
+                    coverage: docs.coverage,
+                    ..Settings::default()
+                }
+            }
             Group::Test => Settings::default(),
         })
     }
@@ -186,6 +203,16 @@ mod tests {
         names.iter().map(|n| n.to_string()).collect()
     }
 
+    #[test]
+    fn ci_skip_alone_and_with_the_test_switch() {
+        assert!(config("").ci().unwrap().is_empty());
+        assert_eq!(config("[ci]\nskip = [\"sdk\"]\n").ci().unwrap(), ["sdk"]);
+        assert_eq!(config("[test]\nci = false\n").ci().unwrap(), ["test"]);
+        let both = config("[test]\nci = false\n\n[ci]\nskip = [\"test\", \"sdk\"]\n");
+        assert_eq!(both.ci().unwrap(), ["test", "sdk"]);
+        assert!(config("[test]\nci = true\n").ci().unwrap().is_empty());
+    }
+
     const TEXT: &str = "[gate]\nfeatures = \"repo\"\n\n[package.core]\nfeatures = \"all\"\n\n[package.core.gate]\nfeatures = \"bench\"\ntarget = \"t\"\n\n[package.core.docs]\nbaseline = \"main\"\n\n[package.other]\nfeatures = \"x\"\n";
 
     #[test]
@@ -214,6 +241,21 @@ mod tests {
             .resolve(&[], Group::Docs)
             .unwrap();
         assert_eq!(docs.paths, None);
+    }
+
+    #[test]
+    fn coverage_resolves_group_then_repo_wide_for_docs_only() {
+        let text = "[docs]\ncoverage = 70\n\n[package.core.docs]\ncoverage = 90\n";
+        let cfg = config(text);
+        let docs = |p: &[&str]| cfg.resolve(&pkgs(p), Group::Docs).unwrap().coverage;
+        assert_eq!(docs(&["core"]), Some(90));
+        assert_eq!(docs(&["other"]), Some(70));
+        assert_eq!(docs(&[]), Some(70));
+        assert_eq!(
+            cfg.resolve(&pkgs(&["core"]), Group::Gate).unwrap().coverage,
+            None
+        );
+        assert_eq!(config("").resolve(&[], Group::Docs).unwrap().coverage, None);
     }
 
     #[test]

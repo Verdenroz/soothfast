@@ -417,7 +417,7 @@ impl Plan {
 
 /// Each project's name: its ecosystem, plus its directory when another
 /// project shares the ecosystem.
-fn names(projects: &[Project]) -> Vec<String> {
+pub(crate) fn names(projects: &[Project]) -> Vec<String> {
     projects
         .iter()
         .map(|p| {

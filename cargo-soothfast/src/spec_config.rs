@@ -89,10 +89,24 @@ impl SpecEntry {
     }
 }
 
-/// Every `[[spec]]` entry, in declaration order.
+/// One `[[proto]]` entry: a wire-format message reconciled against the
+/// struct that carries it. The keys are the `spec check-proto` flags.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProtoEntry {
+    /// The `.proto` file, relative to the package directory.
+    pub proto: String,
+    pub message: String,
+    /// The Rust source file, relative to the package directory.
+    pub source: String,
+    /// The struct in `source` with the `#[prost]` fields.
+    pub struct_name: String,
+}
+
+/// Every `[[spec]]` and `[[proto]]` entry, in declaration order.
 #[derive(Debug, Clone, Default)]
 pub struct SpecConfig {
     pub entries: Vec<SpecEntry>,
+    pub protos: Vec<ProtoEntry>,
 }
 
 impl SpecConfig {
@@ -183,11 +197,16 @@ pub fn parse(text: &str) -> Result<SpecConfig, String> {
         let line = line.as_str();
 
         if let Some(inner) = line.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
-            section = if inner.trim() == "spec" {
-                cfg.entries.push(SpecEntry::new(String::new()));
-                Section::Spec
-            } else {
-                Section::Other
+            section = match inner.trim() {
+                "spec" => {
+                    cfg.entries.push(SpecEntry::new(String::new()));
+                    Section::Spec
+                }
+                "proto" => {
+                    cfg.protos.push(ProtoEntry::default());
+                    Section::Proto
+                }
+                _ => Section::Other,
             };
             continue;
         }
@@ -208,6 +227,14 @@ pub fn parse(text: &str) -> Result<SpecConfig, String> {
             return Err(format!("line {lineno}: expected `key = value`"));
         };
         let value = parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
+        if section == Section::Proto {
+            let entry = cfg
+                .protos
+                .last_mut()
+                .ok_or_else(|| format!("line {lineno}: key outside [[proto]]"))?;
+            set_proto(entry, key.trim(), value).map_err(|e| format!("line {lineno}: {e}"))?;
+            continue;
+        }
         let entry = cfg
             .entries
             .last_mut()
@@ -251,13 +278,26 @@ pub fn parse(text: &str) -> Result<SpecConfig, String> {
                 }
                 entry.responses.insert(code, cr);
             }
-            Section::Other => {}
+            Section::Proto | Section::Other => {}
         }
     }
 
     for (i, e) in cfg.entries.iter().enumerate() {
         if e.path.is_empty() {
             return Err(format!("[[spec]] entry {} has no `path`", i + 1));
+        }
+    }
+    for (i, e) in cfg.protos.iter().enumerate() {
+        let missing = [
+            ("proto", &e.proto),
+            ("message", &e.message),
+            ("source", &e.source),
+            ("struct", &e.struct_name),
+        ]
+        .into_iter()
+        .find(|(_, v)| v.is_empty());
+        if let Some((key, _)) = missing {
+            return Err(format!("[[proto]] entry {} has no `{key}`", i + 1));
         }
     }
     Ok(cfg)
@@ -269,6 +309,7 @@ enum Section {
     Spec,
     Types,
     Responses,
+    Proto,
     /// A table belonging to another consumer of `soothfast.toml`.
     Other,
 }
@@ -316,6 +357,17 @@ fn to_json(value: TomlValue) -> Value {
         TomlValue::StrArray(a) => Value::Array(a.into_iter().map(Value::String).collect()),
         TomlValue::Table(t) => Value::Object(t.into_iter().map(|(k, v)| (k, to_json(v))).collect()),
     }
+}
+
+fn set_proto(entry: &mut ProtoEntry, key: &str, value: TomlValue) -> Result<(), String> {
+    match (key, value) {
+        ("proto", TomlValue::Str(s)) => entry.proto = s,
+        ("message", TomlValue::Str(s)) => entry.message = s,
+        ("source", TomlValue::Str(s)) => entry.source = s,
+        ("struct", TomlValue::Str(s)) => entry.struct_name = s,
+        (k, _) => return Err(format!("unknown or mistyped [[proto]] key {k:?}")),
+    }
+    Ok(())
 }
 
 fn set(entry: &mut SpecEntry, key: &str, value: TomlValue) -> Result<(), String> {
@@ -375,6 +427,33 @@ servers = ["https://api.example.com", "https://staging.example.com"]
         assert_eq!(e.mode, Mode::Generate);
         assert_eq!(e.title.as_deref(), Some("Items API"));
         assert_eq!(e.servers.len(), 2);
+    }
+
+    #[test]
+    fn reads_every_proto_entry_beside_specs() {
+        let cfg = parse(
+            "[[proto]]\nproto = \"a.proto\"\nmessage = \"A\"\nsource = \"src/a.rs\"\nstruct = \"SA\"\n\n[[spec]]\npath = \"x.yaml\"\n\n[[proto]]\nproto = \"b.proto\"\nmessage = \"B\"\nsource = \"src/b.rs\"\nstruct = \"SB\"\n",
+        )
+        .expect("parses");
+        assert_eq!(cfg.entries.len(), 1);
+        let names: Vec<_> = cfg.protos.iter().map(|p| p.struct_name.as_str()).collect();
+        assert_eq!(names, ["SA", "SB"]);
+        assert_eq!(cfg.protos[0].proto, "a.proto");
+        assert_eq!(cfg.protos[1].message, "B");
+    }
+
+    #[test]
+    fn a_proto_entry_needs_all_four_keys() {
+        let err = parse("[[proto]]\nproto = \"a.proto\"\nmessage = \"A\"\nsource = \"a.rs\"\n")
+            .expect_err("rejected");
+        assert_eq!(err, "[[proto]] entry 1 has no `struct`");
+    }
+
+    #[test]
+    fn a_mistyped_or_unknown_proto_key_names_its_line() {
+        let err = parse("[[proto]]\nproto = 3\n").expect_err("rejected");
+        assert_eq!(err, "line 2: unknown or mistyped [[proto]] key \"proto\"");
+        assert!(parse("[[proto]]\nfile = \"a\"\n").is_err());
     }
 
     #[test]

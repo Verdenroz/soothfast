@@ -15,6 +15,7 @@ mod buildcost;
 mod buildstamp;
 mod bump;
 mod cache;
+mod ci;
 mod codekey;
 mod config;
 mod coverage;
@@ -110,6 +111,50 @@ commands:
            (folds a restored .soothfast cache layout in DIR into this
            project's: items keep the entries of both, runs and link maps are
            copied when absent)
+  ci       [KIND [ARGS]] [--event pull_request|push|other] [--base REF]
+           [--results DIR]
+           (runs one CI job the way the workflow does and records its verdict
+           in DIR, read from the runner's environment unless a flag says
+           otherwise; with no KIND, every kind that applies to the event, in
+           order, stopping at the first failure)
+  ci       test [--all] [--project DIR [--suite S] [--toolchain T] [--name N]]
+           [cargo test args...]
+           (the workflow's test job: --base from the event, else every
+           package; --project tests one project outside the workspace)
+  ci       gate [-p PKG]... [--shard I/N] [--save-baseline NAME]
+           [--accepted LABEL]
+           (the workflow's gate job, one package at a time, every package
+           with a soothfast bench target without -p: a pull request gates
+           against its base, a default-branch push records HEAD against its
+           parent; --accepted waives regressions, never errors, and the
+           comment lands in DIR/gate-comment.md)
+  ci       docs [-p PKG]... [--baselines DIR [--expect-shards N] [--plan FILE]]
+           (the workflow's docs job: merges the gate legs' baselines in DIR,
+           then runs docs check against the pull request's base or the
+           previous commit; with no --baselines it checks against whatever
+           baseline exists locally)
+  ci       gate-import [--project DIR [--name N]] [--accepted LABEL]
+           (the perf gate of a [[project]] with a benchmark command: benches
+           the head and, on a pull request, its merge base, and gates the
+           imported results; every project when none is named, exiting with
+           the worst; --accepted waives a regression, never an error)
+  ci       verdict [--expect NAME:KIND]... [--accepted LABEL] [--out FILE]
+           (merges the records under the results directory into the pull
+           request comment body, written to FILE or <results>/verdict-comment.md;
+           exits 1 on an error, a missing expected record, or a regression
+           no --accepted label waives)
+  ci       regen [--paths-out FILE] [--baseline NAME] [--no-changelog]
+           (regenerates the changelog (--no-changelog skips it), generate-mode specs and SDKs the
+           project configures, then REGEN_RUN with REGEN_PATHS; prints
+           paths= and changed= lines for the landing step, and writes them
+           to FILE; never commits)
+  ci       build LANE [-p PKG]... [--shards N] [--stage DIR] [--plan-out FILE]
+           [--listing-out FILE]
+           (the workflow's build-once job: `prebuild --only LANE` per package,
+           the packages the lane applies to when none are named; --shards
+           counts only on a pull request; --plan-out adds each package's
+           items to a plan file; --listing-out writes the checksum of
+           .soothfast/bins before and after)
   plan     [--github]
            (prints the jobs the reusable workflow runs, read from the
            [[project]] tables of soothfast.toml and the cargo workspace;
@@ -187,7 +232,7 @@ commands:
            built when the store cannot hold it, and never builds)
   trend    append [-p PKG] [--from-baseline NAME] | render
            (--from-baseline reads a saved baseline instead of re-measuring)
-  verdict  record --name N --kind rust|import|docs|test --exit CODE --output FILE
+  verdict  record --name N --kind rust|import|docs|test|check --exit CODE --output FILE
            [--seconds S] [--out FILE]
   verdict  merge DIR --out FILE [--accepted LABEL] [--expect NAME:KIND]..
            (one job's result, then the pull request's single comment;
@@ -210,7 +255,7 @@ commands:
   spec     gen -p PKG [--features F] [--check]
   spec     gate -p PKG [--base REF] [--allow-breaking]
   spec     check -p PKG [--features F] [--target NAME]
-  spec     check-proto -p PKG --proto FILE --message NAME --source FILE --struct NAME
+  spec     check-proto -p PKG [--proto FILE --message NAME --source FILE --struct NAME]
            (reconciles a .proto message's fields against a Rust struct's
            #[prost(..)] fields by tag — for consumed, not served, wire formats)
   spec     html -p PKG [--features F] [--target NAME] [--out DIR]
@@ -282,6 +327,7 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         "plan" => plan::run(rest),
         "prebuild" => prebuild::run(rest),
         "cache" => cache::run(rest),
+        "ci" => ci::run(rest),
         "import" => import::run(rest),
         "gate" => gate::run(rest),
         "baseline" => baseline_merge::run(rest),

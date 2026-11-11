@@ -49,7 +49,7 @@ impl Group {
             "features" => true,
             "target" => self != Group::Test,
             "baseline" => matches!(self, Group::Gate | Group::Docs),
-            "paths" => self == Group::Docs,
+            "paths" | "coverage" => self == Group::Docs,
             _ => false,
         }
     }
@@ -69,6 +69,8 @@ pub struct Settings {
     /// The PATHS `docs` commands scan when none are given, in place of
     /// `[docs] paths`.
     pub paths: Option<Vec<String>>,
+    /// The minimum percent `coverage docs` requires, as `--min` takes it.
+    pub coverage: Option<u32>,
 }
 
 impl Settings {
@@ -79,6 +81,7 @@ impl Settings {
             target: self.target.or(lower.target),
             baseline: self.baseline.or(lower.baseline),
             paths: self.paths.or(lower.paths),
+            coverage: self.coverage.or(lower.coverage),
         }
     }
 }
@@ -200,6 +203,9 @@ fn set(
         ("target", TomlValue::Str(s)) if group.is_some() => settings.target = Some(s),
         ("baseline", TomlValue::Str(s)) => settings.baseline = Some(s),
         ("paths", TomlValue::StrArray(v)) => settings.paths = Some(v),
+        ("coverage", TomlValue::Int(n)) if group.is_some() => {
+            settings.coverage = Some(u32::try_from(n).ok().filter(|n| *n <= 100).ok_or(())?)
+        }
         _ => return Err(()),
     }
     Ok(())
@@ -273,6 +279,16 @@ mod tests {
     fn the_test_group_has_no_target() {
         assert!(parse("[package.a.test]\ntarget = \"t\"\n").is_err());
         assert!(parse("[package.a.test]\nfeatures = \"f\"\n").is_ok());
+    }
+
+    #[test]
+    fn coverage_is_a_percent_of_the_docs_group_only() {
+        let docs = parse("[package.a.docs]\ncoverage = 85\n").unwrap();
+        assert_eq!(docs["a"].groups[&Group::Docs].coverage, Some(85));
+        assert!(parse("[package.a.gate]\ncoverage = 85\n").is_err());
+        assert!(parse("[package.a]\ncoverage = 85\n").is_err());
+        assert!(parse("[package.a.docs]\ncoverage = 101\n").is_err());
+        assert!(parse("[package.a.docs]\ncoverage = \"85\"\n").is_err());
     }
 
     #[test]

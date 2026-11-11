@@ -647,24 +647,46 @@ paths = ["README.md", "docs/server"]
 | Group | Commands | Keys |
 | --- | --- | --- |
 | `gate` | `gate`, `measure`, `baseline`, `prebuild`, `trend append`, `buildcost` | `features`, `target`, `baseline` |
-| `docs` | `docs *`, `coverage`, `report`, `mcp` | `features`, `target`, `baseline`, `paths` |
+| `docs` | `docs *`, `coverage`, `report`, `mcp` | `features`, `target`, `baseline`, `paths`, `coverage` |
 | `spec` | `spec *`, `sdk *` | `features`, `target` |
 | `test` | `test` | `features` |
 
 `features` takes what `--features` takes. `target` is the bench target a
 command builds, what `--bench` takes, and only a group table sets it.
 `baseline` is the baseline `--baseline` names. `paths` replaces `[docs] paths`
-as the PATHS `docs` commands scan when none are given. A key a group's
+as the PATHS `docs` commands scan when none are given. `coverage` is a whole
+percent from 0 to 100, the `--min` of `coverage docs` when the flag is absent;
+it is also a key of the repo-wide `[docs]` table. An older `cargo soothfast`
+rejects `coverage` as an unknown key of `[docs]`, so adopt it once every
+runner has updated. A key a group's
 commands have no flag for is an error naming its line.
 
 From highest precedence: the command-line flag, `[package.NAME.GROUP]`,
-`[package.NAME]`, the repo-wide section (`[gate] features`, `[docs] paths`),
+`[package.NAME]`, the repo-wide section (`[gate] features`, `[docs] paths`,
+`[docs] coverage`),
 then the built-in default. A file with no `[package.*]` table behaves as
 before. The package is the command's `-p` (`docs` also takes `[docs]
 package`); a command with none reads only the repo-wide section. Given
 several packages, they must resolve to the same defaults, or the command asks
 to be run once per package. Any package name works, quoted when it contains a
 dot, and one the workspace lacks is not an error.
+
+## Skipping CI jobs
+
+`[ci] skip` in the root `soothfast.toml` names the kinds of CI job not to run:
+
+```toml ignore
+[ci]
+skip = ["sdk"]
+```
+
+The names are free-form strings, and `cargo soothfast` does not check them
+against the jobs it knows. `[test] ci = false` keeps working and means the
+same as `skip` naming `"test"`; setting both is not an error. An older
+`cargo soothfast` skips the `[ci]` table, so it is safe in a shared file.
+
+Wire-format reconciliation reads `[[proto]]` entries from the package
+directory's `soothfast.toml`; see [Spec](spec.md).
 
 ## Ratchets
 
