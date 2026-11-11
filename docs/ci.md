@@ -824,6 +824,10 @@ with a spec that is not generated runs `spec check`, and one with an `[[sdk]]`
 entry runs `sdk gen --check`. Every step runs even after one fails, and each
 package records a `check` verdict named `spec-PKG` with the worst exit code.
 With nothing configured it says so and records nothing.
+`ci proto` runs `spec check-proto` for every package with a `[[proto]]`
+entry, or the `-p` ones given, which reconciles each message's fields against
+its Rust struct. Each package records a `check` verdict named `proto-PKG`.
+With nothing configured it says so and records nothing.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
 jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
 `routes` or `rustdoc` lane. With no package named, `bench` builds the gated

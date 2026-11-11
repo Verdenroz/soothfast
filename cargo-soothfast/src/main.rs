@@ -145,6 +145,9 @@ commands:
            spec and sdk gen --check for an SDK; every step runs and the
            exit code is the worst; with no -p, every package with a
            [[spec]] entry)
+  ci       proto [-p PKG]...
+           (spec check-proto for each package, recorded as proto-PKG; with
+           no -p, every package with a [[proto]] entry)
   ci       verdict [--expect NAME:KIND]... [--accepted LABEL] [--out FILE]
            (merges the records under the results directory into the pull
            request comment body, written to FILE or <results>/verdict-comment.md;
