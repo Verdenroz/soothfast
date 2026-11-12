@@ -574,8 +574,8 @@ When the docs bind no Rust item, `docs check` builds no rustdoc, so neither
 | `routes` | The dev-profile executable behind `spec check`, for each package with a `[[spec]]` entry | `.soothfast/bins` |
 | `rustdoc` | Rustdoc JSON for the docs package and, for each package that generates a spec, for it and the workspace crates its types come from | `.soothfast/rustdoc` |
 
-`run.yml` builds the `bench` and `rustdoc` lanes. It has no `spec` job, so it
-builds no `routes` lane. A job is skipped when its lane has nothing to build,
+`run.yml` builds the `bench` and `rustdoc` lanes. Its `spec` check job builds
+what it needs itself, so `run.yml` builds no `routes` lane. A job is skipped when its lane has nothing to build,
 and each lane reads its store first and builds only what is missing. The
 `bench` lane leaves the merge-base alone for the reason the gate does: if the
 run cache holds a run for it, the gate reuses that run and never builds the
@@ -707,7 +707,7 @@ A spec job of the caller's builds its own lane with the action:
 `prebuild: routes rustdoc` runs those lanes in place of the gate, for the
 packages with `[[spec]]` entries, and `prebuild-docs: PKG` alone runs
 `rustdoc`. A later job downloads the staged directory into `.soothfast/` before
-`spec check`. A `spec` job inside `run.yml` is a follow-up.
+`spec check`.
 
 ## Checks from the file
 
