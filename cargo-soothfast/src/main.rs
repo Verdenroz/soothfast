@@ -25,6 +25,7 @@ mod docs_binds;
 mod docs_claims;
 mod docs_generated;
 mod docs_support;
+mod every_package;
 mod gate;
 mod gate_lock;
 mod gate_save;
@@ -274,23 +275,23 @@ commands:
   docs     serve [--baseline NAME] [--addr HOST:PORT]   (dev server + live reload)
   docs     gh-deploy [--baseline NAME] [--branch NAME] [--remote NAME] [--message MSG]
            (build + publish to a gh-pages-style branch, replaces `mkdocs gh-deploy`)
-  coverage measure|docs -p PKG [--min PCT] [--features F]
+  coverage measure|docs [-p PKG] [--min PCT] [--features F]
   coverage docs --dir D --lang L [--min PCT]   (Kotlin, Java, Python, TS/JS symbols; reads
            [[project]] dir/ecosystem from soothfast.toml when no -p or --dir is given)
-  spec     gen -p PKG [--features F] [--check]
-  spec     gate -p PKG [--base REF] [--allow-breaking]
-  spec     check -p PKG [--features F] [--target NAME]
+  spec     gen [-p PKG] [--features F] [--check]
+  spec     gate [-p PKG] [--base REF] [--allow-breaking]
+  spec     check [-p PKG] [--features F] [--target NAME]
   spec     check-proto -p PKG [--proto FILE --message NAME --source FILE --struct NAME]
            (reconciles a .proto message's fields against a Rust struct's
            #[prost(..)] fields by tag — for consumed, not served, wire formats)
   spec     html -p PKG [--features F] [--target NAME] [--out DIR]
            (renders every generate-mode spec file — OpenAPI/AsyncAPI/MCP —
            as a themed docs-site page; default --out is docs/api)
-  sdk      gen -p PKG [--features F] [--target NAME] [--check]
+  sdk      gen [-p PKG] [--features F] [--target NAME] [--check]
   sdk      build -p PKG [--target TRIPLE].. [--bench NAME] [--debug]
            (cross-compiles the embedded server and stages it per ecosystem;
            note --target is a Rust triple here, so name the bench --bench)
-  sdk      gate -p PKG [--base REF] [--allow-breaking]   (alias of spec gate:
+  sdk      gate [-p PKG] [--base REF] [--allow-breaking]   (alias of spec gate:
            the SDK surface is the linked generate-mode spec surface)
   sdk      publish -p PKG [--only LANG] [--dry-run]   (refuses stale output;
            python publishes via `uv build` + `uv publish`)
@@ -309,6 +310,12 @@ commands:
            --json prints the rows as an array of state, subject, detail, fix;
            exits 1 when any row needs action)
   mcp      -p PKG [--baseline NAME] [--features F]   (agent-facing server on stdio)
+
+With no -p and a [package.NAME] table in soothfast.toml, measure, gate,
+coverage measure, spec gen|gate|check and sdk gen|gate run once for every
+workspace member that qualifies (a bench target, or a [[spec]] / [[sdk]]
+entry in the package's own soothfast.toml), in name order, each under a
+`soothfast: package NAME` line, exiting with the worst code. Without such tables, -p is as before.
 
 `--features F` builds the bench binary / rustdoc surface with those cargo
 features enabled (feature-gated items are otherwise invisible).
@@ -343,6 +350,9 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
         eprint!("{USAGE}");
         return 2;
     };
+    if let Some(rc) = every_package::dispatch(&argv) {
+        return rc;
+    }
     let rest = &argv[1..];
     match cmd.as_str() {
         "measure" => cmd_measure(rest),
