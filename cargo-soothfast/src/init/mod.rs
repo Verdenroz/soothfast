@@ -19,6 +19,8 @@ mod textdiff;
 
 #[cfg(test)]
 mod no_cargo_tests;
+#[cfg(test)]
+mod test_support;
 
 use bot::{BotLabels, bot_enabled, has_bot_table};
 use ci::Ci;
@@ -1282,7 +1284,8 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::ecosystem::{Tests, parse_projects_tolerant};
+    use super::ecosystem::parse_projects_tolerant;
+    use super::test_support::{mixed_ws, project, python_ws, scratch, ws};
     use super::*;
     use serde_json::json;
 
@@ -1419,22 +1422,6 @@ cmd = "npm test"
             std::fs::read_to_string(root.join("soothfast.toml")).unwrap(),
             own
         );
-    }
-
-    fn ws(benched: &[&str], docs: Option<&str>) -> Workspace {
-        Workspace {
-            rust: true,
-            projects: Vec::new(),
-            ci: Ci::default(),
-            default_branch: "master".into(),
-            benched: benched.iter().map(|s| s.to_string()).collect(),
-            docs_packages: docs.map(String::from).into_iter().collect(),
-            action: "Verdenroz/soothfast@v0".into(),
-            bot: false,
-            labels: false,
-            java: "21".into(),
-            node: "22".into(),
-        }
     }
 
     #[test]
@@ -1716,13 +1703,6 @@ cmd = "npm test"
         assert_eq!(docs_package(&meta).as_deref(), Some("z"));
     }
 
-    fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("soothfast-init-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     #[test]
     fn a_seed_is_written_once_and_a_line_is_appended_once() {
         let root = scratch("seed");
@@ -1857,29 +1837,6 @@ cmd = "npm test"
         assert_eq!(report(&root, &files, true, false), 0);
     }
 
-    fn project(eco: Ecosystem, dir: &str) -> Project {
-        let settings = Settings {
-            bench_cmd: (eco == Ecosystem::Gradle).then(|| "./gradlew jmh -Pout={out}".into()),
-            ..Settings::default()
-        };
-        Project {
-            ecosystem: eco,
-            dir: dir.into(),
-            bench: settings.bench(eco).ok(),
-            walltime: None,
-            prefix: None,
-            test: Tests::default(),
-        }
-    }
-
-    fn python_ws() -> Workspace {
-        Workspace {
-            rust: false,
-            projects: vec![project(Ecosystem::Python, ".")],
-            ..ws(&[], None)
-        }
-    }
-
     #[test]
     fn the_init_table_makes_a_flagless_check_clean() {
         let root = scratch("table");
@@ -1928,14 +1885,6 @@ cmd = "npm test"
         assert_eq!(text.matches("[[project]]").count(), 1);
         assert!(!text.contains("[ init ]") && !text.contains("pyperf"));
         assert!(parse_projects(&text).is_ok());
-    }
-
-    fn mixed_ws(rust: bool, projects: Vec<Project>) -> Workspace {
-        Workspace {
-            rust,
-            projects,
-            ..ws(&["a"], None)
-        }
     }
 
     #[test]
