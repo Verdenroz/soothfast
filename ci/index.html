@@ -718,10 +718,20 @@ PKG[:TARGET]</code>, <code>--only bench|routes|rustdoc</code>, <code>--stage DIR
 packages with <code>[[spec]]</code> entries, and <code>prebuild-docs: PKG</code> alone runs
 <code>rustdoc</code>. A later job downloads the staged directory into <code>.soothfast/</code> before
 <code>spec check</code>. A <code>spec</code> job inside <code>run.yml</code> is a follow-up.</p>
+<h2 id="checks-from-the-file">Checks from the file<a class="anchor" href="#checks-from-the-file" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast plan</code> also reads what else <code>soothfast.toml</code> configures and
+gives <code>run.yml</code> one job for each: <code>ci spec</code> for every package with a
+<code>[[spec]]</code> entry, <code>ci proto</code> for every package with a <code>[[proto]]</code> entry,
+<code>ci coverage</code> for every docs package with a <code>coverage</code> minimum, <code>ci capture</code>
+for every docs package with docs of its own, and <code>ci site</code> when the file has a <code>[site]</code> table. A
+job is named for its record, <code>spec-PKG</code> or <code>site</code>, runs
+<code>cargo soothfast ci KIND -p PKG</code>, and installs the pinned rustdoc toolchain
+when its command reads rustdoc JSON (<code>spec</code>, <code>coverage</code> and <code>site</code>). The
+verdict expects a result from each. A kind named in <code>[ci] skip</code> gets no job.</p>
 <h2 id="one-verdict">One verdict<a class="anchor" href="#one-verdict" aria-label="Link to this section">#</a></h2>
 <p>The reusable <code>run.yml</code> workflow gives a pull request one soothfast comment and
 one check, however many projects or shards it gates. Every gate job, the test
-job and the docs check records a result (project, kind, verdict, the last forty
+job, the docs check and each check job records a result (project, kind, verdict, the last forty
 lines of output, reuse counts, seconds) and uploads it as
 <code>soothfast-result-&lt;name&gt;</code>. The <code>verdict</code> job downloads them all, runs
 <code>cargo soothfast ci verdict</code>, and posts one comment marked
@@ -834,11 +844,14 @@ With nothing configured it says so and records nothing.
 <code>-p</code> ones given, and fails when a package documents less than its minimum.
 Each package records a <code>check</code> verdict named <code>coverage-PKG</code>. With nothing
 configured it says so and records nothing.
-<code>ci capture</code> runs <code>docs capture --check</code> for every docs package, or the <code>-p</code>
+<code>ci capture</code> runs <code>docs capture --check</code> for each docs package, or the <code>-p</code>
 ones given, which fails when the output recorded beside a capture block no
 longer matches what the block prints. A package with no capture block passes.
-Each package records a <code>check</code> verdict named <code>capture-PKG</code>. With no docs
-package it says so and records nothing.
+A lone docs package is checked against every doc. Among several, the blocks of
+all the docs would compile into each package's crate, so only a package whose
+<code>[package.NAME.docs]</code> table names its own <code>paths</code> is checked. Each package
+records a <code>check</code> verdict named <code>capture-PKG</code>. With no such package it says so
+and records nothing.
 <code>ci site</code> builds the docs site with <code>docs build --out DIR</code>, where DIR is
 <code>target/soothfast-site</code> unless <code>--out</code> says otherwise. It builds against the
 <code>head</code> baseline when <code>.soothfast/baselines/head.json</code> exists. It runs only when
@@ -969,6 +982,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l2" href="#one-build">One build</a></li>
   
     <li><a class="toc-l3" href="#sharding">Sharding</a></li>
+  
+    <li><a class="toc-l2" href="#checks-from-the-file">Checks from the file</a></li>
   
     <li><a class="toc-l2" href="#one-verdict">One verdict</a></li>
   
