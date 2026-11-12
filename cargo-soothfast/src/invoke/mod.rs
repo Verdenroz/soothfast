@@ -14,6 +14,7 @@ use crate::{rustdoc_inputs, rustdocstore, store};
 
 mod args;
 mod bench;
+mod git;
 mod hostenv;
 mod root;
 mod run;
@@ -24,6 +25,7 @@ pub use bench::{
     bench_executable, build_link_map, cargo_messages, listed_ids, prebuild_benches, run_bench,
     run_bench_dir, run_bench_in, run_bench_raw, run_discovery, run_discovery_in,
 };
+pub use git::{git, git_in};
 #[cfg(test)]
 pub use hostenv::Guest;
 pub use hostenv::{HostEnv, host_env, list_items};
@@ -1128,25 +1130,6 @@ pub fn sync_untracked_cargo_config(wt: &Path) -> Result<(), String> {
         std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-/// Run a git command in the workspace root, returning trimmed stdout.
-pub fn git(args: &[&str]) -> io::Result<String> {
-    let root = workspace_root()?;
-    git_in(&root, args)
-}
-
-/// Run a git command in `dir`, returning trimmed stdout.
-pub fn git_in(dir: &Path, args: &[&str]) -> io::Result<String> {
-    let out = Command::new("git").args(args).current_dir(dir).output()?;
-    if !out.status.success() {
-        return Err(io::Error::other(format!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr)
-        )));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 #[cfg(test)]
