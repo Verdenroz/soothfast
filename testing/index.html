@@ -188,6 +188,13 @@ many times. A binary that passes a rerun is flaky: the summary lists it on a
 <code>test: FLAKY:</code> line, the command exits 0 for it, and no pass is stored, so the
 next run executes it again. Doc tests are not rerun. <code>--result FILE</code> writes
 the outcome as JSON, with the verdict <code>flaky</code> when any binary was.</p>
+<p>Every run that gets as far as running tests also records its outcome in
+<code>.soothfast/test-status.json</code>: whether it passed, the number of failures, and
+a snapshot of the tree it ran on, which is <code>HEAD</code>'s tree plus a digest of the
+uncommitted and untracked changes. <code>cargo soothfast status</code> reads it: a pass
+whose snapshot matches the current tree is <code>ok</code>, a pass on another tree is
+<code>stale</code>, and a failed run is <code>failed</code>. A run that stops on a build error
+records nothing, and <code>--no-run</code> records nothing.</p>
 <h3 id="allow-lists">Allow-lists<a class="anchor" href="#allow-lists" aria-label="Link to this section">#</a></h3>
 <p>A package that owns many files no test reads, most often a package at the
 workspace root, can list the files that matter instead of ignoring the rest:</p>
