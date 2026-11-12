@@ -1,0 +1,7 @@
+  pages:
+    needs: soothfast
+    if: github.event_name == 'push'
+    permissions:
+      pages: write
+      id-token: write
+    uses: @@action@@

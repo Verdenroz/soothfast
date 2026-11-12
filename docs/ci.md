@@ -730,16 +730,18 @@ workspace with none keeps its test, gate and docs jobs in the workflow itself.
 `[ci] pages = true` in the root `soothfast.toml` publishes the site to GitHub
 Pages on every push to the default branch. The docs job builds it after it
 has merged the gate's baselines, so the pages carry that push's measured
-numbers, and uploads it as the Pages artifact. A `Deploy site` job then
-publishes the artifact. That job checks nothing out, runs no repository code
-and holds only `pages: write` and `id-token: write`, so no token that can
-write to the repository is involved.
+numbers, and uploads it as the Pages artifact. A second job in the caller,
+which calls the reusable `pages.yml`, then publishes the artifact. That job
+checks nothing out, runs no repository code and holds only `pages: write` and
+`id-token: write`, so no token that can write to the repository is involved.
+The deploy is its own workflow because a reusable workflow's permissions are
+checked before it starts: inside `run.yml` it would make every caller grant
+`pages: write`, with the setting on or off.
 
 It needs three things: a `[site]` table, a docs package (the docs job is what
 builds the site), and the repository's Pages source set to "GitHub Actions".
-`cargo soothfast init` adds `pages: write` to the caller's permissions when
-the setting is on, and `init --check` reports the caller as drifted until it
-has been rerun. A failing docs check deploys nothing.
+`cargo soothfast init` adds the `pages` job to the caller when the setting is
+on, and `init --check` reports the caller as drifted until it has been rerun. A failing docs check deploys nothing.
 
 ## One verdict
 

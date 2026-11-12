@@ -7,6 +7,7 @@ const WORKFLOW: &str = include_str!("workflow.yml.tmpl");
 const TEST_JOB: &str = include_str!("test_job.yml.tmpl");
 const GATE_JOB: &str = include_str!("gate_job.yml.tmpl");
 const CALLER_JOB: &str = include_str!("caller_job.yml.tmpl");
+const PAGES_JOB: &str = include_str!("pages_job.yml.tmpl");
 const DOCS_JOB: &str = include_str!("docs_job.yml.tmpl");
 const LABELS_JOB: &str = include_str!("labels_job.yml.tmpl");
 
@@ -31,8 +32,8 @@ pub(super) struct Workspace {
     pub(super) bot: bool,
     /// Whether `[bot] labels = true` is scaffolded.
     pub(super) labels: bool,
-    /// Whether `[ci] pages = true` deploys the site, which the caller has to
-    /// be allowed to do.
+    /// Whether `[ci] pages = true` deploys the site, which adds the job that
+    /// is allowed to.
     pub(super) pages: bool,
     /// Whether the repository configures a spec, proto, coverage, capture or
     /// site check, which only the reusable workflow runs.
@@ -108,13 +109,18 @@ fn caller_job(ws: &Workspace) -> String {
         .iter()
         .filter_map(|(key, value)| Some(format!("      {key}: {}\n", value.as_ref()?)))
         .collect();
-    let pages = if ws.pages { "      pages: write\n" } else { "" };
-    let mut text = CALLER_JOB.replace("@@pages@@", pages).replace(
+    let mut text = CALLER_JOB.replace(
         "@@action@@",
         &ws.action.replacen('@', "/.github/workflows/run.yml@", 1),
     );
     if !with.is_empty() {
         text.push_str(&format!("    with:\n{with}"));
+    }
+    if ws.pages {
+        text.push_str(&PAGES_JOB.replace(
+            "@@action@@",
+            &ws.action.replacen('@', "/.github/workflows/pages.yml@", 1),
+        ));
     }
     text
 }
@@ -254,14 +260,16 @@ mod tests {
 
     #[test]
     fn the_caller_may_deploy_pages_only_when_the_file_asks() {
-        let grant = "      id-token: write\n      pages: write\n    uses: ";
         let on = Workspace {
             pages: true,
             ..mixed_ws(false, vec![project(Ecosystem::Node, ".")])
         };
-        assert!(workflow(&on).contains(grant));
-        let off = mixed_ws(false, vec![project(Ecosystem::Node, ".")]);
-        assert!(workflow(&off).contains("      id-token: write\n    uses: "));
+        let text = workflow(&on);
+        assert!(text.contains("  pages:\n    needs: soothfast\n"), "{text}");
+        assert!(text.contains("      pages: write\n"));
+        assert!(text.contains("/.github/workflows/pages.yml@v0\n"), "{text}");
+        let off = workflow(&mixed_ws(false, vec![project(Ecosystem::Node, ".")]));
+        assert!(!off.contains("pages"), "{off}");
     }
 
     #[test]
