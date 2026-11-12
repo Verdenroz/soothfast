@@ -113,11 +113,21 @@ impl Config {
         test::parse(&self.text).map_err(|e| self.located(e))
     }
 
+    /// The `[ci] site_run` shell `ci site` runs before it builds the site.
+    pub fn site_run(&self) -> Result<Option<String>, String> {
+        Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.site_run)
+    }
+
+    /// Whether `[ci] pages = true` asks for the built site to be deployed.
+    pub fn pages(&self) -> Result<bool, String> {
+        Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.pages)
+    }
+
     /// The `[ci]` table's `skip` list: the CI job kinds not to run.
     /// `[test] ci = false` adds `"test"` when the list doesn't name it.
     #[allow(dead_code, reason = "read by the CI job planner")]
     pub fn ci(&self) -> Result<Vec<String>, String> {
-        let mut skip = ci::parse(&self.text).map_err(|e| self.located(e))?;
+        let mut skip = ci::parse(&self.text).map_err(|e| self.located(e))?.skip;
         let test_off = self.test()?.ci == Some(false);
         if test_off && !skip.iter().any(|k| k == "test") {
             skip.push("test".into());

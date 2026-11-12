@@ -125,6 +125,8 @@ struct Plan {
     first_shard_only: bool,
     /// The spec, proto, coverage, capture and site jobs.
     checks: Vec<Check>,
+    /// Whether `[ci] pages = true` deploys the site the docs job builds.
+    pages: bool,
 }
 
 /// One project's tests, or one suite's, and whether the change reaches them.
@@ -169,8 +171,10 @@ fn build(
         None => None,
     };
     let ci = init::ci(root)?;
-    let skip = Config::load(root)?.ci()?;
-    let checks = checks::planned(rust.is_some(), &skip)?;
+    let config = Config::load(root)?;
+    let skip = config.ci()?;
+    let pages = config.pages()?;
+    let checks = checks::planned(root, rust.is_some(), &skip)?;
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
     }
@@ -188,6 +192,7 @@ fn build(
         shards,
         first_shard_only,
         checks,
+        pages,
     };
     plan.check_names()?;
     plan.reused = plan.stored_passes(root)?;
@@ -234,6 +239,12 @@ impl Plan {
             }));
         }
         json!({ "include": include })
+    }
+
+    /// The site deploys when the file asks for it, the site check is planned
+    /// and the docs job, which builds what is deployed, runs.
+    fn site_deploy(&self) -> bool {
+        self.pages && self.docs && self.checks.iter().any(|c| c.kind == "site")
     }
 
     fn test_all(&self) -> bool {
@@ -405,7 +416,7 @@ impl Plan {
             .unwrap_or_default();
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nchecks={}\nchecks_any={}\nchecks_expect={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nchecks={}\nchecks_any={}\nchecks_expect={}\nsite_deploy={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -425,6 +436,7 @@ impl Plan {
                 .map(Check::name)
                 .collect::<Vec<_>>()
                 .join(" "),
+            self.site_deploy(),
         )
     }
 }
@@ -501,6 +513,7 @@ mod tests {
             shards: 1,
             first_shard_only: false,
             checks: Vec::new(),
+            pages: false,
         }
     }
 
@@ -576,7 +589,8 @@ mod tests {
         assert_eq!(matrix["include"].as_array().unwrap().len(), 1);
         let pure = plan(None, vec![]).outputs();
         assert!(pure.contains("projects=false\nrust=false\n"), "{pure}");
-        let checks = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=\n";
+        let checks =
+            "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=\nsite_deploy=false\n";
         assert!(pure.ends_with(checks), "{pure}");
     }
 

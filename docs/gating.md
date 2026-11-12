@@ -702,6 +702,9 @@ and `sdk publish` keep their own meaning without `-p`.
 skip = ["sdk"]
 ```
 
+`pages = true` in the same table deploys the docs site on a push to the
+default branch; see [CI](ci.md#deploying-the-site).
+
 The names are free-form strings, and `cargo soothfast` does not check them
 against the jobs it knows. `[test] ci = false` keeps working and means the
 same as `skip` naming `"test"`; setting both is not an error. An older

@@ -152,7 +152,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
             "warn     {caller} calls soothfast; its jobs run twice until it or {WORKFLOW_PATH} is removed"
         );
     }
-    let duplicate_only = ws.projects.is_empty() && ws.ci.is_default();
+    let duplicate_only = ws.inline();
     let skip_workflow = skips_workflow(root, &callers, duplicate_only, force);
     if skip_workflow {
         println!(
@@ -347,7 +347,7 @@ cmd = "npm test"
             crate::config::docs::parse(SHARED_TOML).unwrap().coverage,
             Some(80)
         );
-        assert_eq!(crate::config::ci::parse(SHARED_TOML).unwrap(), ["sdk"]);
+        assert_eq!(crate::config::ci::parse(SHARED_TOML).unwrap().skip, ["sdk"]);
         assert_eq!(
             crate::spec_config::parse(SHARED_TOML).unwrap().protos.len(),
             1

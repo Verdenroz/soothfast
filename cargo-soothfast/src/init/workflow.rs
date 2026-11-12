@@ -7,6 +7,7 @@ const WORKFLOW: &str = include_str!("workflow.yml.tmpl");
 const TEST_JOB: &str = include_str!("test_job.yml.tmpl");
 const GATE_JOB: &str = include_str!("gate_job.yml.tmpl");
 const CALLER_JOB: &str = include_str!("caller_job.yml.tmpl");
+const PAGES_JOB: &str = include_str!("pages_job.yml.tmpl");
 const DOCS_JOB: &str = include_str!("docs_job.yml.tmpl");
 const LABELS_JOB: &str = include_str!("labels_job.yml.tmpl");
 
@@ -31,15 +32,29 @@ pub(super) struct Workspace {
     pub(super) bot: bool,
     /// Whether `[bot] labels = true` is scaffolded.
     pub(super) labels: bool,
+    /// Whether `[ci] pages = true` deploys the site, which adds the job that
+    /// is allowed to.
+    pub(super) pages: bool,
+    /// Whether the repository configures a spec, proto, coverage, capture or
+    /// site check, which only the reusable workflow runs.
+    pub(super) checks: bool,
     pub(super) java: String,
     pub(super) node: String,
+}
+
+impl Workspace {
+    /// Whether the jobs fit in the workflow itself: a cargo workspace with
+    /// nothing but tests, a gate and a docs check on the default runner.
+    pub(super) fn inline(&self) -> bool {
+        self.projects.is_empty() && self.ci.is_default() && !self.checks && !self.pages
+    }
 }
 
 pub(super) fn workflow(ws: &Workspace) -> String {
     let mut text = WORKFLOW
         .replace("@@default_branch@@", &ws.default_branch)
         .replace("@@schedule@@", if ws.bot { SCHEDULE } else { "" });
-    if ws.projects.is_empty() && ws.ci.is_default() {
+    if ws.inline() {
         text.push_str(&cargo_jobs(ws));
         if ws.bot && ws.labels {
             text.push_str(LABELS_JOB);
@@ -100,6 +115,12 @@ fn caller_job(ws: &Workspace) -> String {
     );
     if !with.is_empty() {
         text.push_str(&format!("    with:\n{with}"));
+    }
+    if ws.pages {
+        text.push_str(&PAGES_JOB.replace(
+            "@@action@@",
+            &ws.action.replacen('@', "/.github/workflows/pages.yml@", 1),
+        ));
     }
     text
 }
@@ -217,6 +238,38 @@ mod tests {
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             assert!(!line.starts_with('\t'), "tab indent: {line}");
         }
+    }
+
+    #[test]
+    fn a_cargo_workspace_with_checks_or_pages_calls_the_reusable_workflow() {
+        let plain = ws(&["a"], None);
+        assert!(!workflow(&plain).contains("/.github/workflows/run.yml@"));
+        for w in [
+            Workspace {
+                checks: true,
+                ..ws(&["a"], None)
+            },
+            Workspace {
+                pages: true,
+                ..ws(&["a"], None)
+            },
+        ] {
+            assert!(workflow(&w).contains("/.github/workflows/run.yml@"));
+        }
+    }
+
+    #[test]
+    fn the_caller_may_deploy_pages_only_when_the_file_asks() {
+        let on = Workspace {
+            pages: true,
+            ..mixed_ws(false, vec![project(Ecosystem::Node, ".")])
+        };
+        let text = workflow(&on);
+        assert!(text.contains("  pages:\n    needs: soothfast\n"), "{text}");
+        assert!(text.contains("      pages: write\n"));
+        assert!(text.contains("/.github/workflows/pages.yml@v0\n"), "{text}");
+        let off = workflow(&mixed_ws(false, vec![project(Ecosystem::Node, ".")]));
+        assert!(!off.contains("pages"), "{off}");
     }
 
     #[test]

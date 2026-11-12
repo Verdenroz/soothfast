@@ -17,6 +17,8 @@ pub(super) fn ws(benched: &[&str], docs: Option<&str>) -> Workspace {
         action: "Verdenroz/soothfast@v0".into(),
         bot: false,
         labels: false,
+        pages: false,
+        checks: false,
         java: "21".into(),
         node: "22".into(),
     }

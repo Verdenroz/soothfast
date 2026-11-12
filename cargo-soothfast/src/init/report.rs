@@ -54,7 +54,7 @@ pub(crate) fn drift(root: &Path) -> Result<Drift, String> {
         true,
     )?;
     ws.labels = true;
-    let duplicate_only = ws.projects.is_empty() && ws.ci.is_default();
+    let duplicate_only = ws.inline();
     let skip = skips_workflow(root, &other_callers(root), duplicate_only, false);
     let mut out = Drift::default();
     for f in scaffold(&ws)

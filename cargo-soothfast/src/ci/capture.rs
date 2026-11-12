@@ -3,7 +3,9 @@
 
 use super::each;
 use super::env::CiEnv;
-use crate::config::{self, Group};
+use std::path::Path;
+
+use crate::config::{Config, Group};
 use crate::{init, invoke};
 
 fn command(pkg: &str) -> Vec<String> {
@@ -31,13 +33,18 @@ fn separable(
     Ok(kept)
 }
 
-pub(super) fn configured() -> Result<Vec<String>, String> {
-    let docs = init::rust_plan(&invoke::project_root())?.docs_packages;
-    let shared = config::defaults(&[], Group::Docs)?.paths;
+pub(super) fn configured_at(root: &Path) -> Result<Vec<String>, String> {
+    let docs = init::rust_plan(root)?.docs_packages;
+    let config = Config::load(root)?;
+    let shared = config.resolve(&[], Group::Docs)?.paths;
     separable(docs, |pkg| {
-        let own = config::defaults(&[pkg.to_string()], Group::Docs)?.paths;
+        let own = config.resolve(&[pkg.to_string()], Group::Docs)?.paths;
         Ok(own.is_some() && own != shared)
     })
+}
+
+fn configured() -> Result<Vec<String>, String> {
+    configured_at(&invoke::project_root())
 }
 
 /// Entry point for `ci capture`.

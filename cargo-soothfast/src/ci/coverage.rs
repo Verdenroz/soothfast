@@ -3,7 +3,9 @@
 
 use super::each;
 use super::env::CiEnv;
-use crate::config::{self, Group};
+use std::path::Path;
+
+use crate::config::{Config, Group};
 use crate::{init, invoke};
 
 fn command(pkg: &str) -> Vec<String> {
@@ -24,11 +26,16 @@ fn with_minimum(
     Ok(kept)
 }
 
-pub(super) fn configured() -> Result<Vec<String>, String> {
-    let docs = init::rust_plan(&invoke::project_root())?.docs_packages;
+pub(super) fn configured_at(root: &Path) -> Result<Vec<String>, String> {
+    let docs = init::rust_plan(root)?.docs_packages;
+    let config = Config::load(root)?;
     with_minimum(docs, |pkg| {
-        Ok(config::defaults(&[pkg.to_string()], Group::Docs)?.coverage)
+        Ok(config.resolve(&[pkg.to_string()], Group::Docs)?.coverage)
     })
+}
+
+fn configured() -> Result<Vec<String>, String> {
+    configured_at(&invoke::project_root())
 }
 
 /// Entry point for `ci coverage`.

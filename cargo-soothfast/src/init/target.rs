@@ -1,6 +1,8 @@
 //! The workspace init scaffolds for: the settings saved in `soothfast.toml`,
 //! what detection finds and what the flags add.
 
+use crate::ci::checks;
+use crate::config::Config;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -66,6 +68,7 @@ pub(super) fn target(
         return Err("-p adds a bench target to a cargo package".into());
     };
     let existing = std::fs::read_to_string(root.join(WORKFLOW_PATH)).unwrap_or_default();
+    let config = Config::load(root)?;
     let ws = Workspace {
         rust,
         projects,
@@ -76,6 +79,8 @@ pub(super) fn target(
         action: action_ref(&existing, tools.action.as_deref(), offline),
         bot,
         labels: false,
+        pages: config.pages()?,
+        checks: !checks::planned(root, rust, &config.ci()?)?.is_empty(),
         java: tools
             .java
             .or_else(|| pinned(&existing, "java"))

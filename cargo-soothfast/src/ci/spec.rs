@@ -2,6 +2,8 @@
 //! spec, a breaking change since the base, a hand-written spec that no longer
 //! matches its routes, and a stale generated SDK.
 
+use std::path::Path;
+
 use super::each::{self, Job};
 use super::env::{CiEnv, Event};
 use crate::spec_config::Mode;
@@ -103,9 +105,12 @@ fn package(name: &str) -> Result<Package, String> {
     })
 }
 
-pub(super) fn configured() -> Result<Vec<String>, String> {
-    let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-    Ok(spec_config::configured(&root)?.0)
+pub(super) fn configured_at(root: &Path) -> Result<Vec<String>, String> {
+    Ok(spec_config::configured(root)?.0)
+}
+
+fn configured() -> Result<Vec<String>, String> {
+    configured_at(&invoke::workspace_root().map_err(|e| e.to_string())?)
 }
 
 fn inner(opts: &Options) -> i32 {

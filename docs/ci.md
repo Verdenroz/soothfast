@@ -574,8 +574,8 @@ When the docs bind no Rust item, `docs check` builds no rustdoc, so neither
 | `routes` | The dev-profile executable behind `spec check`, for each package with a `[[spec]]` entry | `.soothfast/bins` |
 | `rustdoc` | Rustdoc JSON for the docs package and, for each package that generates a spec, for it and the workspace crates its types come from | `.soothfast/rustdoc` |
 
-`run.yml` builds the `bench` and `rustdoc` lanes. It has no `spec` job, so it
-builds no `routes` lane. A job is skipped when its lane has nothing to build,
+`run.yml` builds the `bench` and `rustdoc` lanes. Its `spec` check job builds
+what it needs itself, so `run.yml` builds no `routes` lane. A job is skipped when its lane has nothing to build,
 and each lane reads its store first and builds only what is missing. The
 `bench` lane leaves the merge-base alone for the reason the gate does: if the
 run cache holds a run for it, the gate reuses that run and never builds the
@@ -707,7 +707,7 @@ A spec job of the caller's builds its own lane with the action:
 `prebuild: routes rustdoc` runs those lanes in place of the gate, for the
 packages with `[[spec]]` entries, and `prebuild-docs: PKG` alone runs
 `rustdoc`. A later job downloads the staged directory into `.soothfast/` before
-`spec check`. A `spec` job inside `run.yml` is a follow-up.
+`spec check`.
 
 ## Checks from the file
 
@@ -720,6 +720,28 @@ job is named for its record, `spec-PKG` or `site`, runs
 `cargo soothfast ci KIND -p PKG`, and installs the pinned rustdoc toolchain
 when its command reads rustdoc JSON (`spec`, `coverage` and `site`). The
 verdict expects a result from each. A kind named in `[ci] skip` gets no job.
+
+Only `run.yml` runs these jobs. `cargo soothfast init` writes a workflow that
+calls it whenever the file configures one of them or `[ci] pages`. A cargo
+workspace with none keeps its test, gate and docs jobs in the workflow itself.
+
+### Deploying the site
+
+`[ci] pages = true` in the root `soothfast.toml` publishes the site to GitHub
+Pages on every push to the default branch. The docs job builds it after it
+has merged the gate's baselines, so the pages carry that push's measured
+numbers, and uploads it as the Pages artifact. A second job in the caller,
+which calls the reusable `pages.yml`, then publishes the artifact. That job
+checks nothing out, runs no repository code and holds only `pages: write` and
+`id-token: write`, so no token that can write to the repository is involved.
+The deploy is its own workflow because a reusable workflow's permissions are
+checked before it starts: inside `run.yml` it would make every caller grant
+`pages: write`, with the setting on or off.
+
+It needs three things: a `[site]` table, a docs package (the docs job is what
+builds the site), and the repository's Pages source set to "GitHub Actions".
+`cargo soothfast init` adds the `pages` job to the caller when the setting is
+on, and `init --check` reports the caller as drifted until it has been rerun. A failing docs check deploys nothing.
 
 ## One verdict
 
@@ -864,6 +886,19 @@ and records nothing.
 `head` baseline when `.soothfast/baselines/head.json` exists. It runs only when
 the root `soothfast.toml` has a `[site]` table; without one it says so and
 records nothing. The record is a `check` verdict named `site`.
+
+A site whose pages are partly generated (an API reference, a perf report)
+names the command that generates them as `site_run` under `[ci]`:
+
+```toml ignore
+[ci]
+site_run = "make docs-pages"
+```
+
+`ci site` runs it with `bash -euo pipefail` from the workspace root before the
+build, under the same record, with `$SOOTHFAST` naming the running
+`cargo-soothfast` and `$SOOTHFAST_BASELINE` set to `head` when that baseline
+exists and empty otherwise. A command that fails stops the build.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
 jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
 `routes` or `rustdoc` lane. With no package named, `bench` builds the gated
