@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 use super::args::GateArgs;
-use super::measure_ref_interleaved;
+use super::measure::measure_ref_interleaved;
 use crate::buildstamp;
 use crate::gate_save::HeadRun;
 use crate::headrun::{Settled, head_from_runcache, ref_doc};
