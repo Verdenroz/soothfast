@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Deploy the docs site to Pages from run.yml (#401)
 - Plan and run the check jobs soothfast.toml configures (#394)
 - Run per-package commands once per package (#392)
 - Add ci spec, proto, coverage, capture and site kinds (#393)
