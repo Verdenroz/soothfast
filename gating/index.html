@@ -660,24 +660,6 @@ package</code>); a command with none reads only the repo-wide section. Given
 several packages, they must resolve to the same defaults, or the command asks
 to be run once per package. Any package name works, quoted when it contains a
 dot, and one the workspace lacks is not an error.</p>
-<h3 id="every-package-at-once">Every package at once<a class="anchor" href="#every-package-at-once" aria-label="Link to this section">#</a></h3>
-<p>With a <code>[package.*]</code> table in the file, <code>measure</code>, <code>gate</code>, <code>spec gen</code>,
-<code>spec gate</code>, <code>spec check</code>, <code>sdk gen</code>, <code>sdk gate</code> and <code>coverage measure</code> run
-once per package when given no <code>-p</code>, each run resolving that package's own
-defaults. The packages are the workspace members the command means something
-for, whether or not a member has a table of its own, in name order. Each
-run's output follows a <code>soothfast: package NAME</code> line, every package runs even
-after one fails, and the exit code is the highest any run returned.</p>
-<p>A member the command means nothing for is skipped without a word. <code>measure</code>, <code>gate</code> and
-<code>coverage measure</code> need a bench target, the one <code>--bench</code> names, else the
-group's <code>target</code>, else <code>soothfast</code>. <code>spec</code> commands and <code>sdk gate</code> need a
-<code>[[spec]]</code> entry in the package's own <code>soothfast.toml</code>, and <code>sdk gen</code> an
-<code>[[sdk]]</code> entry. When no member qualifies, or <code>-p</code> is given, the command runs
-as it does without package tables: <code>gate</code> and <code>measure</code> over the
-workspace, the others asking for <code>-p</code>.</p>
-<p><code>gate accept</code>, <code>gate --import</code>, <code>coverage docs</code>, <code>docs *</code>, <code>test</code>, <code>ci *</code>, <code>prebuild</code>,
-<code>baseline</code>, <code>trend</code>, <code>report</code>, <code>mcp</code>, <code>spec html</code>, <code>spec probe</code>, <code>sdk build</code>
-and <code>sdk publish</code> keep their own meaning without <code>-p</code>.</p>
 <h2 id="skipping-ci-jobs">Skipping CI jobs<a class="anchor" href="#skipping-ci-jobs" aria-label="Link to this section">#</a></h2>
 <p><code>[ci] skip</code> in the root <code>soothfast.toml</code> names the kinds of CI job not to run:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[ci]</span>
@@ -826,8 +808,6 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l2" href="#features">Features</a></li>
   
     <li><a class="toc-l2" href="#per-package-defaults">Per-package defaults</a></li>
-  
-    <li><a class="toc-l3" href="#every-package-at-once">Every package at once</a></li>
   
     <li><a class="toc-l2" href="#skipping-ci-jobs">Skipping CI jobs</a></li>
   
