@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::*;
 
 fn repo(tag: &str, files: &[(&str, &str)]) -> PathBuf {
