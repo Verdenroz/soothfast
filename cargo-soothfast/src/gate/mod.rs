@@ -3,6 +3,7 @@
 //! exit non-zero on regression. On failure, emits a callgrind triage
 //! artifact when valgrind is available.
 
+mod args;
 mod thresholds;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,6 +11,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use self::args::{
+    AcceptArgs, GateArgs, ImportArgs, accept_args, against_ref_in, packages_in, with_package,
+};
 use self::thresholds::{
     ASYNC_THRESHOLD_PCT, BUILD_MS_SOFT_PCT, HEADROOM_COUNTER_FLOOR_PCT, IR_THRESHOLD_PCT,
     SIZE_THRESHOLD_PCT, WALLTIME_NOISE_MARGIN, WALLTIME_THRESHOLD_PCT, counter_limit,
@@ -30,34 +34,6 @@ use crate::workspace;
 
 pub use thresholds::{ALLOC_THRESHOLD_PCT, INSTRUCTIONS_THRESHOLD_PCT};
 pub(crate) use thresholds::{COUNTER_FLAT_ABS, COUNTER_FLAT_PCT};
-
-struct GateArgs {
-    common: CommonArgs,
-    baseline: String,
-    ratchet: Option<String>,
-    against_ref: Option<String>,
-    deps: bool,
-    allow_gone: bool,
-    allow_harness_change: bool,
-    matrix: String,
-    save_baseline: Option<String>,
-    reuse_base: bool,
-    /// Whether a crate the merge-base has no bench target for is measured;
-    /// `gate accept` has nothing to accept for one.
-    measure_new: bool,
-    import: ImportArgs,
-}
-
-/// `--import`: gate result files from another harness instead of measuring.
-/// Each side is a `(format, file)` pair.
-#[derive(Default)]
-struct ImportArgs {
-    current: Option<(String, String)>,
-    reference: Option<(String, String)>,
-    prefix: Option<String>,
-    walltime: Option<String>,
-    baseline_given: bool,
-}
 
 pub fn run(args: &[String]) -> i32 {
     if args.first().map(String::as_str) == Some("accept") {
@@ -541,46 +517,6 @@ fn prebuild_both_sides(packages: &[String], common: &CommonArgs, args: &[String]
     });
 }
 
-fn against_ref_in(args: &[String]) -> Option<String> {
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if a == "--against-ref" {
-            return it.next().cloned();
-        }
-    }
-    None
-}
-
-/// Packages named by repeated `-p`, in the order given.
-fn packages_in(args: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if matches!(a.as_str(), "-p" | "--package")
-            && let Some(p) = it.next()
-        {
-            out.push(p.clone());
-        }
-    }
-    out
-}
-
-/// `args` with every `-p` collapsed to the single named package.
-fn with_package(args: &[String], pkg: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
-        if matches!(a.as_str(), "-p" | "--package") {
-            it.next();
-            continue;
-        }
-        out.push(a.clone());
-    }
-    out.push("-p".into());
-    out.push(pkg.into());
-    out
-}
-
 /// The two sides of one comparison, plus what the reader needs to know
 /// about how much the comparison is worth.
 struct Resolved {
@@ -670,16 +606,6 @@ fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Resolved>, St
     }))
 }
 
-struct AcceptArgs {
-    common: CommonArgs,
-    baseline: Option<String>,
-    against_ref: Option<String>,
-    matrix: String,
-    justification: Option<String>,
-    only: Vec<String>,
-    headroom: Option<f64>,
-}
-
 /// Record a reviewed delta into `soothfast-gate.lock`, so a future `gate`
 /// treats it as the new ceiling for that bench and metric instead of a
 /// regression — without touching the threshold for anything else. Only
@@ -702,58 +628,6 @@ fn accept_cmd(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     accept_parsed(a, walltime_advisory)
-}
-
-/// `gate accept`'s arguments.
-fn accept_args(args: &[String]) -> Result<AcceptArgs, String> {
-    let mut a = AcceptArgs {
-        common: CommonArgs::default(),
-        baseline: None,
-        against_ref: None,
-        matrix: "default".into(),
-        justification: None,
-        only: Vec::new(),
-        headroom: None,
-    };
-    let mut it = args.iter();
-    while let Some(arg) = it.next() {
-        if a.common.try_parse(arg, &mut it) {
-            continue;
-        }
-        match arg.as_str() {
-            "--baseline" => match it.next() {
-                Some(n) => a.baseline = Some(n.clone()),
-                None => return Err("--baseline needs a name".into()),
-            },
-            "--against-ref" => match it.next() {
-                Some(r) => a.against_ref = Some(r.clone()),
-                None => return Err("--against-ref needs a git ref".into()),
-            },
-            "--features-matrix" => match it.next() {
-                Some(m) => a.matrix = m.clone(),
-                None => return Err("--features-matrix needs combos like \"default;full\"".into()),
-            },
-            "--justification" => match it.next() {
-                Some(j) => a.justification = Some(j.clone()),
-                None => return Err("--justification needs text".into()),
-            },
-            "--only" => match it.next() {
-                Some(id) => a.only.push(id.clone()),
-                None => return Err("--only needs a bench id".into()),
-            },
-            "--headroom" => match it.next().map(|v| v.parse::<f64>()) {
-                Some(Ok(pct)) => a.headroom = Some(pct),
-                _ => return Err("--headroom needs a percentage number".into()),
-            },
-            "--shard" => match it.next().map(|s| invoke::Shard::parse(s)) {
-                Some(Ok(shard)) => a.common.shard = Some(shard),
-                Some(Err(e)) => return Err(e),
-                None => return Err("--shard needs I/N".into()),
-            },
-            other => return Err(format!("unknown gate accept arg {other:?}")),
-        }
-    }
-    Ok(a)
 }
 
 /// `gate accept` once its arguments and config are read.
@@ -2216,14 +2090,15 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        CompareCtx, FailedMetric, GateArgs, ImportArgs, NewTarget, Resolved, accept_args,
-        assertion_failures, base_method_differs, combine_min, combine_rounds, compare, errored_at,
-        harness_of, harness_verdict, harness_waiver, identical_head, identical_pass,
-        identical_pass_args, identical_pass_cache, mark_harness, newly_measured, nothing_measured,
-        ratchet_in, reuse_hint, round_duration, run_imported, triage_harness_note,
+        CompareCtx, FailedMetric, NewTarget, Resolved, assertion_failures, base_method_differs,
+        combine_min, combine_rounds, compare, errored_at, harness_of, harness_verdict,
+        harness_waiver, identical_head, identical_pass, identical_pass_args, identical_pass_cache,
+        mark_harness, newly_measured, nothing_measured, ratchet_in, reuse_hint, round_duration,
+        run_imported, triage_harness_note,
     };
     use crate::buildstamp;
 
+    use crate::gate::args::{GateArgs, ImportArgs, accept_args};
     use crate::gate_lock;
     use crate::gate_save::save_head;
 
