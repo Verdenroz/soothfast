@@ -11,6 +11,8 @@ set -euo pipefail
 # shellcheck source=action/labels.sh
 source "$(dirname "$0")/labels.sh"
 
+"$(dirname "$0")/latest-attempt.sh" "$RESULTS"
+
 expect=()
 read -ra shards <<<"${EXPECT_SHARDS:-}"
 for kind in rust import docs test check; do

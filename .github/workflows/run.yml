@@ -140,7 +140,7 @@ jobs:
       - name: Upload the results of tests that need no job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-test-settled
+          name: soothfast-result-test-settled-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/settled
           if-no-files-found: ignore
 
@@ -321,7 +321,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-test-rust
+          name: soothfast-result-test-rust-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
 
@@ -382,7 +382,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-test-${{ matrix.name }}
+          name: soothfast-result-test-${{ matrix.name }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
       - name: Upload the stored pass
@@ -508,7 +508,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-rust${{ matrix.shard != '' && format('-shard-{0}', matrix.slug) || '' }}
+          name: soothfast-result-rust${{ matrix.shard != '' && format('-shard-{0}', matrix.slug) || '' }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
       # The docs job reads claims from this instead of measuring again. A
@@ -517,7 +517,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-baseline-rust${{ matrix.shard != '' && format('-shard-{0}', matrix.slug) || '' }}
+          name: soothfast-baseline-rust${{ matrix.shard != '' && format('-shard-{0}', matrix.slug) || '' }}-attempt-${{ github.run_attempt }}
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
 
@@ -574,14 +574,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-${{ matrix.name }}
+          name: soothfast-result-${{ matrix.name }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
       - name: Upload the imported measurement
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-baseline-import-${{ matrix.name }}
+          name: soothfast-baseline-import-${{ matrix.name }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/soothfast-baseline/import-${{ matrix.name }}.json
           if-no-files-found: ignore
 
@@ -699,6 +699,8 @@ jobs:
         with:
           pattern: soothfast-baseline-*
           path: ${{ runner.temp }}/baselines
+      - name: Keep the latest attempt's measurements
+        run: ./.soothfast-action/action/latest-attempt.sh "$RUNNER_TEMP/baselines"
       - name: Download the item listing
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -732,7 +734,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-docs
+          name: soothfast-result-docs-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
 
@@ -800,7 +802,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: soothfast-result-${{ matrix.name }}
+          name: soothfast-result-${{ matrix.name }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
 
