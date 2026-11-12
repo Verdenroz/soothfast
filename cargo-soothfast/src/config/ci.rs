@@ -12,6 +12,9 @@ pub struct CiTable {
     pub skip: Vec<String>,
     /// Whether a default-branch push deploys the built site to GitHub Pages.
     pub pages: bool,
+    /// Shell `ci site` runs before it builds the site, for pages the
+    /// repository generates.
+    pub site_run: Option<String>,
 }
 
 /// Parse the `[ci]` table of a `soothfast.toml`.
@@ -36,6 +39,7 @@ pub fn parse(text: &str) -> Result<CiTable, String> {
         match (key.trim(), value) {
             ("skip", TomlValue::StrArray(kinds)) => table.skip = kinds,
             ("pages", TomlValue::Bool(pages)) => table.pages = pages,
+            ("site_run", TomlValue::Str(run)) => table.site_run = Some(run),
             (k, _) => {
                 return Err(format!(
                     "line {lineno}: unknown or mistyped `{k}` under [ci]"
@@ -65,6 +69,8 @@ mod tests {
         assert!(parse("[ci]\npages = true\n").unwrap().pages);
         assert!(!parse("[ci]\nskip = [\"sdk\"]\n").unwrap().pages);
         assert!(parse("[ci]\npages = \"yes\"\n").is_err());
+        let hook = parse("[ci]\nsite_run = \"make pages\"\n").unwrap();
+        assert_eq!(hook.site_run.as_deref(), Some("make pages"));
     }
 
     #[test]

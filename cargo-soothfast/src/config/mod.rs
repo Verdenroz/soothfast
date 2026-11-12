@@ -113,6 +113,11 @@ impl Config {
         test::parse(&self.text).map_err(|e| self.located(e))
     }
 
+    /// The `[ci] site_run` shell `ci site` runs before it builds the site.
+    pub fn site_run(&self) -> Result<Option<String>, String> {
+        Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.site_run)
+    }
+
     /// Whether `[ci] pages = true` asks for the built site to be deployed.
     pub fn pages(&self) -> Result<bool, String> {
         Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.pages)

@@ -880,6 +880,19 @@ and records nothing.
 `head` baseline when `.soothfast/baselines/head.json` exists. It runs only when
 the root `soothfast.toml` has a `[site]` table; without one it says so and
 records nothing. The record is a `check` verdict named `site`.
+
+A site whose pages are partly generated (an API reference, a perf report)
+names the command that generates them as `site_run` under `[ci]`:
+
+```toml ignore
+[ci]
+site_run = "make docs-pages"
+```
+
+`ci site` runs it with `bash -euo pipefail` from the workspace root before the
+build, under the same record, with `$SOOTHFAST` naming the running
+`cargo-soothfast` and `$SOOTHFAST_BASELINE` set to `head` when that baseline
+exists and empty otherwise. A command that fails stops the build.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
 jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
 `routes` or `rustdoc` lane. With no package named, `bench` builds the gated
