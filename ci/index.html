@@ -599,8 +599,8 @@ When the docs bind no Rust item, <code>docs check</code> builds no rustdoc, so n
 <tr><td><code>rustdoc</code></td><td>Rustdoc JSON for the docs package and, for each package that generates a spec, for it and the workspace crates its types come from</td><td><code>.soothfast/rustdoc</code></td></tr>
 </tbody>
 </table></div>
-<p><code>run.yml</code> builds the <code>bench</code> and <code>rustdoc</code> lanes. It has no <code>spec</code> job, so it
-builds no <code>routes</code> lane. A job is skipped when its lane has nothing to build,
+<p><code>run.yml</code> builds the <code>bench</code> and <code>rustdoc</code> lanes. Its <code>spec</code> check job builds
+what it needs itself, so <code>run.yml</code> builds no <code>routes</code> lane. A job is skipped when its lane has nothing to build,
 and each lane reads its store first and builds only what is missing. The
 <code>bench</code> lane leaves the merge-base alone for the reason the gate does: if the
 run cache holds a run for it, the gate reuses that run and never builds the
@@ -717,7 +717,7 @@ PKG[:TARGET]</code>, <code>--only bench|routes|rustdoc</code>, <code>--stage DIR
 <code>prebuild: routes rustdoc</code> runs those lanes in place of the gate, for the
 packages with <code>[[spec]]</code> entries, and <code>prebuild-docs: PKG</code> alone runs
 <code>rustdoc</code>. A later job downloads the staged directory into <code>.soothfast/</code> before
-<code>spec check</code>. A <code>spec</code> job inside <code>run.yml</code> is a follow-up.</p>
+<code>spec check</code>.</p>
 <h2 id="checks-from-the-file">Checks from the file<a class="anchor" href="#checks-from-the-file" aria-label="Link to this section">#</a></h2>
 <p><code>cargo soothfast plan</code> also reads what else <code>soothfast.toml</code> configures and
 gives <code>run.yml</code> one job for each: <code>ci spec</code> for every package with a
@@ -728,6 +728,24 @@ job is named for its record, <code>spec-PKG</code> or <code>site</code>, runs
 <code>cargo soothfast ci KIND -p PKG</code>, and installs the pinned rustdoc toolchain
 when its command reads rustdoc JSON (<code>spec</code>, <code>coverage</code> and <code>site</code>). The
 verdict expects a result from each. A kind named in <code>[ci] skip</code> gets no job.</p>
+<p>Only <code>run.yml</code> runs these jobs. <code>cargo soothfast init</code> writes a workflow that
+calls it whenever the file configures one of them or <code>[ci] pages</code>. A cargo
+workspace with none keeps its test, gate and docs jobs in the workflow itself.</p>
+<h3 id="deploying-the-site">Deploying the site<a class="anchor" href="#deploying-the-site" aria-label="Link to this section">#</a></h3>
+<p><code>[ci] pages = true</code> in the root <code>soothfast.toml</code> publishes the site to GitHub
+Pages on every push to the default branch. The docs job builds it after it
+has merged the gate's baselines, so the pages carry that push's measured
+numbers, and uploads it as the Pages artifact. A second job in the caller,
+which calls the reusable <code>pages.yml</code>, then publishes the artifact. That job
+checks nothing out, runs no repository code and holds only <code>pages: write</code> and
+<code>id-token: write</code>, so no token that can write to the repository is involved.
+The deploy is its own workflow because a reusable workflow's permissions are
+checked before it starts: inside <code>run.yml</code> it would make every caller grant
+<code>pages: write</code>, with the setting on or off.</p>
+<p>It needs three things: a <code>[site]</code> table, a docs package (the docs job is what
+builds the site), and the repository's Pages source set to "GitHub Actions".
+<code>cargo soothfast init</code> adds the <code>pages</code> job to the caller when the setting is
+on, and <code>init --check</code> reports the caller as drifted until it has been rerun. A failing docs check deploys nothing.</p>
 <h2 id="one-verdict">One verdict<a class="anchor" href="#one-verdict" aria-label="Link to this section">#</a></h2>
 <p>The reusable <code>run.yml</code> workflow gives a pull request one soothfast comment and
 one check, however many projects or shards it gates. Every gate job, the test
@@ -856,7 +874,15 @@ and records nothing.
 <code>target/soothfast-site</code> unless <code>--out</code> says otherwise. It builds against the
 <code>head</code> baseline when <code>.soothfast/baselines/head.json</code> exists. It runs only when
 the root <code>soothfast.toml</code> has a <code>[site]</code> table; without one it says so and
-records nothing. The record is a <code>check</code> verdict named <code>site</code>.
+records nothing. The record is a <code>check</code> verdict named <code>site</code>.</p>
+<p>A site whose pages are partly generated (an API reference, a perf report)
+names the command that generates them as <code>site_run</code> under <code>[ci]</code>:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[ci]</span>
+<span class="tok-ty">site_run </span>=<span class="tok-str"> &quot;make docs-pages&quot;</span></code></pre></figure>
+<p><code>ci site</code> runs it with <code>bash -euo pipefail</code> from the workspace root before the
+build, under the same record, with <code>$SOOTHFAST</code> naming the running
+<code>cargo-soothfast</code> and <code>$SOOTHFAST_BASELINE</code> set to <code>head</code> when that baseline
+exists and empty otherwise. A command that fails stops the build.
 <code>ci build LANE</code> is the build-once job: it prebuilds into the stores what later
 jobs read, with <code>cargo soothfast prebuild --only LANE</code> for the <code>bench</code>,
 <code>routes</code> or <code>rustdoc</code> lane. With no package named, <code>bench</code> builds the gated
@@ -984,6 +1010,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l3" href="#sharding">Sharding</a></li>
   
     <li><a class="toc-l2" href="#checks-from-the-file">Checks from the file</a></li>
+  
+    <li><a class="toc-l3" href="#deploying-the-site">Deploying the site</a></li>
   
     <li><a class="toc-l2" href="#one-verdict">One verdict</a></li>
   

@@ -682,6 +682,8 @@ and <code>sdk publish</code> keep their own meaning without <code>-p</code>.</p>
 <p><code>[ci] skip</code> in the root <code>soothfast.toml</code> names the kinds of CI job not to run:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[ci]</span>
 <span class="tok-ty">skip </span>=<span class="tok-str"> [&quot;sdk&quot;]</span></code></pre></figure>
+<p><code>pages = true</code> in the same table deploys the docs site on a push to the
+default branch; see <a href="../ci/#deploying-the-site">CI</a>.</p>
 <p>The names are free-form strings, and <code>cargo soothfast</code> does not check them
 against the jobs it knows. <code>[test] ci = false</code> keeps working and means the
 same as <code>skip</code> naming <code>&quot;test&quot;</code>; setting both is not an error. An older
