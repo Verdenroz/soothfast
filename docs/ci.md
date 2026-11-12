@@ -721,6 +721,12 @@ job is named for its record, `spec-PKG` or `site`, runs
 when its command reads rustdoc JSON (`spec`, `coverage` and `site`). The
 verdict expects a result from each. A kind named in `[ci] skip` gets no job.
 
+When the repository has a docs package, the site is built in the docs job
+and has no job of its own. That job has the gate's merged baseline, so the
+pages and a `site_run` hook can read the run's measured numbers. The site is
+built even when the docs check failed, so its result still reaches the
+verdict.
+
 Only `run.yml` runs these jobs. `cargo soothfast init` writes a workflow that
 calls it whenever the file configures one of them or `[ci] pages`. A cargo
 workspace with none keeps its test, gate and docs jobs in the workflow itself.
@@ -728,9 +734,8 @@ workspace with none keeps its test, gate and docs jobs in the workflow itself.
 ### Deploying the site
 
 `[ci] pages = true` in the root `soothfast.toml` publishes the site to GitHub
-Pages on every push to the default branch. The docs job builds it after it
-has merged the gate's baselines, so the pages carry that push's measured
-numbers, and uploads it as the Pages artifact. A second job in the caller,
+Pages on every push to the default branch. The docs job, which builds the
+site, uploads it as the Pages artifact. A second job in the caller,
 which calls the reusable `pages.yml`, then publishes the artifact. That job
 checks nothing out, runs no repository code and holds only `pages: write` and
 `id-token: write`, so no token that can write to the repository is involved.
@@ -878,8 +883,10 @@ ones given, which fails when the output recorded beside a capture block no
 longer matches what the block prints. A package with no capture block passes.
 A lone docs package is checked against every doc. Among several, the blocks of
 all the docs would compile into each package's crate, so only a package whose
-`[package.NAME.docs]` table names its own `paths` is checked. Each package
-records a `check` verdict named `capture-PKG`. With no such package it says so
+`[package.NAME.docs]` table names its own `paths` is checked. For a lone docs
+package, `capture_paths` under `[ci]` lists the docs to check in place of all
+of them, which leaves out a page whose output changes from run to run. Each
+package records a `check` verdict named `capture-PKG`. With no such package it says so
 and records nothing.
 `ci site` builds the docs site with `docs build --out DIR`, where DIR is
 `target/soothfast-site` unless `--out` says otherwise. It builds against the

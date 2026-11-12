@@ -15,6 +15,9 @@ pub struct CiTable {
     /// Shell `ci site` runs before it builds the site, for pages the
     /// repository generates.
     pub site_run: Option<String>,
+    /// The docs `ci capture` checks for a lone docs package, in place of
+    /// every doc it scans.
+    pub capture_paths: Vec<String>,
 }
 
 /// Parse the `[ci]` table of a `soothfast.toml`.
@@ -40,6 +43,7 @@ pub fn parse(text: &str) -> Result<CiTable, String> {
             ("skip", TomlValue::StrArray(kinds)) => table.skip = kinds,
             ("pages", TomlValue::Bool(pages)) => table.pages = pages,
             ("site_run", TomlValue::Str(run)) => table.site_run = Some(run),
+            ("capture_paths", TomlValue::StrArray(paths)) => table.capture_paths = paths,
             (k, _) => {
                 return Err(format!(
                     "line {lineno}: unknown or mistyped `{k}` under [ci]"
@@ -71,6 +75,8 @@ mod tests {
         assert!(parse("[ci]\npages = \"yes\"\n").is_err());
         let hook = parse("[ci]\nsite_run = \"make pages\"\n").unwrap();
         assert_eq!(hook.site_run.as_deref(), Some("make pages"));
+        let capture = parse("[ci]\ncapture_paths = [\"README.md\"]\n").unwrap();
+        assert_eq!(capture.capture_paths, ["README.md"]);
     }
 
     #[test]

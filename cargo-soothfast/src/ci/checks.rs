@@ -95,9 +95,8 @@ fn collect(
 }
 
 /// The matrix the workflow's check job runs over.
-pub fn matrix(checks: &[Check]) -> Value {
+pub fn matrix<'a>(checks: impl Iterator<Item = &'a Check>) -> Value {
     let include: Vec<Value> = checks
-        .iter()
         .map(|c| {
             json!({
                 "name": c.name(),
@@ -134,10 +133,10 @@ mod tests {
             ["spec-server", "coverage-core", "coverage-server", "site"]
         );
         assert_eq!(
-            matrix(&checks)["include"][0],
+            matrix(checks.iter())["include"][0],
             json!({"name": "spec-server", "kind": "spec", "package": "server", "rustdoc": true})
         );
-        assert_eq!(matrix(&checks)["include"][3]["package"], "");
+        assert_eq!(matrix(checks.iter())["include"][3]["package"], "");
     }
 
     #[test]

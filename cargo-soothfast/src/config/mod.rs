@@ -113,6 +113,14 @@ impl Config {
         test::parse(&self.text).map_err(|e| self.located(e))
     }
 
+    /// The `[ci] capture_paths` docs `ci capture` checks for a lone docs
+    /// package.
+    pub fn capture_paths(&self) -> Result<Vec<String>, String> {
+        Ok(ci::parse(&self.text)
+            .map_err(|e| self.located(e))?
+            .capture_paths)
+    }
+
     /// The `[ci] site_run` shell `ci site` runs before it builds the site.
     pub fn site_run(&self) -> Result<Option<String>, String> {
         Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.site_run)

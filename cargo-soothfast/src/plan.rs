@@ -241,10 +241,23 @@ impl Plan {
         json!({ "include": include })
     }
 
-    /// The site deploys when the file asks for it, the site check is planned
-    /// and the docs job, which builds what is deployed, runs.
+    /// Whether the docs job builds the site. It has the gate's merged
+    /// baseline, which a job of the check matrix does not.
+    fn site_in_docs(&self) -> bool {
+        self.docs && self.checks.iter().any(|c| c.kind == "site")
+    }
+
+    /// The checks that get a job of their own.
+    fn matrix_checks(&self) -> impl Iterator<Item = &Check> {
+        let in_docs = self.site_in_docs();
+        self.checks
+            .iter()
+            .filter(move |c| !(in_docs && c.kind == "site"))
+    }
+
+    /// The site deploys when the file asks for it and the docs job builds it.
     fn site_deploy(&self) -> bool {
-        self.pages && self.docs && self.checks.iter().any(|c| c.kind == "site")
+        self.pages && self.site_in_docs()
     }
 
     fn test_all(&self) -> bool {
@@ -416,7 +429,7 @@ impl Plan {
             .unwrap_or_default();
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nchecks={}\nchecks_any={}\nchecks_expect={}\nsite_deploy={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nchecks={}\nchecks_any={}\nchecks_expect={}\nsite_in_docs={}\nsite_deploy={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -429,13 +442,14 @@ impl Plan {
             self.test_expect(),
             self.shard_legs(),
             self.ci.runs_on_json(),
-            checks::matrix(&self.checks),
-            !self.checks.is_empty(),
+            checks::matrix(self.matrix_checks()),
+            self.matrix_checks().next().is_some(),
             self.checks
                 .iter()
                 .map(Check::name)
                 .collect::<Vec<_>>()
                 .join(" "),
+            self.site_in_docs(),
             self.site_deploy(),
         )
     }
@@ -589,9 +603,26 @@ mod tests {
         assert_eq!(matrix["include"].as_array().unwrap().len(), 1);
         let pure = plan(None, vec![]).outputs();
         assert!(pure.contains("projects=false\nrust=false\n"), "{pure}");
-        let checks =
-            "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=\nsite_deploy=false\n";
+        let checks = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=\nsite_in_docs=false\nsite_deploy=false\n";
         assert!(pure.ends_with(checks), "{pure}");
+    }
+
+    #[test]
+    fn the_docs_job_builds_the_site_when_there_is_one() {
+        let site = || Check {
+            kind: "site",
+            package: None,
+            rustdoc: true,
+        };
+        let mut p = plan(Some(&["a"]), vec![]);
+        p.checks = vec![site()];
+        let alone = p.outputs();
+        assert!(alone.contains("checks_any=true\nchecks_expect=site\nsite_in_docs=false\n"));
+        p.docs = true;
+        p.pages = true;
+        let with_docs = p.outputs();
+        let moved = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=site\nsite_in_docs=true\nsite_deploy=true\n";
+        assert!(with_docs.ends_with(moved), "{with_docs}");
     }
 
     #[test]
