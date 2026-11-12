@@ -778,6 +778,19 @@ jobs:
       - name: Install the pinned rustdoc toolchain
         if: matrix.rustdoc
         run: ./.soothfast-action/action/rustdoc-toolchain.sh
+      # Entries are named for the toolchain, flags and sources they came from,
+      # so a restored store only saves the builds whose inputs did not change.
+      - name: Restore and save the rustdoc and executable stores
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .soothfast/rustdoc
+            .soothfast/bins
+          key: soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-
+            soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
+            soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.repository.default_branch }}-
       - name: Check
         env:
           KIND: ${{ matrix.kind }}
