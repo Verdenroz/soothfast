@@ -34,15 +34,26 @@ pub(super) struct Workspace {
     /// Whether `[ci] pages = true` deploys the site, which the caller has to
     /// be allowed to do.
     pub(super) pages: bool,
+    /// Whether the repository configures a spec, proto, coverage, capture or
+    /// site check, which only the reusable workflow runs.
+    pub(super) checks: bool,
     pub(super) java: String,
     pub(super) node: String,
+}
+
+impl Workspace {
+    /// Whether the jobs fit in the workflow itself: a cargo workspace with
+    /// nothing but tests, a gate and a docs check on the default runner.
+    pub(super) fn inline(&self) -> bool {
+        self.projects.is_empty() && self.ci.is_default() && !self.checks && !self.pages
+    }
 }
 
 pub(super) fn workflow(ws: &Workspace) -> String {
     let mut text = WORKFLOW
         .replace("@@default_branch@@", &ws.default_branch)
         .replace("@@schedule@@", if ws.bot { SCHEDULE } else { "" });
-    if ws.projects.is_empty() && ws.ci.is_default() {
+    if ws.inline() {
         text.push_str(&cargo_jobs(ws));
         if ws.bot && ws.labels {
             text.push_str(LABELS_JOB);
@@ -220,6 +231,24 @@ mod tests {
         assert!(text.contains("branches: [master]"));
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             assert!(!line.starts_with('\t'), "tab indent: {line}");
+        }
+    }
+
+    #[test]
+    fn a_cargo_workspace_with_checks_or_pages_calls_the_reusable_workflow() {
+        let plain = ws(&["a"], None);
+        assert!(!workflow(&plain).contains("/.github/workflows/run.yml@"));
+        for w in [
+            Workspace {
+                checks: true,
+                ..ws(&["a"], None)
+            },
+            Workspace {
+                pages: true,
+                ..ws(&["a"], None)
+            },
+        ] {
+            assert!(workflow(&w).contains("/.github/workflows/run.yml@"));
         }
     }
 

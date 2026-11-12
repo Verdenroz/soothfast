@@ -174,7 +174,7 @@ fn build(
     let config = Config::load(root)?;
     let skip = config.ci()?;
     let pages = config.pages()?;
-    let checks = checks::planned(rust.is_some(), &skip)?;
+    let checks = checks::planned(root, rust.is_some(), &skip)?;
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
     }

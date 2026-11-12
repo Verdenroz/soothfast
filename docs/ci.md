@@ -721,6 +721,10 @@ job is named for its record, `spec-PKG` or `site`, runs
 when its command reads rustdoc JSON (`spec`, `coverage` and `site`). The
 verdict expects a result from each. A kind named in `[ci] skip` gets no job.
 
+Only `run.yml` runs these jobs. `cargo soothfast init` writes a workflow that
+calls it whenever the file configures one of them or `[ci] pages`. A cargo
+workspace with none keeps its test, gate and docs jobs in the workflow itself.
+
 ### Deploying the site
 
 `[ci] pages = true` in the root `soothfast.toml` publishes the site to GitHub

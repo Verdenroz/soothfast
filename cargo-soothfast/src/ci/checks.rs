@@ -1,6 +1,8 @@
 //! The check jobs a repository's configuration calls for, which `plan` turns
 //! into the workflow's matrix.
 
+use std::path::Path;
+
 use serde_json::{Value, json};
 
 use super::{capture, coverage, proto, site, spec};
@@ -10,29 +12,29 @@ use super::{capture, coverage, proto, site, spec};
 struct Kind {
     name: &'static str,
     rustdoc: bool,
-    packages: fn() -> Result<Vec<String>, String>,
+    packages: fn(&Path) -> Result<Vec<String>, String>,
 }
 
 const KINDS: &[Kind] = &[
     Kind {
         name: "spec",
         rustdoc: true,
-        packages: spec::configured,
+        packages: spec::configured_at,
     },
     Kind {
         name: "proto",
         rustdoc: false,
-        packages: proto::configured,
+        packages: proto::configured_at,
     },
     Kind {
         name: "coverage",
         rustdoc: true,
-        packages: coverage::configured,
+        packages: coverage::configured_at,
     },
     Kind {
         name: "capture",
         rustdoc: false,
-        packages: capture::configured,
+        packages: capture::configured_at,
     },
 ];
 
@@ -58,8 +60,13 @@ impl Check {
 
 /// The checks this repository runs, leaving out the kinds `skip` names. The
 /// per-package kinds need a cargo workspace.
-pub fn planned(cargo: bool, skip: &[String]) -> Result<Vec<Check>, String> {
-    collect(cargo, skip, |kind| (kind.packages)(), site::configured)
+pub fn planned(root: &Path, cargo: bool, skip: &[String]) -> Result<Vec<Check>, String> {
+    collect(
+        cargo,
+        skip,
+        |kind| (kind.packages)(root),
+        || Ok(site::configured_at(root)),
+    )
 }
 
 fn collect(

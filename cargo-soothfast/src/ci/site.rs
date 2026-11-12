@@ -45,8 +45,8 @@ fn command(out: &str, head_baseline: bool) -> Vec<String> {
 }
 
 /// Whether the repository configures a site to build.
-pub(super) fn configured() -> Result<bool, String> {
-    Ok(job(DEFAULT_OUT)?.is_some())
+pub(super) fn configured_at(root: &Path) -> bool {
+    has_site(&std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default())
 }
 
 /// What the recorded job runs: the build alone, or this kind again with
@@ -66,8 +66,7 @@ fn head_baseline(root: &Path) -> bool {
 
 fn job(out: &str) -> Result<Option<Job>, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-    let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();
-    if !has_site(&text) {
+    if !configured_at(&root) {
         return Ok(None);
     }
     let hook = Config::load(&root)?.site_run()?.is_some();

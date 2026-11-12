@@ -152,7 +152,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
             "warn     {caller} calls soothfast; its jobs run twice until it or {WORKFLOW_PATH} is removed"
         );
     }
-    let duplicate_only = ws.projects.is_empty() && ws.ci.is_default();
+    let duplicate_only = ws.inline();
     let skip_workflow = skips_workflow(root, &callers, duplicate_only, force);
     if skip_workflow {
         println!(
