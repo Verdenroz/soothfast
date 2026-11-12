@@ -347,7 +347,7 @@ cmd = "npm test"
             crate::config::docs::parse(SHARED_TOML).unwrap().coverage,
             Some(80)
         );
-        assert_eq!(crate::config::ci::parse(SHARED_TOML).unwrap(), ["sdk"]);
+        assert_eq!(crate::config::ci::parse(SHARED_TOML).unwrap().skip, ["sdk"]);
         assert_eq!(
             crate::spec_config::parse(SHARED_TOML).unwrap().protos.len(),
             1

@@ -76,6 +76,7 @@ pub(super) fn target(
         action: action_ref(&existing, tools.action.as_deref(), offline),
         bot,
         labels: false,
+        pages: crate::config::Config::load(root)?.pages()?,
         java: tools
             .java
             .or_else(|| pinned(&existing, "java"))

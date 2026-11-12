@@ -31,6 +31,9 @@ pub(super) struct Workspace {
     pub(super) bot: bool,
     /// Whether `[bot] labels = true` is scaffolded.
     pub(super) labels: bool,
+    /// Whether `[ci] pages = true` deploys the site, which the caller has to
+    /// be allowed to do.
+    pub(super) pages: bool,
     pub(super) java: String,
     pub(super) node: String,
 }
@@ -94,7 +97,8 @@ fn caller_job(ws: &Workspace) -> String {
         .iter()
         .filter_map(|(key, value)| Some(format!("      {key}: {}\n", value.as_ref()?)))
         .collect();
-    let mut text = CALLER_JOB.replace(
+    let pages = if ws.pages { "      pages: write\n" } else { "" };
+    let mut text = CALLER_JOB.replace("@@pages@@", pages).replace(
         "@@action@@",
         &ws.action.replacen('@', "/.github/workflows/run.yml@", 1),
     );
@@ -217,6 +221,18 @@ mod tests {
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             assert!(!line.starts_with('\t'), "tab indent: {line}");
         }
+    }
+
+    #[test]
+    fn the_caller_may_deploy_pages_only_when_the_file_asks() {
+        let grant = "      id-token: write\n      pages: write\n    uses: ";
+        let on = Workspace {
+            pages: true,
+            ..mixed_ws(false, vec![project(Ecosystem::Node, ".")])
+        };
+        assert!(workflow(&on).contains(grant));
+        let off = mixed_ws(false, vec![project(Ecosystem::Node, ".")]);
+        assert!(workflow(&off).contains("      id-token: write\n    uses: "));
     }
 
     #[test]

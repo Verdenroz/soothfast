@@ -73,6 +73,7 @@ jobs:
       checks: ${{ steps.plan.outputs.checks }}
       checks_any: ${{ steps.plan.outputs.checks_any }}
       checks_expect: ${{ steps.plan.outputs.checks_expect }}
+      site_deploy: ${{ steps.plan.outputs.site_deploy }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -708,6 +709,20 @@ jobs:
         run: |
           cargo soothfast ci docs --baselines "$RUNNER_TEMP/baselines" \
             --expect-shards "$SHARDS" --plan "$RUNNER_TEMP/plan/plan.json"
+      # Built here, after the baselines are merged, so the deployed pages
+      # carry this push's measured numbers.
+      - name: Build the site to deploy
+        if: >-
+          needs.plan.outputs.site_deploy == 'true' && github.event_name == 'push'
+          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: cargo soothfast ci --results "$RUNNER_TEMP/soothfast-site-results" site --out "$RUNNER_TEMP/soothfast-site"
+      - name: Upload the site
+        if: >-
+          needs.plan.outputs.site_deploy == 'true' && github.event_name == 'push'
+          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/soothfast-site
       - name: Upload the docs result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -715,6 +730,29 @@ jobs:
           name: soothfast-result-docs
           path: ${{ runner.temp }}/soothfast-results
           if-no-files-found: ignore
+
+  # Publishes the site the docs job built. It checks nothing out and runs no
+  # repository code, and it holds no token that can write to the repository.
+  deploy-site:
+    name: Deploy site
+    needs: [plan, docs]
+    if: >-
+      needs.plan.outputs.site_deploy == 'true' && needs.docs.result == 'success'
+      && github.event_name == 'push'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
   # One job per spec, proto, coverage, capture and site check the plan found
   # in soothfast.toml. Each is `cargo soothfast ci KIND`, so its flags and

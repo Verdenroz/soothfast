@@ -721,6 +721,22 @@ job is named for its record, `spec-PKG` or `site`, runs
 when its command reads rustdoc JSON (`spec`, `coverage` and `site`). The
 verdict expects a result from each. A kind named in `[ci] skip` gets no job.
 
+### Deploying the site
+
+`[ci] pages = true` in the root `soothfast.toml` publishes the site to GitHub
+Pages on every push to the default branch. The docs job builds it after it
+has merged the gate's baselines, so the pages carry that push's measured
+numbers, and uploads it as the Pages artifact. A `Deploy site` job then
+publishes the artifact. That job checks nothing out, runs no repository code
+and holds only `pages: write` and `id-token: write`, so no token that can
+write to the repository is involved.
+
+It needs three things: a `[site]` table, a docs package (the docs job is what
+builds the site), and the repository's Pages source set to "GitHub Actions".
+`cargo soothfast init` adds `pages: write` to the caller's permissions when
+the setting is on, and `init --check` reports the caller as drifted until it
+has been rerun. A failing docs check deploys nothing.
+
 ## One verdict
 
 The reusable `run.yml` workflow gives a pull request one soothfast comment and

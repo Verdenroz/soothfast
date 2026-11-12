@@ -5,10 +5,18 @@
 
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
-/// Parse `skip` from the `[ci]` table of a `soothfast.toml`: the CI job
-/// kinds not to run. The names are free-form.
-pub fn parse(text: &str) -> Result<Vec<String>, String> {
-    let mut skip = Vec::new();
+/// The `[ci]` table of a `soothfast.toml`.
+#[derive(Debug, Default, PartialEq)]
+pub struct CiTable {
+    /// The CI job kinds not to run. The names are free-form.
+    pub skip: Vec<String>,
+    /// Whether a default-branch push deploys the built site to GitHub Pages.
+    pub pages: bool,
+}
+
+/// Parse the `[ci]` table of a `soothfast.toml`.
+pub fn parse(text: &str) -> Result<CiTable, String> {
+    let mut table = CiTable::default();
     let mut in_ci = false;
 
     for (lineno, line) in logical_lines(text) {
@@ -26,7 +34,8 @@ pub fn parse(text: &str) -> Result<Vec<String>, String> {
         };
         let value = parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
         match (key.trim(), value) {
-            ("skip", TomlValue::StrArray(kinds)) => skip = kinds,
+            ("skip", TomlValue::StrArray(kinds)) => table.skip = kinds,
+            ("pages", TomlValue::Bool(pages)) => table.pages = pages,
             (k, _) => {
                 return Err(format!(
                     "line {lineno}: unknown or mistyped `{k}` under [ci]"
@@ -34,7 +43,7 @@ pub fn parse(text: &str) -> Result<Vec<String>, String> {
             }
         }
     }
-    Ok(skip)
+    Ok(table)
 }
 
 #[cfg(test)]
@@ -44,8 +53,18 @@ mod tests {
     #[test]
     fn skip_lists_job_kinds_and_other_tables_are_ignored() {
         let text = "[docs]\npaths = [\"x\"]\n\n[ci]\nskip = [\"sdk\", \"anything\"]\n";
-        assert_eq!(parse(text).unwrap(), ["sdk", "anything"]);
-        assert!(parse("[gate]\nfeatures = \"a\"\n").unwrap().is_empty());
+        assert_eq!(parse(text).unwrap().skip, ["sdk", "anything"]);
+        assert_eq!(
+            parse("[gate]\nfeatures = \"a\"\n").unwrap(),
+            CiTable::default()
+        );
+    }
+
+    #[test]
+    fn pages_turns_the_site_deploy_on() {
+        assert!(parse("[ci]\npages = true\n").unwrap().pages);
+        assert!(!parse("[ci]\nskip = [\"sdk\"]\n").unwrap().pages);
+        assert!(parse("[ci]\npages = \"yes\"\n").is_err());
     }
 
     #[test]
