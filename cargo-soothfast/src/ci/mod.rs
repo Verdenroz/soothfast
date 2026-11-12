@@ -6,12 +6,18 @@
 //! `mod` line and its entry in [`KINDS`].
 
 mod build;
+mod capture;
+mod coverage;
 mod docs;
+mod each;
 mod env;
 mod gate;
 mod import;
+mod proto;
 mod record;
 mod regen;
+mod site;
+mod spec;
 mod test;
 mod verdict;
 
@@ -50,6 +56,31 @@ const KINDS: &[Kind] = &[
     Kind {
         name: "docs",
         run: Some(docs::run),
+        applies: in_a_run,
+    },
+    Kind {
+        name: "spec",
+        run: Some(spec::run),
+        applies: in_a_run,
+    },
+    Kind {
+        name: "proto",
+        run: Some(proto::run),
+        applies: in_a_run,
+    },
+    Kind {
+        name: "coverage",
+        run: Some(coverage::run),
+        applies: in_a_run,
+    },
+    Kind {
+        name: "capture",
+        run: Some(capture::run),
+        applies: in_a_run,
+    },
+    Kind {
+        name: "site",
+        run: Some(site::run),
         applies: in_a_run,
     },
     Kind {
@@ -207,6 +238,11 @@ mod tests {
                 "gate",
                 "gate-import",
                 "docs",
+                "spec",
+                "proto",
+                "coverage",
+                "capture",
+                "site",
                 "verdict",
                 "regen"
             ]

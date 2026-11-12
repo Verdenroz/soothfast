@@ -196,6 +196,18 @@ pub fn configured(root: &Path) -> Result<(Vec<String>, Vec<String>), String> {
     Ok((all, generating))
 }
 
+/// The workspace members with a `[[proto]]` entry.
+pub fn proto_packages(root: &Path) -> Result<Vec<String>, String> {
+    let members = crate::workspace::member_dirs(Some(root)).map_err(|e| e.to_string())?;
+    let mut packages = Vec::new();
+    for (package, dir) in members {
+        if !load(&dir)?.protos.is_empty() {
+            packages.push(package);
+        }
+    }
+    Ok(packages)
+}
+
 /// Read `soothfast.toml` from a directory. An absent file is not an error —
 /// it just means nothing is configured for generation.
 pub fn load(dir: &Path) -> Result<SpecConfig, String> {

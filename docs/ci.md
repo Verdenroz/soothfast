@@ -821,6 +821,34 @@ error anything else; the head's items are saved for the docs check unless
 the gate errored, and a pass that cannot save them errors. `--accepted
 LABEL` waives a regression, which then exits 0, and never an error. The
 worktree is removed whether or not the bench fails.
+`ci spec` is the spec checks of every package with a `[[spec]]` entry, or
+the `-p` ones given, with the `spec` defaults each package resolves in
+`soothfast.toml`. A package that generates a spec runs `spec gen --check`,
+which fails on a stale committed spec. On a pull request, and on any run given
+`--base`, `spec gate` compares with the base; a push alone has none. A package
+with a spec that is not generated runs `spec check`, and one with an `[[sdk]]`
+entry runs `sdk gen --check`. Every step runs even after one fails, and each
+package records a `check` verdict named `spec-PKG` with the worst exit code.
+With nothing configured it says so and records nothing.
+`ci proto` runs `spec check-proto` for every package with a `[[proto]]`
+entry, or the `-p` ones given, which reconciles each message's fields against
+its Rust struct. Each package records a `check` verdict named `proto-PKG`.
+With nothing configured it says so and records nothing.
+`ci coverage` runs `coverage docs` for every docs package that sets a
+`coverage` minimum, in its `[package.NAME.docs]` table or in `[docs]`, or the
+`-p` ones given, and fails when a package documents less than its minimum.
+Each package records a `check` verdict named `coverage-PKG`. With nothing
+configured it says so and records nothing.
+`ci capture` runs `docs capture --check` for every docs package, or the `-p`
+ones given, which fails when the output recorded beside a capture block no
+longer matches what the block prints. A package with no capture block passes.
+Each package records a `check` verdict named `capture-PKG`. With no docs
+package it says so and records nothing.
+`ci site` builds the docs site with `docs build --out DIR`, where DIR is
+`target/soothfast-site` unless `--out` says otherwise. It builds against the
+`head` baseline when `.soothfast/baselines/head.json` exists. It runs only when
+the root `soothfast.toml` has a `[site]` table; without one it says so and
+records nothing. The record is a `check` verdict named `site`.
 `ci build LANE` is the build-once job: it prebuilds into the stores what later
 jobs read, with `cargo soothfast prebuild --only LANE` for the `bench`,
 `routes` or `rustdoc` lane. With no package named, `bench` builds the gated
