@@ -8,10 +8,21 @@ use std::path::Path;
 use crate::config::{Config, Group};
 use crate::{init, invoke};
 
-fn command(pkg: &str) -> Vec<String> {
-    ["docs", "capture", "-p", pkg, "--check"]
+fn command(pkg: &str, paths: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = ["docs", "capture", "-p", pkg, "--check"]
         .map(String::from)
-        .to_vec()
+        .to_vec();
+    args.extend(paths.iter().cloned());
+    args
+}
+
+/// `[ci] capture_paths`, which narrows the docs a lone docs package is
+/// checked against. Several packages each have paths of their own.
+fn lone_paths(root: &Path) -> Result<Vec<String>, String> {
+    match init::rust_plan(root)?.docs_packages.len() {
+        1 => Config::load(root)?.capture_paths(),
+        _ => Ok(Vec::new()),
+    }
 }
 
 /// The docs packages whose docs can be told apart. A lone package owns every
@@ -50,7 +61,16 @@ fn configured() -> Result<Vec<String>, String> {
 /// Entry point for `ci capture`.
 pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     let none = "ci capture: no docs package with docs of its own";
-    each::run_packages(env, "capture", args, none, configured, command)
+    let paths = match lone_paths(&invoke::project_root()) {
+        Ok(paths) => paths,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    each::run_packages(env, "capture", args, none, configured, |pkg| {
+        command(pkg, &paths)
+    })
 }
 
 #[cfg(test)]
@@ -60,8 +80,12 @@ mod tests {
     #[test]
     fn a_package_runs_capture_in_check_mode() {
         assert_eq!(
-            command("core"),
+            command("core", &[]),
             ["docs", "capture", "-p", "core", "--check"]
+        );
+        assert_eq!(
+            command("core", &["README.md".to_string()]).last().unwrap(),
+            "README.md"
         );
     }
 

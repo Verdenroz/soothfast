@@ -76,7 +76,7 @@ pub fn run_packages(
     args: &[String],
     none: &str,
     found: impl FnOnce() -> Result<Vec<String>, String>,
-    command: fn(&str) -> Vec<String>,
+    command: impl Fn(&str) -> Vec<String>,
 ) -> i32 {
     let packages = match named_or(kind, args, found) {
         Ok(packages) => packages,

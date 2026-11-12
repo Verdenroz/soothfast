@@ -247,18 +247,20 @@ fn situation(env: &CiEnv, opts: &Options) -> Result<Situation, String> {
     })
 }
 
-/// The `*.json` files one directory down from `dir`, which is where each
-/// downloaded artifact lands.
+/// The `*.json` files in `dir` and one directory down. Several downloaded
+/// artifacts each land in a directory of their own, and a lone one lands in
+/// `dir` itself.
 fn baseline_files(dir: &Path) -> Vec<PathBuf> {
-    let subdirs = fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_dir());
+    let entries = |d: &Path| -> Vec<PathBuf> {
+        let listed = fs::read_dir(d).into_iter().flatten().flatten();
+        listed.map(|e| e.path()).collect()
+    };
+    let (subdirs, top): (Vec<PathBuf>, Vec<PathBuf>) =
+        entries(dir).into_iter().partition(|p| p.is_dir());
     let mut files: Vec<PathBuf> = subdirs
-        .flat_map(|d| fs::read_dir(d).into_iter().flatten().flatten())
-        .map(|e| e.path())
+        .iter()
+        .flat_map(|d| entries(d))
+        .chain(top)
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     files.sort();
@@ -524,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn baselines_are_the_json_files_one_directory_down() {
+    fn baselines_are_the_json_files_in_the_directory_and_one_down() {
         let dir = std::env::temp_dir().join(format!("soothfast-ci-docs-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         for leg in ["b", "a"] {
@@ -535,7 +537,11 @@ mod tests {
         fs::write(dir.join("top.json"), "{}").unwrap();
         assert_eq!(
             baseline_files(&dir),
-            [dir.join("a").join("x.json"), dir.join("b").join("x.json")]
+            [
+                dir.join("a").join("x.json"),
+                dir.join("b").join("x.json"),
+                dir.join("top.json")
+            ]
         );
         assert!(baseline_files(&dir.join("missing")).is_empty());
         fs::remove_dir_all(dir).unwrap();
