@@ -728,14 +728,18 @@ job is named for its record, <code>spec-PKG</code> or <code>site</code>, runs
 <code>cargo soothfast ci KIND -p PKG</code>, and installs the pinned rustdoc toolchain
 when its command reads rustdoc JSON (<code>spec</code>, <code>coverage</code> and <code>site</code>). The
 verdict expects a result from each. A kind named in <code>[ci] skip</code> gets no job.</p>
+<p>When the repository has a docs package, the site is built in the docs job
+and has no job of its own. That job has the gate's merged baseline, so the
+pages and a <code>site_run</code> hook can read the run's measured numbers. The site is
+built even when the docs check failed, so its result still reaches the
+verdict.</p>
 <p>Only <code>run.yml</code> runs these jobs. <code>cargo soothfast init</code> writes a workflow that
 calls it whenever the file configures one of them or <code>[ci] pages</code>. A cargo
 workspace with none keeps its test, gate and docs jobs in the workflow itself.</p>
 <h3 id="deploying-the-site">Deploying the site<a class="anchor" href="#deploying-the-site" aria-label="Link to this section">#</a></h3>
 <p><code>[ci] pages = true</code> in the root <code>soothfast.toml</code> publishes the site to GitHub
-Pages on every push to the default branch. The docs job builds it after it
-has merged the gate's baselines, so the pages carry that push's measured
-numbers, and uploads it as the Pages artifact. A second job in the caller,
+Pages on every push to the default branch. The docs job, which builds the
+site, uploads it as the Pages artifact. A second job in the caller,
 which calls the reusable <code>pages.yml</code>, then publishes the artifact. That job
 checks nothing out, runs no repository code and holds only <code>pages: write</code> and
 <code>id-token: write</code>, so no token that can write to the repository is involved.
@@ -867,8 +871,10 @@ ones given, which fails when the output recorded beside a capture block no
 longer matches what the block prints. A package with no capture block passes.
 A lone docs package is checked against every doc. Among several, the blocks of
 all the docs would compile into each package's crate, so only a package whose
-<code>[package.NAME.docs]</code> table names its own <code>paths</code> is checked. Each package
-records a <code>check</code> verdict named <code>capture-PKG</code>. With no such package it says so
+<code>[package.NAME.docs]</code> table names its own <code>paths</code> is checked. For a lone docs
+package, <code>capture_paths</code> under <code>[ci]</code> lists the docs to check in place of all
+of them, which leaves out a page whose output changes from run to run. Each
+package records a <code>check</code> verdict named <code>capture-PKG</code>. With no such package it says so
 and records nothing.
 <code>ci site</code> builds the docs site with <code>docs build --out DIR</code>, where DIR is
 <code>target/soothfast-site</code> unless <code>--out</code> says otherwise. It builds against the
