@@ -22,6 +22,10 @@
 - Add cargo soothfast status (#377)
 - Per-package defaults in soothfast.toml (#379)
 
+### 🐛 Fixes
+
+- Three gaps the first single-gate run found (#403)
+
 ### 🔧 Internal
 
 - Split init/mod.rs into modules (#395)
