@@ -15,11 +15,9 @@ mod rustdoc;
 mod worktree;
 
 pub use args::{CommonArgs, Shard};
-#[cfg(test)]
-pub use baseline::baseline_path;
 pub use baseline::{
-    SaveScope, id_pkg, load_baseline, load_baseline_in, save_baseline, save_baseline_in,
-    write_baseline_in,
+    SaveScope, baseline_path, id_pkg, load_baseline, load_baseline_in, save_baseline,
+    save_baseline_in, write_baseline_in,
 };
 pub(crate) use bench::{Build, bench_artifact, bench_build_command, bench_toolchain};
 pub use bench::{
