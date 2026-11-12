@@ -3,11 +3,18 @@
 //! exit non-zero on regression. On failure, emits a callgrind triage
 //! artifact when valgrind is available.
 
+mod thresholds;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use self::thresholds::{
+    ASYNC_THRESHOLD_PCT, BUILD_MS_SOFT_PCT, HEADROOM_COUNTER_FLOOR_PCT, IR_THRESHOLD_PCT,
+    SIZE_THRESHOLD_PCT, WALLTIME_NOISE_MARGIN, WALLTIME_THRESHOLD_PCT, counter_limit,
+    imported_noise_pct, walltime_limit,
+};
 use crate::buildstamp;
 use crate::config::{self, Config, Group};
 use crate::gate_lock;
@@ -21,68 +28,8 @@ use crate::invoke::{self, CommonArgs, ItemMetrics, Run};
 use crate::itemreuse::{Bin, Reuse};
 use crate::workspace;
 
-/// Deterministic counters gate tight.
-pub const INSTRUCTIONS_THRESHOLD_PCT: f64 = 5.0;
-const IR_THRESHOLD_PCT: f64 = 5.0;
-/// Walltime medians gate at +10%, or higher on noisy runners (see
-/// `walltime_limit`).
-const WALLTIME_THRESHOLD_PCT: f64 = 10.0;
-/// Multiple of the A/A noise floor the walltime threshold must stay above.
-/// 3x keeps the threshold at ≥3 sigma, where a suite of a few hundred items
-/// expects well under one false positive per run.
-const WALLTIME_NOISE_MARGIN: f64 = 3.0;
-/// Allocation counts/bytes and binary size are deterministic; gate at +5%.
-pub const ALLOC_THRESHOLD_PCT: u64 = 5;
-const SIZE_THRESHOLD_PCT: u64 = 5;
-/// Poll/wake counts on the counting executor are exact; gate them like
-/// allocations. This is the regression class instruction counts miss — a
-/// future that polls twice as often can have an identical `Ir`.
-const ASYNC_THRESHOLD_PCT: u64 = 5;
-/// Compile time is noisy: soft (warn-only) at +25%.
-const BUILD_MS_SOFT_PCT: f64 = 25.0;
-/// A deterministic counter within this of the reference reads as "flat" —
-/// wide enough for perfcnt's tiny run-to-run wobble, far below any real change.
-pub(crate) const COUNTER_FLAT_PCT: f64 = 0.5;
-/// Absolute floor alongside `COUNTER_FLAT_PCT`: below ~30K instructions the
-/// 0.5% cutoff is tighter than perfcnt's own run-to-run wobble.
-pub(crate) const COUNTER_FLAT_ABS: u64 = 150;
-/// `gate accept --headroom` floor for deterministic counters: a delta must
-/// clear this before it counts as "close to failing," so a bench parked
-/// near the line by measurement noise alone never qualifies.
-const HEADROOM_COUNTER_FLOOR_PCT: f64 = 3.0 * COUNTER_FLAT_PCT;
-
-/// Effective walltime threshold: the fixed +10%, raised to 3x the measured
-/// A/A noise floor when that is higher. A fixed threshold is ~2 sigma on a
-/// noisy runner — several false positives per run across a few hundred
-/// items — while dropping walltime entirely would leave such runners
-/// unmonitored. Scaling keeps every run gated at ≥3 sigma.
-fn walltime_limit(noise_pct: f64) -> f64 {
-    WALLTIME_THRESHOLD_PCT.max(noise_pct * WALLTIME_NOISE_MARGIN)
-}
-
-/// Relative walltime dispersion of an imported item, the larger of its two
-/// sides, in percent. A harness result carries no A/A run, so its own spread
-/// stands in for the noise floor. Zero for a natively measured item.
-fn imported_noise_pct(old: &Value, cur: &ItemMetrics) -> f64 {
-    if cur.imported.is_none() {
-        return 0.0;
-    }
-    let spread = |mad: Option<f64>, median: Option<f64>| match (mad, median) {
-        (Some(mad), Some(median)) if median > 0.0 => mad / median * 100.0,
-        _ => 0.0,
-    };
-    spread(cur.mad_ns, cur.median_ns).max(spread(
-        old["walltime"]["mad_ns"].as_f64(),
-        old["walltime"]["median_ns"].as_f64(),
-    ))
-}
-
-/// A bench whose loop body is only a few instructions wide cannot survive a
-/// tight relative threshold across a refactor: one spilled register is
-/// already several percent. `tolerance` widens its own gate.
-fn counter_limit(default_pct: f64, cur: &ItemMetrics) -> f64 {
-    default_pct.max(cur.tolerance_pct.unwrap_or(0.0))
-}
+pub use thresholds::{ALLOC_THRESHOLD_PCT, INSTRUCTIONS_THRESHOLD_PCT};
+pub(crate) use thresholds::{COUNTER_FLAT_ABS, COUNTER_FLAT_PCT};
 
 struct GateArgs {
     common: CommonArgs,
@@ -2266,16 +2213,22 @@ fn partial(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Value, json};
+
     use super::{
-        CompareCtx, FailedMetric, GateArgs, combine_min, combine_rounds, compare, identical_pass,
-        identical_pass_args, identical_pass_cache, reuse_hint, round_duration, walltime_limit,
+        CompareCtx, FailedMetric, GateArgs, ImportArgs, NewTarget, Resolved, accept_args,
+        assertion_failures, base_method_differs, combine_min, combine_rounds, compare, errored_at,
+        harness_of, harness_verdict, harness_waiver, identical_head, identical_pass,
+        identical_pass_args, identical_pass_cache, mark_harness, newly_measured, nothing_measured,
+        ratchet_in, reuse_hint, round_duration, run_imported, triage_harness_note,
     };
     use crate::buildstamp;
+
     use crate::gate_lock;
     use crate::gate_save::save_head;
+
     use crate::invoke::{self, CommonArgs, HarnessSync, ItemMetrics, Run};
     use crate::test::fixture::TempDir;
-    use serde_json::{Value, json};
 
     fn ctx() -> CompareCtx {
         CompareCtx {
@@ -2747,9 +2700,9 @@ mod tests {
     #[test]
     fn a_shard_that_owns_nothing_is_accepted_as_it_is_gated() {
         let argv: Vec<String> = ["--shard", "3/4"].iter().map(|s| s.to_string()).collect();
-        let a = super::accept_args(&argv).unwrap();
-        assert!(super::nothing_measured(&Run::default(), &a.common, "accept").is_none());
-        let refusal = super::nothing_measured(&Run::default(), &CommonArgs::default(), "accept");
+        let a = accept_args(&argv).unwrap();
+        assert!(nothing_measured(&Run::default(), &a.common, "accept").is_none());
+        let refusal = nothing_measured(&Run::default(), &CommonArgs::default(), "accept");
         assert!(refusal.unwrap().ends_with("refusing to accept"));
     }
 
@@ -3060,9 +3013,9 @@ mod tests {
         head
     }
 
-    fn gated(resolved: &super::Resolved) -> u32 {
+    fn gated(resolved: &Resolved) -> u32 {
         let (regressions, _) = gate_failures(&resolved.reference, &resolved.current);
-        regressions + super::assertion_failures(&resolved.current, &mut Vec::new())
+        regressions + assertion_failures(&resolved.current, &mut Vec::new())
     }
 
     fn scratch(name: &str) -> TempDir {
@@ -3071,17 +3024,16 @@ mod tests {
 
     /// A new crate gated and saved into `root` through the gate's save path.
     fn save_new_crate(root: &TempDir, holds: bool) -> u32 {
-        let resolved =
-            super::newly_measured(super::NewTarget::Registers, || Ok(new_crate_run(holds)))
-                .unwrap()
-                .expect("a crate whose new target registers items is gated");
+        let resolved = newly_measured(NewTarget::Registers, || Ok(new_crate_run(holds)))
+            .unwrap()
+            .expect("a crate whose new target registers items is gated");
         let failures = gated(&resolved);
         let common = CommonArgs {
             pkg: Some("pkg".into()),
             ..CommonArgs::default()
         };
         let current = &resolved.current;
-        let claims = super::assertion_failures(current, &mut Vec::new());
+        let claims = assertion_failures(current, &mut Vec::new());
         save_head(root, "head", current, &resolved.head, &common, None, claims).unwrap();
         failures
     }
@@ -3100,8 +3052,7 @@ mod tests {
 
     #[test]
     fn a_package_with_no_bench_target_at_head_either_is_not_gated() {
-        let measured =
-            super::newly_measured(super::NewTarget::Absent, || panic!("nothing to measure"));
+        let measured = newly_measured(NewTarget::Absent, || panic!("nothing to measure"));
         assert!(measured.unwrap().is_none());
     }
 
@@ -3117,12 +3068,12 @@ mod tests {
         let stored = json!({ "items": { "pkg::bt_base_to_htf_index": { "callgrind": { "ir": 7 } } }, "head_format": crate::headrun::HEAD_FORMAT });
         let ids = std::collections::BTreeSet::from(["pkg::bt_base_to_htf_index".to_string()]);
         let stored = Box::new((stored, "binary abc".to_string(), ids));
-        let (run, source) = super::identical_head(pass(), false, Some(stored));
+        let (run, source) = identical_head(pass(), false, Some(stored));
         assert_eq!(source, HeadRun::Measured);
         assert_eq!(run.items["pkg::bt_base_to_htf_index"].ir, Some(7));
         assert_eq!(run.items["pkg::bt_base_to_htf_index"].median_ns, Some(5.0));
         assert_eq!(run.reused.unwrap().from, "binary abc");
-        let (_, source) = super::identical_head(pass(), false, None);
+        let (_, source) = identical_head(pass(), false, None);
         assert_eq!(source, HeadRun::Uncounted);
     }
 
@@ -3139,7 +3090,7 @@ mod tests {
             pkg: Some("pkg".into()),
             ..CommonArgs::default()
         };
-        super::errored_at(&root, "head", &common, None, "cargo bench failed");
+        errored_at(&root, "head", &common, None, "cargo bench failed");
         let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
         assert_eq!(saved["items"], json!({}));
         let expr = "pkg::old.alloc.allocs <= 1";
@@ -3173,13 +3124,13 @@ mod tests {
             "owners": { "pkg": ["pkg::old"] },
         });
         invoke::write_baseline_in(&root, "head", &stale).unwrap();
-        let e = super::ratchet_in(&root, "release").unwrap_err();
+        let e = ratchet_in(&root, "release").unwrap_err();
         let common = CommonArgs {
             pkg: Some("pkg".into()),
             ..CommonArgs::default()
         };
         let listed = ["pkg::new".to_string()];
-        super::errored_at(&root, "head", &common, Some(&listed), &e);
+        errored_at(&root, "head", &common, Some(&listed), &e);
         let saved = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
         assert_eq!(saved["items"], json!({}));
         assert_eq!(saved["unmeasured"][0]["reason"], "gate-failed");
@@ -3205,33 +3156,18 @@ mod tests {
 
     #[test]
     fn a_new_bench_target_with_no_items_yet_is_not_gated() {
-        let measured =
-            super::newly_measured(super::NewTarget::Empty, || panic!("nothing to measure"));
+        let measured = newly_measured(NewTarget::Empty, || panic!("nothing to measure"));
         assert!(measured.unwrap().is_none());
     }
 
     #[test]
     fn a_new_target_that_registers_items_but_measured_none_reaches_the_zero_items_refusal() {
-        let measured = super::newly_measured(super::NewTarget::Registers, || Ok(Run::default()));
+        let measured = newly_measured(NewTarget::Registers, || Ok(Run::default()));
         let resolved = measured
             .unwrap()
             .expect("gated, so the zero-items guard refuses it");
         let common = CommonArgs::default();
-        assert!(super::nothing_measured(&resolved.current, &common, "gate").is_some());
-    }
-
-    #[test]
-    fn quiet_runners_keep_the_fixed_threshold() {
-        assert_eq!(walltime_limit(0.0), 10.0);
-        assert_eq!(walltime_limit(0.22), 10.0);
-        assert_eq!(walltime_limit(3.33), 10.0);
-    }
-
-    #[test]
-    fn noisy_runners_scale_instead_of_dropping_walltime() {
-        assert_eq!(walltime_limit(4.75), 14.25);
-        // Clears the A/A control's worst observed false positive (+11.8%).
-        assert!(walltime_limit(4.75) > 11.8);
+        assert!(nothing_measured(&resolved.current, &common, "gate").is_some());
     }
 
     #[test]
@@ -3292,43 +3228,43 @@ mod tests {
 
     #[test]
     fn a_regression_on_a_mismatched_harness_names_the_flag_that_waives_it() {
-        let text = super::harness_verdict(&mismatched(), true);
+        let text = harness_verdict(&mismatched(), true);
         assert!(text.contains("--allow-harness-change"));
         assert!(text.contains("soothfast 0.2.0 -> 0.3.1"));
     }
 
     #[test]
     fn a_clean_run_on_a_mismatched_harness_still_says_so() {
-        let text = super::harness_verdict(&mismatched(), false);
+        let text = harness_verdict(&mismatched(), false);
         assert!(text.contains("different harness"));
         assert!(text.contains("soothfast 0.2.0 -> 0.3.1"));
         assert!(!text.contains("--allow-harness-change"));
-        assert!(super::harness_verdict(&HarnessSync::default(), false).is_empty());
+        assert!(harness_verdict(&HarnessSync::default(), false).is_empty());
     }
 
     #[test]
     fn the_flag_waives_a_regression_and_nothing_else() {
-        assert!(super::harness_waiver(&mismatched(), true, 1));
-        assert!(!super::harness_waiver(&mismatched(), false, 1));
+        assert!(harness_waiver(&mismatched(), true, 1));
+        assert!(!harness_waiver(&mismatched(), false, 1));
         // A pinned reference means a regression is the code's, flag or not.
-        assert!(!super::harness_waiver(&HarnessSync::default(), true, 1));
+        assert!(!harness_waiver(&HarnessSync::default(), true, 1));
         // Nothing regressed, so there is nothing to waive.
-        assert!(!super::harness_waiver(&mismatched(), true, 0));
+        assert!(!harness_waiver(&mismatched(), true, 0));
     }
 
     #[test]
     fn a_reference_served_from_the_cache_keeps_its_mismatch() {
         let mut doc = json!({ "version": 1, "items": {} });
-        super::mark_harness(&mut doc, &mismatched());
-        assert_eq!(super::harness_of(&doc), mismatched());
+        mark_harness(&mut doc, &mismatched());
+        assert_eq!(harness_of(&doc), mismatched());
         let clean = json!({ "version": 1, "items": {} });
-        assert_eq!(super::harness_of(&clean), HarnessSync::default());
+        assert_eq!(harness_of(&clean), HarnessSync::default());
     }
 
     #[test]
     fn a_stored_reference_is_only_marked_when_the_pin_missed() {
         let mut doc = json!({ "version": 1, "items": {} });
-        super::mark_harness(&mut doc, &HarnessSync::default());
+        mark_harness(&mut doc, &HarnessSync::default());
         assert_eq!(doc, json!({ "version": 1, "items": {} }));
     }
 
@@ -3336,10 +3272,10 @@ mod tests {
     fn the_triage_artifact_carries_the_mismatch_and_drops_it_again() {
         let dir = std::env::temp_dir().join("soothfast-test-triage-harness");
         let _ = std::fs::remove_dir_all(&dir);
-        super::triage_harness_note(&dir, &mismatched());
+        triage_harness_note(&dir, &mismatched());
         let note = std::fs::read_to_string(dir.join("harness-mismatch.txt")).unwrap();
         assert!(note.contains("soothfast 0.2.0 -> 0.3.1"));
-        super::triage_harness_note(&dir, &HarnessSync::default());
+        triage_harness_note(&dir, &HarnessSync::default());
         assert!(!dir.join("harness-mismatch.txt").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3387,7 +3323,7 @@ mod tests {
             save_baseline: None,
             reuse_base: true,
             measure_new: true,
-            import: super::ImportArgs {
+            import: ImportArgs {
                 current: Some(file("cur.json", pyperf(current))),
                 reference: Some(reference.clone()),
                 prefix: None,
@@ -3411,7 +3347,7 @@ mod tests {
             invoke::save_baseline_in(&root, "base", &other_run, scope).unwrap();
             g.import.reference = None;
         }
-        let code = super::run_imported(&g, &root);
+        let code = run_imported(&g, &root);
         let _ = std::fs::remove_dir_all(&root);
         code
     }
@@ -3517,7 +3453,7 @@ mod tests {
     #[test]
     fn a_merge_base_that_counts_another_way_or_cannot_say_is_a_mismatch() {
         let head = callgrind_env(Some("one-process"));
-        let differs = |have, base| super::base_method_differs(&head, have, base);
+        let differs = |have, base| base_method_differs(&head, have, base);
         let two = Ok(callgrind_env(None));
         let one = Ok(callgrind_env(Some("one-process")));
         assert_eq!(differs(true, Some(&two)).as_deref(), Some("two-process"));
@@ -3535,9 +3471,6 @@ mod tests {
         let head = callgrind_env(Some("one-process"));
         let mut walltime = callgrind_env(None);
         walltime.gating_backend = "walltime".into();
-        assert_eq!(
-            super::base_method_differs(&head, true, Some(&Ok(walltime))),
-            None
-        );
+        assert_eq!(base_method_differs(&head, true, Some(&Ok(walltime))), None);
     }
 }
