@@ -11,7 +11,7 @@ fn command(pkg: &str) -> Vec<String> {
         .to_vec()
 }
 
-fn configured() -> Result<Vec<String>, String> {
+pub(super) fn configured() -> Result<Vec<String>, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     spec_config::proto_packages(&root)
 }

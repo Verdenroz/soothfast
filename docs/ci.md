@@ -709,11 +709,23 @@ packages with `[[spec]]` entries, and `prebuild-docs: PKG` alone runs
 `rustdoc`. A later job downloads the staged directory into `.soothfast/` before
 `spec check`. A `spec` job inside `run.yml` is a follow-up.
 
+## Checks from the file
+
+`cargo soothfast plan` also reads what else `soothfast.toml` configures and
+gives `run.yml` one job for each: `ci spec` for every package with a
+`[[spec]]` entry, `ci proto` for every package with a `[[proto]]` entry,
+`ci coverage` for every docs package with a `coverage` minimum, `ci capture`
+for every docs package with docs of its own, and `ci site` when the file has a `[site]` table. A
+job is named for its record, `spec-PKG` or `site`, runs
+`cargo soothfast ci KIND -p PKG`, and installs the pinned rustdoc toolchain
+when its command reads rustdoc JSON (`spec`, `coverage` and `site`). The
+verdict expects a result from each. A kind named in `[ci] skip` gets no job.
+
 ## One verdict
 
 The reusable `run.yml` workflow gives a pull request one soothfast comment and
 one check, however many projects or shards it gates. Every gate job, the test
-job and the docs check records a result (project, kind, verdict, the last forty
+job, the docs check and each check job records a result (project, kind, verdict, the last forty
 lines of output, reuse counts, seconds) and uploads it as
 `soothfast-result-<name>`. The `verdict` job downloads them all, runs
 `cargo soothfast ci verdict`, and posts one comment marked
@@ -839,11 +851,14 @@ With nothing configured it says so and records nothing.
 `-p` ones given, and fails when a package documents less than its minimum.
 Each package records a `check` verdict named `coverage-PKG`. With nothing
 configured it says so and records nothing.
-`ci capture` runs `docs capture --check` for every docs package, or the `-p`
+`ci capture` runs `docs capture --check` for each docs package, or the `-p`
 ones given, which fails when the output recorded beside a capture block no
 longer matches what the block prints. A package with no capture block passes.
-Each package records a `check` verdict named `capture-PKG`. With no docs
-package it says so and records nothing.
+A lone docs package is checked against every doc. Among several, the blocks of
+all the docs would compile into each package's crate, so only a package whose
+`[package.NAME.docs]` table names its own `paths` is checked. Each package
+records a `check` verdict named `capture-PKG`. With no such package it says so
+and records nothing.
 `ci site` builds the docs site with `docs build --out DIR`, where DIR is
 `target/soothfast-site` unless `--out` says otherwise. It builds against the
 `head` baseline when `.soothfast/baselines/head.json` exists. It runs only when

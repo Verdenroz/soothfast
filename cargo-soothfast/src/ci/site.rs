@@ -37,6 +37,11 @@ fn command(out: &str, head_baseline: bool) -> Vec<String> {
     args
 }
 
+/// Whether the repository configures a site to build.
+pub(super) fn configured() -> Result<bool, String> {
+    Ok(job(DEFAULT_OUT)?.is_some())
+}
+
 fn job(out: &str) -> Result<Option<Job>, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let text = std::fs::read_to_string(root.join("soothfast.toml")).unwrap_or_default();

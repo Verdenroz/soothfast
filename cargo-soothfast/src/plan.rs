@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
+use crate::ci::checks::{self, Check};
+use crate::config::Config;
 use crate::init::ci::Ci;
 use crate::init::ecosystem::{Project, Suite, slug};
 use crate::init::{self, RustPlan};
@@ -121,6 +123,8 @@ struct Plan {
     reused: BTreeSet<String>,
     shards: u64,
     first_shard_only: bool,
+    /// The spec, proto, coverage, capture and site jobs.
+    checks: Vec<Check>,
 }
 
 /// One project's tests, or one suite's, and whether the change reaches them.
@@ -165,6 +169,8 @@ fn build(
         None => None,
     };
     let ci = init::ci(root)?;
+    let skip = Config::load(root)?.ci()?;
+    let checks = checks::planned(rust.is_some(), &skip)?;
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
     }
@@ -181,6 +187,7 @@ fn build(
         reused: BTreeSet::new(),
         shards,
         first_shard_only,
+        checks,
     };
     plan.check_names()?;
     plan.reused = plan.stored_passes(root)?;
@@ -398,7 +405,7 @@ impl Plan {
             .unwrap_or_default();
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nchecks={}\nchecks_any={}\nchecks_expect={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -411,6 +418,13 @@ impl Plan {
             self.test_expect(),
             self.shard_legs(),
             self.ci.runs_on_json(),
+            checks::matrix(&self.checks),
+            !self.checks.is_empty(),
+            self.checks
+                .iter()
+                .map(Check::name)
+                .collect::<Vec<_>>()
+                .join(" "),
         )
     }
 }
@@ -486,6 +500,7 @@ mod tests {
             reused: BTreeSet::new(),
             shards: 1,
             first_shard_only: false,
+            checks: Vec::new(),
         }
     }
 
@@ -561,6 +576,8 @@ mod tests {
         assert_eq!(matrix["include"].as_array().unwrap().len(), 1);
         let pure = plan(None, vec![]).outputs();
         assert!(pure.contains("projects=false\nrust=false\n"), "{pure}");
+        let checks = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=\n";
+        assert!(pure.ends_with(checks), "{pure}");
     }
 
     #[test]
@@ -571,7 +588,7 @@ mod tests {
         let out = p.outputs();
         assert!(out.contains("rust=true\ntest=false\n"), "{out}");
         assert!(
-            out.ends_with("runs_on=[\"self-hosted\",\"linux\"]\n"),
+            out.contains("runs_on=[\"self-hosted\",\"linux\"]\n"),
             "{out}"
         );
     }

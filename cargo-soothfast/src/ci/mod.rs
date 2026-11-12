@@ -7,6 +7,7 @@
 
 mod build;
 mod capture;
+pub mod checks;
 mod coverage;
 mod docs;
 mod each;

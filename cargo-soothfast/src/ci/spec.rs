@@ -103,7 +103,7 @@ fn package(name: &str) -> Result<Package, String> {
     })
 }
 
-fn configured() -> Result<Vec<String>, String> {
+pub(super) fn configured() -> Result<Vec<String>, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     Ok(spec_config::configured(&root)?.0)
 }
