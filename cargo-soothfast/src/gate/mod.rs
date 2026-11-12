@@ -5,10 +5,11 @@
 
 mod args;
 mod harness;
+mod rounds;
 mod thresholds;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use serde_json::Value;
 
@@ -19,6 +20,7 @@ use self::harness::{
     harness_note, harness_of, harness_reasons, harness_verdict, harness_waiver, mark_harness,
     triage_harness_note,
 };
+use self::rounds::{combine_rounds, round_duration};
 use self::thresholds::{
     ASYNC_THRESHOLD_PCT, BUILD_MS_SOFT_PCT, HEADROOM_COUNTER_FLOOR_PCT, IR_THRESHOLD_PCT,
     SIZE_THRESHOLD_PCT, WALLTIME_NOISE_MARGIN, WALLTIME_THRESHOLD_PCT, counter_limit,
@@ -1370,59 +1372,6 @@ fn bench_text_digests(
     })
 }
 
-fn round_duration(d: Duration) -> String {
-    let secs = d.as_secs();
-    if secs < 60 {
-        format!("{secs}s")
-    } else {
-        format!("{}m{:02}s", secs / 60, secs % 60)
-    }
-}
-
-/// Fold a side's timing-only second round into its full first round. A
-/// failed second round costs drift cancellation, not the gate: a merge-base
-/// harness that predates `--skip-gating-counters` rejects the flag.
-fn combine_rounds(first: Run, second: Result<Run, String>) -> Run {
-    match second {
-        Ok(r) => combine_min(first, r),
-        Err(e) => {
-            eprintln!("WARN: second timing round failed ({e}); using one round for this side");
-            first
-        }
-    }
-}
-
-/// Per-metric minima of two rounds of the same side.
-fn combine_min(mut first: Run, second: Run) -> Run {
-    for (id, m2) in second.items {
-        let m = first.items.entry(id).or_default();
-        if let (Some(a), Some(b)) = (m.median_ns, m2.median_ns) {
-            m.wall_rounds = vec![a, b];
-        }
-        m.median_ns = min_opt_f(m.median_ns, m2.median_ns);
-        m.p99_ns = min_opt_f(m.p99_ns, m2.p99_ns);
-        m.instructions = min_opt_u(m.instructions, m2.instructions);
-        m.cycles = min_opt_u(m.cycles, m2.cycles);
-        m.ir = min_opt_u(m.ir, m2.ir);
-        m.allocs = min_opt_u(m.allocs, m2.allocs);
-        m.bytes = min_opt_u(m.bytes, m2.bytes);
-    }
-    first
-}
-
-fn min_opt_f(a: Option<f64>, b: Option<f64>) -> Option<f64> {
-    match (a, b) {
-        (Some(x), Some(y)) => Some(x.min(y)),
-        (x, y) => x.or(y),
-    }
-}
-fn min_opt_u(a: Option<u64>, b: Option<u64>) -> Option<u64> {
-    match (a, b) {
-        (Some(x), Some(y)) => Some(x.min(y)),
-        (x, y) => x.or(y),
-    }
-}
-
 /// Why a walltime overrun is a SOFT warning instead of a hard fail, if it is.
 fn walltime_downgrade(old: &Value, cur: &ItemMetrics, limit: f64) -> Option<&'static str> {
     if counters_flat_on_unchanged_code(old, cur) {
@@ -1981,9 +1930,9 @@ mod tests {
 
     use super::{
         CompareCtx, FailedMetric, NewTarget, Resolved, assertion_failures, base_method_differs,
-        combine_min, combine_rounds, compare, errored_at, identical_head, identical_pass,
-        identical_pass_args, identical_pass_cache, newly_measured, nothing_measured, ratchet_in,
-        reuse_hint, round_duration, run_imported,
+        compare, errored_at, identical_head, identical_pass, identical_pass_args,
+        identical_pass_cache, newly_measured, nothing_measured, ratchet_in, reuse_hint,
+        run_imported,
     };
     use crate::buildstamp;
 
@@ -2067,16 +2016,6 @@ mod tests {
         });
         run.build = build;
         run
-    }
-
-    #[test]
-    fn round_durations_read_as_minutes_and_seconds() {
-        assert_eq!(
-            round_duration(std::time::Duration::from_millis(45_900)),
-            "45s"
-        );
-        assert_eq!(round_duration(std::time::Duration::from_secs(161)), "2m41s");
-        assert_eq!(round_duration(std::time::Duration::from_secs(300)), "5m00s");
     }
 
     #[test]
@@ -2669,22 +2608,6 @@ mod tests {
     }
 
     #[test]
-    fn combine_min_records_both_rounds() {
-        let m = |ns: f64| ItemMetrics {
-            median_ns: Some(ns),
-            ..ItemMetrics::default()
-        };
-        let mut a = Run::default();
-        a.items.insert("pkg::x".into(), m(100.0));
-        let mut b = Run::default();
-        b.items.insert("pkg::x".into(), m(90.0));
-        let merged = combine_min(a, b);
-        let item = &merged.items["pkg::x"];
-        assert_eq!(item.wall_rounds, vec![100.0, 90.0]);
-        assert_eq!(item.median_ns, Some(90.0));
-    }
-
-    #[test]
     fn a_walltime_fail_with_moving_counters_still_fails() {
         // +3.7% instructions passes its own +5% gate but breaks the
         // "identical work" corroboration — the slowdown could be real.
@@ -2932,58 +2855,6 @@ mod tests {
             .expect("gated, so the zero-items guard refuses it");
         let common = CommonArgs::default();
         assert!(nothing_measured(&resolved.current, &common, "gate").is_some());
-    }
-
-    #[test]
-    fn combine_min_keeps_counters_a_timing_only_round_lacks() {
-        let mut full = Run {
-            noise_pct: Some(1.5),
-            gating_backend: Some("callgrind".into()),
-            ..Run::default()
-        };
-        full.items.insert(
-            "pkg::item".into(),
-            ItemMetrics {
-                ir: Some(100),
-                instructions: Some(200),
-                median_ns: Some(50.0),
-                allocs: Some(3),
-                ..ItemMetrics::default()
-            },
-        );
-        let mut timing_only = Run::default();
-        timing_only.items.insert(
-            "pkg::item".into(),
-            ItemMetrics {
-                median_ns: Some(40.0),
-                allocs: Some(3),
-                ..ItemMetrics::default()
-            },
-        );
-
-        let merged = combine_min(full, timing_only);
-        let m = &merged.items["pkg::item"];
-        assert_eq!(m.ir, Some(100));
-        assert_eq!(m.instructions, Some(200));
-        assert_eq!(m.median_ns, Some(40.0));
-        assert_eq!(m.allocs, Some(3));
-        // Calibration and env records ride on round 1, the full one.
-        assert_eq!(merged.noise_pct, Some(1.5));
-        assert_eq!(merged.gating_backend.as_deref(), Some("callgrind"));
-    }
-
-    #[test]
-    fn a_failed_second_round_degrades_to_the_full_first_round() {
-        let mut full = Run::default();
-        full.items.insert(
-            "pkg::item".into(),
-            ItemMetrics {
-                ir: Some(100),
-                ..ItemMetrics::default()
-            },
-        );
-        let merged = combine_rounds(full, Err("unknown runner arg".into()));
-        assert_eq!(merged.items["pkg::item"].ir, Some(100));
     }
 
     fn pyperf(seconds: f64) -> String {
