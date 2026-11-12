@@ -12,6 +12,10 @@
 
 ### ✨ Features
 
+- Plan and run the check jobs soothfast.toml configures (#394)
+- Run per-package commands once per package (#392)
+- Add ci spec, proto, coverage, capture and site kinds (#393)
+- Report init drift and the last test run in status (#391)
 - Run each CI job as cargo soothfast ci <kind> (#384)
 - Add cargo soothfast bump (#380)
 - Add cargo soothfast status (#377)
@@ -19,6 +23,8 @@
 
 ### 🔧 Internal
 
+- Split gate.rs into modules (#397)
+- Split invoke.rs into modules (#396)
 - Retire action inputs that soothfast.toml carries (#388)
 - Run workflow jobs as cargo soothfast ci kinds (#387)
 - Drop llms.txt, keep the trend series on the Pages branch (#378)
