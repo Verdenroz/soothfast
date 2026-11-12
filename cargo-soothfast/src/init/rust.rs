@@ -7,8 +7,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use super::ci;
 use super::ci::Ci;
+use super::target::ci;
 use crate::{invoke, workspace};
 
 const BENCH_STUB: &str = "\

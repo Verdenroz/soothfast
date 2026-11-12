@@ -108,8 +108,10 @@ fn caller_job(ws: &Workspace) -> String {
 mod tests {
     use super::*;
     use crate::init::ecosystem::Ecosystem;
+    use crate::init::lookup::{action_ref, pinned};
+    use crate::init::report;
+    use crate::init::scaffold::{Kind, Scaffold};
     use crate::init::test_support::{mixed_ws, project, scratch, ws};
-    use crate::init::{Kind, Scaffold, action_ref, pinned, report};
     #[test]
     fn a_workspace_without_benches_gets_no_gate_job() {
         let text = workflow(&ws(&[], None));

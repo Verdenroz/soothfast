@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use super::Workspace;
 use super::ci::Ci;
 use super::ecosystem::{Ecosystem, Project, Settings, Tests};
+use super::workflow::Workspace;
 
 pub(super) fn ws(benched: &[&str], docs: Option<&str>) -> Workspace {
     Workspace {
