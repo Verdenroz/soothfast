@@ -816,6 +816,34 @@ error anything else; the head's items are saved for the docs check unless
 the gate errored, and a pass that cannot save them errors. <code>--accepted
 LABEL</code> waives a regression, which then exits 0, and never an error. The
 worktree is removed whether or not the bench fails.
+<code>ci spec</code> is the spec checks of every package with a <code>[[spec]]</code> entry, or
+the <code>-p</code> ones given, with the <code>spec</code> defaults each package resolves in
+<code>soothfast.toml</code>. A package that generates a spec runs <code>spec gen --check</code>,
+which fails on a stale committed spec. On a pull request, and on any run given
+<code>--base</code>, <code>spec gate</code> compares with the base; a push alone has none. A package
+with a spec that is not generated runs <code>spec check</code>, and one with an <code>[[sdk]]</code>
+entry runs <code>sdk gen --check</code>. Every step runs even after one fails, and each
+package records a <code>check</code> verdict named <code>spec-PKG</code> with the worst exit code.
+With nothing configured it says so and records nothing.
+<code>ci proto</code> runs <code>spec check-proto</code> for every package with a <code>[[proto]]</code>
+entry, or the <code>-p</code> ones given, which reconciles each message's fields against
+its Rust struct. Each package records a <code>check</code> verdict named <code>proto-PKG</code>.
+With nothing configured it says so and records nothing.
+<code>ci coverage</code> runs <code>coverage docs</code> for every docs package that sets a
+<code>coverage</code> minimum, in its <code>[package.NAME.docs]</code> table or in <code>[docs]</code>, or the
+<code>-p</code> ones given, and fails when a package documents less than its minimum.
+Each package records a <code>check</code> verdict named <code>coverage-PKG</code>. With nothing
+configured it says so and records nothing.
+<code>ci capture</code> runs <code>docs capture --check</code> for every docs package, or the <code>-p</code>
+ones given, which fails when the output recorded beside a capture block no
+longer matches what the block prints. A package with no capture block passes.
+Each package records a <code>check</code> verdict named <code>capture-PKG</code>. With no docs
+package it says so and records nothing.
+<code>ci site</code> builds the docs site with <code>docs build --out DIR</code>, where DIR is
+<code>target/soothfast-site</code> unless <code>--out</code> says otherwise. It builds against the
+<code>head</code> baseline when <code>.soothfast/baselines/head.json</code> exists. It runs only when
+the root <code>soothfast.toml</code> has a <code>[site]</code> table; without one it says so and
+records nothing. The record is a <code>check</code> verdict named <code>site</code>.
 <code>ci build LANE</code> is the build-once job: it prebuilds into the stores what later
 jobs read, with <code>cargo soothfast prebuild --only LANE</code> for the <code>bench</code>,
 <code>routes</code> or <code>rustdoc</code> lane. With no package named, <code>bench</code> builds the gated
