@@ -715,7 +715,7 @@ packages with `[[spec]]` entries, and `prebuild-docs: PKG` alone runs
 gives `run.yml` one job for each: `ci spec` for every package with a
 `[[spec]]` entry, `ci proto` for every package with a `[[proto]]` entry,
 `ci coverage` for every docs package with a `coverage` minimum, `ci capture`
-for every docs package, and `ci site` when the file has a `[site]` table. A
+for every docs package with docs of its own, and `ci site` when the file has a `[site]` table. A
 job is named for its record, `spec-PKG` or `site`, runs
 `cargo soothfast ci KIND -p PKG`, and installs the pinned rustdoc toolchain
 when its command reads rustdoc JSON (`spec`, `coverage` and `site`). The
@@ -851,11 +851,14 @@ With nothing configured it says so and records nothing.
 `-p` ones given, and fails when a package documents less than its minimum.
 Each package records a `check` verdict named `coverage-PKG`. With nothing
 configured it says so and records nothing.
-`ci capture` runs `docs capture --check` for every docs package, or the `-p`
+`ci capture` runs `docs capture --check` for each docs package, or the `-p`
 ones given, which fails when the output recorded beside a capture block no
 longer matches what the block prints. A package with no capture block passes.
-Each package records a `check` verdict named `capture-PKG`. With no docs
-package it says so and records nothing.
+A lone docs package is checked against every doc. Among several, the blocks of
+all the docs would compile into each package's crate, so only a package whose
+`[package.NAME.docs]` table names its own `paths` is checked. Each package
+records a `check` verdict named `capture-PKG`. With no such package it says so
+and records nothing.
 `ci site` builds the docs site with `docs build --out DIR`, where DIR is
 `target/soothfast-site` unless `--out` says otherwise. It builds against the
 `head` baseline when `.soothfast/baselines/head.json` exists. It runs only when
