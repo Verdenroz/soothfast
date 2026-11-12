@@ -23,6 +23,7 @@
 
 ### 🔧 Internal
 
+- Split init/mod.rs into modules (#395)
 - Split gate.rs into modules (#397)
 - Split invoke.rs into modules (#396)
 - Retire action inputs that soothfast.toml carries (#388)
