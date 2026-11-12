@@ -3,8 +3,10 @@
 use serde_json::{Value, json};
 
 use super::compare::{CompareCtx, compare};
+use super::resolve::{Resolved, assertion_failures};
 use crate::gate_lock;
-use crate::invoke::{ItemMetrics, Run};
+use crate::invoke::{self, ItemMetrics, Run};
+use crate::test::fixture::TempDir;
 
 pub(super) fn ctx() -> CompareCtx {
     CompareCtx {
@@ -55,4 +57,29 @@ pub(super) fn gate_failures_with(
 pub(super) fn reused(mut doc: Value) -> Value {
     doc["reused_from"] = json!("deadbeef");
     doc
+}
+
+/// A new crate's run whose one alloc claim holds or not.
+pub(super) fn new_crate_run(holds: bool) -> Run {
+    let mut head = run_with(ItemMetrics {
+        allocs: Some(0),
+        bytes: Some(0),
+        ..ItemMetrics::default()
+    });
+    head.assertions.push(invoke::AssertionOutcome {
+        id: "pkg::bt_base_to_htf_index".into(),
+        kind: "alloc".into(),
+        ok: holds,
+        detail: "claimed 0".into(),
+    });
+    head
+}
+
+pub(super) fn gated(resolved: &Resolved) -> u32 {
+    let (regressions, _) = gate_failures(&resolved.reference, &resolved.current);
+    regressions + assertion_failures(&resolved.current, &mut Vec::new())
+}
+
+pub(super) fn scratch(name: &str) -> TempDir {
+    TempDir::new(name)
 }
