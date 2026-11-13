@@ -571,7 +571,7 @@ default branch). The rest is needed only by the step that uses it, and each
 fails naming the tool:</p>
 <ul>
 <li><code>gh</code>, to comment with the job token and to land regenerated files. Without it the gate still runs and only skips the perf-accepted label check, with a warning.</li>
-<li><code>jq</code>, to comment, sweep labels or mint a token as soothfast-bot, and to find the bench packages when none are named.</li>
+<li><code>jq</code>, to comment, sweep labels or mint a token as soothfast-bot, to land regenerated files, and to find the bench packages when none are named.</li>
 <li><code>valgrind</code>, for the callgrind fallback on machines without hardware performance counters. The step installs it with <code>apt-get</code> when it runs as root or passwordless <code>sudo</code> is available, and otherwise warns and carries on. A runner with performance counters does not need it.</li>
 <li><code>rustup</code>, for a nightly or pinned rustdoc toolchain. <code>dtolnay/rust-toolchain</code> installs it when it is missing.</li>
 </ul>
