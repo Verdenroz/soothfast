@@ -24,6 +24,7 @@
 
 ### 🐛 Fixes
 
+- Land bot commits signed, on the default branch tip (#405)
 - Three gaps the first single-gate run found (#403)
 
 ### 🔧 Internal
