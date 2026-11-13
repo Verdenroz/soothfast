@@ -535,8 +535,8 @@ fails naming the tool:
 
 - `gh`, to comment with the job token and to land regenerated files. Without it the gate still runs and only skips the
   perf-accepted label check, with a warning.
-- `jq`, to comment, sweep labels or mint a token as soothfast-bot, and to find
-  the bench packages when none are named.
+- `jq`, to comment, sweep labels or mint a token as soothfast-bot, to land
+  regenerated files, and to find the bench packages when none are named.
 - `valgrind`, for the callgrind fallback on machines without hardware
   performance counters. The step installs it with `apt-get` when it runs as
   root or passwordless `sudo` is available, and otherwise warns and carries on.
