@@ -24,6 +24,7 @@
 
 ### 🐛 Fixes
 
+- Accept .soothfast/* as the init ignore line (#409)
 - Land bot commits signed, on the default branch tip (#405)
 - Three gaps the first single-gate run found (#403)
 
