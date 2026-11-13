@@ -211,17 +211,25 @@ fn rustc_args(verbose: &str, name: &str) -> Vec<String> {
     args
 }
 
+/// Whether `unit` is a unit of `package` in either layout: `pkg-<hash>` or
+/// `pkg/<hash>`.
+fn unit_of(unit: &str, package: &str) -> bool {
+    unit.strip_prefix(package)
+        .is_some_and(|rest| rest.starts_with(['-', '/']))
+}
+
 /// Rebuild `name`'s unit in place under another `-C metadata`: the same
 /// unit and fingerprint, a different crate hash, as two trees can build. The
-/// `verbose` build wrote to `built`; the rebuild writes to `deps`.
+/// `verbose` build wrote under profile dir `built`; the rebuild writes under
+/// `into`.
 fn rebuild_under_other_metadata(
     verbose: &str,
     name: &str,
     built: &Path,
-    deps: &Path,
+    into: &Path,
     keep_mtimes: bool,
 ) {
-    let (from, to) = (built.to_string_lossy(), deps.to_string_lossy());
+    let (from, to) = (built.to_string_lossy(), into.to_string_lossy());
     let args: Vec<String> = rustc_args(verbose, name)
         .into_iter()
         .map(|a| match a.strip_prefix("metadata=") {
@@ -229,7 +237,8 @@ fn rebuild_under_other_metadata(
             None => a.replace(from.as_ref(), to.as_ref()),
         })
         .collect();
-    let outputs: Vec<(PathBuf, std::time::SystemTime)> = fs::read_dir(deps)
+    let out_dir = &args[args.iter().position(|a| a == "--out-dir").unwrap() + 1];
+    let outputs: Vec<(PathBuf, std::time::SystemTime)> = fs::read_dir(out_dir)
         .unwrap()
         .flatten()
         .filter(|e| {
@@ -275,8 +284,8 @@ fn a_unit_built_on_a_dependency_the_base_built_itself_is_not_seeded() {
     write_workspace(&base, &pin("memchr"), "pub fn f() -> u8 { 2 }\n");
 
     let verbose = build_verbose(&base, &base_t);
-    let deps = base_t.join("release/deps");
-    rebuild_under_other_metadata(&verbose, "memchr", &deps, &deps, true);
+    let profile = base_t.join("release");
+    rebuild_under_other_metadata(&verbose, "memchr", &profile, &profile, true);
     write_workspace(&base, &both, uses);
     build(&head, &head_t);
 
@@ -286,10 +295,7 @@ fn a_unit_built_on_a_dependency_the_base_built_itself_is_not_seeded() {
     let fresh = |name: &str| units.iter().find(|(n, _)| n == name).map(|(_, f)| *f);
     assert_eq!(fresh("aho_corasick"), Some(false), "{units:?}");
     assert!(
-        seeded
-            .skipped
-            .iter()
-            .any(|s| s.starts_with("aho-corasick-")),
+        seeded.skipped.iter().any(|s| unit_of(s, "aho-corasick")),
         "{seeded:?}"
     );
     let _ = fs::remove_dir_all(&root);
@@ -344,7 +350,7 @@ fn a_unit_an_earlier_seed_copied_does_not_block_its_dependents() {
     let (head_p, base_p) = (head_t.join("release"), base_t.join("release"));
     let first = seed(&head_p, &base_p, &members).unwrap();
     assert!(
-        first.names.iter().any(|n| n.starts_with("memchr-")),
+        first.names.iter().any(|n| unit_of(n, "memchr")),
         "{first:?}"
     );
     build(&base, &base_t);
@@ -356,7 +362,7 @@ fn a_unit_an_earlier_seed_copied_does_not_block_its_dependents() {
     build(&head, &head_t);
     let second = seed(&head_p, &base_p, &members).unwrap();
     assert!(
-        second.names.iter().any(|n| n.starts_with("aho-corasick-")),
+        second.names.iter().any(|n| unit_of(n, "aho-corasick")),
         "{second:?}"
     );
     let units = build(&base, &base_t);
@@ -379,11 +385,10 @@ fn a_seeded_unit_rebuilt_in_place_leaves_its_dependents_to_the_base() {
     let (head_p, base_p) = (head_t.join("release"), base_t.join("release"));
     let first = seed(&head_p, &base_p, &members).unwrap();
     assert!(
-        first.names.iter().any(|n| n.starts_with("memchr-")),
+        first.names.iter().any(|n| unit_of(n, "memchr")),
         "{first:?}"
     );
-    let (built, deps) = (head_p.join("deps"), base_p.join("deps"));
-    rebuild_under_other_metadata(&verbose, "memchr", &built, &deps, false);
+    rebuild_under_other_metadata(&verbose, "memchr", &head_p, &base_p, false);
 
     let both = format!("{}{}", pin("memchr"), pin("aho-corasick"));
     let uses = "pub fn f() -> bool { aho_corasick::AhoCorasick::new([\"a\"]).is_ok() }\n";
@@ -395,10 +400,7 @@ fn a_seeded_unit_rebuilt_in_place_leaves_its_dependents_to_the_base() {
     let fresh = |name: &str| units.iter().find(|(n, _)| n == name).map(|(_, f)| *f);
     assert_eq!(fresh("aho_corasick"), Some(false), "{units:?}");
     assert!(
-        second
-            .skipped
-            .iter()
-            .any(|s| s.starts_with("aho-corasick-")),
+        second.skipped.iter().any(|s| unit_of(s, "aho-corasick")),
         "{second:?}"
     );
     let _ = fs::remove_dir_all(&root);
