@@ -29,6 +29,7 @@
 
 ### 🔧 Internal
 
+- Seed tests pass under cargo's per-package layout (#410)
 - Split init/mod.rs into modules (#395)
 - Split gate.rs into modules (#397)
 - Split invoke.rs into modules (#396)
