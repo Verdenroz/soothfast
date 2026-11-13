@@ -59,9 +59,16 @@ impl Kind {
 }
 
 /// Whether two `.gitignore` lines name the same root entry, so `/.soothfast`
-/// and `.soothfast/` count as one.
+/// and `.soothfast/` count as one. `.soothfast/*` counts too: it is how a
+/// repository ignores the directory and still keeps a file in it.
 fn same_ignore(a: &str, b: &str) -> bool {
-    let bare = |l: &str| l.trim().trim_matches('/').to_string();
+    let bare = |l: &str| {
+        let l = l.trim();
+        l.strip_suffix("/*")
+            .unwrap_or(l)
+            .trim_matches('/')
+            .to_string()
+    };
     bare(a) == bare(b)
 }
 
@@ -365,7 +372,14 @@ mod tests {
             kind: Kind::Line,
             content: ".soothfast/".into(),
         };
-        for form in [".soothfast", ".soothfast/", "/.soothfast", "/.soothfast/"] {
+        for form in [
+            ".soothfast",
+            ".soothfast/",
+            "/.soothfast",
+            "/.soothfast/",
+            ".soothfast/*",
+            "/.soothfast/*",
+        ] {
             assert_eq!(
                 line.state(Some(&format!("target\n{form}\n"))),
                 State::Current
