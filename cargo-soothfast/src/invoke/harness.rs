@@ -72,9 +72,19 @@ pub fn harness_versions() -> String {
 }
 
 /// Whether the working tree has no uncommitted changes, so HEAD's SHA names
-/// what was actually measured.
+/// what was actually measured. The store and the directories the CI action
+/// checks out into the workspace do not count: no build reads them.
 pub fn tree_is_clean() -> bool {
-    git(&["status", "--porcelain"]).is_ok_and(|s| s.trim().is_empty())
+    git(&["status", "--porcelain"]).is_ok_and(|s| only_scratch(&s))
+}
+
+/// Whether every path `git status --porcelain` lists is scratch.
+fn only_scratch(porcelain: &str) -> bool {
+    porcelain
+        .lines()
+        .filter_map(|line| line.get(3..))
+        .flat_map(|paths| paths.split(" -> "))
+        .all(|path| crate::store::is_scratch(std::path::Path::new(path.trim_matches('"'))))
 }
 
 /// Whether the reference side ended up embedding HEAD's measurement harness.
@@ -351,7 +361,18 @@ fn retarget_line(line: &str, from: usize, to: &str) -> Option<String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::harness_mismatches;
+    use super::{harness_mismatches, only_scratch};
+
+    #[test]
+    fn the_store_and_the_action_checkout_leave_the_tree_clean() {
+        assert!(only_scratch(""));
+        assert!(only_scratch(
+            "?? .soothfast-action/\n M .soothfast/trend.jsonl\n"
+        ));
+        assert!(!only_scratch("?? .soothfast-action/\n M src/lib.rs\n"));
+        assert!(!only_scratch("R  .soothfast/a.rs -> src/a.rs\n"));
+        assert!(!only_scratch("?? \"docs/a b.md\"\n"));
+    }
 
     #[test]
     fn a_method_difference_mismatches_the_harness_without_a_pin() {
