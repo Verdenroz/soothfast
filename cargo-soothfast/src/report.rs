@@ -8,7 +8,10 @@ use serde_json::Value;
 use soothfast_report::{badges, changelog, perf_table, trend_chart};
 
 use crate::config::{self, Config, Group, Settings};
-use crate::{coverage_lang, docs_support, invoke, project_surface, trend, workspace};
+use crate::{
+    buildstamp, coverage_lang, docs_support, headrun, invoke, project_surface, runcache, trend,
+    workspace,
+};
 
 pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
@@ -174,38 +177,64 @@ fn surface_diffs(pkgs: &[String], refname: &str, features: Option<&str>) -> Resu
 /// has no earlier side to compare against. `Ok(None)` when that leaves
 /// nothing measured, which renders the current-only table as before.
 fn measure_ref(a: &ReportArgs, refname: &str) -> Result<Option<Value>, String> {
-    let pkgs = a.pkg.clone();
     let features = a.features.clone();
-    println!("report: measuring {refname} in a worktree for the perf delta");
-    let runs = invoke::with_merge_base_worktree(refname, |wt| {
-        let mut runs = Vec::new();
-        for pkg in &pkgs {
-            if !workspace::has_bench_target(pkg, "soothfast", Some(wt))
-                .map_err(|e| e.to_string())?
-            {
-                continue;
-            }
-            let common = invoke::CommonArgs {
-                pkg: Some(pkg.clone()),
-                features: features.clone(),
-                ..Default::default()
-            };
-            let records =
-                invoke::run_bench_in(&common, &[], Some(wt)).map_err(|e| e.to_string())?;
-            runs.push(invoke::collect(&records));
+    let sha = invoke::git(&["merge-base", "HEAD", refname])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    let key = |pkg: &str| {
+        let common = invoke::CommonArgs::default();
+        let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+        (!sha.is_empty()).then(|| runcache::report_key(&sha, pkg, features.as_deref(), &stamp))
+    };
+    let mut docs = Vec::new();
+    let mut unmeasured = Vec::new();
+    for pkg in &a.pkg {
+        match key(pkg).and_then(|key| runcache::stored_report(&key)) {
+            Some(doc) => docs.push(doc),
+            None => unmeasured.push(pkg.clone()),
         }
-        Ok(runs)
-    })?;
-    if runs.is_empty() {
+    }
+    if unmeasured.is_empty() {
+        println!("report: reusing the stored measurement of {refname} for the perf delta");
+    } else {
+        println!("report: measuring {refname} in a worktree for the perf delta");
+        let runs = invoke::with_merge_base_worktree(refname, |wt| {
+            let mut runs = Vec::new();
+            for pkg in &unmeasured {
+                if !workspace::has_bench_target(pkg, "soothfast", Some(wt))
+                    .map_err(|e| e.to_string())?
+                {
+                    continue;
+                }
+                let common = invoke::CommonArgs {
+                    pkg: Some(pkg.clone()),
+                    features: features.clone(),
+                    ..Default::default()
+                };
+                let records =
+                    invoke::run_bench_in(&common, &[], Some(wt)).map_err(|e| e.to_string())?;
+                runs.push((pkg.clone(), invoke::collect(&records)));
+            }
+            Ok(runs)
+        })?;
+        for (pkg, run) in runs {
+            let doc = headrun::ref_doc(&run);
+            if let Some(key) = key(&pkg) {
+                runcache::keep_report(&key, &doc);
+            }
+            docs.push(doc);
+        }
+    }
+    if docs.is_empty() {
         return Ok(None);
     }
     let mut items = serde_json::Map::new();
     let mut noise: Option<f64> = None;
-    for run in &runs {
-        if let Some(obj) = invoke::run_to_items_value(run).as_object() {
+    for doc in &docs {
+        if let Some(obj) = doc["items"].as_object() {
             items.extend(obj.clone());
         }
-        if let Some(n) = run.noise_pct {
+        if let Some(n) = doc["noise_pct"].as_f64() {
             noise = Some(noise.map_or(n, |m: f64| m.max(n)));
         }
     }
