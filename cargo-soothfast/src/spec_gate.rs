@@ -10,6 +10,8 @@
 //! spec files at the merge-base instead. Every parsed file must re-render
 //! byte-identically, so the mode is self-checking; it is the right default
 //! for CI that already requires the freshness check on every merge.
+//! `--prefer-committed` reads them the same way and rebuilds the merge-base
+//! when one does not re-render, as a file written by an older release may not.
 //!
 //! A deliberate break is acknowledged the way consumers experience it: by
 //! the spec's own version. Breaking findings pass when the head spec's
@@ -26,11 +28,32 @@ use crate::invoke::{self, CommonArgs};
 use crate::spec_config;
 use crate::spec_gen;
 
+/// Where the base documents come from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BaseSource {
+    /// Generated from the merge-base in a worktree.
+    Rebuild,
+    /// The committed spec files at the merge-base, or an error.
+    Committed,
+    /// The committed files when they re-render, a rebuild otherwise.
+    PreferCommitted,
+}
+
+impl BaseSource {
+    fn from_flag(flag: &str) -> Option<Self> {
+        match flag {
+            "--from-committed" => Some(Self::Committed),
+            "--prefer-committed" => Some(Self::PreferCommitted),
+            _ => None,
+        }
+    }
+}
+
 pub fn run(args: &[String]) -> i32 {
     let mut common = CommonArgs::default();
     let mut base = "origin/master".to_string();
     let mut allow_breaking = false;
-    let mut from_committed = false;
+    let mut source = BaseSource::Rebuild;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -43,9 +66,10 @@ pub fn run(args: &[String]) -> i32 {
             },
             // Escape hatch for a deliberate, coordinated break.
             "--allow-breaking" => allow_breaking = true,
-            "--from-committed" => from_committed = true,
             _ => {
-                if !common.try_parse(a, &mut it) {
+                if let Some(named) = BaseSource::from_flag(a) {
+                    source = named;
+                } else if !common.try_parse(a, &mut it) {
                     eprintln!("soothfast: unknown spec gate arg {a:?}");
                     return 2;
                 }
@@ -60,7 +84,7 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("soothfast: spec gate requires -p PKG");
         return 2;
     };
-    match gate(&pkg, &common, &base, allow_breaking, from_committed) {
+    match gate(&pkg, &common, &base, allow_breaking, source) {
         Ok(code) => code,
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -74,7 +98,7 @@ fn gate(
     common: &CommonArgs,
     base: &str,
     allow_breaking: bool,
-    from_committed: bool,
+    source: BaseSource,
 ) -> Result<i32, String> {
     let meta = invoke::pkg_meta(pkg).map_err(|e| e.to_string())?;
     let cfg = spec_config::load(&meta.dir)?;
@@ -85,13 +109,23 @@ fn gate(
         return Ok(0);
     }
 
-    let base_docs = if from_committed {
-        committed_base_docs(&head, &cfg, &meta, base)?
-    } else {
+    let rebuilt = || {
         invoke::with_merge_base_worktree(base, |wt| {
             spec_gen::build(pkg, common, Some(wt), &cfg, &meta)
-        })?
-        .docs
+        })
+        .map(|built| built.docs)
+    };
+    let base_docs = match source {
+        BaseSource::Rebuild => rebuilt()?,
+        BaseSource::Committed => committed_base_docs(&head, &cfg, &meta, base)?,
+        BaseSource::PreferCommitted => match committed_base_docs(&head, &cfg, &meta, base) {
+            Ok(docs) => docs,
+            Err(e) => {
+                println!("spec gate: {e}");
+                println!("spec gate: rebuilding the merge-base instead");
+                rebuilt()?
+            }
+        },
     };
 
     let mut breaking = 0u32;
@@ -219,6 +253,19 @@ fn committed_base_docs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_flag_names_its_base_source() {
+        assert_eq!(
+            BaseSource::from_flag("--from-committed"),
+            Some(BaseSource::Committed)
+        );
+        assert_eq!(
+            BaseSource::from_flag("--prefer-committed"),
+            Some(BaseSource::PreferCommitted)
+        );
+        assert_eq!(BaseSource::from_flag("--base"), None);
+    }
 
     #[test]
     fn a_major_bump_licenses_a_break_and_lesser_bumps_do_not() {

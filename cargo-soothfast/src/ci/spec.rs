@@ -64,8 +64,13 @@ fn steps(pkg: &Package, against: Option<&str>) -> Vec<Vec<String>> {
     if pkg.generates {
         steps.push(command(&["spec", "gen"], &["--check"]));
     }
+    // `spec gen --check` above pins the committed spec to its code, at the
+    // base as at HEAD, so the base is read instead of built.
     if let Some(base) = against {
-        steps.push(command(&["spec", "gate"], &["--base", base]));
+        steps.push(command(
+            &["spec", "gate"],
+            &["--base", base, "--prefer-committed"],
+        ));
     }
     if pkg.reconciles {
         steps.push(command(&["spec", "check"], &[]));
@@ -201,7 +206,15 @@ mod tests {
             steps(&pkg(true, false, false), Some("b4se")),
             [
                 argv(&["spec", "gen", "-p", "api", "--check"]),
-                argv(&["spec", "gate", "-p", "api", "--base", "b4se"]),
+                argv(&[
+                    "spec",
+                    "gate",
+                    "-p",
+                    "api",
+                    "--base",
+                    "b4se",
+                    "--prefer-committed"
+                ]),
             ]
         );
     }
