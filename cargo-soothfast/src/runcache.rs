@@ -240,6 +240,35 @@ pub(crate) fn hashed(parts: &[String]) -> String {
     hex_fnv(parts.join("\u{1}").as_bytes())
 }
 
+/// The key a report keeps its measurement of `sha` under for one package:
+/// the commit, the features, the build settings, the harness and this host.
+pub fn report_key(sha: &str, pkg: &str, features: Option<&str>, stamp: &BuildStamp) -> String {
+    let parts = [
+        "report".to_string(),
+        sha.to_string(),
+        pkg.to_string(),
+        features.unwrap_or("").to_string(),
+        stamp.to_json().to_string(),
+        crate::invoke::harness_versions(),
+        cpu_model(),
+    ];
+    hashed(&parts)
+}
+
+/// The document stored under `key` by [`keep_report`]. Reading it renews it,
+/// so a measurement every push reads outlives the runs stored around it.
+pub fn stored_report(key: &str) -> Option<Value> {
+    let text = std::fs::read_to_string(dir()?.join(format!("{key}.json"))).ok()?;
+    let doc: Value = serde_json::from_str(&text).ok()?;
+    store(key, &doc);
+    Some(doc)
+}
+
+/// Keep `doc` as the measurement [`report_key`] names.
+pub fn keep_report(key: &str, doc: &Value) {
+    store(key, doc);
+}
+
 /// `bytes` hashed, as sixteen hex digits.
 pub(crate) fn hex_fnv(bytes: &[u8]) -> String {
     format!("{:016x}", soothfast_registry::fnv1a(bytes))
@@ -313,6 +342,16 @@ mod tests {
             profiles: "aaaa".into(),
             rustflags: "bbbb".into(),
         }
+    }
+
+    #[test]
+    fn a_report_s_measurement_is_keyed_by_commit_package_and_features() {
+        let key = |sha, pkg, features| report_key(sha, pkg, features, &stamp());
+        let one = key("abc", "core", None);
+        assert_eq!(one, key("abc", "core", None));
+        assert_ne!(one, key("def", "core", None));
+        assert_ne!(one, key("abc", "other", None));
+        assert_ne!(one, key("abc", "core", Some("full")));
     }
 
     fn env(backend: &str) -> HostEnv {
