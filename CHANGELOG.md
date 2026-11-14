@@ -32,6 +32,7 @@
 
 ### ⚡ Performance
 
+- Measure a changelog's last release once (#422)
 - Store an identical binary's run under the merge-base (#418)
 - Build the site from the spec jobs' routes builds (#416)
 - Read the spec gate's base from the committed spec in CI (#413)
