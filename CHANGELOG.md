@@ -36,6 +36,7 @@
 
 ### ⚡ Performance
 
+- Gate an unsharded pull request in its build job (#430)
 - Measure a changelog's last release once (#422)
 - Store an identical binary's run under the merge-base (#418)
 - Build the site from the spec jobs' routes builds (#416)
