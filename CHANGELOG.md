@@ -24,6 +24,7 @@
 
 ### 🐛 Fixes
 
+- Fail claims on an id no listing package registers (#424)
 - Report and drop orphaned locked binds (#419)
 - Store a CI run under its commit despite the action checkout (#415)
 - Accept .soothfast/* as the init ignore line (#409)
