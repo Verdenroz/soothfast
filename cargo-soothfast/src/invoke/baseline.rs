@@ -83,6 +83,10 @@ pub fn save_baseline_in(
     let mut doc =
         load_baseline_in(root, name)?.unwrap_or_else(|| json!({ "version": 1, "items": {} }));
     let prior = own_measured(&mut doc, &scope, run)?;
+    let yielded = yielded_to_registrant(&doc, &scope, run);
+    if let Some(map) = new_items.as_object_mut() {
+        map.retain(|id, _| !yielded.contains(id));
+    }
     let unix_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -119,7 +123,10 @@ pub fn save_baseline_in(
     // Assertion verdicts ride along so renderers can show *verified* claims
     // ("proven O(n log n), zero-alloc") from produced data. Same scope rules
     // as items: a full run replaces its slice, keyed by the assertion's id.
-    let replaced: Vec<String> = run.items.keys().chain(&prior).cloned().collect();
+    let replaced: Vec<String> = (run.items.keys().chain(&prior))
+        .filter(|id| !yielded.contains(*id))
+        .cloned()
+        .collect();
     let mut assertions: Vec<Value> = doc["assertions"]
         .as_array()
         .cloned()
@@ -132,7 +139,7 @@ pub fn save_baseline_in(
             }),
         })
         .collect();
-    for a in &run.assertions {
+    for a in run.assertions.iter().filter(|a| !yielded.contains(&a.id)) {
         assertions.push(a.to_json());
     }
     doc["assertions"] = Value::Array(assertions);
@@ -192,6 +199,31 @@ fn own_measured(doc: &mut Value, scope: &SaveScope, run: &Run) -> io::Result<BTr
         .collect())
 }
 
+/// The ids of `run` a `-p` save leaves alone: the saving package lists them
+/// without registering them, and their registrant is already in `doc`'s
+/// `owners`. Prints one line when there are any.
+fn yielded_to_registrant(doc: &Value, scope: &SaveScope, run: &Run) -> BTreeSet<String> {
+    let (SaveScope::BenchFull(Some(pkg)) | SaveScope::BenchFiltered(Some(pkg))) = scope else {
+        return BTreeSet::new();
+    };
+    let yielded: BTreeSet<String> = crate::unmeasured::shared(doc)
+        .into_iter()
+        .filter(|(id, listers)| {
+            run.items.contains_key(id)
+                && crate::unmeasured::registrant(id, listers).is_some_and(|r| r != pkg)
+        })
+        .map(|(id, _)| id)
+        .collect();
+    if !yielded.is_empty() {
+        let ids: Vec<&str> = yielded.iter().map(String::as_str).collect();
+        println!(
+            "baseline: {pkg} does not register {}, whose registrant already saved; keeping that number",
+            ids.join(", ")
+        );
+    }
+    yielded
+}
+
 /// Write `doc` as baseline `name` under `root`.
 pub fn write_baseline_in(root: &Path, name: &str, doc: &Value) -> io::Result<()> {
     let path = baseline_path(root, name);
@@ -233,7 +265,72 @@ pub fn load_baseline_in(root: &Path, name: &str) -> io::Result<Option<Value>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommonArgs, SaveScope};
+    use super::{CommonArgs, SaveScope, load_baseline_in, save_baseline_in};
+    use crate::invoke::{AssertionOutcome, ItemMetrics, Run};
+    use serde_json::Value;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("soothfast-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    fn run_with(ir: u64) -> Run {
+        let mut run = Run::default();
+        let metrics = ItemMetrics {
+            ir: Some(ir),
+            ..ItemMetrics::default()
+        };
+        run.items.insert("lib::g".into(), metrics);
+        run.assertions.push(AssertionOutcome {
+            id: "lib::g".into(),
+            kind: "alloc".into(),
+            ok: true,
+            detail: format!("ir {ir}"),
+        });
+        run
+    }
+
+    fn save(root: &std::path::Path, pkg: &str, ir: u64) {
+        let scope = SaveScope::BenchFull(Some(pkg.into()));
+        save_baseline_in(root, "b", &run_with(ir), scope).unwrap();
+    }
+
+    fn stored(root: &std::path::Path) -> Value {
+        let doc = load_baseline_in(root, "b").unwrap().unwrap();
+        serde_json::json!({
+            "item": doc["items"]["lib::g"],
+            "assertions": doc["assertions"],
+            "owners": doc["owners"],
+        })
+    }
+
+    #[test]
+    fn a_dependent_s_save_leaves_the_registering_package_s_number_in_either_order() {
+        let root = scratch("shared-order");
+        save(&root, "app", 2);
+        save(&root, "lib", 1);
+        let dependent_first = stored(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        save(&root, "lib", 1);
+        save(&root, "app", 2);
+        let registrant_first = stored(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(dependent_first, registrant_first);
+        assert_eq!(dependent_first["item"]["saved_by"], "lib");
+        assert_eq!(dependent_first["item"]["callgrind"]["ir"], 1);
+        assert_eq!(dependent_first["assertions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_dependent_s_save_writes_the_number_until_the_registering_package_saves() {
+        let root = scratch("shared-until");
+        save(&root, "app", 2);
+        let doc = stored(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(doc["item"]["saved_by"], "app");
+        assert_eq!(doc["item"]["callgrind"]["ir"], 2);
+    }
 
     #[test]
     fn save_scope_mirrors_what_the_args_measured() {
