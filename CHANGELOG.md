@@ -24,6 +24,7 @@
 
 ### 🐛 Fixes
 
+- Report and drop orphaned locked binds (#419)
 - Store a CI run under its commit despite the action checkout (#415)
 - Accept .soothfast/* as the init ignore line (#409)
 - Land bot commits signed, on the default branch tip (#405)
@@ -50,6 +51,10 @@
 ### 🔍 API surface
 
 ```
+# soothfast-docs
+ADDED    soothfast_docs::lockfile::orphans
+CHANGED  soothfast_docs::lockfile::merge (signature)
+
 # soothfast-report
 ADDED    soothfast_report::surface
 ADDED    soothfast_report::surface::SurfaceEntry
