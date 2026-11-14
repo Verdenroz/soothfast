@@ -423,6 +423,16 @@ fn build_surface(a: &DocsArgs, pkg: &str) -> Result<(surface::Surface, Value, Pa
     Ok((surface::from_rustdoc(&doc, &root), doc, root))
 }
 
+/// Whether the scan covered every page of the repository's `[docs] paths`.
+/// PATH arguments and a package's own `docs` paths both scan fewer.
+fn full_scan(a: &DocsArgs, root: &Path) -> Result<bool, String> {
+    if !a.paths.is_empty() {
+        return Ok(false);
+    }
+    let repo_wide = Config::load(root)?.docs()?.paths;
+    Ok(a.scope.as_ref().is_none_or(|scope| *scope == repo_wide))
+}
+
 fn bound_targets(scanned: &Scanned) -> BTreeSet<&str> {
     (scanned.docs.iter())
         .flat_map(|(_, doc, _)| &doc.binds)
@@ -513,7 +523,11 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
 
     // 1b. Locked binds no page binds. A partial scan cannot tell an orphan
     // from a bind on an unscanned page, so only a full scan reports them.
-    if a.paths.is_empty() {
+    let full = match full_scan(a, &scanned.root) {
+        Ok(full) => full,
+        Err(e) => return err(&e),
+    };
+    if full {
         let lock = match lockfile::read(&scanned.root) {
             Ok(l) => l,
             Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
@@ -606,8 +620,14 @@ fn accept(a: &DocsArgs) -> i32 {
 }
 
 fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
-    if a.allow_gone && !a.paths.is_empty() {
-        return err("--allow-gone needs a full scan, so it takes no PATH args");
+    let full = match full_scan(a, &scanned.root) {
+        Ok(full) => full,
+        Err(e) => return err(&e),
+    };
+    if a.allow_gone && !full {
+        return err(
+            "--allow-gone needs a scan of every [docs] paths page, so it takes no PATH args or package paths",
+        );
     }
     let surfs = match surfaces_for_binds(a, scanned) {
         Ok(s) => s,
@@ -644,7 +664,7 @@ fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
                 binds.len(),
                 lockfile::LOCKFILE
             );
-            if a.paths.is_empty() && !a.allow_gone && !orphans.is_empty() {
+            if full && !a.allow_gone && !orphans.is_empty() {
                 println!(
                     "kept {} locked bind(s) no page binds; `docs accept --allow-gone` drops them",
                     orphans.len()
@@ -1319,6 +1339,16 @@ mod tests {
         let dir = orphaned_project("orphan-partial");
         let a = DocsArgs {
             paths: vec!["README.md".into()],
+            ..DocsArgs::default()
+        };
+        assert_eq!(check_scanned(&a, &scan_at(&a, dir).unwrap()), 0);
+    }
+
+    #[test]
+    fn a_package_scope_reports_no_orphans() {
+        let dir = orphaned_project("orphan-package-scope");
+        let a = DocsArgs {
+            scope: Some(vec!["README.md".into()]),
             ..DocsArgs::default()
         };
         assert_eq!(check_scanned(&a, &scan_at(&a, dir).unwrap()), 0);
