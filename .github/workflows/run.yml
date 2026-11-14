@@ -75,6 +75,7 @@ jobs:
       checks_expect: ${{ steps.plan.outputs.checks_expect }}
       site_in_docs: ${{ steps.plan.outputs.site_in_docs }}
       site_deploy: ${{ steps.plan.outputs.site_deploy }}
+      trend_url: ${{ steps.plan.outputs.trend_url }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -747,6 +748,15 @@ jobs:
       - name: Install the pinned rustdoc toolchain for the site
         if: ${{ !cancelled() && needs.plan.outputs.site_in_docs == 'true' && needs.plan.outputs.docs_binds_rust == 'false' }}
         run: ./.soothfast-action/action/rustdoc-toolchain.sh
+      # The built site carries the series, so the next run fetches it back from Pages.
+      - name: Append the trend point
+        if: >-
+          needs.plan.outputs.trend_url != '' && github.event_name == 'push'
+          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          TREND_URL: ${{ needs.plan.outputs.trend_url }}
+          CLI: ${{ steps.soothfast.outputs.bin }}
+        run: ./.soothfast-action/action/trend-series.sh
       - name: Build the site
         if: ${{ !cancelled() && needs.plan.outputs.site_in_docs == 'true' }}
         env:
