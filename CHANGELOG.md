@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Keep a trend from the generated workflow (#423)
 - Deploy the docs site to Pages from run.yml (#401)
 - Plan and run the check jobs soothfast.toml configures (#394)
 - Run per-package commands once per package (#392)
@@ -24,6 +25,7 @@
 
 ### 🐛 Fixes
 
+- Render macro-generated items from rustdoc JSON (#421)
 - Fail claims on an id no listing package registers (#424)
 - Report and drop orphaned locked binds (#419)
 - Store a CI run under its commit despite the action checkout (#415)
@@ -56,6 +58,7 @@
 # soothfast-docs
 ADDED    soothfast_docs::lockfile::orphans
 CHANGED  soothfast_docs::lockfile::merge (signature)
+CHANGED  soothfast_docs::surface::from_rustdoc (body)
 
 # soothfast-report
 ADDED    soothfast_report::surface
