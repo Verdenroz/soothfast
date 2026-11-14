@@ -852,7 +852,10 @@ worktree is removed whether or not the bench fails.
 the <code>-p</code> ones given, with the <code>spec</code> defaults each package resolves in
 <code>soothfast.toml</code>. A package that generates a spec runs <code>spec gen --check</code>,
 which fails on a stale committed spec. On a pull request, and on any run given
-<code>--base</code>, <code>spec gate</code> compares with the base; a push alone has none. A package
+<code>--base</code>, <code>spec gate</code> compares with the base; a push alone has none. The base
+is the spec committed at the merge-base, which that same check pinned to its
+code, so nothing is built there; a committed spec that does not re-render is
+rebuilt in a worktree instead. A package
 with a spec that is not generated runs <code>spec check</code>, and one with an <code>[[sdk]]</code>
 entry runs <code>sdk gen --check</code>. Every step runs even after one fails, and each
 package records a <code>check</code> verdict named <code>spec-PKG</code> with the worst exit code.
