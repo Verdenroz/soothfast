@@ -565,6 +565,10 @@ parallel. `run.yml` now compiles once. After `plan`, two build jobs run on
 separate machines: `Build (bench)` and `Build (rustdoc)`. The gate waits for
 the first only, so it never waits for a nightly rustdoc build. The docs check
 waits for the second and for the gate, since it reads the gate's baseline.
+On a pull request whose gate is not split into shards, the gate runs in the
+bench build's own job, named `Build and gate`, straight after the build: it
+needs no write token there, and a job of its own would set up a second
+runner only to read what the first just built.
 When the docs bind no Rust item, `docs check` builds no rustdoc, so neither
 `Build (rustdoc)` nor a nightly toolchain runs at all.
 

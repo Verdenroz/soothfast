@@ -147,13 +147,19 @@ jobs:
 
   # Builds the bench and rustdoc stores on their own machines, so the gate and the docs check compile nothing.
   # Toolchain and cache setup match the reading jobs, since the variables they export are in the store keys.
+  # An unsharded pull request is gated here too, right after the build: the
+  # gate reads no write token on a pull request, and a job of its own would
+  # only set up again to read what this one just built.
   build-bench:
-    name: Build (bench)
+    name: ${{ github.event_name == 'pull_request' && inputs.shard == 1 && 'Build and gate' || 'Build (bench)' }}
     needs: plan
     if: github.event_name != 'schedule' && needs.plan.outputs.packages != ''
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
       contents: read
+      pull-requests: read
+    env:
+      GATES_HERE: ${{ github.event_name == 'pull_request' && inputs.shard == 1 }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -191,11 +197,38 @@ jobs:
           prebuild-shards: ${{ github.event_name == 'pull_request' && inputs.shard || 1 }}
           prebuild-stage: ${{ runner.temp }}/store
           bin-cache: "true"
+      # After a failed build too: the gate then compiles for itself and reports the error.
+      - name: Gate
+        if: ${{ !cancelled() && env.GATES_HERE == 'true' }}
+        uses: ./.soothfast-action
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: "false"
+          labels: "false"
+          comment: "false"
+          save-baseline: head
+          rustdoc-cache: "false"
+      - name: Upload the gate results
+        if: always() && env.GATES_HERE == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-result-rust-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/soothfast-results
+          if-no-files-found: ignore
+      - name: Upload the head measurement
+        if: always() && env.GATES_HERE == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-baseline-rust-attempt-${{ github.run_attempt }}
+          path: .soothfast/baselines/head.json
+          if-no-files-found: ignore
+      # Only a gate job of its own reads the packed stores.
       - name: Pack the stores
-        if: always()
+        if: always() && env.GATES_HERE != 'true'
         run: if [ -d "$RUNNER_TEMP/store" ]; then tar -C "$RUNNER_TEMP/store" -cf "$RUNNER_TEMP/store.tar" .; fi
       - name: Upload the stores
-        if: always()
+        if: always() && env.GATES_HERE != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: soothfast-store-bench
@@ -431,7 +464,9 @@ jobs:
   gate-rust:
     name: Gate${{ matrix.shard != '' && format(' ({0})', matrix.shard) || '' }}
     needs: [plan, build-bench]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && github.event_name != 'schedule' && needs.plan.outputs.packages != '' }}
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' && github.event_name != 'schedule'
+      && needs.plan.outputs.packages != '' && (github.event_name != 'pull_request' || inputs.shard != 1) }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     environment: soothfast-bot
     permissions:
@@ -588,7 +623,7 @@ jobs:
 
   docs:
     name: Docs check
-    needs: [plan, build-rustdoc, gate-rust, gate, check]
+    needs: [plan, build-rustdoc, build-bench, gate-rust, gate, check]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.plan.outputs.docs == 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
@@ -875,7 +910,7 @@ jobs:
 
   verdict:
     name: verdict
-    needs: [plan, test, test-projects, gate-rust, gate, docs, check]
+    needs: [plan, test, test-projects, build-bench, gate-rust, gate, docs, check]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ fromJSON(inputs.runs_on) }}
     environment: soothfast-bot
