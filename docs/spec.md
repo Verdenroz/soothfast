@@ -374,7 +374,9 @@ files at the merge-base instead. Every parsed file must re-render
 byte-identically or the gate fails, so a stale or hand-edited base can never
 be silently diffed. It is the right default for CI that already requires
 `spec gen --check` on every merge, which pins the committed file to what the
-merge-base would generate.
+merge-base would generate. `--prefer-committed` reads the same files and
+rebuilds the merge-base when one does not re-render, as a file written by an
+older release may not. `ci spec` gates this way.
 
 Every dialect gates on that same asymmetry, read off whichever key states
 the direction. For **AsyncAPI** it is the operation's own `action`: a
