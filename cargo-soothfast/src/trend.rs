@@ -250,17 +250,35 @@ fn publishable_from(root: &Path, remote: &str, branch: &str) -> Result<Option<St
     })
 }
 
-/// Appends `line` to the working copy, seeded from `publishable_from`.
+/// Appends `line` to the working copy, seeded from `publishable_from`. A
+/// last point for the same commit is replaced, so a rerun adds no duplicate.
 fn append_line(root: &Path, remote: &str, branch: &str, line: &str) -> Result<PathBuf, String> {
     let existing = publishable_from(root, remote, branch)
         .map_err(|e| format!("cannot read the existing trend series: {e}"))?
         .unwrap_or_default();
+    let existing = without_last_point_of(&existing, line);
     let path = working_copy(root);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
-    std::fs::write(&path, existing + line).map_err(|e| format!("{}: {e}", path.display()))?;
+    std::fs::write(&path, format!("{existing}{line}"))
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(path)
+}
+
+fn without_last_point_of<'a>(series: &'a str, line: &str) -> &'a str {
+    let commit = |l: &str| {
+        let point: Value = serde_json::from_str(l).ok()?;
+        point["commit"].as_str().map(str::to_owned)
+    };
+    let body = series.trim_end_matches('\n');
+    let kept = body.rfind('\n').map_or(0, |i| i + 1);
+    let last = commit(&body[kept..]);
+    if last.is_some() && last == commit(line) {
+        &series[..kept]
+    } else {
+        series
+    }
 }
 
 /// A trend point built from a saved baseline instead of a fresh measurement.
@@ -498,6 +516,40 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
             "{\"b\":2}\n{\"d\":4}\n{\"c\":3}\n"
+        );
+    }
+
+    #[test]
+    fn appending_the_same_commit_twice_replaces_its_point() {
+        let root = repo_with_origin("rerun", None);
+        append_line(&root, "origin", "gh-pages", "{\"commit\":\"a1\",\"v\":1}\n").unwrap();
+        let path =
+            append_line(&root, "origin", "gh-pages", "{\"commit\":\"a1\",\"v\":2}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"commit\":\"a1\",\"v\":2}\n"
+        );
+    }
+
+    #[test]
+    fn a_rerun_does_not_touch_earlier_commits_points() {
+        let root = repo_with_origin("rerun-keeps", None);
+        std::fs::create_dir_all(root.join(".soothfast")).unwrap();
+        std::fs::write(
+            working_copy(&root),
+            "{\"commit\":\"a1\"}\n{\"commit\":\"b2\",\"v\":1}\n",
+        )
+        .unwrap();
+        let path =
+            append_line(&root, "origin", "gh-pages", "{\"commit\":\"b2\",\"v\":2}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"commit\":\"a1\"}\n{\"commit\":\"b2\",\"v\":2}\n"
+        );
+        append_line(&root, "origin", "gh-pages", "{\"commit\":\"a1\",\"v\":3}\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{\"commit\":\"a1\"}\n{\"commit\":\"b2\",\"v\":2}\n{\"commit\":\"a1\",\"v\":3}\n"
         );
     }
 

@@ -751,6 +751,21 @@ builds the site), and the repository's Pages source set to "GitHub Actions".
 `cargo soothfast init` adds the `pages` job to the caller when the setting is
 on, and `init --check` reports the caller as drifted until it has been rerun. A failing docs check deploys nothing.
 
+### Keeping a trend
+
+`[ci] trend_url = "https://owner.github.io/repo"` keeps a performance trend
+with `pages`. The series is the `trend.jsonl` at the root of the published
+site, so the URL is both the opt-in and where to read it. On a push to the
+default branch, the docs job fetches that file, appends the point from the
+merged `head` baseline, and builds the series into the site it uploads. A
+rerun of the same commit replaces its point instead of adding a second one.
+
+The first run finds no `trend.jsonl` (a 404) and starts the series. Any other
+answer, or a body that is not a JSON lines series, fails the job rather than
+publish a site without its history. A mistyped URL that returns a 404 reads as
+a first run and starts a new series, so check the first deploy's `trend.jsonl`.
+The URL must start with `https://`.
+
 ## One verdict
 
 The reusable `run.yml` workflow gives a pull request one soothfast comment and

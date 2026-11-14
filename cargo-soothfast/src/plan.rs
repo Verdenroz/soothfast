@@ -127,6 +127,8 @@ struct Plan {
     checks: Vec<Check>,
     /// Whether `[ci] pages = true` deploys the site the docs job builds.
     pages: bool,
+    /// `[ci] trend_url`, which the docs job fetches the series from.
+    trend_url: Option<String>,
 }
 
 /// One project's tests, or one suite's, and whether the change reaches them.
@@ -174,6 +176,7 @@ fn build(
     let config = Config::load(root)?;
     let skip = config.ci()?;
     let pages = config.pages()?;
+    let trend_url = config.trend_url()?;
     let checks = checks::planned(root, rust.is_some(), &skip)?;
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
@@ -193,6 +196,7 @@ fn build(
         first_shard_only,
         checks,
         pages,
+        trend_url,
     };
     plan.check_names()?;
     plan.reused = plan.stored_passes(root)?;
@@ -429,7 +433,7 @@ impl Plan {
             .unwrap_or_default();
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nchecks={}\nchecks_any={}\nchecks_expect={}\nsite_in_docs={}\nsite_deploy={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nchecks={}\nchecks_any={}\nchecks_expect={}\nsite_in_docs={}\nsite_deploy={}\ntrend_url={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -451,6 +455,10 @@ impl Plan {
                 .join(" "),
             self.site_in_docs(),
             self.site_deploy(),
+            self.trend_url
+                .as_deref()
+                .filter(|_| self.site_deploy())
+                .unwrap_or_default(),
         )
     }
 }
@@ -528,6 +536,7 @@ mod tests {
             first_shard_only: false,
             checks: Vec::new(),
             pages: false,
+            trend_url: None,
         }
     }
 
@@ -603,7 +612,7 @@ mod tests {
         assert_eq!(matrix["include"].as_array().unwrap().len(), 1);
         let pure = plan(None, vec![]).outputs();
         assert!(pure.contains("projects=false\nrust=false\n"), "{pure}");
-        let checks = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=\nsite_in_docs=false\nsite_deploy=false\n";
+        let checks = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=\nsite_in_docs=false\nsite_deploy=false\ntrend_url=\n";
         assert!(pure.ends_with(checks), "{pure}");
     }
 
@@ -621,8 +630,27 @@ mod tests {
         p.docs = true;
         p.pages = true;
         let with_docs = p.outputs();
-        let moved = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=site\nsite_in_docs=true\nsite_deploy=true\n";
+        let moved = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=site\nsite_in_docs=true\nsite_deploy=true\ntrend_url=\n";
         assert!(with_docs.ends_with(moved), "{with_docs}");
+    }
+
+    #[test]
+    fn the_plan_carries_the_trend_url_only_when_the_site_deploys() {
+        let site = Check {
+            kind: "site",
+            package: None,
+            rustdoc: true,
+        };
+        let mut p = plan(Some(&["a"]), vec![]);
+        p.checks = vec![site];
+        p.docs = true;
+        p.trend_url = Some("https://o.github.io/r".into());
+        assert!(p.outputs().ends_with("site_deploy=false\ntrend_url=\n"));
+        p.pages = true;
+        assert!(
+            p.outputs()
+                .ends_with("site_deploy=true\ntrend_url=https://o.github.io/r\n")
+        );
     }
 
     #[test]
