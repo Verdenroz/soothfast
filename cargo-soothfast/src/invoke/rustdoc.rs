@@ -138,7 +138,9 @@ fn local_crate_dirs(pkg: &str, dir: Option<&Path>) -> io::Result<Vec<PathBuf>> {
 }
 
 /// Build rustdoc JSON for a package (nightly-only job) and load it.
-/// `dir` runs the build in another worktree; JSON lands in its target/doc.
+/// `dir` runs the build in another worktree. The build has a target
+/// directory of its own, `soothfast-rustdoc` under the workspace's, so it
+/// never waits on the lock of a `cargo build` running beside it.
 ///
 /// Reuses a stored extraction of the same inputs (see `rustdocstore`) instead
 /// of re-running `cargo rustdoc`: rustdoc's JSON backend re-serializes on every
@@ -157,7 +159,8 @@ pub fn rustdoc_json_in(
     };
     // Honor CARGO_TARGET_DIR / build.target-dir: a hardcoded target/ would
     // silently read a STALE json and validate docs against an old surface.
-    let json_path = target_dir(dir)?
+    let doc_target = target_dir(dir)?.join("soothfast-rustdoc");
+    let json_path = doc_target
         .join("doc")
         .join(format!("{}.json", pkg.replace('-', "_")));
 
@@ -172,7 +175,15 @@ pub fn rustdoc_json_in(
     let started = std::time::SystemTime::now();
 
     let build = |dep_info: Option<&Path>| {
-        let cmd = rustdoc_command(&toolchain, pkg, dir, features, visibility, dep_info);
+        let cmd = rustdoc_command(
+            &toolchain,
+            pkg,
+            dir,
+            &doc_target,
+            features,
+            visibility,
+            dep_info,
+        );
         timed(&format!("cargo rustdoc {pkg}"), || run_teeing_stderr(cmd))
     };
     let mut built = build(Some(&dep_info))?;
@@ -236,12 +247,14 @@ fn rustdoc_command(
     toolchain: &str,
     pkg: &str,
     dir: Option<&Path>,
+    target: &Path,
     features: Option<&str>,
     visibility: Visibility,
     dep_info: Option<&Path>,
 ) -> Command {
     let mut cmd = Command::new("cargo");
     cmd.args([&format!("+{toolchain}"), "rustdoc", "-p", pkg, "--lib"]);
+    cmd.arg("--target-dir").arg(target);
     if dep_info.is_some() {
         cmd.arg("--message-format=json-render-diagnostics");
     }

@@ -114,8 +114,7 @@ pub(crate) fn discover_routes(
 
 /// Build rustdoc JSON for the package, private items included.
 ///
-/// The expensive step, so generators call it once for all their files —
-/// and only after route discovery has proven there is work to do.
+/// The expensive step, so generators call it once for all their files.
 /// Private items are mandatory here: route handlers are commonly not
 /// `pub`, and rustdoc omits them entirely by default.
 pub(crate) fn rustdoc_for(
@@ -308,13 +307,22 @@ pub(crate) fn build(
         return Ok(built);
     }
 
-    let mut by_spec = discover_routes(common, dir)?;
+    // The routes executable and the rustdoc JSON are separate cargo builds
+    // in separate target directories, so they run side by side.
+    let (routes, documented) = std::thread::scope(|scope| {
+        let documented = scope.spawn(|| {
+            let doc = rustdoc_for(pkg, common, dir);
+            (doc, aux_rustdoc_for(pkg, dir, cfg))
+        });
+        (discover_routes(common, dir), documented.join())
+    });
+    let mut by_spec = routes?;
     by_spec.retain(|s, _| cfg.mode_of(s) == Mode::Generate);
     if by_spec.is_empty() {
         return Ok(built);
     }
-    let doc = rustdoc_for(pkg, common, dir)?;
-    let aux = aux_rustdoc_for(pkg, dir, cfg);
+    let (doc, aux) = documented.map_err(|_| "the rustdoc build panicked".to_string())?;
+    let doc = doc?;
     let docs = Docs::new(&doc, &aux);
 
     for (spec_file, routes) in &by_spec {
