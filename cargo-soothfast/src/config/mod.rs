@@ -131,6 +131,13 @@ impl Config {
         Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.pages)
     }
 
+    /// The `[ci] trend_url` the trend series is fetched from.
+    pub fn trend_url(&self) -> Result<Option<String>, String> {
+        Ok(ci::parse(&self.text)
+            .map_err(|e| self.located(e))?
+            .trend_url)
+    }
+
     /// The `[ci]` table's `skip` list: the CI job kinds not to run.
     /// `[test] ci = false` adds `"test"` when the list doesn't name it.
     #[allow(dead_code, reason = "read by the CI job planner")]

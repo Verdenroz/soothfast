@@ -12,6 +12,9 @@ pub struct CiTable {
     pub skip: Vec<String>,
     /// Whether a default-branch push deploys the built site to GitHub Pages.
     pub pages: bool,
+    /// The published site's `https://` URL, which holds the trend series.
+    /// Setting it keeps a trend from the generated workflow.
+    pub trend_url: Option<String>,
     /// Shell `ci site` runs before it builds the site, for pages the
     /// repository generates.
     pub site_run: Option<String>,
@@ -42,6 +45,9 @@ pub fn parse(text: &str) -> Result<CiTable, String> {
         match (key.trim(), value) {
             ("skip", TomlValue::StrArray(kinds)) => table.skip = kinds,
             ("pages", TomlValue::Bool(pages)) => table.pages = pages,
+            ("trend_url", TomlValue::Str(url)) if url.starts_with("https://") => {
+                table.trend_url = Some(url);
+            }
             ("site_run", TomlValue::Str(run)) => table.site_run = Some(run),
             ("capture_paths", TomlValue::StrArray(paths)) => table.capture_paths = paths,
             (k, _) => {
@@ -77,6 +83,20 @@ mod tests {
         assert_eq!(hook.site_run.as_deref(), Some("make pages"));
         let capture = parse("[ci]\ncapture_paths = [\"README.md\"]\n").unwrap();
         assert_eq!(capture.capture_paths, ["README.md"]);
+    }
+
+    #[test]
+    fn trend_url_names_the_published_site() {
+        let text = "[ci]\ntrend_url = \"https://o.github.io/r\"\n";
+        let url = parse(text).unwrap().trend_url;
+        assert_eq!(url.as_deref(), Some("https://o.github.io/r"));
+        assert_eq!(parse("[ci]\npages = true\n").unwrap().trend_url, None);
+    }
+
+    #[test]
+    fn a_trend_url_that_is_not_https_is_an_error() {
+        assert!(parse("[ci]\ntrend_url = \"http://o.github.io/r\"\n").is_err());
+        assert!(parse("[ci]\ntrend_url = true\n").is_err());
     }
 
     #[test]
