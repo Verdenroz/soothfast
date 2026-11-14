@@ -39,10 +39,17 @@ not among the `-p` packages fails with a request to add it.
 
 `soothfast.lock` is plain JSON: `{"version": 2, "binds": {"item::path":
 "<16-hex-digit fingerprint>"}}`. Running `docs accept` with explicit PATHS
-merges into the existing lock, so binds outside that scope survive. Running
-it with no PATHS replaces the whole map, which is how dead binds get
-dropped. A lock written under an older `version` reports as needing one
-re-accept rather than as prose that drifted.
+merges into the existing lock, so binds outside that scope survive.
+
+A locked bind that no scanned page binds is an orphan. When the scan covers
+every `[docs] paths` page, `docs check` fails on each one and `docs accept`
+keeps them and prints how many; `docs accept --allow-gone` drops them. With
+PATHS, or with a package's own `docs` paths, neither reports orphans, since
+the bind may sit on a page that was not scanned, and `--allow-gone` is a
+usage error.
+
+A lock written under an older `version` reports as needing one re-accept
+rather than as prose that drifted.
 
 ### Binding code in other languages
 

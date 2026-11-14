@@ -2,7 +2,7 @@
 //! stale when the item's current fingerprint differs from the locked one;
 //! `docs accept` re-locks after the prose has been re-verified by a human.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -61,17 +61,21 @@ pub fn write(root: &Path, binds: &Binds) -> Result<(), String> {
     std::fs::write(root.join(LOCKFILE), text + "\n").map_err(|e| e.to_string())
 }
 
-/// Merge freshly accepted binds over `existing`. A full-scope accept replaces
-/// the map outright, dropping binds that no longer exist anywhere; a partial
-/// (explicit-paths) accept must preserve out-of-scope entries.
-pub fn merge(existing: &Binds, fresh: &Binds, full_scope: bool) -> Binds {
-    if full_scope {
-        fresh.clone()
-    } else {
-        let mut merged = existing.clone();
-        merged.extend(fresh.iter().map(|(k, v)| (k.clone(), v.clone())));
-        merged
-    }
+/// Overlay freshly accepted binds on `existing`, keeping every other entry.
+pub fn merge(existing: &Binds, fresh: &Binds) -> Binds {
+    let mut merged = existing.clone();
+    merged.extend(fresh.iter().map(|(k, v)| (k.clone(), v.clone())));
+    merged
+}
+
+/// Locked binds that no marker in `bound` names. Only meaningful when
+/// `bound` holds the targets of every configured docs page.
+pub fn orphans(locked: &Binds, bound: &BTreeSet<&str>) -> Vec<String> {
+    locked
+        .keys()
+        .filter(|target| !bound.contains(target.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// The entries of `lock` a fresh accept may merge over.
@@ -116,7 +120,7 @@ mod tests {
     fn partial_scope_merge_preserves_out_of_scope_entries() {
         let existing = binds(&[("a::x", "1111"), ("b::y", "2222")]);
         let fresh = binds(&[("a::x", "9999")]);
-        let merged = merge(&existing, &fresh, false);
+        let merged = merge(&existing, &fresh);
         assert_eq!(merged.get("a::x").map(String::as_str), Some("9999"));
         assert_eq!(merged.get("b::y").map(String::as_str), Some("2222"));
         assert_eq!(merged.len(), 2);
@@ -150,9 +154,15 @@ mod tests {
     }
 
     #[test]
-    fn full_scope_merge_drops_binds_that_no_longer_exist() {
-        let existing = binds(&[("a::x", "1111"), ("gone::z", "2222")]);
-        let fresh = binds(&[("a::x", "9999")]);
-        assert_eq!(merge(&existing, &fresh, true), fresh);
+    fn orphans_are_the_locked_binds_no_marker_names() {
+        let locked = binds(&[("a::x", "1111"), ("gone::z", "2222"), ("old::w", "3333")]);
+        let bound = BTreeSet::from(["a::x", "unlocked::q"]);
+        assert_eq!(orphans(&locked, &bound), ["gone::z", "old::w"]);
+    }
+
+    #[test]
+    fn a_fully_bound_lock_has_no_orphans() {
+        let locked = binds(&[("a::x", "1111")]);
+        assert!(orphans(&locked, &BTreeSet::from(["a::x"])).is_empty());
     }
 }
