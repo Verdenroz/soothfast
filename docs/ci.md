@@ -725,7 +725,10 @@ When the repository has a docs package, the site is built in the docs job
 and has no job of its own. That job has the gate's merged baseline, so the
 pages and a `site_run` hook can read the run's measured numbers. The site is
 built even when the docs check failed, so its result still reaches the
-verdict.
+verdict. The docs job starts after the check jobs, since each spec job
+uploads the routes executable and rustdoc JSON it built and the docs job
+merges them into its stores. A `site_run` hook that renders routes pages
+then compiles nothing.
 
 Only `run.yml` runs these jobs. `cargo soothfast init` writes a workflow that
 calls it whenever the file configures one of them or `[ci] pages`. A cargo

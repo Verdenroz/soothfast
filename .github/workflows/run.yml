@@ -587,7 +587,7 @@ jobs:
 
   docs:
     name: Docs check
-    needs: [plan, build-rustdoc, gate-rust, gate]
+    needs: [plan, build-rustdoc, gate-rust, gate, check]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.plan.outputs.docs == 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
@@ -691,6 +691,34 @@ jobs:
             mkdir -p .soothfast
             tar -xf "$RUNNER_TEMP/store-in/store.tar" -C .soothfast
           fi
+      # A site with routes pages reads the executables and rustdoc JSON the
+      # spec jobs built, so this job compiles neither again.
+      - name: Download the spec jobs' builds
+        if: needs.plan.outputs.site_in_docs == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: soothfast-store-spec-*
+          path: ${{ runner.temp }}/spec-stores
+      # The executable store is keyed by the compiler, and the spec jobs build on stable.
+      - name: Merge the spec jobs' builds
+        id: spec-stores
+        if: needs.plan.outputs.site_in_docs == 'true'
+        env:
+          CLI: ${{ steps.soothfast.outputs.bin }}
+        run: |
+          shopt -s nullglob globstar
+          for tar in "$RUNNER_TEMP"/spec-stores/**/store.tar; do
+            dir=$(mktemp -d)
+            tar -xf "$tar" -C "$dir"
+            "$CLI" cache merge --from "$dir"
+            rm -rf "$dir"
+            hit=true
+          done
+          if [ "${hit:-}" = true ]; then
+            rustup toolchain install stable --profile minimal
+            echo "hit=true" >>"$GITHUB_OUTPUT"
+          fi
       # Only this run's own legs. Several artifacts each land in a directory of
       # their own, and a lone one lands in the path itself.
       - name: Download this run's measurements
@@ -721,7 +749,14 @@ jobs:
         run: ./.soothfast-action/action/rustdoc-toolchain.sh
       - name: Build the site
         if: ${{ !cancelled() && needs.plan.outputs.site_in_docs == 'true' }}
-        run: cargo soothfast ci site --out "$RUNNER_TEMP/soothfast-site"
+        env:
+          SPEC_BUILDS: ${{ steps.spec-stores.outputs.hit }}
+        run: |
+          # The compiler and CARGO_INCREMENTAL the spec jobs built under, which the store keys name.
+          if [ "$SPEC_BUILDS" = true ]; then
+            export RUSTUP_TOOLCHAIN=stable CARGO_INCREMENTAL=0
+          fi
+          cargo soothfast ci site --out "$RUNNER_TEMP/soothfast-site"
       # pages.yml publishes this artifact.
       - name: Upload the site
         if: >-
@@ -798,6 +833,28 @@ jobs:
           KIND: ${{ matrix.kind }}
           PACKAGE: ${{ matrix.package }}
         run: cargo soothfast ci "$KIND" ${PACKAGE:+-p "$PACKAGE"}
+      # Both lanes are store hits after the check, so this only copies what
+      # the site's routes pages read.
+      - name: Stage the spec builds for the site
+        if: ${{ !cancelled() && matrix.kind == 'spec' && needs.plan.outputs.site_in_docs == 'true' }}
+        env:
+          PACKAGE: ${{ matrix.package }}
+          STAGE: ${{ runner.temp }}/store
+        run: |
+          for lane in routes rustdoc; do
+            cargo soothfast ci build "$lane" --stage "$STAGE" ${PACKAGE:+--spec "$PACKAGE"} \
+              || echo "::warning::could not stage the $lane builds for the site"
+          done
+          if [ -d "$STAGE" ]; then tar -C "$STAGE" -cf "$RUNNER_TEMP/store.tar" .; fi
+      - name: Upload the spec builds
+        if: ${{ !cancelled() && matrix.kind == 'spec' && needs.plan.outputs.site_in_docs == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: soothfast-store-${{ matrix.name }}
+          path: ${{ runner.temp }}/store.tar
+          if-no-files-found: ignore
+          retention-days: 1
+          compression-level: 1
       - name: Upload the check result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
