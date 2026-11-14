@@ -245,7 +245,7 @@ pub fn cheap_key_skipping(
 
 /// Whether `file` lies under a top-level `.soothfast*` path: the store and
 /// the directories the CI action makes in the workspace while a job runs.
-fn is_scratch(file: &Path) -> bool {
+pub(crate) fn is_scratch(file: &Path) -> bool {
     file.components()
         .next()
         .is_some_and(|c| c.as_os_str().to_string_lossy().starts_with(".soothfast"))
