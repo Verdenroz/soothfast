@@ -241,7 +241,9 @@ pub(crate) fn hashed(parts: &[String]) -> String {
 }
 
 /// The key a report keeps its measurement of `sha` under for one package:
-/// the commit, the features, the build settings, the harness and this host.
+/// the commit, the features, the build settings and the harness. The host
+/// is not part of it: [`stored_report`] decides whether a run from another
+/// machine still stands.
 pub fn report_key(sha: &str, pkg: &str, features: Option<&str>, stamp: &BuildStamp) -> String {
     let parts = [
         "report".to_string(),
@@ -250,23 +252,36 @@ pub fn report_key(sha: &str, pkg: &str, features: Option<&str>, stamp: &BuildSta
         features.unwrap_or("").to_string(),
         stamp.to_json().to_string(),
         crate::invoke::harness_versions(),
-        cpu_model(),
     ];
     hashed(&parts)
 }
 
-/// The document stored under `key` by [`keep_report`]. Reading it renews it,
-/// so a measurement every push reads outlives the runs stored around it.
+/// The document stored under `key` by [`keep_report`], when it stands on
+/// this host. Reading it renews it, so a measurement every push reads
+/// outlives the runs stored around it.
 pub fn stored_report(key: &str) -> Option<Value> {
     let text = std::fs::read_to_string(dir()?.join(format!("{key}.json"))).ok()?;
     let doc: Value = serde_json::from_str(&text).ok()?;
+    if !stands_on(&doc, &cpu_model()) {
+        return None;
+    }
     store(key, &doc);
     Some(doc)
 }
 
-/// Keep `doc` as the measurement [`report_key`] names.
+/// Keep `doc` as the measurement [`report_key`] names, with the host it ran on.
 pub fn keep_report(key: &str, doc: &Value) {
-    store(key, doc);
+    let mut doc = doc.clone();
+    doc[REPORT_HOST] = serde_json::json!(cpu_model());
+    store(key, &doc);
+}
+
+const REPORT_HOST: &str = "report_host";
+
+/// Whether a stored report measurement is this host's to read: callgrind
+/// counts do not depend on the machine, and anything else was timed on it.
+fn stands_on(doc: &Value, host: &str) -> bool {
+    doc["gating_backend"] == "callgrind" || doc[REPORT_HOST] == host
 }
 
 /// `bytes` hashed, as sixteen hex digits.
@@ -352,6 +367,16 @@ mod tests {
         assert_ne!(one, key("def", "core", None));
         assert_ne!(one, key("abc", "other", None));
         assert_ne!(one, key("abc", "core", Some("full")));
+    }
+
+    #[test]
+    fn a_report_s_callgrind_run_stands_on_any_host_and_a_timed_one_on_its_own() {
+        let counted = serde_json::json!({"gating_backend": "callgrind", "report_host": "a"});
+        assert!(stands_on(&counted, "b"));
+        let timed = serde_json::json!({"gating_backend": "walltime", "report_host": "a"});
+        assert!(stands_on(&timed, "a"));
+        assert!(!stands_on(&timed, "b"));
+        assert!(!stands_on(&serde_json::json!({}), "a"));
     }
 
     fn env(backend: &str) -> HostEnv {
