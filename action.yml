@@ -402,8 +402,9 @@ runs:
         for dir in runs items maps; do
           if [ -d ".soothfast/$dir" ]; then mv ".soothfast/$dir" ".soothfast-branch/$dir"; fi
         done
-    # The default-branch push saves under its own sha, which is the exact key
-    # a later pull request asks for as its merge-base.
+    # The default-branch push saves under its own sha, which a later pull
+    # request asks for as its merge-base, and again with `-regen` once the
+    # regeneration has stored its own runs. The first restore key matches both.
     - name: Restore measured runs
       if: steps.prepare.outputs.cache_runs == 'true'
       id: runs
@@ -413,8 +414,9 @@ runs:
           .soothfast/runs
           .soothfast/items
           .soothfast/maps
-        key: soothfast-runs-${{ steps.prepare.outputs.default_branch }}-${{ steps.prepare.outputs.reference }}
+        key: soothfast-runs-${{ steps.prepare.outputs.default_branch }}-${{ steps.prepare.outputs.reference }}-regen
         restore-keys: |
+          soothfast-runs-${{ steps.prepare.outputs.default_branch }}-${{ steps.prepare.outputs.reference }}
           ${{ steps.save-key.outputs.shard_prefix }}
           soothfast-runs-${{ github.ref_name }}-
           soothfast-runs-${{ steps.prepare.outputs.default_branch }}-
@@ -638,6 +640,20 @@ runs:
         [ "$CHANGELOG" = true ] || args+=(--no-changelog)
         "$CLI" ci regen "${args[@]}"
         cat "$RUNNER_TEMP/soothfast-regen" >>"$GITHUB_OUTPUT"
+    # The changelog measures the last release once and reads it on every
+    # later push, so what the regeneration stored is saved under a key of its own.
+    - name: Save the runs the regeneration measured
+      if: >-
+        steps.regen.outcome == 'success' && steps.prepare.outputs.cache_runs == 'true'
+        && steps.prepare.outputs.records == 'true' && inputs.changelog == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          .soothfast/runs
+          .soothfast/items
+          .soothfast/maps
+        key: ${{ steps.save-key.outputs.key }}-regen
+
     # Minted after everything that compiles the tree has run.
     - name: Mint a soothfast-bot token
       if: steps.regen.outputs.changed == 'true' && inputs.bot-token == ''
