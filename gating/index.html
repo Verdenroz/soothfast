@@ -502,6 +502,15 @@ stamped with the shard, and <code>cargo soothfast baseline merge</code> joins th
 files into one baseline. Each leg builds both sides itself unless the stores hold
 them; <code>shard:</code> on the <a href="../ci/#one-build">reusable workflow</a> builds them once
 and gives every leg a hit.</p>
+<h2 id="items-several-packages-list">Items several packages list<a class="anchor" href="#items-several-packages-list" aria-label="Link to this section">#</a></h2>
+<p>A measured function in a library is linked into the bench binary of every
+crate that depends on it, so several packages can list one id. A saved
+baseline holds one number per id. When the registering package (the id's
+first segment) is among the listers, its <code>-p</code> save always wins, and a
+dependent's save skips that id in either order. A docs claim on such an id
+reads the registrant's number and counts another lister's as missing. When no
+lister registers the id, the claim fails and names the packages: give the
+crate a bench target and save it with <code>-p</code>.</p>
 <h2 id="thresholds">Thresholds<a class="anchor" href="#thresholds" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap"><table>
 <thead><tr><th>metric</th><th>threshold</th><th>notes</th></tr></thead>
@@ -818,6 +827,8 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l3" href="#reused-items-and-switches">Reused items and switches</a></li>
   
     <li><a class="toc-l2" href="#sharding">Sharding</a></li>
+  
+    <li><a class="toc-l2" href="#items-several-packages-list">Items several packages list</a></li>
   
     <li><a class="toc-l2" href="#thresholds">Thresholds</a></li>
   
