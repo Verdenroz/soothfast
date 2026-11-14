@@ -31,6 +31,7 @@
 
 ### ⚡ Performance
 
+- Build the site from the spec jobs' routes builds (#416)
 - Read the spec gate's base from the committed spec in CI (#413)
 
 ### 🔧 Internal
