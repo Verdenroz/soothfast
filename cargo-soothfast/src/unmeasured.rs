@@ -3,7 +3,7 @@
 //! typed reason. `docs check` reports an unchanged claim on one "not
 //! evaluated" and fails a new or edited one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::Path;
 
@@ -241,6 +241,34 @@ pub fn owned_by_others(doc: &Value, package: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// Every id two or more packages of baseline `doc` list, with those packages.
+pub fn shared(doc: &Value) -> BTreeMap<String, Vec<String>> {
+    let mut by_id: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (package, ids) in doc[OWNERS_KEY].as_object().into_iter().flatten() {
+        for id in ids
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            by_id
+                .entry(id.to_string())
+                .or_default()
+                .push(package.clone());
+        }
+    }
+    by_id.retain(|_, listers| listers.len() > 1);
+    by_id.values_mut().for_each(|listers| listers.sort());
+    by_id
+}
+
+/// The package of `listers` that registers `id`.
+pub fn registrant<'a>(id: &str, listers: &'a [String]) -> Option<&'a String> {
+    listers
+        .iter()
+        .find(|p| p.replace('-', "_") == invoke::id_pkg(id))
+}
+
 /// One entry of `package` for `items`, lacking `metrics`.
 pub fn entry(
     package: &str,
@@ -354,6 +382,25 @@ mod tests {
 
     fn ids(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn shared_lists_ids_under_two_owners_sorted() {
+        let doc = json!({ "owners": {
+            "b": ["lib::f", "b::own"],
+            "a": ["lib::f"],
+            "c": ["lib::f"],
+        } });
+        let shared = shared(&doc);
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared["lib::f"], ids(&["a", "b", "c"]));
+    }
+
+    #[test]
+    fn registrant_is_the_lister_whose_normalized_name_prefixes_the_id() {
+        let listers = ids(&["app", "my-lib"]);
+        assert_eq!(registrant("my_lib::f", &listers), Some(&listers[1]));
+        assert_eq!(registrant("other::f", &listers), None);
     }
 
     #[test]

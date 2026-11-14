@@ -471,6 +471,17 @@ files into one baseline. Each leg builds both sides itself unless the stores hol
 them; `shard:` on the [reusable workflow](ci.md#one-build) builds them once
 and gives every leg a hit.
 
+## Items several packages list
+
+A measured function in a library is linked into the bench binary of every
+crate that depends on it, so several packages can list one id. A saved
+baseline holds one number per id. When the registering package (the id's
+first segment) is among the listers, its `-p` save always wins, and a
+dependent's save skips that id in either order. A docs claim on such an id
+reads the registrant's number and counts another lister's as missing. When no
+lister registers the id, the claim fails and names the packages: give the
+crate a bench target and save it with `-p`.
+
 ## Thresholds
 
 | metric | threshold | notes |

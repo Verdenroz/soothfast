@@ -411,8 +411,8 @@ fn an_id_two_packages_save_is_owned_by_both_and_keeps_the_last_number() {
     let doc = invoke::load_baseline_in(&root, "head").unwrap().unwrap();
     assert_eq!(unmeasured::owned_by(&doc, "a"), ["soothfast::same"]);
     assert_eq!(unmeasured::owned_by(&doc, "b"), ["soothfast::same"]);
-    let holds = reading(&root, "soothfast::same.walltime.median_ns < 1ms");
-    assert!(matches!(holds, Reading::Decided(Outcome::Holds(_))));
+    let claim = reading(&root, "soothfast::same.walltime.median_ns < 1ms");
+    assert!(matches!(claim, Reading::Decided(Outcome::Failed(_))));
     let _ = std::fs::remove_dir_all(&root);
 }
 
