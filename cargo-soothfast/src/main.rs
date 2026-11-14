@@ -263,7 +263,8 @@ commands:
   verdict  merge DIR --out FILE [--accepted LABEL] [--expect NAME:KIND]..
            (one job's result, then the pull request's single comment;
            exits 1 on a regression or error)
-  docs     check|accept|gen-tests -p PKG [--baseline NAME] [--skip-claims] [--features F] [PATHS...]
+  docs     check|accept|gen-tests -p PKG [--baseline NAME] [--skip-claims] [--allow-gone] [--features F] [PATHS...]
+           (--allow-gone: accept drops locked binds no page binds; no PATHS)
            (check --against-ref REF: a claim the merge-base made unchanged,
            on an item the baseline lists as unmeasured, is reported not
            evaluated; any other claim with no measurement fails)
