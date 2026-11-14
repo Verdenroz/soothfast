@@ -218,9 +218,12 @@ pub(super) fn measure_ref_interleaved(
                 } else {
                     Settled::AsMeasured
                 };
+                // The merge-base built this binary too, so the run is stored
+                // under its commit and the next gate against it builds nothing there.
+                let ids = [head_dig.as_deref(), base_known.then_some(base_sha.as_str())];
                 match settled_doc(doc, &settled) {
-                    Some(doc) if counted => store_head(&runs, doc, pass, &[head_dig.as_deref()]),
-                    Some(doc) => store_identical(&runs, doc, pass, &[head_dig.as_deref()]),
+                    Some(doc) if counted => store_head(&runs, doc, pass, &ids),
+                    Some(doc) => store_identical(&runs, doc, pass, &ids),
                     None => {}
                 }
             }
