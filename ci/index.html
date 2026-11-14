@@ -732,7 +732,10 @@ verdict expects a result from each. A kind named in <code>[ci] skip</code> gets 
 and has no job of its own. That job has the gate's merged baseline, so the
 pages and a <code>site_run</code> hook can read the run's measured numbers. The site is
 built even when the docs check failed, so its result still reaches the
-verdict.</p>
+verdict. The docs job starts after the check jobs, since each spec job
+uploads the routes executable and rustdoc JSON it built and the docs job
+merges them into its stores. A <code>site_run</code> hook that renders routes pages
+then compiles nothing.</p>
 <p>Only <code>run.yml</code> runs these jobs. <code>cargo soothfast init</code> writes a workflow that
 calls it whenever the file configures one of them or <code>[ci] pages</code>. A cargo
 workspace with none keeps its test, gate and docs jobs in the workflow itself.</p>
