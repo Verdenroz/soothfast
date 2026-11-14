@@ -28,6 +28,10 @@
 - Land bot commits signed, on the default branch tip (#405)
 - Three gaps the first single-gate run found (#403)
 
+### ⚡ Performance
+
+- Read the spec gate's base from the committed spec in CI (#413)
+
 ### 🔧 Internal
 
 - Seed tests pass under cargo's per-package layout (#410)
