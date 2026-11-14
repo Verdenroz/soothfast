@@ -22,6 +22,8 @@ struct DocsArgs {
     check_only: bool,
     /// `docs check` leaves claims unevaluated, for a run with no measurement.
     skip_claims: bool,
+    /// `docs accept` drops locked binds no scanned page binds.
+    allow_gone: bool,
     features: Option<String>,
     /// `docs routes` `[[bench]]` target to link the route registry from.
     target: Option<String>,
@@ -101,6 +103,7 @@ pub fn run(args: &[String]) -> i32 {
         out: None,
         check_only: false,
         skip_claims: false,
+        allow_gone: false,
         features: None,
         target: None,
         addr: None,
@@ -129,6 +132,7 @@ pub fn run(args: &[String]) -> i32 {
             "--out" => a.out = it.next().map(PathBuf::from),
             "--check" => a.check_only = true,
             "--skip-claims" => a.skip_claims = true,
+            "--allow-gone" => a.allow_gone = true,
             "--features" => a.features = it.next().cloned(),
             "--target" => a.target = it.next().cloned(),
             "--addr" => match it.next() {
@@ -419,6 +423,13 @@ fn build_surface(a: &DocsArgs, pkg: &str) -> Result<(surface::Surface, Value, Pa
     Ok((surface::from_rustdoc(&doc, &root), doc, root))
 }
 
+fn bound_targets(scanned: &Scanned) -> BTreeSet<&str> {
+    (scanned.docs.iter())
+        .flat_map(|(_, doc, _)| &doc.binds)
+        .flat_map(|bind| bind.targets())
+        .collect()
+}
+
 fn check(a: &DocsArgs) -> i32 {
     match scan_all(a) {
         Ok(scanned) => check_scanned(a, &scanned),
@@ -496,6 +507,23 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // 1b. Locked binds no page binds. A partial scan cannot tell an orphan
+    // from a bind on an unscanned page, so only a full scan reports them.
+    if a.paths.is_empty() {
+        let lock = match lockfile::read(&scanned.root) {
+            Ok(l) => l,
+            Err(e) => return err(&format!("cannot read soothfast.lock: {e}")),
+        };
+        if lock.version == lockfile::VERSION {
+            for target in lockfile::orphans(&lock.binds, &bound_targets(scanned)) {
+                failures += 1;
+                println!(
+                    "FAIL  bind {target} is locked but no page binds it; `cargo soothfast docs accept --allow-gone` drops it"
+                );
             }
         }
     }
@@ -578,6 +606,9 @@ fn accept(a: &DocsArgs) -> i32 {
 }
 
 fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
+    if a.allow_gone && !a.paths.is_empty() {
+        return err("--allow-gone needs a full scan, so it takes no PATH args");
+    }
     let surfs = match surfaces_for_binds(a, scanned) {
         Ok(s) => s,
         Err(e) => return err(&e),
@@ -595,18 +626,17 @@ fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
             }
         }
     }
-    // Explicit PATHS scan a subset of docs: merge so locks for binds in
-    // out-of-scope files survive. Full scope replaces (drops dead binds).
-    let full_scope = a.paths.is_empty();
-    let existing = if full_scope {
-        lockfile::Binds::new()
-    } else {
-        match lockfile::read(&scanned.root).and_then(lockfile::comparable) {
-            Ok(binds) => binds,
-            Err(e) => return err(&e),
-        }
+    // Explicit PATHS scan a subset of docs: locks for binds in out-of-scope
+    // files survive. A full scan keeps orphans too unless --allow-gone.
+    let mut kept = match lockfile::read(&scanned.root).and_then(lockfile::comparable) {
+        Ok(binds) => binds,
+        Err(e) => return err(&e),
     };
-    let binds = lockfile::merge(&existing, &fresh, full_scope);
+    let orphans = lockfile::orphans(&kept, &bound_targets(scanned));
+    if a.allow_gone {
+        kept.retain(|target, _| !orphans.contains(target));
+    }
+    let binds = lockfile::merge(&kept, &fresh);
     match lockfile::write(&scanned.root, &binds) {
         Ok(()) => {
             println!(
@@ -614,6 +644,12 @@ fn accept_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
                 binds.len(),
                 lockfile::LOCKFILE
             );
+            if a.paths.is_empty() && !a.allow_gone && !orphans.is_empty() {
+                println!(
+                    "kept {} locked bind(s) no page binds; `docs accept --allow-gone` drops them",
+                    orphans.len()
+                );
+            }
             0
         }
         Err(e) => err(&format!("cannot write lockfile: {e}")),
@@ -1257,5 +1293,66 @@ mod tests {
                 symbol: "parse"
             }
         );
+    }
+
+    fn orphaned_project(tag: &str) -> std::path::PathBuf {
+        let dir = project_without_cargo(tag);
+        let a = DocsArgs::default();
+        assert_eq!(accept_scanned(&a, &scan_at(&a, dir.clone()).unwrap()), 0);
+        std::fs::write(dir.join("README.md"), "# Demo\n").unwrap();
+        dir
+    }
+
+    fn locked(dir: &std::path::Path) -> usize {
+        soothfast_docs::lockfile::read(dir).unwrap().binds.len()
+    }
+
+    #[test]
+    fn check_fails_on_a_locked_bind_no_page_binds() {
+        let dir = orphaned_project("orphan-check");
+        let a = DocsArgs::default();
+        assert_eq!(check_scanned(&a, &scan_at(&a, dir).unwrap()), 1);
+    }
+
+    #[test]
+    fn a_partial_check_reports_no_orphans() {
+        let dir = orphaned_project("orphan-partial");
+        let a = DocsArgs {
+            paths: vec!["README.md".into()],
+            ..DocsArgs::default()
+        };
+        assert_eq!(check_scanned(&a, &scan_at(&a, dir).unwrap()), 0);
+    }
+
+    #[test]
+    fn accept_keeps_orphans_without_allow_gone() {
+        let dir = orphaned_project("orphan-keep");
+        let a = DocsArgs::default();
+        assert_eq!(accept_scanned(&a, &scan_at(&a, dir.clone()).unwrap()), 0);
+        assert_eq!(locked(&dir), 1);
+    }
+
+    #[test]
+    fn accept_allow_gone_drops_orphans_and_check_passes() {
+        let dir = orphaned_project("orphan-drop");
+        let a = DocsArgs {
+            allow_gone: true,
+            ..DocsArgs::default()
+        };
+        assert_eq!(accept_scanned(&a, &scan_at(&a, dir.clone()).unwrap()), 0);
+        assert_eq!(locked(&dir), 0);
+        assert_eq!(check_scanned(&a, &scan_at(&a, dir).unwrap()), 0);
+    }
+
+    #[test]
+    fn allow_gone_with_paths_is_a_usage_error() {
+        let dir = orphaned_project("orphan-paths");
+        let a = DocsArgs {
+            allow_gone: true,
+            paths: vec!["README.md".into()],
+            ..DocsArgs::default()
+        };
+        assert_eq!(accept_scanned(&a, &scan_at(&a, dir.clone()).unwrap()), 2);
+        assert_eq!(locked(&dir), 1);
     }
 }
