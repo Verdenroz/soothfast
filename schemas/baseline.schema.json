@@ -125,7 +125,7 @@
       "type": "string"
     },
     "owners": {
-      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id two packages both list is owned by both. A failed package's old numbers are exactly the ids it owns and no other package does.",
+      "description": "Each package's items, keyed by the package as given to the gate, from its bench binary's listing (narrowed to the shard when sharded). An id two packages both list is owned by both; a docs claim on it reads the number of the package that registers it (the id's first segment), and fails when none of them does. A failed package's old numbers are exactly the ids it owns and no other package does.",
       "type": "object",
       "additionalProperties": {
         "type": "array",
