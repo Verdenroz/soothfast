@@ -4,7 +4,7 @@
 //! A new or edited claim, or one naming an item no entry lists, still fails
 //! when its measurement is missing.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::Value;
@@ -109,6 +109,7 @@ pub struct Against<'a> {
     baseline: &'a Value,
     entries: Vec<Unmeasured>,
     owned: BTreeSet<String>,
+    shared: BTreeMap<String, Vec<String>>,
 }
 
 impl<'a> Against<'a> {
@@ -117,7 +118,27 @@ impl<'a> Against<'a> {
             baseline,
             entries: unmeasured::read(baseline)?,
             owned: unmeasured::owned(baseline),
+            shared: unmeasured::shared(baseline),
         })
+    }
+
+    /// Whether `item`'s number is another lister's, not its registrant's;
+    /// an error when several packages list it and none registers it.
+    fn shared_state(&self, item: &str) -> Result<bool, String> {
+        let Some(listers) = self.shared.get(item) else {
+            return Ok(false);
+        };
+        let saved_by = self.baseline["items"][item]["saved_by"].as_str();
+        let Some(registrant) = unmeasured::registrant(item, listers) else {
+            let none = if listers.len() > 2 { "none" } else { "neither" };
+            let now = saved_by.map_or(String::new(), |p| format!(" (now {p}'s)"));
+            return Err(format!(
+                "{item} is listed by the bench binaries of {} and {none} registers it, so its baseline number is whichever saved last{now}; give {} a bench target and save it with -p",
+                listers.join(", "),
+                invoke::id_pkg(item),
+            ));
+        };
+        Ok(saved_by.is_some_and(|p| p != registrant))
     }
 
     /// One claim.
@@ -130,16 +151,28 @@ impl<'a> Against<'a> {
             std::iter::once((&claim.item, &claim.backend, &claim.metric))
                 .chain(claim.minus.iter().map(|m| (&m.item, &m.backend, &m.metric)))
                 .collect();
-        let e = match claims::evaluate(&claim, self.baseline) {
-            Ok((true, actual)) => return Reading::Decided(Outcome::Holds(actual)),
-            Ok((false, actual)) => return Reading::Decided(Outcome::Violated(actual)),
-            Err(e) => e,
+        let mut stale: Vec<&String> = Vec::new();
+        for (item, ..) in &operands {
+            match self.shared_state(item) {
+                Err(why) => return Reading::Decided(Outcome::Failed(why)),
+                Ok(true) => stale.push(item),
+                Ok(false) => {}
+            }
+        }
+        let e = match stale.first() {
+            Some(item) => format!("{item}: its registering package saved no number for it"),
+            None => match claims::evaluate(&claim, self.baseline) {
+                Ok((true, actual)) => return Reading::Decided(Outcome::Holds(actual)),
+                Ok((false, actual)) => return Reading::Decided(Outcome::Violated(actual)),
+                Err(e) => e,
+            },
         };
         let mut first: Option<Reason> = None;
         let mut measurable: Option<Reason> = None;
         let mut reasons = Vec::new();
         for (item, backend, metric) in operands {
-            if self.baseline["items"][item][backend][metric].is_number() {
+            let number = self.baseline["items"][item][backend][metric].is_number();
+            if number && !stale.contains(&item) {
                 continue;
             }
             let covering: Vec<&Unmeasured> = (self.entries.iter())

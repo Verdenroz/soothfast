@@ -186,3 +186,65 @@ fn only_a_claim_the_merge_base_made_counts_as_unchanged() {
     assert_eq!(unchanged, Claims::from([("a.md".to_string(), expr)]));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn shared_baseline(saved_by: &str, entries: &[Unmeasured]) -> Value {
+    let item = |by: &str| json!({ "saved_by": by, "alloc": { "allocs": 0, "bytes": 0 } });
+    json!({
+        "items": { "lib::f": item(saved_by), "lib::g": item(saved_by), "app::h": item("app") },
+        "owners": {
+            "app": ["app::h", "lib::f", "lib::g"],
+            "lib": ["lib::g"],
+            "tool": ["lib::f"],
+        },
+        "unmeasured": entries.iter().map(Unmeasured::to_json).collect::<Vec<_>>(),
+    })
+}
+
+#[test]
+fn a_claim_on_an_id_two_packages_list_and_neither_registers_fails_naming_both() {
+    let b = shared_baseline("tool", &[]);
+    let Reading::Decided(Outcome::Failed(why)) = read("lib::f.alloc.allocs <= 0", &b) else {
+        panic!("a shared id nobody registers fails");
+    };
+    assert!(why.contains("lib::f is listed by the bench binaries of app, tool and neither"));
+    assert!(why.contains("(now tool's)") && why.contains("give lib a bench target"));
+}
+
+#[test]
+fn a_claim_on_a_shared_id_reads_its_registering_package_s_number() {
+    let b = shared_baseline("lib", &[]);
+    let holds = read("lib::g.alloc.allocs <= 0", &b);
+    assert_eq!(holds, Reading::Decided(Outcome::Holds(0.0)));
+}
+
+#[test]
+fn a_shared_id_s_number_saved_by_another_lister_reads_as_missing() {
+    let covering = entry(Reason::GateFailed, &["lib::g"], &[]);
+    let b = shared_baseline("app", &[covering]);
+    let reading = read("lib::g.alloc.allocs <= 0", &b);
+    assert!(matches!(
+        reading,
+        Reading::Unmeasured(Reason::GateFailed, _)
+    ));
+    let b = shared_baseline("app", &[]);
+    let reading = read("lib::g.alloc.allocs <= 0", &b);
+    assert!(matches!(reading, Reading::Decided(Outcome::Failed(_))));
+}
+
+#[test]
+fn an_id_one_package_lists_reads_as_before() {
+    let b = shared_baseline("tool", &[]);
+    let holds = read("app::h.alloc.allocs <= 0", &b);
+    assert_eq!(holds, Reading::Decided(Outcome::Holds(0.0)));
+}
+
+#[test]
+fn a_shared_id_with_no_saved_by_reads_as_before() {
+    let mut b = shared_baseline("lib", &[]);
+    b["items"]["lib::g"]
+        .as_object_mut()
+        .unwrap()
+        .remove("saved_by");
+    let holds = read("lib::g.alloc.allocs <= 0", &b);
+    assert_eq!(holds, Reading::Decided(Outcome::Holds(0.0)));
+}
