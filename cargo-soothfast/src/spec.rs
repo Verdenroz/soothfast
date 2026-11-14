@@ -331,8 +331,11 @@ pub fn routes_cmd(
     // whose handlers can't carry `#[route]` directly for the same reason)
     // has no rustdoc surface to pull comments from — the reconciliation
     // table itself doesn't need them, so degrade instead of failing.
-    let docs_text = match crate::docs_support::load(pkg, features) {
-        Ok((_, doc)) => crate::docs_support::docs_text(&doc),
+    // The private-items document is the one the spec commands build, so a
+    // run that has generated or gated the spec reads it from the store.
+    let docs_text = match invoke::rustdoc_json_in(pkg, None, features, invoke::Visibility::Private)
+    {
+        Ok((doc, _)) => crate::docs_support::docs_text(&doc),
         Err(e) => {
             eprintln!("soothfast: handler doc comments unavailable, continuing without them: {e}");
             std::collections::BTreeMap::new()
