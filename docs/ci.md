@@ -915,15 +915,22 @@ one container file pays for no build that would find nothing to do. The lane
 stays in the comment as `pass (carried from <commit>)`, and the verdict
 still expects it.
 
-A lane is carried only when both hold:
-
-1. No file the pull request changed is one the lane reads.
-2. A pass is stored for the lane's fingerprint, from a run on the default
-   branch.
+A lane is carried only when a pass is stored under its key, which is its
+fingerprint and its delta. The delta is a digest of the merge-base blob of
+each changed file the lane reads, or `absent` for one the base lacks. It is
+empty when the pull request changed none of them, so a lane the pull request
+did not touch matches a pass of the default branch. A lane it did touch
+matches only a pass of an earlier head of the same pull request whose touched
+inputs began from the same base blobs. That head can be one the default
+branch was merged into: an update that leaves the lane's inputs and their base
+side as they were costs the lane nothing.
 
 A fingerprint match alone is not enough. A pull request that reverts a
 lane's inputs to an older default-branch state matches an old pass while
-regressing against the current base, so the diff decides first.
+regressing against the current base, and a conflict resolved in the pull
+request's favour can leave the head's inputs identical while the base moved.
+The delta covers the base side of what the pull request touched. What it did
+not touch equals the base's by construction.
 
 The fingerprint covers the lane's name, the whole root `soothfast.toml`, the
 soothfast version and revision of the checkout, the runner labels, the shard
@@ -972,11 +979,19 @@ When the soothfast checkout is the repository itself, every revision is
 new, so the revision is replaced by a digest of the workspace members,
 `action/`, `action.yml` and `run.yml`.
 
-A push to the default branch stores a lane when every result it listed
-exists and is a plain pass, not carried and not `claims not evaluated`. The
-passes live in `.soothfast/lanes`, one small file per lane, restored and
-saved through the Actions cache under `soothfast-lanes-<ref>-<run>-<attempt>`
-and pruned to the newest 2048. A pull request run only reads them.
+A default-branch push and a pull request run each store a lane when every
+result it listed exists and is a plain pass, not carried, not `claims not
+evaluated`, and not a regression a label waived. The passes live in
+`.soothfast/lanes`, one small file per key, saved through the Actions cache
+under `soothfast-lanes-<ref>-<run>-<attempt>` and pruned to the newest 2048.
+A pull request's `<ref>` is its merge ref (`<number>/merge`), and GitHub
+scopes a cache a pull request creates to that ref: the base branch and other
+pull requests cannot restore it, so a pull request, fork or not, seeds passes
+only for itself. The plan job restores the pull request's entry, sets it
+aside, restores the base's newest entry (then the default branch's), and
+copies the first into the second without overwriting, so neither shadows the
+other. A pass the pull request stored is carried from its head commit, never
+from the merge commit.
 
 A file no package owns (a container file, a workflow, a top-level script) is
 an input of every Rust lane unless `[test] ignore` lists it, so a repository
