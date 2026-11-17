@@ -957,23 +957,17 @@ passes live in `.soothfast/lanes`, one small file per lane, restored and
 saved through the Actions cache under `soothfast-lanes-<ref>-<run>-<attempt>`
 and pruned to the newest 2048. A pull request run only reads them.
 
-Carrying trusts what a fingerprint cannot see:
+A file no package owns (a container file, a workflow, a top-level script) is
+an input of every Rust lane unless `[test] ignore` lists it, so a repository
+gets the most from carrying by keeping `[test] ignore` accurate.
 
-- Files outside the repository, including a path dependency or `[patch]`
-  path outside it (a path dependency outside the root disables the lane,
-  a `[patch]` path is not seen), and submodule contents beyond the commit
-  the submodule is pinned to.
-- Code generated from the network, and a build script that reads a
-  variable or file the list above does not name.
-- A data file read by a Rust lane from a package outside the lane's
-  dependency closure, or by `docs` from a non-markdown file outside `[site]
-  docs_dir`. Name such files in `[ci] inputs`.
-- The runner image: only the labels are keyed, so a new image version with
-  the same labels carries an older pass.
-- Anything the caller workflow changes outside `soothfast.toml` and the
-  pinned soothfast revision, since the caller's own file is not read.
-
-Apply `soothfast:test-all` to run every lane on one pull request.
+A fingerprint cannot see everything, and a lane carries a pass over these
+gaps: inputs outside the repository or fetched from the network, environment
+variables set only on the lane jobs, the runner image (only its labels are
+keyed), `[patch]` or cargo config paths outside the root, packages outside a
+lane's dependency closure that generate code for it, and `[docs] paths` that
+name non-markdown files. List such files in `[ci] inputs`, or apply the
+`soothfast:test-all` label to run every lane on one pull request.
 
 ## One command per job
 
