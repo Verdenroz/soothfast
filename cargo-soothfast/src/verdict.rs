@@ -14,6 +14,8 @@ const NOTHING_TO_COMPARE: &str = "nothing to compare";
 const CLAIMS_SKIPPED: &str = "claims not evaluated";
 const KINDS: [&str; 5] = ["rust", "import", "docs", "test", "check"];
 /// GitHub rejects a comment over 65,536 characters; the rest is the marker.
+const SHORT_SHA: usize = 7;
+const NOTE_SHA: usize = 12;
 const BODY_LIMIT: usize = 65_000;
 const TRUNCATED: &str = "output truncated";
 const LANDING_NOTE: &str = "\nNo lane ran: this pull request is a soothfast-bot landing, which holds only regenerated files.\n";
@@ -67,6 +69,8 @@ struct Record {
     seconds: u64,
     flaky: bool,
     unevaluated: bool,
+    /// The commit whose pass this lane carries, when it did not run.
+    carried: Option<String>,
 }
 
 /// The test runner's verdict words, which are not the gate's.
@@ -109,6 +113,9 @@ impl Record {
         if self.unevaluated {
             v["unevaluated"] = json!(true);
         }
+        if let Some(commit) = &self.carried {
+            v["carried"] = json!(commit);
+        }
         v
     }
 
@@ -143,6 +150,7 @@ impl Record {
                 .or_else(|| seconds.as_f64().map(|s| s.round() as u64))?,
             flaky,
             unevaluated: v["unevaluated"].as_bool().unwrap_or(false),
+            carried: v["carried"].as_str().map(String::from),
         })
     }
 
@@ -176,6 +184,7 @@ impl Record {
         self.seconds = self.seconds.max(other.seconds);
         self.flaky |= other.flaky;
         self.unevaluated |= other.unevaluated;
+        self.carried = self.carried.take().filter(|_| other.carried.is_some());
     }
 }
 
@@ -244,12 +253,45 @@ pub(crate) fn write_record(
     }
     // A job that died before the gate wrote anything still records an error.
     let output = fs::read_to_string(output).unwrap_or_default();
-    let rec = build(name, kind, code, &output, seconds);
+    store(&build(name, kind, code, &output, seconds), out)
+}
+
+/// Writes to `out` the record of a lane that did not run because `commit`
+/// passed it with the same inputs.
+pub(crate) fn write_carried(
+    name: String,
+    kind: String,
+    commit: &str,
+    out: &Path,
+) -> Result<(), String> {
+    let tail = format!(
+        "inputs unchanged since {} passed this lane; nothing ran",
+        short(commit, NOTE_SHA)
+    );
+    let rec = Record {
+        name,
+        kind,
+        verdict: Verdict::Pass,
+        tail,
+        reuse: None,
+        seconds: 0,
+        flaky: false,
+        unevaluated: false,
+        carried: Some(commit.to_string()),
+    };
+    store(&rec, out)
+}
+
+fn store(rec: &Record, out: &Path) -> Result<(), String> {
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let text = serde_json::to_string_pretty(&rec.to_json()).map_err(|e| e.to_string())?;
     fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
+}
+
+fn short(sha: &str, len: usize) -> String {
+    sha.chars().take(len).collect()
 }
 
 fn build(name: String, kind: String, code: i32, output: &str, seconds: u64) -> Record {
@@ -264,6 +306,7 @@ fn build(name: String, kind: String, code: i32, output: &str, seconds: u64) -> R
         },
         reuse: parse_reuse(&output),
         unevaluated: kind == "docs" && output.contains(CLAIMS_SKIPPED),
+        carried: None,
         kind,
         verdict,
         seconds,
@@ -433,6 +476,7 @@ fn errored(name: String, kind: String, tail: String) -> Record {
         seconds: 0,
         flaky: false,
         unevaluated: false,
+        carried: None,
     }
 }
 
@@ -543,8 +587,13 @@ fn render(records: &[Record], accepted: Option<&str>) -> String {
         out.push_str(&format!("\nRegressions accepted by the `{label}` label.\n"));
     }
     for r in records {
+        let carried = r
+            .carried
+            .as_deref()
+            .map(|c| format!(" (carried from {})", short(c, SHORT_SHA)))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "\n### {}\n{}{}{} | {} | {}s",
+            "\n### {}\n{}{carried}{}{} | {} | {}s",
             r.name,
             r.verdict.name(),
             if r.flaky { " (flaky)" } else { "" },
@@ -583,6 +632,7 @@ mod tests {
             seconds: 10,
             flaky: false,
             unevaluated: false,
+            carried: None,
         }
     }
 
@@ -903,5 +953,62 @@ mod tests {
         ];
         assert!(fails(&both, true));
         assert!(!fails(&[rec("a", Verdict::NothingToCompare, "")], false));
+    }
+
+    fn carried_in(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-carried-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        write_carried(
+            "core".into(),
+            "rust".into(),
+            &"ab".repeat(20),
+            &dir.join("core.json"),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_carried_record_survives_a_round_trip() {
+        let dir = carried_in("json");
+        let text = fs::read_to_string(dir.join("core.json")).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+        let rec = Record::from_json(&serde_json::from_str(&text).unwrap()).unwrap();
+        assert_eq!(rec.carried.as_deref(), Some("ab".repeat(20).as_str()));
+        assert_eq!((rec.verdict, rec.seconds), (Verdict::Pass, 0));
+        assert_eq!(
+            rec.tail,
+            "inputs unchanged since abababababab passed this lane; nothing ran"
+        );
+        assert_eq!(Record::from_json(&rec.to_json()), Some(rec));
+        assert_eq!(
+            Record::from_json(
+                &json!({"name": "a", "kind": "rust", "verdict": "pass", "tail": "", "seconds": 1})
+            )
+            .unwrap()
+            .carried,
+            None
+        );
+    }
+
+    #[test]
+    fn a_carried_pass_is_shown_with_the_commit_it_came_from() {
+        let dir = carried_in("render");
+        let body = render(&read_records(&dir), None);
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(body.contains("### core\npass (carried from abababa) | rust | 0s"));
+        assert!(body.contains("1 projects: 0 regressed, 0 errored, 1 pass"));
+    }
+
+    #[test]
+    fn a_carried_record_satisfies_the_expectation_of_its_lane() {
+        let dir = carried_in("expect");
+        let out = dir.join("comment.md");
+        let expect = [("core".to_string(), "rust".to_string())];
+        assert_eq!(merge_dir(&dir, &out, None, &expect, false), Ok(0));
+        let missing = [("other".to_string(), "rust".to_string())];
+        assert_eq!(merge_dir(&dir, &out, None, &missing, false), Ok(1));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
