@@ -99,7 +99,7 @@ pub struct Target {
 
 /// The toolchain versions a workflow installs, which name the toolchain in a
 /// key without probing a binary that may not be installed yet.
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct Pins {
     pub java: Option<String>,
     pub node: Option<String>,
@@ -244,6 +244,11 @@ pub struct Files(BTreeMap<String, String>);
 impl Files {
     pub fn read(root: &Path) -> io::Result<Files> {
         file_ids(root, ".", &|_| true).map(Files)
+    }
+
+    /// The blob id of each file by path.
+    pub fn ids(&self) -> &BTreeMap<String, String> {
+        &self.0
     }
 }
 
