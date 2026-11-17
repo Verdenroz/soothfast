@@ -32,7 +32,7 @@ pub struct PullRequest {
 impl PullRequest {
     /// Whether the bot with App slug `slug` opened this from a `bot/` branch
     /// of the repository itself and wrote every commit on it.
-    fn from_bot(&self, slug: &str) -> bool {
+    fn opened_by_bot(&self, slug: &str) -> bool {
         let same_repo = self.head_repo.is_some() && self.head_repo == self.repo;
         self.author.as_deref() == Some(&format!("{slug}[bot]"))
             && same_repo
@@ -121,7 +121,7 @@ pub fn is_landing(
     allowed: &Allowed,
     changed: &BTreeSet<String>,
 ) -> bool {
-    pr.from_bot(&bot.slug)
+    pr.opened_by_bot(&bot.slug)
         && !changed.is_empty()
         && changed.iter().all(|path| {
             // The config read here is the pull request's own, so a landing
@@ -145,7 +145,7 @@ pub fn detect(root: &Path, base: Option<&str>, pr: &PullRequest) -> bool {
 fn read(root: &Path, base: &str, pr: &PullRequest) -> Result<bool, String> {
     let config = Config::load(root)?;
     let bot = config.landing()?;
-    if !pr.from_bot(&bot.slug) {
+    if !pr.opened_by_bot(&bot.slug) {
         return Ok(false);
     }
     let changed = committed(root, base)?;
