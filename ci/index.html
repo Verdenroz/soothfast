@@ -272,7 +272,9 @@ named in <code>spec</code>, and lands whatever changed as one pull request on
 <code>bot/soothfast-update</code>. Pushes to other branches do nothing beyond the
 install.</p>
 <p>The bot PR triggers your workflows like any other pull request, this step
-included, which is how its required checks get satisfied. Jobs that skip on a
+included, which is how its required checks get satisfied. Under <code>run.yml</code> the
+plan recognises the landing and runs no lane for it; see
+<a href="#bot-landings">Bot landings</a>. Jobs that skip on a
 <code>[bot]</code> actor count as passed for required checks. If the bot PR is left
 open, your ruleset gave auto-merge nothing to wait on (a pull request rule
 with zero required approvals and no required checks); merge it by hand or
@@ -497,6 +499,8 @@ nothing as the bot instead of failing the job.</p>
 <span class="tok-ty">ignore_labels </span>=<span class="tok-str"> [&quot;do-not-merge&quot;]</span>
 <span class="tok-ty">perf_accepted_labels </span>=<span class="tok-str"> [&quot;soothfast:perf-accepted&quot;]  # read by the gate, not the broker</span>
 <span class="tok-ty">merge_method </span>=<span class="tok-str"> &quot;squash&quot;             # squash | merge | rebase</span>
+<span class="tok-ty">landing_paths </span>=<span class="tok-str"> []                  # globs of files your own jobs land; read by plan</span>
+<span class="tok-ty">slug </span>=<span class="tok-str"> &quot;soothfast-bot&quot;              # the App&#39;s slug; read by plan</span>
 
 <span class="tok-kw">[[bot.label]]                       # optional, one per label; read by init only</span>
 <span class="tok-ty">name </span>=<span class="tok-str"> &quot;soothfast:merge&quot;</span>
@@ -515,6 +519,11 @@ needs no writer to apply anything, because the setting is read from the
 default branch. Each push evaluates as many pull requests as the Workers
 subrequest budget allows, least recently updated first, so successive
 pushes reach every open pull request.</p>
+<p><code>landing_paths</code> and <code>slug</code> decide which pull requests count as the bot's own
+landings; see <a href="#bot-landings">Bot landings</a>. The broker checks their types
+and reads neither. A broker deployed before it knew the two keys treats them
+as unknown, so deploy the broker first when you run your own; with the
+hosted broker, set them once it has been deployed at or after this change.</p>
 <p>A malformed <code>[bot]</code> table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the
 repository's "Automatically delete head branches" setting.</p>
@@ -788,6 +797,36 @@ so a repo set up with init requires <code>soothfast / verdict</code>. The check 
 regressed or errored, or recorded no result; a perf-accepted label
 (<code>soothfast:perf-accepted</code> unless <code>perf_accepted_labels</code> renames it) applied by
 a writer waives regressions, never errors or docs drift.</p>
+<h3 id="bot-landings">Bot landings<a class="anchor" href="#bot-landings" aria-label="Link to this section">#</a></h3>
+<p>A pull request the bot opens to land regenerated files runs no lane.
+<code>cargo soothfast plan</code> plans nothing for it, every lane job is skipped, and
+the <code>verdict</code> job still runs and passes, with one line in the comment saying
+no lane ran. The required check is a pass, not a skip, so the landing merges
+as soon as auto-merge sees it, with no ruleset bypass.</p>
+<p>A pull request is a landing only when all of these hold:</p>
+<ul>
+<li>Its author is <code>&lt;slug&gt;[bot]</code>, where <code>slug</code> is <code>soothfast-bot</code> unless <code>[bot] slug</code> names another App. The actor of the run is not consulted: the bot is the actor when it updates or merges someone else's pull request.</li>
+<li>Its head branch is in the repository itself and starts with <code>bot/</code>.</li>
+<li>GitHub created and signed every commit on it for the bot (author the bot, committer <code>web-flow</code>, signature verified). <code>action/land.sh</code> commits that way through the API. A commit pushed to the branch does not qualify, whatever author it names. <code>action/landing-commits.sh</code> reads this from the API in the plan job.</li>
+<li>Every file it changes against the base is one regeneration writes, or matches a <code>[bot] landing_paths</code> glob, and none is a <code>soothfast.toml</code>.</li>
+</ul>
+<p>The files regeneration writes are <code>CHANGELOG.md</code> when the repository drafts
+one, each <code>[[spec]]</code> file with <code>mode = &quot;generate&quot;</code>, and everything under each
+<code>[[sdk]] out</code> directory. List anything else a job of your own lands through
+<code>land.sh</code> in <code>landing_paths</code>, including what a <code>regen-run</code> hook writes:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[bot]</span>
+<span class="tok-ty">labels </span>=<span class="tok-kw"> true</span>
+<span class="tok-ty">landing_paths </span>=<span class="tok-str"> [&quot;docs/generated/**&quot;, &quot;TREND.md&quot;]</span></code></pre></figure>
+<p><code>*</code> and <code>?</code> stay inside one path segment and <code>**</code> crosses them. Anything
+else makes it an ordinary pull request that runs every lane: another author,
+a fork, a hand-pushed commit, one file outside the set, a diff or an API
+call that cannot be read. A landing that changes <code>soothfast.toml</code> is always
+ordinary, because the plan reads the pull request's own copy of the file and
+a widened <code>landing_paths</code> would otherwise approve itself.</p>
+<p>A repository that would sooner skip pull requests for landings can make the
+App a bypass actor on the default branch and push to it directly. The bot's
+token can then write to the default branch unreviewed, which is why
+<code>land.sh</code> does not do it.</p>
 <h2 id="one-command-per-job">One command per job<a class="anchor" href="#one-command-per-job" aria-label="Link to this section">#</a></h2>
 <p><code>cargo soothfast ci &lt;kind&gt;</code> runs one CI job: the flags, the choice of base
 and the verdict record that a workflow step would otherwise assemble in
@@ -1044,6 +1083,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l3" href="#keeping-a-trend">Keeping a trend</a></li>
   
     <li><a class="toc-l2" href="#one-verdict">One verdict</a></li>
+  
+    <li><a class="toc-l3" href="#bot-landings">Bot landings</a></li>
   
     <li><a class="toc-l2" href="#one-command-per-job">One command per job</a></li>
   
