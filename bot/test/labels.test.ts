@@ -159,6 +159,7 @@ interface World {
   protection?: object | Error;
   updateError?: Error;
   compareStatus?: string;
+  currentHeads?: string[];
   compareError?: Error;
   aheadFiles?: string[] | number;
   incomingFiles?: string[] | number;
@@ -223,7 +224,9 @@ function fakeRun(world: World) {
         filename,
         ...(base !== "main" && { previous_filename: world.renamedFrom }),
       }));
-      return { status: world.compareStatus ?? "identical", files };
+      const current = base === "main" && world.currentHeads?.includes(head);
+      const status = current ? "identical" : world.compareStatus;
+      return { status: status ?? "identical", files };
     },
     async updateBranch(_r: string, number: number, sha: string) {
       calls.push(`update ${number}@${sha}`);
@@ -956,4 +959,84 @@ test("always: a behind pull request is updated without reading the branch policy
   assert.equal(updated(calls), 1);
   assert.ok(!calls.includes("rules"));
   assert.ok(!calls.includes("compare abc123...main"));
+});
+
+const sweepPulls = (...numbers: number[]) =>
+  numbers.map((number) =>
+    pull({
+      number,
+      names: [UPDATE],
+      head: { sha: `sha${number}` },
+      updated_at: `2026-01-0${number}T00:00:00Z`,
+    }),
+  );
+const sweepWriters = (...numbers: number[]) => ({
+  permissions: { alice: "write" },
+  labelers: Object.fromEntries(numbers.map((n) => [n, { [UPDATE]: "alice" }])),
+});
+
+test("needed: a strict sweep updates one pull request, queued ones first", async () => {
+  const pulls = sweepPulls(1, 2, 3);
+  pulls[2] = { ...pulls[2], auto_merge: {} };
+  const { run, calls, logs } = fakeRun({
+    toml: NEEDED,
+    pulls,
+    ...sweepWriters(1, 2, 3),
+    compareStatus: "behind",
+    rules: [strictRule],
+  });
+  await evaluateOpen(run);
+  assert.deepEqual(
+    calls.filter((c) => c.startsWith("update ")),
+    ["update 3@sha3"],
+  );
+  assert.deepEqual(logs, [
+    "#3: updated from main",
+    "#1: not updating, another pull request is being updated first",
+    "#2: not updating, another pull request is being updated first",
+  ]);
+});
+
+test("needed: a strict sweep passes over pull requests that are already current", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: sweepPulls(1, 2, 3),
+    ...sweepWriters(1, 2, 3),
+    compareStatus: "behind",
+    currentHeads: ["sha1"],
+    rules: [strictRule],
+  });
+  await evaluateOpen(run);
+  assert.deepEqual(
+    calls.filter((c) => c.startsWith("update ")),
+    ["update 2@sha2"],
+  );
+});
+
+test("needed: a sweep updates every pull request that overlaps when the branch is not strict", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: sweepPulls(1, 2, 3),
+    ...sweepWriters(1, 2, 3),
+    compareStatus: "behind",
+    aheadFiles: ["a.rs"],
+    incomingFiles: ["a.rs"],
+  });
+  await evaluateOpen(run);
+  assert.equal(updated(calls), 3);
+});
+
+test("needed: a sweep stays within the subrequest cap", async () => {
+  const numbers = Array.from({ length: 30 }, (_, i) => i + 1);
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: sweepPulls(...numbers).map((p) => ({ ...p, updated_at: "x" })),
+    ...sweepWriters(...numbers),
+    compareStatus: "behind",
+    aheadFiles: ["a.rs"],
+    incomingFiles: ["a.rs"],
+  });
+  await evaluateOpen(run);
+  assert.ok(updated(calls) > 4, `${updated(calls)} updated`);
+  assert.ok(calls.length <= SUBREQUEST_BUDGET, `${calls.length} subrequests`);
 });

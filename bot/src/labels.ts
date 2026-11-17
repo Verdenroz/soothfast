@@ -134,18 +134,25 @@ export async function evaluateOpen(source: Run): Promise<void> {
     run.defaultBranch,
     run.token,
   );
+  const always = context.config.update === "always";
+  const queuedFirst = (pr: PullRequest) =>
+    always || pr.auto_merge === null ? 1 : 0;
   const actionable = open
     .filter((pr) => canAct(pr, context.config))
-    .sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+    .sort(
+      (a, b) =>
+        queuedFirst(a) - queuedFirst(b) ||
+        a.updated_at.localeCompare(b.updated_at),
+    );
   if (actionable.length === 0) run.log("no pull requests to act on");
-  const always = context.config.update === "always";
   const worst = always ? WORST_CASE_ALWAYS : WORST_CASE_PER_PULL_REQUEST;
   const reserved = always ? 0 : SHARED_READS;
+  const quota = { strict: 1 };
   let reached = 0;
   for (const pr of actionable) {
     if (SUBREQUEST_BUDGET - reserved - spent < worst) break;
     reached++;
-    await evaluate(context, pr).catch((e: unknown) =>
+    await evaluate(context, pr, undefined, quota).catch((e: unknown) =>
       run.log(`#${pr.number}: ${e instanceof Error ? e.message : e}`),
     );
   }
@@ -294,6 +301,7 @@ async function evaluate(
   context: Context,
   pr: PullRequest,
   labeler?: Labeler,
+  quota?: Quota,
 ): Promise<void> {
   const { run, config } = context;
   const initial = gated(pr, config, labeler);
@@ -302,10 +310,17 @@ async function evaluate(
   const gate = await byWriters(context, pr, initial, labeler);
   const checked = gate.merge.length > 0 ? (await context.policy()).checks : 0;
   const reason = wantsUpdate(gate)
-    ? await updateReason(context, pr)
+    ? await updateReason(context, pr, quota)
     : undefined;
-  for (const action of decide(pr, gate, checked, reason !== undefined))
-    await perform(context, pr, action);
+  for (const action of decide(pr, gate, checked, reason !== undefined)) {
+    if (action.kind !== "update_branch") await perform(context, pr, action);
+    else if ((await updateBranch(context, pr)) && reason === "strict" && quota)
+      quota.strict--;
+  }
+}
+
+interface Quota {
+  strict: number;
 }
 
 type UpdateReason = "always" | "strict" | "overlap";
@@ -313,6 +328,7 @@ type UpdateReason = "always" | "strict" | "overlap";
 async function updateReason(
   { run, config, policy }: Context,
   pr: PullRequest,
+  quota?: Quota,
 ): Promise<UpdateReason | undefined> {
   const ahead = await run.github.compare(
     run.repository,
@@ -327,7 +343,10 @@ async function updateReason(
     run.log(`#${pr.number}: not updating, ${why}`);
     return undefined;
   };
-  if ((await policy()).strict) return "strict";
+  if ((await policy()).strict)
+    return quota && quota.strict <= 0
+      ? skip("another pull request is being updated first")
+      : "strict";
   return (await overlaps(run, pr, ahead))
     ? "overlap"
     : skip(
@@ -406,6 +425,24 @@ const isAlreadyMergeable = (e: unknown) =>
   e instanceof GitHubError &&
   /(clean|unstable|has_hooks) status/i.test(e.message);
 
+async function updateBranch(
+  { run }: Context,
+  pr: PullRequest,
+): Promise<boolean> {
+  const tag = `#${pr.number}`;
+  return run.github
+    .updateBranch(run.repository, pr.number, pr.head.sha, run.token)
+    .then(() => {
+      run.log(`${tag}: updated from ${run.defaultBranch}`);
+      return true;
+    })
+    .catch((e: unknown) => {
+      if (!(e instanceof GitHubError)) throw e;
+      run.log(`${tag}: could not update (${e.status}: ${e.message})`);
+      return false;
+    });
+}
+
 async function perform(
   { run, config }: Context,
   pr: PullRequest,
@@ -453,15 +490,6 @@ async function perform(
       }
       return;
     }
-    case "update_branch":
-      await github
-        .updateBranch(repository, pr.number, pr.head.sha, token)
-        .then(() => run.log(`${tag}: updated from ${run.defaultBranch}`))
-        .catch((e: unknown) => {
-          if (!(e instanceof GitHubError)) throw e;
-          run.log(`${tag}: could not update (${e.status}: ${e.message})`);
-        });
-      return;
     case "skip":
       run.log(`${tag}: not merging, ${action.reason}`);
   }
