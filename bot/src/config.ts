@@ -118,7 +118,8 @@ function build(entries: Map<string, Value>): BotConfig {
       throw new ConfigError(`[bot] ${key} must be ${expected}`);
     return value;
   };
-  // perf_accepted_labels is read by the gate, not the broker.
+  // perf_accepted_labels is read by the gate, landing_paths and slug by
+  // `cargo soothfast plan`; the broker only checks their types.
   const config = {
     labels: take("labels", DEFAULTS.labels, isFlag, "true or false"),
     mergeLabels: take("merge_labels", DEFAULTS.mergeLabels, isList, LIST),
@@ -133,6 +134,8 @@ function build(entries: Map<string, Value>): BotConfig {
     ),
   };
   take("perf_accepted_labels", [], isList, LIST);
+  take("landing_paths", [], isList, LIST);
+  take("slug", "", isText, "a string");
   if (rest.size > 0)
     throw new ConfigError(
       `[bot] has unknown keys: ${[...rest.keys()].join(", ")}`,
@@ -143,6 +146,7 @@ function build(entries: Map<string, Value>): BotConfig {
 const LIST = "an array of strings";
 const isFlag = (value: Value): value is boolean => typeof value === "boolean";
 const isList = (value: Value): value is string[] => Array.isArray(value);
+const isText = (value: Value): value is string => typeof value === "string";
 const isMethod = (value: Value): value is MergeMethod =>
   value === "squash" || value === "merge" || value === "rebase";
 
