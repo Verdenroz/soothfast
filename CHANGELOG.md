@@ -25,6 +25,7 @@
 
 ### 🐛 Fixes
 
+- Skip the lanes on a soothfast-bot landing pull request (#438)
 - Reuse a report's callgrind run on another host (#431)
 - Render macro-generated items from rustdoc JSON (#421)
 - Fail claims on an id no listing package registers (#424)
