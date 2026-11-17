@@ -279,6 +279,23 @@ plan recognises the landing and runs no lane for it; see
 open, your ruleset gave auto-merge nothing to wait on (a pull request rule
 with zero required approvals and no required checks); merge it by hand or
 drop the rule.</p>
+<h3 id="one-landing-per-commit">One landing per commit<a class="anchor" href="#one-landing-per-commit" aria-label="Link to this section">#</a></h3>
+<p>Jobs that land files for the same default-branch commit add to one
+branch, <code>bot/soothfast-update</code>, and one pull request, so jobs that finish close
+together cost the default branch one bot commit. A job joins only while the
+landing is open: the pull request merges as soon as its required checks pass,
+and a job that finishes after that starts a second landing on the new tip. A job of
+your own joins by running <code>action/land.sh</code> with <code>TOKEN</code>, <code>APP_SLUG</code>, <code>TITLE</code> and
+<code>PATHS</code> and leaving <code>BRANCH</code> unset. The script adds its commit on top of the
+bot's commits already on the branch, and starts the branch over from the
+default branch's tip when it is missing, based on an older commit, or holds a
+commit that is not the bot's.</p>
+<p>The pull request keeps the title of the job that opened it. Its body lists one
+line per job, its <code>TITLE</code> and the files it landed (the first ten, then a
+count), and running a job again replaces its own line, found by its <code>TITLE</code>, so
+two jobs must not share one. A job that finds its files already on the branch
+changes nothing. <code>BODY</code>, when set, opens the body of a landing the job starts.</p>
+<p>A job that sets its own <code>BRANCH</code> keeps a separate pull request on that branch.</p>
 <h2 id="why-the-environment">Why the environment<a class="anchor" href="#why-the-environment" aria-label="Link to this section">#</a></h2>
 <p>The step needs <code>id-token: write</code> to prove its identity to the broker. That
 permission is also common on jobs that publish to crates.io, PyPI, or a cloud
@@ -1068,6 +1085,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l2" href="#checking-the-setup">Checking the setup</a></li>
   
     <li><a class="toc-l2" href="#what-the-step-does">What the step does</a></li>
+  
+    <li><a class="toc-l3" href="#one-landing-per-commit">One landing per commit</a></li>
   
     <li><a class="toc-l2" href="#why-the-environment">Why the environment</a></li>
   
