@@ -32,6 +32,7 @@ labels = true
 merge_labels = ["ship", 'land']
 update_labels = []
 update_all = true
+update = "always"
 ignore_labels = ["hold"] # trailing comment
 merge_method = "rebase"
 `);
@@ -40,9 +41,16 @@ merge_method = "rebase"
     mergeLabels: ["ship", "land"],
     updateLabels: [],
     updateAll: true,
+    update: "always",
     ignoreLabels: ["hold"],
     mergeMethod: "rebase",
   });
+});
+
+test("update defaults to needed and accepts needed or always", () => {
+  assert.equal(parsed("[bot]\nlabels = true\n").update, "needed");
+  assert.equal(parsed('[bot]\nupdate = "needed"\n').update, "needed");
+  assert.equal(parsed('[bot]\nupdate = "always"\n').update, "always");
 });
 
 test("arrays can span lines and carry escapes", () => {
@@ -129,6 +137,7 @@ const malformed = [
     /squash, merge or rebase/,
   ],
   ["update_all not a flag", '[bot]\nupdate_all = "yes"\n', /update_all must be true or false/],
+  ["bad update mode", '[bot]\nupdate = "never"\n', /update must be needed or always/],
   ["repeated key", "[bot]\nlabels = true\nlabels = false\n", /repeats labels/],
   ["repeated table", "[bot]\n[site]\n[bot]\n", /defined twice/],
   ["line without =", "[bot]\nlabels\n", /invalid line/],
