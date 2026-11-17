@@ -3,17 +3,17 @@
 # against the default branch, and merge it: auto-merge when the default
 # branch has a rule that blocks merging, immediately otherwise. The commit
 # is created through the API, which signs it as the App, so it passes a
-# rule that requires signed commits. Callers that omit BRANCH share
-# bot/soothfast-update, so one default-branch commit gets one pull request.
-# When BRANCH already holds only bot commits on top of the default branch's
-# tip, this run's commit goes on top of them and the ref moves without
-# force, retrying from a fresh read when another job moved it first.
-# Otherwise the commit lands on the tip and the ref is force-updated. When
-# anyone but the bot has pushed to the default branch since this checkout,
-# that push's own run lands and this one skips. The pull request keeps the
-# title of the run that opened it, and its body lists each run's TITLE and
-# files. The working tree and HEAD are left as they were.
-# TOKEN is revoked on every exit path.
+# rule that requires signed commits.
+# Callers that omit BRANCH share bot/soothfast-update. When the branch holds
+# only bot commits on the default branch's tip, the commit goes on top of
+# them and the ref moves without force, retried from a fresh read when
+# another job moved it first; otherwise it lands on the tip with a force
+# update. The pull request keeps its opener's title and lists each run's
+# TITLE and files in its body.
+# When anyone but the bot has pushed to the default branch since this
+# checkout, that push's own run lands and this one skips.
+# The working tree and HEAD are left as they were. TOKEN is revoked on every
+# exit path.
 # Inputs: TOKEN APP_SLUG TITLE PATHS (space separated pathspecs), and
 # optionally BRANCH (default bot/soothfast-update) and BODY (opens the body
 # of a landing this run starts).
@@ -43,8 +43,6 @@ merge_body() {
   [ "$found" = 1 ] || out+="$line"$'\n'
   printf '%s' "${out%$'\n'}"
 }
-
-[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 BRANCH=${BRANCH:-bot/soothfast-update}
 : "${TOKEN:?}" "${APP_SLUG:?}" "${TITLE:?}" "${PATHS:?}"
@@ -89,7 +87,8 @@ while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
     jq -nc --arg path "$path" --arg mode "$new_mode" --arg sha "$blob" '{path: $path, mode: $mode, type: "blob", sha: $sha}'
   fi
 done < <(git diff --cached --no-renames --raw -z --abbrev=40 "$parent" -- "${paths[@]}") >"$entries"
-line="- ${TITLE}: $(jq -rs 'map(.path) | join(", ")' "$entries")"
+files=$(jq -rs 'map(.path) | if length > 10 then (.[:10] | join(", ")) + " and \(length - 10) more" else join(", ") end' "$entries")
+line="- ${TITLE}: ${files}"
 
 commit=
 for _ in 1 2 3; do
