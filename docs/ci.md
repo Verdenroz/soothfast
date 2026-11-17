@@ -169,6 +169,24 @@ open, your ruleset gave auto-merge nothing to wait on (a pull request rule
 with zero required approvals and no required checks); merge it by hand or
 drop the rule.
 
+### One landing per commit
+
+Every job that lands files for the same default-branch commit adds to one
+branch, `bot/soothfast-update`, and one pull request, so a merge costs the
+default branch one bot commit however many jobs regenerate something. A job of
+your own joins by running `action/land.sh` with `TOKEN`, `APP_SLUG`, `TITLE` and
+`PATHS` and leaving `BRANCH` unset. The script adds its commit on top of the
+bot's commits already on the branch, and starts the branch over from the
+default branch's tip when it is missing, based on an older commit, or holds a
+commit that is not the bot's.
+
+The pull request keeps the title of the job that opened it. Its body lists one
+line per job, its `TITLE` and the files it landed, and running a job again
+replaces its own line. A job that finds its files already on the branch
+changes nothing. `BODY`, when set, opens the body of a landing the job starts.
+
+A job that sets its own `BRANCH` keeps a separate pull request on that branch.
+
 ## Why the environment
 
 The step needs `id-token: write` to prove its identity to the broker. That
