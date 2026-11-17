@@ -39,6 +39,7 @@ mod itemreuse;
 mod jumptable;
 mod labels;
 mod landing;
+mod lanes;
 mod linkmap;
 mod mcp;
 mod plan;
