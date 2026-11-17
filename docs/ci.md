@@ -161,7 +161,9 @@ named in `spec`, and lands whatever changed as one pull request on
 install.
 
 The bot PR triggers your workflows like any other pull request, this step
-included, which is how its required checks get satisfied. Jobs that skip on a
+included, which is how its required checks get satisfied. Under `run.yml` the
+plan recognises the landing and runs no lane for it; see
+[Bot landings](#bot-landings). Jobs that skip on a
 `[bot]` actor count as passed for required checks. If the bot PR is left
 open, your ruleset gave auto-merge nothing to wait on (a pull request rule
 with zero required approvals and no required checks); merge it by hand or
@@ -421,6 +423,8 @@ update_all = false                  # true: keep every open, non-draft PR up to 
 ignore_labels = ["do-not-merge"]
 perf_accepted_labels = ["soothfast:perf-accepted"]  # read by the gate, not the broker
 merge_method = "squash"             # squash | merge | rebase
+landing_paths = []                  # globs of files your own jobs land; read by plan
+slug = "soothfast-bot"              # the App's slug; read by plan
 
 [[bot.label]]                       # optional, one per label; read by init only
 name = "soothfast:merge"
@@ -442,6 +446,11 @@ needs no writer to apply anything, because the setting is read from the
 default branch. Each push evaluates as many pull requests as the Workers
 subrequest budget allows, least recently updated first, so successive
 pushes reach every open pull request.
+
+`landing_paths` and `slug` decide which pull requests count as the bot's own
+landings; see [Bot landings](#bot-landings). The broker checks their types
+and reads neither. A broker deployed before it knew the two keys treats them
+as unknown, so deploy the broker first when you run your own.
 
 A malformed `[bot]` table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the
@@ -792,6 +801,51 @@ so a repo set up with init requires `soothfast / verdict`. The check fails when 
 regressed or errored, or recorded no result; a perf-accepted label
 (`soothfast:perf-accepted` unless `perf_accepted_labels` renames it) applied by
 a writer waives regressions, never errors or docs drift.
+
+### Bot landings
+
+A pull request the bot opens to land regenerated files runs no lane.
+`cargo soothfast plan` plans nothing for it, every lane job is skipped, and
+the `verdict` job still runs and passes, with one line in the comment saying
+no lane ran. The required check is a pass, not a skip, so the landing merges
+as soon as auto-merge sees it, with no ruleset bypass.
+
+A pull request is a landing only when all of these hold:
+
+- Its author is `<slug>[bot]`, where `slug` is `soothfast-bot` unless
+  `[bot] slug` names another App. The actor of the run is not consulted: the
+  bot is the actor when it updates or merges someone else's pull request.
+- Its head branch is in the repository itself and starts with `bot/`.
+- GitHub created and signed every commit on it for the bot (author the bot,
+  committer `web-flow`, signature verified). `action/land.sh` commits that
+  way through the API. A commit pushed to the branch does not qualify,
+  whatever author it names. `action/landing-commits.sh` reads this from the
+  API in the plan job.
+- Every file it changes against the base is one regeneration writes, or
+  matches a `[bot] landing_paths` glob, and none is a `soothfast.toml`.
+
+The files regeneration writes are `CHANGELOG.md` when the repository drafts
+one, each `[[spec]]` file with `mode = "generate"`, and everything under each
+`[[sdk]] out` directory. List anything else a job of your own lands through
+`land.sh` in `landing_paths`, including what a `regen-run` hook writes:
+
+```toml
+[bot]
+labels = true
+landing_paths = ["docs/generated/**", "TREND.md"]
+```
+
+`*` and `?` stay inside one path segment and `**` crosses them. Anything
+else makes it an ordinary pull request that runs every lane: another author,
+a fork, a hand-pushed commit, one file outside the set, a diff or an API
+call that cannot be read. A landing that changes `soothfast.toml` is always
+ordinary, because the plan reads the pull request's own copy of the file and
+a widened `landing_paths` would otherwise approve itself.
+
+A repository that would sooner skip pull requests for landings can make the
+App a bypass actor on the default branch and push to it directly. The bot's
+token can then write to the default branch unreviewed, which is why
+`land.sh` does not do it.
 
 ## One command per job
 
