@@ -198,9 +198,7 @@ fn build(
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
     }
-    let changelog = rust.as_ref().is_some_and(|r| !r.packages.is_empty())
-        || !config.changelog()?.packages.is_empty();
-    let landing = landing::detect(root, base, pr, changelog);
+    let landing = landing::detect(root, base, pr);
     let plan = Plan {
         rust,
         projects,

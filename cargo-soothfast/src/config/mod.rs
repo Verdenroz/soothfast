@@ -13,6 +13,7 @@ pub mod package;
 
 pub use package::{Group, Settings};
 
+use crate::init::bot::Landing;
 use crate::invoke::{self, CommonArgs};
 use crate::test::config as test;
 
@@ -100,6 +101,11 @@ impl Config {
     /// The `[changelog]` and `[changelog.icons]` tables.
     pub fn changelog(&self) -> Result<changelog::ChangelogConfig, String> {
         changelog::parse(&self.text).map_err(|e| self.located(e))
+    }
+
+    /// What `[bot]` says about the bot's own landing pull requests.
+    pub fn landing(&self) -> Result<Landing, String> {
+        Landing::parse(&self.text).map_err(|e| self.located(e))
     }
 
     /// The names of the `[package.NAME]` tables, in name order.
