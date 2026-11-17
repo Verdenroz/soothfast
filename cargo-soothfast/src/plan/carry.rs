@@ -1,10 +1,13 @@
 //! The lanes a pull request leaves alone: `plan` drops their jobs and shows
-//! each in the verdict as a pass carried from the default branch.
+//! each in the verdict as a pass carried from a stored run.
 //!
-//! A lane is carried when no file the pull request changed is one it reads
-//! and a pass is stored for its fingerprint. The fingerprint alone is not
-//! enough: a pull request that reverts a lane's inputs to an older state
-//! matches an old pass while regressing against the current base.
+//! A lane is carried when a pass is stored under its key: the fingerprint of
+//! its inputs at head and the delta, the merge-base side of the changed files
+//! it reads. A lane the pull request did not touch has an empty delta, so a
+//! pass of the default branch matches; a touched lane matches only a pass of
+//! a pull-request head whose touched inputs began from the same base blobs.
+//! The delta is what stops a pull request that reverts a lane's inputs to an
+//! older state from matching an old pass while regressing against the base.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -13,6 +16,8 @@ use serde_json::{Value, json};
 
 use super::{Plan, names};
 use crate::config::Config;
+use crate::invoke;
+use crate::lanes::delta::base_delta;
 use crate::lanes::graph::Graph;
 use crate::lanes::inputs::{Inputs, Lane, Reads, Setup};
 use crate::lanes::store::{Store, key};
@@ -20,15 +25,16 @@ use crate::lanes::tool;
 use crate::test::project::Files;
 use crate::verdict::write_carried;
 
-/// How the base a pass was judged against differs from the current one. A
-/// pass of the default branch has no difference.
-const NO_DELTA: &str = "";
-
 /// The two facts about the toolchain and the tool that `plan` cannot see.
 pub(super) struct Stamps {
     pub rev: String,
     pub rust_stable: String,
+    /// The pull request's base, which the deltas are read against.
+    pub base: Option<String>,
 }
+
+/// The delta of a lane, or none when it cannot be read.
+type Delta<'a> = &'a dyn Fn(&Lane) -> Option<String>;
 
 /// A result a lane's job leaves: its name and the kind it is shown with.
 type Shown = (String, &'static str);
@@ -131,11 +137,33 @@ impl Plan {
             return;
         };
         let site = Site::read(root, &config);
-        self.decide(&inputs, site.as_ref(), Store::open().as_ref());
+        let merge_base = stamps
+            .base
+            .as_deref()
+            .and_then(|b| invoke::git_in(root, &["merge-base", b, "HEAD"]).ok());
+        let changed = self.changed.clone();
+        let delta = |lane: &Lane| {
+            let touched = changed.iter().flatten();
+            let paths: Vec<&str> = touched
+                .filter(|f| inputs.reads(lane, f))
+                .map(String::as_str)
+                .collect();
+            if paths.is_empty() {
+                return Some(String::new());
+            }
+            base_delta(root, merge_base.as_deref()?, &paths)
+        };
+        self.decide(&inputs, site.as_ref(), Store::open().as_ref(), &delta);
     }
 
-    fn decide(&mut self, inputs: &Inputs, site: Option<&Site>, store: Option<&Store>) {
-        let units = self.units(inputs, site);
+    fn decide(
+        &mut self,
+        inputs: &Inputs,
+        site: Option<&Site>,
+        store: Option<&Store>,
+        delta: Delta,
+    ) {
+        let units = self.units(inputs, site, delta);
         self.recorded = units
             .all
             .iter()
@@ -146,18 +174,13 @@ impl Plan {
                 kind: u.kind,
             })
             .collect();
-        let (Some(changed), Some(store)) = (&self.changed, store) else {
+        let (Some(_), Some(store)) = (&self.changed, store) else {
             return;
         };
         if self.landing || self.test_all() {
             return;
         }
-        let hit = |u: &Unit| {
-            let untouched = !changed.iter().any(|f| inputs.reads(&u.lane, f));
-            untouched
-                .then(|| store.lookup(&u.lane.id, &u.key))
-                .flatten()
-        };
+        let hit = |u: &Unit| store.lookup(&u.lane.id, &u.key);
         let coupled = |u: &Unit| matches!(u.kind, "rust" | "import" | "docs");
         let found: Vec<(&Unit, Option<String>)> = units
             .all
@@ -183,7 +206,7 @@ impl Plan {
             .collect();
     }
 
-    fn units(&self, inputs: &Inputs, site: Option<&Site>) -> Units {
+    fn units(&self, inputs: &Inputs, site: Option<&Site>, delta: Delta) -> Units {
         let rust = self.rust.as_ref();
         let packages = rust.map(|r| r.packages.as_slice()).unwrap_or_default();
         let docs_packages = rust.map(|r| r.docs_packages.as_slice()).unwrap_or_default();
@@ -192,7 +215,7 @@ impl Plan {
             .map(|p| {
                 let lane = inputs.rust(&format!("rust:{p}"), p)?;
                 let shown = vec![(p.clone(), "rust")];
-                Some(unit(inputs, lane, "rust", self.gate_records(p), shown))
+                unit(inputs, delta, lane, "rust", self.gate_records(p), shown)
             })
             .collect();
         let imports: Vec<Option<Unit>> = self
@@ -203,7 +226,7 @@ impl Plan {
             .map(|(p, name)| {
                 let lane = inputs.project(&format!("import:{name}"), p)?;
                 let shown = vec![(name.clone(), "import")];
-                Some(unit(inputs, lane, "import", vec![name], shown))
+                unit(inputs, delta, lane, "import", vec![name], shown)
             })
             .collect();
         let documented: Option<Vec<Lane>> = docs_packages
@@ -221,7 +244,7 @@ impl Plan {
             let parts: Vec<&Lane> = feeds.iter().copied().chain(&documented).collect();
             Lane::union("docs", &parts, vec![Reads::Markdown])
         });
-        let docs = self.docs_unit(inputs, base.as_ref(), site);
+        let docs = self.docs_unit(inputs, delta, base.as_ref(), site);
         let mut all: Vec<Unit> = gates.into_iter().chain(imports).flatten().collect();
         let complete = gated_ok && (!self.docs || docs.is_some());
         all.extend(docs);
@@ -229,13 +252,19 @@ impl Plan {
             self.checks
                 .iter()
                 .filter(|c| !(self.site_in_docs() && c.kind == "site"))
-                .filter_map(|c| self.check_unit(inputs, c, base.as_ref(), site)),
+                .filter_map(|c| self.check_unit(inputs, delta, c, base.as_ref(), site)),
         );
         Units { all, complete }
     }
 
     /// The docs job, and the site it builds when there is one.
-    fn docs_unit(&self, inputs: &Inputs, base: Option<&Lane>, site: Option<&Site>) -> Option<Unit> {
+    fn docs_unit(
+        &self,
+        inputs: &Inputs,
+        delta: Delta,
+        base: Option<&Lane>,
+        site: Option<&Site>,
+    ) -> Option<Unit> {
         if !self.docs {
             return None;
         }
@@ -249,12 +278,13 @@ impl Plan {
         }
         let lane = Lane::union("docs", &[base], reads);
         let saved = shown.iter().map(|(name, _)| name.clone()).collect();
-        Some(unit(inputs, lane, "docs", saved, shown))
+        unit(inputs, delta, lane, "docs", saved, shown)
     }
 
     fn check_unit(
         &self,
         inputs: &Inputs,
+        delta: Delta,
         check: &crate::ci::checks::Check,
         base: Option<&Lane>,
         site: Option<&Site>,
@@ -270,13 +300,8 @@ impl Plan {
             (_, Some(package)) => inputs.rust(&id, package)?,
             _ => return None,
         };
-        Some(unit(
-            inputs,
-            lane,
-            "check",
-            vec![name.clone()],
-            vec![(name, "check")],
-        ))
+        let shown = vec![(name.clone(), "check")];
+        unit(inputs, delta, lane, "check", vec![name], shown)
     }
 
     /// The results a gate job leaves for `package`: one per leg of the shard.
@@ -319,18 +344,20 @@ impl Plan {
 
 fn unit(
     inputs: &Inputs,
+    delta: Delta,
     lane: Lane,
     kind: &'static str,
     saved: Vec<String>,
     shown: Vec<Shown>,
-) -> Unit {
-    Unit {
-        key: key(&lane.id, &inputs.fingerprint(&lane), NO_DELTA),
+) -> Option<Unit> {
+    let key = key(&lane.id, &inputs.fingerprint(&lane), &delta(&lane)?);
+    Some(Unit {
+        key,
         lane,
         kind,
         saved,
         shown,
-    }
+    })
 }
 
 #[cfg(test)]

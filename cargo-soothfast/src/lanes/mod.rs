@@ -6,6 +6,7 @@
 //! and digests it, [`graph`] gives the packages a Rust lane reaches, and
 //! [`tool`] names the soothfast build behind a pass.
 
+pub mod delta;
 pub mod graph;
 pub mod inputs;
 pub mod save;
