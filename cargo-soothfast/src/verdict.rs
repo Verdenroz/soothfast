@@ -526,6 +526,17 @@ fn read_records(dir: &Path) -> Vec<Record> {
         .collect()
 }
 
+/// The names of the records under `dir` that are a plain pass: not carried,
+/// not flaky, and with every claim evaluated.
+pub(crate) fn plain_passes(dir: &Path) -> BTreeSet<String> {
+    read_records(dir)
+        .into_iter()
+        .filter(|r| r.verdict == Verdict::Pass && !r.flaky && !r.unevaluated)
+        .filter(|r| r.carried.is_none())
+        .map(|r| r.name)
+        .collect()
+}
+
 /// One record per name. A name with `#` after it (`pkg#1/3`, a shard) folds
 /// into the one before it, so shards share a section and each is still
 /// expected on its own.

@@ -14,6 +14,7 @@ mod each;
 mod env;
 mod gate;
 mod import;
+mod lanes;
 mod proto;
 mod record;
 pub(crate) mod regen;
@@ -83,6 +84,11 @@ const KINDS: &[Kind] = &[
         name: "site",
         run: Some(site::run),
         applies: in_a_run,
+    },
+    Kind {
+        name: "lanes",
+        run: Some(lanes::run),
+        applies: |_| false,
     },
     Kind {
         name: "verdict",
@@ -244,6 +250,7 @@ mod tests {
                 "coverage",
                 "capture",
                 "site",
+                "lanes",
                 "verdict",
                 "regen"
             ]
