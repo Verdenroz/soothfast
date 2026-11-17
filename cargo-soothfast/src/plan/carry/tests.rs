@@ -55,7 +55,6 @@ fn site() -> Site {
     }
 }
 
-/// The plan's lanes as `repo` holds them now.
 fn units(p: &Plan, repo: &TempRepo, site: Option<&Site>) -> Units {
     let files = Files::read(&repo.root).unwrap();
     p.units(&inputs(&files, repo), site)
@@ -76,7 +75,6 @@ fn inputs<'a>(files: &'a Files, repo: &TempRepo) -> Inputs<'a> {
     Inputs::new(files.ids(), Some(graph(&repo.root)), test, vec![], setup).unwrap()
 }
 
-/// A default-branch run of the tree as it is: every lane passes.
 fn pass_all(p: &Plan, repo: &TempRepo, site: Option<&Site>) -> (TempDir, Store) {
     let tag = repo.root.file_name().unwrap().to_string_lossy().to_string();
     let dir = TempDir::new(&format!("{tag}-store"));
@@ -92,7 +90,6 @@ fn pass_all(p: &Plan, repo: &TempRepo, site: Option<&Site>) -> (TempDir, Store) 
     (dir, store)
 }
 
-/// Plans a pull request that changed `changed`, whose files are already in `repo`.
 fn pull(p: &mut Plan, repo: &TempRepo, store: &Store, site: Option<&Site>, changed: &[&str]) {
     p.changed = Some(changed.iter().map(|c| c.to_string()).collect());
     let files = Files::read(&repo.root).unwrap();

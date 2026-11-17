@@ -882,6 +882,99 @@ App a bypass actor on the default branch and push to it directly. The bot's
 token can then write to the default branch unreviewed, which is why
 `land.sh` does not do it.
 
+### Carried lanes
+
+A lane is a unit of work a pull request may not need: `rust:<package>` (the
+bench build and gate of one package), `import:<project>` (the bench of a
+non-Rust project), `check:<name>` (one spec, proto, coverage, capture or site
+job) and `docs` (the docs check, with the site when it builds there).
+`cargo soothfast plan` drops the job of a lane the pull request does not
+touch and leaves its result to a stored pass, so a pull request that changed
+one container file pays for no build that would find nothing to do. The lane
+stays in the comment as `pass (carried from <commit>)`, and the verdict
+still expects it.
+
+A lane is carried only when both hold:
+
+1. No file the pull request changed is one the lane reads.
+2. A pass is stored for the lane's fingerprint, from a run on the default
+   branch.
+
+A fingerprint match alone is not enough. A pull request that reverts a
+lane's inputs to an older default-branch state matches an old pass while
+regressing against the current base, so the diff decides first.
+
+The fingerprint covers the lane's name, the whole root `soothfast.toml`, the
+soothfast version and revision of the checkout, the runner labels, the shard
+count, the Java and Node pins, the build variables the stores key on
+(`RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `CARGO_INCREMENTAL`,
+`RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`), the `[test] env` values, and every
+file matching `[ci] inputs`. Then, by kind:
+
+- Rust lanes (`rust:*`, and the spec, proto and coverage checks): the files
+  `[test]` selection sends to every package (files no package owns,
+  `Cargo.toml`, `Cargo.lock`, toolchain and cargo config files, `[test]
+  inputs`) and every file of the package and of each workspace package it
+  reaches through a dependency of any kind, dev-dependencies included. A
+  `[test.packages.NAME]` allow-list does not narrow this, and `[test]
+  ignore` applies as it does to tests. The jobs install a floating
+  `stable`, so the plan fetches the checksum of its release manifest
+  (`https://static.rust-lang.org/dist/channel-rust-stable.toml.sha256`) and
+  adds it.
+- `import:*`: the files in the project directory or matching its watch
+  globs, its bench command, output, format, walltime and prefix, and the
+  toolchain it runs on.
+- `docs`, and the capture check: the files of every Rust and import lane,
+  the docs packages, and every markdown file. The site adds the files under
+  `[site] docs_dir` and `theme_dir`, and a site with a `site_run` hook never
+  carries.
+
+`[ci] inputs` lists globs of files a lane reads that its own sources do not
+hold, such as a data file outside every package. A change to a match moves
+every lane:
+
+```toml
+[ci]
+inputs = ["fixtures/**", "Makefile"]
+```
+
+The `docs` lane reads the gates' baselines, so the `rust:*`, `import:*` and
+`docs` lanes (and the site built with the docs) carry together or not at all.
+Tests are not lanes: they keep their own stored passes.
+
+Every lane runs, and nothing is carried, when the run is a push or a
+bot landing, when the pull request carries `soothfast:test-all`, when the
+changed files are unknown, or when the lane has no fingerprint: no stored
+pass, `cargo metadata` failed, a package or path dependency lies outside the
+repository, or the soothfast revision or the stable channel is unknown.
+When the soothfast checkout is the repository itself, every revision is
+new, so the revision is replaced by a digest of the workspace members,
+`action/`, `action.yml` and `run.yml`.
+
+A push to the default branch stores a lane when every result it listed
+exists and is a plain pass, not carried and not `claims not evaluated`. The
+passes live in `.soothfast/lanes`, one small file per lane, restored and
+saved through the Actions cache under `soothfast-lanes-<ref>-<run>-<attempt>`
+and pruned to the newest 2048. A pull request run only reads them.
+
+Carrying trusts what a fingerprint cannot see:
+
+- Files outside the repository, including a path dependency or `[patch]`
+  path outside it (a path dependency outside the root disables the lane,
+  a `[patch]` path is not seen), and submodule contents beyond the commit
+  the submodule is pinned to.
+- Code generated from the network, and a build script that reads a
+  variable or file the list above does not name.
+- A data file read by a Rust lane from a package outside the lane's
+  dependency closure, or by `docs` from a non-markdown file outside `[site]
+  docs_dir`. Name such files in `[ci] inputs`.
+- The runner image: only the labels are keyed, so a new image version with
+  the same labels carries an older pass.
+- Anything the caller workflow changes outside `soothfast.toml` and the
+  pinned soothfast revision, since the caller's own file is not read.
+
+Apply `soothfast:test-all` to run every lane on one pull request.
+
 ## One command per job
 
 `cargo soothfast ci <kind>` runs one CI job: the flags, the choice of base
