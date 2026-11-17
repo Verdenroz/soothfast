@@ -255,8 +255,8 @@ interface Policy {
   strict: boolean;
 }
 
-// An unreadable rule set or protection counts as strict: a pull request
-// nobody updates could never merge, while an extra update only costs a run.
+// Unreadable rules or protection, and enforced classic protection with no
+// strict flag, count as strict: an unupdated pull request may never merge.
 async function branchPolicy(run: Run): Promise<Policy> {
   const { github, repository, defaultBranch: branch, token } = run;
   const [rules, info] = await Promise.all([
@@ -268,11 +268,12 @@ async function branchPolicy(run: Run): Promise<Policy> {
     ),
   ]);
   const classic = info?.protection?.required_status_checks;
+  const classicChecks =
+    (classic?.contexts?.length ?? 0) + (classic?.checks?.length ?? 0);
   return {
     checks:
       (rules ?? []).filter((r) => CHECK_RULES.includes(r.type)).length +
-      (classic?.contexts?.length ?? 0) +
-      (classic?.checks?.length ?? 0),
+      classicChecks,
     strict:
       rules === undefined ||
       info === undefined ||
@@ -281,7 +282,9 @@ async function branchPolicy(run: Run): Promise<Policy> {
           r.type === "required_status_checks" &&
           r.parameters?.strict_required_status_checks_policy,
       ) ||
-      (classic?.strict === true && classic.enforcement_level !== "off"),
+      (classicChecks > 0 &&
+        classic?.enforcement_level !== "off" &&
+        classic?.strict !== false),
   };
 }
 

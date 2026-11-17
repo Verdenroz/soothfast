@@ -871,36 +871,48 @@ test("needed: a strict ruleset rule updates without comparing files", async () =
   assert.ok(!calls.includes("compare abc123...main"));
 });
 
-test("needed: strict classic protection updates", async () => {
-  const { run, calls } = fakeRun({
-    toml: NEEDED,
-    pulls: [behindPull()],
-    ...writerUpdates(),
-    compareStatus: "behind",
-    protection: {
-      protection: {
-        required_status_checks: { strict: true, enforcement_level: "everyone" },
-      },
-    },
-  });
-  await evaluateOne(run, 5, labeledBy("alice", UPDATE));
-  assert.equal(updated(calls), 1);
+const classic = (required: object) => ({
+  protection: { required_status_checks: required },
 });
 
-test("needed: classic protection that is switched off is not strict", async () => {
+for (const [name, required, expected] of [
+  ["strict", { strict: true, contexts: ["ci"] }, 1],
+  [
+    "with no strict flag",
+    { contexts: ["ci"], enforcement_level: "everyone" },
+    1,
+  ],
+  ["with an explicit strict false", { strict: false, contexts: ["ci"] }, 0],
+  [
+    "switched off",
+    { strict: true, contexts: ["ci"], enforcement_level: "off" },
+    0,
+  ],
+  ["without required checks", { strict: true, contexts: [], checks: [] }, 0],
+] as const) {
+  test(`needed: classic protection ${name} updates ${expected} pull request`, async () => {
+    const { run, calls } = fakeRun({
+      toml: NEEDED,
+      pulls: [behindPull()],
+      ...writerUpdates(),
+      compareStatus: "behind",
+      protection: classic(required),
+    });
+    await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+    assert.equal(updated(calls), expected);
+  });
+}
+
+test("needed: a sweep under enforced classic protection with no strict flag updates one", async () => {
   const { run, calls } = fakeRun({
     toml: NEEDED,
-    pulls: [behindPull()],
-    ...writerUpdates(),
+    pulls: sweepPulls(1, 2),
+    ...sweepWriters(1, 2),
     compareStatus: "behind",
-    protection: {
-      protection: {
-        required_status_checks: { strict: true, enforcement_level: "off" },
-      },
-    },
+    protection: classic({ contexts: ["ci"] }),
   });
-  await evaluateOne(run, 5, labeledBy("alice", UPDATE));
-  assert.equal(updated(calls), 0);
+  await evaluateOpen(run);
+  assert.equal(updated(calls), 1);
 });
 
 for (const [name, world] of [
