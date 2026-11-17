@@ -38,6 +38,7 @@ mod itemcache;
 mod itemreuse;
 mod jumptable;
 mod labels;
+mod landing;
 mod linkmap;
 mod mcp;
 mod plan;

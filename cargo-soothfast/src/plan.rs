@@ -11,6 +11,7 @@ use crate::config::Config;
 use crate::init::ci::Ci;
 use crate::init::ecosystem::{Project, Suite, slug};
 use crate::init::{self, RustPlan};
+use crate::landing::{self, PullRequest};
 use crate::test::project::{
     Pins, TEST_ALL_LABEL, Verdict, changed_since, covered, suites_for, target_for, toolchain_for,
     touches, write_result,
@@ -29,6 +30,7 @@ struct Args {
     shards: u64,
     /// Run only the first shard, which records every item for the others.
     first_shard_only: bool,
+    pr: PullRequest,
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
@@ -68,12 +70,23 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
                     ));
                 }
             },
+            "--pr-author" => out.pr.author = given(value),
+            "--head-ref" => out.pr.head_ref = given(value),
+            "--head-repo" => out.pr.head_repo = given(value),
+            "--repo" => out.pr.repo = given(value),
+            "--verified-commits" => out.pr.verified_commits = value == "true",
             "--java" => out.pins.java = Some(value),
             "--node" => out.pins.node = Some(value),
             other => return Err(format!("unknown plan arg {other:?}")),
         }
     }
     Ok(out)
+}
+
+/// A flag's value, or none for the empty string a workflow passes when it
+/// has nothing to say.
+fn given(value: String) -> Option<String> {
+    Some(value).filter(|v| !v.is_empty())
 }
 
 pub fn run(args: &[String]) -> i32 {
@@ -89,6 +102,7 @@ pub fn run(args: &[String]) -> i32 {
         args.pins,
         args.shards,
         args.first_shard_only,
+        &args.pr,
     ) {
         Ok(plan) => plan,
         Err(e) => return err(&e),
@@ -129,6 +143,8 @@ struct Plan {
     pages: bool,
     /// `[ci] trend_url`, which the docs job fetches the series from.
     trend_url: Option<String>,
+    /// Whether this is a soothfast-bot landing, which runs no lane.
+    landing: bool,
 }
 
 /// One project's tests, or one suite's, and whether the change reaches them.
@@ -146,6 +162,7 @@ fn build(
     mut pins: Pins,
     shards: u64,
     first_shard_only: bool,
+    pr: &PullRequest,
 ) -> Result<Plan, String> {
     let rust = root
         .join("Cargo.toml")
@@ -181,7 +198,10 @@ fn build(
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
     }
-    let mut plan = Plan {
+    let changelog = rust.as_ref().is_some_and(|r| !r.packages.is_empty())
+        || !config.changelog()?.packages.is_empty();
+    let landing = landing::detect(root, base, pr, changelog);
+    let plan = Plan {
         rust,
         projects,
         ci,
@@ -197,7 +217,9 @@ fn build(
         checks,
         pages,
         trend_url,
+        landing: false,
     };
+    let mut plan = if landing { plan.without_lanes() } else { plan };
     plan.check_names()?;
     plan.reused = plan.stored_passes(root)?;
     Ok(plan)
@@ -215,6 +237,22 @@ fn docs_binds_rust(root: &Path, rust: Option<&RustPlan>) -> bool {
 }
 
 impl Plan {
+    /// The plan of a landing: nothing to test, gate or check, so every lane
+    /// job is skipped and the verdict has nothing to wait for.
+    fn without_lanes(self) -> Plan {
+        Plan {
+            rust: None,
+            projects: Vec::new(),
+            docs: false,
+            docs_binds_rust: false,
+            suites: Vec::new(),
+            checks: Vec::new(),
+            pages: false,
+            landing: true,
+            ..self
+        }
+    }
+
     /// The matrix of entries, one per project and, with `rust`, one for the
     /// cargo workspace.
     fn matrix(&self, rust: bool) -> Value {
@@ -433,7 +471,7 @@ impl Plan {
             .unwrap_or_default();
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nchecks={}\nchecks_any={}\nchecks_expect={}\nsite_in_docs={}\nsite_deploy={}\ntrend_url={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nlanding={}\nchecks={}\nchecks_any={}\nchecks_expect={}\nsite_in_docs={}\nsite_deploy={}\ntrend_url={}\n",
             self.matrix(false),
             self.projects.iter().any(|p| p.bench.is_some()),
             self.rust.is_some(),
@@ -446,6 +484,7 @@ impl Plan {
             self.test_expect(),
             self.shard_legs(),
             self.ci.runs_on_json(),
+            self.landing,
             checks::matrix(self.matrix_checks()),
             self.matrix_checks().next().is_some(),
             self.checks
@@ -497,7 +536,9 @@ fn err(msg: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::init::bot::Landing;
     use crate::init::ecosystem::{Bench, Ecosystem, Tests};
+    use crate::landing::Allowed;
 
     fn project(ecosystem: Ecosystem, dir: &str) -> Project {
         Project {
@@ -537,6 +578,7 @@ mod tests {
             checks: Vec::new(),
             pages: false,
             trend_url: None,
+            landing: false,
         }
     }
 
@@ -868,5 +910,217 @@ mod tests {
         assert!(p.outputs().contains("\ndocs_binds_rust=false\n"));
         p.docs_binds_rust = true;
         assert!(p.outputs().contains("\ndocs_binds_rust=true\n"));
+    }
+
+    fn landing_pr() -> PullRequest {
+        PullRequest {
+            author: Some("soothfast-bot[bot]".into()),
+            head_ref: Some("bot/soothfast-update".into()),
+            head_repo: Some("acme/items".into()),
+            repo: Some("acme/items".into()),
+            verified_commits: true,
+        }
+    }
+
+    /// The outputs of a repository with every kind of lane, planned for `pr`
+    /// changing `changed`. It generates `api/openapi.yaml`, an SDK under
+    /// `sdk/python` and a changelog, and lands `TREND.md` from its own job.
+    fn planned(pr: &PullRequest, changed: &[&str]) -> String {
+        let mut p = plan(Some(&["a"]), vec![testable(Ecosystem::Node, "web", &[])]);
+        p.docs = true;
+        p.checks = vec![Check {
+            kind: "spec",
+            package: Some("a".into()),
+            rustdoc: true,
+        }];
+        let bot = Landing::parse("[bot]\nlanding_paths = [\"TREND.md\"]\n").unwrap();
+        let allowed = Allowed {
+            files: ["CHANGELOG.md".to_string(), "api/openapi.yaml".to_string()].into(),
+            dirs: vec!["sdk/python".into()],
+            globs: bot.paths.clone(),
+        };
+        let changed = changed.iter().map(|c| c.to_string()).collect();
+        let p = match landing::is_landing(pr, &bot, &allowed, &changed) {
+            true => p.without_lanes(),
+            false => p,
+        };
+        p.outputs()
+    }
+
+    fn runs_every_lane(out: &str) -> bool {
+        out.contains("\nrust=true\ntest=true\npackages=a\ndocs=true\n")
+            && out.contains("\ntest_projects=true\n")
+            && out.contains("\nlanding=false\n")
+            && out.contains("\nchecks_any=true\n")
+    }
+
+    const LANDED: [&str; 4] = [
+        "CHANGELOG.md",
+        "api/openapi.yaml",
+        "sdk/python/acme/models.py",
+        "TREND.md",
+    ];
+
+    #[test]
+    fn a_landing_plans_no_lane() {
+        let out = planned(&landing_pr(), &LANDED);
+        assert!(
+            out.starts_with("matrix={\"include\":[]}\nprojects=false\nrust=false\ntest=false\npackages=\ndocs=false\ndocs_package=\ndocs_binds_rust=false\ntest_matrix={\"include\":[]}\ntest_projects=false\ntest_all=false\ntest_expect=\n"),
+            "{out}"
+        );
+        assert!(
+            out.ends_with("landing=true\nchecks={\"include\":[]}\nchecks_any=false\nchecks_expect=\nsite_in_docs=false\nsite_deploy=false\ntrend_url=\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_pull_request_the_bot_did_not_open_runs_every_lane() {
+        for author in [
+            Some("octocat"),
+            Some("other-bot[bot]"),
+            Some("soothfast-bot"),
+            None,
+        ] {
+            let pr = PullRequest {
+                author: author.map(String::from),
+                ..landing_pr()
+            };
+            assert!(runs_every_lane(&planned(&pr, &LANDED)), "{author:?}");
+        }
+    }
+
+    #[test]
+    fn a_branch_outside_bot_runs_every_lane() {
+        for head_ref in [Some("fix/bot/soothfast-update"), Some("bot"), None] {
+            let pr = PullRequest {
+                head_ref: head_ref.map(String::from),
+                ..landing_pr()
+            };
+            assert!(runs_every_lane(&planned(&pr, &LANDED)), "{head_ref:?}");
+        }
+    }
+
+    #[test]
+    fn a_fork_head_runs_every_lane() {
+        for head_repo in [Some("mallory/items"), None] {
+            let pr = PullRequest {
+                head_repo: head_repo.map(String::from),
+                ..landing_pr()
+            };
+            assert!(runs_every_lane(&planned(&pr, &LANDED)), "{head_repo:?}");
+        }
+        let unknown = PullRequest {
+            head_repo: None,
+            repo: None,
+            ..landing_pr()
+        };
+        assert!(runs_every_lane(&planned(&unknown, &LANDED)));
+    }
+
+    #[test]
+    fn unverified_commits_run_every_lane() {
+        let pr = PullRequest {
+            verified_commits: false,
+            ..landing_pr()
+        };
+        assert!(runs_every_lane(&planned(&pr, &LANDED)));
+        let argv = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(!parse_args(&argv(&[])).unwrap().pr.verified_commits);
+        for value in ["false", "", "yes"] {
+            let args = parse_args(&argv(&["--verified-commits", value])).unwrap();
+            assert!(!args.pr.verified_commits, "{value:?}");
+        }
+        assert!(
+            parse_args(&argv(&["--verified-commits", "true"]))
+                .unwrap()
+                .pr
+                .verified_commits
+        );
+    }
+
+    #[test]
+    fn one_path_outside_the_landing_set_runs_every_lane() {
+        for outside in [
+            "src/lib.rs",
+            "api/other.yaml",
+            "sdk/python-extra/a.py",
+            "docs/TREND.md",
+        ] {
+            let changed = [&LANDED[..], &[outside]].concat();
+            assert!(
+                runs_every_lane(&planned(&landing_pr(), &changed)),
+                "{outside}"
+            );
+        }
+        assert!(runs_every_lane(&planned(&landing_pr(), &[])));
+    }
+
+    #[test]
+    fn a_file_regen_lands_by_pathspec_but_does_not_generate_runs_every_lane() {
+        let out = planned(&landing_pr(), &["CHANGELOG.md", ".github/workflows/ci.yml"]);
+        assert!(runs_every_lane(&out), "{out}");
+        assert!(runs_every_lane(&planned(
+            &landing_pr(),
+            &["web/package.json"]
+        )));
+    }
+
+    #[test]
+    fn a_changed_soothfast_toml_at_any_depth_runs_every_lane() {
+        let wide = |changed: &[&str]| {
+            let bot = Landing::parse("[bot]\nlanding_paths = [\"**\"]\n").unwrap();
+            let allowed = Allowed {
+                globs: bot.paths.clone(),
+                ..Allowed::default()
+            };
+            let changed = changed.iter().map(|c| c.to_string()).collect();
+            landing::is_landing(&landing_pr(), &bot, &allowed, &changed)
+        };
+        assert!(wide(&["src/lib.rs"]));
+        assert!(!wide(&["soothfast.toml"]));
+        assert!(!wide(&["src/lib.rs", "crates/api/soothfast.toml"]));
+        assert!(wide(&["docs/soothfast.toml.md"]));
+    }
+
+    #[test]
+    fn the_bot_is_the_one_the_bot_table_names() {
+        let bot = Landing::parse("[bot]\nslug = \"acme-bot\"\n").unwrap();
+        let allowed = Allowed {
+            files: ["CHANGELOG.md".to_string()].into(),
+            ..Allowed::default()
+        };
+        let changed = ["CHANGELOG.md".to_string()].into();
+        assert!(!landing::is_landing(
+            &landing_pr(),
+            &bot,
+            &allowed,
+            &changed
+        ));
+        let pr = PullRequest {
+            author: Some("acme-bot[bot]".into()),
+            ..landing_pr()
+        };
+        assert!(landing::is_landing(&pr, &bot, &allowed, &changed));
+    }
+
+    #[test]
+    fn the_pull_request_flags_are_parsed() {
+        let argv = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let flags = [
+            "--pr-author",
+            "soothfast-bot[bot]",
+            "--head-ref",
+            "bot/soothfast-update",
+            "--head-repo",
+            "acme/items",
+            "--repo",
+            "acme/items",
+            "--verified-commits",
+            "true",
+        ];
+        assert_eq!(parse_args(&argv(&flags)).unwrap().pr, landing_pr());
+        let empty = parse_args(&argv(&["--pr-author", "", "--head-ref", ""])).unwrap();
+        assert_eq!(empty.pr, PullRequest::default());
     }
 }
