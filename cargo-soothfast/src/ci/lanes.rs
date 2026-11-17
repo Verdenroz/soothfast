@@ -30,22 +30,22 @@ fn stored(env: &CiEnv, dir: PathBuf) -> Result<(), String> {
         .results
         .as_ref()
         .ok_or("lanes needs a results directory")?;
-    let commit = env.head.clone().ok_or("lanes needs the run's commit")?;
-    let run = std::env::var("GITHUB_RUN_ID").unwrap_or_default();
     let path = dir.join("lanes.json");
     let Some(listing) = read_listing(&path)? else {
         println!("lanes: no lanes.json; nothing to store");
         return Ok(());
     };
     let store = Store::open().ok_or("cannot open .soothfast/lanes")?;
-    let saved = save(
-        &listing,
-        &plain_passes(results),
-        &store,
-        &Pass { commit, run },
-    )?;
+    let saved = save(&listing, &plain_passes(results), &store, &pass(env)?)?;
     println!("lanes: stored {saved} passed lane(s)");
     Ok(())
+}
+
+/// Where the run's lanes passed: a pull request's head, not its merge commit.
+fn pass(env: &CiEnv) -> Result<Pass, String> {
+    let commit = env.head.clone().ok_or("lanes needs the run's commit")?;
+    let run = std::env::var("GITHUB_RUN_ID").unwrap_or_default();
+    Ok(Pass { commit, run })
 }
 
 /// The plan's listing, or none when the plan wrote nothing.
@@ -82,5 +82,20 @@ mod tests {
         assert_eq!(read_listing(&dir.join("lanes.json")), Ok(Some("[]".into())));
         assert!(read_listing(&dir).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_pull_requests_lanes_pass_at_its_head_not_its_merge_commit() {
+        use crate::ci::env::Flags;
+        use std::collections::BTreeMap;
+        let vars = BTreeMap::from([
+            ("GITHUB_EVENT_NAME".to_string(), "pull_request".to_string()),
+            ("GITHUB_SHA".to_string(), "merge".to_string()),
+        ]);
+        let payload = r#"{"pull_request":{"head":{"sha":"headsha"},"base":{"sha":"b"}}}"#;
+        let env = CiEnv::parse(&vars, Some(payload), &Flags::default());
+        assert_eq!(pass(&env).unwrap().commit, "headsha");
+        let none = CiEnv::parse(&BTreeMap::new(), None, &Flags::default());
+        assert!(pass(&none).is_err());
     }
 }

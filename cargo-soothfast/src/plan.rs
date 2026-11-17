@@ -122,6 +122,7 @@ pub fn run(args: &[String]) -> i32 {
     let stamps = Stamps {
         rev: args.rev,
         rust_stable: args.rust_stable,
+        base: args.base.clone(),
     };
     plan.settle_lanes(&root, &stamps);
     if let Some(dir) = &args.lanes

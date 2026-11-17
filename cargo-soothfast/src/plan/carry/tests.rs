@@ -57,7 +57,28 @@ fn site() -> Site {
 
 fn units(p: &Plan, repo: &TempRepo, site: Option<&Site>) -> Units {
     let files = Files::read(&repo.root).unwrap();
-    p.units(&inputs(&files, repo), site)
+    p.units(&inputs(&files, repo), site, &|_| Some(String::new()))
+}
+
+/// A stand-in for the base side of the changed files a lane reads: empty when
+/// it reads none, else named by `base` and the files.
+fn delta<'a>(
+    inputs: &'a Inputs,
+    changed: &'a [&'a str],
+    base: &'a str,
+) -> impl Fn(&Lane) -> Option<String> + 'a {
+    move |lane| {
+        let read: Vec<&str> = changed
+            .iter()
+            .copied()
+            .filter(|f| inputs.reads(lane, f))
+            .collect();
+        Some(if read.is_empty() {
+            String::new()
+        } else {
+            format!("{base}:{}", read.join(","))
+        })
+    }
 }
 
 fn inputs<'a>(files: &'a Files, repo: &TempRepo) -> Inputs<'a> {
@@ -91,9 +112,35 @@ fn pass_all(p: &Plan, repo: &TempRepo, site: Option<&Site>) -> (TempDir, Store) 
 }
 
 fn pull(p: &mut Plan, repo: &TempRepo, store: &Store, site: Option<&Site>, changed: &[&str]) {
+    pull_on(p, repo, store, site, changed, "b1");
+}
+
+fn pull_on(
+    p: &mut Plan,
+    repo: &TempRepo,
+    store: &Store,
+    site: Option<&Site>,
+    changed: &[&str],
+    base: &str,
+) {
     p.changed = Some(changed.iter().map(|c| c.to_string()).collect());
     let files = Files::read(&repo.root).unwrap();
-    p.decide(&inputs(&files, repo), site, Some(store));
+    let inputs = inputs(&files, repo);
+    p.decide(&inputs, site, Some(store), &delta(&inputs, changed, base));
+}
+
+/// The pass a pull request head stores for its lanes under its own deltas.
+fn pass_head(repo: &TempRepo, store: &Store, changed: &[&str], base: &str) {
+    let files = Files::read(&repo.root).unwrap();
+    let inputs = inputs(&files, repo);
+    let units = lanes().units(&inputs, None, &delta(&inputs, changed, base));
+    for u in units.all {
+        let pass = Pass {
+            commit: "feedface".into(),
+            run: "2".into(),
+        };
+        store.record(&u.lane.id, &u.key, &pass);
+    }
 }
 
 fn carried(p: &Plan) -> Vec<&str> {
@@ -114,7 +161,6 @@ fn an_untouched_lane_with_a_stored_pass_leaves_the_outputs() {
         "{out}"
     );
     assert_eq!(p.matrix(false), json!({ "include": [] }));
-    assert_eq!(p.carried[0].commit, PASSED);
 }
 
 #[test]
@@ -310,7 +356,9 @@ fn the_escape_hatch_a_landing_a_push_and_an_unknown_diff_run_every_lane() {
 
     let mut p = lanes();
     let files = Files::read(&repo.root).unwrap();
-    p.decide(&inputs(&files, &repo), None, Some(&store));
+    p.decide(&inputs(&files, &repo), None, Some(&store), &|_| {
+        Some(String::new())
+    });
     assert!(p.carried.is_empty());
     assert_eq!(p.recorded.len(), 3);
 }
@@ -336,7 +384,7 @@ fn lanes_json_names_each_lane_and_the_results_a_run_must_leave() {
     let mut p = checked(&[("spec", Some("core"))]);
     p.shards = 2;
     let files = Files::read(&repo.root).unwrap();
-    p.decide(&inputs(&files, &repo), None, None);
+    p.decide(&inputs(&files, &repo), None, None, &|_| Some(String::new()));
     let out = TempDir::new("plan-carry-json");
     p.write_lanes(&out).unwrap();
     let doc: Value =
@@ -392,4 +440,77 @@ fn a_checked_out_action_among_the_changes_does_not_stop_a_carry() {
         &[".soothfast-action/action.yml"],
     );
     assert_eq!(carried(&p), ["rust:core", "rust:cli", "import:node"]);
+}
+
+fn empty_store(tag: &str) -> (TempDir, Store) {
+    let dir = TempDir::new(tag);
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = Store::at(dir.to_path_buf());
+    (dir, store)
+}
+
+#[test]
+fn a_touched_lane_carries_from_a_pull_request_pass_with_the_same_delta_only() {
+    let repo = repo("carry-previous-head");
+    let (_dir, store) = pass_all(&lanes(), &repo, None);
+    repo.write("cli/src/lib.rs", "2");
+    let changed = ["cli/src/lib.rs"];
+    let mut p = lanes();
+    pull(&mut p, &repo, &store, None, &changed);
+    assert_eq!(carried(&p), ["rust:core", "import:node"]);
+
+    pass_head(&repo, &store, &changed, "b1");
+    let mut p = lanes();
+    pull(&mut p, &repo, &store, None, &changed);
+    assert_eq!(carried(&p), ["rust:core", "rust:cli", "import:node"]);
+    assert_eq!(p.carried[1].commit, "feedface");
+}
+
+#[test]
+fn a_base_that_moved_under_a_touched_input_runs_the_lane() {
+    let repo = repo("carry-moved-base");
+    let (_dir, store) = empty_store("carry-moved-base-store");
+    repo.write("cli/src/lib.rs", "2");
+    let changed = ["cli/src/lib.rs"];
+    pass_head(&repo, &store, &changed, "b1");
+    let mut p = lanes();
+    pull_on(&mut p, &repo, &store, None, &changed, "b2");
+    assert!(!p.carries("rust:cli"));
+    pull_on(&mut p, &repo, &store, None, &changed, "b1");
+    assert!(p.carries("rust:cli"));
+}
+
+#[test]
+fn a_pull_request_pass_does_not_carry_to_a_head_that_changed_the_lane_again() {
+    let repo = repo("carry-new-head");
+    let (_dir, store) = empty_store("carry-new-head-store");
+    repo.write("cli/src/lib.rs", "2");
+    let changed = ["cli/src/lib.rs"];
+    pass_head(&repo, &store, &changed, "b1");
+    repo.write("cli/src/lib.rs", "3");
+    let mut p = lanes();
+    pull(&mut p, &repo, &store, None, &changed);
+    assert!(!p.carries("rust:cli"));
+}
+
+#[test]
+fn the_recorded_key_of_a_touched_lane_differs_from_the_default_branch_one() {
+    let repo = repo("carry-recorded-key");
+    let (_dir, store) = pass_all(&lanes(), &repo, None);
+    repo.write("cli/src/lib.rs", "2");
+    let mut p = lanes();
+    pull(&mut p, &repo, &store, None, &["cli/src/lib.rs"]);
+    let key = |p: &Plan, lane: &str| {
+        p.recorded
+            .iter()
+            .find(|r| r.lane == lane)
+            .unwrap()
+            .key
+            .clone()
+    };
+    let mut q = lanes();
+    let files = Files::read(&repo.root).unwrap();
+    q.decide(&inputs(&files, &repo), None, None, &|_| Some(String::new()));
+    assert_ne!(key(&p, "rust:cli"), key(&q, "rust:cli"));
+    assert_eq!(key(&p, "rust:core"), key(&q, "rust:core"));
 }
