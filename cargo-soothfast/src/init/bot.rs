@@ -83,6 +83,49 @@ impl BotLabels {
     }
 }
 
+/// The App slug of soothfast-bot, unless `[bot] slug` names another.
+pub const DEFAULT_SLUG: &str = "soothfast-bot";
+
+/// What `[bot]` says about the bot's own landing pull requests.
+#[derive(Debug, PartialEq)]
+pub struct Landing {
+    /// The App's slug; `<slug>[bot]` authors a landing.
+    pub slug: String,
+    /// Globs of the files a repository's own jobs land, beyond what
+    /// regeneration writes.
+    pub paths: Vec<String>,
+}
+
+impl Landing {
+    /// The `slug` and `landing_paths` keys of `[bot]` over the defaults.
+    pub fn parse(text: &str) -> Result<Landing, String> {
+        let mut landing = Landing {
+            slug: DEFAULT_SLUG.to_string(),
+            paths: Vec::new(),
+        };
+        for (lineno, line) in bot_keys(text) {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            match (key.trim(), parse_value(value.trim())) {
+                ("slug", Ok(TomlValue::Str(slug))) if slug.is_empty() => {}
+                ("slug", Ok(TomlValue::Str(slug))) => landing.slug = slug,
+                ("landing_paths", Ok(TomlValue::StrArray(paths))) => landing.paths = paths,
+                ("slug", _) => {
+                    return Err(format!("line {lineno}: `slug` under [bot] is a string"));
+                }
+                ("landing_paths", _) => {
+                    return Err(format!(
+                        "line {lineno}: `landing_paths` under [bot] is a list of strings"
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(landing)
+    }
+}
+
 /// The `[[bot.label]]` entries of the text.
 fn label_styles(text: &str) -> Result<Vec<LabelStyle>, String> {
     let mut styles = Vec::new();
@@ -242,5 +285,20 @@ mod tests {
     fn the_bot_table_is_found_by_its_header() {
         assert!(has_bot_table("[gate]\n\n[bot]\nlabels = true\n"));
         assert!(!has_bot_table("[bot.extra]\n# [bot]\n"));
+    }
+
+    #[test]
+    fn the_landing_keys_default_and_parse() {
+        let landing = Landing::parse("[bot]\nlabels = true\n").unwrap();
+        assert_eq!(landing.slug, DEFAULT_SLUG);
+        assert!(landing.paths.is_empty());
+        let text = "[bot]\nslug = \"acme-bot\"\nlanding_paths = [\"docs/generated/**\"]\n";
+        let landing = Landing::parse(text).unwrap();
+        assert_eq!(landing.slug, "acme-bot");
+        assert_eq!(landing.paths, ["docs/generated/**"]);
+        let unset = Landing::parse("[bot]\nslug = \"\"\n").unwrap();
+        assert_eq!(unset.slug, DEFAULT_SLUG);
+        assert!(Landing::parse("[bot]\nslug = true\n").is_err());
+        assert!(Landing::parse("[bot]\nlanding_paths = \"docs\"\n").is_err());
     }
 }

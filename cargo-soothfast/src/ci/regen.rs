@@ -157,17 +157,23 @@ fn hook(vars: &BTreeMap<String, String>) -> Result<Option<Hook>, String> {
     }))
 }
 
+/// The packages the changelog lists: `[changelog] packages`, else the gated
+/// ones. With none, regeneration writes no changelog.
+pub(crate) fn changelog_listed<'a>(packages: &'a [String], gated: &'a [String]) -> &'a [String] {
+    match packages.is_empty() {
+        true => gated,
+        false => packages,
+    }
+}
+
 /// The steps in order, and the pathspecs they may change.
 fn plan(inputs: &Inputs) -> (Vec<Step>, Vec<String>) {
     let mut steps = Vec::new();
     let mut paths = Vec::new();
-    let listed = match inputs.changelog_packages.is_empty() {
-        true => &inputs.gated,
-        false => &inputs.changelog_packages,
-    };
+    let listed = changelog_listed(&inputs.changelog_packages, &inputs.gated);
     if inputs.changelog && !listed.is_empty() {
         steps.extend(inputs.gated.iter().cloned().map(Step::Measure));
-        steps.push(Step::Changelog(listed.clone()));
+        steps.push(Step::Changelog(listed.to_vec()));
         paths.push("CHANGELOG.md".to_string());
     }
     if !inputs.specs.is_empty() {

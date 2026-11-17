@@ -16,7 +16,7 @@ mod gate;
 mod import;
 mod proto;
 mod record;
-mod regen;
+pub(crate) mod regen;
 mod site;
 mod spec;
 mod test;

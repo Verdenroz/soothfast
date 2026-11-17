@@ -5,7 +5,7 @@
 # EXPECT_RUST, EXPECT_IMPORT, EXPECT_DOCS, EXPECT_TEST, EXPECT_CHECK
 # (space-separated names of the results each kind must have) and EXPECT_SHARDS
 # (I/N of each Rust gate leg, which expects every package once per leg)
-# (optional).
+# (optional), LANDING (true when the plan ran no lane for a bot landing).
 set -euo pipefail
 
 # shellcheck source=action/labels.sh
@@ -31,9 +31,12 @@ if perf_accepted "$PR_NUMBER" "${waivers[@]}"; then
   accepted=(--accepted "$accepted_label")
 fi
 
+landing=()
+[ "${LANDING:-}" != true ] || landing=(--landing)
+
 body="${RUNNER_TEMP:-/tmp}/soothfast-verdict.md"
 rc=0
-"$CLI" ci --results "$RESULTS" verdict --out "$body" "${expect[@]}" "${accepted[@]}" || rc=$?
+"$CLI" ci --results "$RESULTS" verdict --out "$body" "${expect[@]}" "${accepted[@]}" "${landing[@]}" || rc=$?
 [ "$rc" -le 1 ] || exit "$rc"
 
 cat "$body"

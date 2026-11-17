@@ -101,6 +101,15 @@ unknown = 1
   assert.deepEqual(config, { ...DEFAULTS, labels: true });
 });
 
+test("the plan's landing_paths and slug leave the config unchanged", () => {
+  const config = parsed(`[bot]
+labels = true
+landing_paths = ["docs/generated/**", "TREND.md"]
+slug = "acme-bot"
+`);
+  assert.deepEqual(config, { ...DEFAULTS, labels: true });
+});
+
 const malformed = [
   ["unknown key", "[bot]\nmerge_label = []\n", /unknown keys: merge_label/],
   ["non-boolean labels", '[bot]\nlabels = "yes"\n', /labels must be/],
@@ -109,6 +118,8 @@ const malformed = [
     '[bot]\nperf_accepted_labels = "a"\n',
     /perf_accepted_labels must be/,
   ],
+  ["scalar landing_paths", '[bot]\nlanding_paths = "docs/**"\n', /landing_paths must be/],
+  ["slug not a string", "[bot]\nslug = true\n", /slug must be a string/],
   ["scalar label list", '[bot]\nmerge_labels = "a"\n', /array of strings/],
   ["non-string item", "[bot]\nmerge_labels = [1]\n", /unreadable/],
   ["unterminated array", '[bot]\nmerge_labels = ["a"\n', /unreadable/],
