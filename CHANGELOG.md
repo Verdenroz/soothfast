@@ -12,6 +12,8 @@
 
 ### ✨ Features
 
+- Carry a lane's pass from the pull request's earlier head (#444)
+- Carry a lane's pass when a pull request leaves its inputs alone (#443)
 - Update a labelled pull request only when it is needed (#439)
 - Keep a trend from the generated workflow (#423)
 - Deploy the docs site to Pages from run.yml (#401)
@@ -26,6 +28,8 @@
 
 ### 🐛 Fixes
 
+- Read a missing landing branch as absent (#445)
+- Share one landing between the jobs of a commit (#441)
 - Skip the lanes on a soothfast-bot landing pull request (#438)
 - Reuse a report's callgrind run on another host (#431)
 - Render macro-generated items from rustdoc JSON (#421)
@@ -43,6 +47,10 @@
 - Store an identical binary's run under the merge-base (#418)
 - Build the site from the spec jobs' routes builds (#416)
 - Read the spec gate's base from the committed spec in CI (#413)
+
+### 📦 Dependencies
+
+- Bump the all-dependencies group with 2 updates (#434)
 
 ### 🔧 Internal
 
