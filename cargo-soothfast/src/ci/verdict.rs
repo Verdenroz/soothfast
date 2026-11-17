@@ -128,6 +128,8 @@ mod tests {
         assert!(landed.contains("No lane ran"), "{landed}");
         assert_eq!(run(&env(Some(&dir)), &[]), 0);
         assert!(!body(&dir).contains("No lane ran"));
+        let unmet = argv(&["--landing", "--expect", "core:rust"]);
+        assert_eq!(run(&env(Some(&dir)), &unmet), 1);
         fs::remove_dir_all(dir).unwrap();
     }
 

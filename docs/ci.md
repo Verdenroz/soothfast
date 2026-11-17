@@ -450,7 +450,8 @@ pushes reach every open pull request.
 `landing_paths` and `slug` decide which pull requests count as the bot's own
 landings; see [Bot landings](#bot-landings). The broker checks their types
 and reads neither. A broker deployed before it knew the two keys treats them
-as unknown, so deploy the broker first when you run your own.
+as unknown, so deploy the broker first when you run your own; with the
+hosted broker, set them once it has been deployed at or after this change.
 
 A malformed `[bot]` table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the
