@@ -867,6 +867,67 @@ a widened <code>landing_paths</code> would otherwise approve itself.</p>
 App a bypass actor on the default branch and push to it directly. The bot's
 token can then write to the default branch unreviewed, which is why
 <code>land.sh</code> does not do it.</p>
+<h3 id="carried-lanes">Carried lanes<a class="anchor" href="#carried-lanes" aria-label="Link to this section">#</a></h3>
+<p>A lane is a unit of work a pull request may not need: <code>rust:&lt;package&gt;</code> (the
+bench build and gate of one package), <code>import:&lt;project&gt;</code> (the bench of a
+non-Rust project), <code>check:&lt;name&gt;</code> (one spec, proto, coverage, capture or site
+job) and <code>docs</code> (the docs check, with the site when it builds there).
+<code>cargo soothfast plan</code> drops the job of a lane the pull request does not
+touch and leaves its result to a stored pass, so a pull request that changed
+one container file pays for no build that would find nothing to do. The lane
+stays in the comment as <code>pass (carried from &lt;commit&gt;)</code>, and the verdict
+still expects it.</p>
+<p>A lane is carried only when both hold:</p>
+<ol>
+<li>No file the pull request changed is one the lane reads.</li>
+<li>A pass is stored for the lane's fingerprint, from a run on the default branch.</li>
+</ol>
+<p>A fingerprint match alone is not enough. A pull request that reverts a
+lane's inputs to an older default-branch state matches an old pass while
+regressing against the current base, so the diff decides first.</p>
+<p>The fingerprint covers the lane's name, the whole root <code>soothfast.toml</code>, the
+soothfast version and revision of the checkout, the runner labels, the shard
+count, the Java and Node pins, the build variables the stores key on
+(<code>RUSTC</code>, <code>RUSTC_WRAPPER</code>, <code>RUSTC_WORKSPACE_WRAPPER</code>, <code>CARGO_INCREMENTAL</code>,
+<code>RUSTFLAGS</code>, <code>CARGO_ENCODED_RUSTFLAGS</code>), the <code>[test] env</code> values, and every
+file matching <code>[ci] inputs</code>. Then, by kind:</p>
+<ul>
+<li>Rust lanes (<code>rust:*</code>, and the spec, proto and coverage checks): the files <code>[test]</code> selection sends to every package (files no package owns, <code>Cargo.toml</code>, <code>Cargo.lock</code>, toolchain and cargo config files, `[test] inputs`) and every file of the package and of each workspace package it reaches through a dependency of any kind, dev-dependencies included. A <code>[test.packages.NAME]</code> allow-list does not narrow this, and `[test] ignore` applies as it does to tests. The jobs install a floating <code>stable</code>, so the plan fetches the checksum of its release manifest (<code>https://static.rust-lang.org/dist/channel-rust-stable.toml.sha256</code>) and adds it.</li>
+<li><code>import:*</code>: the files in the project directory or matching its watch globs, its bench command, output, format, walltime and prefix, and the toolchain it runs on.</li>
+<li><code>docs</code>, and the capture check: the files of every Rust and import lane, the docs packages, and every markdown file. The site adds the files under <code>[site] docs_dir</code> and <code>theme_dir</code>, and a site with a <code>site_run</code> hook never carries.</li>
+</ul>
+<p><code>[ci] inputs</code> lists globs of files a lane reads that its own sources do not
+hold, such as a data file outside every package. A change to a match moves
+every lane:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[ci]</span>
+<span class="tok-ty">inputs </span>=<span class="tok-str"> [&quot;fixtures/**&quot;, &quot;Makefile&quot;]</span></code></pre></figure>
+<p>The <code>docs</code> lane reads the gates' baselines, so the <code>rust:*</code>, <code>import:*</code> and
+<code>docs</code> lanes (and the site built with the docs) carry together or not at all.
+Tests are not lanes: they keep their own stored passes.</p>
+<p>Every lane runs, and nothing is carried, when the run is a push or a
+bot landing, when the pull request carries <code>soothfast:test-all</code>, when the
+changed files are unknown, or when the lane has no fingerprint: no stored
+pass, <code>cargo metadata</code> failed, a package or path dependency lies outside the
+repository, or the soothfast revision or the stable channel is unknown.
+When the soothfast checkout is the repository itself, every revision is
+new, so the revision is replaced by a digest of the workspace members,
+<code>action/</code>, <code>action.yml</code> and <code>run.yml</code>.</p>
+<p>A push to the default branch stores a lane when every result it listed
+exists and is a plain pass, not carried and not <code>claims not evaluated</code>. The
+passes live in <code>.soothfast/lanes</code>, one small file per lane, restored and
+saved through the Actions cache under <code>soothfast-lanes-&lt;ref&gt;-&lt;run&gt;-&lt;attempt&gt;</code>
+and pruned to the newest 2048. A pull request run only reads them.</p>
+<p>A file no package owns (a container file, a workflow, a top-level script) is
+an input of every Rust lane unless <code>[test] ignore</code> lists it, so a repository
+gets the most from carrying by keeping <code>[test] ignore</code> accurate.</p>
+<p>A fingerprint cannot see everything, and a lane carries a pass over these
+gaps: inputs outside the repository or fetched from the network, environment
+variables set only on the lane jobs, the runner image (only its labels are
+keyed), <code>[patch]</code> or cargo config paths outside the root, packages outside a
+lane's dependency closure that generate code for it, <code>[docs] paths</code> that
+name non-markdown files, a submodule's contents beyond its pinned commit, and
+edits to the caller workflow beyond the inputs the fingerprint names. List such files in <code>[ci] inputs</code>, or apply the
+<code>soothfast:test-all</code> label to run every lane on one pull request.</p>
 <h2 id="one-command-per-job">One command per job<a class="anchor" href="#one-command-per-job" aria-label="Link to this section">#</a></h2>
 <p><code>cargo soothfast ci &lt;kind&gt;</code> runs one CI job: the flags, the choice of base
 and the verdict record that a workflow step would otherwise assemble in
@@ -1127,6 +1188,8 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l2" href="#one-verdict">One verdict</a></li>
   
     <li><a class="toc-l3" href="#bot-landings">Bot landings</a></li>
+  
+    <li><a class="toc-l3" href="#carried-lanes">Carried lanes</a></li>
   
     <li><a class="toc-l2" href="#one-command-per-job">One command per job</a></li>
   
