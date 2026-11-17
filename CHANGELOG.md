@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Update a labelled pull request only when it is needed (#439)
 - Keep a trend from the generated workflow (#423)
 - Deploy the docs site to Pages from run.yml (#401)
 - Plan and run the check jobs soothfast.toml configures (#394)
