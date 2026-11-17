@@ -58,14 +58,8 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
             return 2;
         }
     };
-    let invoke = |args: &[String], record: bool| {
-        let mut cmd = Command::new(&exe);
-        cmd.args(args);
-        if record {
-            cmd.env("SOOTHFAST_RECORD", "1");
-        }
-        cmd.status().map_or(2, |s| s.code().unwrap_or(1))
-    };
+    let invoke =
+        |name: Option<&str>, args: &[String], record: bool| spawn(env, &exe, name, args, record);
     let gate = |name: &str, args: &[String]| {
         let mut cmd = Command::new(&exe);
         cmd.args(args);
@@ -81,6 +75,20 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
             let outcome = compare(&opts, &packages, against.as_deref(), gate);
             report(env, &opts, &packages, &outcome)
         }
+    }
+}
+
+/// Runs one `cargo soothfast` command. With a `name` its exit code is also
+/// left as a result record of that name.
+fn spawn(env: &CiEnv, exe: &Path, name: Option<&str>, args: &[String], record: bool) -> i32 {
+    let mut cmd = Command::new(exe);
+    cmd.args(args);
+    if record {
+        cmd.env("SOOTHFAST_RECORD", "1");
+    }
+    match name {
+        Some(name) => run_recorded(env, name, "rust", &mut cmd),
+        None => cmd.status().map_or(2, |s| s.code().unwrap_or(1)),
     }
 }
 
@@ -320,7 +328,7 @@ fn record(
     opts: &Options,
     packages: &[String],
     parent: bool,
-    invoke: impl Fn(&[String], bool) -> i32,
+    invoke: impl Fn(Option<&str>, &[String], bool) -> i32,
 ) -> i32 {
     if !parent {
         eprintln!("soothfast: HEAD has no parent to gate against; no reference run recorded");
@@ -332,7 +340,8 @@ fn record(
             (false, None) => continue,
         };
         let args = with_features(args, opts.features.as_deref());
-        let code = invoke(&args, record);
+        let name = record_name(pkg, opts.shard);
+        let code = invoke(record.then_some(name.as_str()), &args, record);
         if code != 0 {
             eprintln!("soothfast: {} for {pkg} exited {code}", args[..2].join(" "));
         }
@@ -422,7 +431,7 @@ mod tests {
             shard: shard(1, 2),
             ..Options::default()
         };
-        let invoke = |args: &[String], record: bool| {
+        let invoke = |_: Option<&str>, args: &[String], record: bool| {
             calls.borrow_mut().push((args.to_vec(), record));
             3
         };
@@ -508,13 +517,60 @@ mod tests {
         };
         for parent in [true, false] {
             let recorded = RefCell::new(Vec::new());
-            let invoke = |args: &[String], _: bool| {
+            let invoke = |_: Option<&str>, args: &[String], _: bool| {
                 recorded.borrow_mut().push(last_two(args));
                 0
             };
             record(&saving, &argv(&["a"]), parent, invoke);
             assert_eq!(recorded.into_inner(), [["--features", "bench-gate"]]);
         }
+    }
+
+    #[test]
+    fn a_push_names_the_record_of_each_gated_package_and_shard() {
+        let names = RefCell::new(Vec::new());
+        let opts = Options {
+            shard: shard(1, 2),
+            ..Options::default()
+        };
+        let invoke = |name: Option<&str>, _: &[String], _: bool| {
+            names.borrow_mut().push(name.map(String::from));
+            0
+        };
+        record(&opts, &argv(&["a"]), true, invoke);
+        record(&opts, &argv(&["a"]), false, invoke);
+        let want = [Some("a#1/2".to_string())];
+        assert_eq!(names.into_inner(), want);
+    }
+
+    fn push_env(dir: &std::path::Path) -> CiEnv {
+        let flags = crate::ci::env::Flags {
+            results: Some(dir.to_path_buf()),
+            ..crate::ci::env::Flags::default()
+        };
+        CiEnv::parse(&BTreeMap::new(), None, &flags)
+    }
+
+    #[test]
+    fn a_recorded_run_leaves_a_pass_or_a_non_pass_by_its_exit_code() {
+        let dir = std::env::temp_dir().join(format!("soothfast-gate-push-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let env = push_env(&dir);
+        let sh = Path::new("/bin/sh");
+        for (code, verdict) in [(0, "pass"), (1, "regressed"), (2, "errored")] {
+            let args = ["-c".to_string(), format!("exit {code}")];
+            assert_eq!(spawn(&env, sh, Some("core"), &args, true), code);
+            let doc = std::fs::read_to_string(super::super::record::result_path(&dir, "core"));
+            let doc: serde_json::Value = serde_json::from_str(&doc.unwrap()).unwrap();
+            assert_eq!(doc["verdict"], verdict);
+            assert_eq!(doc["kind"], "rust");
+        }
+        let fails = |_: Option<&str>, _: &[String], _: bool| 1;
+        assert_eq!(
+            record(&Options::default(), &argv(&["core"]), true, fails),
+            0
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -15,7 +15,7 @@ use super::config::TestConfig;
 use crate::{glob, invoke};
 
 /// Files whose change can alter every package's build.
-const GLOBAL_FILES: &[&str] = &[
+pub(crate) const GLOBAL_FILES: &[&str] = &[
     "Cargo.toml",
     "Cargo.lock",
     "rust-toolchain",
@@ -51,7 +51,7 @@ pub fn packages(root: &Path) -> io::Result<Vec<Package>> {
     ))
 }
 
-fn parse_packages(meta: &Value, root: &Path) -> Vec<Package> {
+pub(crate) fn parse_packages(meta: &Value, root: &Path) -> Vec<Package> {
     meta["packages"]
         .as_array()
         .into_iter()

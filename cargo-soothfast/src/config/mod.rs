@@ -127,6 +127,11 @@ impl Config {
             .capture_paths)
     }
 
+    /// The `[ci] inputs` globs every lane's fingerprint also covers.
+    pub fn ci_inputs(&self) -> Result<Vec<String>, String> {
+        Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.inputs)
+    }
+
     /// The `[ci] site_run` shell `ci site` runs before it builds the site.
     pub fn site_run(&self) -> Result<Option<String>, String> {
         Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.site_run)

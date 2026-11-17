@@ -9,7 +9,7 @@ pub(crate) mod last;
 pub(crate) mod project;
 mod runner;
 pub(crate) mod rustdoc;
-mod select;
+pub(crate) mod select;
 pub(crate) mod shim;
 
 use std::path::{Path, PathBuf};

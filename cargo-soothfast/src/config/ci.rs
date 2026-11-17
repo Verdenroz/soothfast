@@ -21,6 +21,9 @@ pub struct CiTable {
     /// The docs `ci capture` checks for a lone docs package, in place of
     /// every doc it scans.
     pub capture_paths: Vec<String>,
+    /// Globs of files outside every lane's own sources that a lane reads,
+    /// which a pull request touching none of them need not rerun.
+    pub inputs: Vec<String>,
 }
 
 /// Parse the `[ci]` table of a `soothfast.toml`.
@@ -50,6 +53,7 @@ pub fn parse(text: &str) -> Result<CiTable, String> {
             }
             ("site_run", TomlValue::Str(run)) => table.site_run = Some(run),
             ("capture_paths", TomlValue::StrArray(paths)) => table.capture_paths = paths,
+            ("inputs", TomlValue::StrArray(globs)) => table.inputs = globs,
             (k, _) => {
                 return Err(format!(
                     "line {lineno}: unknown or mistyped `{k}` under [ci]"
@@ -83,6 +87,14 @@ mod tests {
         assert_eq!(hook.site_run.as_deref(), Some("make pages"));
         let capture = parse("[ci]\ncapture_paths = [\"README.md\"]\n").unwrap();
         assert_eq!(capture.capture_paths, ["README.md"]);
+    }
+
+    #[test]
+    fn inputs_lists_the_globs_every_lane_reads() {
+        let text = "[ci]\ninputs = [\"fixtures/**\", \"Makefile\"]\n";
+        assert_eq!(parse(text).unwrap().inputs, ["fixtures/**", "Makefile"]);
+        assert!(parse("[ci]\nskip = [\"x\"]\n").unwrap().inputs.is_empty());
+        assert!(parse("[ci]\ninputs = \"fixtures\"\n").is_err());
     }
 
     #[test]
