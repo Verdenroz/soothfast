@@ -3,15 +3,51 @@
 # against the default branch, and merge it: auto-merge when the default
 # branch has a rule that blocks merging, immediately otherwise. The commit
 # is created through the API, which signs it as the App, so it passes a
-# rule that requires signed commits. It lands on the default branch's tip:
-# when only the bot has committed since this checkout, this run's files
-# replace the bot's; when anyone else has, that push's own run lands and
-# this one skips. The working tree and HEAD are left as they were.
+# rule that requires signed commits. Callers that omit BRANCH share
+# bot/soothfast-update, so one default-branch commit gets one pull request.
+# When BRANCH already holds only bot commits on top of the default branch's
+# tip, this run's commit goes on top of them and the ref moves without
+# force, retrying from a fresh read when another job moved it first.
+# Otherwise the commit lands on the tip and the ref is force-updated. When
+# anyone but the bot has pushed to the default branch since this checkout,
+# that push's own run lands and this one skips. The pull request keeps the
+# title of the run that opened it, and its body lists each run's TITLE and
+# files. The working tree and HEAD are left as they were.
 # TOKEN is revoked on every exit path.
-# Inputs: TOKEN APP_SLUG BRANCH TITLE BODY PATHS (space separated pathspecs).
+# Inputs: TOKEN APP_SLUG TITLE PATHS (space separated pathspecs), and
+# optionally BRANCH (default bot/soothfast-update) and BODY (opens the body
+# of a landing this run starts).
 set -euo pipefail
 
-: "${TOKEN:?}" "${APP_SLUG:?}" "${BRANCH:?}" "${TITLE:?}" "${PATHS:?}"
+# Reads `compare/<tip>...<branch>` on stdin; succeeds when the branch is the
+# tip plus bot commits only.
+on_tip_of_bot_commits() {
+  jq -e --arg tip "$1" --arg bot "$2[bot]" \
+    '(.status == "ahead" or .status == "identical") and .merge_base_commit.sha == $tip
+      and .total_commits == (.commits | length) and all(.commits[]; .author.login == $bot)' >/dev/null
+}
+
+# Body with one "- TITLE: files" line per run: this run's line replaces its
+# earlier one, or is appended.
+merge_body() {
+  local body=$1 title=$2 line=$3 out="" found=0 l
+  [ -n "$body" ] || { printf '%s' "$line"; return; }
+  while IFS= read -r l; do
+    if [[ "$l" == "- $title: "* ]]; then
+      [ "$found" = 1 ] || out+="$line"$'\n'
+      found=1
+    else
+      out+="$l"$'\n'
+    fi
+  done <<<"$body"
+  [ "$found" = 1 ] || out+="$line"$'\n'
+  printf '%s' "${out%$'\n'}"
+}
+
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
+BRANCH=${BRANCH:-bot/soothfast-update}
+: "${TOKEN:?}" "${APP_SLUG:?}" "${TITLE:?}" "${PATHS:?}"
 for tool in gh jq; do
   command -v "$tool" >/dev/null || { echo "::error::$tool must be installed on the runner to land files; see docs/ci.md, Self-hosted runners"; exit 1; }
 done
@@ -53,22 +89,54 @@ while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
     jq -nc --arg path "$path" --arg mode "$new_mode" --arg sha "$blob" '{path: $path, mode: $mode, type: "blob", sha: $sha}'
   fi
 done < <(git diff --cached --no-renames --raw -z --abbrev=40 "$parent" -- "${paths[@]}") >"$entries"
+line="- ${TITLE}: $(jq -rs 'map(.path) | join(", ")' "$entries")"
 
-tree=$(jq -s --arg base "$(git rev-parse "$parent^{tree}")" '{base_tree: $base, tree: .}' "$entries" \
-  | gh api "$repo/git/trees" --input - --jq .sha)
-# No author or committer: the API signs a commit only when it names neither.
-commit=$(jq -n --arg message "$TITLE" --arg tree "$tree" --arg parent "$parent" \
-  '{message: $message, tree: $tree, parents: [$parent]}' | gh api "$repo/git/commits" --input - --jq .sha)
-if ! gh api -X PATCH "$repo/git/refs/heads/$BRANCH" -f sha="$commit" -F force=true >/dev/null 2>&1; then
-  gh api "$repo/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$commit" >/dev/null
-fi
+commit=
+for _ in 1 2 3; do
+  branch_head=$(gh api "$repo/git/ref/heads/$BRANCH" --jq .object.sha 2>/dev/null || true)
+  base=$parent
+  base_tree=$(git rev-parse "$parent^{tree}")
+  accumulate=false
+  if [ -n "$branch_head" ] \
+    && gh api "$repo/compare/$parent...$branch_head" | on_tip_of_bot_commits "$parent" "$APP_SLUG"; then
+    accumulate=true
+    base=$branch_head
+    base_tree=$(gh api "$repo/git/commits/$base" --jq .tree.sha)
+  fi
+
+  tree=$(jq -s --arg base "$base_tree" '{base_tree: $base, tree: .}' "$entries" \
+    | gh api "$repo/git/trees" --input - --jq .sha)
+  if [ "$tree" = "$base_tree" ]; then
+    echo "land: nothing to commit"
+    exit 0
+  fi
+  # No author or committer: the API signs a commit only when it names neither.
+  commit=$(jq -n --arg message "$TITLE" --arg tree "$tree" --arg parent "$base" \
+    '{message: $message, tree: $tree, parents: [$parent]}' | gh api "$repo/git/commits" --input - --jq .sha)
+
+  if [ -z "$branch_head" ]; then
+    gh api "$repo/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$commit" >/dev/null 2>&1 && break
+  else
+    gh api -X PATCH "$repo/git/refs/heads/$BRANCH" -f sha="$commit" \
+      -F force="$([ "$accumulate" = true ] && echo false || echo true)" >/dev/null 2>&1 && break
+  fi
+  commit=
+done
+[ -n "$commit" ] || { echo "::error::land: $BRANCH kept moving, giving up"; exit 1; }
 
 pr=$(gh pr list --head "$BRANCH" --base "$default" --state open --json number --jq '.[0].number // empty')
-if [ -z "$pr" ]; then
-  url=$(gh pr create --head "$BRANCH" --base "$default" --title "$TITLE" --body "${BODY:-}")
-  pr=${url##*/}
+if [ -n "$pr" ] && [ "$accumulate" = true ]; then
+  merge_body "$(gh pr view "$pr" --json body --jq .body)" "$TITLE" "$line" \
+    | gh pr edit "$pr" --body-file - >/dev/null
 else
-  gh pr edit "$pr" --title "$TITLE" --body "${BODY:-}" >/dev/null
+  body=$line
+  [ -z "${BODY:-}" ] || body="$BODY"$'\n\n'"$line"
+  if [ -z "$pr" ]; then
+    url=$(gh pr create --head "$BRANCH" --base "$default" --title "$TITLE" --body "$body")
+    pr=${url##*/}
+  else
+    gh pr edit "$pr" --title "$TITLE" --body "$body" >/dev/null
+  fi
 fi
 
 # History-only rules (deletion, linear history) leave the PR clean, and
