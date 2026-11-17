@@ -23,7 +23,7 @@ impl Graph {
         Graph::from_metadata(&meta, root)
     }
 
-    pub(super) fn from_metadata(meta: &Value, root: &Path) -> Option<Graph> {
+    pub(crate) fn from_metadata(meta: &Value, root: &Path) -> Option<Graph> {
         let packages = meta["packages"].as_array()?;
         let inside = |path: Option<&str>| path.is_some_and(|p| Path::new(p).starts_with(root));
         let contained = packages.iter().all(|p| {

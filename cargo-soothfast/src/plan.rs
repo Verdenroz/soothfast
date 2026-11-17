@@ -18,6 +18,9 @@ use crate::test::project::{
 };
 use crate::{docs, invoke};
 
+mod carry;
+use carry::{Carried, Recorded, Stamps};
+
 /// What the command line asked for beyond `--github`.
 #[derive(Default)]
 struct Args {
@@ -31,6 +34,12 @@ struct Args {
     /// Run only the first shard, which records every item for the others.
     first_shard_only: bool,
     pr: PullRequest,
+    /// The revision of the soothfast checkout the jobs run.
+    rev: String,
+    /// An identifier of the stable channel the jobs install.
+    rust_stable: String,
+    /// Where to write the fingerprints of the lanes a run may record.
+    lanes: Option<PathBuf>,
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
@@ -62,6 +71,9 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
                     .collect()
             }
             "--results" => out.results = Some(PathBuf::from(value)),
+            "--lanes" => out.lanes = Some(PathBuf::from(value)),
+            "--soothfast-rev" => out.rev = value,
+            "--rust-stable" => out.rust_stable = value,
             "--shard" => match value.parse() {
                 Ok(n) if n >= 1 => out.shards = n,
                 _ => {
@@ -95,7 +107,7 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     let root = invoke::project_root();
-    let plan = match build(
+    let mut plan = match build(
         &root,
         args.base.as_deref(),
         args.labels,
@@ -107,6 +119,16 @@ pub fn run(args: &[String]) -> i32 {
         Ok(plan) => plan,
         Err(e) => return err(&e),
     };
+    let stamps = Stamps {
+        rev: args.rev,
+        rust_stable: args.rust_stable,
+    };
+    plan.settle_lanes(&root, &stamps);
+    if let Some(dir) = &args.lanes
+        && let Err(e) = plan.write_lanes(dir)
+    {
+        return err(&e);
+    }
     if let Some(dir) = &args.results
         && let Err(e) = plan.write_settled(dir)
     {
@@ -145,6 +167,10 @@ struct Plan {
     trend_url: Option<String>,
     /// Whether this is a soothfast-bot landing, which runs no lane.
     landing: bool,
+    /// The lanes a stored pass covers, whose jobs are dropped.
+    carried: Vec<Carried>,
+    /// Every lane with a fingerprint, for a default-branch run to store.
+    recorded: Vec<Recorded>,
 }
 
 /// One project's tests, or one suite's, and whether the change reaches them.
@@ -216,6 +242,8 @@ fn build(
         pages,
         trend_url,
         landing: false,
+        carried: Vec::new(),
+        recorded: Vec::new(),
     };
     let mut plan = if landing { plan.without_lanes() } else { plan };
     plan.check_names()?;
@@ -255,18 +283,21 @@ impl Plan {
     /// cargo workspace.
     fn matrix(&self, rust: bool) -> Value {
         let mut include = Vec::new();
-        if let (true, Some(plan)) = (rust, &self.rust) {
+        if rust && self.rust.is_some() {
             include.push(json!({
                 "name": "rust",
                 "ecosystem": "rust",
                 "dir": ".",
-                "packages": plan.packages.join(" "),
+                "packages": self.packages().join(" "),
             }));
         }
         for (project, name) in self.projects.iter().zip(names(&self.projects)) {
             let Some(bench) = &project.bench else {
                 continue;
             };
+            if self.carries(&format!("import:{name}")) {
+                continue;
+            }
             include.push(json!({
                 "name": name,
                 "ecosystem": project.ecosystem.name(),
@@ -281,6 +312,20 @@ impl Plan {
         json!({ "include": include })
     }
 
+    /// The gated packages no stored pass covers.
+    fn packages(&self) -> Vec<&str> {
+        let gated = self.rust.iter().flat_map(|r| &r.packages);
+        gated
+            .filter(|p| !self.carries(&format!("rust:{p}")))
+            .map(String::as_str)
+            .collect()
+    }
+
+    /// Whether the docs job runs.
+    fn docs_job(&self) -> bool {
+        self.docs && !self.carries("docs")
+    }
+
     /// Whether the docs job builds the site. It has the gate's merged
     /// baseline, which a job of the check matrix does not.
     fn site_in_docs(&self) -> bool {
@@ -290,9 +335,9 @@ impl Plan {
     /// The checks that get a job of their own.
     fn matrix_checks(&self) -> impl Iterator<Item = &Check> {
         let in_docs = self.site_in_docs();
-        self.checks
-            .iter()
-            .filter(move |c| !(in_docs && c.kind == "site"))
+        self.checks.iter().filter(move |c| {
+            !(in_docs && c.kind == "site") && !self.carries(&format!("check:{}", c.name()))
+        })
     }
 
     /// The site deploys when the file asks for it and the docs job builds it.
@@ -422,7 +467,7 @@ impl Plan {
     /// A result file in `dir` for each test that needs no job.
     fn write_settled(&self, dir: &Path) -> Result<(), String> {
         let settled = self.settled();
-        if settled.is_empty() {
+        if settled.is_empty() && self.carried.is_empty() {
             return Ok(());
         }
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -430,7 +475,7 @@ impl Plan {
             let path = dir.join(format!("{name}.json"));
             write_result(&path, &format!("test-{name}"), &project, verdict, &[], 0.0)?;
         }
-        Ok(())
+        self.write_carried(dir)
     }
 
     /// The legs the Rust gate runs as, each with its `I/N` shard and the
@@ -462,20 +507,18 @@ impl Plan {
             .as_ref()
             .map(|r| r.docs_packages.join(" "))
             .unwrap_or_default();
-        let packages = self
-            .rust
-            .as_ref()
-            .map(|r| r.packages.join(" "))
-            .unwrap_or_default();
+        let packages = self.packages().join(" ");
         let tests = self.test_matrix();
         format!(
             "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nlanding={}\nchecks={}\nchecks_any={}\nchecks_expect={}\nsite_in_docs={}\nsite_deploy={}\ntrend_url={}\n",
             self.matrix(false),
-            self.projects.iter().any(|p| p.bench.is_some()),
+            !self.matrix(false)["include"]
+                .as_array()
+                .is_none_or(Vec::is_empty),
             self.rust.is_some(),
             self.rust.is_some() && self.ci.runs_test(),
-            self.docs,
-            self.docs_binds_rust,
+            self.docs_job(),
+            self.docs_binds_rust && !self.carries("docs"),
             tests,
             !tests["include"].as_array().is_none_or(Vec::is_empty),
             self.test_all(),
@@ -490,7 +533,7 @@ impl Plan {
                 .map(Check::name)
                 .collect::<Vec<_>>()
                 .join(" "),
-            self.site_in_docs(),
+            self.site_in_docs() && !self.carries("docs"),
             self.site_deploy(),
             self.trend_url
                 .as_deref()
@@ -532,13 +575,13 @@ fn err(msg: &str) -> i32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::plan) mod tests {
     use super::*;
     use crate::init::bot::Landing;
     use crate::init::ecosystem::{Bench, Ecosystem, Tests};
     use crate::landing::Allowed;
 
-    fn project(ecosystem: Ecosystem, dir: &str) -> Project {
+    pub(in crate::plan) fn project(ecosystem: Ecosystem, dir: &str) -> Project {
         Project {
             ecosystem,
             dir: dir.into(),
@@ -553,7 +596,7 @@ mod tests {
         }
     }
 
-    fn plan(rust: Option<&[&str]>, projects: Vec<Project>) -> Plan {
+    pub(in crate::plan) fn plan(rust: Option<&[&str]>, projects: Vec<Project>) -> Plan {
         Plan {
             rust: rust.map(|packages| RustPlan {
                 packages: packages.iter().map(|p| p.to_string()).collect(),
@@ -577,6 +620,8 @@ mod tests {
             pages: false,
             trend_url: None,
             landing: false,
+            carried: Vec::new(),
+            recorded: Vec::new(),
         }
     }
 

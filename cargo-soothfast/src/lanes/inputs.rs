@@ -25,6 +25,8 @@ pub enum Reads {
     Markdown,
     /// Everything under a directory.
     Under(String),
+    /// These files.
+    Files(BTreeSet<String>),
 }
 
 /// One unit of work a pull request may skip: its name, what it reads, and
@@ -184,6 +186,7 @@ impl<'a> Inputs<'a> {
             }
             Reads::Markdown => file.ends_with(".md"),
             Reads::Under(dir) => under(dir, file),
+            Reads::Files(paths) => paths.contains(file),
         }
     }
 

@@ -14,12 +14,18 @@ const OWN_FILES: &[&str] = &["action/**", "action.yml", ".github/workflows/run.y
 /// checkout is the tree being planned (soothfast gating itself) every
 /// revision is new, so the token is a digest of the files the tool is made
 /// of instead. Empty when `rev` is.
-pub fn token(root: &Path, rev: &str, files: &BTreeMap<String, String>, graph: &Graph) -> String {
+pub fn token(
+    root: &Path,
+    rev: &str,
+    files: &BTreeMap<String, String>,
+    graph: Option<&Graph>,
+) -> String {
     if rev.is_empty() || invoke::git_in(root, &["rev-parse", "HEAD"]).ok().as_deref() != Some(rev) {
         return rev.to_string();
     }
     let members: Vec<&str> = graph
-        .packages()
+        .map(Graph::packages)
+        .unwrap_or_default()
         .iter()
         .map(|p| p.dir.as_str())
         .filter(|d| !d.is_empty())
@@ -68,16 +74,19 @@ mod tests {
     fn own(repo: &TempRepo) -> String {
         let head = repo.git(&["rev-parse", "HEAD"]);
         let files = Files::read(&repo.root).unwrap();
-        token(&repo.root, &head, files.ids(), &graph(repo))
+        token(&repo.root, &head, files.ids(), Some(&graph(repo)))
     }
 
     #[test]
     fn another_checkout_is_named_by_its_revision() {
         let repo = committed("lane-tool-rev");
         let files = Files::read(&repo.root).unwrap();
-        let token = token(&repo.root, "abc123", files.ids(), &graph(&repo));
+        let token = token(&repo.root, "abc123", files.ids(), Some(&graph(&repo)));
         assert_eq!(token, "abc123");
-        assert_eq!(super::token(&repo.root, "", files.ids(), &graph(&repo)), "");
+        assert_eq!(
+            super::token(&repo.root, "", files.ids(), Some(&graph(&repo))),
+            ""
+        );
     }
 
     #[test]
