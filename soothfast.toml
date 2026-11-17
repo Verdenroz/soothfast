@@ -35,3 +35,14 @@ ignore = ["*.md", "docs/**", "LICENSE", ".github/**", "action/**", "action.yml",
 
 [bot]
 labels = true
+landing_paths = [
+  "README.md",
+  "docs/index.md",
+  "docs/measuring.md",
+  "docs/gating.md",
+  "docs/spec.md",
+  "docs/reports.md",
+  "docs/coverage.md",
+  "docs/reference/**",
+  "docs/perf/**",
+]
