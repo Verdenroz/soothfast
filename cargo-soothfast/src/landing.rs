@@ -19,6 +19,7 @@ const CONFIG_NAME: &str = "soothfast.toml";
 pub struct PullRequest {
     /// Login of whoever opened it.
     pub author: Option<String>,
+    /// Name of the head branch.
     pub head_ref: Option<String>,
     /// `owner/name` of the repository the head branch is in.
     pub head_repo: Option<String>,
@@ -47,9 +48,11 @@ impl PullRequest {
 /// The paths a landing may change, relative to the project root.
 #[derive(Debug, Default, PartialEq)]
 pub struct Allowed {
+    /// Single generated files.
     pub files: BTreeSet<String>,
     /// Directories whose whole content is generated.
     pub dirs: Vec<String>,
+    /// The `[bot] landing_paths` globs.
     pub globs: Vec<String>,
 }
 
