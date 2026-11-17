@@ -965,8 +965,9 @@ A fingerprint cannot see everything, and a lane carries a pass over these
 gaps: inputs outside the repository or fetched from the network, environment
 variables set only on the lane jobs, the runner image (only its labels are
 keyed), `[patch]` or cargo config paths outside the root, packages outside a
-lane's dependency closure that generate code for it, and `[docs] paths` that
-name non-markdown files. List such files in `[ci] inputs`, or apply the
+lane's dependency closure that generate code for it, `[docs] paths` that
+name non-markdown files, a submodule's contents beyond its pinned commit, and
+edits to the caller workflow beyond the inputs the fingerprint names. List such files in `[ci] inputs`, or apply the
 `soothfast:test-all` label to run every lane on one pull request.
 
 ## One command per job

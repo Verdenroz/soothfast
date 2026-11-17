@@ -377,3 +377,19 @@ fn the_lane_flags_are_parsed() {
     let none = crate::plan::parse_args(&argv(&[])).unwrap();
     assert!(none.rev.is_empty() && none.lanes.is_none());
 }
+
+#[test]
+fn a_checked_out_action_among_the_changes_does_not_stop_a_carry() {
+    let repo = repo("carry-scratch");
+    let mut p = lanes();
+    let (_dir, store) = pass_all(&p, &repo, None);
+    repo.write(".soothfast-action/action.yml", "x");
+    pull(
+        &mut p,
+        &repo,
+        &store,
+        None,
+        &[".soothfast-action/action.yml"],
+    );
+    assert_eq!(carried(&p), ["rust:core", "rust:cli", "import:node"]);
+}

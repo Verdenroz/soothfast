@@ -5,10 +5,12 @@
 //! stands.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use super::graph::Graph;
 use crate::init::ecosystem::Project;
 use crate::runcache::hashed;
+use crate::store::is_scratch;
 use crate::test::config::TestConfig;
 use crate::test::project::{Pins, toolchain_for};
 use crate::test::select::{Scope, classify};
@@ -167,8 +169,9 @@ impl<'a> Inputs<'a> {
 
     /// Whether `lane` reads `file`.
     pub fn reads(&self, lane: &Lane, file: &str) -> bool {
-        self.ci_inputs.iter().any(|g| glob::matches(g, file))
-            || lane.reads.iter().any(|r| self.read_by(r, file))
+        !is_scratch(Path::new(file))
+            && (self.ci_inputs.iter().any(|g| glob::matches(g, file))
+                || lane.reads.iter().any(|r| self.read_by(r, file)))
     }
 
     fn read_by(&self, reads: &Reads, file: &str) -> bool {
@@ -486,6 +489,22 @@ mod tests {
         let site = Lane::union("check:site", &[&docs], vec![Reads::Under("book".into())]);
         assert!(inputs.reads(&site, "book/intro.txt"));
         assert!(!inputs.reads(&docs, "book/intro.txt"));
+    }
+
+    #[test]
+    fn the_scratch_paths_of_a_job_are_not_inputs() {
+        let repo = repo("lane-fp-scratch");
+        let first = app(&repo);
+        repo.write(".soothfast-action/action.yml", "1");
+        repo.write(".soothfast/lanes/x", "1");
+        assert_eq!(first, app(&repo));
+        repo.write(".soothfast/lanes/x", "2");
+        assert_eq!(first, app(&repo));
+        let files = Files::read(&repo.root).unwrap();
+        let inputs = inputs_of(&files, &repo);
+        let lane = inputs.rust("rust:app", "app").unwrap();
+        assert!(!inputs.reads(&lane, ".soothfast-action/action.yml"));
+        assert!(!inputs.reads(&lane, ".soothfast/lanes/x"));
     }
 
     #[test]
