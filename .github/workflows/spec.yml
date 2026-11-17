@@ -55,9 +55,7 @@ jobs:
         env:
           TOKEN: ${{ steps.bot.outputs.token }}
           APP_SLUG: ${{ steps.bot.outputs.app_slug }}
-          BRANCH: bot/spec-update
           TITLE: "chore: regenerate API specs"
-          BODY: Automated spec regeneration.
           PATHS: "*.yaml *.yml *.json"
         run: action/land.sh
 

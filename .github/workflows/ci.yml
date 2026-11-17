@@ -200,9 +200,7 @@ jobs:
         env:
           TOKEN: ${{ steps.bot.outputs.token }}
           APP_SLUG: ${{ steps.bot.outputs.app_slug }}
-          BRANCH: bot/docs-update
           TITLE: "docs: regenerate derived docs"
-          BODY: Automated regeneration of captured output and reference pages.
           PATHS: README.md docs
         run: action/land.sh
 
