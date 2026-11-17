@@ -61,8 +61,6 @@ jobs:
         env:
           TOKEN: ${{ steps.bot.outputs.token }}
           APP_SLUG: ${{ steps.bot.outputs.app_slug }}
-          BRANCH: bot/changelog-update
           TITLE: "docs: regenerate CHANGELOG.md"
-          BODY: Automated CHANGELOG regeneration.
           PATHS: CHANGELOG.md
         run: action/land.sh
