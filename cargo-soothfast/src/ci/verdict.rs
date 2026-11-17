@@ -13,10 +13,11 @@ struct Args {
     expect: Vec<(String, String)>,
     accepted: Option<String>,
     out: Option<PathBuf>,
+    landing: bool,
 }
 
 /// Entry point for `ci verdict`: `[--expect NAME:KIND]... [--accepted LABEL]
-/// [--out FILE]`. Exits 1 when a job errored, recorded nothing it was
+/// [--out FILE] [--landing]`. Exits 1 when a job errored, recorded nothing it was
 /// expected to, or regressed without a waiver.
 pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     let result = parse(args).and_then(|args| {
@@ -25,7 +26,13 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
             .as_ref()
             .ok_or("verdict needs a results directory")?;
         let out = args.out.unwrap_or_else(|| dir.join(BODY_FILE));
-        merge_dir(dir, &out, args.accepted.as_deref(), &args.expect)
+        merge_dir(
+            dir,
+            &out,
+            args.accepted.as_deref(),
+            &args.expect,
+            args.landing,
+        )
     });
     match result {
         Ok(code) => code,
@@ -38,6 +45,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         expect: Vec::new(),
         accepted: None,
         out: None,
+        landing: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -50,6 +58,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "--expect" => parsed.expect.push(expected(&value()?)?),
             "--accepted" => parsed.accepted = Some(value()?),
             "--out" => parsed.out = Some(PathBuf::from(value()?)),
+            "--landing" => parsed.landing = true,
             other => return Err(format!("unknown verdict argument {other:?}")),
         }
     }
@@ -104,6 +113,21 @@ mod tests {
         let out = custom.to_str().unwrap();
         assert_eq!(run(&env(Some(&dir)), &argv(&["--out", out])), 0);
         assert!(custom.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_landing_passes_with_no_result_and_says_no_lane_ran() {
+        let dir = scratch("landing");
+        assert_eq!(run(&env(Some(&dir)), &argv(&["--landing"])), 0);
+        let landed = body(&dir);
+        assert!(
+            landed.starts_with("## soothfast verdict\n0 projects:"),
+            "{landed}"
+        );
+        assert!(landed.contains("No lane ran"), "{landed}");
+        assert_eq!(run(&env(Some(&dir)), &[]), 0);
+        assert!(!body(&dir).contains("No lane ran"));
         fs::remove_dir_all(dir).unwrap();
     }
 

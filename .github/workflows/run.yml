@@ -76,6 +76,7 @@ jobs:
       site_in_docs: ${{ steps.plan.outputs.site_in_docs }}
       site_deploy: ${{ steps.plan.outputs.site_deploy }}
       trend_url: ${{ steps.plan.outputs.trend_url }}
+      landing: ${{ steps.plan.outputs.landing }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -113,6 +114,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: .soothfast-action/action/writer-labels.sh
+      # Keyed on who opened the pull request, never on the actor: the bot is
+      # the actor when it updates or merges a pull request someone else wrote.
+      - name: Commits GitHub signed for the bot
+        id: commits
+        if: github.event_name == 'pull_request' && endsWith(github.event.pull_request.user.login, '[bot]')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .soothfast-action/action/landing-commits.sh
       # Stored passes are looked up here, before any job or toolchain exists,
       # so a test a pass covers costs no runner at all.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -133,10 +145,16 @@ jobs:
           # A push records every item in its first leg; the others would only set up.
           FIRST_ONLY: ${{ github.event_name != 'pull_request' && 'true' || '' }}
           SETTLED: ${{ runner.temp }}/settled
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          VERIFIED: ${{ steps.commits.outputs.verified }}
         run: |
           cargo soothfast plan --github --java "$JAVA" --node "$NODE" \
             --shard "$SHARD" ${FIRST_ONLY:+--first-shard-only} \
             --results "$SETTLED" \
+            --pr-author "$PR_AUTHOR" --head-ref "$HEAD_REF" --head-repo "$HEAD_REPO" \
+            --repo "$GITHUB_REPOSITORY" --verified-commits "$VERIFIED" \
             ${BASE_REF:+--base "origin/$BASE_REF"} ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
       - name: Upload the results of tests that need no job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -961,6 +979,7 @@ jobs:
           EXPECT_DOCS: ${{ needs.plan.outputs.docs == 'true' && 'docs' || '' }}
           EXPECT_TEST: ${{ needs.plan.outputs.test == 'true' && 'test-rust' || '' }} ${{ needs.plan.outputs.test_expect }}
           EXPECT_CHECK: ${{ needs.plan.outputs.checks_expect }}
+          LANDING: ${{ needs.plan.outputs.landing }}
         run: ./.soothfast-action/action/verdict.sh
 
   labels:

@@ -16,6 +16,7 @@ const KINDS: [&str; 5] = ["rust", "import", "docs", "test", "check"];
 /// GitHub rejects a comment over 65,536 characters; the rest is the marker.
 const BODY_LIMIT: usize = 65_000;
 const TRUNCATED: &str = "output truncated";
+const LANDING_NOTE: &str = "\nNo lane ran: this pull request is a soothfast-bot landing, which holds only regenerated files.\n";
 
 /// Declared worst first: sorting ascending lists the sections to read first,
 /// and the minimum of two verdicts is the one that decides.
@@ -389,18 +390,20 @@ fn merge(args: &[String]) -> Result<i32, String> {
     }
     let dir = dir.ok_or("merge needs a results directory")?;
     let out = out.ok_or("merge needs --out")?;
-    merge_dir(&dir, Path::new(&out), accepted.as_deref(), &expect)
+    merge_dir(&dir, Path::new(&out), accepted.as_deref(), &expect, false)
 }
 
 /// Folds the records under `dir` into the comment body at `out`. Each
 /// `expect` entry is a `(name, kind)` that must have a record, and a
 /// regression is waived when `accepted` names the label that waived it.
-/// Returns 1 when the run fails.
+/// `landing` says the plan ran no lane because the pull request is a bot
+/// landing. Returns 1 when the run fails.
 pub(crate) fn merge_dir(
     dir: &Path,
     out: &Path,
     accepted: Option<&str>,
     expect: &[(String, String)],
+    landing: bool,
 ) -> Result<i32, String> {
     let raw = read_records(dir);
     let seen: BTreeSet<String> = raw.iter().map(|r| r.name.clone()).collect();
@@ -412,7 +415,11 @@ pub(crate) fn merge_dir(
         }
     }
     records.sort_by(|a, b| (a.verdict, &a.name).cmp(&(b.verdict, &b.name)));
-    fs::write(out, fit(&records, accepted)).map_err(|e| format!("{}: {e}", out.display()))?;
+    let mut body = fit(&records, accepted);
+    if landing {
+        body.push_str(LANDING_NOTE);
+    }
+    fs::write(out, body).map_err(|e| format!("{}: {e}", out.display()))?;
     Ok(i32::from(fails(&records, accepted.is_some())))
 }
 
