@@ -1,10 +1,13 @@
 export type MergeMethod = "squash" | "merge" | "rebase";
 
+export type UpdateMode = "needed" | "always";
+
 export interface BotConfig {
   labels: boolean;
   mergeLabels: string[];
   updateLabels: string[];
   updateAll: boolean;
+  update: UpdateMode;
   ignoreLabels: string[];
   mergeMethod: MergeMethod;
 }
@@ -21,6 +24,7 @@ export const DEFAULTS: BotConfig = {
   mergeLabels: ["soothfast:merge"],
   updateLabels: ["soothfast:update"],
   updateAll: false,
+  update: "needed",
   ignoreLabels: ["do-not-merge"],
   mergeMethod: "squash",
 };
@@ -125,6 +129,7 @@ function build(entries: Map<string, Value>): BotConfig {
     mergeLabels: take("merge_labels", DEFAULTS.mergeLabels, isList, LIST),
     updateLabels: take("update_labels", DEFAULTS.updateLabels, isList, LIST),
     updateAll: take("update_all", DEFAULTS.updateAll, isFlag, "true or false"),
+    update: take("update", DEFAULTS.update, isUpdateMode, "needed or always"),
     ignoreLabels: take("ignore_labels", DEFAULTS.ignoreLabels, isList, LIST),
     mergeMethod: take(
       "merge_method",
@@ -149,6 +154,9 @@ const isList = (value: Value): value is string[] => Array.isArray(value);
 const isText = (value: Value): value is string => typeof value === "string";
 const isMethod = (value: Value): value is MergeMethod =>
   value === "squash" || value === "merge" || value === "rebase";
+
+const isUpdateMode = (value: Value): value is UpdateMode =>
+  value === "needed" || value === "always";
 
 function parseValue(key: string, raw: string): Value {
   if (raw === "true") return true;

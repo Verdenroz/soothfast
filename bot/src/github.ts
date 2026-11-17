@@ -24,6 +24,7 @@ export interface Repository {
 
 export interface Comparison {
   status: string;
+  files?: { filename: string; previous_filename?: string }[];
 }
 
 export interface IssueComment {
@@ -50,11 +51,17 @@ interface IssueEvent {
 
 interface BranchRule {
   type: string;
+  parameters?: { strict_required_status_checks_policy?: boolean };
 }
 
 interface BranchProtection {
   protection?: {
-    required_status_checks?: { contexts?: string[]; checks?: unknown[] };
+    required_status_checks?: {
+      contexts?: string[];
+      checks?: unknown[];
+      strict?: boolean;
+      enforcement_level?: string;
+    };
   };
 }
 

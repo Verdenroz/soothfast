@@ -159,7 +159,11 @@ interface World {
   protection?: object | Error;
   updateError?: Error;
   compareStatus?: string;
+  currentHeads?: string[];
   compareError?: Error;
+  aheadFiles?: string[] | number;
+  incomingFiles?: string[] | number;
+  renamedFrom?: string;
   live?: Partial<PullRequest> & { names?: string[] };
   permissionFailures?: number;
   enableError?: Error;
@@ -167,12 +171,15 @@ interface World {
   contentsFailures?: number;
 }
 
+const ALWAYS = '[bot]\nlabels = true\nupdate = "always"\n';
+const NEEDED = '[bot]\nlabels = true\nupdate = "needed"\n';
+
 let nextRepositoryId = 0;
 
 function fakeRun(world: World) {
   const calls: string[] = [];
   const logs: string[] = [];
-  const toml = world.toml === undefined ? "[bot]\nlabels = true\n" : world.toml;
+  const toml = world.toml === undefined ? ALWAYS : world.toml;
   const pulls = world.pulls ?? [];
   let permissionFailures = world.permissionFailures ?? 0;
   let contentsFailures = world.contentsFailures ?? 0;
@@ -208,7 +215,18 @@ function fakeRun(world: World) {
     async compare(_r: string, base: string, head: string) {
       calls.push(`compare ${base}...${head}`);
       if (world.compareError) throw world.compareError;
-      return { status: world.compareStatus ?? "identical" };
+      const listed = base === "main" ? world.aheadFiles : world.incomingFiles;
+      const names =
+        typeof listed === "number"
+          ? Array.from({ length: listed }, (_, i) => `f${i}`)
+          : (listed ?? []);
+      const files = names.map((filename) => ({
+        filename,
+        ...(base !== "main" && { previous_filename: world.renamedFrom }),
+      }));
+      const current = base === "main" && world.currentHeads?.includes(head);
+      const status = current ? "identical" : world.compareStatus;
+      return { status: status ?? "identical", files };
     },
     async updateBranch(_r: string, number: number, sha: string) {
       calls.push(`update ${number}@${sha}`);
@@ -585,7 +603,7 @@ test("a push evaluates only open pull requests with an update label", async () =
 
 test("a push with update_all updates every open pull request without a label lookup", async () => {
   const { run, calls } = fakeRun({
-    toml: "[bot]\nlabels = true\nupdate_all = true\n",
+    toml: `${ALWAYS}update_all = true\n`,
     pulls: [pull({ number: 1 }), pull({ number: 2, draft: true })],
     compareStatus: "behind",
   });
@@ -646,7 +664,7 @@ test("a draft with an update label is left alone", async () => {
 test("a sweep logs how many pull requests it reached", async () => {
   const pulls = Array.from({ length: 30 }, (_, i) => pull({ number: i + 1 }));
   const { run, calls, logs } = fakeRun({
-    toml: "[bot]\nlabels = true\nupdate_all = true\n",
+    toml: `${ALWAYS}update_all = true\n`,
     pulls,
     compareStatus: "behind",
   });
@@ -658,7 +676,7 @@ test("a sweep logs how many pull requests it reached", async () => {
 test("a sweep with update_all reaches more than six pull requests within the subrequest cap", async () => {
   const pulls = Array.from({ length: 30 }, (_, i) => pull({ number: i + 1 }));
   const { run, calls } = fakeRun({
-    toml: "[bot]\nlabels = true\nupdate_all = true\n",
+    toml: `${ALWAYS}update_all = true\n`,
     pulls,
     compareStatus: "behind",
   });
@@ -675,7 +693,7 @@ test("a sweep evaluates the least recently updated pull requests first", async (
     pull({ number: i + 1, updated_at: day(20 - i) }),
   );
   const { run, calls } = fakeRun({
-    toml: "[bot]\nlabels = true\nupdate_all = true\n",
+    toml: `${ALWAYS}update_all = true\n`,
     pulls,
     compareStatus: "behind",
   });
@@ -759,4 +777,278 @@ test("a failed read is not cached", async () => {
   await assert.rejects(evaluateOpen(run));
   await evaluateOpen(run);
   assert.equal(fetches(calls), 2);
+});
+
+const behindPull = (number = 5) => pull({ number, names: [UPDATE] });
+const writerUpdates = (number = 5) => ({
+  permissions: { alice: "write" },
+  labelers: { [number]: { [UPDATE]: "alice" } },
+});
+const updated = (calls: string[]) =>
+  calls.filter((c) => c.startsWith("update ")).length;
+const strictRule = {
+  type: "required_status_checks",
+  parameters: { strict_required_status_checks_policy: true },
+};
+
+test("needed: a non-strict branch with no common file is not updated", async () => {
+  const { run, calls, logs } = fakeRun({
+    toml: NEEDED,
+    pulls: [behindPull()],
+    ...writerUpdates(),
+    ...checks,
+    compareStatus: "behind",
+    aheadFiles: ["a.rs"],
+    incomingFiles: ["b.rs"],
+  });
+  await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+  assert.equal(updated(calls), 0);
+  assert.deepEqual(logs, [
+    "#5: not updating, main does not require it and the incoming commits touch none of its files",
+  ]);
+});
+
+test("needed: a non-strict branch with a common file is updated", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: [behindPull()],
+    ...writerUpdates(),
+    compareStatus: "behind",
+    aheadFiles: ["a.rs", "b.rs"],
+    incomingFiles: ["b.rs"],
+  });
+  await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+  assert.deepEqual(calls.slice(-5), [
+    "compare main...abc123",
+    "rules",
+    "protection",
+    "compare abc123...main",
+    "update 5@abc123",
+  ]);
+});
+
+test("needed: a file renamed on the default branch overlaps under its old name", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: [behindPull()],
+    ...writerUpdates(),
+    compareStatus: "behind",
+    aheadFiles: ["a.rs"],
+    incomingFiles: ["b.rs"],
+    renamedFrom: "a.rs",
+  });
+  await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+  assert.equal(updated(calls), 1);
+});
+
+for (const [name, files] of [
+  ["the pull request's", { aheadFiles: 300, incomingFiles: ["b"] }],
+  ["the incoming", { aheadFiles: ["a"], incomingFiles: 300 }],
+] as const) {
+  test(`needed: a possibly truncated file list on ${name} side updates`, async () => {
+    const { run, calls } = fakeRun({
+      toml: NEEDED,
+      pulls: [behindPull()],
+      ...writerUpdates(),
+      compareStatus: "behind",
+      ...files,
+    });
+    await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+    assert.equal(updated(calls), 1);
+  });
+}
+
+test("needed: a strict ruleset rule updates without comparing files", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: [behindPull()],
+    ...writerUpdates(),
+    compareStatus: "behind",
+    rules: [strictRule],
+  });
+  await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+  assert.equal(updated(calls), 1);
+  assert.ok(!calls.includes("compare abc123...main"));
+});
+
+const classic = (required: object) => ({
+  protection: { required_status_checks: required },
+});
+
+for (const [name, required, expected] of [
+  ["strict", { strict: true, contexts: ["ci"] }, 1],
+  [
+    "with no strict flag",
+    { contexts: ["ci"], enforcement_level: "everyone" },
+    1,
+  ],
+  ["with an explicit strict false", { strict: false, contexts: ["ci"] }, 0],
+  [
+    "switched off",
+    { strict: true, contexts: ["ci"], enforcement_level: "off" },
+    0,
+  ],
+  ["without required checks", { strict: true, contexts: [], checks: [] }, 0],
+] as const) {
+  test(`needed: classic protection ${name} updates ${expected} pull request`, async () => {
+    const { run, calls } = fakeRun({
+      toml: NEEDED,
+      pulls: [behindPull()],
+      ...writerUpdates(),
+      compareStatus: "behind",
+      protection: classic(required),
+    });
+    await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+    assert.equal(updated(calls), expected);
+  });
+}
+
+test("needed: a sweep under enforced classic protection with no strict flag updates one", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: sweepPulls(1, 2),
+    ...sweepWriters(1, 2),
+    compareStatus: "behind",
+    protection: classic({ contexts: ["ci"] }),
+  });
+  await evaluateOpen(run);
+  assert.equal(updated(calls), 1);
+});
+
+for (const [name, world] of [
+  ["rules", { rules: new GitHubError(403, "forbidden") }],
+  ["protection", { protection: new GitHubError(404, "not found") }],
+] as const) {
+  test(`needed: unreadable ${name} count as strict`, async () => {
+    const { run, calls } = fakeRun({
+      toml: NEEDED,
+      pulls: [behindPull()],
+      ...writerUpdates(),
+      compareStatus: "behind",
+      ...world,
+    });
+    await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+    assert.equal(updated(calls), 1);
+  });
+}
+
+test("needed: a merge queue rule alone is not strict", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: [behindPull()],
+    ...writerUpdates(),
+    compareStatus: "behind",
+    rules: [{ type: "merge_queue" }],
+  });
+  await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+  assert.equal(updated(calls), 0);
+});
+
+test("needed: a pull request that is not behind is never updated", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: [behindPull()],
+    ...writerUpdates(),
+    compareStatus: "ahead",
+    rules: [strictRule],
+  });
+  await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+  assert.equal(updated(calls), 0);
+  assert.ok(!calls.includes("rules"));
+  assert.ok(!calls.includes("compare abc123...main"));
+});
+
+test("always: a behind pull request is updated without reading the branch policy", async () => {
+  const { run, calls } = fakeRun({
+    toml: ALWAYS,
+    pulls: [behindPull()],
+    ...writerUpdates(),
+    compareStatus: "behind",
+    aheadFiles: ["a"],
+    incomingFiles: ["b"],
+  });
+  await evaluateOne(run, 5, labeledBy("alice", UPDATE));
+  assert.equal(updated(calls), 1);
+  assert.ok(!calls.includes("rules"));
+  assert.ok(!calls.includes("compare abc123...main"));
+});
+
+const sweepPulls = (...numbers: number[]) =>
+  numbers.map((number) =>
+    pull({
+      number,
+      names: [UPDATE],
+      head: { sha: `sha${number}` },
+      updated_at: `2026-01-0${number}T00:00:00Z`,
+    }),
+  );
+const sweepWriters = (...numbers: number[]) => ({
+  permissions: { alice: "write" },
+  labelers: Object.fromEntries(numbers.map((n) => [n, { [UPDATE]: "alice" }])),
+});
+
+test("needed: a strict sweep updates one pull request, queued ones first", async () => {
+  const pulls = sweepPulls(1, 2, 3);
+  pulls[2] = { ...pulls[2], auto_merge: {} };
+  const { run, calls, logs } = fakeRun({
+    toml: NEEDED,
+    pulls,
+    ...sweepWriters(1, 2, 3),
+    compareStatus: "behind",
+    rules: [strictRule],
+  });
+  await evaluateOpen(run);
+  assert.deepEqual(
+    calls.filter((c) => c.startsWith("update ")),
+    ["update 3@sha3"],
+  );
+  assert.deepEqual(logs, [
+    "#3: updated from main",
+    "#1: not updating, another pull request is being updated first",
+    "#2: not updating, another pull request is being updated first",
+  ]);
+});
+
+test("needed: a strict sweep passes over pull requests that are already current", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: sweepPulls(1, 2, 3),
+    ...sweepWriters(1, 2, 3),
+    compareStatus: "behind",
+    currentHeads: ["sha1"],
+    rules: [strictRule],
+  });
+  await evaluateOpen(run);
+  assert.deepEqual(
+    calls.filter((c) => c.startsWith("update ")),
+    ["update 2@sha2"],
+  );
+});
+
+test("needed: a sweep updates every pull request that overlaps when the branch is not strict", async () => {
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: sweepPulls(1, 2, 3),
+    ...sweepWriters(1, 2, 3),
+    compareStatus: "behind",
+    aheadFiles: ["a.rs"],
+    incomingFiles: ["a.rs"],
+  });
+  await evaluateOpen(run);
+  assert.equal(updated(calls), 3);
+});
+
+test("needed: a sweep stays within the subrequest cap", async () => {
+  const numbers = Array.from({ length: 30 }, (_, i) => i + 1);
+  const { run, calls } = fakeRun({
+    toml: NEEDED,
+    pulls: sweepPulls(...numbers).map((p) => ({ ...p, updated_at: "x" })),
+    ...sweepWriters(...numbers),
+    compareStatus: "behind",
+    aheadFiles: ["a.rs"],
+    incomingFiles: ["a.rs"],
+  });
+  await evaluateOpen(run);
+  assert.ok(updated(calls) > 4, `${updated(calls)} updated`);
+  assert.ok(calls.length <= SUBREQUEST_BUDGET, `${calls.length} subrequests`);
 });

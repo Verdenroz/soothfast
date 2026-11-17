@@ -368,7 +368,7 @@ acts as soothfast-bot:
 | Label | Effect |
 |---|---|
 | `soothfast:merge` | Enable auto-merge behind the required checks, when a writer applies the label. Refused when the default branch requires no status check, since the merge would happen at once. |
-| `soothfast:update` | Merge the default branch into a pull request that fell behind. |
+| `soothfast:update` | Merge the default branch into a pull request that fell behind, when the update is needed (see `update` below). |
 | `do-not-merge` | Cancel a queued auto-merge and leave the pull request alone. |
 
 A label counts only when the person who last applied it can write to the
@@ -420,6 +420,7 @@ labels = true                       # default false
 merge_labels = ["soothfast:merge"]
 update_labels = ["soothfast:update"]
 update_all = false                  # true: keep every open, non-draft PR up to date
+update = "needed"                   # needed | always
 ignore_labels = ["do-not-merge"]
 perf_accepted_labels = ["soothfast:perf-accepted"]  # read by the gate, not the broker
 merge_method = "squash"             # squash | merge | rebase
@@ -452,6 +453,39 @@ landings; see [Bot landings](#bot-landings). The broker checks their types
 and reads neither. A broker deployed before it knew the two keys treats them
 as unknown, so deploy the broker first when you run your own; with the
 hosted broker, set them once it has been deployed at or after this change.
+
+Every update restarts the pull request's checks, so by default
+(`update = "needed"`) the broker updates a pull request that is behind or
+diverged only for one of two reasons:
+
+- The default branch requires branches to be up to date before merging (a
+  ruleset's or classic protection's "require branches to be up to date"). A
+  merge queue does not count. Classic protection with required checks counts
+  unless it says `strict: false`, because GitHub does not always report the
+  flag. When the rules or protection cannot be read, the broker assumes the
+  branch is strict, since a pull request nobody updates could never merge.
+- The commits arriving from the default branch and the pull request's own
+  commits change a common file, so a semantic conflict is tested before
+  merge. This is a file-level approximation. When either file list may be
+  cut short (GitHub's compare lists at most 300 files) the broker assumes an
+  overlap.
+
+When neither holds the broker logs why it did not update and leaves the
+pull request on its existing checks, so on a branch with no up-to-date
+requirement a labelled pull request may stay behind the default branch and
+still merge; that is not a bot failure. Under a strict default branch each
+update invalidates every other pull request, so a sweep updates at most one
+per run: pull requests with auto-merge enabled first, then the least
+recently updated. Pull requests that are already current do not count, so
+the next sweep moves on. Updates for an overlap are not limited, and a
+webhook for a single pull request is never limited. `update = "always"`
+updates every pull request that wants it and is behind, on every push to the
+default branch. `update_all` keeps its meaning and follows the same
+`update` setting.
+
+A broker deployed before it knew `update` treats a table that sets it as
+malformed and acts on nothing, so deploy a self-run broker before adding
+the key to `soothfast.toml`.
 
 A malformed `[bot]` table (an unknown key, a wrong type, a duplicate) makes
 the bot act on nothing and log why. Deleting the head branch stays the

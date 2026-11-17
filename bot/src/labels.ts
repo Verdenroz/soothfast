@@ -1,5 +1,10 @@
 import { parseBotConfig, type BotConfig } from "./config.ts";
-import { GitHubError, type GitHubApi, type PullRequest } from "./github.ts";
+import {
+  GitHubError,
+  type Comparison,
+  type GitHubApi,
+  type PullRequest,
+} from "./github.ts";
 import type { Labeler } from "./webhook.ts";
 
 type Action =
@@ -29,14 +34,17 @@ export interface Run {
 interface Context {
   run: Run;
   config: BotConfig;
-  checked: () => Promise<number>;
+  policy: () => Promise<Policy>;
   permission: (login: string) => Promise<string>;
 }
 
 // Free plan cap of 50, minus the action sweep's worst case outside the count:
 // OIDC 2, app slug, installation, mint, ref 3, revoke.
 export const SUBREQUEST_BUDGET = 41;
-const WORST_CASE_PER_PULL_REQUEST = 4;
+const WORST_CASE_ALWAYS = 4;
+const WORST_CASE_PER_PULL_REQUEST = 5;
+const SHARED_READS = 2;
+const COMPARE_FILE_CAP = 300;
 
 const CONFIG_TTL_MS = 60_000;
 type Parsed = ReturnType<typeof parseBotConfig>;
@@ -126,15 +134,25 @@ export async function evaluateOpen(source: Run): Promise<void> {
     run.defaultBranch,
     run.token,
   );
+  const always = context.config.update === "always";
+  const queuedFirst = (pr: PullRequest) =>
+    always || pr.auto_merge === null ? 1 : 0;
   const actionable = open
     .filter((pr) => canAct(pr, context.config))
-    .sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+    .sort(
+      (a, b) =>
+        queuedFirst(a) - queuedFirst(b) ||
+        a.updated_at.localeCompare(b.updated_at),
+    );
   if (actionable.length === 0) run.log("no pull requests to act on");
+  const worst = always ? WORST_CASE_ALWAYS : WORST_CASE_PER_PULL_REQUEST;
+  const reserved = always ? 0 : SHARED_READS;
+  const quota = { strict: 1 };
   let reached = 0;
   for (const pr of actionable) {
-    if (SUBREQUEST_BUDGET - spent < WORST_CASE_PER_PULL_REQUEST) break;
+    if (SUBREQUEST_BUDGET - reserved - spent < worst) break;
     reached++;
-    await evaluate(context, pr).catch((e: unknown) =>
+    await evaluate(context, pr, undefined, quota).catch((e: unknown) =>
       run.log(`#${pr.number}: ${e instanceof Error ? e.message : e}`),
     );
   }
@@ -169,7 +187,7 @@ async function load(run: Run): Promise<Context | undefined> {
   return {
     run,
     config: parsed.config,
-    checked: memo(() => requiredChecks(run)),
+    policy: memo(() => branchPolicy(run)),
     permission: memoBy((login) =>
       run.github.collaboratorPermission(run.repository, login, run.token),
     ),
@@ -232,34 +250,53 @@ function memo<T>(compute: () => Promise<T>): () => Promise<T> {
   return () => once("");
 }
 
-async function requiredChecks(run: Run): Promise<number> {
+interface Policy {
+  checks: number;
+  strict: boolean;
+}
+
+// Unreadable rules or protection, and enforced classic protection with no
+// strict flag, count as strict: an unupdated pull request may never merge.
+async function branchPolicy(run: Run): Promise<Policy> {
   const { github, repository, defaultBranch: branch, token } = run;
   const [rules, info] = await Promise.all([
-    readable(run, "branch rules", [], () =>
+    readable(run, "branch rules", () =>
       github.branchRules(repository, branch, token),
     ),
-    readable(run, "branch protection", {}, () =>
+    readable(run, "branch protection", () =>
       github.branchProtection(repository, branch, token),
     ),
   ]);
-  const classic = info.protection?.required_status_checks;
-  return (
-    rules.filter((r) => CHECK_RULES.includes(r.type)).length +
-    (classic?.contexts?.length ?? 0) +
-    (classic?.checks?.length ?? 0)
-  );
+  const classic = info?.protection?.required_status_checks;
+  const classicChecks =
+    (classic?.contexts?.length ?? 0) + (classic?.checks?.length ?? 0);
+  return {
+    checks:
+      (rules ?? []).filter((r) => CHECK_RULES.includes(r.type)).length +
+      classicChecks,
+    strict:
+      rules === undefined ||
+      info === undefined ||
+      rules.some(
+        (r) =>
+          r.type === "required_status_checks" &&
+          r.parameters?.strict_required_status_checks_policy,
+      ) ||
+      (classicChecks > 0 &&
+        classic?.enforcement_level !== "off" &&
+        classic?.strict !== false),
+  };
 }
 
 async function readable<T>(
   run: Run,
   what: string,
-  empty: T,
   read: () => Promise<T>,
-): Promise<T> {
+): Promise<T | undefined> {
   return read().catch((e: unknown) => {
     if (!(e instanceof GitHubError && [403, 404].includes(e.status))) throw e;
     run.log(`${what} unreadable (${e.status}); counting no required checks`);
-    return empty;
+    return undefined;
   });
 }
 
@@ -267,27 +304,82 @@ async function evaluate(
   context: Context,
   pr: PullRequest,
   labeler?: Labeler,
+  quota?: Quota,
 ): Promise<void> {
   const { run, config } = context;
   const initial = gated(pr, config, labeler);
   if (initial.declined)
     run.log(`#${pr.number}: not merging, ${initial.declined}`);
   const gate = await byWriters(context, pr, initial, labeler);
-  const checked = gate.merge.length > 0 ? await context.checked() : 0;
-  const behind = wantsUpdate(gate) && (await isBehind(run, pr));
-  for (const action of decide(pr, gate, checked, behind))
-    await perform(context, pr, action);
+  const checked = gate.merge.length > 0 ? (await context.policy()).checks : 0;
+  const reason = wantsUpdate(gate)
+    ? await updateReason(context, pr, quota)
+    : undefined;
+  for (const action of decide(pr, gate, checked, reason !== undefined)) {
+    if (action.kind !== "update_branch") await perform(context, pr, action);
+    else if ((await updateBranch(context, pr)) && reason === "strict" && quota)
+      quota.strict--;
+  }
 }
 
-async function isBehind(run: Run, pr: PullRequest): Promise<boolean> {
-  const { status } = await run.github.compare(
+interface Quota {
+  strict: number;
+}
+
+type UpdateReason = "always" | "strict" | "overlap";
+
+async function updateReason(
+  { run, config, policy }: Context,
+  pr: PullRequest,
+  quota?: Quota,
+): Promise<UpdateReason | undefined> {
+  const ahead = await run.github.compare(
     run.repository,
     run.defaultBranch,
     pr.head.sha,
     run.token,
   );
-  return status === "behind" || status === "diverged";
+  if (ahead.status !== "behind" && ahead.status !== "diverged")
+    return undefined;
+  if (config.update === "always") return "always";
+  const skip = (why: string) => {
+    run.log(`#${pr.number}: not updating, ${why}`);
+    return undefined;
+  };
+  if ((await policy()).strict)
+    return quota && quota.strict <= 0
+      ? skip("another pull request is being updated first")
+      : "strict";
+  return (await overlaps(run, pr, ahead))
+    ? "overlap"
+    : skip(
+        `${run.defaultBranch} does not require it and the incoming commits touch none of its files`,
+      );
 }
+
+async function overlaps(
+  run: Run,
+  pr: PullRequest,
+  ahead: Comparison,
+): Promise<boolean> {
+  const incoming = await run.github.compare(
+    run.repository,
+    pr.head.sha,
+    run.defaultBranch,
+    run.token,
+  );
+  if (truncated(ahead) || truncated(incoming)) return true;
+  const mine = new Set(paths(ahead));
+  return paths(incoming).some((path) => mine.has(path));
+}
+
+const truncated = ({ files }: Comparison) =>
+  files === undefined || files.length >= COMPARE_FILE_CAP;
+
+const paths = ({ files = [] }: Comparison) =>
+  files.flatMap((f) =>
+    f.previous_filename ? [f.filename, f.previous_filename] : [f.filename],
+  );
 
 async function byWriters(
   { run, permission }: Context,
@@ -336,6 +428,24 @@ const isAlreadyMergeable = (e: unknown) =>
   e instanceof GitHubError &&
   /(clean|unstable|has_hooks) status/i.test(e.message);
 
+async function updateBranch(
+  { run }: Context,
+  pr: PullRequest,
+): Promise<boolean> {
+  const tag = `#${pr.number}`;
+  return run.github
+    .updateBranch(run.repository, pr.number, pr.head.sha, run.token)
+    .then(() => {
+      run.log(`${tag}: updated from ${run.defaultBranch}`);
+      return true;
+    })
+    .catch((e: unknown) => {
+      if (!(e instanceof GitHubError)) throw e;
+      run.log(`${tag}: could not update (${e.status}: ${e.message})`);
+      return false;
+    });
+}
+
 async function perform(
   { run, config }: Context,
   pr: PullRequest,
@@ -383,15 +493,6 @@ async function perform(
       }
       return;
     }
-    case "update_branch":
-      await github
-        .updateBranch(repository, pr.number, pr.head.sha, token)
-        .then(() => run.log(`${tag}: updated from ${run.defaultBranch}`))
-        .catch((e: unknown) => {
-          if (!(e instanceof GitHubError)) throw e;
-          run.log(`${tag}: could not update (${e.status}: ${e.message})`);
-        });
-      return;
     case "skip":
       run.log(`${tag}: not merging, ${action.reason}`);
   }
