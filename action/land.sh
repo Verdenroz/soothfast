@@ -92,7 +92,8 @@ line="- ${TITLE}: ${files}"
 
 commit=
 for _ in 1 2 3; do
-  branch_head=$(gh api "$repo/git/ref/heads/$BRANCH" --jq .object.sha 2>/dev/null || true)
+  # A failed request prints its error body, which must not pass for a sha.
+  branch_head=$(gh api "$repo/git/ref/heads/$BRANCH" --jq .object.sha 2>/dev/null) || branch_head=
   base=$parent
   base_tree=$(git rev-parse "$parent^{tree}")
   accumulate=false
