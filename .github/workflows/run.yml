@@ -134,15 +134,37 @@ jobs:
           restore-keys: |
             soothfast-tests-${{ github.ref_name }}-
             soothfast-tests-${{ github.event.repository.default_branch }}-
-      # The passes of lanes a pull request may carry, looked up for the base
-      # it targets before the default branch's.
+      # The passes of lanes a run may carry: this ref's own first. A pull
+      # request's ref is its merge ref, which only that pull request restores.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .soothfast/lanes
           key: soothfast-lanes-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            soothfast-lanes-${{ github.base_ref || github.ref_name }}-
+            soothfast-lanes-${{ github.ref_name }}-
+      # Restoring the pull request's entry alone would shadow newer passes of
+      # the base, so it is set aside, the base's entry restored, and the two
+      # merged.
+      - name: Set the pull request's lane passes aside
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -d .soothfast/lanes ]; then mv .soothfast/lanes .soothfast-lanes-own; fi
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: github.event_name == 'pull_request'
+        with:
+          path: .soothfast/lanes
+          key: soothfast-lanes-${{ github.base_ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            soothfast-lanes-${{ github.base_ref }}-
             soothfast-lanes-${{ github.event.repository.default_branch }}-
+      # Files are named by key, so copying without overwriting is the merge.
+      - name: Merge the pull request's lane passes
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -d .soothfast-lanes-own ]; then
+            mkdir -p .soothfast/lanes
+            cp -rn .soothfast-lanes-own/. .soothfast/lanes/ || true
+          fi
       # The jobs install a floating stable toolchain, which the plan cannot see; the
       # checksum of its manifest names it. An empty value keeps every Rust lane running.
       - name: Name the soothfast revision and the stable channel
@@ -161,8 +183,8 @@ jobs:
           # A push records every item in its first leg; the others would only set up.
           FIRST_ONLY: ${{ github.event_name != 'pull_request' && 'true' || '' }}
           SETTLED: ${{ runner.temp }}/settled
-          # Only a default-branch push lists its lanes for storing.
-          LANES: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && format('{0}/lanes', runner.temp) || '' }}
+          # A pull request and a default-branch push list their lanes for storing.
+          LANES: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && format('{0}/lanes', runner.temp) || '' }}
           SOOTHFAST_REV: ${{ steps.stamps.outputs.rev }}
           RUST_STABLE: ${{ steps.stamps.outputs.stable }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -185,8 +207,9 @@ jobs:
           if-no-files-found: ignore
       - name: Upload the lanes a run may store
         if: >-
-          github.event_name == 'push'
-          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+          github.event_name == 'pull_request'
+          || (github.event_name == 'push'
+          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: soothfast-lanes-attempt-${{ github.run_attempt }}
@@ -509,13 +532,14 @@ jobs:
           path: .soothfast/tests
           key: soothfast-tests-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-  # Stores the lanes the default branch passed, for the pull requests after it to carry.
+  # Stores the lanes a pull request or the default branch passed, under the run's own ref, for later runs to carry.
   lane-store:
     name: Save lane passes
     needs: [plan, build-bench, gate-rust, gate, docs, check]
     if: >-
-      ${{ !cancelled() && needs.plan.result == 'success' && github.event_name == 'push'
-      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      ${{ !cancelled() && needs.plan.result == 'success' && (github.event_name == 'pull_request'
+      || (github.event_name == 'push'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
       contents: read
@@ -543,7 +567,6 @@ jobs:
           key: soothfast-lanes-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             soothfast-lanes-${{ github.ref_name }}-
-            soothfast-lanes-${{ github.event.repository.default_branch }}-
       # A lane with a missing result is not stored, so a pattern that matches
       # nothing is not an error here.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
