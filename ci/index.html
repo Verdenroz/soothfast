@@ -1126,6 +1126,17 @@ commit in it, every file it changed is one regeneration writes or matches a
 <code>soothfast.toml</code>. A changelog carries
 measured numbers, and one that came out a digit different would otherwise
 land again, and that landing would regenerate again.</p>
+<p><code>--probe</code> regenerates nothing and prints <code>generated=true</code> or
+<code>generated=false</code> for that rule, then <code>bot=</code> and the bot's App slug (empty
+when <code>soothfast.toml</code> cannot be read). The action asks it first, so a push
+that needs no regeneration also skips the rustdoc toolchain install and every
+build that exists only for the regeneration. It does the same for a push
+that someone other than the bot has since followed on the default branch,
+which lands the regeneration from its own run. The action checks that again
+just before it regenerates, since the gate between the two can run long. Both
+fail open: without <code>gh</code>, a token or an answer, the push regenerates as it
+always has, and <code>land.sh</code> stays the final check before anything lands. The
+reference run is recorded either way.</p>
 <p><code>cargo soothfast ci</code> with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. <code>verdict</code> applies to pull requests
 and <code>regen</code> to pushes to the default branch.</p>
