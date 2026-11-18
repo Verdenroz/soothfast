@@ -28,6 +28,7 @@
 
 ### 🐛 Fixes
 
+- Close a landing that conflicts (#452)
 - Keep a binary's first stored run (#455)
 - Stop a landing from regenerating itself (#451)
 - Read a missing landing branch as absent (#445)
