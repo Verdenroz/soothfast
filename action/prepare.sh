@@ -4,8 +4,10 @@
 # callgrind fallback, and the rustdoc toolchain when anything regenerates.
 # A default-branch push with the gate on records a reference run.
 # Inputs: GATE REGEN LABELS CACHE (true|false) SHARD PACKAGES RUSTDOC_TOOLCHAIN
-# GH_TOKEN (also authenticates the fetches), RUSTDOC_LANE (true|false, optional).
-# Outputs: on_default_branch, default_branch, packages, regenerating, sweep (act on labels),
+# GH_TOKEN (also authenticates the fetches), RUSTDOC_LANE (true|false, optional),
+# CLI (the cargo-soothfast binary, optional), REGEN_RUN and REGEN_PATHS (optional).
+# Outputs: on_default_branch, default_branch, packages, regenerating (false
+# for a push that needs none), bot_slug, sweep (act on labels),
 # records (this leg records the reference), reference (the commit whose
 # recorded runs the gate compares against) and cache_runs.
 set -euo pipefail
@@ -52,9 +54,38 @@ gating=false
 [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ "$GATE" = true ] && gating=true
 recording=false
 [ "${GITHUB_EVENT_NAME:-}" = push ] && [ "$on_default" = true ] && [ "$GATE" = true ] && recording=true
+# A checkout without persisted credentials cannot fetch on its own, so the
+# token authenticates this one command and is never written to the config.
+fetch() {
+  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}" header
+  if [ -z "$token" ]; then
+    git fetch --quiet "$@"
+    return
+  fi
+  header=$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')
+  echo "::add-mask::${header}"
+  git -c "http.extraheader=AUTHORIZATION: basic ${header}" fetch --quiet "$@"
+}
+
 regenerating=false
 [ "${GITHUB_EVENT_NAME:-}" != pull_request ] && [ "$on_default" = true ] && [ "$REGEN" = true ] && regenerating=true
+bot=
+# The probe reads the push's range, which a shallow checkout lacks.
+if [ "$regenerating" = true ] && [ "${GITHUB_EVENT_NAME:-}" = push ] && [ -n "${CLI:-}" ]; then
+  if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+    fetch --unshallow --tags || true
+  fi
+  probe=$("$CLI" ci regen --probe || true)
+  bot=$(sed -n 's/^bot=//p' <<<"$probe")
+  if grep -qx 'generated=true' <<<"$probe"; then
+    echo "regen: this push is the bot's own landing, skipping the regeneration"
+    regenerating=false
+  elif APP_SLUG=$bot DEFAULT_BRANCH=$default "$(dirname "$0")/superseded.sh"; then
+    regenerating=false
+  fi
+fi
 echo "regenerating=$regenerating" >>"$GITHUB_OUTPUT"
+echo "bot_slug=$bot" >>"$GITHUB_OUTPUT"
 if [ "$gating" = false ] && [ "$recording" = false ] && [ "$regenerating" = false ]; then
   echo "packages=" >>"$GITHUB_OUTPUT"
   [ "${RUSTDOC_LANE:-false}" = true ] && install_rustdoc_toolchain
@@ -73,19 +104,6 @@ if [ "$gating" = true ] || [ "$recording" = true ]; then
   fi
 fi
 echo "packages=$PACKAGES" >>"$GITHUB_OUTPUT"
-
-# A checkout without persisted credentials cannot fetch on its own, so the
-# token authenticates this one command and is never written to the config.
-fetch() {
-  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}" header
-  if [ -z "$token" ]; then
-    git fetch --quiet "$@"
-    return
-  fi
-  header=$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')
-  echo "::add-mask::${header}"
-  git -c "http.extraheader=AUTHORIZATION: basic ${header}" fetch --quiet "$@"
-}
 
 if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
   fetch --unshallow --tags
