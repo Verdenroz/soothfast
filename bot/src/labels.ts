@@ -68,7 +68,9 @@ export const isLanding = (pr: PullRequest, botLogin?: string) =>
 // The live read carries mergeable; null means GitHub is still computing it.
 // A head that moved since the list read is a landing that was just rebuilt.
 export const conflicting = (pr: PullRequest, live: PullRequest) =>
-  live.mergeable === false && live.head.sha === pr.head.sha;
+  live.state === "open" &&
+  live.mergeable === false &&
+  live.head.sha === pr.head.sha;
 
 const present = (pr: PullRequest, wanted: string[]) =>
   pr.labels.map((l) => l.name).filter((name) => wanted.includes(name));
@@ -500,7 +502,6 @@ async function perform(
       return;
     case "close_landing":
       await github.closePullRequest(repository, pr.number, token);
-      await github.deleteBranch(repository, pr.head.ref, token);
       run.log(`${tag}: closed, it conflicts with ${run.defaultBranch}`);
       return;
     case "enable_auto_merge": {

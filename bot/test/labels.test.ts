@@ -67,6 +67,7 @@ const BOT = "soothfast-bot[bot]";
 const landing = (overrides: Partial<PullRequest> = {}) =>
   pull({
     user: { login: BOT },
+    state: "open",
     head: {
       sha: "abc123",
       ref: "bot/soothfast-update",
@@ -102,6 +103,8 @@ test("only a live read that says not mergeable on the same head is a conflict", 
   assert.ok(!conflicting(seen, { ...seen }));
   const moved = { ...seen.head, sha: "def456" };
   assert.ok(!conflicting(seen, { ...seen, head: moved, mergeable: false }));
+  const closed = { ...seen, state: "closed", mergeable: false };
+  assert.ok(!conflicting(seen, closed));
 });
 
 test("a conflicting landing is closed whatever its labels", () => {
@@ -323,9 +326,6 @@ function fakeRun(world: World) {
     },
     async closePullRequest(_r: string, number: number) {
       calls.push(`close ${number}`);
-    },
-    async deleteBranch(_r: string, branch: string) {
-      calls.push(`delete ${branch}`);
     },
     async disableAutoMerge(id: string) {
       calls.push(`disable ${id}`);
@@ -1132,7 +1132,7 @@ test("needed: a sweep stays within the subrequest cap", async () => {
 const landingSweep = (world: World, ...pulls: PullRequest[]) =>
   fakeRun({ toml: NEEDED, pulls, ...world });
 
-test("a sweep closes a conflicting landing and deletes its branch", async () => {
+test("a sweep closes a conflicting landing and leaves its branch", async () => {
   const { run, calls, logs } = landingSweep(
     { mergeable: false },
     landing({ auto_merge: {} }),
@@ -1143,7 +1143,6 @@ test("a sweep closes a conflicting landing and deletes its branch", async () => 
     "list main",
     "pull 5",
     "close 5",
-    "delete bot/soothfast-update",
   ]);
   assert.deepEqual(logs, ["#5: closed, it conflicts with main"]);
 });

@@ -528,18 +528,18 @@ Once per broker deployment (see `bot/`):
 GitHub does not redeliver a webhook that failed. On default-branch pushes and
 schedules the action asks the broker to sweep the open pull requests: it
 cancels queued merges held by `do-not-merge`, updates labelled branches and
-closes conflicting landings, but never enables a merge. `labels` defaults to `"true"`; set `labels:
-"false"` to turn the sweep off, as the workflows `init` writes do for every
+closes conflicting landings, but never enables a merge. `labels` defaults to
+`"true"`; set `labels: "false"` to turn the sweep off, as the workflows `init` writes do for every
 job but the labels job.
 
 A landing that conflicts with the default branch can never merge, and nothing
-else rebuilds it, so the sweep closes it and deletes its branch. It does this
+else rebuilds it, so the sweep closes it. It does this
 only for a pull request opened by the App's own `<slug>[bot]` login from a
 `bot/` branch of the repository itself, and only when GitHub reports it as
 conflicting for the head the sweep listed. A state GitHub has not computed yet
 is left for the next sweep, and so is a landing carrying an ignore label such as
-`do-not-merge`. The next job that has something to land opens a fresh landing
-on the new tip.
+`do-not-merge`. The branch is left as it is: the next job that has something
+to land starts it over from the new tip and opens a fresh landing.
 
 The sweep is best effort, since webhooks are the primary path, and it never
 fails the job: a missing `jq`, a job without `id-token: write` and

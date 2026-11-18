@@ -109,13 +109,14 @@ function fakeGitHub(
         return (opts.pulls ?? []) as never;
       },
       async pullRequest() {
-        return { ...(opts.pulls?.[0] as object), mergeable: false } as never;
+        return {
+          ...(opts.pulls?.[0] as object),
+          state: "open",
+          mergeable: false,
+        } as never;
       },
       async closePullRequest(_repository, number) {
         fake.closed.push(`close ${number}`);
-      },
-      async deleteBranch(_repository, branch) {
-        fake.closed.push(`delete ${branch}`);
       },
       async disableAutoMerge(id) {
         fake.disabled.push(id);
@@ -461,7 +462,7 @@ test("a sweep closes a conflicting landing the app opened", async () => {
   const fake = fakeGitHub({ ...sweepable, pulls: [landing] });
   const { status } = await request({}, fake, { route: "/sweep" });
   assert.equal(status, 200);
-  assert.deepEqual(fake.closed, ["close 3", "delete bot/soothfast-update"]);
+  assert.deepEqual(fake.closed, ["close 3"]);
 });
 
 test("a sweep from a schedule run is served", async () => {
