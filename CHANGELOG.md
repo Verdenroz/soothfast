@@ -28,6 +28,7 @@
 
 ### 🐛 Fixes
 
+- Stop a landing from regenerating itself (#451)
 - Read a missing landing branch as absent (#445)
 - Share one landing between the jobs of a commit (#441)
 - Skip the lanes on a soothfast-bot landing pull request (#438)
