@@ -1221,6 +1221,18 @@ commit in it, every file it changed is one regeneration writes or matches a
 measured numbers, and one that came out a digit different would otherwise
 land again, and that landing would regenerate again.
 
+`--probe` regenerates nothing and prints `generated=true` or
+`generated=false` for that rule, then `bot=` and the bot's App slug (empty
+when `soothfast.toml` cannot be read). The action asks it first, so a push
+that needs no regeneration also skips the rustdoc toolchain install and every
+build that exists only for the regeneration. It does the same for a push
+that someone other than the bot has since followed on the default branch,
+which lands the regeneration from its own run. The action checks that again
+just before it regenerates, since the gate between the two can run long. Both
+fail open: without `gh`, a token or an answer, the push regenerates as it
+always has, and `land.sh` stays the final check before anything lands. The
+reference run is recorded either way.
+
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. `verdict` applies to pull requests
 and `regen` to pushes to the default branch.

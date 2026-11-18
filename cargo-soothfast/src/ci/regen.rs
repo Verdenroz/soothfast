@@ -59,18 +59,21 @@ trait Host {
 }
 
 /// Entry point for `ci regen`: `[--paths-out FILE] [--baseline NAME]
-/// [--no-changelog]`.
+/// [--no-changelog] [--probe]`.
 pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     let flags = match parse(args) {
         Ok(flags) => flags,
         Err(e) => return crate::arg_err(&e),
     };
     let vars: BTreeMap<String, String> = std::env::vars().collect();
+    if flags.probe {
+        return probe(env, &vars);
+    }
     let inputs = match discover(&flags, &vars) {
         Ok(inputs) => inputs,
         Err(e) => return crate::arg_err(&e),
     };
-    let report = match answers_itself(env, &inputs) {
+    let report = match answers_itself(env, inputs.hook.as_ref()) {
         true => {
             eprintln!("regen: this push changed only regenerated files, nothing to regenerate");
             UNCHANGED.to_string()
@@ -93,15 +96,28 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
 /// Whether the push being built is regeneration's own output landing.
 /// Regenerating again could differ by a measured digit and land again,
 /// without end.
-fn answers_itself(env: &CiEnv, inputs: &Inputs) -> bool {
+fn answers_itself(env: &CiEnv, hook: Option<&Hook>) -> bool {
     let (Event::Push, Some(base)) = (env.event, &env.base) else {
         return false;
     };
     let Ok(root) = invoke::workspace_root() else {
         return false;
     };
-    let hook = inputs.hook.as_ref().map_or(&[][..], |h| &h.paths);
-    landing::generated_push(&root, base, hook)
+    landing::generated_push(&root, base, hook.map_or(&[][..], |h| &h.paths))
+}
+
+/// `--probe`: prints whether this push only landed regenerated files, and the
+/// bot's slug, without regenerating anything.
+fn probe(env: &CiEnv, vars: &BTreeMap<String, String>) -> i32 {
+    let Ok(root) = invoke::workspace_root() else {
+        print!("generated=false\nbot=\n");
+        return 0;
+    };
+    let hook = hook(vars).ok().flatten();
+    let paths = hook.as_ref().map_or(&[][..], |h| &h.paths);
+    let base = env.base.as_deref().filter(|_| env.event == Event::Push);
+    print!("{}", landing::probe(&root, base, paths));
+    0
 }
 
 #[derive(Debug, PartialEq)]
@@ -109,6 +125,7 @@ struct Flags {
     paths_out: Option<PathBuf>,
     baseline: String,
     changelog: bool,
+    probe: bool,
 }
 
 fn parse(args: &[String]) -> Result<Flags, String> {
@@ -116,6 +133,7 @@ fn parse(args: &[String]) -> Result<Flags, String> {
         paths_out: None,
         baseline: DEFAULT_BASELINE.to_string(),
         changelog: true,
+        probe: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -128,6 +146,7 @@ fn parse(args: &[String]) -> Result<Flags, String> {
             "--paths-out" => flags.paths_out = Some(PathBuf::from(value()?)),
             "--baseline" => flags.baseline = value()?,
             "--no-changelog" => flags.changelog = false,
+            "--probe" => flags.probe = true,
             other => return Err(format!("unknown regen argument {other:?}")),
         }
     }
@@ -568,12 +587,14 @@ mod tests {
             paths_out: paths_out.map(Into::into),
             baseline: baseline.into(),
             changelog,
+            probe: false,
         };
         assert_eq!(parse(&[]), Ok(flags(None, "base", true)));
         let args = strings(&["--paths-out", "out.txt", "--baseline", "main"]);
         assert_eq!(parse(&args), Ok(flags(Some("out.txt"), "main", true)));
         let off = strings(&["--no-changelog"]);
         assert_eq!(parse(&off), Ok(flags(None, "base", false)));
+        assert!(parse(&strings(&["--probe"])).unwrap().probe);
         assert!(parse(&strings(&["--nope"])).is_err());
         assert!(parse(&strings(&["--paths-out"])).is_err());
     }

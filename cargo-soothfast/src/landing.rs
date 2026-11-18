@@ -169,6 +169,18 @@ pub fn generated_push(root: &Path, base: &str, hook: &[String]) -> bool {
     })
 }
 
+/// The `generated=` and `bot=` lines `ci regen --probe` prints for a push
+/// from `base` to `HEAD`: whether it only landed generated files, and the
+/// bot's App slug, empty when the configuration cannot be read.
+pub fn probe(root: &Path, base: Option<&str>, hook: &[String]) -> String {
+    let generated = base.is_some_and(|base| generated_push(root, base, hook));
+    let slug = Config::load(root)
+        .and_then(|config| config.landing())
+        .map(|landing| landing.slug)
+        .unwrap_or_default();
+    format!("generated={generated}\nbot={slug}\n")
+}
+
 /// Whether the pull request planned at `root` against `base` is a landing.
 pub fn detect(root: &Path, base: Option<&str>, pr: &PullRequest) -> bool {
     let Some(base) = base else {
@@ -426,6 +438,19 @@ mod tests {
         let repo = pushed("landing-push-empty", &["CHANGELOG.md"]);
         assert!(!generated_push(&repo.root, "HEAD", &[]));
         assert!(!generated_push(&repo.root, "no-such-ref", &[]));
+    }
+
+    #[test]
+    fn the_probe_answers_a_bot_landing_a_human_push_and_an_unreadable_range() {
+        let landing = pushed("landing-probe-bot", &["CHANGELOG.md"]);
+        let answer = probe(&landing.root, Some("HEAD^"), &[]);
+        assert_eq!(answer, "generated=true\nbot=soothfast-bot\n");
+        let human = pushed("landing-probe-human", &["src/lib.rs"]);
+        let answer = probe(&human.root, Some("HEAD^"), &[]);
+        assert_eq!(answer, "generated=false\nbot=soothfast-bot\n");
+        let answer = probe(&landing.root, Some("no-such-ref"), &[]);
+        assert_eq!(answer, "generated=false\nbot=soothfast-bot\n");
+        assert_eq!(probe(&landing.root, None, &[]), answer);
     }
 
     #[test]
