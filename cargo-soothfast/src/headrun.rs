@@ -521,20 +521,20 @@ pub fn uncounted_complexity(pass: &Run, stored: Option<&Value>) -> bool {
         .any(|a| !counted.iter().any(|c| c.id == a.id && c.kind == a.kind))
 }
 
-/// A run already stored under a binary's digest stands: the binary is the
-/// same, and a fresh callgrind reading of it can differ by a few Ir between
-/// hosts, which would flip every figure read back by digest.
+/// A run already stored under a binary's digest stands, and is what the
+/// commit is stored with too: the binary is the same, and a fresh callgrind
+/// reading of it can differ by a few Ir, which would flip every figure read
+/// back by digest and split it from the one read back by commit.
 fn put(runs: &Runs, doc: &Value, digests: &[Option<&str>]) {
     let ids: BTreeSet<String> = invoke::run_from_items_value(&doc["items"])
         .items
         .into_keys()
         .collect();
+    let mut kept = None;
     for digest in digests.iter().flatten() {
-        let counted = runs
-            .load(digest, digest)
-            .is_some_and(|stored| readable_as_head(&stored) && counts_cover(&stored, &ids));
-        if !counted {
-            runs.store(digest, doc);
+        match standing(runs, digest, &ids) {
+            Some(stored) => kept = kept.or(Some(stored)),
+            None => runs.store(digest, doc),
         }
     }
     if !invoke::tree_is_clean() {
@@ -543,7 +543,14 @@ fn put(runs: &Runs, doc: &Value, digests: &[Option<&str>]) {
     let Ok(sha) = invoke::git(&["rev-parse", "HEAD"]) else {
         return;
     };
-    runs.store(sha.trim(), doc);
+    runs.store(sha.trim(), kept.as_ref().unwrap_or(doc));
+}
+
+/// The run already stored under `digest`, when it is readable as HEAD's and
+/// counts every one of `ids`.
+fn standing(runs: &Runs, digest: &str, ids: &BTreeSet<String>) -> Option<Value> {
+    runs.load(digest, digest)
+        .filter(|stored| readable_as_head(stored) && counts_cover(stored, ids))
 }
 
 /// A measured run in the reference-document shape `compare` reads.
@@ -615,7 +622,7 @@ fn digestible(name: &str, flags: &str) -> bool {
 mod tests {
     use super::{
         Plan, Settled, cache_head, digestible, loaded_section_bytes, merge_stored, ref_doc,
-        reuse_plan, run_from_doc, settle, settled_doc,
+        reuse_plan, run_from_doc, settle, settled_doc, standing,
     };
     use crate::buildstamp::BuildStamp;
     use crate::codekey;
@@ -798,6 +805,11 @@ mod tests {
         );
         let stored = runs.load(digest, "x").expect("stored");
         assert_eq!(stored["items"]["pkg::a"]["callgrind"]["ir"], 5_029_830);
+        let ids = BTreeSet::from(["pkg::a".to_string()]);
+        let kept = standing(&runs, digest, &ids).expect("standing");
+        assert_eq!(kept["items"]["pkg::a"]["callgrind"]["ir"], 5_029_830);
+        let other = BTreeSet::from(["pkg::missing".to_string()]);
+        assert!(standing(&runs, digest, &other).is_none());
     }
 
     #[test]
