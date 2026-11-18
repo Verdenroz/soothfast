@@ -753,6 +753,42 @@ mod tests {
     }
 
     #[test]
+    fn a_second_measurement_of_one_binary_leaves_its_stored_counts_alone() {
+        let digest = &format!("test-headrun-first-count-{}", std::process::id());
+        let common = CommonArgs {
+            pkg: Some(digest.clone()),
+            ..CommonArgs::default()
+        };
+        let stamp = BuildStamp::fixture();
+        let env = HostEnv {
+            gating_backend: "callgrind".into(),
+            guest: None,
+            callgrind_method: None,
+            item_reuse: true,
+        };
+        let runs = Runs::new(&stamp, &common, Some(env));
+        let counted = |ir| {
+            let mut run = timing();
+            run.items.get_mut("pkg::a").expect("item").ir = Some(ir);
+            run
+        };
+        cache_head(
+            &runs,
+            &counted(5_029_830),
+            Some(digest),
+            &Settled::AsMeasured,
+        );
+        cache_head(
+            &runs,
+            &counted(5_029_832),
+            Some(digest),
+            &Settled::AsMeasured,
+        );
+        let stored = runs.load(digest, "x").expect("stored");
+        assert_eq!(stored["items"]["pkg::a"]["callgrind"]["ir"], 5_029_830);
+    }
+
+    #[test]
     fn a_stored_run_reads_back_with_its_build_backend_and_noise_floor() {
         let mut run = timing();
         run.noise_pct = Some(1.5);
