@@ -360,6 +360,9 @@ runs:
         CACHE: ${{ inputs.cache == 'true' && (steps.lanes.outputs.active == 'false' || steps.lanes.outputs.bench == 'true') }}
         SHARD: ${{ inputs.shard }}
         GH_TOKEN: ${{ inputs.token }}
+        CLI: ${{ steps.resolve.outputs.bin }}
+        REGEN_RUN: ${{ inputs.regen-run }}
+        REGEN_PATHS: ${{ inputs.regen-paths }}
         RUSTDOC_LANE: ${{ contains(steps.lanes.outputs.lanes, 'rustdoc') || contains(steps.lanes.outputs.lanes, 'routes') }}
       run: "$GITHUB_ACTION_PATH/action/prepare.sh"
     - name: Name the runs cache
@@ -625,8 +628,21 @@ runs:
         BROKER: ${{ inputs.broker }}
       run: "$GITHUB_ACTION_PATH/action/sweep.sh"
 
+    # The gate above can run long enough for another push to land.
+    - name: Check the regeneration is still wanted
+      if: steps.prepare.outputs.regenerating == 'true' && steps.lanes.outputs.active == 'false' && github.event_name == 'push'
+      id: wanted
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        APP_SLUG: ${{ steps.prepare.outputs.bot_slug }}
+        DEFAULT_BRANCH: ${{ steps.prepare.outputs.default_branch }}
+      run: |
+        if "$GITHUB_ACTION_PATH/action/superseded.sh"; then
+          echo "superseded=true" >>"$GITHUB_OUTPUT"
+        fi
     - name: Regenerate derived files
-      if: steps.prepare.outputs.regenerating == 'true' && steps.lanes.outputs.active == 'false'
+      if: steps.prepare.outputs.regenerating == 'true' && steps.lanes.outputs.active == 'false' && steps.wanted.outputs.superseded != 'true'
       id: regen
       shell: bash
       env:
