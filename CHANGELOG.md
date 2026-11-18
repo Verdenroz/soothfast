@@ -1,13 +1,45 @@
 # Changelog
 
-## Unreleased (draft vs v0.5.6)
+## 0.6.0 - 2026-11-18
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+CI now runs from `soothfast.toml`. Every job is a `cargo soothfast ci <kind>`
+call, `plan` adds a check job for each spec, proto, coverage, capture and
+site check the file configures, and `[ci] pages = true` deploys the docs
+site to GitHub Pages. Pull requests do less repeated work: a lane whose
+inputs did not change carries its pass from the default branch or from the
+pull request's earlier head, and soothfast-bot updates a labelled pull
+request only when the default branch requires it or the incoming commits
+touch the same files. Regenerated files from the jobs of one commit land
+in a single signed bot pull request, which skips the lanes. A landing no
+longer starts another regeneration, a push that a newer one has overtaken
+skips its own, and the bot closes a landing that conflicts. New commands:
+`cargo soothfast status` and `cargo soothfast bump`. `llms.txt` is gone;
+`cargo soothfast mcp` serves the same surface live.
+
+### Upgrade notes
+
+- The action inputs `features`, `spec`, `changelog-features`,
+  `changelog-packages`, `prebuild-docs-paths`, `prebuild-docs-features` and
+  `prebuild-spec` are retired. A workflow that sets one fails with the
+  `soothfast.toml` key to move the value to; `docs/ci.md` has the table.
+- `soothfast_report::llms` is now `soothfast_report::surface`, keeping
+  `SurfaceEntry`. `ProjectEntry`, `ProjectSurface`, `render` and
+  `render_projects` are removed, and so is the `llms.txt` release asset.
+  Delete a committed `llms.txt` and any step that gates it.
+- `soothfast_docs::lockfile::merge` changed signature.
+- The trend series lives at the root of the Pages branch. A local
+  `.soothfast/trend.jsonl` is still read when present.
+- soothfast-bot's `[bot] update` defaults to `"needed"`. Set
+  `update = "always"` to keep every labelled pull request current after
+  each merge. A self-run broker must be deployed before the key is set.
+- A bench binary's first stored run now stands until the binary changes,
+  so a changelog's perf figures no longer move between pushes of the same
+  code.
+- Run `cargo soothfast init --check` after upgrading to see workflow drift,
+  and `cargo soothfast bump` to move every soothfast pin to this release.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
