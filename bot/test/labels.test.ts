@@ -8,10 +8,12 @@ import {
 } from "../src/github.ts";
 import {
   SUBREQUEST_BUDGET,
+  conflicting,
   decide,
   evaluateOpen,
   evaluatePullRequest,
   gated,
+  isLanding,
 } from "../src/labels.ts";
 import type { Labeler } from "../src/webhook.ts";
 
@@ -27,7 +29,13 @@ function pull(overrides: Partial<PullRequest> & { names?: string[] } = {}) {
     draft: false,
     labels: names.map((name) => ({ name })),
     auto_merge: null,
-    head: { sha: "abc123" },
+    user: { login: "alice" },
+    head: {
+      sha: "abc123",
+      ref: "feature",
+      repo: { full_name: "acme/widgets" },
+    },
+    base: { repo: { full_name: "acme/widgets" } },
     updated_at: "2026-01-01T00:00:00Z",
     ...rest,
   } satisfies PullRequest;
@@ -54,6 +62,61 @@ function plan(pr: PullRequest, opts: Plan = {}) {
   };
   return decide(pr, verified, checked, behind);
 }
+
+const BOT = "soothfast-bot[bot]";
+const landing = (overrides: Partial<PullRequest> = {}) =>
+  pull({
+    user: { login: BOT },
+    head: {
+      sha: "abc123",
+      ref: "bot/soothfast-update",
+      repo: { full_name: "acme/widgets" },
+    },
+    ...overrides,
+  });
+
+test("a pull request the bot opened from a bot branch of the same repository is a landing", () => {
+  assert.ok(isLanding(landing(), BOT));
+});
+
+test("a landing needs the bot's login, a bot branch and the same repository", () => {
+  const head = (ref: string, full_name: string | null) => ({
+    sha: "abc123",
+    ref,
+    repo: full_name ? { full_name } : null,
+  });
+  assert.ok(!isLanding(landing(), undefined));
+  assert.ok(!isLanding(landing({ user: { login: "alice" } }), BOT));
+  assert.ok(
+    !isLanding(landing({ head: head("feature", "acme/widgets") }), BOT),
+  );
+  assert.ok(!isLanding(landing({ head: head("bot/x", "fork/widgets") }), BOT));
+  assert.ok(!isLanding(landing({ head: head("bot/x", null) }), BOT));
+});
+
+test("only a live read that says not mergeable on the same head is a conflict", () => {
+  const seen = landing();
+  assert.ok(conflicting(seen, { ...seen, mergeable: false }));
+  assert.ok(!conflicting(seen, { ...seen, mergeable: null }));
+  assert.ok(!conflicting(seen, { ...seen, mergeable: true }));
+  assert.ok(!conflicting(seen, { ...seen }));
+  const moved = { ...seen.head, sha: "def456" };
+  assert.ok(!conflicting(seen, { ...seen, head: moved, mergeable: false }));
+});
+
+test("a conflicting landing is closed whatever its labels", () => {
+  const pr = landing({ names: [MERGE, UPDATE], auto_merge: {} });
+  const gate = gated(pr, DEFAULTS);
+  assert.deepEqual(decide(pr, gate, 1, true, true), [
+    { kind: "close_landing" },
+  ]);
+});
+
+test("an ignored conflicting landing is left alone", () => {
+  const pr = landing({ names: [HOLD] });
+  const gate = gated(pr, DEFAULTS);
+  assert.deepEqual(decide(pr, gate, 1, false, true), []);
+});
 
 const applied = { label: MERGE, login: "alice" };
 

@@ -10,6 +10,7 @@ import type { Labeler } from "./webhook.ts";
 type Action =
   | { kind: "disable_auto_merge" }
   | { kind: "update_branch" }
+  | { kind: "close_landing" }
   | { kind: "enable_auto_merge"; label: string }
   | { kind: "skip"; reason: string };
 
@@ -56,6 +57,17 @@ const CHECK_RULES: readonly string[] = [
   "merge_queue",
 ];
 
+export const isLanding = (pr: PullRequest, botLogin?: string) =>
+  botLogin !== undefined &&
+  pr.user.login === botLogin &&
+  pr.head.ref.startsWith("bot/") &&
+  pr.head.repo?.full_name === pr.base.repo.full_name;
+
+// The live read carries mergeable; null means GitHub is still computing it.
+// A head that moved since the list read is a landing that was just rebuilt.
+export const conflicting = (pr: PullRequest, live: PullRequest) =>
+  live.mergeable === false && live.head.sha === pr.head.sha;
+
 const present = (pr: PullRequest, wanted: string[]) =>
   pr.labels.map((l) => l.name).filter((name) => wanted.includes(name));
 
@@ -96,10 +108,12 @@ export function decide(
   gate: Gated,
   checked: number,
   behind: boolean,
+  conflicts = false,
 ): Action[] {
   const { ignored, merge } = gate;
   if (ignored)
     return pr.auto_merge === null ? [] : [{ kind: "disable_auto_merge" }];
+  if (conflicts) return [{ kind: "close_landing" }];
   const actions: Action[] = [];
   if (behind && wantsUpdate(gate)) actions.push({ kind: "update_branch" });
   if (merge.length > 0) {

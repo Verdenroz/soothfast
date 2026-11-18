@@ -39,7 +39,10 @@ export interface PullRequest {
   draft: boolean;
   labels: { name: string }[];
   auto_merge: object | null;
-  head: { sha: string };
+  user: { login: string };
+  head: { sha: string; ref: string; repo: { full_name: string } | null };
+  base: { repo: { full_name: string } };
+  mergeable?: boolean | null;
   updated_at: string;
 }
 
@@ -154,6 +157,16 @@ export interface GitHubApi {
     repository: string,
     number: number,
     expectedHeadSha: string,
+    token: string,
+  ): Promise<void>;
+  closePullRequest(
+    repository: string,
+    number: number,
+    token: string,
+  ): Promise<void>;
+  deleteBranch(
+    repository: string,
+    branch: string,
     token: string,
   ): Promise<void>;
   enableAutoMerge(
@@ -425,6 +438,17 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
           expected_head_sha: expectedHeadSha,
         }),
       );
+    },
+    async closePullRequest(repository, number, token) {
+      const path = `/repos/${repository}/pulls/${number}`;
+      expectOk(
+        await call<undefined>("PATCH", path, token, { state: "closed" }),
+      );
+    },
+    async deleteBranch(repository, branch, token) {
+      const ref = branch.split("/").map(encodeURIComponent).join("/");
+      const path = `/repos/${repository}/git/refs/heads/${ref}`;
+      expectOk(await call<undefined>("DELETE", path, token));
     },
     async enableAutoMerge(nodeId, method, expectedHeadOid, token) {
       await graphql(
