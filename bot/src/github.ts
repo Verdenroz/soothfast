@@ -39,7 +39,11 @@ export interface PullRequest {
   draft: boolean;
   labels: { name: string }[];
   auto_merge: object | null;
-  head: { sha: string };
+  user: { login: string };
+  head: { sha: string; ref: string; repo: { full_name: string } | null };
+  base: { repo: { full_name: string } };
+  mergeable?: boolean | null;
+  state?: string;
   updated_at: string;
 }
 
@@ -154,6 +158,11 @@ export interface GitHubApi {
     repository: string,
     number: number,
     expectedHeadSha: string,
+    token: string,
+  ): Promise<void>;
+  closePullRequest(
+    repository: string,
+    number: number,
     token: string,
   ): Promise<void>;
   enableAutoMerge(
@@ -424,6 +433,12 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
         await call<undefined>("PUT", path, token, {
           expected_head_sha: expectedHeadSha,
         }),
+      );
+    },
+    async closePullRequest(repository, number, token) {
+      const path = `/repos/${repository}/pulls/${number}`;
+      expectOk(
+        await call<undefined>("PATCH", path, token, { state: "closed" }),
       );
     },
     async enableAutoMerge(nodeId, method, expectedHeadOid, token) {

@@ -47,7 +47,7 @@ interface CommentRequest {
 interface Minted {
   token: string;
   expires_at: string;
-  slug?: string;
+  slug: string;
 }
 
 type Ctx = Pick<ExecutionContext, "waitUntil">;
@@ -128,13 +128,7 @@ export async function handle(
       : undefined;
   if (body instanceof Response) return body;
 
-  const auth = await authenticate(
-    claims,
-    policy.mode,
-    route !== "/sweep",
-    env,
-    deps,
-  );
+  const auth = await authenticate(claims, policy.mode, env, deps);
   if (auth instanceof Response) return auth;
   if (body) return comment(claims, body, auth, deps);
   return route === "/sweep"
@@ -195,6 +189,7 @@ async function act(work: Work, env: Env, deps: Deps): Promise<void> {
     target.repository,
     target.defaultBranch,
     fresh,
+    undefined,
     (m) => console.log(`${target.repository}: ${m}`),
   );
   try {
@@ -213,6 +208,7 @@ const makeRun = (
   repository: string,
   defaultBranch: string,
   fresh: boolean,
+  botLogin: string | undefined,
   log: Run["log"],
 ): Run => ({
   github: deps.github,
@@ -221,6 +217,7 @@ const makeRun = (
   repository,
   defaultBranch,
   fresh,
+  botLogin,
   log,
 });
 
@@ -246,7 +243,6 @@ async function appSlug(
 async function authenticate(
   claims: OidcClaims,
   mode: keyof typeof PERMISSIONS,
-  withSlug: boolean,
   env: Env,
   deps: Deps,
 ): Promise<Minted | Response> {
@@ -272,9 +268,7 @@ async function authenticate(
     PERMISSIONS[mode],
     jwt,
   );
-  const slug = withSlug
-    ? await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt)
-    : undefined;
+  const slug = await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt);
   return { ...minted, slug };
 }
 
@@ -346,6 +340,7 @@ async function sweep(
       claims.repository,
       repository.default_branch,
       true,
+      `${minted.slug}[bot]`,
       (message) => log.push(message),
     );
     await evaluateOpen(run);

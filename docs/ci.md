@@ -527,10 +527,19 @@ Once per broker deployment (see `bot/`):
 
 GitHub does not redeliver a webhook that failed. On default-branch pushes and
 schedules the action asks the broker to sweep the open pull requests: it
-cancels queued merges held by `do-not-merge` and updates labelled branches,
-but never enables a merge. `labels` defaults to `"true"`; set `labels:
-"false"` to turn the sweep off, as the workflows `init` writes do for every
+cancels queued merges held by `do-not-merge`, updates labelled branches and
+closes conflicting landings, but never enables a merge. `labels` defaults to
+`"true"`; set `labels: "false"` to turn the sweep off, as the workflows `init` writes do for every
 job but the labels job.
+
+A landing that conflicts with the default branch can never merge, and nothing
+else rebuilds it, so the sweep closes it. It does this
+only for a pull request opened by the App's own `<slug>[bot]` login from a
+`bot/` branch of the repository itself, and only when GitHub reports it as
+conflicting for the head the sweep listed. A state GitHub has not computed yet
+is left for the next sweep, and so is a landing carrying an ignore label such as
+`do-not-merge`. The branch is left as it is: the next job that has something
+to land starts it over from the new tip and opens a fresh landing.
 
 The sweep is best effort, since webhooks are the primary path, and it never
 fails the job: a missing `jq`, a job without `id-token: write` and
@@ -1204,6 +1213,25 @@ for each package with a `mode = "generate"` spec and `sdk gen` for each with
 variable is set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
 lines, also written to `--paths-out`, and never commits or pushes.
 `--baseline NAME` names the baseline it measures into (default `base`).
+
+A push of the bot's own landing regenerates nothing: the bot authored every
+commit in it, every file it changed is one regeneration writes or matches a
+`[bot] landing_paths` glob or a `REGEN_PATHS` pathspec, and none is a
+`soothfast.toml`. A changelog carries
+measured numbers, and one that came out a digit different would otherwise
+land again, and that landing would regenerate again.
+
+`--probe` regenerates nothing and prints `generated=true` or
+`generated=false` for that rule, then `bot=` and the bot's App slug (empty
+when `soothfast.toml` cannot be read). The action asks it first, so a push
+that needs no regeneration also skips the rustdoc toolchain install and every
+build that exists only for the regeneration. It does the same for a push
+that someone other than the bot has since followed on the default branch,
+which lands the regeneration from its own run. The action checks that again
+just before it regenerates, since the gate between the two can run long. Both
+fail open: without `gh`, a token or an answer, the push regenerates as it
+always has, and `land.sh` stays the final check before anything lands. The
+reference run is recorded either way.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. `verdict` applies to pull requests

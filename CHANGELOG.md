@@ -55,6 +55,9 @@ in a single signed bot pull request, which skips the lanes. New commands:
 
 ### 🐛 Fixes
 
+- Close a landing that conflicts (#452)
+- Keep a binary's first stored run (#455)
+- Stop a landing from regenerating itself (#451)
 - Read a missing landing branch as absent (#445)
 - Share one landing between the jobs of a commit (#441)
 - Skip the lanes on a soothfast-bot landing pull request (#438)
@@ -69,6 +72,7 @@ in a single signed bot pull request, which skips the lanes. New commands:
 
 ### ⚡ Performance
 
+- Skip a push's regeneration when it is not needed (#453)
 - Gate an unsharded pull request in its build job (#430)
 - Measure a changelog's last release once (#422)
 - Store an identical binary's run under the merge-base (#418)

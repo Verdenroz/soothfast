@@ -166,11 +166,13 @@ commands:
            request comment body, written to FILE or <results>/verdict-comment.md;
            exits 1 on an error, a missing expected record, or a regression
            no --accepted label waives)
-  ci       regen [--paths-out FILE] [--baseline NAME] [--no-changelog]
+  ci       regen [--paths-out FILE] [--baseline NAME] [--no-changelog] [--probe]
            (regenerates the changelog (--no-changelog skips it), generate-mode specs and SDKs the
            project configures, then REGEN_RUN with REGEN_PATHS; prints
            paths= and changed= lines for the landing step, and writes them
-           to FILE; never commits)
+           to FILE; never commits; --probe regenerates nothing and prints
+           generated= (this push only landed regenerated files) and bot=
+           (the bot's App slug))
   ci       build LANE [-p PKG]... [--docs PKG]... [--spec PKG[:TARGET]]...
            [--shards N] [--stage DIR] [--plan-out FILE] [--listing-out FILE]
            (the workflow's build-once job: `prebuild --only LANE` for the

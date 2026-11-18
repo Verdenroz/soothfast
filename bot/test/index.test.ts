@@ -41,6 +41,7 @@ interface Fake {
   comments: IssueComment[];
   posted: { kind: "create" | "update"; body: string }[];
   disabled: string[];
+  closed: string[];
 }
 
 function fakeGitHub(
@@ -61,6 +62,7 @@ function fakeGitHub(
     comments: opts.comments ?? [],
     posted: [],
     disabled: [],
+    closed: [],
     github: {
       async installationFor() {
         return opts.installed === false ? undefined : { id: 7 };
@@ -105,6 +107,16 @@ function fakeGitHub(
       },
       async openPullRequests() {
         return (opts.pulls ?? []) as never;
+      },
+      async pullRequest() {
+        return {
+          ...(opts.pulls?.[0] as object),
+          state: "open",
+          mergeable: false,
+        } as never;
+      },
+      async closePullRequest(_repository, number) {
+        fake.closed.push(`close ${number}`);
       },
       async disableAutoMerge(id) {
         fake.disabled.push(id);
@@ -413,6 +425,7 @@ const sweepable = {
       draft: false,
       labels: [{ name: "do-not-merge" }],
       auto_merge: {},
+      user: { login: "alice" },
       head: { sha: "abc123" },
       updated_at: "2026-01-01T00:00:00Z",
     },
@@ -431,6 +444,25 @@ test("a sweep acts on open pull requests, returns its log and revokes", async ()
     { contents: "write", pull_requests: "write" },
   ]);
   assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a sweep closes a conflicting landing the app opened", async () => {
+  const landing = {
+    ...sweepable.pulls[0],
+    labels: [],
+    auto_merge: null,
+    user: { login: "soothfast-bot[bot]" },
+    head: {
+      sha: "abc123",
+      ref: "bot/soothfast-update",
+      repo: { full_name: "acme/mylib" },
+    },
+    base: { repo: { full_name: "acme/mylib" } },
+  };
+  const fake = fakeGitHub({ ...sweepable, pulls: [landing] });
+  const { status } = await request({}, fake, { route: "/sweep" });
+  assert.equal(status, 200);
+  assert.deepEqual(fake.closed, ["close 3"]);
 });
 
 test("a sweep from a schedule run is served", async () => {
