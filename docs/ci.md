@@ -1205,6 +1205,13 @@ variable is set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
 lines, also written to `--paths-out`, and never commits or pushes.
 `--baseline NAME` names the baseline it measures into (default `base`).
 
+A push that changed nothing but regenerated files regenerates nothing: every
+file it changed is one regeneration writes, matches a `[bot] landing_paths`
+glob or a `REGEN_PATHS` pathspec, and none is a `soothfast.toml`. That is the
+bot's own landing arriving on the default branch. A changelog carries
+measured numbers, and one that came out a digit different would otherwise
+land again, and that landing would regenerate again.
+
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. `verdict` applies to pull requests
 and `regen` to pushes to the default branch.
