@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::env::CiEnv;
+use super::env::{CiEnv, Event};
 use crate::config::Config;
-use crate::{invoke, sdk_config, spec_config, workspace};
+use crate::{invoke, landing, sdk_config, spec_config, workspace};
 
 const DEFAULT_BASELINE: &str = "base";
 const SPEC_PATHS: [&str; 3] = ["*.yaml", "*.yml", "*.json"];
+const UNCHANGED: &str = "paths=\nchanged=false\n";
 
 /// What the repo configures for regeneration.
 #[derive(Debug, Default, PartialEq)]
@@ -59,7 +60,7 @@ trait Host {
 
 /// Entry point for `ci regen`: `[--paths-out FILE] [--baseline NAME]
 /// [--no-changelog]`.
-pub fn run(_env: &CiEnv, args: &[String]) -> i32 {
+pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     let flags = match parse(args) {
         Ok(flags) => flags,
         Err(e) => return crate::arg_err(&e),
@@ -69,8 +70,15 @@ pub fn run(_env: &CiEnv, args: &[String]) -> i32 {
         Ok(inputs) => inputs,
         Err(e) => return crate::arg_err(&e),
     };
-    let Some(report) = regenerate(&inputs, &Process) else {
-        return 1;
+    let report = match answers_itself(env, &inputs) {
+        true => {
+            eprintln!("regen: this push changed only regenerated files, nothing to regenerate");
+            UNCHANGED.to_string()
+        }
+        false => match regenerate(&inputs, &Process) {
+            Some(report) => report,
+            None => return 1,
+        },
     };
     print!("{report}");
     match flags.paths_out {
@@ -80,6 +88,20 @@ pub fn run(_env: &CiEnv, args: &[String]) -> i32 {
         },
         None => 0,
     }
+}
+
+/// Whether the push being built is regeneration's own output landing.
+/// Regenerating again could differ by a measured digit and land again,
+/// without end.
+fn answers_itself(env: &CiEnv, inputs: &Inputs) -> bool {
+    let (Event::Push, Some(base)) = (env.event, &env.base) else {
+        return false;
+    };
+    let Ok(root) = invoke::workspace_root() else {
+        return false;
+    };
+    let hook = inputs.hook.as_ref().map_or(&[][..], |h| &h.paths);
+    landing::generated_push(&root, base, hook)
 }
 
 #[derive(Debug, PartialEq)]
