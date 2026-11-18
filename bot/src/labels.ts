@@ -29,6 +29,7 @@ export interface Run {
   repository: string;
   defaultBranch: string;
   fresh: boolean;
+  botLogin?: string;
   log: (message: string) => void;
 }
 
@@ -44,6 +45,7 @@ interface Context {
 export const SUBREQUEST_BUDGET = 41;
 const WORST_CASE_ALWAYS = 4;
 const WORST_CASE_PER_PULL_REQUEST = 5;
+const LANDING_READ = 1;
 const SHARED_READS = 2;
 const COMPARE_FILE_CAP = 300;
 
@@ -152,19 +154,21 @@ export async function evaluateOpen(source: Run): Promise<void> {
   const queuedFirst = (pr: PullRequest) =>
     always || pr.auto_merge === null ? 1 : 0;
   const actionable = open
-    .filter((pr) => canAct(pr, context.config))
+    .filter((pr) => canAct(pr, context.config, run.botLogin))
     .sort(
       (a, b) =>
         queuedFirst(a) - queuedFirst(b) ||
         a.updated_at.localeCompare(b.updated_at),
     );
   if (actionable.length === 0) run.log("no pull requests to act on");
-  const worst = always ? WORST_CASE_ALWAYS : WORST_CASE_PER_PULL_REQUEST;
+  const worst = (pr: PullRequest) =>
+    (always ? WORST_CASE_ALWAYS : WORST_CASE_PER_PULL_REQUEST) +
+    (isLanding(pr, run.botLogin) ? LANDING_READ : 0);
   const reserved = always ? 0 : SHARED_READS;
   const quota = { strict: 1 };
   let reached = 0;
   for (const pr of actionable) {
-    if (SUBREQUEST_BUDGET - reserved - spent < worst) break;
+    if (SUBREQUEST_BUDGET - reserved - spent < worst(pr)) break;
     reached++;
     await evaluate(context, pr, undefined, quota).catch((e: unknown) =>
       run.log(`#${pr.number}: ${e instanceof Error ? e.message : e}`),
@@ -187,9 +191,14 @@ function counted(github: GitHubApi, spend: () => void): GitHubApi {
   });
 }
 
-function canAct(pr: PullRequest, config: BotConfig): boolean {
+function canAct(
+  pr: PullRequest,
+  config: BotConfig,
+  botLogin?: string,
+): boolean {
   const gate = gated(pr, config);
-  return gate.ignored ? pr.auto_merge !== null : !pr.draft && wantsUpdate(gate);
+  if (gate.ignored) return pr.auto_merge !== null;
+  return isLanding(pr, botLogin) || (!pr.draft && wantsUpdate(gate));
 }
 
 async function load(run: Run): Promise<Context | undefined> {
@@ -324,16 +333,33 @@ async function evaluate(
   const initial = gated(pr, config, labeler);
   if (initial.declined)
     run.log(`#${pr.number}: not merging, ${initial.declined}`);
+  const conflicts = !initial.ignored && (await conflictsWithBase(context, pr));
   const gate = await byWriters(context, pr, initial, labeler);
-  const checked = gate.merge.length > 0 ? (await context.policy()).checks : 0;
-  const reason = wantsUpdate(gate)
-    ? await updateReason(context, pr, quota)
-    : undefined;
-  for (const action of decide(pr, gate, checked, reason !== undefined)) {
+  const checked =
+    gate.merge.length > 0 && !conflicts ? (await context.policy()).checks : 0;
+  const reason =
+    wantsUpdate(gate) && !conflicts
+      ? await updateReason(context, pr, quota)
+      : undefined;
+  const actions = decide(pr, gate, checked, reason !== undefined, conflicts);
+  for (const action of actions) {
     if (action.kind !== "update_branch") await perform(context, pr, action);
     else if ((await updateBranch(context, pr)) && reason === "strict" && quota)
       quota.strict--;
   }
+}
+
+async function conflictsWithBase(
+  { run }: Context,
+  pr: PullRequest,
+): Promise<boolean> {
+  if (!isLanding(pr, run.botLogin)) return false;
+  const live = await run.github.pullRequest(
+    run.repository,
+    pr.number,
+    run.token,
+  );
+  return conflicting(pr, live);
 }
 
 interface Quota {
@@ -471,6 +497,11 @@ async function perform(
     case "disable_auto_merge":
       await github.disableAutoMerge(pr.node_id, token);
       run.log(`${tag}: auto-merge cancelled`);
+      return;
+    case "close_landing":
+      await github.closePullRequest(repository, pr.number, token);
+      await github.deleteBranch(repository, pr.head.ref, token);
+      run.log(`${tag}: closed, it conflicts with ${run.defaultBranch}`);
       return;
     case "enable_auto_merge": {
       const current = await github.pullRequest(repository, pr.number, token);

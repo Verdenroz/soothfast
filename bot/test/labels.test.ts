@@ -227,6 +227,7 @@ interface World {
   aheadFiles?: string[] | number;
   incomingFiles?: string[] | number;
   renamedFrom?: string;
+  mergeable?: boolean | null;
   live?: Partial<PullRequest> & { names?: string[] };
   permissionFailures?: number;
   enableError?: Error;
@@ -300,7 +301,12 @@ function fakeRun(world: World) {
       const { names, ...live } = world.live ?? {};
       const labels = names?.map((name) => ({ name }));
       const seen = pulls.find((p) => p.number === number)!;
-      return { ...seen, ...(labels && { labels }), ...live };
+      return {
+        ...seen,
+        mergeable: world.mergeable,
+        ...(labels && { labels }),
+        ...live,
+      };
     },
     async enableAutoMerge(id: string, method: string, oid: string) {
       calls.push(`enable ${id} ${method} ${oid}`);
@@ -315,6 +321,12 @@ function fakeRun(world: World) {
       calls.push(`merge ${number}@${sha} ${method}`);
       if (world.mergeError) throw world.mergeError;
     },
+    async closePullRequest(_r: string, number: number) {
+      calls.push(`close ${number}`);
+    },
+    async deleteBranch(_r: string, branch: string) {
+      calls.push(`delete ${branch}`);
+    },
     async disableAutoMerge(id: string) {
       calls.push(`disable ${id}`);
     },
@@ -326,6 +338,7 @@ function fakeRun(world: World) {
     repository: "acme/widgets",
     defaultBranch: "main",
     fresh: false,
+    botLogin: BOT,
     log: (message: string) => logs.push(message),
   };
   return { run: { ...run, pulls }, calls, logs };
@@ -1113,5 +1126,106 @@ test("needed: a sweep stays within the subrequest cap", async () => {
   });
   await evaluateOpen(run);
   assert.ok(updated(calls) > 4, `${updated(calls)} updated`);
+  assert.ok(calls.length <= SUBREQUEST_BUDGET, `${calls.length} subrequests`);
+});
+
+const landingSweep = (world: World, ...pulls: PullRequest[]) =>
+  fakeRun({ toml: NEEDED, pulls, ...world });
+
+test("a sweep closes a conflicting landing and deletes its branch", async () => {
+  const { run, calls, logs } = landingSweep(
+    { mergeable: false },
+    landing({ auto_merge: {} }),
+  );
+  await evaluateOpen(run);
+  assert.deepEqual(calls, [
+    "contents soothfast.toml@main",
+    "list main",
+    "pull 5",
+    "close 5",
+    "delete bot/soothfast-update",
+  ]);
+  assert.deepEqual(logs, ["#5: closed, it conflicts with main"]);
+});
+
+test("a sweep leaves a landing alone while mergeable is still unknown", async () => {
+  const { run, calls } = landingSweep({ mergeable: null }, landing());
+  await evaluateOpen(run);
+  assert.ok(!calls.some((c) => c.startsWith("close")));
+  assert.ok(!calls.some((c) => c.startsWith("delete")));
+});
+
+test("a sweep leaves a mergeable landing alone", async () => {
+  const { run, calls } = landingSweep({ mergeable: true }, landing());
+  await evaluateOpen(run);
+  assert.ok(!calls.some((c) => c.startsWith("close")));
+});
+
+test("a sweep leaves a landing alone when its head moved since the list", async () => {
+  const { run, calls } = landingSweep(
+    { mergeable: false, live: { head: { ...landing().head, sha: "new" } } },
+    landing(),
+  );
+  await evaluateOpen(run);
+  assert.ok(!calls.some((c) => c.startsWith("close")));
+});
+
+const strangers = {
+  "someone else's pull request": pull({ number: 5, names: [UPDATE] }),
+  "a bot pull request from a fork": landing({
+    head: {
+      sha: "abc123",
+      ref: "bot/soothfast-update",
+      repo: { full_name: "fork/widgets" },
+    },
+  }),
+  "a bot pull request from another branch": landing({
+    head: {
+      sha: "abc123",
+      ref: "feature",
+      repo: { full_name: "acme/widgets" },
+    },
+  }),
+};
+
+for (const [name, pr] of Object.entries(strangers)) {
+  test(`a sweep never closes ${name}`, async () => {
+    const { run, calls } = landingSweep(
+      { mergeable: false, ...sweepWriters(5) },
+      pr,
+    );
+    await evaluateOpen(run);
+    assert.ok(!calls.some((c) => c.startsWith("pull ")));
+    assert.ok(!calls.some((c) => c.startsWith("close")));
+    assert.ok(!calls.some((c) => c.startsWith("delete")));
+  });
+}
+
+test("a sweep leaves an ignored conflicting landing alone", async () => {
+  const { run, calls } = landingSweep(
+    { mergeable: false },
+    landing({ names: [HOLD] }),
+  );
+  await evaluateOpen(run);
+  assert.ok(!calls.some((c) => c.startsWith("pull ")));
+  assert.ok(!calls.some((c) => c.startsWith("close")));
+});
+
+test("a sweep with thirty clean landings stays within the subrequest cap", async () => {
+  const pulls = Array.from({ length: 30 }, (_, i) =>
+    landing({ number: i + 1, head: { ...landing().head, sha: `sha${i}` } }),
+  );
+  const { run, calls } = landingSweep({ mergeable: true }, ...pulls);
+  await evaluateOpen(run);
+  assert.ok(calls.length <= SUBREQUEST_BUDGET, `${calls.length} subrequests`);
+});
+
+test("a sweep with thirty conflicting landings stays within the subrequest cap", async () => {
+  const pulls = Array.from({ length: 30 }, (_, i) =>
+    landing({ number: i + 1 }),
+  );
+  const { run, calls } = landingSweep({ mergeable: false }, ...pulls);
+  await evaluateOpen(run);
+  assert.ok(calls.some((c) => c.startsWith("close")));
   assert.ok(calls.length <= SUBREQUEST_BUDGET, `${calls.length} subrequests`);
 });
