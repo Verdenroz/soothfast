@@ -521,9 +521,21 @@ pub fn uncounted_complexity(pass: &Run, stored: Option<&Value>) -> bool {
         .any(|a| !counted.iter().any(|c| c.id == a.id && c.kind == a.kind))
 }
 
+/// A run already stored under a binary's digest stands: the binary is the
+/// same, and a fresh callgrind reading of it can differ by a few Ir between
+/// hosts, which would flip every figure read back by digest.
 fn put(runs: &Runs, doc: &Value, digests: &[Option<&str>]) {
+    let ids: BTreeSet<String> = invoke::run_from_items_value(&doc["items"])
+        .items
+        .into_keys()
+        .collect();
     for digest in digests.iter().flatten() {
-        runs.store(digest, doc);
+        let counted = runs
+            .load(digest, digest)
+            .is_some_and(|stored| readable_as_head(&stored) && counts_cover(&stored, &ids));
+        if !counted {
+            runs.store(digest, doc);
+        }
     }
     if !invoke::tree_is_clean() {
         return;
