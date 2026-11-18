@@ -72,7 +72,7 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     };
     let report = match answers_itself(env, &inputs) {
         true => {
-            println!("regen: this push changed only regenerated files, nothing to regenerate");
+            eprintln!("regen: this push changed only regenerated files, nothing to regenerate");
             UNCHANGED.to_string()
         }
         false => match regenerate(&inputs, &Process) {

@@ -139,13 +139,20 @@ fn only_generated(allowed: &Allowed, changed: &BTreeSet<String>, also: &BTreeSet
         })
 }
 
-/// Whether the commits since `base` changed only files regeneration writes:
-/// the generated paths, and whatever they changed under the `hook`
-/// pathspecs. Regenerating after such a push would answer its own landing.
-/// Anything unreadable is an ordinary push.
+/// Whether the commits since `base` are the bot's and changed only files
+/// regeneration writes: the generated paths, and whatever they changed
+/// under the `hook` pathspecs. Regenerating after such a push would answer
+/// its own landing. Anything unreadable is an ordinary push.
 pub fn generated_push(root: &Path, base: &str, hook: &[String]) -> bool {
     let read = || -> Result<bool, String> {
         let config = Config::load(root)?;
+        let bot = format!("{}[bot]", config.landing()?.slug);
+        let range = format!("{base}..HEAD");
+        let authors =
+            invoke::git_in(root, &["log", "--format=%an", &range]).map_err(|e| e.to_string())?;
+        if authors.lines().any(|author| author != bot) {
+            return Ok(false);
+        }
         let allowed = allowed(root, &config)?;
         let changed = committed(root, base, &[])?;
         let hooked = match hook.is_empty() {
@@ -370,14 +377,32 @@ mod tests {
             repo.write(file, "two\n");
         }
         repo.git(&["add", "-A"]);
-        repo.commit();
+        repo.git(&[
+            "-c",
+            "user.name=soothfast-bot[bot]",
+            "-c",
+            "user.email=bot@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "land",
+        ]);
         repo
     }
 
     #[test]
-    fn a_push_of_generated_files_alone_is_a_generated_push() {
+    fn a_bot_push_of_generated_files_alone_is_a_generated_push() {
         let repo = pushed("landing-push-generated", &["CHANGELOG.md"]);
         assert!(generated_push(&repo.root, "HEAD^", &[]));
+    }
+
+    #[test]
+    fn the_same_files_pushed_by_anyone_else_are_not() {
+        let repo = pushed("landing-push-human", &["CHANGELOG.md"]);
+        repo.write("CHANGELOG.md", "three\n");
+        repo.git(&["add", "-A"]);
+        repo.commit();
+        assert!(!generated_push(&repo.root, "HEAD^", &[]));
     }
 
     #[test]
