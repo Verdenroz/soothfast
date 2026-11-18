@@ -1120,6 +1120,12 @@ for each package with a <code>mode = &quot;generate&quot;</code> spec and <code>
 variable is set (it needs <code>REGEN_PATHS</code>). It prints <code>paths=</code> and <code>changed=</code>
 lines, also written to <code>--paths-out</code>, and never commits or pushes.
 <code>--baseline NAME</code> names the baseline it measures into (default <code>base</code>).</p>
+<p>A push of the bot's own landing regenerates nothing: the bot authored every
+commit in it, every file it changed is one regeneration writes or matches a
+<code>[bot] landing_paths</code> glob or a <code>REGEN_PATHS</code> pathspec, and none is a
+<code>soothfast.toml</code>. A changelog carries
+measured numbers, and one that came out a digit different would otherwise
+land again, and that landing would regenerate again.</p>
 <p><code>cargo soothfast ci</code> with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. <code>verdict</code> applies to pull requests
 and <code>regen</code> to pushes to the default branch.</p>
