@@ -577,10 +577,18 @@ repository's "Automatically delete head branches" setting.</p>
 <h3 id="reconciling-missed-deliveries">Reconciling missed deliveries<a class="anchor" href="#reconciling-missed-deliveries" aria-label="Link to this section">#</a></h3>
 <p>GitHub does not redeliver a webhook that failed. On default-branch pushes and
 schedules the action asks the broker to sweep the open pull requests: it
-cancels queued merges held by <code>do-not-merge</code> and updates labelled branches,
-but never enables a merge. <code>labels</code> defaults to <code>&quot;true&quot;</code>; set <code>labels:
-&quot;false&quot;</code> to turn the sweep off, as the workflows <code>init</code> writes do for every
+cancels queued merges held by <code>do-not-merge</code>, updates labelled branches and
+closes conflicting landings, but never enables a merge. <code>labels</code> defaults to
+<code>&quot;true&quot;</code>; set <code>labels: &quot;false&quot;</code> to turn the sweep off, as the workflows <code>init</code> writes do for every
 job but the labels job.</p>
+<p>A landing that conflicts with the default branch can never merge, and nothing
+else rebuilds it, so the sweep closes it. It does this
+only for a pull request opened by the App's own <code>&lt;slug&gt;[bot]</code> login from a
+<code>bot/</code> branch of the repository itself, and only when GitHub reports it as
+conflicting for the head the sweep listed. A state GitHub has not computed yet
+is left for the next sweep, and so is a landing carrying an ignore label such as
+<code>do-not-merge</code>. The branch is left as it is: the next job that has something
+to land starts it over from the new tip and opens a fresh landing.</p>
 <p>The sweep is best effort, since webhooks are the primary path, and it never
 fails the job: a missing <code>jq</code>, a job without <code>id-token: write</code> and
 <code>environment: soothfast-bot</code>, or a <code>bot-token</code> leaves a notice, and an
