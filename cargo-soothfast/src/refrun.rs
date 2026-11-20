@@ -4,8 +4,15 @@
 
 use std::path::Path;
 
+use std::collections::BTreeSet;
+
+use serde_json::Value;
+
+use crate::buildstamp::BuildStamp;
 use crate::config::{Config, Group};
+use crate::headrun;
 use crate::invoke::{self, CommonArgs};
+use crate::runcache::{self, Runs};
 
 /// The commit a reference measurement stands for, relative to HEAD.
 #[derive(Debug, PartialEq)]
@@ -40,14 +47,52 @@ pub fn common(config: &Config, pkg: &str) -> Result<CommonArgs, String> {
     Ok(common)
 }
 
+/// The run the gate recorded for `sha`, kept under `key` as the report's
+/// measurement of it. HEAD's bench binary names the host conditions the
+/// recorded run was keyed on; without one nothing is read.
+pub fn recorded_for(
+    common: &CommonArgs,
+    stamp: &BuildStamp,
+    sha: &str,
+    key: &str,
+) -> Option<Value> {
+    let exe = invoke::bench_executable(common, None, None)?;
+    let env = invoke::host_env(&exe, common.backend.as_deref()).ok()?;
+    recorded(&Runs::new(stamp, common, Some(env)), sha, key)
+}
+
+/// The run `runs` holds for `sha`, when it is that commit's callgrind
+/// measurement of every item it names, kept under `key`. A run timed on
+/// another backend, or one with an item no counter covers, is not the
+/// measurement a report makes.
+fn recorded(runs: &Runs, sha: &str, key: &str) -> Option<Value> {
+    let doc = runs.load(sha, sha)?;
+    let items: BTreeSet<String> = invoke::run_from_items_value(&doc["items"])
+        .items
+        .into_keys()
+        .collect();
+    let usable = runs.gating_backend() == Some("callgrind")
+        && doc["gating_backend"] == "callgrind"
+        && headrun::readable_as_head(&doc)
+        && headrun::counts_cover(&doc, &items);
+    if usable {
+        runcache::keep_report(key, &doc);
+    }
+    usable.then_some(doc)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
-    use super::{Anchor, anchor, common, invoke};
+    use serde_json::Value;
+
+    use super::{Anchor, anchor, common, headrun, invoke, recorded};
+    use crate::buildstamp::BuildStamp;
     use crate::config::Config;
-    use crate::runcache;
+    use crate::invoke::{CommonArgs, HostEnv};
+    use crate::runcache::{self, Runs};
     use crate::test::fixture::TempDir;
 
     fn git(dir: &Path, args: &[&str]) {
@@ -85,6 +130,112 @@ mod tests {
         git(&dir, &["commit", "-q", "--allow-empty", "-m", "two"]);
         let tagged = invoke::git_in(&dir, &["rev-parse", "v1"]).unwrap();
         assert_eq!(anchor(&dir, "v1"), Anchor::At(tagged));
+    }
+
+    fn stamp() -> BuildStamp {
+        BuildStamp {
+            rustc: "1.88.0".into(),
+            codegen_units: "1".into(),
+            profiles: "p".into(),
+            rustflags: "f".into(),
+        }
+    }
+
+    fn env(backend: &str) -> HostEnv {
+        HostEnv {
+            gating_backend: backend.into(),
+            guest: None,
+            callgrind_method: None,
+            item_reuse: true,
+        }
+    }
+
+    fn args() -> CommonArgs {
+        CommonArgs {
+            pkg: Some("demo".into()),
+            ..CommonArgs::default()
+        }
+    }
+
+    fn gate_run(backend: &str, items: serde_json::Value) -> Value {
+        let mut doc = serde_json::json!({
+            "version": 1,
+            "gating_backend": backend,
+            "items": items,
+        });
+        headrun::stamp(&mut doc);
+        doc
+    }
+
+    fn counted() -> serde_json::Value {
+        serde_json::json!({
+            "demo::a": { "fingerprint": "x", "callgrind": { "ir": 10 } },
+            "demo::b": { "fingerprint": "y", "callgrind": { "ir": 20 } },
+        })
+    }
+
+    fn forget(key: &str) {
+        if let Some(dir) = runcache::state_dir("runs") {
+            let _ = std::fs::remove_file(dir.join(format!("{key}.json")));
+        }
+    }
+
+    /// `doc` stored as the gate stores a commit's run, read back through
+    /// `recorded` under `backend`'s environment, with the report key it was
+    /// kept under.
+    fn read_back(sha: &str, backend: &str, doc: &Value) -> (Option<Value>, Option<Value>) {
+        let (stamp, args) = (stamp(), args());
+        let runs = Runs::new(&stamp, &args, Some(env(backend)));
+        runs.store(sha, doc);
+        let report = runcache::report_key(sha, "demo", None, &stamp);
+        let got = recorded(&runs, sha, &report);
+        let kept = runcache::stored_report(&report);
+        forget(&runcache::key(sha, &stamp, &args, &env(backend)));
+        forget(&report);
+        (got, kept)
+    }
+
+    #[test]
+    fn a_callgrind_run_the_gate_recorded_is_used_and_kept_as_the_reports() {
+        let doc = gate_run("callgrind", counted());
+        let (got, kept) = read_back("test-refrun-recorded", "callgrind", &doc);
+        assert_eq!(got.expect("recorded run")["items"], doc["items"]);
+        assert_eq!(kept.expect("kept report")["items"], doc["items"]);
+    }
+
+    #[test]
+    fn a_run_with_an_uncounted_item_is_not_used() {
+        let mut items = counted();
+        items["demo::b"] = serde_json::json!({ "fingerprint": "y" });
+        let doc = gate_run("callgrind", items);
+        assert_eq!(
+            read_back("test-refrun-uncounted", "callgrind", &doc),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn a_run_timed_on_another_backend_is_not_used() {
+        let doc = gate_run("walltime", counted());
+        assert_eq!(
+            read_back("test-refrun-timed", "walltime", &doc),
+            (None, None)
+        );
+        assert_eq!(
+            read_back("test-refrun-mixed", "callgrind", &doc),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn a_run_stored_without_its_verdicts_is_not_used() {
+        let doc = serde_json::json!({
+            "version": 1, "gating_backend": "callgrind", "items": counted()
+        });
+        assert_eq!(
+            read_back("test-refrun-unstamped", "callgrind", &doc),
+            (None, None)
+        );
     }
 
     fn configured(name: &str, text: &str) -> Config {

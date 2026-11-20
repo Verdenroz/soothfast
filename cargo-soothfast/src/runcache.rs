@@ -188,7 +188,7 @@ pub fn measured_on(env: &HostEnv) -> Value {
 /// measured, so a perfcnt run is never served to a gate that resolved
 /// callgrind, or the reverse; the `--backend` argument stays too, since it
 /// decides which non-gating backends ran alongside.
-fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> String {
+pub(crate) fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> String {
     key_with(
         id,
         stamp,

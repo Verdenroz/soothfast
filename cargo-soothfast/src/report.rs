@@ -197,24 +197,34 @@ fn measure_ref(
         .iter()
         .map(|pkg| refrun::common(config, pkg))
         .collect::<Result<Vec<_>, _>>()?;
+    let stamp = |common: &invoke::CommonArgs| {
+        buildstamp::capture(common.codegen_units_stamp().as_deref(), None)
+    };
     let key = |common: &invoke::CommonArgs| {
-        let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
         let pkg = common.pkg.as_deref().unwrap_or_default();
         (!sha.is_empty())
-            .then(|| runcache::report_key(&sha, pkg, common.features.as_deref(), &stamp))
+            .then(|| runcache::report_key(&sha, pkg, common.features.as_deref(), &stamp(common)))
     };
     let mut docs = Vec::new();
     let mut unmeasured = Vec::new();
     for common in &commons {
-        match key(common).and_then(|key| runcache::stored_report(&key)) {
-            Some(doc) => docs.push(doc),
-            None => unmeasured.push(common),
+        let pkg = common.pkg.as_deref().unwrap_or_default();
+        let Some(key) = key(common) else {
+            unmeasured.push(common);
+            continue;
+        };
+        if let Some(doc) = runcache::stored_report(&key) {
+            println!("report: reusing the stored measurement of {refname} for {pkg}");
+            docs.push(doc);
+        } else if let Some(doc) = refrun::recorded_for(common, &stamp(common), &sha, &key) {
+            println!("report: reusing the gate's recorded run of {refname} for {pkg}");
+            docs.push(doc);
+        } else {
+            unmeasured.push(common);
         }
     }
-    if unmeasured.is_empty() {
-        println!("report: reusing the stored measurement of {refname} for the perf delta");
-    } else {
-        println!("report: measuring {refname} in a worktree for the perf delta");
+    if !unmeasured.is_empty() {
+        println!("report: measuring {refname} in a worktree");
         let runs = invoke::with_merge_base_worktree(refname, |wt| {
             let mut runs = Vec::new();
             for common in &unmeasured {
