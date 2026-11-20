@@ -706,11 +706,14 @@ runs:
         cat "$RUNNER_TEMP/soothfast-regen" >>"$GITHUB_OUTPUT"
     # The changelog measures the last release once and reads it on every
     # later push, so what the regeneration stored is saved under a key of its own.
+    # With `head-runs` it is saved even when a newer push cancels the job, so a
+    # finished measurement is not thrown away.
     - name: Save the runs the regeneration measured
       if: >-
-        steps.regen.outcome == 'success' && inputs.changelog == 'true'
-        && (inputs.head-runs == 'true'
-        || (steps.prepare.outputs.cache_runs == 'true' && steps.prepare.outputs.records == 'true'))
+        always() && inputs.changelog == 'true'
+        && ((inputs.head-runs == 'true' && steps.regen.outcome != 'skipped')
+        || (steps.regen.outcome == 'success'
+        && steps.prepare.outputs.cache_runs == 'true' && steps.prepare.outputs.records == 'true'))
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |

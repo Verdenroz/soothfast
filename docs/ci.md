@@ -1304,7 +1304,9 @@ newest entry of that prefix before it regenerates, merged with the runs the
 gate saved for the same commit. The prefix is the regeneration's alone, so a
 gate leg's save under `soothfast-runs-<branch>-` can never shadow it, and a
 push that starts while an earlier regeneration is still running reads the
-newest finished one. Without `head-runs` the runs are saved under the
+newest finished one. The runs are saved even when a newer push cancels the
+regeneration or the step fails, since each entry is a file of its own that a
+reader drops when it does not parse. Without `head-runs` the runs are saved under the
 commit's `-regen` key, as before.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
