@@ -169,19 +169,20 @@ fn build_script_output(out_dir: &Path) -> Option<String> {
 
 /// A build script's `rerun-if-changed` paths (for workspace packages, which
 /// are relative to the package) and every package's `rerun-if-env-changed`.
+/// A workspace script that names no path to watch makes the inputs opaque,
+/// since cargo then reruns it for any file of the package.
 fn add_build_script(inputs: &mut Inputs, root: &Path, package_dir: Option<&PathBuf>, msg: &Value) {
-    let Some(out_dir) = msg["out_dir"].as_str().map(Path::new) else {
-        return;
-    };
-    let Some(output) = build_script_output(out_dir) else {
-        return;
-    };
-    for line in output.lines() {
+    let output = msg["out_dir"]
+        .as_str()
+        .and_then(|out| build_script_output(Path::new(out)));
+    let mut watches = false;
+    for line in output.iter().flat_map(|o| o.lines()) {
         let directive = line
             .strip_prefix("cargo::")
             .or_else(|| line.strip_prefix("cargo:"));
         match directive.and_then(|d| d.split_once('=')) {
             Some(("rerun-if-changed", path)) => {
+                watches = true;
                 if let Some(dir) = package_dir {
                     inputs.files.insert(relative(root, &dir.join(path)));
                 }
@@ -192,6 +193,7 @@ fn add_build_script(inputs: &mut Inputs, root: &Path, package_dir: Option<&PathB
             _ => {}
         }
     }
+    inputs.opaque |= package_dir.is_some() && !watches;
 }
 
 /// The files on the first line of a Makefile-style dep-info (spaces in a
@@ -406,6 +408,36 @@ mod tests {
         );
         let env: Vec<_> = inputs.env.iter().map(String::as_str).collect();
         assert_eq!(env, ["DEP_TOKEN", "REG_TOKEN"]);
+        assert!(!inputs.opaque);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_workspace_build_script_that_watches_nothing_makes_the_inputs_opaque() {
+        let root = temp("opaque");
+        let run = |id: &str, output: Option<&str>| {
+            let out_dir = root.join("build").join(id).join("out");
+            std::fs::create_dir_all(&out_dir).unwrap();
+            if let Some(output) = output {
+                std::fs::write(out_dir.with_file_name("output"), output).unwrap();
+            }
+            let local = format!("path+file:///w/{id}#{id}@0.1.0");
+            let stdout = [
+                json!({"reason": "compiler-artifact", "package_id": local,
+                       "manifest_path": root.join(id).join("Cargo.toml"),
+                       "target": {"kind": ["lib"]}, "filenames": []}),
+                json!({"reason": "build-script-executed", "package_id": local,
+                       "out_dir": out_dir}),
+            ]
+            .iter()
+            .map(|m| m.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+            collect(&root, &root.join("missing.d"), stdout.as_bytes()).opaque
+        };
+        assert!(run("silent", Some("cargo:rustc-cfg=x\n")));
+        assert!(run("unrecorded", None));
+        assert!(!run("watching", Some("cargo:rerun-if-changed=build.rs\n")));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
