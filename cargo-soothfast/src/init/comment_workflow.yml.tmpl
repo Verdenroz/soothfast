@@ -1,0 +1,19 @@
+name: soothfast-comment
+
+# Written by `cargo soothfast init`; `cargo soothfast init --check` reports drift.
+# Comments the verdict of a fork's pull request, whose own run cannot.
+on:
+  workflow_run:
+    workflows: [soothfast]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  comment:
+    permissions:
+      actions: read
+      pull-requests: write
+    uses: @@action@@
+    with:
+      soothfast_ref: "@@pin@@"
