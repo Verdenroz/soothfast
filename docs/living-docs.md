@@ -177,6 +177,10 @@ fresh generation of every test and example in memory, diffed against what is
 on disk. A stale `docs gen-tests` or `docs capture` run therefore fails CI
 just like a stale bind or a violated claim.
 
+With `ci regen` on, a push to the default branch runs `docs capture` and lands
+the refreshed output, so captured output follows the code without a hand-run.
+`[ci] skip = ["capture"]` opts out, and also drops the pull request check.
+
 ## Which package
 
 `docs check`, `docs accept`, `docs capture`, `docs gen-tests`, `docs reference`,
