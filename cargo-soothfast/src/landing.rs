@@ -206,21 +206,20 @@ fn read(root: &Path, base: &str, pr: &PullRequest) -> Result<bool, String> {
 
 /// What regeneration can write under `root`, plus `[bot] landing_paths`.
 fn allowed(root: &Path, config: &Config) -> Result<Allowed, String> {
-    let (members, gated) = match root.join("Cargo.toml").is_file() {
+    let (members, gated, captured) = match root.join("Cargo.toml").is_file() {
         true => (
             workspace::member_dirs(Some(root)).map_err(|e| e.to_string())?,
             workspace::bench_crates("soothfast", Some(root))?,
+            capture::regenerated(root, config)?,
         ),
         false => Default::default(),
     };
     let packages = config.changelog()?.packages;
     let changelog = !changelog_listed(&packages, &gated).is_empty();
     let mut allowed = Allowed::of(root, &members, config.landing()?.paths, changelog)?;
-    if root.join("Cargo.toml").is_file() {
-        for captured in capture::regenerated(root, config)? {
-            allowed.files.extend(captured.pages);
-        }
-    }
+    allowed
+        .files
+        .extend(captured.into_iter().flat_map(|c| c.pages));
     Ok(allowed)
 }
 

@@ -8,21 +8,17 @@ use std::path::Path;
 use crate::config::{Config, Group};
 use crate::{init, invoke};
 
-fn command(pkg: &str, paths: &[String]) -> Vec<String> {
-    let mut args: Vec<String> = ["docs", "capture", "-p", pkg, "--check"]
-        .map(String::from)
-        .to_vec();
+/// `docs capture -p PKG [PATHS]`, which records fresh output.
+pub(super) fn args(pkg: &str, paths: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = ["docs", "capture", "-p", pkg].map(String::from).to_vec();
     args.extend(paths.iter().cloned());
     args
 }
 
-/// `[ci] capture_paths`, which narrows the docs a lone docs package is
-/// checked against. Several packages each have paths of their own.
-fn lone_paths(root: &Path) -> Result<Vec<String>, String> {
-    match init::rust_plan(root)?.docs_packages.len() {
-        1 => Config::load(root)?.capture_paths(),
-        _ => Ok(Vec::new()),
-    }
+fn command(pkg: &str, paths: &[String]) -> Vec<String> {
+    let mut args = args(pkg, paths);
+    args.insert(4, "--check".to_string());
+    args
 }
 
 /// The docs packages whose docs can be told apart. A lone package owns every
@@ -44,30 +40,21 @@ fn separable(
     Ok(kept)
 }
 
-/// A docs package that `ci capture` covers and the docs `paths` it is limited
-/// to. No paths means every doc in the package's scope.
-#[derive(Debug, PartialEq)]
-pub(super) struct Covered {
-    pub package: String,
-    pub paths: Vec<String>,
-}
-
-pub(super) fn covered(root: &Path) -> Result<Vec<Covered>, String> {
+/// The docs packages `ci capture` covers and the docs paths it limits them
+/// to: `[ci] capture_paths` for a lone package, since several each have paths
+/// of their own. No paths means every doc in a package's scope.
+pub(super) fn covered(root: &Path, config: &Config) -> Result<(Vec<String>, Vec<String>), String> {
     let docs = init::rust_plan(root)?.docs_packages;
-    let config = Config::load(root)?;
+    let paths = match docs.len() {
+        1 => config.capture_paths()?,
+        _ => Vec::new(),
+    };
     let shared = config.resolve(&[], Group::Docs)?.paths;
-    let paths = lone_paths(root)?;
     let packages = separable(docs, |pkg| {
         let own = config.resolve(&[pkg.to_string()], Group::Docs)?.paths;
         Ok(own.is_some() && own != shared)
     })?;
-    Ok(packages
-        .into_iter()
-        .map(|package| Covered {
-            package,
-            paths: paths.clone(),
-        })
-        .collect())
+    Ok((packages, paths))
 }
 
 /// A covered package regeneration captures, and the `pages` its output lands
@@ -85,13 +72,14 @@ pub(crate) fn regenerated(root: &Path, config: &Config) -> Result<Vec<Regenerate
     if config.ci()?.iter().any(|kind| kind == "capture") {
         return Ok(Vec::new());
     }
+    let (packages, paths) = covered(root, config)?;
     let mut found = Vec::new();
-    for Covered { package, paths } in covered(root)? {
-        let pages = crate::docs::capture_pages(root, &package, &paths)?;
+    for package in packages {
+        let pages = crate::docs::capture_pages(root, config, &package, &paths)?;
         if !pages.is_empty() {
             found.push(Regenerated {
                 package,
-                paths,
+                paths: paths.clone(),
                 pages,
             });
         }
@@ -100,24 +88,22 @@ pub(crate) fn regenerated(root: &Path, config: &Config) -> Result<Vec<Regenerate
 }
 
 pub(super) fn configured_at(root: &Path) -> Result<Vec<String>, String> {
-    Ok(covered(root)?.into_iter().map(|c| c.package).collect())
-}
-
-fn configured() -> Result<Vec<String>, String> {
-    configured_at(&invoke::project_root())
+    Ok(covered(root, &Config::load(root)?)?.0)
 }
 
 /// Entry point for `ci capture`.
 pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     let none = "ci capture: no docs package with docs of its own";
-    let paths = match lone_paths(&invoke::project_root()) {
-        Ok(paths) => paths,
+    let root = invoke::project_root();
+    let (packages, paths) = match Config::load(&root).and_then(|c| covered(&root, &c)) {
+        Ok(covered) => covered,
         Err(e) => {
             eprintln!("soothfast: {e}");
             return 2;
         }
     };
-    each::run_packages(env, "capture", args, none, configured, |pkg| {
+    let found = || Ok(packages);
+    each::run_packages(env, "capture", args, none, found, |pkg| {
         command(pkg, &paths)
     })
 }

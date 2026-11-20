@@ -245,6 +245,12 @@ fn plan(inputs: &Inputs) -> (Vec<Step>, Vec<String>) {
     (steps, paths)
 }
 
+/// `path` as a git pathspec without whitespace, which the landing step splits
+/// `paths=` on. `?` matches the character it stands in for.
+fn pathspec(path: &str) -> String {
+    path.replace(char::is_whitespace, "?")
+}
+
 /// Runs the plan and returns the `paths=` and `changed=` lines the landing
 /// step reads, or `None` when a step failed.
 fn regenerate(inputs: &Inputs, host: &impl Host) -> Option<String> {
@@ -254,6 +260,7 @@ fn regenerate(inputs: &Inputs, host: &impl Host) -> Option<String> {
             return None;
         }
     }
+    let paths: Vec<String> = paths.iter().map(|path| pathspec(path)).collect();
     let changed = !paths.is_empty() && host.changed(&paths);
     Some(format!("paths={}\nchanged={changed}\n", paths.join(" ")))
 }
@@ -277,11 +284,7 @@ fn execute(step: &Step, baseline: &str, host: &impl Host) -> i32 {
         }
         Step::SpecGen(pkg) => host.cli(&words(&["spec", "gen", "-p", pkg])),
         Step::SdkGen(pkg) => host.cli(&words(&["sdk", "gen", "-p", pkg])),
-        Step::Capture { package, paths } => {
-            let mut args = words(&["docs", "capture", "-p", package]);
-            args.extend(paths.iter().cloned());
-            host.cli(&args)
-        }
+        Step::Capture { package, paths } => host.cli(&capture::args(package, paths)),
         Step::Hook(script) => host.hook(script),
     }
 }
@@ -613,14 +616,17 @@ mod tests {
     }
 
     #[test]
-    fn a_package_without_capture_pages_adds_no_paths() {
-        let off = Inputs {
-            captures: Vec::new(),
-            ..everything()
+    fn a_captured_page_with_a_space_in_its_name_stays_one_path() {
+        let spaced = Inputs {
+            captures: vec![Regenerated {
+                package: "api".into(),
+                pages: strings(&["docs/Getting Started.md"]),
+                ..Regenerated::default()
+            }],
+            ..inputs()
         };
-        let (steps, paths) = plan(&off);
-        assert!(!steps.iter().any(|s| matches!(s, Step::Capture { .. })));
-        assert!(!paths.contains(&"README.md".to_string()));
+        let report = regenerate(&spaced, &Fake::new()).unwrap();
+        assert!(report.starts_with("paths=docs/Getting?Started.md\n"));
     }
 
     #[test]

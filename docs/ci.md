@@ -156,9 +156,9 @@ by binary.
 Then it measures each package into the
 `baseline` baseline, regenerates `CHANGELOG.md` against the latest tag (or
 lists the initial surface when there is no tag), regenerates any packages
-named in `spec`, records fresh output for each capture block, and lands whatever changed as one pull request on
-`bot/soothfast-update`. Pushes to other branches do nothing beyond the
-install.
+named in `spec`, records fresh output for each capture block, and lands
+whatever changed as one pull request on `bot/soothfast-update`. Pushes to
+other branches do nothing beyond the install.
 
 The bot PR triggers your workflows like any other pull request, this step
 included, which is how its required checks get satisfied. Under `run.yml` the
@@ -1133,10 +1133,10 @@ A lone docs package is checked against every doc. Among several, the blocks of
 all the docs would compile into each package's crate, so only a package whose
 `[package.NAME.docs]` table names its own `paths` is checked. For a lone docs
 package, `capture_paths` under `[ci]` lists the docs to check in place of all
-of them, which leaves out a page whose output changes from run to run. The
-default branch keeps that output current: `ci regen` runs `docs capture` for
-the same packages and paths, and lands the docs it changes. A failing example
-fails the regeneration, so nothing lands. `[ci] skip = ["capture"]` turns off
+of them, which leaves out a page whose output changes from run to run. On the
+default branch `ci regen` runs `docs capture` for the same packages and paths
+and lands the docs it changes. A failing example fails the regeneration, so
+nothing lands. `[ci] skip = ["capture"]` turns off
 both the check and the regeneration. Each
 package records a `check` verdict named `capture-PKG`. With no such package it says so
 and records nothing.
@@ -1215,8 +1215,7 @@ the `[changelog]` packages, or those same packages when it names none
 (`--no-changelog` skips both), runs `spec gen`
 for each package with a `mode = "generate"` spec and `sdk gen` for each with
 `[[sdk]]`, then `docs capture` for each docs package `ci capture` checks (it
-runs each example once, and the markdown holding a capture block is what
-lands), then runs the `REGEN_RUN` command with `$SOOTHFAST` set when that
+runs each capture block once, and the markdown holding one is what lands), then runs the `REGEN_RUN` command with `$SOOTHFAST` set when that
 variable is set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
 lines, also written to `--paths-out`, and never commits or pushes.
 `--baseline NAME` names the baseline it measures into (default `base`).
