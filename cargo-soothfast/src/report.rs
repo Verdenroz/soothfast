@@ -2,15 +2,15 @@
 //! recorded data: perf tables, trend charts, badges, and a living
 //! CHANGELOG.md whose Unreleased section is regenerated in place.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use soothfast_report::{badges, changelog, perf_table, trend_chart};
 
 use crate::config::{self, Config, Group, Settings};
 use crate::{
-    buildstamp, coverage_lang, docs_support, headrun, invoke, project_surface, runcache, trend,
-    workspace,
+    buildstamp, coverage_lang, docs_support, headrun, invoke, project_surface, refrun, runcache,
+    trend, workspace,
 };
 
 pub fn run(args: &[String]) -> i32 {
@@ -176,11 +176,22 @@ fn surface_diffs(pkgs: &[String], refname: &str, features: Option<&str>) -> Resu
 /// skipped rather than failing the run, since a newly measured crate simply
 /// has no earlier side to compare against. `Ok(None)` when that leaves
 /// nothing measured, which renders the current-only table as before.
-fn measure_ref(a: &ReportArgs, refname: &str) -> Result<Option<Value>, String> {
+///
+/// A ref that is HEAD itself measures nothing: its figures are `baseline`'s.
+fn measure_ref(
+    a: &ReportArgs,
+    refname: &str,
+    root: &Path,
+    baseline: &Value,
+) -> Result<Option<Value>, String> {
     let features = a.features.clone();
-    let sha = invoke::git(&["merge-base", "HEAD", refname])
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
+    let sha = match refrun::anchor(root, refname) {
+        refrun::Anchor::Head => {
+            println!("report: {refname} is HEAD, so its figures are the baseline's own");
+            return Ok(Some(baseline.clone()));
+        }
+        refrun::Anchor::At(sha) => sha,
+    };
     let key = |pkg: &str| {
         let common = invoke::CommonArgs::default();
         let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
@@ -374,7 +385,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
     // snapshot into "what moved", which is what a changelog reader wants and
     // what keeps a no-op merge from rewriting the whole table.
     let ref_baseline = match &a.against_ref {
-        Some(refname) => match measure_ref(&a, refname) {
+        Some(refname) => match measure_ref(&a, refname, &root, &baseline) {
             Ok(b) => b,
             Err(e) => return err(&e),
         },

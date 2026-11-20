@@ -45,6 +45,7 @@ mod mcp;
 mod plan;
 mod prebuild;
 mod project_surface;
+mod refrun;
 mod report;
 mod runcache;
 mod rustdoc_inputs;
