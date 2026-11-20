@@ -52,6 +52,8 @@ pub struct CiEnv {
     /// Whether the default branch's pushes regenerate what the checks would
     /// otherwise fail a pull request for (`SOOTHFAST_REGEN=true`).
     pub regen: bool,
+    /// Whether a pull request's base is the repository's default branch.
+    pub into_default_branch: bool,
 }
 
 /// Takes the flags `--event`, `--base` and `--results` out of `args`, and
@@ -133,13 +135,16 @@ impl CiEnv {
                 .pointer("/pull_request/number")
                 .and_then(Value::as_u64),
             regen: var("SOOTHFAST_REGEN").is_some_and(|v| v == "true"),
+            into_default_branch: text(&["pull_request", "base", "ref"])
+                .zip(text(&["repository", "default_branch"]))
+                .is_some_and(|(base, default)| base == default),
         }
     }
 
-    /// Whether this run is a pull request whose generated files are
-    /// regenerated on the default branch after merge.
+    /// Whether this run is a pull request into the default branch, whose
+    /// generated files are regenerated there after merge.
     pub fn regenerated_after_merge(&self) -> bool {
-        self.regen && self.event == Event::PullRequest
+        self.regen && self.event == Event::PullRequest && self.into_default_branch
     }
 }
 
@@ -160,6 +165,8 @@ mod tests {
 
     const PULL: &str = r#"{"number": 7, "pull_request": {"number": 7,
         "base": {"sha": "b4se"}, "head": {"sha": "h3ad"}}}"#;
+    const INTO_MAIN: &str = r#"{"pull_request": {"base": {"ref": "main"}},
+        "repository": {"default_branch": "main"}}"#;
     const PUSH: &str = r#"{"before": "pr3v", "repository": {"default_branch": "main"}}"#;
 
     #[test]
@@ -184,6 +191,7 @@ mod tests {
                 results: Some("/tmp/r/soothfast-results".into()),
                 pr: Some(7),
                 regen: false,
+                into_default_branch: false,
             }
         );
     }
@@ -195,13 +203,28 @@ mod tests {
                 ("GITHUB_EVENT_NAME", "pull_request"),
                 ("SOOTHFAST_REGEN", value),
             ]);
-            CiEnv::parse(&vars, None, &Flags::default())
+            CiEnv::parse(&vars, Some(INTO_MAIN), &Flags::default())
         };
         assert!(regen("true").regenerated_after_merge());
         assert!(!regen("false").regenerated_after_merge());
-        assert!(!regen("").regenerated_after_merge());
         let unset = vars(&[("GITHUB_EVENT_NAME", "pull_request")]);
-        assert!(!CiEnv::parse(&unset, None, &Flags::default()).regen);
+        assert!(!CiEnv::parse(&unset, Some(INTO_MAIN), &Flags::default()).regen);
+    }
+
+    #[test]
+    fn a_pull_request_into_another_branch_is_not_regenerated() {
+        let vars = vars(&[
+            ("GITHUB_EVENT_NAME", "pull_request"),
+            ("SOOTHFAST_REGEN", "true"),
+        ]);
+        let into = |payload: &str| {
+            CiEnv::parse(&vars, Some(payload), &Flags::default()).regenerated_after_merge()
+        };
+        assert!(!into(
+            r#"{"pull_request": {"base": {"ref": "release/0.6"}}, "repository": {"default_branch": "main"}}"#
+        ));
+        assert!(!into(r#"{"pull_request": {"base": {"ref": "main"}}}"#));
+        assert!(!into(r#"{"repository": {"default_branch": "main"}}"#));
     }
 
     #[test]
