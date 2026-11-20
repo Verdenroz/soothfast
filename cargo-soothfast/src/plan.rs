@@ -116,7 +116,7 @@ pub fn run(args: &[String]) -> i32 {
         args.shards,
         args.first_shard_only,
         &args.pr,
-        CiEnv::from_process(&Flags::default()).regenerated_after_merge(),
+        CiEnv::from_process(&Flags::default()).bot_regenerates(),
     ) {
         Ok(plan) => plan,
         Err(e) => return err(&e),

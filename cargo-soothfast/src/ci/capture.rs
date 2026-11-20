@@ -60,9 +60,9 @@ fn configured() -> Result<Vec<String>, String> {
 
 /// Entry point for `ci capture`.
 pub fn run(env: &CiEnv, args: &[String]) -> i32 {
-    match regen::after_merge(env) {
+    match regen::bot_regenerates(env) {
         Ok(true) => {
-            println!("ci capture: skipped, regenerated on the default branch after merge");
+            println!("ci capture: skipped, regenerated on the default branch");
             return 0;
         }
         Ok(false) => {}

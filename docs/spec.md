@@ -395,10 +395,11 @@ is invisible and a real edit is named at the field it happened to.
 
 `spec gen --check` is the companion staleness gate: it fails when
 regenerating would change a committed file, so the bot's output can never
-silently diverge from the code. With the bot on, `ci spec` runs it (and
-`sdk gen --check`) on pushes only: a pull request into the default branch
-leaves those files to the regeneration after merge and keeps `spec gate` and
-`spec check`.
+silently diverge from the code. With the bot on, `ci spec` leaves it (and
+`sdk gen --check`) out of a pull request into the default branch and a push
+to it, where the push's regeneration rewrites those files, and keeps
+`spec gate` and `spec check`. Every other run still checks, and so does a
+repository without the bot.
 
 ## Reconciliation
 

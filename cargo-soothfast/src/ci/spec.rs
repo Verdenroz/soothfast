@@ -54,8 +54,8 @@ fn gate_base(env: &CiEnv) -> Option<String> {
     env.base.clone().filter(|_| given)
 }
 
-/// The checks a pull request skips because the default branch regenerates
-/// what they compare: the generated spec and the generated SDK.
+/// The checks a run skips where the bot regenerates what they compare: the
+/// generated spec and the generated SDK.
 fn regenerated(pkg: &Package) -> Vec<&'static str> {
     let mut names = Vec::new();
     if pkg.generates {
@@ -137,16 +137,14 @@ fn inner(env: &CiEnv, opts: &Options) -> i32 {
         return crate::arg_err("ci spec --inner takes one -p");
     };
     let read = package(name).and_then(|pkg| {
-        let regen = (pkg.generates || pkg.sdk) && regen::after_merge(env)?;
+        let regen = (pkg.generates || pkg.sdk) && regen::bot_regenerates(env)?;
         Ok((pkg, regen))
     });
     match read {
         Ok((pkg, regen)) => {
             if regen {
                 for skipped in regenerated(&pkg) {
-                    println!(
-                        "ci spec: {skipped} skipped, regenerated on the default branch after merge"
-                    );
+                    println!("ci spec: {skipped} skipped, regenerated on the default branch");
                 }
             }
             each::run_steps(&steps(&pkg, opts.against.as_deref(), regen), each::spawn)

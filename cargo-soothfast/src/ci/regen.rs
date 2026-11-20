@@ -13,11 +13,11 @@ const DEFAULT_BASELINE: &str = "base";
 const SPEC_PATHS: [&str; 3] = ["*.yaml", "*.yml", "*.json"];
 const UNCHANGED: &str = "paths=\nchanged=false\n";
 
-/// Whether `env` is a pull request whose generated files the default branch
-/// regenerates after merge. The workflow regenerates in its gate job, which
-/// runs only in a workspace with a package to gate.
-pub(super) fn after_merge(env: &CiEnv) -> Result<bool, String> {
-    if !env.regenerated_after_merge() {
+/// Whether the bot regenerates the generated files of the run `env`
+/// describes. The workflow regenerates in its gate job, which runs only in a
+/// workspace with a package to gate.
+pub(super) fn bot_regenerates(env: &CiEnv) -> Result<bool, String> {
+    if !env.bot_regenerates() {
         return Ok(false);
     }
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;

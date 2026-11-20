@@ -143,10 +143,15 @@ impl CiEnv {
         }
     }
 
-    /// Whether this run is a pull request into the default branch, whose
-    /// generated files are regenerated there after merge.
-    pub fn regenerated_after_merge(&self) -> bool {
-        self.regen && self.event == Event::PullRequest && self.into_default_branch
+    /// Whether the bot regenerates this run's generated files: a pull request
+    /// into the default branch or a push to it, with regeneration on.
+    pub fn bot_regenerates(&self) -> bool {
+        let on_default_branch = match self.event {
+            Event::PullRequest => self.into_default_branch,
+            Event::Push => self.default_branch,
+            Event::Other => false,
+        };
+        self.regen && on_default_branch
     }
 }
 
@@ -207,8 +212,8 @@ mod tests {
             ]);
             CiEnv::parse(&vars, Some(INTO_MAIN), &Flags::default())
         };
-        assert!(regen("true").regenerated_after_merge());
-        assert!(!regen("false").regenerated_after_merge());
+        assert!(regen("true").bot_regenerates());
+        assert!(!regen("false").bot_regenerates());
         let unset = vars(&[("GITHUB_EVENT_NAME", "pull_request")]);
         assert!(!CiEnv::parse(&unset, Some(INTO_MAIN), &Flags::default()).regen);
     }
@@ -219,9 +224,8 @@ mod tests {
             ("GITHUB_EVENT_NAME", "pull_request"),
             ("SOOTHFAST_REGEN", "true"),
         ]);
-        let into = |payload: &str| {
-            CiEnv::parse(&vars, Some(payload), &Flags::default()).regenerated_after_merge()
-        };
+        let into =
+            |payload: &str| CiEnv::parse(&vars, Some(payload), &Flags::default()).bot_regenerates();
         assert!(!into(
             r#"{"pull_request": {"base": {"ref": "release/0.6"}}, "repository": {"default_branch": "main"}}"#
         ));
@@ -230,18 +234,33 @@ mod tests {
     }
 
     #[test]
-    fn regeneration_after_merge_is_about_pull_requests() {
-        let push = vars(&[("GITHUB_EVENT_NAME", "push"), ("SOOTHFAST_REGEN", "true")]);
-        let env = CiEnv::parse(&push, None, &Flags::default());
-        assert!(env.regen);
-        assert!(!env.regenerated_after_merge());
-        let manual = vars(&[
-            ("GITHUB_EVENT_NAME", "workflow_dispatch"),
-            ("SOOTHFAST_REGEN", "true"),
-        ]);
-        assert!(
-            !CiEnv::parse(&manual, Some(INTO_MAIN), &Flags::default()).regenerated_after_merge()
-        );
+    fn a_push_is_regenerated_only_on_the_default_branch() {
+        let push = |git_ref: &str, regen: &str| {
+            let vars = vars(&[
+                ("GITHUB_EVENT_NAME", "push"),
+                ("GITHUB_REF", git_ref),
+                ("SOOTHFAST_REGEN", regen),
+            ]);
+            CiEnv::parse(&vars, Some(PUSH), &Flags::default()).bot_regenerates()
+        };
+        assert!(push("refs/heads/main", "true"));
+        assert!(!push("refs/heads/main", ""));
+        assert!(!push("refs/heads/release/0.6", "true"));
+        assert!(!push("refs/tags/main", "true"));
+    }
+
+    #[test]
+    fn no_other_event_is_regenerated() {
+        for event in ["workflow_dispatch", "schedule", "merge_group"] {
+            let vars = vars(&[
+                ("GITHUB_EVENT_NAME", event),
+                ("GITHUB_REF", "refs/heads/main"),
+                ("SOOTHFAST_REGEN", "true"),
+            ]);
+            let env = CiEnv::parse(&vars, Some(INTO_MAIN), &Flags::default());
+            assert!(env.regen && env.default_branch);
+            assert!(!env.bot_regenerates(), "{event}");
+        }
     }
 
     #[test]
