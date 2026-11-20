@@ -1111,10 +1111,17 @@ which fails on a stale committed spec. On a pull request, and on any run given
 `--base`, `spec gate` compares with the base; a push alone has none. The base
 is the spec committed at the merge-base, which that same check pinned to its
 code, so nothing is built there; a committed spec that does not re-render is
-rebuilt in a worktree instead. A package
+rebuilt in a worktree instead. The head's spec is always built from its
+routes. A package
 with a spec that is not generated runs `spec check`, and one with an `[[sdk]]`
 entry runs `sdk gen --check`. Every step runs even after one fails, and each
 package records a `check` verdict named `spec-PKG` with the worst exit code.
+With the `bot` input on, a pull request into the default branch runs neither
+`spec gen --check` nor `sdk gen --check`, since the default branch's push
+regenerates those files after merge, and says so; `spec gate` and `spec check`
+still run, and a package left with no step passes. A push runs every check.
+The workflow tells the CLI through `SOOTHFAST_REGEN=true`, which unset means
+off.
 With nothing configured it says so and records nothing.
 `ci proto` runs `spec check-proto` for every package with a `[[proto]]`
 entry, or the `-p` ones given, which reconciles each message's fields against
@@ -1134,7 +1141,9 @@ all the docs would compile into each package's crate, so only a package whose
 package, `capture_paths` under `[ci]` lists the docs to check in place of all
 of them, which leaves out a page whose output changes from run to run. Each
 package records a `check` verdict named `capture-PKG`. With no such package it says so
-and records nothing.
+and records nothing. With the `bot` input on, a pull request into the default
+branch plans no capture check, and `ci capture` run there passes with a line
+saying the output is regenerated after merge.
 `ci site` builds the docs site with `docs build --out DIR`, where DIR is
 `target/soothfast-site` unless `--out` says otherwise. It builds against the
 `head` baseline when `.soothfast/baselines/head.json` exists. It runs only when
