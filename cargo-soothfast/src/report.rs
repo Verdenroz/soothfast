@@ -182,9 +182,9 @@ fn measure_ref(
     a: &ReportArgs,
     refname: &str,
     root: &Path,
+    config: &Config,
     baseline: &Value,
 ) -> Result<Option<Value>, String> {
-    let features = a.features.clone();
     let sha = match refrun::anchor(root, refname) {
         refrun::Anchor::Head => {
             println!("report: {refname} is HEAD, so its figures are the baseline's own");
@@ -192,17 +192,23 @@ fn measure_ref(
         }
         refrun::Anchor::At(sha) => sha,
     };
-    let key = |pkg: &str| {
-        let common = invoke::CommonArgs::default();
+    let commons = a
+        .pkg
+        .iter()
+        .map(|pkg| refrun::common(config, pkg))
+        .collect::<Result<Vec<_>, _>>()?;
+    let key = |common: &invoke::CommonArgs| {
         let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
-        (!sha.is_empty()).then(|| runcache::report_key(&sha, pkg, features.as_deref(), &stamp))
+        let pkg = common.pkg.as_deref().unwrap_or_default();
+        (!sha.is_empty())
+            .then(|| runcache::report_key(&sha, pkg, common.features.as_deref(), &stamp))
     };
     let mut docs = Vec::new();
     let mut unmeasured = Vec::new();
-    for pkg in &a.pkg {
-        match key(pkg).and_then(|key| runcache::stored_report(&key)) {
+    for common in &commons {
+        match key(common).and_then(|key| runcache::stored_report(&key)) {
             Some(doc) => docs.push(doc),
-            None => unmeasured.push(pkg.clone()),
+            None => unmeasured.push(common),
         }
     }
     if unmeasured.is_empty() {
@@ -211,26 +217,21 @@ fn measure_ref(
         println!("report: measuring {refname} in a worktree for the perf delta");
         let runs = invoke::with_merge_base_worktree(refname, |wt| {
             let mut runs = Vec::new();
-            for pkg in &unmeasured {
-                if !workspace::has_bench_target(pkg, "soothfast", Some(wt))
-                    .map_err(|e| e.to_string())?
-                {
+            for common in &unmeasured {
+                let pkg = common.pkg.as_deref().unwrap_or_default();
+                let target = common.target.as_deref().unwrap_or("soothfast");
+                if !workspace::has_bench_target(pkg, target, Some(wt)).map_err(|e| e.to_string())? {
                     continue;
                 }
-                let common = invoke::CommonArgs {
-                    pkg: Some(pkg.clone()),
-                    features: features.clone(),
-                    ..Default::default()
-                };
                 let records =
-                    invoke::run_bench_in(&common, &[], Some(wt)).map_err(|e| e.to_string())?;
-                runs.push((pkg.clone(), invoke::collect(&records)));
+                    invoke::run_bench_in(common, &[], Some(wt)).map_err(|e| e.to_string())?;
+                runs.push((*common, invoke::collect(&records)));
             }
             Ok(runs)
         })?;
-        for (pkg, run) in runs {
+        for (common, run) in runs {
             let doc = headrun::ref_doc(&run);
-            if let Some(key) = key(&pkg) {
+            if let Some(key) = key(common) {
                 runcache::keep_report(&key, &doc);
             }
             docs.push(doc);
@@ -385,7 +386,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
     // snapshot into "what moved", which is what a changelog reader wants and
     // what keeps a no-op merge from rewriting the whole table.
     let ref_baseline = match &a.against_ref {
-        Some(refname) => match measure_ref(&a, refname, &root, &baseline) {
+        Some(refname) => match measure_ref(&a, refname, &root, &config, &baseline) {
             Ok(b) => b,
             Err(e) => return err(&e),
         },
