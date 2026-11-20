@@ -846,38 +846,6 @@ so a repo set up with init requires <code>soothfast / verdict</code>. The check 
 regressed or errored, or recorded no result; a perf-accepted label
 (<code>soothfast:perf-accepted</code> unless <code>perf_accepted_labels</code> renames it) applied by
 a writer waives regressions, never errors or docs drift.</p>
-<h3 id="pull-requests-from-forks">Pull requests from forks<a class="anchor" href="#pull-requests-from-forks" aria-label="Link to this section">#</a></h3>
-<p>The verdict body is also written to the run's job summary, whoever opened the
-pull request. A fork's run has a read-only token and no OIDC identity, so the
-<code>verdict</code> job cannot comment. It uploads the body and the pull request number
-as the <code>soothfast-verdict-comment-attempt-&lt;attempt&gt;</code> artifact, and a second
-workflow posts it.</p>
-<p>The contributor sees the comment, headed by a line saying it came from a
-fork's run and was not produced with the repository's token. It is posted
-with <code>github.token</code>, not by the bot, under the same marker, so the next
-verdict replaces it. A pull request from the same repository is unaffected:
-its comment is posted directly and nothing is uploaded.</p>
-<p>It is two workflows because the fork's own run executes code and a workflow
-file the fork controls. The comment job runs from <code>workflow_run</code>, which GitHub
-starts from the base repository with its permissions: <code>cargo soothfast init</code>
-writes it as <code>soothfast-comment.yml</code>, a caller of the reusable <code>comment.yml</code>
-with <code>actions: read</code> and <code>pull-requests: write</code> and nothing else. It never
-checks out or runs the pull request's code, and it runs only for a
-<code>pull_request</code> run whose head repository is not this one. The generated file
-carries a <code>zizmor: ignore[dangerous-triggers]</code> on its <code>on:</code> line for that
-reason.</p>
-<p>The artifact is untrusted, so the job trusts only what GitHub reports about the
-run: its id, head commit, head repository and head branch. The number in the
-artifact is posted to only when it is a plain integer naming an open pull
-request of this repository whose head is that commit, repository and branch,
-and whose head repository is not the base repository. Otherwise nothing is
-posted and a notice says why. The body is capped below GitHub's comment limit
-and truncated with a line saying so. Each attempt of a run uploads its own
-artifact and the job reads the one of the attempt that triggered it, so a
-re-run posts its own verdict or nothing, and a run for an older commit cannot
-overwrite a newer verdict.</p>
-<p>A repository on the reusable workflow only needs the <code>soothfast-comment.yml</code>
-file; <code>init --check</code> reports it missing or changed like the main caller.</p>
 <h3 id="bot-landings">Bot landings<a class="anchor" href="#bot-landings" aria-label="Link to this section">#</a></h3>
 <p>A pull request the bot opens to land regenerated files runs no lane.
 <code>cargo soothfast plan</code> plans nothing for it, every lane job is skipped, and
@@ -1276,8 +1244,6 @@ installs the release matching your <code>Cargo.lock</code>.</p>
     <li><a class="toc-l3" href="#keeping-a-trend">Keeping a trend</a></li>
   
     <li><a class="toc-l2" href="#one-verdict">One verdict</a></li>
-  
-    <li><a class="toc-l3" href="#pull-requests-from-forks">Pull requests from forks</a></li>
   
     <li><a class="toc-l3" href="#bot-landings">Bot landings</a></li>
   
