@@ -14,9 +14,22 @@
 
 - Comment a fork's verdict from workflow_run (#462)
 
+### 🐛 Fixes
+
+- Keep changelog rows whose delta is unchanged (#463)
+
 ### ⚡ Performance
 
 - Regenerate in a job of its own (#461)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-report
+ADDED    soothfast_report::changelog::keep_stable_rows
+```
 
 
 ## 0.6.0 - 2026-11-18
