@@ -886,7 +886,9 @@ starts from the base repository with its permissions: `cargo soothfast init`
 writes it as `soothfast-comment.yml`, a caller of the reusable `comment.yml`
 with `actions: read` and `pull-requests: write` and nothing else. It never
 checks out or runs the pull request's code, and it runs only for a
-`pull_request` run whose head repository is not this one.
+`pull_request` run whose head repository is not this one. The generated file
+carries a `zizmor: ignore[dangerous-triggers]` on its `on:` line for that
+reason.
 
 The artifact is untrusted, so the job trusts only what GitHub reports about the
 run: its id, head commit, head repository and head branch. The number in the
