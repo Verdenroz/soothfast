@@ -6,7 +6,9 @@ use super::bot::{bot_enabled, has_bot_table};
 use super::ci::Ci;
 use super::ecosystem::{self, parse_projects};
 use super::textdiff;
-use super::workflow::{WORKFLOW_PATH, Workspace, workflow};
+use super::workflow::{
+    COMMENT_WORKFLOW_PATH, WORKFLOW_PATH, Workspace, comment_workflow, workflow,
+};
 
 const SOOTHFAST_TOML: &str = "\
 # Counters (callgrind or perf) gate; walltime is reported and never fails,
@@ -288,6 +290,16 @@ pub(super) fn scaffold(ws: &Workspace) -> Vec<Scaffold> {
             content: workflow(ws),
         },
     );
+    if let Some(content) = comment_workflow(ws) {
+        files.insert(
+            1,
+            Scaffold {
+                path: COMMENT_WORKFLOW_PATH.into(),
+                kind: Kind::Whole,
+                content,
+            },
+        );
+    }
     if !ws.projects.is_empty() {
         files.push(Scaffold {
             path: "soothfast.toml".into(),
