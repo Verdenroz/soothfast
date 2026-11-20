@@ -49,6 +49,9 @@ pub struct CiEnv {
     /// Where jobs record their verdicts. A run with none records nothing.
     pub results: Option<PathBuf>,
     pub pr: Option<u64>,
+    /// Whether the default branch's pushes regenerate what the checks would
+    /// otherwise fail a pull request for (`SOOTHFAST_REGEN=true`).
+    pub regen: bool,
 }
 
 /// Takes the flags `--event`, `--base` and `--results` out of `args`, and
@@ -129,7 +132,14 @@ impl CiEnv {
             pr: payload
                 .pointer("/pull_request/number")
                 .and_then(Value::as_u64),
+            regen: var("SOOTHFAST_REGEN").is_some_and(|v| v == "true"),
         }
+    }
+
+    /// Whether this run is a pull request whose generated files are
+    /// regenerated on the default branch after merge.
+    pub fn regenerated_after_merge(&self) -> bool {
+        self.regen && self.event == Event::PullRequest
     }
 }
 
@@ -173,8 +183,33 @@ mod tests {
                 default_branch: false,
                 results: Some("/tmp/r/soothfast-results".into()),
                 pr: Some(7),
+                regen: false,
             }
         );
+    }
+
+    #[test]
+    fn regeneration_is_on_only_when_the_variable_says_true() {
+        let regen = |value: &str| {
+            let vars = vars(&[
+                ("GITHUB_EVENT_NAME", "pull_request"),
+                ("SOOTHFAST_REGEN", value),
+            ]);
+            CiEnv::parse(&vars, None, &Flags::default())
+        };
+        assert!(regen("true").regenerated_after_merge());
+        assert!(!regen("false").regenerated_after_merge());
+        assert!(!regen("").regenerated_after_merge());
+        let unset = vars(&[("GITHUB_EVENT_NAME", "pull_request")]);
+        assert!(!CiEnv::parse(&unset, None, &Flags::default()).regen);
+    }
+
+    #[test]
+    fn regeneration_after_merge_is_about_pull_requests() {
+        let push = vars(&[("GITHUB_EVENT_NAME", "push"), ("SOOTHFAST_REGEN", "true")]);
+        let env = CiEnv::parse(&push, None, &Flags::default());
+        assert!(env.regen);
+        assert!(!env.regenerated_after_merge());
     }
 
     #[test]
