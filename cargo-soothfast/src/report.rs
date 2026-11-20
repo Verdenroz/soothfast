@@ -814,7 +814,7 @@ mod tests {
             )
         };
         let existing = merge_changelog("", &table("100.0"));
-        let merged = merge_changelog(&existing, &table("100.2"));
+        let merged = merge_changelog(&existing, &table("100.02"));
         assert_eq!(merged, existing);
     }
 
