@@ -100,7 +100,10 @@ pseudo-items in the shared baseline file stay out.
 `cargo soothfast report changelog -p mylib --against-ref v1.0` merges a
 fresh "Unreleased" section into `CHANGELOG.md` in place. Every
 `## [released]` section already there survives. Re-running it is idempotent:
-it replaces the `Unreleased` section rather than appending a duplicate.
+it replaces the `Unreleased` section rather than appending a duplicate. A
+row of the Gate movement table whose displayed delta is unchanged, with `was`
+and `now` within 0.05% of the row already in the file, keeps its text, so a
+reading that wobbles by a few instructions does not rewrite the file.
 
 The draft leads with what merged since `v1.0`, grouped into Features, Fixes,
 Performance, Documentation, Dependencies and Internal by each commit's type,
