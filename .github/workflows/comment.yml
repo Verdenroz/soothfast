@@ -12,6 +12,10 @@ on:
         description: The ref of Verdenroz/soothfast whose action/ scripts to run.
         type: string
         required: true
+      runs_on:
+        description: JSON for the runner labels of the job.
+        type: string
+        default: '"ubuntu-latest"'
 
 permissions: {}
 
@@ -21,7 +25,7 @@ jobs:
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name != github.repository
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
     permissions:
       actions: read
       pull-requests: write
@@ -47,5 +51,7 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/soothfast-verdict-comment
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           GH_TOKEN: ${{ github.token }}
         run: ./.soothfast-action/action/fork-comment.sh
