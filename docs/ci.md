@@ -1237,8 +1237,8 @@ reference run is recorded either way.
 The generated workflow runs the regeneration as a job of its own, `Regenerate`,
 after the gate. The gate job of a push only records the reference run. The
 regeneration job restores the built stores and the runs the gate saved, so
-`measure` reads HEAD's run back, and its concurrency group is the branch with
-`cancel-in-progress`: a newer push cancels an older regeneration still
+`measure` reads HEAD's run back. It runs in one concurrency group per branch
+with `cancel-in-progress`: a newer push cancels an older regeneration still
 running, and a burst of merges runs one. The plan job runs `ci regen --probe`
 first: the push of the bot's own landing skips the job and never enters the
 group, so it cannot cancel the regeneration of the push before it.

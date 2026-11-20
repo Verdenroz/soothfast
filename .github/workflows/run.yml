@@ -206,9 +206,7 @@ jobs:
         if: >-
           inputs.bot && github.event_name == 'push'
           && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        run: |
-          probe=$(cargo soothfast ci regen --probe || true)
-          grep -x 'generated=true' <<<"$probe" >>"$GITHUB_OUTPUT" || true
+        run: cargo soothfast ci regen --probe | grep -x 'generated=true' >>"$GITHUB_OUTPUT" || true
       - name: Upload the results of tests that need no job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -691,12 +689,12 @@ jobs:
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
 
-  # One regeneration per branch: a newer push cancels an older one still running.
   regen:
     name: Regenerate
     needs: [plan, gate-rust]
     if: >-
-      ${{ inputs.bot && github.event_name == 'push'
+      ${{ !cancelled() && needs.gate-rust.result == 'success'
+      && inputs.bot && github.event_name == 'push'
       && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       && needs.plan.outputs.generated != 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
