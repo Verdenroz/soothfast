@@ -35,7 +35,7 @@ pub use rust::{RustPlan, has_markers, rust_plan};
 use scaffold::{Kind, scaffold};
 use target::target;
 pub use target::{ci, manifest, suites};
-use workflow::WORKFLOW_PATH;
+use workflow::{COMMENT_WORKFLOW_PATH, WORKFLOW_PATH};
 
 /// The toolchain versions and soothfast ref init's flags pin, over the ones an existing
 /// workflow already carries.
@@ -182,7 +182,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
     0
 }
 
-/// The workflow files besides the one init writes that call soothfast, as
+/// The workflow files besides the ones init writes that call soothfast, as
 /// repo-relative paths.
 fn other_callers(root: &Path) -> Vec<String> {
     let dir = root.join(".github/workflows");
@@ -203,7 +203,11 @@ fn other_callers(root: &Path) -> Vec<String> {
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml"))
-        .filter(|p| p.file_name() != Path::new(WORKFLOW_PATH).file_name())
+        .filter(|p| {
+            [WORKFLOW_PATH, COMMENT_WORKFLOW_PATH]
+                .iter()
+                .all(|own| p.file_name() != Path::new(own).file_name())
+        })
         .filter(|p| std::fs::read_to_string(p).is_ok_and(|t| calls(&t)))
         .filter_map(|p| Some(format!(".github/workflows/{}", p.file_name()?.to_str()?)))
         .collect();
@@ -387,6 +391,10 @@ cmd = "npm test"
             "    uses: Verdenroz/soothfast/.github/workflows/run.yml@abc\n",
         );
         write("soothfast.yml", "    uses: Verdenroz/soothfast@abc\n");
+        write(
+            "soothfast-comment.yml",
+            "    uses: Verdenroz/soothfast/.github/workflows/comment.yml@abc\n",
+        );
         write(
             "other.yml",
             "      - uses: actions/checkout@abc\n# Verdenroz/soothfast@x\n",
