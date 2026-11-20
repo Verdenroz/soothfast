@@ -10,6 +10,10 @@
 <!-- What a consumer has to do. "Nothing" is a useful answer. -->
 <!-- /soothfast:notes -->
 
+### ✨ Features
+
+- Comment a fork's verdict from workflow_run (#462)
+
 ### ⚡ Performance
 
 - Regenerate in a job of its own (#461)
