@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use super::select::{Lane, SpecPackage, Wanted};
-use crate::config::{self, Group};
-use crate::invoke::CommonArgs;
+use crate::config::{self, Config, Group};
+use crate::invoke::{self, CommonArgs};
+use crate::report::resolve_features;
 
 pub(super) struct Args {
     pub(super) common: CommonArgs,
@@ -60,6 +61,7 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
         spec: Vec::new(),
         docs_features: None,
         docs_defaults: BTreeMap::new(),
+        changelog: Vec::new(),
         docs_paths: Vec::new(),
         against_ref: None,
         reuse_base: true,
@@ -72,6 +74,7 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
         match a.as_str() {
             "-p" | "--package" => wanted.packages.push(take(&mut it, a)?),
             "--docs" => wanted.docs.push(take(&mut it, a)?),
+            "--changelog" => wanted.changelog.push((take(&mut it, a)?, None)),
             "--docs-features" => wanted.docs_features = Some(take(&mut it, a)?),
             "--docs-paths" => {
                 let given = wanted.docs_paths.len();
@@ -112,6 +115,14 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
             wanted
                 .docs_defaults
                 .extend(defaults.features.map(|f| (pkg.clone(), f)));
+        }
+    }
+    if !wanted.changelog.is_empty() {
+        let config = Config::load(&invoke::project_root())?;
+        let (changelog, gate) = (config.changelog()?.features, config.gate()?.features);
+        for (pkg, features) in &mut wanted.changelog {
+            let docs = config::defaults(std::slice::from_ref(pkg), Group::Docs)?.features;
+            *features = resolve_features(docs, changelog.as_deref(), gate.as_deref());
         }
     }
     config::apply_to(&mut common, Group::Gate, &wanted.packages)?;

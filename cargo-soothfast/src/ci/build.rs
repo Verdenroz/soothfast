@@ -8,7 +8,8 @@ use std::process::Command;
 use soothfast_registry::fnv1a;
 
 use super::env::{CiEnv, Event};
-use crate::config::{self, Group, Settings};
+use super::regen::changelog_listed;
+use crate::config::{self, Config, Group, Settings};
 use crate::init;
 use crate::{invoke, spec_config, workspace};
 
@@ -49,7 +50,7 @@ fn parse(args: &[String]) -> Result<Job, String> {
         };
         match a.as_str() {
             "-p" | "--package" => job.named.push(("-p".into(), value()?)),
-            "--docs" | "--spec" => job.named.push((a.clone(), value()?)),
+            "--docs" | "--spec" | "--changelog" => job.named.push((a.clone(), value()?)),
             "--shards" => match value()?.parse() {
                 Ok(n) if n >= 1 => job.shards = n,
                 _ => return Err("--shards wants a count of at least 1".into()),
@@ -108,6 +109,8 @@ enum Source {
     Spec,
     /// Packages that generate a spec from the code.
     Generating,
+    /// Packages the changelog lists, on the push that regenerates it.
+    Changelog,
 }
 
 /// How `prebuild` takes a lane's packages and which defaults they resolve.
@@ -144,6 +147,12 @@ const LANES: &[LaneKind] = &[
         flag: "--spec",
         group: Group::Spec,
         source: Source::Generating,
+    },
+    LaneKind {
+        name: "rustdoc",
+        flag: "--changelog",
+        group: Group::Docs,
+        source: Source::Changelog,
     },
 ];
 
@@ -202,7 +211,8 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     let has_parent = || invoke::git(&["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok();
     let shape = shape(env, job.shards, has_parent);
     let resolve = |pkg: &str, group| config::defaults(&[pkg.to_string()], group);
-    let (packages, calls) = match plan(&job, &shape, load, resolve) {
+    let loaded = |source| load(source, env);
+    let (packages, calls) = match plan(&job, &shape, loaded, resolve) {
         Ok(planned) => planned,
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -259,14 +269,27 @@ fn plan(
     Ok((packages, calls))
 }
 
-fn load(source: Source) -> Result<Vec<String>, String> {
+fn load(source: Source, env: &CiEnv) -> Result<Vec<String>, String> {
     let root = invoke::project_root();
     match source {
         Source::Gated => workspace::bench_crates("soothfast", Some(&root)),
         Source::Docs => Ok(init::rust_plan(&root)?.docs_packages),
         Source::Spec => Ok(spec_config::configured(&root)?.0),
         Source::Generating => Ok(spec_config::configured(&root)?.1),
+        Source::Changelog if regenerates_changelog(env) => {
+            let listed = Config::load(&root)?.changelog()?.packages;
+            let gated = workspace::bench_crates("soothfast", Some(&root))?;
+            Ok(changelog_listed(&listed, &gated).to_vec())
+        }
+        Source::Changelog => Ok(Vec::new()),
     }
+}
+
+/// Whether the run is the push `ci regen` regenerates the changelog on. The
+/// workflow's `--no-changelog` is not visible here, so a repository that
+/// turns it off still prebuilds the changelog's rustdoc.
+fn regenerates_changelog(env: &CiEnv) -> bool {
+    env.event == Event::Push && env.default_branch
 }
 
 /// Runs every call, then lists the built items and the store's checksums as
@@ -529,7 +552,37 @@ mod tests {
             Source::Docs => argv(&["d"]),
             Source::Spec => argv(&["s", "g"]),
             Source::Generating => argv(&["g"]),
+            Source::Changelog => Vec::new(),
         })
+    }
+
+    #[test]
+    fn only_a_default_branch_push_prebuilds_for_the_changelog() {
+        assert!(regenerates_changelog(&env(Event::Push, None, true)));
+        assert!(!regenerates_changelog(&env(Event::Push, None, false)));
+        assert!(!regenerates_changelog(&env(Event::PullRequest, None, true)));
+        assert!(!regenerates_changelog(&env(Event::Other, None, true)));
+    }
+
+    #[test]
+    fn the_changelogs_packages_build_in_a_call_of_their_own() {
+        let shape = shape(&env(Event::Push, None, true), 1, || false);
+        let listed = |source| match source {
+            Source::Changelog => Ok(argv(&["c"])),
+            other => configured(other),
+        };
+        let (packages, calls) = plan(&job("rustdoc", None), &shape, listed, no_features).unwrap();
+        assert_eq!(packages, ["d", "g", "c"]);
+        assert_eq!(
+            calls.last(),
+            Some(&argv(&[
+                "prebuild",
+                "--only",
+                "rustdoc",
+                "--changelog",
+                "c"
+            ]))
+        );
     }
 
     #[test]

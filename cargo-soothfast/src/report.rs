@@ -437,7 +437,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
 
 /// The features `report changelog` reads the API surface under: the command
 /// line first, then `[changelog] features`, then `[gate] features`.
-fn resolve_features(
+pub(crate) fn resolve_features(
     cli: Option<String>,
     changelog: Option<&str>,
     gate: Option<&str>,
