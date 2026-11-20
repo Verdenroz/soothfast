@@ -220,6 +220,11 @@ pub fn rustdoc_json_in(
     Ok((doc, root))
 }
 
+/// `rustc -vV` of the toolchain that builds rustdoc JSON for the tree at `root`.
+pub fn rustdoc_rustc(root: &Path) -> Option<String> {
+    store::rustc_version(Some(&rustdoc_toolchain()), root)
+}
+
 /// The store key `rustdoc_json_in` looks `pkg` up under in the workspace.
 pub fn rustdoc_key(pkg: &str, features: Option<&str>, visibility: Visibility) -> Option<String> {
     let root = workspace_root().ok()?;

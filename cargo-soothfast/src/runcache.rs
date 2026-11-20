@@ -260,13 +260,21 @@ pub fn report_key(sha: &str, pkg: &str, features: Option<&str>, stamp: &BuildSta
 /// this host. Reading it renews it, so a measurement every push reads
 /// outlives the runs stored around it.
 pub fn stored_report(key: &str) -> Option<Value> {
+    stored_doc(key).filter(|doc| stands_on(doc, &cpu_model()))
+}
+
+/// The document stored under `key`, renewed by the read. Unlike a run it
+/// does not depend on the host that wrote it.
+pub fn stored_doc(key: &str) -> Option<Value> {
     let text = std::fs::read_to_string(dir()?.join(format!("{key}.json"))).ok()?;
     let doc: Value = serde_json::from_str(&text).ok()?;
-    if !stands_on(&doc, &cpu_model()) {
-        return None;
-    }
     store(key, &doc);
     Some(doc)
+}
+
+/// Keep `doc` under `key`, which names every input it was derived from.
+pub fn keep_doc(key: &str, doc: &Value) {
+    store(key, doc);
 }
 
 /// Keep `doc` as the measurement [`report_key`] names, with the host it ran on.

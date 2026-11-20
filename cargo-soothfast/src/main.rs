@@ -46,6 +46,7 @@ mod plan;
 mod prebuild;
 mod project_surface;
 mod refrun;
+mod refsurface;
 mod report;
 mod runcache;
 mod rustdoc_inputs;

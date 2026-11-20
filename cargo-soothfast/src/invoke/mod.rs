@@ -40,7 +40,7 @@ pub use run::{
     run_to_items_value,
 };
 pub(crate) use rustdoc::{RUSTDOC_FORMAT_VERSION, crate_dirs};
-pub use rustdoc::{Visibility, rustdoc_holds, rustdoc_json_in, rustdoc_key};
+pub use rustdoc::{Visibility, rustdoc_holds, rustdoc_json_in, rustdoc_key, rustdoc_rustc};
 pub use worktree::{
     forget_missing_worktree, sync_untracked_cargo_config, with_merge_base_worktree,
 };
