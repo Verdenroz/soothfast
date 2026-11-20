@@ -330,11 +330,89 @@ fn perf_section(inputs: &DraftInputs) -> String {
             if rows.is_empty() {
                 return String::new();
             }
-            out.push_str("| item | metric | was | now | delta |\n|---|---|---:|---:|---:|\n");
+            out.push_str(MOVEMENT_HEADER);
+            out.push_str("\n|---|---|---:|---:|---:|\n");
             out.push_str(&rows);
         }
     }
     format!("### \u{1F4CA} Gate movement\n\n{out}")
+}
+
+const MOVEMENT_HEADER: &str = "| item | metric | was | now | delta |";
+
+/// Reuse the rows of `existing`'s gate-movement table in a freshly rendered
+/// `draft`. A row whose item, metric and displayed delta match one already
+/// there keeps its old text, so a reading that moved by a few instructions
+/// does not rewrite the file. Rows that are new, gone or show another delta
+/// take the draft's version.
+pub fn keep_stable_rows(draft: &str, existing: &str) -> String {
+    let old: BTreeMap<(&str, &str), &str> = movement_rows(existing)
+        .filter_map(|line| Some((row_key(line)?, line)))
+        .collect();
+    let rows: Vec<bool> = row_flags(draft).collect();
+    let mut out = String::with_capacity(draft.len());
+    for (line, is_row) in draft.split_inclusive('\n').zip(rows) {
+        let text = line.trim_end_matches('\n');
+        let kept = is_row
+            .then(|| old.get(&row_key(text)?))
+            .flatten()
+            .filter(|old_text| same_reading(old_text, text));
+        match kept {
+            Some(old_text) => {
+                out.push_str(old_text);
+                out.push_str(&line[text.len()..]);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// Whether each line of `text` is a data row of the gate-movement table.
+fn row_flags(text: &str) -> impl Iterator<Item = bool> {
+    let mut in_table = false;
+    let mut header = false;
+    text.lines().map(move |l| {
+        if l == MOVEMENT_HEADER {
+            in_table = true;
+            header = true;
+            return false;
+        }
+        let row = in_table && !header && l.starts_with('|');
+        in_table = in_table && (header || row);
+        header = false;
+        row
+    })
+}
+
+/// Data rows of the gate-movement table in `text`.
+fn movement_rows(text: &str) -> impl Iterator<Item = &str> {
+    text.lines()
+        .zip(row_flags(text))
+        .filter_map(|(line, is_row)| is_row.then_some(line))
+}
+
+/// Same displayed delta, and `was` and `now` within half a displayed delta
+/// step of each other, so only a reading that is the same up to noise stands.
+fn same_reading(old: &str, new: &str) -> bool {
+    let cells =
+        |row: &str| -> Vec<String> { row.split('|').map(|c| c.trim().to_string()).collect() };
+    let (old, new) = (cells(old), cells(new));
+    let figure = |cell: &String| cell.parse::<f64>().ok();
+    old.len() == new.len()
+        && old.len() == 7
+        && old[5] == new[5]
+        && [3, 4]
+            .iter()
+            .all(|&i| match (figure(&old[i]), figure(&new[i])) {
+                (Some(o), Some(n)) => o > 0.0 && (n - o).abs() / o < 0.0005,
+                _ => false,
+            })
+}
+
+fn row_key(line: &str) -> Option<(&str, &str)> {
+    let mut cells = line.split('|').skip(1);
+    Some((cells.next()?.trim(), cells.next()?.trim()))
 }
 
 /// A diff the surface engine produced no findings for.
@@ -380,6 +458,7 @@ mod tests {
         ApiSection, Change, DraftInputs, Icons, PerfThresholds, changes_from_subjects, draft,
         sections, unparsed_subjects,
     };
+    use super::{MOVEMENT_HEADER, keep_stable_rows};
     use crate::surface::SurfaceEntry;
 
     /// The values `cargo-soothfast` passes from its gate constants.
@@ -751,5 +830,81 @@ mod tests {
         assert!(text.contains("- Stop hashing comments (#124)"), "{text}");
         assert!(!text.contains("Features"), "{text}");
         assert!(!text.contains("Internal"), "{text}");
+    }
+
+    fn movement(rows: &[&str]) -> String {
+        let mut text =
+            format!("### Gate movement\n\n{MOVEMENT_HEADER}\n|---|---|---:|---:|---:|\n");
+        for row in rows {
+            text.push_str(row);
+            text.push('\n');
+        }
+        text
+    }
+
+    #[test]
+    fn a_row_with_the_same_displayed_delta_keeps_its_old_text() {
+        let old = movement(&["| `a` | instructions | 5029830.0 | 6000000.0 | +19.3% |"]);
+        let new = movement(&["| `a` | instructions | 5029832.0 | 6000000.0 | +19.3% |"]);
+        assert_eq!(keep_stable_rows(&new, &old), old);
+    }
+
+    #[test]
+    fn a_row_whose_displayed_delta_changed_is_rewritten() {
+        let old = movement(&["| `a` | instructions | 100.0 | 120.0 | +20.0% |"]);
+        let new = movement(&["| `a` | instructions | 100.0 | 130.0 | +30.0% |"]);
+        assert_eq!(keep_stable_rows(&new, &old), new);
+    }
+
+    #[test]
+    fn a_new_item_appears_beside_a_kept_row() {
+        let old = movement(&["| `a` | instructions | 100.0 | 120.0 | +20.0% |"]);
+        let new = movement(&[
+            "| `a` | instructions | 100.01 | 120.01 | +20.0% |",
+            "| `b` | allocs | 1.0 | 2.0 | +100.0% |",
+        ]);
+        let want = movement(&[
+            "| `a` | instructions | 100.0 | 120.0 | +20.0% |",
+            "| `b` | allocs | 1.0 | 2.0 | +100.0% |",
+        ]);
+        assert_eq!(keep_stable_rows(&new, &old), want);
+    }
+
+    #[test]
+    fn a_removed_item_disappears() {
+        let old = movement(&[
+            "| `a` | instructions | 100.0 | 120.0 | +20.0% |",
+            "| `b` | allocs | 1.0 | 2.0 | +100.0% |",
+        ]);
+        let new = movement(&["| `a` | instructions | 100.0 | 120.0 | +20.0% |"]);
+        assert_eq!(keep_stable_rows(&new, &old), new);
+    }
+
+    #[test]
+    fn keeping_stable_rows_is_idempotent() {
+        let old = movement(&["| `a` | instructions | 100.0 | 120.0 | +20.0% |"]);
+        let new = movement(&["| `a` | instructions | 100.01 | 120.01 | +20.0% |"]);
+        let once = keep_stable_rows(&new, &old);
+        assert_eq!(keep_stable_rows(&new, &once), once);
+    }
+
+    #[test]
+    fn a_row_with_other_figures_is_rewritten_though_the_delta_matches() {
+        let old = movement(&["| `a` | instructions | 100.0 | 120.0 | +20.0% |"]);
+        let new = movement(&["| `a` | instructions | 200.0 | 240.0 | +20.0% |"]);
+        assert_eq!(keep_stable_rows(&new, &old), new);
+    }
+
+    #[test]
+    fn a_table_after_the_movement_table_is_left_alone() {
+        let old = movement(&["| `a` | instructions | 100.0 | 120.0 | +20.0% |"]);
+        let draft = format!(
+            "{}\n| thing | x |\n|---|---|\n| `a` | instructions | 9.0 | 9.0 | +20.0% |\n",
+            movement(&["| `a` | instructions | 100.01 | 120.01 | +20.0% |"])
+        );
+        let want = format!(
+            "{old}\n| thing | x |\n|---|---|\n| `a` | instructions | 9.0 | 9.0 | +20.0% |\n"
+        );
+        assert_eq!(keep_stable_rows(&draft, &old), want);
     }
 }
