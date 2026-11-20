@@ -77,6 +77,7 @@ jobs:
       site_deploy: ${{ steps.plan.outputs.site_deploy }}
       trend_url: ${{ steps.plan.outputs.trend_url }}
       landing: ${{ steps.plan.outputs.landing }}
+      generated: ${{ steps.push.outputs.generated }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -199,6 +200,15 @@ jobs:
             --pr-author "$PR_AUTHOR" --head-ref "$HEAD_REF" --head-repo "$HEAD_REPO" \
             --repo "$GITHUB_REPOSITORY" --verified-commits "$VERIFIED" \
             ${BASE_REF:+--base "origin/$BASE_REF"} ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
+      # Fails open: no answer reads as not a landing.
+      - name: Check whether the push is the bot's landing
+        id: push
+        if: >-
+          inputs.bot && github.event_name == 'push'
+          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          probe=$(cargo soothfast ci regen --probe || true)
+          grep -x 'generated=true' <<<"$probe" >>"$GITHUB_OUTPUT" || true
       - name: Upload the results of tests that need no job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -687,11 +697,13 @@ jobs:
     needs: [plan, gate-rust]
     if: >-
       ${{ inputs.bot && github.event_name == 'push'
-      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && needs.plan.outputs.generated != 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     environment: soothfast-bot
     concurrency:
-      group: soothfast-regen-${{ github.ref }}
+      # The bot's own landing regenerates nothing, so it must not cancel a real regeneration.
+      group: soothfast-regen-${{ github.ref }}${{ needs.plan.outputs.generated == 'true' && format('-{0}', github.sha) || '' }}
       cancel-in-progress: true
     permissions:
       contents: read
