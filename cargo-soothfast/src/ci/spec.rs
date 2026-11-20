@@ -6,6 +6,7 @@ use std::path::Path;
 
 use super::each::{self, Job};
 use super::env::{CiEnv, Event};
+use super::regen;
 use crate::spec_config::Mode;
 use crate::{invoke, sdk_config, spec_config};
 
@@ -135,9 +136,12 @@ fn inner(env: &CiEnv, opts: &Options) -> i32 {
     let [name] = opts.packages.as_slice() else {
         return crate::arg_err("ci spec --inner takes one -p");
     };
-    match package(name) {
-        Ok(pkg) => {
-            let regen = env.regenerated_after_merge();
+    let read = package(name).and_then(|pkg| {
+        let regen = (pkg.generates || pkg.sdk) && regen::after_merge(env)?;
+        Ok((pkg, regen))
+    });
+    match read {
+        Ok((pkg, regen)) => {
             if regen {
                 for skipped in regenerated(&pkg) {
                     println!(
@@ -287,22 +291,6 @@ mod tests {
             ["spec gen --check", "sdk gen --check"]
         );
         assert_eq!(regenerated(&pkg(false, true, false)), Vec::<&str>::new());
-    }
-
-    #[test]
-    fn only_a_pull_request_with_the_bot_skips() {
-        let payload = r#"{"pull_request": {"base": {"ref": "main"}},
-            "repository": {"default_branch": "main"}}"#;
-        let on = |event: &str| {
-            let vars = BTreeMap::from([
-                ("GITHUB_EVENT_NAME".to_string(), event.to_string()),
-                ("SOOTHFAST_REGEN".to_string(), "true".to_string()),
-            ]);
-            CiEnv::parse(&vars, Some(payload), &Flags::default()).regenerated_after_merge()
-        };
-        assert!(on("pull_request"));
-        assert!(!on("push"));
-        assert!(!on("workflow_dispatch"));
     }
 
     #[test]

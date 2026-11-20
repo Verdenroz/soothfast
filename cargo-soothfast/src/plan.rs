@@ -222,10 +222,14 @@ fn build(
     };
     let ci = init::ci(root)?;
     let config = Config::load(root)?;
-    let skip = config.ci()?;
+    let mut skip = config.ci()?;
+    // Regeneration runs in the gate job, which needs a package to gate.
+    if capture_regenerated && rust.as_ref().is_some_and(|r| !r.packages.is_empty()) {
+        skip.push("capture".to_string());
+    }
     let pages = config.pages()?;
     let trend_url = config.trend_url()?;
-    let checks = checks::planned(root, rust.is_some(), &skip, capture_regenerated)?;
+    let checks = checks::planned(root, rust.is_some(), &skip)?;
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
     }

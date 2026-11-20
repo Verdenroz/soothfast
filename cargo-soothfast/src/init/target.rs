@@ -80,7 +80,7 @@ pub(super) fn target(
         bot,
         labels: false,
         pages: config.pages()?,
-        checks: !checks::planned(root, rust, &config.ci()?, false)?.is_empty(),
+        checks: !checks::planned(root, rust, &config.ci()?)?.is_empty(),
         java: tools
             .java
             .or_else(|| pinned(&existing, "java"))

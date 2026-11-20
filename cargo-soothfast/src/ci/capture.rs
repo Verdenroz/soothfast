@@ -1,8 +1,8 @@
 //! `ci capture`: fails a docs package whose recorded example output has gone
 //! stale. A package whose docs hold no capture block passes.
 
-use super::each;
 use super::env::CiEnv;
+use super::{each, regen};
 use std::path::Path;
 
 use crate::config::{Config, Group};
@@ -60,9 +60,16 @@ fn configured() -> Result<Vec<String>, String> {
 
 /// Entry point for `ci capture`.
 pub fn run(env: &CiEnv, args: &[String]) -> i32 {
-    if env.regenerated_after_merge() {
-        println!("ci capture: skipped, regenerated on the default branch after merge");
-        return 0;
+    match regen::after_merge(env) {
+        Ok(true) => {
+            println!("ci capture: skipped, regenerated on the default branch after merge");
+            return 0;
+        }
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
     }
     let none = "ci capture: no docs package with docs of its own";
     let paths = match lone_paths(&invoke::project_root()) {

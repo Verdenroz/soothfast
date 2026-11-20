@@ -49,8 +49,8 @@ pub struct CiEnv {
     /// Where jobs record their verdicts. A run with none records nothing.
     pub results: Option<PathBuf>,
     pub pr: Option<u64>,
-    /// Whether the default branch's pushes regenerate what the checks would
-    /// otherwise fail a pull request for (`SOOTHFAST_REGEN=true`).
+    /// Whether a default-branch push regenerates the generated files
+    /// (`SOOTHFAST_REGEN=true`).
     pub regen: bool,
     /// Whether a pull request's base is the repository's default branch.
     pub into_default_branch: bool,
@@ -118,7 +118,9 @@ impl CiEnv {
             Event::Push => text(&["before"]).filter(|b| b != NO_COMMIT),
             Event::Other => None,
         };
-        let default_branch = text(&["repository", "default_branch"])
+        let default = text(&["repository", "default_branch"]);
+        let default_branch = default
+            .as_ref()
             .zip(var("GITHUB_REF"))
             .is_some_and(|(d, r)| *r == format!("refs/heads/{d}"));
         CiEnv {
@@ -136,7 +138,7 @@ impl CiEnv {
                 .and_then(Value::as_u64),
             regen: var("SOOTHFAST_REGEN").is_some_and(|v| v == "true"),
             into_default_branch: text(&["pull_request", "base", "ref"])
-                .zip(text(&["repository", "default_branch"]))
+                .zip(default)
                 .is_some_and(|(base, default)| base == default),
         }
     }
@@ -233,6 +235,13 @@ mod tests {
         let env = CiEnv::parse(&push, None, &Flags::default());
         assert!(env.regen);
         assert!(!env.regenerated_after_merge());
+        let manual = vars(&[
+            ("GITHUB_EVENT_NAME", "workflow_dispatch"),
+            ("SOOTHFAST_REGEN", "true"),
+        ]);
+        assert!(
+            !CiEnv::parse(&manual, Some(INTO_MAIN), &Flags::default()).regenerated_after_merge()
+        );
     }
 
     #[test]

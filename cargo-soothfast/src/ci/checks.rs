@@ -58,19 +58,12 @@ impl Check {
     }
 }
 
-/// The checks this repository runs, leaving out the kinds `skip` names, and
-/// capture when the default branch regenerates it after merge. The
+/// The checks this repository runs, leaving out the kinds `skip` names. The
 /// per-package kinds need a cargo workspace.
-pub fn planned(
-    root: &Path,
-    cargo: bool,
-    skip: &[String],
-    capture_regenerated: bool,
-) -> Result<Vec<Check>, String> {
+pub fn planned(root: &Path, cargo: bool, skip: &[String]) -> Result<Vec<Check>, String> {
     collect(
         cargo,
         skip,
-        capture_regenerated,
         |kind| (kind.packages)(root),
         || Ok(site::configured_at(root)),
     )
@@ -79,12 +72,10 @@ pub fn planned(
 fn collect(
     cargo: bool,
     skip: &[String],
-    capture_regenerated: bool,
     packages: impl Fn(&Kind) -> Result<Vec<String>, String>,
     site: impl FnOnce() -> Result<bool, String>,
 ) -> Result<Vec<Check>, String> {
-    let runs =
-        |name: &str| !skip.iter().any(|s| s == name) && !(capture_regenerated && name == "capture");
+    let runs = |name: &str| !skip.iter().any(|s| s == name);
     let mut checks = Vec::new();
     for kind in KINDS.iter().filter(|k| cargo && runs(k.name)) {
         checks.extend(packages(kind)?.into_iter().map(|package| Check {
@@ -126,7 +117,6 @@ mod tests {
         Ok(match kind.name {
             "spec" => vec!["server".into()],
             "coverage" => vec!["core".into(), "server".into()],
-            "capture" => vec!["docs".into()],
             _ => Vec::new(),
         })
     }
@@ -137,56 +127,37 @@ mod tests {
 
     #[test]
     fn each_configured_package_and_the_site_get_a_job() {
-        let checks = collect(true, &[], false, found, || Ok(true)).unwrap();
+        let checks = collect(true, &[], found, || Ok(true)).unwrap();
         assert_eq!(
             names(&checks),
-            [
-                "spec-server",
-                "coverage-core",
-                "coverage-server",
-                "capture-docs",
-                "site"
-            ]
+            ["spec-server", "coverage-core", "coverage-server", "site"]
         );
         assert_eq!(
             matrix(checks.iter())["include"][0],
             json!({"name": "spec-server", "kind": "spec", "package": "server", "rustdoc": true})
         );
-        assert_eq!(matrix(checks.iter())["include"][4]["package"], "");
+        assert_eq!(matrix(checks.iter())["include"][3]["package"], "");
     }
 
     #[test]
     fn a_skipped_kind_gets_none() {
         let skip = ["coverage".to_string(), "site".to_string()];
-        let checks = collect(true, &skip, false, found, || Ok(true)).unwrap();
-        assert_eq!(names(&checks), ["spec-server", "capture-docs"]);
-    }
-
-    #[test]
-    fn capture_is_not_planned_when_the_bot_regenerates_it() {
-        let skip = ["coverage".to_string()];
-        let on = collect(true, &skip, true, found, || Ok(true)).unwrap();
-        assert_eq!(names(&on), ["spec-server", "site"]);
-        let off = collect(true, &skip, false, found, || Ok(true)).unwrap();
-        assert_eq!(names(&off), ["spec-server", "capture-docs", "site"]);
+        let checks = collect(true, &skip, found, || Ok(true)).unwrap();
+        assert_eq!(names(&checks), ["spec-server"]);
     }
 
     #[test]
     fn without_a_cargo_workspace_only_the_site_is_checked() {
-        let checks = collect(false, &[], false, found, || Ok(true)).unwrap();
+        let checks = collect(false, &[], found, || Ok(true)).unwrap();
         assert_eq!(names(&checks), ["site"]);
-        assert!(
-            collect(false, &[], false, found, || Ok(false))
-                .unwrap()
-                .is_empty()
-        );
+        assert!(collect(false, &[], found, || Ok(false)).unwrap().is_empty());
     }
 
     #[test]
     fn a_lookup_error_is_reported() {
         let failing = |_: &Kind| Err("bad table".to_string());
         assert_eq!(
-            collect(true, &[], false, failing, || Ok(false)),
+            collect(true, &[], failing, || Ok(false)),
             Err("bad table".into())
         );
     }

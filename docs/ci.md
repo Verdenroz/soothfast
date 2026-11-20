@@ -1117,11 +1117,12 @@ with a spec that is not generated runs `spec check`, and one with an `[[sdk]]`
 entry runs `sdk gen --check`. Every step runs even after one fails, and each
 package records a `check` verdict named `spec-PKG` with the worst exit code.
 With the `bot` input on, a pull request into the default branch runs neither
-`spec gen --check` nor `sdk gen --check`, since the default branch's push
-regenerates those files after merge, and says so; `spec gate` and `spec check`
-still run, and a package left with no step passes. A push runs every check.
-The workflow tells the CLI through `SOOTHFAST_REGEN=true`, which unset means
-off.
+`spec gen --check` nor `sdk gen --check` and prints a line for each: the
+default branch's push regenerates those files after merge. `spec gate` and
+`spec check` still run, and a package left with no step passes. A push runs
+every check. The workflow turns this on by setting `SOOTHFAST_REGEN=true`.
+A workspace with no `soothfast` bench target keeps both checks: the
+regeneration runs in the gate job, which that workspace does not have.
 With nothing configured it says so and records nothing.
 `ci proto` runs `spec check-proto` for every package with a `[[proto]]`
 entry, or the `-p` ones given, which reconciles each message's fields against
@@ -1143,7 +1144,8 @@ of them, which leaves out a page whose output changes from run to run. Each
 package records a `check` verdict named `capture-PKG`. With no such package it says so
 and records nothing. With the `bot` input on, a pull request into the default
 branch plans no capture check, and `ci capture` run there passes with a line
-saying the output is regenerated after merge.
+saying the output is regenerated after merge. A workspace with no `soothfast`
+bench target keeps the check, as `ci spec` does.
 `ci site` builds the docs site with `docs build --out DIR`, where DIR is
 `target/soothfast-site` unless `--out` says otherwise. It builds against the
 `head` baseline when `.soothfast/baselines/head.json` exists. It runs only when
