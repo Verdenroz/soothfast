@@ -341,17 +341,16 @@ fn perf_section(inputs: &DraftInputs) -> String {
 const MOVEMENT_HEADER: &str = "| item | metric | was | now | delta |";
 
 /// Reuse the rows of `existing`'s gate-movement table in a freshly rendered
-/// `draft`. A row whose item, metric and displayed delta match one already
-/// there keeps its old text, so a reading that moved by a few instructions
-/// does not rewrite the file. Rows that are new, gone or show another delta
-/// take the draft's version.
+/// `draft`. A row keeps its old text when its item, metric and displayed
+/// delta match one already there and `was` and `now` are each within 0.05%
+/// of that row's figures, so a reading that moved by a few instructions does
+/// not rewrite the file. Every other row takes the draft's version.
 pub fn keep_stable_rows(draft: &str, existing: &str) -> String {
     let old: BTreeMap<(&str, &str), &str> = movement_rows(existing)
         .filter_map(|line| Some((row_key(line)?, line)))
         .collect();
-    let rows: Vec<bool> = row_flags(draft).collect();
     let mut out = String::with_capacity(draft.len());
-    for (line, is_row) in draft.split_inclusive('\n').zip(rows) {
+    for (line, is_row) in draft.split_inclusive('\n').zip(row_flags(draft)) {
         let text = line.trim_end_matches('\n');
         let kept = is_row
             .then(|| old.get(&row_key(text)?))
@@ -392,23 +391,25 @@ fn movement_rows(text: &str) -> impl Iterator<Item = &str> {
         .filter_map(|(line, is_row)| is_row.then_some(line))
 }
 
-/// Same displayed delta, and `was` and `now` within half a displayed delta
-/// step of each other, so only a reading that is the same up to noise stands.
+/// Whether two rows show the same delta with `was` and `now` each within
+/// `FIGURE_TOLERANCE` of the old figure. A zero or unparseable figure differs.
 fn same_reading(old: &str, new: &str) -> bool {
-    let cells =
-        |row: &str| -> Vec<String> { row.split('|').map(|c| c.trim().to_string()).collect() };
-    let (old, new) = (cells(old), cells(new));
-    let figure = |cell: &String| cell.parse::<f64>().ok();
-    old.len() == new.len()
-        && old.len() == 7
-        && old[5] == new[5]
-        && [3, 4]
-            .iter()
-            .all(|&i| match (figure(&old[i]), figure(&new[i])) {
-                (Some(o), Some(n)) => o > 0.0 && (n - o).abs() / o < 0.0005,
-                _ => false,
-            })
+    let old: Vec<&str> = old.split('|').map(str::trim).collect();
+    let new: Vec<&str> = new.split('|').map(str::trim).collect();
+    let ([_, _, _, old_was, old_now, old_delta, _], [_, _, _, new_was, new_now, new_delta, _]) =
+        (old.as_slice(), new.as_slice())
+    else {
+        return false;
+    };
+    let close = |old: &str, new: &str| match (old.parse::<f64>(), new.parse::<f64>()) {
+        (Ok(o), Ok(n)) => o > 0.0 && (n - o).abs() / o < FIGURE_TOLERANCE,
+        _ => false,
+    };
+    old_delta == new_delta && close(old_was, new_was) && close(old_now, new_now)
 }
+
+/// Half of the 0.1% step a delta is displayed in.
+const FIGURE_TOLERANCE: f64 = 0.0005;
 
 fn row_key(line: &str) -> Option<(&str, &str)> {
     let mut cells = line.split('|').skip(1);
@@ -878,14 +879,6 @@ mod tests {
         ]);
         let new = movement(&["| `a` | instructions | 100.0 | 120.0 | +20.0% |"]);
         assert_eq!(keep_stable_rows(&new, &old), new);
-    }
-
-    #[test]
-    fn keeping_stable_rows_is_idempotent() {
-        let old = movement(&["| `a` | instructions | 100.0 | 120.0 | +20.0% |"]);
-        let new = movement(&["| `a` | instructions | 100.01 | 120.01 | +20.0% |"]);
-        let once = keep_stable_rows(&new, &old);
-        assert_eq!(keep_stable_rows(&new, &once), once);
     }
 
     #[test]

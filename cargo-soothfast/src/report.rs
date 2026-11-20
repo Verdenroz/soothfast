@@ -602,8 +602,7 @@ fn merge_changelog(existing: &str, draft: &str) -> String {
             unreleased.push('\n');
         }
     }
-    let draft = changelog::keep_stable_rows(draft, &unreleased);
-    let draft = draft.as_str();
+    let draft = &changelog::keep_stable_rows(draft, &unreleased);
     let mut doc = String::from("# Changelog\n");
     let pre = preamble.trim();
     if !pre.is_empty() {
