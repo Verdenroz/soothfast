@@ -1253,6 +1253,15 @@ variable is set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
 lines, also written to `--paths-out`, and never commits or pushes.
 `--baseline NAME` names the baseline it measures into (default `base`).
 
+The changelog's release side is a lookup. When the latest tag is HEAD nothing
+is measured. Otherwise the tag's measurement comes from the run store (its own
+entry, or the run the gate recorded for that commit under the same
+conditions) before a worktree is built, and its API surface likewise. On a
+default-branch push, `ci build rustdoc` also builds the public rustdoc of the
+changelog's packages under the features the changelog reads, so HEAD's surface
+is a store hit; a repository that turns the changelog off with
+`--no-changelog` still pays for that build.
+
 A push of the bot's own landing regenerates nothing: the bot authored every
 commit in it, every file it changed is one regeneration writes or matches a
 `[bot] landing_paths` glob or a `REGEN_PATHS` pathspec, and none is a
