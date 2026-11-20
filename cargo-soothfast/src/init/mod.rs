@@ -182,7 +182,7 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
     0
 }
 
-/// The workflow files besides the one init writes that call soothfast, as
+/// The workflow files besides the ones init writes that call soothfast, as
 /// repo-relative paths.
 fn other_callers(root: &Path) -> Vec<String> {
     let dir = root.join(".github/workflows");

@@ -31,7 +31,8 @@ body="${RUNNER_TEMP:-/tmp}/soothfast-fork-verdict.md"
 {
   echo "_This verdict comes from a fork's run and was not produced with this repository's token._"
   echo
-  head -c "$limit" "$ARTIFACT_DIR/body.md" | iconv -f UTF-8 -t UTF-8 -c
+  # iconv -c exits 1 when it drops bytes, as it does after a cut mid-character.
+  head -c "$limit" "$ARTIFACT_DIR/body.md" | iconv -f UTF-8 -t UTF-8 -c || true
   if [ "$(wc -c <"$ARTIFACT_DIR/body.md")" -gt "$limit" ]; then
     printf "\n\n_Truncated: the verdict exceeds the comment size limit. The full text is in the run's job summary._\n"
   fi

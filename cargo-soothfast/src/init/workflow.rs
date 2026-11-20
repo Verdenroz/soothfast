@@ -73,17 +73,17 @@ pub(super) fn workflow(ws: &Workspace) -> String {
 pub(super) fn comment_workflow(ws: &Workspace) -> Option<String> {
     (!ws.inline()).then(|| {
         let mut text = COMMENT_WORKFLOW
-            .replace(
-                "@@action@@",
-                &ws.action
-                    .replacen('@', "/.github/workflows/comment.yml@", 1),
-            )
+            .replace("@@action@@", &reusable(&ws.action, "comment.yml"))
             .replace("@@pin@@", action_pin(&ws.action));
         if ws.ci.labels.is_some() {
             text.push_str(&format!("      runs_on: '{}'\n", ws.ci.runs_on_json()));
         }
         text
     })
+}
+
+fn reusable(action: &str, file: &str) -> String {
+    action.replacen('@', &format!("/.github/workflows/{file}@"), 1)
 }
 
 fn action_pin(action: &str) -> &str {
@@ -133,18 +133,12 @@ fn caller_job(ws: &Workspace) -> String {
         .iter()
         .filter_map(|(key, value)| Some(format!("      {key}: {}\n", value.as_ref()?)))
         .collect();
-    let mut text = CALLER_JOB.replace(
-        "@@action@@",
-        &ws.action.replacen('@', "/.github/workflows/run.yml@", 1),
-    );
+    let mut text = CALLER_JOB.replace("@@action@@", &reusable(&ws.action, "run.yml"));
     if !with.is_empty() {
         text.push_str(&format!("    with:\n{with}"));
     }
     if ws.pages {
-        text.push_str(&PAGES_JOB.replace(
-            "@@action@@",
-            &ws.action.replacen('@', "/.github/workflows/pages.yml@", 1),
-        ));
+        text.push_str(&PAGES_JOB.replace("@@action@@", &reusable(&ws.action, "pages.yml")));
     }
     text
 }

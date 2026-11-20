@@ -872,7 +872,8 @@ a writer waives regressions, never errors or docs drift.
 The verdict body is also written to the run's job summary, whoever opened the
 pull request. A fork's run has a read-only token and no OIDC identity, so the
 `verdict` job cannot comment. It uploads the body and the pull request number
-as the `soothfast-verdict-comment` artifact, and a second workflow posts it.
+as the `soothfast-verdict-comment-attempt-<attempt>` artifact, and a second
+workflow posts it.
 
 The contributor sees the comment, headed by a line saying it came from a
 fork's run and was not produced with the repository's token. It is posted
@@ -896,9 +897,10 @@ artifact is posted to only when it is a plain integer naming an open pull
 request of this repository whose head is that commit, repository and branch,
 and whose head repository is not the base repository. Otherwise nothing is
 posted and a notice says why. The body is capped below GitHub's comment limit
-and truncated with a line saying so. A re-run of the verdict job replaces the
-artifact, so the comment follows the latest attempt, and a run for an older
-commit cannot overwrite a newer verdict.
+and truncated with a line saying so. Each attempt of a run uploads its own
+artifact and the job reads the one of the attempt that triggered it, so a
+re-run posts its own verdict or nothing, and a run for an older commit cannot
+overwrite a newer verdict.
 
 A repository on the reusable workflow only needs the `soothfast-comment.yml`
 file; `init --check` reports it missing or changed like the main caller.
