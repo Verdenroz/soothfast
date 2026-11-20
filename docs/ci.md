@@ -1239,9 +1239,16 @@ after the gate. The gate job of a push only records the reference run. The
 regeneration job restores the built stores and the runs the gate saved, so
 `measure` reads HEAD's run back. It runs in one concurrency group per branch
 with `cancel-in-progress`: a newer push cancels an older regeneration still
-running, and a burst of merges runs one. The plan job runs `ci regen --probe`
-first: the push of the bot's own landing skips the job and never enters the
-group, so it cannot cancel the regeneration of the push before it.
+running, and a burst of merges runs one regeneration to completion. Two
+kinds of push never enter the group. The plan job runs `ci regen --probe`
+first, and the push of the bot's own landing skips the job, so it cannot
+cancel the regeneration of the push before it. A `Regenerate (check)` job
+then asks, once the gate has passed, whether someone other than the bot has
+pushed since. If so the job is skipped: an older push whose gate finishes
+late would otherwise cancel the newer push's regeneration and then find
+itself superseded. A newer push needs its whole plan, build and gate before
+it can enter, so the older one is in the group by then and is the one
+cancelled. The check fails open, like the two the action makes later.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. `verdict` applies to pull requests
