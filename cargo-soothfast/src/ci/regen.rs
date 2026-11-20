@@ -169,7 +169,7 @@ fn discover(flags: &Flags, vars: &BTreeMap<String, String>) -> Result<Inputs, St
             sdks.push(Sdk { package, paths });
         }
     }
-    let captures = capture::regenerated(&invoke::project_root(), &config)?;
+    let captures = capture::regenerated(&root, &config)?;
     let hook = hook(vars)?;
     Ok(Inputs {
         baseline: flags.baseline.clone(),
