@@ -60,6 +60,10 @@ fn configured() -> Result<Vec<String>, String> {
 
 /// Entry point for `ci capture`.
 pub fn run(env: &CiEnv, args: &[String]) -> i32 {
+    if env.regenerated_after_merge() {
+        println!("ci capture: skipped, regenerated on the default branch after merge");
+        return 0;
+    }
     let none = "ci capture: no docs package with docs of its own";
     let paths = match lone_paths(&invoke::project_root()) {
         Ok(paths) => paths,

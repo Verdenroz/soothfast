@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use crate::ci::checks::{self, Check};
+use crate::ci::env::{CiEnv, Flags};
 use crate::config::Config;
 use crate::init::ci::Ci;
 use crate::init::ecosystem::{Project, Suite, slug};
@@ -115,6 +116,7 @@ pub fn run(args: &[String]) -> i32 {
         args.shards,
         args.first_shard_only,
         &args.pr,
+        CiEnv::from_process(&Flags::default()).regenerated_after_merge(),
     ) {
         Ok(plan) => plan,
         Err(e) => return err(&e),
@@ -190,6 +192,7 @@ fn build(
     shards: u64,
     first_shard_only: bool,
     pr: &PullRequest,
+    capture_regenerated: bool,
 ) -> Result<Plan, String> {
     let rust = root
         .join("Cargo.toml")
@@ -221,7 +224,7 @@ fn build(
     let skip = config.ci()?;
     let pages = config.pages()?;
     let trend_url = config.trend_url()?;
-    let checks = checks::planned(root, rust.is_some(), &skip)?;
+    let checks = checks::planned(root, rust.is_some(), &skip, capture_regenerated)?;
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
     }
