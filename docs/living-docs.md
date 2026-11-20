@@ -178,8 +178,9 @@ on disk. A stale `docs gen-tests` or `docs capture` run therefore fails CI
 just like a stale bind or a violated claim.
 
 With `ci regen` on, a push to the default branch runs `docs capture` and lands
-the refreshed output. `[ci] skip = ["capture"]` opts out, and also drops the
-pull request check.
+the refreshed output. A failing example is a warning there, and the rest of
+the regeneration still lands. `[ci] skip = ["capture"]` opts out, and also
+drops the pull request check.
 
 ## Which package
 
