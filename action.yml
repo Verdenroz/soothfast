@@ -121,8 +121,9 @@ inputs:
     description: >-
       Restore the measured runs a gate leg of this same push saved under
       HEAD's commit, so the regeneration reads HEAD's run back instead of
-      measuring it again, and save what the regeneration measured under that
-      commit's `-regen` key. For a job with `gate: "false"` that runs after
+      measuring it again, restore the newest earlier `soothfast-regen-runs-`
+      entry of the branch, and save what the regeneration measured under that
+      prefix with this commit. For a job with `gate: "false"` that runs after
       the gate leg.
     required: false
     default: "false"
@@ -449,6 +450,35 @@ runs:
           .soothfast/items
           .soothfast/maps
         key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}
+    - name: Set the push's runs aside
+      if: inputs.head-runs == 'true' && steps.prepare.outputs.regenerating == 'true'
+      shell: bash
+      run: |
+        mkdir -p .soothfast-head
+        for dir in runs items maps; do
+          if [ -d ".soothfast/$dir" ]; then mv ".soothfast/$dir" ".soothfast-head/$dir"; fi
+        done
+    # Gate saves share the `soothfast-runs-<branch>-` prefix, so the release
+    # measurement lives under a prefix only the regeneration writes.
+    - name: Restore the last regeneration's runs
+      if: inputs.head-runs == 'true' && steps.prepare.outputs.regenerating == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          .soothfast/runs
+          .soothfast/items
+          .soothfast/maps
+        key: soothfast-regen-runs-${{ github.ref_name }}-${{ github.sha }}
+        restore-keys: |
+          soothfast-regen-runs-${{ github.ref_name }}-
+    - name: Merge the push's runs
+      if: inputs.head-runs == 'true' && steps.prepare.outputs.regenerating == 'true'
+      shell: bash
+      env:
+        CLI: ${{ steps.resolve.outputs.bin }}
+      run: |
+        "$CLI" cache merge --from .soothfast-head
+        rm -rf .soothfast-head
 
     # The store is content-addressed, so entries from any lineage are safe to
     # combine. actions/cache saves the merged directory when the job ends.
@@ -687,7 +717,7 @@ runs:
           .soothfast/runs
           .soothfast/items
           .soothfast/maps
-        key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}-regen
+        key: ${{ inputs.head-runs == 'true' && format('soothfast-regen-runs-{0}-{1}', github.ref_name, github.sha) || format('soothfast-runs-{0}-{1}-regen', github.ref_name, github.sha) }}
 
     # Minted after everything that compiles the tree has run.
     - name: Mint a soothfast-bot token
