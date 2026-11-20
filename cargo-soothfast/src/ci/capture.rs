@@ -70,6 +70,35 @@ pub(super) fn covered(root: &Path) -> Result<Vec<Covered>, String> {
         .collect())
 }
 
+/// A covered package regeneration captures, and the `pages` its output lands
+/// in.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Regenerated {
+    pub package: String,
+    pub paths: Vec<String>,
+    pub pages: Vec<String>,
+}
+
+/// The packages regeneration captures: the covered ones whose docs hold a
+/// capture block, none when `[ci] skip` names `capture`.
+pub(crate) fn regenerated(root: &Path, config: &Config) -> Result<Vec<Regenerated>, String> {
+    if config.ci()?.iter().any(|kind| kind == "capture") {
+        return Ok(Vec::new());
+    }
+    let mut found = Vec::new();
+    for Covered { package, paths } in covered(root)? {
+        let pages = crate::docs::capture_pages(root, &package, &paths)?;
+        if !pages.is_empty() {
+            found.push(Regenerated {
+                package,
+                paths,
+                pages,
+            });
+        }
+    }
+    Ok(found)
+}
+
 pub(super) fn configured_at(root: &Path) -> Result<Vec<String>, String> {
     Ok(covered(root)?.into_iter().map(|c| c.package).collect())
 }

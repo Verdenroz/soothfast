@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::capture::{self, Regenerated};
 use super::env::{CiEnv, Event};
 use crate::config::Config;
 use crate::{invoke, landing, sdk_config, spec_config, workspace};
@@ -22,6 +23,7 @@ struct Inputs {
     changelog_packages: Vec<String>,
     specs: Vec<String>,
     sdks: Vec<Sdk>,
+    captures: Vec<Regenerated>,
     hook: Option<Hook>,
 }
 
@@ -46,6 +48,7 @@ enum Step {
     Changelog(Vec<String>),
     SpecGen(String),
     SdkGen(String),
+    Capture { package: String, paths: Vec<String> },
     Hook(String),
 }
 
@@ -155,7 +158,8 @@ fn parse(args: &[String]) -> Result<Flags, String> {
 
 fn discover(flags: &Flags, vars: &BTreeMap<String, String>) -> Result<Inputs, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-    let changelog_packages = Config::load(&root)?.changelog()?.packages;
+    let config = Config::load(&root)?;
+    let changelog_packages = config.changelog()?.packages;
     let gated = workspace::bench_crates("soothfast", Some(&root))?;
     let (_, specs) = spec_config::configured(&root)?;
     let mut sdks = Vec::new();
@@ -165,6 +169,7 @@ fn discover(flags: &Flags, vars: &BTreeMap<String, String>) -> Result<Inputs, St
             sdks.push(Sdk { package, paths });
         }
     }
+    let captures = capture::regenerated(&invoke::project_root(), &config)?;
     let hook = hook(vars)?;
     Ok(Inputs {
         baseline: flags.baseline.clone(),
@@ -173,6 +178,7 @@ fn discover(flags: &Flags, vars: &BTreeMap<String, String>) -> Result<Inputs, St
         changelog_packages,
         specs,
         sdks,
+        captures,
         hook,
     })
 }
@@ -225,6 +231,13 @@ fn plan(inputs: &Inputs) -> (Vec<Step>, Vec<String>) {
         steps.push(Step::SdkGen(sdk.package.clone()));
         paths.extend(sdk.paths.iter().cloned());
     }
+    for capture in &inputs.captures {
+        steps.push(Step::Capture {
+            package: capture.package.clone(),
+            paths: capture.paths.clone(),
+        });
+        paths.extend(capture.pages.iter().cloned());
+    }
     if let Some(hook) = &inputs.hook {
         steps.push(Step::Hook(hook.run.clone()));
         paths.extend(hook.paths.iter().cloned());
@@ -264,6 +277,11 @@ fn execute(step: &Step, baseline: &str, host: &impl Host) -> i32 {
         }
         Step::SpecGen(pkg) => host.cli(&words(&["spec", "gen", "-p", pkg])),
         Step::SdkGen(pkg) => host.cli(&words(&["sdk", "gen", "-p", pkg])),
+        Step::Capture { package, paths } => {
+            let mut args = words(&["docs", "capture", "-p", package]);
+            args.extend(paths.iter().cloned());
+            host.cli(&args)
+        }
         Step::Hook(script) => host.hook(script),
     }
 }
@@ -397,6 +415,11 @@ mod tests {
                 package: "api".into(),
                 paths: strings(&["api/sdk/python"]),
             }],
+            captures: vec![Regenerated {
+                package: "api".into(),
+                paths: strings(&["README.md"]),
+                pages: strings(&["README.md", "docs/guide.md"]),
+            }],
             hook: Some(Hook {
                 run: "make gen".into(),
                 paths: strings(&["gen", "extra.txt"]),
@@ -448,6 +471,19 @@ mod tests {
         );
         assert_eq!(
             only(Inputs {
+                captures: vec![Regenerated {
+                    package: "api".into(),
+                    ..Regenerated::default()
+                }],
+                ..inputs()
+            }),
+            [Step::Capture {
+                package: "api".into(),
+                paths: Vec::new()
+            }]
+        );
+        assert_eq!(
+            only(Inputs {
                 hook: Some(Hook {
                     run: "x".into(),
                     paths: strings(&["p"])
@@ -459,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn steps_run_in_order_with_the_hook_after_the_sdks() {
+    fn steps_run_in_order_with_capture_after_the_sdks_and_the_hook_last() {
         let host = Fake {
             tag: Some("v1.2.0"),
             ..Fake::new()
@@ -474,6 +510,7 @@ mod tests {
                 "report changelog -p core -p docs --against-ref v1.2.0 --baseline base",
                 "spec gen -p api",
                 "sdk gen -p api",
+                "docs capture -p api README.md",
                 "hook make gen",
             ]
         );
@@ -545,9 +582,9 @@ mod tests {
         let report = regenerate(&everything(), &host).unwrap();
         assert_eq!(
             report,
-            "paths=CHANGELOG.md *.yaml *.yml *.json api/sdk/python gen extra.txt\nchanged=true\n"
+            "paths=CHANGELOG.md *.yaml *.yml *.json api/sdk/python README.md docs/guide.md gen extra.txt\nchanged=true\n"
         );
-        assert_eq!(host.asked_about.borrow().len(), 7);
+        assert_eq!(host.asked_about.borrow().len(), 9);
     }
 
     #[test]
@@ -559,6 +596,31 @@ mod tests {
         assert_eq!(regenerate(&everything(), &host), None);
         assert!(!host.hook_ran.get());
         assert_eq!(host.calls().last().unwrap(), "spec gen -p api");
+    }
+
+    #[test]
+    fn a_failing_capture_stops_the_run_before_the_hook() {
+        let host = Fake {
+            fail_on: Some("docs capture"),
+            ..Fake::new()
+        };
+        assert_eq!(regenerate(&everything(), &host), None);
+        assert!(!host.hook_ran.get());
+        assert_eq!(
+            host.calls().last().unwrap(),
+            "docs capture -p api README.md"
+        );
+    }
+
+    #[test]
+    fn a_package_without_capture_pages_adds_no_paths() {
+        let off = Inputs {
+            captures: Vec::new(),
+            ..everything()
+        };
+        let (steps, paths) = plan(&off);
+        assert!(!steps.iter().any(|s| matches!(s, Step::Capture { .. })));
+        assert!(!paths.contains(&"README.md".to_string()));
     }
 
     #[test]

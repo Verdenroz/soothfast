@@ -811,6 +811,28 @@ fn capture(a: &DocsArgs) -> i32 {
     }
 }
 
+/// The pages `docs capture -p PKG [PATHS]` splices output into: those it scans
+/// that hold a capture block.
+pub(crate) fn capture_pages(
+    root: &Path,
+    pkg: &str,
+    paths: &[String],
+) -> Result<Vec<String>, String> {
+    let a = DocsArgs {
+        paths: paths.iter().map(PathBuf::from).collect(),
+        scope: Config::load(root)?
+            .resolve(&[pkg.to_string()], Group::Docs)?
+            .paths,
+        ..DocsArgs::default()
+    };
+    let scanned = scan_at(&a, root.to_path_buf())?;
+    let holding = scanned
+        .docs
+        .into_iter()
+        .filter(|(file, doc, _)| !gentests::capture_ids(file, doc).is_empty());
+    Ok(holding.map(|(file, _, _)| file).collect())
+}
+
 /// Fail unless the capture example on disk is what gen-tests would write now.
 /// Block ids are positions, so a stale example would run another block's code.
 fn current_capture(a: &DocsArgs, scanned: &Scanned, pkg: &str, dir: &Path) -> Result<(), i32> {
@@ -999,8 +1021,8 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DocsArgs, accept_scanned, blocks_named_in, check_scanned, head_for_sniff, scan_at,
-        single_package, takes_package, unscanned_marker_files,
+        DocsArgs, accept_scanned, blocks_named_in, capture_pages, check_scanned, head_for_sniff,
+        scan_at, single_package, takes_package, unscanned_marker_files,
     };
     use crate::{docs_binds, invoke};
 
@@ -1313,6 +1335,19 @@ mod tests {
                 symbol: "parse"
             }
         );
+    }
+
+    #[test]
+    fn capture_pages_are_the_scanned_pages_holding_a_capture_block() {
+        let dir = project_without_cargo("capture-pages");
+        std::fs::create_dir_all(dir.join("book")).unwrap();
+        let block = "```rust capture-output\nfn main() {}\n```\n";
+        std::fs::write(dir.join("book/a.md"), format!("# A\n\n{block}")).unwrap();
+        std::fs::write(dir.join("book/b.md"), "# B\n").unwrap();
+        std::fs::write(dir.join("soothfast.toml"), "[docs]\npaths = [\"book\"]\n").unwrap();
+        assert_eq!(capture_pages(&dir, "demo", &[]).unwrap(), ["book/a.md"]);
+        let narrowed = ["README.md".to_string()];
+        assert!(capture_pages(&dir, "demo", &narrowed).unwrap().is_empty());
     }
 
     fn orphaned_project(tag: &str) -> std::path::PathBuf {
