@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
+use crate::ci::capture;
 use crate::ci::regen::changelog_listed;
 use crate::config::Config;
 use crate::init::bot::Landing;
@@ -214,7 +215,13 @@ fn allowed(root: &Path, config: &Config) -> Result<Allowed, String> {
     };
     let packages = config.changelog()?.packages;
     let changelog = !changelog_listed(&packages, &gated).is_empty();
-    Allowed::of(root, &members, config.landing()?.paths, changelog)
+    let mut allowed = Allowed::of(root, &members, config.landing()?.paths, changelog)?;
+    if root.join("Cargo.toml").is_file() {
+        for captured in capture::regenerated(root, config)? {
+            allowed.files.extend(captured.pages);
+        }
+    }
+    Ok(allowed)
 }
 
 /// The files the commits since `base`'s merge-base change, relative to
@@ -431,6 +438,76 @@ mod tests {
         assert!(!generated_push(&repo.root, "HEAD^", &[]));
         assert!(generated_push(&repo.root, "HEAD^", &["docs".to_string()]));
         assert!(!generated_push(&repo.root, "HEAD^", &["src".to_string()]));
+    }
+
+    /// A one-package repository whose README holds a capture block, and
+    /// whose last commit, by `author`, changed `files`. `HEAD^` is the base.
+    fn captured(name: &str, config: &str, author: &str, files: &[&str]) -> TempRepo {
+        let repo = TempRepo::new(name);
+        repo.write("soothfast.toml", config);
+        repo.write(
+            "Cargo.toml",
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        repo.write("src/lib.rs", "one\n");
+        repo.write(
+            "README.md",
+            "<!-- soothfast:bind demo::f -->\n```rust capture-output\nfn main() {}\n```\n",
+        );
+        repo.write("docs/guide.md", "one\n");
+        repo.git(&["add", "-A"]);
+        repo.commit();
+        for file in files {
+            let text = std::fs::read_to_string(repo.root.join(file)).unwrap();
+            repo.write(file, &format!("{text}two\n"));
+        }
+        repo.git(&["add", "-A"]);
+        repo.git(&[
+            "-c",
+            &format!("user.name={author}"),
+            "-c",
+            "user.email=bot@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "land",
+        ]);
+        repo
+    }
+
+    #[test]
+    fn captured_docs_are_generated_with_no_landing_path_for_them() {
+        let bot = "soothfast-bot[bot]";
+        let repo = captured("landing-captured", "", bot, &["README.md"]);
+
+        assert!(generated_push(&repo.root, "HEAD^", &[]));
+        let mixed = captured(
+            "landing-captured-mixed",
+            "",
+            bot,
+            &["README.md", "src/lib.rs"],
+        );
+        assert!(!generated_push(&mixed.root, "HEAD^", &[]));
+        let prose = captured("landing-captured-prose", "", bot, &["docs/guide.md"]);
+        assert!(!generated_push(&prose.root, "HEAD^", &[]));
+    }
+
+    #[test]
+    fn a_human_edit_to_a_captured_doc_is_not_generated() {
+        let repo = captured("landing-captured-human", "", "octocat", &["README.md"]);
+        assert!(!generated_push(&repo.root, "HEAD^", &[]));
+    }
+
+    #[test]
+    fn skipping_capture_leaves_its_docs_out_of_what_a_landing_may_change() {
+        let config = "[ci]\nskip = [\"capture\"]\n";
+        let repo = captured(
+            "landing-captured-skipped",
+            config,
+            "soothfast-bot[bot]",
+            &["README.md"],
+        );
+        assert!(!generated_push(&repo.root, "HEAD^", &[]));
     }
 
     #[test]
