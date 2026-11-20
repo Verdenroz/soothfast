@@ -1248,7 +1248,9 @@ pushed since. If so the job is skipped: an older push whose gate finishes
 late would otherwise cancel the newer push's regeneration and then find
 itself superseded. A newer push needs its whole plan, build and gate before
 it can enter, so the older one is in the group by then and is the one
-cancelled. The check fails open, like the two the action makes later.
+cancelled. The check fails open, like the two the action makes later: a
+script that cannot tell, or a check job that itself fails, reads as not
+superseded and the push regenerates.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. `verdict` applies to pull requests

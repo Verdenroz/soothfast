@@ -735,7 +735,8 @@ jobs:
     needs: [plan, gate-rust, regen-check]
     if: >-
       ${{ !cancelled() && needs.gate-rust.result == 'success'
-      && needs.regen-check.result == 'success' && needs.regen-check.outputs.superseded != 'true'
+      && (needs.regen-check.result == 'success' || needs.regen-check.result == 'failure')
+      && needs.regen-check.outputs.superseded != 'true'
       && inputs.bot && github.event_name == 'push'
       && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       && needs.plan.outputs.generated != 'true' }}
