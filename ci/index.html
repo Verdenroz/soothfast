@@ -268,9 +268,9 @@ by binary.</p>
 <p>Then it measures each package into the
 <code>baseline</code> baseline, regenerates <code>CHANGELOG.md</code> against the latest tag (or
 lists the initial surface when there is no tag), regenerates any packages
-named in <code>spec</code>, and lands whatever changed as one pull request on
-<code>bot/soothfast-update</code>. Pushes to other branches do nothing beyond the
-install.</p>
+named in <code>spec</code>, records fresh output for each capture block, and lands
+whatever changed as one pull request on <code>bot/soothfast-update</code>. Pushes to
+other branches do nothing beyond the install.</p>
 <p>The bot PR triggers your workflows like any other pull request, this step
 included, which is how its required checks get satisfied. Under <code>run.yml</code> the
 plan recognises the landing and runs no lane for it; see
@@ -892,8 +892,9 @@ as soon as auto-merge sees it, with no ruleset bypass.</p>
 <li>Every file it changes against the base is one regeneration writes, or matches a <code>[bot] landing_paths</code> glob, and none is a <code>soothfast.toml</code>.</li>
 </ul>
 <p>The files regeneration writes are <code>CHANGELOG.md</code> when the repository drafts
-one, each <code>[[spec]]</code> file with <code>mode = &quot;generate&quot;</code>, and everything under each
-<code>[[sdk]] out</code> directory. List anything else a job of your own lands through
+one, each <code>[[spec]]</code> file with <code>mode = &quot;generate&quot;</code>, everything under each
+<code>[[sdk]] out</code> directory, and each doc holding a capture block that <code>ci capture</code>
+covers. List anything else a job of your own lands through
 <code>land.sh</code> in <code>landing_paths</code>, including what a <code>regen-run</code> hook writes:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[bot]</span>
 <span class="tok-ty">labels </span>=<span class="tok-kw"> true</span>
@@ -1091,7 +1092,12 @@ A lone docs package is checked against every doc. Among several, the blocks of
 all the docs would compile into each package's crate, so only a package whose
 <code>[package.NAME.docs]</code> table names its own <code>paths</code> is checked. For a lone docs
 package, <code>capture_paths</code> under <code>[ci]</code> lists the docs to check in place of all
-of them, which leaves out a page whose output changes from run to run. Each
+of them, which leaves out a page whose output changes from run to run. On the
+default branch <code>ci regen</code> runs <code>docs capture</code> for the same packages and paths
+and lands the docs it changes. A package whose example fails is reported as a
+warning and its docs are left as committed; everything else still lands.
+<code>[ci] skip = [&quot;capture&quot;]</code> turns off
+both the check and the regeneration. Each
 package records a <code>check</code> verdict named <code>capture-PKG</code>. With no such package it says so
 and records nothing.
 <code>ci site</code> builds the docs site with <code>docs build --out DIR</code>, where DIR is
@@ -1157,8 +1163,10 @@ package with a <code>soothfast</code> bench target and regenerates <code>CHANGEL
 the <code>[changelog]</code> packages, or those same packages when it names none
 (<code>--no-changelog</code> skips both), runs <code>spec gen</code>
 for each package with a <code>mode = &quot;generate&quot;</code> spec and <code>sdk gen</code> for each with
-<code>[[sdk]]</code>, then runs the <code>REGEN_RUN</code> command with <code>$SOOTHFAST</code> set when that
-variable is set (it needs <code>REGEN_PATHS</code>). It prints <code>paths=</code> and <code>changed=</code>
+<code>[[sdk]]</code>, then <code>docs capture</code> for each docs package <code>ci capture</code> checks (it
+runs each capture block once, and the markdown holding one is what lands),
+then runs the <code>REGEN_RUN</code> command with <code>$SOOTHFAST</code> set when that variable is
+set (it needs <code>REGEN_PATHS</code>). It prints <code>paths=</code> and <code>changed=</code>
 lines, also written to <code>--paths-out</code>, and never commits or pushes.
 <code>--baseline NAME</code> names the baseline it measures into (default <code>base</code>).</p>
 <p>A push of the bot's own landing regenerates nothing: the bot authored every
