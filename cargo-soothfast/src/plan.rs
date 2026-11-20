@@ -184,6 +184,7 @@ struct Candidate<'a> {
     reached: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build(
     root: &Path,
     base: Option<&str>,
