@@ -1092,12 +1092,13 @@ jobs:
           LANDING: ${{ needs.plan.outputs.landing }}
         run: ./.soothfast-action/action/verdict.sh
       - name: Upload the verdict for comment.yml
-        if: always()
+        if: "!cancelled()"
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: soothfast-verdict-comment
           path: ${{ runner.temp }}/soothfast-verdict-comment
           if-no-files-found: ignore
+          overwrite: true
 
   labels:
     name: Labels
