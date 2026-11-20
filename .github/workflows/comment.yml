@@ -1,0 +1,57 @@
+name: soothfast-comment
+
+# Posts the verdict of a fork's pull request run. A fork's own run has a
+# read-only token and cannot comment, so it uploads the verdict and this
+# workflow, triggered by workflow_run with the base repository's permissions,
+# posts it. It never checks out or runs the pull request's code. `cargo
+# soothfast init` writes the caller.
+on:
+  workflow_call:
+    inputs:
+      soothfast_ref:
+        description: The ref of Verdenroz/soothfast whose action/ scripts to run.
+        type: string
+        required: true
+      runs_on:
+        description: JSON for the runner labels of the job.
+        type: string
+        default: '"ubuntu-latest"'
+
+permissions: {}
+
+jobs:
+  comment:
+    name: comment
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name != github.repository
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: action
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: soothfast-verdict-comment-attempt-${{ github.event.workflow_run.run_attempt }}
+          path: ${{ runner.temp }}/soothfast-verdict-comment
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Post the verdict
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/soothfast-verdict-comment
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: ./.soothfast-action/action/fork-comment.sh
