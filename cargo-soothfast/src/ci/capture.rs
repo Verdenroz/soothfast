@@ -44,14 +44,34 @@ fn separable(
     Ok(kept)
 }
 
-pub(super) fn configured_at(root: &Path) -> Result<Vec<String>, String> {
+/// A docs package that `ci capture` covers and the docs `paths` it is limited
+/// to. No paths means every doc in the package's scope.
+#[derive(Debug, PartialEq)]
+pub(super) struct Covered {
+    pub package: String,
+    pub paths: Vec<String>,
+}
+
+pub(super) fn covered(root: &Path) -> Result<Vec<Covered>, String> {
     let docs = init::rust_plan(root)?.docs_packages;
     let config = Config::load(root)?;
     let shared = config.resolve(&[], Group::Docs)?.paths;
-    separable(docs, |pkg| {
+    let paths = lone_paths(root)?;
+    let packages = separable(docs, |pkg| {
         let own = config.resolve(&[pkg.to_string()], Group::Docs)?.paths;
         Ok(own.is_some() && own != shared)
-    })
+    })?;
+    Ok(packages
+        .into_iter()
+        .map(|package| Covered {
+            package,
+            paths: paths.clone(),
+        })
+        .collect())
+}
+
+pub(super) fn configured_at(root: &Path) -> Result<Vec<String>, String> {
+    Ok(covered(root)?.into_iter().map(|c| c.package).collect())
 }
 
 fn configured() -> Result<Vec<String>, String> {
