@@ -77,6 +77,8 @@ jobs:
       site_deploy: ${{ steps.plan.outputs.site_deploy }}
       trend_url: ${{ steps.plan.outputs.trend_url }}
       landing: ${{ steps.plan.outputs.landing }}
+      generated: ${{ steps.push.outputs.generated }}
+      bot_slug: ${{ steps.push.outputs.bot }}
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
@@ -199,6 +201,13 @@ jobs:
             --pr-author "$PR_AUTHOR" --head-ref "$HEAD_REF" --head-repo "$HEAD_REPO" \
             --repo "$GITHUB_REPOSITORY" --verified-commits "$VERIFIED" \
             ${BASE_REF:+--base "origin/$BASE_REF"} ${LABELS:+--labels "$LABELS"} >> "$GITHUB_OUTPUT"
+      # Fails open: no answer reads as not a landing.
+      - name: Check whether the push is the bot's landing
+        id: push
+        if: >-
+          inputs.bot && github.event_name == 'push'
+          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: cargo soothfast ci regen --probe | grep -xE 'generated=true|bot=[A-Za-z0-9-]*' >>"$GITHUB_OUTPUT" || true
       - name: Upload the results of tests that need no job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -596,11 +605,9 @@ jobs:
       ${{ !cancelled() && needs.plan.result == 'success' && github.event_name != 'schedule'
       && needs.plan.outputs.packages != '' && (github.event_name != 'pull_request' || inputs.shard != 1) }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
-    environment: soothfast-bot
     permissions:
       contents: read
-      pull-requests: write
-      id-token: write
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.shards) }}
@@ -658,16 +665,14 @@ jobs:
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
-          changelog: ${{ inputs.bot && 'true' || 'false' }}
+          changelog: "false"
           labels: "false"
           comment: "false"
           shard: ${{ matrix.shard }}
           # Each pull-request leg saves the items its shard owns; the docs job
           # merges the legs. A push records every item in its first leg.
           save-baseline: head
-          # The build job owns the executables; only the changelog
-          # regeneration on a default-branch push builds rustdoc here.
-          rustdoc-cache: ${{ inputs.bot && github.event_name == 'push' && 'true' || 'false' }}
+          rustdoc-cache: "false"
       - name: Upload the gate results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -684,6 +689,124 @@ jobs:
           name: soothfast-baseline-rust${{ matrix.shard != '' && format('-shard-{0}', matrix.slug) || '' }}-attempt-${{ github.run_attempt }}
           path: .soothfast/baselines/head.json
           if-no-files-found: ignore
+
+  # An older push whose gate finishes late would cancel the newer push's
+  # regeneration and then skip its own, so it is kept out of the regen group.
+  regen-check:
+    name: Regenerate (check)
+    needs: [plan, gate-rust]
+    if: >-
+      ${{ !cancelled() && needs.gate-rust.result == 'success'
+      && inputs.bot && github.event_name == 'push'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && needs.plan.outputs.generated != 'true' }}
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    outputs:
+      superseded: ${{ steps.check.outputs.superseded }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: action
+          persist-credentials: false
+      # Fails open: anything the script cannot read is not superseded.
+      - name: Check the push is still the newest
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_SLUG: ${{ needs.plan.outputs.bot_slug }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if .soothfast-action/action/superseded.sh; then
+            echo "superseded=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "superseded=false" >>"$GITHUB_OUTPUT"
+          fi
+
+  regen:
+    name: Regenerate
+    needs: [plan, gate-rust, regen-check]
+    if: >-
+      ${{ !cancelled() && needs.gate-rust.result == 'success'
+      && (needs.regen-check.result == 'success' || needs.regen-check.result == 'failure')
+      && needs.regen-check.outputs.superseded != 'true'
+      && inputs.bot && github.event_name == 'push'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && needs.plan.outputs.generated != 'true' }}
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    environment: soothfast-bot
+    concurrency:
+      # A push that regenerates nothing must not cancel a real regeneration.
+      group: soothfast-regen-${{ github.ref }}${{ (needs.plan.outputs.generated == 'true' || needs.regen-check.outputs.superseded == 'true') && format('-{0}', github.sha) || '' }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      # A failed build leaves nothing to download, and this job then compiles
+      # for itself and reports the error in its own output.
+      - name: Download the built stores
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: soothfast-store-bench
+          path: ${{ runner.temp }}/store-in
+      - name: Check the built stores
+        id: store
+        run: echo "hit=$([ -f "$RUNNER_TEMP/store-in/store.tar" ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
+      # On a store hit nothing compiles, so only the variable rust-cache sets, which the store keys name, is kept.
+      - name: Match the build job's environment
+        if: steps.store.outputs.hit == 'true'
+        run: echo "CARGO_INCREMENTAL=0" >>"$GITHUB_ENV"
+      - if: steps.store.outputs.hit != 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: bench
+          save-if: "false"
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
+      # A tar keeps the executables' modes, which an artifact drops.
+      - name: Unpack the built stores
+        run: |
+          if [ -f "$RUNNER_TEMP/store-in/store.tar" ]; then
+            mkdir -p .soothfast
+            tar -xf "$RUNNER_TEMP/store-in/store.tar" -C .soothfast
+          fi
+      - uses: ./.soothfast-action
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          gate: "false"
+          changelog: "true"
+          labels: "false"
+          head-runs: "true"
+          rustdoc-cache: "true"
 
   gate:
     name: Gate (${{ matrix.name }})

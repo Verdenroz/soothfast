@@ -117,6 +117,15 @@ inputs:
     description: Space-separated pathspecs `regen-run` may change.
     required: false
     default: ""
+  head-runs:
+    description: >-
+      Restore the measured runs a gate leg of this same push saved under
+      HEAD's commit, so the regeneration reads HEAD's run back instead of
+      measuring it again, and save what the regeneration measured under that
+      commit's `-regen` key. For a job with `gate: "false"` that runs after
+      the gate leg.
+    required: false
+    default: "false"
   labels:
     description: >-
       On default-branch pushes and schedules, ask the soothfast-bot broker to
@@ -431,6 +440,15 @@ runs:
       run: |
         "$CLI" cache merge --from .soothfast-branch
         rm -rf .soothfast-branch
+    - name: Restore the push's measured runs
+      if: inputs.head-runs == 'true' && steps.prepare.outputs.regenerating == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          .soothfast/runs
+          .soothfast/items
+          .soothfast/maps
+        key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}
 
     # The store is content-addressed, so entries from any lineage are safe to
     # combine. actions/cache saves the merged directory when the job ends.
@@ -660,15 +678,16 @@ runs:
     # later push, so what the regeneration stored is saved under a key of its own.
     - name: Save the runs the regeneration measured
       if: >-
-        steps.regen.outcome == 'success' && steps.prepare.outputs.cache_runs == 'true'
-        && steps.prepare.outputs.records == 'true' && inputs.changelog == 'true'
+        steps.regen.outcome == 'success' && inputs.changelog == 'true'
+        && (inputs.head-runs == 'true'
+        || (steps.prepare.outputs.cache_runs == 'true' && steps.prepare.outputs.records == 'true'))
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           .soothfast/runs
           .soothfast/items
           .soothfast/maps
-        key: ${{ steps.save-key.outputs.key }}-regen
+        key: soothfast-runs-${{ github.ref_name }}-${{ github.sha }}-regen
 
     # Minted after everything that compiles the tree has run.
     - name: Mint a soothfast-bot token
