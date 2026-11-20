@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Regenerate captured example output (#464)
 - Comment a fork's verdict from workflow_run (#462)
 
 ### 🐛 Fixes
