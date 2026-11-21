@@ -53,6 +53,14 @@ pub(super) fn remember(dir: &Path, cheap: &str, stable: &str, born: u128) {
     write_atomic(&dir.join(format!("{stable}.latest")), cheap.as_bytes());
 }
 
+/// Point `stable` at the entry named for `cheap`, which a lookup just hit,
+/// unless it already does or the entry never had a pointer.
+pub(super) fn repoint(dir: &Path, cheap: &str, stable: &str) {
+    if target(dir, stable).as_deref() != Some(cheap) && born(dir, cheap, stable).is_some() {
+        write_atomic(&dir.join(format!("{stable}.latest")), cheap.as_bytes());
+    }
+}
+
 /// The name of the pointer that finds the entry named for `cheap`.
 pub fn name_of(dir: &Path, cheap: &str) -> Option<String> {
     let text = read(dir, format!("{cheap}.stable"))?;

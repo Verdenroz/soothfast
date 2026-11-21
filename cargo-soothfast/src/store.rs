@@ -353,6 +353,9 @@ fn entry_path(dir: &Path, key: &str, digest: &str, ext: &str) -> PathBuf {
 pub fn lookup(dir: &Path, key: &str, root: &Path, ext: &str) -> Option<PathBuf> {
     let (cheap, stable) = halves(key);
     if let Some(hit) = lookup_exact(dir, cheap, root, ext) {
+        if let Some(stable) = stable {
+            pointer::repoint(dir, cheap, stable);
+        }
         return Some(hit);
     }
     let stable = stable?;
@@ -910,6 +913,36 @@ mod tests {
         repo.write("app/soothfast-gate.lock", "two\n");
         repo.write("dep/build.rs", "fn main() {}\n");
         assert_eq!(lookup(&store, &key(&repo, "h"), &repo.0, "x"), None);
+    }
+
+    #[test]
+    fn an_exact_hit_repoints_the_stable_half() {
+        let (repo, store, first) = setup("repoint");
+        repo.write("app/src/lib.rs", "pub fn app() -> u8 { 0 }\n");
+        stored(&repo, &store, &key(&repo, "h"), &inputs(&READ));
+        repo.write("app/src/lib.rs", "pub fn app() {}\n");
+        assert_eq!(key(&repo, "h"), first);
+        assert!(lookup(&store, &first, &repo.0, "x").is_some());
+        repo.write("app/soothfast-gate.lock", "two\n");
+        assert!(lookup(&store, &key(&repo, "h"), &repo.0, "x").is_some());
+    }
+
+    #[test]
+    fn an_exact_hit_on_an_opaque_entry_leaves_no_pointer() {
+        let repo = Repo::new("opaque-hit");
+        let store = repo.store_dir();
+        let opaque = Inputs {
+            opaque: true,
+            ..inputs(&["app/src/lib.rs"])
+        };
+        stored(&repo, &store, &key(&repo, "h"), &opaque);
+        assert!(lookup(&store, &key(&repo, "h"), &repo.0, "x").is_some());
+        let pointers = std::fs::read_dir(&store)
+            .unwrap()
+            .flatten()
+            .filter(|f| f.path().extension().is_some_and(|x| x == "latest"))
+            .count();
+        assert_eq!(pointers, 0);
     }
 
     #[test]
