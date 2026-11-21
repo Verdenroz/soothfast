@@ -156,9 +156,9 @@ by binary.
 Then it measures each package into the
 `baseline` baseline, regenerates `CHANGELOG.md` against the latest tag (or
 lists the initial surface when there is no tag), regenerates any packages
-named in `spec`, and lands whatever changed as one pull request on
-`bot/soothfast-update`. Pushes to other branches do nothing beyond the
-install.
+named in `spec`, records fresh output for each capture block, and lands
+whatever changed as one pull request on `bot/soothfast-update`. Pushes to
+other branches do nothing beyond the install.
 
 The bot PR triggers your workflows like any other pull request, this step
 included, which is how its required checks get satisfied. Under `run.yml` the
@@ -929,8 +929,9 @@ A pull request is a landing only when all of these hold:
   matches a `[bot] landing_paths` glob, and none is a `soothfast.toml`.
 
 The files regeneration writes are `CHANGELOG.md` when the repository drafts
-one, each `[[spec]]` file with `mode = "generate"`, and everything under each
-`[[sdk]] out` directory. List anything else a job of your own lands through
+one, each `[[spec]]` file with `mode = "generate"`, everything under each
+`[[sdk]] out` directory, and each doc holding a capture block that `ci capture`
+covers. List anything else a job of your own lands through
 `land.sh` in `landing_paths`, including what a `regen-run` hook writes:
 
 ```toml
@@ -1150,10 +1151,21 @@ which fails on a stale committed spec. On a pull request, and on any run given
 `--base`, `spec gate` compares with the base; a push alone has none. The base
 is the spec committed at the merge-base, which that same check pinned to its
 code, so nothing is built there; a committed spec that does not re-render is
-rebuilt in a worktree instead. A package
+rebuilt in a worktree instead. The head's spec is always built from its
+routes. A package
 with a spec that is not generated runs `spec check`, and one with an `[[sdk]]`
 entry runs `sdk gen --check`. Every step runs even after one fails, and each
 package records a `check` verdict named `spec-PKG` with the worst exit code.
+With the `bot` input on, a pull request into the default branch and a push to
+it run neither `spec gen --check` nor `sdk gen --check` and print a line for
+each: that push's regeneration rewrites those files and the bot lands them.
+`spec gate` and `spec check` still run, and a package left with no step
+passes. Every other run keeps both checks: a pull request into another branch,
+a push to another branch, and a scheduled, manual or merge-queue run. So does
+a repository without the bot. The workflow turns this on by setting
+`SOOTHFAST_REGEN=true`. A workspace with no `soothfast` bench target keeps
+both checks: the regeneration runs in the gate job, which that workspace does
+not have.
 With nothing configured it says so and records nothing.
 `ci proto` runs `spec check-proto` for every package with a `[[proto]]`
 entry, or the `-p` ones given, which reconciles each message's fields against
@@ -1171,9 +1183,18 @@ A lone docs package is checked against every doc. Among several, the blocks of
 all the docs would compile into each package's crate, so only a package whose
 `[package.NAME.docs]` table names its own `paths` is checked. For a lone docs
 package, `capture_paths` under `[ci]` lists the docs to check in place of all
-of them, which leaves out a page whose output changes from run to run. Each
+of them, which leaves out a page whose output changes from run to run. On the
+default branch `ci regen` runs `docs capture` for the same packages and paths
+and lands the docs it changes. A package whose example fails is reported as a
+warning and its docs are left as committed; everything else still lands.
+`[ci] skip = ["capture"]` turns off
+both the check and the regeneration. Each
 package records a `check` verdict named `capture-PKG`. With no such package it says so
-and records nothing.
+and records nothing. With the `bot` input on, a pull request into the default
+branch and a push to it plan no capture check, and `ci capture` run there
+passes with a line saying the output is regenerated on the default branch.
+Every other run, a repository without the bot, and a workspace with no
+`soothfast` bench target keep the check, as with `ci spec`.
 `ci site` builds the docs site with `docs build --out DIR`, where DIR is
 `target/soothfast-site` unless `--out` says otherwise. It builds against the
 `head` baseline when `.soothfast/baselines/head.json` exists. It runs only when
@@ -1248,8 +1269,10 @@ package with a `soothfast` bench target and regenerates `CHANGELOG.md` over
 the `[changelog]` packages, or those same packages when it names none
 (`--no-changelog` skips both), runs `spec gen`
 for each package with a `mode = "generate"` spec and `sdk gen` for each with
-`[[sdk]]`, then runs the `REGEN_RUN` command with `$SOOTHFAST` set when that
-variable is set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
+`[[sdk]]`, then `docs capture` for each docs package `ci capture` checks (it
+runs each capture block once, and the markdown holding one is what lands),
+then runs the `REGEN_RUN` command with `$SOOTHFAST` set when that variable is
+set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
 lines, also written to `--paths-out`, and never commits or pushes.
 `--baseline NAME` names the baseline it measures into (default `base`).
 

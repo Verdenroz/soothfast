@@ -224,8 +224,8 @@ fn core_triple(version: &str) -> Option<(u64, u64, u64)> {
 }
 
 /// The base documents, read from the committed spec files at the merge-base
-/// instead of rebuilding it. Sound whenever merges require the freshness
-/// check, which guarantees a committed generated spec matches its code.
+/// instead of rebuilding it. Sound whenever the base's committed generated
+/// spec matches its code: a push checks it, or the bot regenerates it.
 /// Files absent at the base diff as new, the same as the worktree path.
 fn committed_base_docs(
     head: &spec_gen::Built,

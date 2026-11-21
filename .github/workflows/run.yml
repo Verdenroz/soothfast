@@ -193,6 +193,7 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           VERIFIED: ${{ steps.commits.outputs.verified }}
+          SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
         run: |
           cargo soothfast plan --github --java "$JAVA" --node "$NODE" \
             --shard "$SHARD" ${FIRST_ONLY:+--first-shard-only} \
@@ -1153,6 +1154,7 @@ jobs:
         env:
           KIND: ${{ matrix.kind }}
           PACKAGE: ${{ matrix.package }}
+          SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
         run: cargo soothfast ci "$KIND" ${PACKAGE:+-p "$PACKAGE"}
       # Both lanes are store hits after the check, so this only copies what
       # the site's routes pages and the regeneration read.

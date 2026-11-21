@@ -6,6 +6,7 @@ use std::path::Path;
 
 use super::each::{self, Job};
 use super::env::{CiEnv, Event};
+use super::regen;
 use crate::spec_config::Mode;
 use crate::{invoke, sdk_config, spec_config};
 
@@ -53,7 +54,20 @@ fn gate_base(env: &CiEnv) -> Option<String> {
     env.base.clone().filter(|_| given)
 }
 
-fn steps(pkg: &Package, against: Option<&str>) -> Vec<Vec<String>> {
+/// The checks a run skips where the bot regenerates what they compare: the
+/// generated spec and the generated SDK.
+fn regenerated(pkg: &Package) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if pkg.generates {
+        names.push("spec gen --check");
+    }
+    if pkg.sdk {
+        names.push("sdk gen --check");
+    }
+    names
+}
+
+fn steps(pkg: &Package, against: Option<&str>, regen: bool) -> Vec<Vec<String>> {
     let command = |words: &[&str], tail: &[&str]| -> Vec<String> {
         let mut args: Vec<String> = words.iter().map(|w| w.to_string()).collect();
         args.extend(["-p".into(), pkg.name.clone()]);
@@ -61,11 +75,11 @@ fn steps(pkg: &Package, against: Option<&str>) -> Vec<Vec<String>> {
         args
     };
     let mut steps = Vec::new();
-    if pkg.generates {
+    if pkg.generates && !regen {
         steps.push(command(&["spec", "gen"], &["--check"]));
     }
-    // `spec gen --check` above pins the committed spec to its code, at the
-    // base as at HEAD, so the base is read instead of built.
+    // The base's committed spec matches its code, so it is read instead of
+    // built. HEAD's spec is always built from its routes.
     if let Some(base) = against {
         steps.push(command(
             &["spec", "gate"],
@@ -75,7 +89,7 @@ fn steps(pkg: &Package, against: Option<&str>) -> Vec<Vec<String>> {
     if pkg.reconciles {
         steps.push(command(&["spec", "check"], &[]));
     }
-    if pkg.sdk {
+    if pkg.sdk && !regen {
         steps.push(command(&["sdk", "gen"], &["--check"]));
     }
     steps
@@ -118,12 +132,23 @@ fn configured() -> Result<Vec<String>, String> {
     configured_at(&invoke::workspace_root().map_err(|e| e.to_string())?)
 }
 
-fn inner(opts: &Options) -> i32 {
+fn inner(env: &CiEnv, opts: &Options) -> i32 {
     let [name] = opts.packages.as_slice() else {
         return crate::arg_err("ci spec --inner takes one -p");
     };
-    match package(name) {
-        Ok(pkg) => each::run_steps(&steps(&pkg, opts.against.as_deref()), each::spawn),
+    let read = package(name).and_then(|pkg| {
+        let regen = (pkg.generates || pkg.sdk) && regen::bot_regenerates(env)?;
+        Ok((pkg, regen))
+    });
+    match read {
+        Ok((pkg, regen)) => {
+            if regen {
+                for skipped in regenerated(&pkg) {
+                    println!("ci spec: {skipped} skipped, regenerated on the default branch");
+                }
+            }
+            each::run_steps(&steps(&pkg, opts.against.as_deref(), regen), each::spawn)
+        }
         Err(e) => {
             eprintln!("soothfast: {e}");
             2
@@ -138,7 +163,7 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
         Err(e) => return crate::arg_err(&e),
     };
     if opts.inner {
-        return inner(&opts);
+        return inner(env, &opts);
     }
     let packages = match opts.packages {
         named if !named.is_empty() => named,
@@ -203,7 +228,7 @@ mod tests {
     #[test]
     fn a_generating_package_checks_its_spec_and_gates() {
         assert_eq!(
-            steps(&pkg(true, false, false), Some("b4se")),
+            steps(&pkg(true, false, false), Some("b4se"), false),
             [
                 argv(&["spec", "gen", "-p", "api", "--check"]),
                 argv(&[
@@ -222,13 +247,48 @@ mod tests {
     #[test]
     fn each_step_runs_only_when_its_input_is_configured() {
         assert_eq!(
-            steps(&pkg(false, true, true), None),
+            steps(&pkg(false, true, true), None, false),
             [
                 argv(&["spec", "check", "-p", "api"]),
                 argv(&["sdk", "gen", "-p", "api", "--check"]),
             ]
         );
-        assert!(steps(&pkg(false, false, false), None).is_empty());
+        assert!(steps(&pkg(false, false, false), None, false).is_empty());
+    }
+
+    #[test]
+    fn regeneration_drops_the_checks_the_bot_makes_current() {
+        assert_eq!(
+            steps(&pkg(true, true, true), Some("b4se"), true),
+            [
+                argv(&[
+                    "spec",
+                    "gate",
+                    "-p",
+                    "api",
+                    "--base",
+                    "b4se",
+                    "--prefer-committed"
+                ]),
+                argv(&["spec", "check", "-p", "api"]),
+            ]
+        );
+        assert_eq!(
+            steps(&pkg(true, true, true), Some("b4se"), false).len(),
+            4,
+            "regeneration off keeps every step"
+        );
+    }
+
+    #[test]
+    fn a_package_with_nothing_left_runs_no_step_and_names_what_it_skipped() {
+        assert!(steps(&pkg(true, false, true), None, true).is_empty());
+        assert_eq!(steps(&pkg(true, false, false), Some("b4se"), true).len(), 1);
+        assert_eq!(
+            regenerated(&pkg(true, true, true)),
+            ["spec gen --check", "sdk gen --check"]
+        );
+        assert_eq!(regenerated(&pkg(false, true, false)), Vec::<&str>::new());
     }
 
     #[test]
