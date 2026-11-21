@@ -248,6 +248,8 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
 
 /// The packages the job builds for and the `prebuild` calls that build them.
 /// With no package named, each entry of the lane builds its own defaults.
+/// The changelog's packages are loaded unless `--changelog` names them, and
+/// ride in the docs call, where `prebuild` builds a shared rustdoc once.
 fn plan(
     job: &Job,
     shape: &Shape,
@@ -255,16 +257,32 @@ fn plan(
     resolve: impl Fn(&str, Group) -> Result<Settings, String>,
 ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
     let mut packages = Vec::new();
-    let mut calls = Vec::new();
+    let mut calls: Vec<Vec<String>> = Vec::new();
     for kind in entries(&job.lane) {
-        let chosen = if job.named.is_empty() {
-            load(kind.source)?
-        } else {
-            let named = job.named.iter().filter(|(flag, _)| flag == kind.flag);
-            named.map(|(_, pkg)| pkg.clone()).collect()
+        let named = job.named.iter().filter(|(flag, _)| flag == kind.flag);
+        let named: Vec<String> = named.map(|(_, pkg)| pkg.clone()).collect();
+        let changelog = kind.source == Source::Changelog;
+        let chosen = match job.named.is_empty() || (changelog && named.is_empty()) {
+            true => load(kind.source)?,
+            false => named,
         };
-        calls.extend(invocations(job, kind, &chosen, shape, &resolve)?);
-        packages.extend(chosen);
+        let docs_call = calls
+            .iter_mut()
+            .find(|call| call.iter().any(|a| a == "--docs"));
+        match docs_call.filter(|_| changelog) {
+            Some(call) => {
+                let flags = chosen
+                    .iter()
+                    .flat_map(|pkg| [kind.flag.into(), pkg.clone()]);
+                call.extend(flags);
+            }
+            None => calls.extend(invocations(job, kind, &chosen, shape, &resolve)?),
+        }
+        for pkg in chosen {
+            if !(changelog && packages.contains(&pkg)) {
+                packages.push(pkg);
+            }
+        }
     }
     Ok((packages, calls))
 }
@@ -435,8 +453,11 @@ mod tests {
             plan_out: None,
             listing_out: None,
         };
-        let unused = |_| Err("named packages need no defaults".to_string());
-        plan(&job, shape, unused, resolve).map(|(_, calls)| calls)
+        let only_the_changelog = |source| match source {
+            Source::Changelog => Ok(Vec::new()),
+            _ => Err("named packages need no defaults".to_string()),
+        };
+        plan(&job, shape, only_the_changelog, resolve).map(|(_, calls)| calls)
     }
 
     fn no_features(_: &str, _: Group) -> Result<Settings, String> {
@@ -588,25 +609,81 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_changelogs_packages_build_in_a_call_of_their_own() {
-        let shape = shape(&env(Event::Push, None, true), 1, || false);
-        let listed = |source| match source {
-            Source::Changelog => Ok(argv(&["c"])),
+    fn changelog_of(
+        packages: &'static [&'static str],
+    ) -> impl Fn(Source) -> Result<Vec<String>, String> {
+        move |source| match source {
+            Source::Changelog => Ok(argv(packages)),
             other => configured(other),
+        }
+    }
+
+    fn rustdoc_plan(
+        named: &[(&str, &str)],
+        load: impl Fn(Source) -> Result<Vec<String>, String>,
+    ) -> (Vec<String>, Vec<Vec<String>>) {
+        let shape = shape(&env(Event::Push, None, true), 1, || false);
+        let job = Job {
+            named: named
+                .iter()
+                .map(|(flag, pkg)| (flag.to_string(), pkg.to_string()))
+                .collect(),
+            ..job("rustdoc", None)
         };
-        let (packages, calls) = plan(&job("rustdoc", None), &shape, listed, no_features).unwrap();
+        plan(&job, &shape, load, no_features).unwrap()
+    }
+
+    const RUSTDOC: [&str; 3] = ["prebuild", "--only", "rustdoc"];
+
+    #[test]
+    fn the_changelogs_packages_ride_in_the_docs_call() {
+        let (packages, calls) = rustdoc_plan(&[], changelog_of(&["c"]));
         assert_eq!(packages, ["d", "g", "c"]);
-        assert_eq!(
-            calls.last(),
-            Some(&argv(&[
-                "prebuild",
-                "--only",
-                "rustdoc",
-                "--changelog",
-                "c"
-            ]))
+        let docs = [&RUSTDOC[..], &["--docs", "d", "--changelog", "c"]].concat();
+        assert_eq!(calls.first(), Some(&argv(&docs)));
+        assert!(
+            calls[1..]
+                .iter()
+                .all(|c| !c.contains(&"--changelog".into()))
         );
+    }
+
+    #[test]
+    fn a_named_docs_package_still_takes_the_changelogs_packages() {
+        let (packages, calls) = rustdoc_plan(&[("--docs", "x")], changelog_of(&["c"]));
+        assert_eq!(packages, ["x", "c"]);
+        let docs = [&RUSTDOC[..], &["--docs", "x", "--changelog", "c"]].concat();
+        assert_eq!(calls, [argv(&docs)]);
+    }
+
+    #[test]
+    fn a_named_docs_package_builds_alone_when_the_changelog_loads_nothing() {
+        let (packages, calls) = rustdoc_plan(&[("--docs", "x")], configured);
+        assert_eq!(packages, ["x"]);
+        assert_eq!(calls, [argv(&[&RUSTDOC[..], &["--docs", "x"]].concat())]);
+    }
+
+    #[test]
+    fn a_changelog_package_the_docs_name_is_listed_once_in_one_call() {
+        let (packages, calls) = rustdoc_plan(&[("--docs", "x")], changelog_of(&["x"]));
+        assert_eq!(packages, ["x"]);
+        let docs = [&RUSTDOC[..], &["--docs", "x", "--changelog", "x"]].concat();
+        assert_eq!(calls, [argv(&docs)]);
+    }
+
+    #[test]
+    fn a_named_changelog_package_is_not_loaded() {
+        let named = [("--docs", "x"), ("--changelog", "y")];
+        let (packages, _) = rustdoc_plan(&named, changelog_of(&["c"]));
+        assert_eq!(packages, ["x", "y"]);
+    }
+
+    #[test]
+    fn the_changelogs_packages_build_in_a_call_of_their_own_without_docs() {
+        let (packages, calls) = rustdoc_plan(&[("--spec", "g")], changelog_of(&["c"]));
+        assert_eq!(packages, ["g", "c"]);
+        let own = [&RUSTDOC[..], &["--changelog", "c"]].concat();
+        assert_eq!(calls.last(), Some(&argv(&own)));
     }
 
     #[test]

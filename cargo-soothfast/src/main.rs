@@ -176,12 +176,15 @@ commands:
            generated= (this push only landed regenerated files) and bot=
            (the bot's App slug))
   ci       build LANE [-p PKG]... [--docs PKG]... [--spec PKG[:TARGET]]...
-           [--shards N] [--stage DIR] [--plan-out FILE] [--listing-out FILE]
+           [--changelog PKG]... [--shards N] [--stage DIR] [--plan-out FILE]
+           [--listing-out FILE]
            (the workflow's build-once job: `prebuild --only LANE` for the
            packages named, -p for bench, --spec for routes, --docs and
            --spec for rustdoc; with none named, bench builds the gated
            packages, routes every package with a [[spec]] entry, and rustdoc
-           the docs packages and those that generate a spec; --shards
+           the docs packages and those that generate a spec; on a push the
+           bot regenerates, rustdoc also builds the changelog's packages,
+           or those --changelog names; --shards
            counts only on a pull request; --plan-out adds each package's
            items to a plan file; --listing-out writes the checksum of
            .soothfast/bins before and after)
@@ -191,7 +194,8 @@ commands:
            --github prints $GITHUB_OUTPUT lines)
   prebuild [-p PKG]... [--features F] [--against-ref REF] [--no-reuse-base]
            [--docs PKG]... [--docs-features F] [--docs-paths PATH...]
-           [--spec PKG[:TARGET]]... [--only bench|routes|rustdoc]...
+           [--changelog PKG]... [--spec PKG[:TARGET]]...
+           [--only bench|routes|rustdoc]...
            (builds into the stores what a later job reads and nothing else:
            HEAD's bench executables and link maps for the -p packages, the
            merge-base's too unless the run cache holds its run, the routes
