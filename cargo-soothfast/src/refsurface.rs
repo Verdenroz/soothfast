@@ -104,7 +104,7 @@ mod tests {
             kind: kind.into(),
             fingerprint,
             signature: format!("pub {kind} x"),
-            has_docs: fingerprint % 2 == 0,
+            has_docs: fingerprint.is_multiple_of(2),
         };
         let mut s = Surface::default();
         s.items
