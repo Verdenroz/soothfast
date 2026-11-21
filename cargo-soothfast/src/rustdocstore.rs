@@ -148,4 +148,80 @@ mod tests {
         let expected: Value = serde_json::from_str(text).unwrap();
         assert_eq!(load_from(&dir, "abc", &repo.0), Some(expected));
     }
+
+    fn documented(repo: &Repo, dir: &Path) -> String {
+        let json = repo.0.join("app.json");
+        std::fs::write(&json, r#"{"index":{}}"#).unwrap();
+        let key = key_with(repo, &request());
+        let read = inputs(&["app/src/lib.rs", "app/README.md"]);
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        store_in(dir, &key, &repo.0, &read, future, &json);
+        key
+    }
+
+    #[test]
+    fn a_document_survives_edits_to_files_the_build_never_read() {
+        let repo = Repo::new("rd-unrelated");
+        repo.write("app/README.md", "included\n");
+        let dir = repo.store_dir();
+        let first = documented(&repo, &dir);
+        repo.write("CHANGELOG.md", "# changes\n");
+        repo.write("app/CHANGELOG.md", "# changes\n");
+        repo.write("app/soothfast-gate.lock", "pruned\n");
+        repo.write("app/openapi.yaml", "openapi: 3.1.0\n");
+        let second = key_with(&repo, &request());
+        assert_ne!(first, second);
+        assert_eq!(
+            store::lookup_exact(&dir, store::entry_key(&second), &repo.0, "json"),
+            None
+        );
+
+        assert!(load_from(&dir, &second, &repo.0).is_some());
+        assert!(store::lookup_exact(&dir, store::entry_key(&second), &repo.0, "json").is_some());
+    }
+
+    #[test]
+    fn a_document_misses_when_an_included_markdown_or_a_source_changes() {
+        for file in ["app/README.md", "app/src/lib.rs"] {
+            let repo = Repo::new("rd-read");
+            repo.write("app/README.md", "included\n");
+            let dir = repo.store_dir();
+            documented(&repo, &dir);
+            repo.write("app/soothfast-gate.lock", "pruned\n");
+            repo.write(file, "edited\n");
+            assert_eq!(load_from(&dir, &key_with(&repo, &request()), &repo.0), None);
+        }
+    }
+
+    #[test]
+    fn a_document_of_another_extraction_never_matches() {
+        let repo = Repo::new("rd-other");
+        repo.write("app/README.md", "included\n");
+        let dir = repo.store_dir();
+        documented(&repo, &dir);
+        repo.write("CHANGELOG.md", "# changes\n");
+        let flags = [("RUSTFLAGS".to_string(), "--cfg x".to_string())];
+        let others = [
+            Request {
+                features: Some("a"),
+                ..request()
+            },
+            Request {
+                visibility: Visibility::Public,
+                ..request()
+            },
+            Request {
+                rustc: "rustc 1.99.1-nightly",
+                ..request()
+            },
+            Request {
+                env: &flags,
+                ..request()
+            },
+        ];
+        for other in &others {
+            assert_eq!(load_from(&dir, &key_with(&repo, other), &repo.0), None);
+        }
+        assert!(load_from(&dir, &key_with(&repo, &request()), &repo.0).is_some());
+    }
 }

@@ -375,6 +375,8 @@ jobs:
       - id: soothfast
         uses: ./.soothfast-action/action/install
       - uses: ./.soothfast-action
+        env:
+          SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
@@ -695,9 +697,10 @@ jobs:
   # regeneration and then skip its own, so it is kept out of the regen group.
   regen-check:
     name: Regenerate (check)
-    needs: [plan, gate-rust]
+    needs: [plan, gate-rust, check, build-rustdoc]
     if: >-
       ${{ !cancelled() && needs.gate-rust.result == 'success'
+      && needs.check.result != 'cancelled' && needs.build-rustdoc.result != 'cancelled'
       && inputs.bot && github.event_name == 'push'
       && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       && needs.plan.outputs.generated != 'true' }}
@@ -733,9 +736,10 @@ jobs:
 
   regen:
     name: Regenerate
-    needs: [plan, gate-rust, regen-check]
+    needs: [plan, gate-rust, check, build-rustdoc, regen-check]
     if: >-
       ${{ !cancelled() && needs.gate-rust.result == 'success'
+      && needs.check.result != 'cancelled' && needs.build-rustdoc.result != 'cancelled'
       && (needs.regen-check.result == 'success' || needs.regen-check.result == 'failure')
       && needs.regen-check.outputs.superseded != 'true'
       && inputs.bot && github.event_name == 'push'
@@ -800,6 +804,29 @@ jobs:
             mkdir -p .soothfast
             tar -xf "$RUNNER_TEMP/store-in/store.tar" -C .soothfast
           fi
+      - name: Download the rustdoc build
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: soothfast-store-rustdoc
+          path: ${{ runner.temp }}/run-stores/rustdoc
+      - name: Download the spec builds
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: soothfast-store-spec-*
+          path: ${{ runner.temp }}/run-stores/spec
+      - name: Merge the rustdoc and spec builds
+        env:
+          CLI: ${{ steps.soothfast.outputs.bin }}
+        run: |
+          shopt -s nullglob globstar
+          for tar in "$RUNNER_TEMP"/run-stores/**/store.tar; do
+            dir=$(mktemp -d)
+            tar -xf "$tar" -C "$dir"
+            "$CLI" cache merge --from "$dir"
+            rm -rf "$dir"
+          done
       - uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
@@ -1132,20 +1159,26 @@ jobs:
           SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
         run: cargo soothfast ci "$KIND" ${PACKAGE:+-p "$PACKAGE"}
       # Both lanes are store hits after the check, so this only copies what
-      # the site's routes pages read.
-      - name: Stage the spec builds for the site
-        if: ${{ !cancelled() && matrix.kind == 'spec' && needs.plan.outputs.site_in_docs == 'true' }}
+      # the site's routes pages and the regeneration read.
+      - name: Stage the spec builds
+        if: >-
+          ${{ !cancelled() && matrix.kind == 'spec'
+          && (needs.plan.outputs.site_in_docs == 'true'
+          || (inputs.bot && github.event_name == 'push'
+          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+          && needs.plan.outputs.generated != 'true')) }}
         env:
           PACKAGE: ${{ matrix.package }}
           STAGE: ${{ runner.temp }}/store
         run: |
           for lane in routes rustdoc; do
             cargo soothfast ci build "$lane" --stage "$STAGE" ${PACKAGE:+--spec "$PACKAGE"} \
-              || echo "::warning::could not stage the $lane builds for the site"
+              || echo "::warning::could not stage the $lane builds"
           done
           if [ -d "$STAGE" ]; then tar -C "$STAGE" -cf "$RUNNER_TEMP/store.tar" .; fi
+      # Only the staging step writes the tar, so nothing uploads without it.
       - name: Upload the spec builds
-        if: ${{ !cancelled() && matrix.kind == 'spec' && needs.plan.outputs.site_in_docs == 'true' }}
+        if: ${{ !cancelled() && matrix.kind == 'spec' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: soothfast-store-${{ matrix.name }}

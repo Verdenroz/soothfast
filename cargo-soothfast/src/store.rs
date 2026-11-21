@@ -3,10 +3,18 @@
 //!
 //! Lookup is in two levels, as a compiler cache does it. A cheap key names the
 //! toolchain, flags, lockfile and the files git lists in the package
-//! directories. It selects a manifest of the other files and variables the
-//! last build read (from cargo and rustc dep-info). An entry is named for the
+//! directories. It selects a manifest of the files and variables the last
+//! build read (from cargo and rustc dep-info). An entry is named for the
 //! key and a digest of those inputs, so any of them changing is a miss, in
 //! any checkout, including the merge-base worktree.
+//!
+//! The key also carries a stable half: the head, the variables and the
+//! files that configure the build (`Cargo.toml`, `Cargo.lock`, `build.rs`,
+//! cargo config, toolchain files), which a manifest does not cover. When a
+//! lookup misses, the last entry stored under the same stable half is checked
+//! against its manifest. If its inputs all still hold it is a hit, and is kept
+//! under the current key too. A build that read a file the tree has since
+//! changed misses either way.
 //!
 //! A tree the key cannot cover (a package directory outside the repository,
 //! no git) has no key and is always rebuilt. What a build reads without
@@ -23,6 +31,8 @@ use std::time::SystemTime;
 
 use serde_json::{Value, json};
 use soothfast_registry::fnv1a;
+
+pub mod pointer;
 
 /// Variable families that change what rustc and rustdoc compile.
 const ENV_PREFIXES: [&str; 4] = [
@@ -53,12 +63,16 @@ const ROOT_FILES: [&str; 6] = [
     "rust-toolchain.toml",
 ];
 
-/// The files and variables a build read beyond the package directories.
-/// Paths are relative to the workspace root when they lie under it.
+/// The files and variables a build read, in the package directories and
+/// beyond. Paths are relative to the workspace root when they lie under it.
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Inputs {
     pub files: BTreeSet<String>,
     pub env: BTreeSet<String>,
+    /// The build may have read more than is listed here (a workspace build
+    /// script that names nothing to watch, a dep-info that could not be
+    /// read), so only the key it was built under finds its entry.
+    pub opaque: bool,
 }
 
 impl Inputs {
@@ -76,6 +90,7 @@ impl Inputs {
         Some(Inputs {
             files: strings("files")?,
             env: strings("env")?,
+            opaque: false,
         })
     }
 
@@ -210,7 +225,8 @@ pub fn cheap_key(
 }
 
 /// `cheap_key` leaving out the listed files that `skip` names. A skipped file
-/// still counts if the build read it, through the manifest.
+/// still counts if the build read it, through the manifest. The result is the
+/// cheap half and the stable half joined by `_`.
 pub fn cheap_key_skipping(
     root: &Path,
     crate_dirs: &[PathBuf],
@@ -236,11 +252,53 @@ pub fn cheap_key_skipping(
     for (name, value) in env {
         input.push_str(&format!("{name}={value}\n"));
     }
+    let mut stable = input.clone();
     for file in files {
-        let token = hash_path(&root.join(&file))?;
-        input.push_str(&format!("{}\u{1}{token}\n", file.display()));
+        let line = format!("{}\u{1}{}\n", file.display(), hash_path(&root.join(&file))?);
+        input.push_str(&line);
+        if configures_build(&file) {
+            stable.push_str(&line);
+        }
     }
-    Some(format!("{:016x}", fnv1a(input.as_bytes())))
+    Some(format!(
+        "{:016x}{KEY_SEP}{:016x}",
+        fnv1a(input.as_bytes()),
+        fnv1a(stable.as_bytes())
+    ))
+}
+
+/// Separates the cheap half of a key from the stable half.
+const KEY_SEP: char = '_';
+
+/// The cheap half of `key`, which names its entries, and the stable half when
+/// it has one.
+fn halves(key: &str) -> (&str, Option<&str>) {
+    match key.split_once(KEY_SEP) {
+        Some((cheap, stable)) => (cheap, Some(stable)),
+        None => (key, None),
+    }
+}
+
+/// The part of `key` its entries are named for.
+pub fn entry_key(key: &str) -> &str {
+    halves(key).0
+}
+
+/// Whether `file` shapes a build in a way no manifest shows: cargo reads it
+/// without recording it, or (`build.rs`) builds differently once it exists.
+fn configures_build(file: &Path) -> bool {
+    let name = file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    let in_cargo_dir = file
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|d| d == ".cargo");
+    matches!(
+        name,
+        "Cargo.toml" | "Cargo.lock" | "build.rs" | "rust-toolchain" | "rust-toolchain.toml"
+    ) || (in_cargo_dir && matches!(name, "config" | "config.toml"))
 }
 
 /// Whether `file` lies under a top-level `.soothfast*` path: the store and
@@ -288,15 +346,55 @@ fn entry_path(dir: &Path, key: &str, digest: &str, ext: &str) -> PathBuf {
     dir.join(format!("{key}-{digest}.{ext}"))
 }
 
-/// The entry stored under `key` whose inputs still hold what they did. Its
-/// modification time is renewed, which is what pruning goes by.
+/// The entry stored under `key` whose inputs still hold what they did, or
+/// else the last entry stored under the key's stable half if its inputs still
+/// hold. That one is then kept under `key` as well. The entry's modification
+/// time is renewed, which is what pruning goes by.
 pub fn lookup(dir: &Path, key: &str, root: &Path, ext: &str) -> Option<PathBuf> {
-    let manifest = std::fs::read_to_string(dir.join(format!("{key}.manifest"))).ok()?;
+    let (cheap, stable) = halves(key);
+    if let Some(hit) = lookup_exact(dir, cheap, root, ext) {
+        if let Some(stable) = stable {
+            pointer::repoint(dir, cheap, stable);
+        }
+        return Some(hit);
+    }
+    let stable = stable?;
+    let (prior, born) = pointer::latest(dir, stable).filter(|(prior, _)| prior != cheap)?;
+    let hit = lookup_exact(dir, &prior, root, ext)?;
+    let to = reindex(dir, &prior, cheap, &hit)?;
+    pointer::remember(dir, cheap, stable, born);
+    Some(to)
+}
+
+/// The entry named for `cheap` whose inputs still hold what they did.
+pub fn lookup_exact(dir: &Path, cheap: &str, root: &Path, ext: &str) -> Option<PathBuf> {
+    let manifest = std::fs::read_to_string(dir.join(format!("{cheap}.manifest"))).ok()?;
     let inputs = Inputs::from_json(&serde_json::from_str(&manifest).ok()?)?;
-    let path = entry_path(dir, key, &inputs.digest(root)?, ext);
+    let path = entry_path(dir, cheap, &inputs.digest(root)?, ext);
     let file = File::open(&path).ok()?;
     let _ = file.set_modified(SystemTime::now());
     Some(path)
+}
+
+/// Link every file of the entry `hit`, stored under the cheap key `from`, under
+/// `cheap`, the payload last so a reader never finds half an entry. Returns the
+/// new payload.
+fn reindex(dir: &Path, from: &str, cheap: &str, hit: &Path) -> Option<PathBuf> {
+    let payload = hit.file_name()?.to_str()?;
+    let renamed = |name: &str| Some(format!("{cheap}{}", name.strip_prefix(from)?));
+    let beside = format!("{payload}.");
+    let own = [format!("{from}.manifest"), format!("{from}.group")];
+    for file in std::fs::read_dir(dir).ok()?.flatten() {
+        let name = file.file_name().to_string_lossy().into_owned();
+        let kept_beside = name.starts_with(&beside) && !name.ends_with(".tmp");
+        if (kept_beside || own.contains(&name))
+            && let Some(to) = renamed(&name)
+        {
+            link_atomic(&file.path(), &dir.join(to));
+        }
+    }
+    let to = dir.join(renamed(payload)?);
+    link_atomic(hit, &to).then_some(to)
 }
 
 /// Keep `from` as the entry for `key`, unless an input was edited after the
@@ -313,11 +411,18 @@ pub fn insert(
     if inputs.changed_since(root, started) {
         return None;
     }
+    let (cheap, stable) = halves(key);
     let digest = inputs.digest(root)?;
-    let manifest = dir.join(format!("{key}.manifest"));
-    let path = entry_path(dir, key, &digest, ext);
+    let manifest = dir.join(format!("{cheap}.manifest"));
+    let path = entry_path(dir, cheap, &digest, ext);
     let stored = copy_atomic(from, &path)
         && write_atomic(&manifest, inputs.to_json().to_string().as_bytes());
+    if stored
+        && !inputs.opaque
+        && let Some(stable) = stable
+    {
+        pointer::remember(dir, cheap, stable, pointer::now());
+    }
     stored.then_some(path)
 }
 
@@ -336,9 +441,20 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
     std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, path).is_ok()
 }
 
+fn link_atomic(from: &Path, to: &Path) -> bool {
+    let tmp = temp_for(to);
+    (std::fs::hard_link(from, &tmp).is_ok() || std::fs::copy(from, &tmp).is_ok())
+        && std::fs::rename(&tmp, to).is_ok()
+}
+
 pub fn copy_atomic(from: &Path, to: &Path) -> bool {
     let tmp = temp_for(to);
     std::fs::copy(from, &tmp).is_ok() && std::fs::rename(&tmp, to).is_ok()
+}
+
+/// Whether `name` is what an entry holds, as opposed to a file kept with it.
+fn is_payload(name: &str) -> bool {
+    name.ends_with(".bin") || name.ends_with(".json")
 }
 
 /// The entry a file of the store belongs to: the key it is named for.
@@ -370,8 +486,7 @@ pub fn prune(dir: &Path, max_bytes: u64) {
             entries
                 .entry(entry_of(&name).to_string())
                 .or_insert((None, modified, 0, Vec::new()));
-        let payload = name.ends_with(".bin") || name.ends_with(".json");
-        if payload {
+        if is_payload(&name) {
             entry.0 = entry.0.max(Some(modified));
         }
         entry.1 = entry.1.max(modified);
@@ -380,10 +495,11 @@ pub fn prune(dir: &Path, max_bytes: u64) {
     }
     let mut entries: Vec<_> = entries.into_values().collect();
     entries.sort_by_key(|(payload, any, _, _)| std::cmp::Reverse(payload.unwrap_or(*any)));
+    let newest = entries.iter().position(|e| e.0.is_some()).unwrap_or(0);
     let mut kept = 0;
     for (i, (_, _, len, files)) in entries.into_iter().enumerate() {
         kept += len;
-        if i > 0 && kept > max_bytes {
+        if i != newest && kept > max_bytes {
             for file in files {
                 let _ = std::fs::remove_file(file);
             }
@@ -455,6 +571,7 @@ pub(crate) mod testing {
         Inputs {
             files: files.iter().map(|f| f.to_string()).collect(),
             env: BTreeSet::new(),
+            opaque: false,
         }
     }
 }
@@ -635,6 +752,231 @@ mod tests {
         assert_eq!(lookup(&store, "k", &repo.0, "x"), None);
         repo.write("docs/guide.md", "one\n");
         assert!(lookup(&store, "k", &repo.0, "x").is_some());
+    }
+
+    const READ: [&str; 3] = ["app/src/lib.rs", "dep/src/lib.rs", "docs/guide.md"];
+
+    fn stored(repo: &Repo, store: &Path, key: &str, read: &Inputs) {
+        let from = repo.0.join("out");
+        std::fs::write(&from, "bytes").unwrap();
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        insert(store, key, &repo.0, read, future, &from, "x").unwrap();
+    }
+
+    fn setup(tag: &str) -> (Repo, PathBuf, String) {
+        let repo = Repo::new(tag);
+        repo.write("docs/guide.md", "guide\n");
+        repo.write("app/soothfast-gate.lock", "one\n");
+        let store = repo.store_dir();
+        let first = key(&repo, "h");
+        stored(&repo, &store, &first, &inputs(&READ));
+        (repo, store, first)
+    }
+
+    #[test]
+    fn a_file_the_build_never_read_changing_is_a_hit_kept_under_the_new_key() {
+        let (repo, store, first) = setup("unrelated");
+        repo.write("app/soothfast-gate.lock", "two\n");
+        repo.write("app/CHANGELOG.md", "# changes\n");
+        repo.write("app/openapi.yaml", "openapi: 3.1.0\n");
+        let second = key(&repo, "h");
+        assert_ne!(first, second);
+        assert_eq!(lookup_exact(&store, entry_key(&second), &repo.0, "x"), None);
+
+        let hit = lookup(&store, &second, &repo.0, "x").unwrap();
+        assert!(hit.to_string_lossy().contains(entry_key(&second)));
+        assert_eq!(std::fs::read(&hit).unwrap(), b"bytes");
+        assert!(lookup_exact(&store, entry_key(&second), &repo.0, "x").is_some());
+    }
+
+    #[test]
+    fn a_file_the_build_read_changing_is_a_miss() {
+        for (file, text) in [
+            ("app/src/lib.rs", "pub fn app() -> u8 { 0 }\n"),
+            ("dep/src/lib.rs", "pub fn dep() -> u8 { 0 }\n"),
+            ("docs/guide.md", "edited\n"),
+        ] {
+            let (repo, store, _) = setup("read");
+            repo.write("app/soothfast-gate.lock", "two\n");
+            repo.write(file, text);
+            assert_eq!(
+                lookup(&store, &key(&repo, "h"), &repo.0, "x"),
+                None,
+                "{file}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deleted_input_is_a_miss() {
+        let (repo, store, _) = setup("deleted");
+        repo.write("app/soothfast-gate.lock", "two\n");
+        std::fs::remove_file(repo.0.join("docs/guide.md")).unwrap();
+        assert_eq!(lookup(&store, &key(&repo, "h"), &repo.0, "x"), None);
+    }
+
+    #[test]
+    fn a_file_added_under_an_input_directory_is_a_miss() {
+        let repo = Repo::new("added");
+        repo.write("gen/a.txt", "a\n");
+        let store = repo.store_dir();
+        let read = inputs(&["app/src/lib.rs", "gen"]);
+        stored(&repo, &store, &key(&repo, "h"), &read);
+        repo.write("gen/b.txt", "b\n");
+        repo.write("app/soothfast-gate.lock", "two\n");
+        assert_eq!(lookup(&store, &key(&repo, "h"), &repo.0, "x"), None);
+    }
+
+    #[test]
+    fn what_configures_the_build_or_names_it_never_falls_back() {
+        let (repo, store, _) = setup("config");
+        repo.write("app/soothfast-gate.lock", "two\n");
+        assert!(lookup(&store, &key(&repo, "h"), &repo.0, "x").is_some());
+        assert_eq!(lookup(&store, &key(&repo, "other"), &repo.0, "x"), None);
+        let flags = [("RUSTFLAGS".to_string(), "--cfg x".to_string())];
+        let flagged = cheap_key(&repo.0, &repo.dirs(), "h", &flags).unwrap();
+        assert_eq!(lookup(&store, &flagged, &repo.0, "x"), None);
+        for file in [
+            "Cargo.lock",
+            "Cargo.toml",
+            "app/Cargo.toml",
+            "app/.cargo/config.toml",
+        ] {
+            let (repo, store, _) = setup("config-file");
+            repo.write(file, "# changed\n");
+            assert_eq!(
+                lookup(&store, &key(&repo, "h"), &repo.0, "x"),
+                None,
+                "{file}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_opaque_build_only_hits_on_its_own_key() {
+        let repo = Repo::new("opaque");
+        let store = repo.store_dir();
+        let first = key(&repo, "h");
+        let opaque = Inputs {
+            opaque: true,
+            ..inputs(&["app/src/lib.rs"])
+        };
+        stored(&repo, &store, &first, &opaque);
+        assert!(lookup(&store, &first, &repo.0, "x").is_some());
+        repo.write("app/soothfast-gate.lock", "two\n");
+        assert_eq!(lookup(&store, &key(&repo, "h"), &repo.0, "x"), None);
+    }
+
+    #[test]
+    fn a_torn_or_stale_pointer_is_a_miss() {
+        let (repo, store, _) = setup("pointer");
+        repo.write("app/soothfast-gate.lock", "two\n");
+        let second = key(&repo, "h");
+        let pointer = store.join(format!("{}.latest", halves(&second).1.unwrap()));
+        for text in ["", "nonsense", "0000000000000000"] {
+            std::fs::write(&pointer, text).unwrap();
+            assert_eq!(lookup(&store, &second, &repo.0, "x"), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_pointer_out_of_the_store_or_to_another_build_is_a_miss() {
+        let (repo, store, first) = setup("escape");
+        let other = key(&repo, "other");
+        stored(&repo, &store, &other, &inputs(&READ));
+        repo.write("app/soothfast-gate.lock", "two\n");
+        let second = key(&repo, "h");
+        let pointer = store.join(format!("{}.latest", halves(&second).1.unwrap()));
+
+        let outside = repo.0.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        for file in std::fs::read_dir(&store).unwrap().flatten() {
+            std::fs::copy(file.path(), outside.join(file.file_name())).unwrap();
+        }
+        let cheap = entry_key(&first);
+        let absolute = outside.join(cheap).to_string_lossy().into_owned();
+        for text in [format!("../outside/{cheap}"), absolute] {
+            std::fs::write(&pointer, &text).unwrap();
+            assert_eq!(lookup(&store, &second, &repo.0, "x"), None, "{text}");
+        }
+
+        std::fs::write(&pointer, entry_key(&other)).unwrap();
+        assert_eq!(lookup(&store, &second, &repo.0, "x"), None);
+        let before = std::fs::read_dir(&outside).unwrap().count();
+        std::fs::write(&pointer, cheap).unwrap();
+        assert!(lookup(&store, &second, &repo.0, "x").is_some());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), before);
+    }
+
+    #[test]
+    fn a_build_script_appearing_is_a_miss() {
+        let (repo, store, _) = setup("buildrs");
+        repo.write("app/soothfast-gate.lock", "two\n");
+        repo.write("dep/build.rs", "fn main() {}\n");
+        assert_eq!(lookup(&store, &key(&repo, "h"), &repo.0, "x"), None);
+    }
+
+    #[test]
+    fn an_exact_hit_repoints_the_stable_half() {
+        let (repo, store, first) = setup("repoint");
+        repo.write("app/src/lib.rs", "pub fn app() -> u8 { 0 }\n");
+        stored(&repo, &store, &key(&repo, "h"), &inputs(&READ));
+        repo.write("app/src/lib.rs", "pub fn app() {}\n");
+        assert_eq!(key(&repo, "h"), first);
+        assert!(lookup(&store, &first, &repo.0, "x").is_some());
+        repo.write("app/soothfast-gate.lock", "two\n");
+        assert!(lookup(&store, &key(&repo, "h"), &repo.0, "x").is_some());
+    }
+
+    #[test]
+    fn an_exact_hit_on_an_opaque_entry_leaves_no_pointer() {
+        let repo = Repo::new("opaque-hit");
+        let store = repo.store_dir();
+        let opaque = Inputs {
+            opaque: true,
+            ..inputs(&["app/src/lib.rs"])
+        };
+        stored(&repo, &store, &key(&repo, "h"), &opaque);
+        assert!(lookup(&store, &key(&repo, "h"), &repo.0, "x").is_some());
+        let pointers = std::fs::read_dir(&store)
+            .unwrap()
+            .flatten()
+            .filter(|f| f.path().extension().is_some_and(|x| x == "latest"))
+            .count();
+        assert_eq!(pointers, 0);
+    }
+
+    #[test]
+    fn pruning_keeps_the_newest_payload_over_a_newer_pointer() {
+        let repo = Repo::new("prune-pointer");
+        let store = repo.store_dir();
+        let first = key(&repo, "h");
+        let from = repo.0.join("out");
+        std::fs::write(&from, "bytes").unwrap();
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        let read = inputs(&["app/src/lib.rs"]);
+        insert(&store, &first, &repo.0, &read, future, &from, "json").unwrap();
+        prune(&store, 0);
+        let left: Vec<_> = std::fs::read_dir(&store)
+            .unwrap()
+            .flatten()
+            .map(|f| f.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(left.iter().any(|n| n.starts_with(entry_key(&first))));
+    }
+
+    #[test]
+    fn an_entry_without_a_pointer_is_found_only_by_its_own_key() {
+        let (repo, store, first) = setup("legacy");
+        for file in std::fs::read_dir(&store).unwrap().flatten() {
+            let name = file.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".latest") || name.ends_with(".stable") {
+                std::fs::remove_file(file.path()).unwrap();
+            }
+        }
+        assert!(lookup(&store, &first, &repo.0, "x").is_some());
+        repo.write("app/soothfast-gate.lock", "two\n");
+        assert_eq!(lookup(&store, &key(&repo, "h"), &repo.0, "x"), None);
     }
 
     #[test]

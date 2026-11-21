@@ -188,7 +188,7 @@ pub fn measured_on(env: &HostEnv) -> Value {
 /// measured, so a perfcnt run is never served to a gate that resolved
 /// callgrind, or the reverse; the `--backend` argument stays too, since it
 /// decides which non-gating backends ran alongside.
-fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> String {
+pub(crate) fn key(id: &str, stamp: &BuildStamp, common: &CommonArgs, env: &HostEnv) -> String {
     key_with(
         id,
         stamp,
@@ -240,19 +240,20 @@ pub(crate) fn hashed(parts: &[String]) -> String {
     hex_fnv(parts.join("\u{1}").as_bytes())
 }
 
-/// The key a report keeps its measurement of `sha` under for one package:
-/// the commit, the features, the build settings and the harness. The host
-/// is not part of it: [`stored_report`] decides whether a run from another
-/// machine still stands.
-pub fn report_key(sha: &str, pkg: &str, features: Option<&str>, stamp: &BuildStamp) -> String {
-    let parts = [
+/// The key a report keeps its measurement of `sha` under for the package
+/// `common` names: the commit, the features, the bench target when one is
+/// set, the build settings and the harness. The host is not part of it:
+/// [`stored_report`] decides whether a run from another machine still stands.
+pub fn report_key(sha: &str, common: &CommonArgs, stamp: &BuildStamp) -> String {
+    let mut parts = vec![
         "report".to_string(),
         sha.to_string(),
-        pkg.to_string(),
-        features.unwrap_or("").to_string(),
+        common.pkg.clone().unwrap_or_default(),
+        common.features.clone().unwrap_or_default(),
         stamp.to_json().to_string(),
         crate::invoke::harness_versions(),
     ];
+    parts.extend(common.target.as_ref().map(|t| format!("target {t}")));
     hashed(&parts)
 }
 
@@ -260,13 +261,25 @@ pub fn report_key(sha: &str, pkg: &str, features: Option<&str>, stamp: &BuildSta
 /// this host. Reading it renews it, so a measurement every push reads
 /// outlives the runs stored around it.
 pub fn stored_report(key: &str) -> Option<Value> {
+    renewed(key, |doc| stands_on(doc, &cpu_model()))
+}
+
+/// The document stored under `key`, renewed by the read. Unlike a run it
+/// does not depend on the host that wrote it.
+pub fn stored_doc(key: &str) -> Option<Value> {
+    renewed(key, |_| true)
+}
+
+fn renewed(key: &str, usable: impl Fn(&Value) -> bool) -> Option<Value> {
     let text = std::fs::read_to_string(dir()?.join(format!("{key}.json"))).ok()?;
-    let doc: Value = serde_json::from_str(&text).ok()?;
-    if !stands_on(&doc, &cpu_model()) {
-        return None;
-    }
+    let doc: Value = serde_json::from_str(&text).ok().filter(usable)?;
     store(key, &doc);
     Some(doc)
+}
+
+/// Keep `doc` under `key`, which names every input it was derived from.
+pub fn keep_doc(key: &str, doc: &Value) {
+    store(key, doc);
 }
 
 /// Keep `doc` as the measurement [`report_key`] names, with the host it ran on.
@@ -282,6 +295,13 @@ const REPORT_HOST: &str = "report_host";
 /// counts do not depend on the machine, and anything else was timed on it.
 fn stands_on(doc: &Value, host: &str) -> bool {
     doc["gating_backend"] == "callgrind" || doc[REPORT_HOST] == host
+}
+
+#[cfg(test)]
+pub(crate) fn forget(key: &str) {
+    if let Some(dir) = dir() {
+        let _ = std::fs::remove_file(dir.join(format!("{key}.json")));
+    }
 }
 
 /// `bytes` hashed, as sixteen hex digits.
@@ -360,13 +380,26 @@ mod tests {
     }
 
     #[test]
-    fn a_report_s_measurement_is_keyed_by_commit_package_and_features() {
-        let key = |sha, pkg, features| report_key(sha, pkg, features, &stamp());
-        let one = key("abc", "core", None);
-        assert_eq!(one, key("abc", "core", None));
-        assert_ne!(one, key("def", "core", None));
-        assert_ne!(one, key("abc", "other", None));
-        assert_ne!(one, key("abc", "core", Some("full")));
+    fn a_report_s_measurement_is_keyed_by_commit_package_features_and_target() {
+        let key = |sha, pkg: &str, features: Option<&str>, target: Option<&str>| {
+            let common = CommonArgs {
+                pkg: Some(pkg.into()),
+                features: features.map(String::from),
+                target: target.map(String::from),
+                ..Default::default()
+            };
+            report_key(sha, &common, &stamp())
+        };
+        let one = key("abc", "core", None, None);
+        assert_eq!(one, key("abc", "core", None, None));
+        assert_ne!(one, key("def", "core", None, None));
+        assert_ne!(one, key("abc", "other", None, None));
+        assert_ne!(one, key("abc", "core", Some("full"), None));
+        assert_ne!(one, key("abc", "core", None, Some("perf")));
+        assert_ne!(
+            key("abc", "core", Some("perf"), None),
+            key("abc", "core", None, Some("perf"))
+        );
     }
 
     #[test]
