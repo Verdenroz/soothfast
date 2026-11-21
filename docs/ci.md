@@ -220,7 +220,7 @@ refused.
 | `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. Counters measured from code proven identical to HEAD's (the item cache, a run stored for the same binary, a run-cache hit on HEAD) are saved with their `reused` marker; walltime from those sources is listed as `unmeasured` (`reused-walltime`) instead. A gate whose claims failed, or that errored, saves no numbers and lists the package's items as `gate-failed`; one that failed only on regressions saves HEAD's numbers, and its verdict or the `soothfast:perf-accepted` label decides. With `shard`, each leg's file holds its shard's items; merge them with `cargo soothfast baseline merge`. |
 | `regen-run` | none | Shell run on the default branch after the built-in regeneration, for derived files it does not cover. `$SOOTHFAST` is the `cargo-soothfast` this step installed, so `"$SOOTHFAST" report render` works whether the CLI came from the install or from `binary`. Requires `regen-paths`. |
 | `regen-paths` | none | Space-separated pathspecs `regen-run` may change; they land in the same pull request. Required with `regen-run`; without it the step fails rather than discarding the changes. |
-| `head-runs` | `false` | Restore the runs a gate leg of the same push saved under HEAD's commit, so the regeneration reads HEAD's run back instead of measuring it, and save what it measured under that commit's `-regen` key. For a job with `gate: "false"` that runs after the gate leg. |
+| `head-runs` | `false` | Restore the runs a gate leg of the same push saved under HEAD's commit, so the regeneration reads HEAD's run back instead of measuring it, and restore and save the release measurement under the `soothfast-regen-runs-` prefix, which only the regeneration writes. For a job with `gate: "false"` that runs after the gate leg. |
 | `baseline` | `base` | Baseline name the regeneration measures into. |
 | `rustdoc-toolchain` | the nightly the release was tested with | Toolchain for rustdoc JSON. A floating `nightly` can change the JSON format under the API diff. |
 | `version` | from `Cargo.lock` | `cargo-soothfast` version to install. |
@@ -1342,6 +1342,25 @@ it can enter, so the older one is in the group by then and is the one
 cancelled. The check fails open, like the two the action makes later: a
 script that cannot tell, or a check job that itself fails, reads as not
 superseded and the push regenerates.
+
+The regeneration job compiles nothing the run already built. It waits for the
+`Build (rustdoc)` job and the spec check jobs, which stage their rustdoc and
+routes builds on a push that regenerates, whether or not the site needs them,
+and merges every `soothfast-store-rustdoc` and `soothfast-store-spec-*`
+artifact the way the docs job does. A build that failed or was skipped leaves
+nothing to download, and the job then builds for itself.
+
+The last release is measured once. With `head-runs`, the action saves the
+regeneration's runs as `soothfast-regen-runs-<branch>-<sha>-<attempt>`. Before
+it regenerates, it restores the newest entry of that prefix and merges it with
+the runs the gate saved for the same commit. Only the regeneration writes that
+prefix, so a gate leg's save under `soothfast-runs-<branch>-` cannot shadow
+it, and a push that starts while an earlier regeneration is still running
+reads the newest finished one. The runs are saved even when a newer push
+cancels the regeneration or the step fails: each run is a file of its own, and
+a reader drops one that does not parse. A cache entry cannot be replaced, so
+the key names the attempt and a re-run saves what it measured as a new entry.
+Without `head-runs` the runs are saved under the commit's `-regen` key.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. `verdict` applies to pull requests
