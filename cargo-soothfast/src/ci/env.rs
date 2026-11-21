@@ -49,6 +49,11 @@ pub struct CiEnv {
     /// Where jobs record their verdicts. A run with none records nothing.
     pub results: Option<PathBuf>,
     pub pr: Option<u64>,
+    /// Whether a default-branch push regenerates the generated files
+    /// (`SOOTHFAST_REGEN=true`).
+    pub regen: bool,
+    /// Whether a pull request's base is the repository's default branch.
+    pub into_default_branch: bool,
 }
 
 /// Takes the flags `--event`, `--base` and `--results` out of `args`, and
@@ -113,7 +118,9 @@ impl CiEnv {
             Event::Push => text(&["before"]).filter(|b| b != NO_COMMIT),
             Event::Other => None,
         };
-        let default_branch = text(&["repository", "default_branch"])
+        let default = text(&["repository", "default_branch"]);
+        let default_branch = default
+            .as_ref()
             .zip(var("GITHUB_REF"))
             .is_some_and(|(d, r)| *r == format!("refs/heads/{d}"));
         CiEnv {
@@ -129,7 +136,22 @@ impl CiEnv {
             pr: payload
                 .pointer("/pull_request/number")
                 .and_then(Value::as_u64),
+            regen: var("SOOTHFAST_REGEN").is_some_and(|v| v == "true"),
+            into_default_branch: text(&["pull_request", "base", "ref"])
+                .zip(default)
+                .is_some_and(|(base, default)| base == default),
         }
+    }
+
+    /// Whether the bot regenerates this run's generated files: a pull request
+    /// into the default branch or a push to it, with regeneration on.
+    pub fn bot_regenerates(&self) -> bool {
+        let on_default_branch = match self.event {
+            Event::PullRequest => self.into_default_branch,
+            Event::Push => self.default_branch,
+            Event::Other => false,
+        };
+        self.regen && on_default_branch
     }
 }
 
@@ -150,6 +172,8 @@ mod tests {
 
     const PULL: &str = r#"{"number": 7, "pull_request": {"number": 7,
         "base": {"sha": "b4se"}, "head": {"sha": "h3ad"}}}"#;
+    const INTO_MAIN: &str = r#"{"pull_request": {"base": {"ref": "main"}},
+        "repository": {"default_branch": "main"}}"#;
     const PUSH: &str = r#"{"before": "pr3v", "repository": {"default_branch": "main"}}"#;
 
     #[test]
@@ -173,8 +197,70 @@ mod tests {
                 default_branch: false,
                 results: Some("/tmp/r/soothfast-results".into()),
                 pr: Some(7),
+                regen: false,
+                into_default_branch: false,
             }
         );
+    }
+
+    #[test]
+    fn regeneration_is_on_only_when_the_variable_says_true() {
+        let regen = |value: &str| {
+            let vars = vars(&[
+                ("GITHUB_EVENT_NAME", "pull_request"),
+                ("SOOTHFAST_REGEN", value),
+            ]);
+            CiEnv::parse(&vars, Some(INTO_MAIN), &Flags::default())
+        };
+        assert!(regen("true").bot_regenerates());
+        assert!(!regen("false").bot_regenerates());
+        let unset = vars(&[("GITHUB_EVENT_NAME", "pull_request")]);
+        assert!(!CiEnv::parse(&unset, Some(INTO_MAIN), &Flags::default()).regen);
+    }
+
+    #[test]
+    fn a_pull_request_into_another_branch_is_not_regenerated() {
+        let vars = vars(&[
+            ("GITHUB_EVENT_NAME", "pull_request"),
+            ("SOOTHFAST_REGEN", "true"),
+        ]);
+        let into =
+            |payload: &str| CiEnv::parse(&vars, Some(payload), &Flags::default()).bot_regenerates();
+        assert!(!into(
+            r#"{"pull_request": {"base": {"ref": "release/0.6"}}, "repository": {"default_branch": "main"}}"#
+        ));
+        assert!(!into(r#"{"pull_request": {"base": {"ref": "main"}}}"#));
+        assert!(!into(r#"{"repository": {"default_branch": "main"}}"#));
+    }
+
+    #[test]
+    fn a_push_is_regenerated_only_on_the_default_branch() {
+        let push = |git_ref: &str, regen: &str| {
+            let vars = vars(&[
+                ("GITHUB_EVENT_NAME", "push"),
+                ("GITHUB_REF", git_ref),
+                ("SOOTHFAST_REGEN", regen),
+            ]);
+            CiEnv::parse(&vars, Some(PUSH), &Flags::default()).bot_regenerates()
+        };
+        assert!(push("refs/heads/main", "true"));
+        assert!(!push("refs/heads/main", ""));
+        assert!(!push("refs/heads/release/0.6", "true"));
+        assert!(!push("refs/tags/main", "true"));
+    }
+
+    #[test]
+    fn no_other_event_is_regenerated() {
+        for event in ["workflow_dispatch", "schedule", "merge_group"] {
+            let vars = vars(&[
+                ("GITHUB_EVENT_NAME", event),
+                ("GITHUB_REF", "refs/heads/main"),
+                ("SOOTHFAST_REGEN", "true"),
+            ]);
+            let env = CiEnv::parse(&vars, Some(INTO_MAIN), &Flags::default());
+            assert!(env.regen && env.default_branch);
+            assert!(!env.bot_regenerates(), "{event}");
+        }
     }
 
     #[test]

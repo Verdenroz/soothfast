@@ -624,6 +624,7 @@ fn merge_changelog(existing: &str, draft: &str) -> String {
             unreleased.push('\n');
         }
     }
+    let draft = &changelog::keep_stable_rows(draft, &unreleased);
     let mut doc = String::from("# Changelog\n");
     let pre = preamble.trim();
     if !pre.is_empty() {
@@ -823,6 +824,19 @@ mod tests {
             prior_release_ref("# Changelog\n\n##  \n\n- shipped\n"),
             Some(PriorRelease::Released(String::new()))
         );
+    }
+
+    #[test]
+    fn merge_keeps_a_row_whose_displayed_delta_is_unchanged() {
+        let table = |was: &str| {
+            format!(
+                "## Unreleased (draft vs v1)\n\n| item | metric | was | now | delta |\n\
+                 |---|---|---:|---:|---:|\n| `a` | instructions | {was} | 120.0 | +20.0% |\n"
+            )
+        };
+        let existing = merge_changelog("", &table("100.0"));
+        let merged = merge_changelog(&existing, &table("100.02"));
+        assert_eq!(merged, existing);
     }
 
     #[test]

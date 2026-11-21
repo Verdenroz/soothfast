@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::capture::{self, Regenerated};
 use super::env::{CiEnv, Event};
 use crate::config::Config;
 use crate::{invoke, landing, sdk_config, spec_config, workspace};
@@ -12,6 +13,17 @@ use crate::{invoke, landing, sdk_config, spec_config, workspace};
 const DEFAULT_BASELINE: &str = "base";
 const SPEC_PATHS: [&str; 3] = ["*.yaml", "*.yml", "*.json"];
 const UNCHANGED: &str = "paths=\nchanged=false\n";
+
+/// Whether the bot regenerates the generated files of the run `env`
+/// describes. The workflow regenerates in its gate job, which runs only in a
+/// workspace with a package to gate.
+pub(super) fn bot_regenerates(env: &CiEnv) -> Result<bool, String> {
+    if !env.bot_regenerates() {
+        return Ok(false);
+    }
+    let root = invoke::workspace_root().map_err(|e| e.to_string())?;
+    Ok(!workspace::bench_crates("soothfast", Some(&root))?.is_empty())
+}
 
 /// What the repo configures for regeneration.
 #[derive(Debug, Default, PartialEq)]
@@ -22,6 +34,7 @@ struct Inputs {
     changelog_packages: Vec<String>,
     specs: Vec<String>,
     sdks: Vec<Sdk>,
+    captures: Vec<Regenerated>,
     hook: Option<Hook>,
 }
 
@@ -46,6 +59,7 @@ enum Step {
     Changelog(Vec<String>),
     SpecGen(String),
     SdkGen(String),
+    Capture { package: String, paths: Vec<String> },
     Hook(String),
 }
 
@@ -56,6 +70,9 @@ trait Host {
     fn hook(&self, script: &str) -> i32;
     fn latest_tag(&self) -> Option<String>;
     fn changed(&self, paths: &[String]) -> bool;
+    /// Puts `paths` back as they are committed.
+    fn restore(&self, paths: &[String]);
+    fn warn(&self, message: &str);
 }
 
 /// Entry point for `ci regen`: `[--paths-out FILE] [--baseline NAME]
@@ -69,7 +86,7 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     if flags.probe {
         return probe(env, &vars);
     }
-    let inputs = match discover(&flags, &vars) {
+    let inputs = match discover(&flags, &vars, &Process) {
         Ok(inputs) => inputs,
         Err(e) => return crate::arg_err(&e),
     };
@@ -153,9 +170,14 @@ fn parse(args: &[String]) -> Result<Flags, String> {
     Ok(flags)
 }
 
-fn discover(flags: &Flags, vars: &BTreeMap<String, String>) -> Result<Inputs, String> {
+fn discover(
+    flags: &Flags,
+    vars: &BTreeMap<String, String>,
+    host: &impl Host,
+) -> Result<Inputs, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-    let changelog_packages = Config::load(&root)?.changelog()?.packages;
+    let config = Config::load(&root)?;
+    let changelog_packages = config.changelog()?.packages;
     let gated = workspace::bench_crates("soothfast", Some(&root))?;
     let (_, specs) = spec_config::configured(&root)?;
     let mut sdks = Vec::new();
@@ -165,6 +187,10 @@ fn discover(flags: &Flags, vars: &BTreeMap<String, String>) -> Result<Inputs, St
             sdks.push(Sdk { package, paths });
         }
     }
+    let captures = capture::regenerated(&root, &config).unwrap_or_else(|e| {
+        host.warn(&format!("no captured output regenerated: {e}"));
+        Vec::new()
+    });
     let hook = hook(vars)?;
     Ok(Inputs {
         baseline: flags.baseline.clone(),
@@ -173,6 +199,7 @@ fn discover(flags: &Flags, vars: &BTreeMap<String, String>) -> Result<Inputs, St
         changelog_packages,
         specs,
         sdks,
+        captures,
         hook,
     })
 }
@@ -207,38 +234,57 @@ pub(crate) fn changelog_listed<'a>(packages: &'a [String], gated: &'a [String]) 
     }
 }
 
-/// The steps in order, and the pathspecs they may change.
-fn plan(inputs: &Inputs) -> (Vec<Step>, Vec<String>) {
+/// The steps in order, each with the pathspecs it may change.
+fn plan(inputs: &Inputs) -> Vec<(Step, Vec<String>)> {
     let mut steps = Vec::new();
-    let mut paths = Vec::new();
     let listed = changelog_listed(&inputs.changelog_packages, &inputs.gated);
     if inputs.changelog && !listed.is_empty() {
-        steps.extend(inputs.gated.iter().cloned().map(Step::Measure));
-        steps.push(Step::Changelog(listed.to_vec()));
-        paths.push("CHANGELOG.md".to_string());
+        let measures = inputs.gated.iter().cloned().map(Step::Measure);
+        steps.extend(measures.map(|step| (step, Vec::new())));
+        let changelog = Step::Changelog(listed.to_vec());
+        steps.push((changelog, vec!["CHANGELOG.md".to_string()]));
     }
-    if !inputs.specs.is_empty() {
-        steps.extend(inputs.specs.iter().cloned().map(Step::SpecGen));
-        paths.extend(SPEC_PATHS.map(String::from));
+    let mut spec_paths = SPEC_PATHS.map(String::from).to_vec();
+    for spec in &inputs.specs {
+        steps.push((Step::SpecGen(spec.clone()), std::mem::take(&mut spec_paths)));
     }
     for sdk in &inputs.sdks {
-        steps.push(Step::SdkGen(sdk.package.clone()));
-        paths.extend(sdk.paths.iter().cloned());
+        steps.push((Step::SdkGen(sdk.package.clone()), sdk.paths.clone()));
+    }
+    for capture in &inputs.captures {
+        let step = Step::Capture {
+            package: capture.package.clone(),
+            paths: capture.paths.clone(),
+        };
+        steps.push((step, capture.pages.clone()));
     }
     if let Some(hook) = &inputs.hook {
-        steps.push(Step::Hook(hook.run.clone()));
-        paths.extend(hook.paths.iter().cloned());
+        steps.push((Step::Hook(hook.run.clone()), hook.paths.clone()));
     }
-    (steps, paths)
+    steps
+}
+
+/// `path` as a git pathspec without whitespace, which the landing step splits
+/// `paths=` on. `?` matches the character it stands in for.
+fn pathspec(path: &str) -> String {
+    path.replace(char::is_whitespace, "?")
 }
 
 /// Runs the plan and returns the `paths=` and `changed=` lines the landing
-/// step reads, or `None` when a step failed.
+/// step reads, or `None` when a step failed. A failed capture only warns:
+/// its pages are restored and left out, and the rest still lands.
 fn regenerate(inputs: &Inputs, host: &impl Host) -> Option<String> {
-    let (steps, paths) = plan(inputs);
-    for step in &steps {
-        if execute(step, &inputs.baseline, host) != 0 {
-            return None;
+    let mut paths = Vec::new();
+    for (step, writes) in plan(inputs) {
+        match (execute(&step, &inputs.baseline, host), &step) {
+            (0, _) => paths.extend(writes.iter().map(|path| pathspec(path))),
+            (_, Step::Capture { package, .. }) => {
+                host.restore(&writes);
+                host.warn(&format!(
+                    "docs capture -p {package} failed, so its captured output stays as committed"
+                ));
+            }
+            _ => return None,
         }
     }
     let changed = !paths.is_empty() && host.changed(&paths);
@@ -264,6 +310,7 @@ fn execute(step: &Step, baseline: &str, host: &impl Host) -> i32 {
         }
         Step::SpecGen(pkg) => host.cli(&words(&["spec", "gen", "-p", pkg])),
         Step::SdkGen(pkg) => host.cli(&words(&["sdk", "gen", "-p", pkg])),
+        Step::Capture { package, paths } => host.cli(&capture::args(package, paths)),
         Step::Hook(script) => host.hook(script),
     }
 }
@@ -307,6 +354,14 @@ impl Host for Process {
             .output()
             .is_ok_and(|o| !o.stdout.is_empty())
     }
+
+    fn restore(&self, paths: &[String]) {
+        status(Command::new("git").args(["checkout", "--"]).args(paths));
+    }
+
+    fn warn(&self, message: &str) {
+        println!("::warning::{message}");
+    }
 }
 
 fn status(cmd: &mut Command) -> i32 {
@@ -331,6 +386,8 @@ mod tests {
         changed: bool,
         asked_about: RefCell<Vec<String>>,
         hook_ran: Cell<bool>,
+        restored: RefCell<Vec<String>>,
+        warnings: RefCell<Vec<String>>,
     }
 
     impl Fake {
@@ -342,6 +399,8 @@ mod tests {
                 changed: false,
                 asked_about: RefCell::new(Vec::new()),
                 hook_ran: Cell::new(false),
+                restored: RefCell::new(Vec::new()),
+                warnings: RefCell::new(Vec::new()),
             }
         }
 
@@ -374,6 +433,18 @@ mod tests {
             *self.asked_about.borrow_mut() = paths.to_vec();
             self.changed
         }
+
+        fn restore(&self, paths: &[String]) {
+            self.restored.borrow_mut().extend(paths.iter().cloned());
+        }
+
+        fn warn(&self, message: &str) {
+            self.warnings.borrow_mut().push(message.to_string());
+        }
+    }
+
+    fn steps(inputs: &Inputs) -> Vec<Step> {
+        plan(inputs).into_iter().map(|(step, _)| step).collect()
     }
 
     fn strings(list: &[&str]) -> Vec<String> {
@@ -397,6 +468,11 @@ mod tests {
                 package: "api".into(),
                 paths: strings(&["api/sdk/python"]),
             }],
+            captures: vec![Regenerated {
+                package: "api".into(),
+                paths: strings(&["README.md"]),
+                pages: strings(&["README.md", "docs/guide.md"]),
+            }],
             hook: Some(Hook {
                 run: "make gen".into(),
                 paths: strings(&["gen", "extra.txt"]),
@@ -416,7 +492,7 @@ mod tests {
 
     #[test]
     fn each_step_runs_only_when_its_input_is_configured() {
-        let only = |inputs: Inputs| plan(&inputs).0;
+        let only = |inputs: Inputs| steps(&inputs);
         assert_eq!(
             only(Inputs {
                 gated: strings(&["core", "tools"]),
@@ -448,6 +524,19 @@ mod tests {
         );
         assert_eq!(
             only(Inputs {
+                captures: vec![Regenerated {
+                    package: "api".into(),
+                    ..Regenerated::default()
+                }],
+                ..inputs()
+            }),
+            [Step::Capture {
+                package: "api".into(),
+                paths: Vec::new()
+            }]
+        );
+        assert_eq!(
+            only(Inputs {
                 hook: Some(Hook {
                     run: "x".into(),
                     paths: strings(&["p"])
@@ -459,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn steps_run_in_order_with_the_hook_after_the_sdks() {
+    fn steps_run_in_order_with_capture_after_the_sdks_and_the_hook_last() {
         let host = Fake {
             tag: Some("v1.2.0"),
             ..Fake::new()
@@ -474,6 +563,7 @@ mod tests {
                 "report changelog -p core -p docs --against-ref v1.2.0 --baseline base",
                 "spec gen -p api",
                 "sdk gen -p api",
+                "docs capture -p api README.md",
                 "hook make gen",
             ]
         );
@@ -498,7 +588,7 @@ mod tests {
             ..inputs()
         };
         assert_eq!(
-            plan(&gated).0.last(),
+            steps(&gated).last(),
             Some(&Step::Changelog(strings(&["core", "tools"])))
         );
         let listed = Inputs {
@@ -506,7 +596,7 @@ mod tests {
             ..gated
         };
         assert_eq!(
-            plan(&listed).0.last(),
+            steps(&listed).last(),
             Some(&Step::Changelog(strings(&["core"])))
         );
     }
@@ -517,23 +607,23 @@ mod tests {
             changelog: false,
             ..everything()
         };
-        let (steps, paths) = plan(&off);
         assert!(
-            !steps
+            !steps(&off)
                 .iter()
                 .any(|s| matches!(s, Step::Measure(_) | Step::Changelog(_)))
         );
-        assert!(!paths.contains(&"CHANGELOG.md".to_string()));
+        let report = regenerate(&off, &Fake::new()).unwrap();
+        assert!(!report.contains("CHANGELOG.md"));
     }
 
     #[test]
     fn a_repository_with_nothing_gated_or_listed_has_no_changelog_step() {
-        assert!(plan(&inputs()).0.is_empty());
+        assert!(steps(&inputs()).is_empty());
         let listed = Inputs {
             changelog_packages: strings(&["core"]),
             ..inputs()
         };
-        assert_eq!(plan(&listed).0, [Step::Changelog(strings(&["core"]))]);
+        assert_eq!(steps(&listed), [Step::Changelog(strings(&["core"]))]);
     }
 
     #[test]
@@ -545,9 +635,9 @@ mod tests {
         let report = regenerate(&everything(), &host).unwrap();
         assert_eq!(
             report,
-            "paths=CHANGELOG.md *.yaml *.yml *.json api/sdk/python gen extra.txt\nchanged=true\n"
+            "paths=CHANGELOG.md *.yaml *.yml *.json api/sdk/python README.md docs/guide.md gen extra.txt\nchanged=true\n"
         );
-        assert_eq!(host.asked_about.borrow().len(), 7);
+        assert_eq!(host.asked_about.borrow().len(), 9);
     }
 
     #[test]
@@ -559,6 +649,47 @@ mod tests {
         assert_eq!(regenerate(&everything(), &host), None);
         assert!(!host.hook_ran.get());
         assert_eq!(host.calls().last().unwrap(), "spec gen -p api");
+    }
+
+    #[test]
+    fn a_failing_capture_warns_and_the_rest_still_lands() {
+        let host = Fake {
+            fail_on: Some("docs capture -p api"),
+            ..Fake::new()
+        };
+        let mut inputs = everything();
+        inputs.captures.push(Regenerated {
+            package: "web".into(),
+            pages: strings(&["web/README.md"]),
+            ..Regenerated::default()
+        });
+        let report = regenerate(&inputs, &host).unwrap();
+        assert_eq!(
+            report,
+            "paths=CHANGELOG.md *.yaml *.yml *.json api/sdk/python web/README.md gen extra.txt\nchanged=false\n"
+        );
+        assert_eq!(
+            host.calls()[host.calls().len() - 2..],
+            ["docs capture -p web", "hook make gen"]
+        );
+        assert_eq!(*host.restored.borrow(), ["README.md", "docs/guide.md"]);
+        let warnings = host.warnings.borrow();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("docs capture -p api failed"));
+    }
+
+    #[test]
+    fn a_captured_page_with_a_space_in_its_name_stays_one_path() {
+        let spaced = Inputs {
+            captures: vec![Regenerated {
+                package: "api".into(),
+                pages: strings(&["docs/Getting Started.md"]),
+                ..Regenerated::default()
+            }],
+            ..inputs()
+        };
+        let report = regenerate(&spaced, &Fake::new()).unwrap();
+        assert!(report.starts_with("paths=docs/Getting?Started.md\n"));
     }
 
     #[test]
