@@ -6,7 +6,7 @@
 //! `mod` line and its entry in [`KINDS`].
 
 mod build;
-mod capture;
+pub(crate) mod capture;
 pub mod checks;
 mod coverage;
 mod docs;

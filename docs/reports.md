@@ -100,7 +100,13 @@ pseudo-items in the shared baseline file stay out.
 `cargo soothfast report changelog -p mylib --against-ref v1.0` merges a
 fresh "Unreleased" section into `CHANGELOG.md` in place. Every
 `## [released]` section already there survives. Re-running it is idempotent:
-it replaces the `Unreleased` section rather than appending a duplicate.
+it replaces the `Unreleased` section rather than appending a duplicate. A
+row of the Gate movement table whose displayed delta is unchanged, with `was`
+and `now` within 0.05% of the row already in the file, keeps its text. An
+instruction count can differ by a few instructions between runner CPU models,
+because libc selects its memory and string routines per CPU. The gate is
+unaffected, since it measures both sides on one machine, and the row rule
+keeps that difference from rewriting the file.
 
 The draft leads with what merged since `v1.0`, grouped into Features, Fixes,
 Performance, Documentation, Dependencies and Internal by each commit's type,
