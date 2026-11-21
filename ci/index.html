@@ -1148,7 +1148,7 @@ packages, <code>routes</code> every package with a <code>[[spec]]</code> entry, 
 docs packages and every package that generates a spec. <code>-p PKG</code> names the
 packages of <code>bench</code>, <code>--spec PKG[:TARGET]</code> those of <code>routes</code>, and <code>--docs PKG</code>
 and <code>--spec PKG</code> those of <code>rustdoc</code>; naming any leaves the rest of the lane
-unbuilt. <code>prebuild</code> reads a spec package's <code>target</code> and <code>features</code> from its
+unbuilt, but for the changelog's packages on a push the bot regenerates. <code>prebuild</code> reads a spec package's <code>target</code> and <code>features</code> from its
 <code>[package.NAME.spec]</code> table and a docs package's <code>features</code> from
 <code>[package.NAME.docs]</code>, unless <code>:TARGET</code>, <code>--features</code> or <code>--docs-features</code>
 says otherwise.</p>
@@ -1197,6 +1197,18 @@ then runs the <code>REGEN_RUN</code> command with <code>$SOOTHFAST</code> set wh
 set (it needs <code>REGEN_PATHS</code>). It prints <code>paths=</code> and <code>changed=</code>
 lines, also written to <code>--paths-out</code>, and never commits or pushes.
 <code>--baseline NAME</code> names the baseline it measures into (default <code>base</code>).</p>
+<p>When the latest tag is HEAD the changelog measures nothing for the release.
+Otherwise the tag's measurement comes from the run store (its own entry, or
+the run the gate recorded for that commit under the same conditions) before a
+worktree is built, and its API surface likewise. On a
+default-branch push the bot regenerates, <code>ci build rustdoc</code> also builds the
+public rustdoc of the changelog's packages under the features the changelog
+reads, whether or not <code>--docs</code> or <code>--spec</code> names packages, so the regeneration
+job finds HEAD's surface in the rustdoc store. One the docs already build
+under the same features is built once. <code>--changelog PKG</code> names the packages
+instead. A pull request never builds it, nor does a push with
+<code>SOOTHFAST_REGEN</code> unset; a repository that turns the changelog off with
+<code>--no-changelog</code> still pays for that build.</p>
 <p>A push of the bot's own landing regenerates nothing: the bot authored every
 commit in it, every file it changed is one regeneration writes or matches a
 <code>[bot] landing_paths</code> glob or a <code>REGEN_PATHS</code> pathspec, and none is a
