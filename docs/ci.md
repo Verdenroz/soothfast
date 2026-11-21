@@ -202,8 +202,11 @@ requests write) for `push`, `workflow_dispatch`, or `schedule` runs on your
 default branch, or on a tag whose commit is already on it. A `pull_request`
 run from the repository itself gets no token at all; it asks the broker to
 post the gate comment, and the broker does so with a token it holds and
-revokes itself. Every other event, ref, or repository the App is not
-installed on is refused.
+revokes itself. The same goes for a `workflow_run` job on the default
+branch, which is how a fork's verdict is posted: it gets no token either, and
+the broker posts only after it finds the named pull request open, from a fork
+rather than this repository, and still at the head commit the job names. Every
+other event, ref, or repository the App is not installed on is refused.
 
 ## Inputs
 
