@@ -22,6 +22,7 @@
 
 ### ⚡ Performance
 
+- Look the release up when regenerating a changelog (#473)
 - Hit stored builds when unread files change (#472)
 - Regenerate in a job of its own (#461)
 
