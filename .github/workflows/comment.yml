@@ -1,10 +1,11 @@
 name: soothfast-comment
 
 # Posts the verdict of a fork's pull request run. A fork's own run has a
-# read-only token and cannot comment, so it uploads the verdict and this
-# workflow, triggered by workflow_run with the base repository's permissions,
-# posts it. It never checks out or runs the pull request's code. `cargo
-# soothfast init` writes the caller.
+# read-only token and cannot comment, so it uploads the pull request number
+# and what the plan expected, and this workflow, triggered by workflow_run
+# with the base repository's permissions, renders the verdict from the run's
+# result files with its own CLI and posts it. It never checks out or runs the
+# pull request's code. `cargo soothfast init` writes the caller.
 on:
   workflow_call:
     inputs:
@@ -28,18 +29,30 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs_on) }}
     permissions:
       actions: read
+      contents: read
       pull-requests: write
     steps:
       - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
+      # The default branch, for the waiver label names its soothfast.toml
+      # configures. A pull request can edit its own copy, so it never decides.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          sparse-checkout: soothfast.toml
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Verdenroz/soothfast
           ref: ${{ inputs.soothfast_ref }}
           path: .soothfast-action
-          sparse-checkout: action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
           persist-credentials: false
+      - id: soothfast
+        uses: ./.soothfast-action/action/install
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
         with:
@@ -47,11 +60,25 @@ jobs:
           path: ${{ runner.temp }}/soothfast-verdict-comment
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
+      # A pattern that matches nothing is not an error here: the script says
+      # the run left no results.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: soothfast-result-*
+          path: ${{ runner.temp }}/soothfast-results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
       - name: Post the verdict
         env:
+          CLI: ${{ steps.soothfast.outputs.bin }}
           ARTIFACT_DIR: ${{ runner.temp }}/soothfast-verdict-comment
+          RESULTS: ${{ runner.temp }}/soothfast-results
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
           GH_TOKEN: ${{ github.token }}
         run: ./.soothfast-action/action/fork-comment.sh

@@ -3,7 +3,9 @@
 # Results are untrusted text; `ci verdict` neutralises the fences. Exits 0 for
 # a passing verdict, 1 for a failing one and anything else when it could not
 # render.
-# Inputs: CLI RESULTS OUT PR_NUMBER BASE_REF GH_TOKEN GITHUB_REPOSITORY,
+# Inputs: CLI RESULTS OUT PR_NUMBER GH_TOKEN GITHUB_REPOSITORY, BASE_REF or
+# LABELS_REF (where labels.sh reads the waiver label names from), GH_REPO
+# (optional, to run outside a checkout),
 # EXPECT_RUST, EXPECT_IMPORT, EXPECT_DOCS, EXPECT_TEST, EXPECT_CHECK
 # (space-separated names of the results each kind must have) and EXPECT_SHARDS
 # (I/N of each Rust gate leg, which expects every package once per leg)
