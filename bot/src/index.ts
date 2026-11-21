@@ -268,13 +268,13 @@ async function authenticate(
       claims,
     );
   }
+  const slug = await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt);
   const minted = await deps.github.mintToken(
     installation.id,
     Number(claims.repository_id),
     PERMISSIONS[mode],
     jwt,
   );
-  const slug = await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt);
   return { ...minted, slug };
 }
 
@@ -374,13 +374,14 @@ async function comment(
       if (!decision.ok) return denied(403, decision.reason, claims);
     }
     const text = `${body.marker}\n${body.body}`;
+    const author = `${minted.slug}[bot]`;
     const existing = (
       await deps.github.listComments(
         claims.repository,
         body.pull_request,
         minted.token,
       )
-    ).find((c) => c.body.startsWith(body.marker));
+    ).find((c) => c.user?.login === author && c.body.startsWith(body.marker));
     const posted = existing
       ? await deps.github.updateComment(
           claims.repository,
@@ -415,12 +416,7 @@ async function decideWorkflowRun(
         ? undefined
         : Promise.reject(e),
     );
-  if (!found)
-    return {
-      ok: false,
-      reason: `pull request ${body.pull_request} does not exist`,
-    };
-  return decideForkPullRequest(body.pull_request, found, body.head_sha ?? "");
+  return decideForkPullRequest(body.pull_request, found, body.head_sha);
 }
 
 function parseComment(
@@ -441,14 +437,18 @@ function parseComment(
     parsed as Partial<CommentRequest>;
   if (
     typeof pull_request !== "number" ||
+    !Number.isSafeInteger(pull_request) ||
+    pull_request <= 0 ||
     typeof marker !== "string" ||
     typeof body !== "string"
   ) {
     return json(400, {
-      reason: "expected {pull_request: number, marker: string, body: string}",
+      reason:
+        "expected {pull_request: positive integer, marker: string, body: string}",
     });
   }
-  if (claims.event_name === "workflow_run") {
+  const forFork = claims.event_name === "workflow_run";
+  if (forFork) {
     if (typeof head_sha !== "string" || !/^[0-9a-f]{40}$/.test(head_sha)) {
       return json(400, {
         reason:
@@ -472,7 +472,12 @@ function parseComment(
   ) {
     return json(400, { reason: `comment exceeds ${COMMENT_MAX_BYTES} bytes` });
   }
-  return { pull_request, marker, body, head_sha };
+  return {
+    pull_request,
+    marker,
+    body,
+    head_sha: forFork ? head_sha : undefined,
+  };
 }
 
 const deps: Deps = { jwks: githubJwks(), github: githubApi() };

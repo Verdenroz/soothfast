@@ -53,7 +53,8 @@ function fakeGitHub(
     tagObjects?: Record<string, string>;
     toml?: string;
     pulls?: object[];
-    forkPull?: object | "missing";
+    forkPull?: object | GitHubError;
+    slugFails?: boolean;
   } = {},
 ): Fake {
   const fake: Fake = {
@@ -110,8 +111,7 @@ function fakeGitHub(
         return (opts.pulls ?? []) as never;
       },
       async pullRequest() {
-        if (opts.forkPull === "missing")
-          throw new GitHubError(404, "Not Found");
+        if (opts.forkPull instanceof GitHubError) throw opts.forkPull;
         if (opts.forkPull) return opts.forkPull as never;
         return {
           ...(opts.pulls?.[0] as object),
@@ -129,6 +129,7 @@ function fakeGitHub(
         fake.revoked.push(token);
       },
       async appSlug() {
+        if (opts.slugFails) throw new GitHubError(500, "boom");
         return "soothfast-bot";
       },
     },
@@ -146,7 +147,7 @@ interface Body {
 async function request(
   overrides: Parameters<typeof claims>[0],
   fake: Fake,
-  opts: { route?: string; token?: string; body?: unknown } = {},
+  opts: { route?: string; token?: string; body?: unknown; env?: Env } = {},
 ) {
   const jwt =
     opts.token ??
@@ -170,7 +171,7 @@ async function request(
     github: fake.github,
     now: () => NOW,
   };
-  const res = await handle(req, env, deps, ctx);
+  const res = await handle(req, opts.env ?? env, deps, ctx);
   return { status: res.status, body: (await res.json()) as Body };
 }
 
@@ -179,9 +180,14 @@ const run = { event_name: "workflow_run" };
 const headSha = "fedcba9876543210fedcba9876543210fedcba98";
 const forkPull = {
   state: "open",
-  head: { sha: headSha, ref: "patch-1", repo: { full_name: "fork/mylib" } },
-  base: { repo: { full_name: "acme/mylib" } },
+  head: {
+    sha: headSha,
+    ref: "patch-1",
+    repo: { id: 999, full_name: "fork/mylib" },
+  },
+  base: { repo: { id: 12345, full_name: "acme/mylib" } },
 };
+const bot = { login: "soothfast-bot[bot]" };
 const commentBody = {
   pull_request: 7,
   marker: "<!-- soothfast-gate -->",
@@ -268,6 +274,68 @@ test("a workflow_run comment needs head_sha before any mint", async () => {
   assert.deepEqual(fake.minted, []);
 });
 
+test("a workflow_run comment rejects a head_sha that is not 40 lowercase hex", async () => {
+  const fake = fakeGitHub({ forkPull });
+  const bad = [
+    headSha.slice(0, 7),
+    headSha.slice(0, 39),
+    `${headSha}0`,
+    headSha.toUpperCase(),
+    `${headSha}\n`,
+    ` ${headSha}`,
+    `g${headSha.slice(1)}`,
+    "",
+    null,
+    [headSha],
+  ];
+  for (const head_sha of bad) {
+    const { status } = await runRequest(fake, { ...commentBody, head_sha });
+    assert.equal(status, 400, JSON.stringify(head_sha));
+  }
+  assert.deepEqual(fake.minted, []);
+});
+
+test("a workflow_run comment is refused on a ref that only resembles the default branch", async () => {
+  const refs = [
+    "refs/heads/main2",
+    "refs/heads/feature/main",
+    "refs/heads/Main",
+    "refs/heads/MAIN",
+    "refs/heads/refs/heads/main",
+    "refs/heads/main/",
+    "refs/heads/",
+  ];
+  for (const ref of refs) {
+    const fake = fakeGitHub({ forkPull });
+    const { status, body } = await runRequest(fake, runComment, { ref });
+    assert.equal(status, 403, ref);
+    assert.match(body.reason ?? "", /not the default branch \(main\)/, ref);
+    assert.deepEqual(fake.posted, [], ref);
+    assert.deepEqual(fake.revoked, ["ghs_minted"], ref);
+  }
+  for (const ref of ["refs/tags/main", "refs/pull/7/merge", "main"]) {
+    const fake = fakeGitHub({ forkPull, compareStatus: "identical" });
+    const { status } = await runRequest(fake, runComment, { ref });
+    assert.equal(status, 403, ref);
+    assert.deepEqual(fake.minted, [], ref);
+  }
+});
+
+test("a workflow_run comment revokes when the pull request lookup fails", async () => {
+  const fake = fakeGitHub({ forkPull: new GitHubError(500, "boom") });
+  await assert.rejects(runRequest(fake), GitHubError);
+  assert.deepEqual(fake.posted, []);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("nothing is minted when the app slug lookup fails", async () => {
+  const fake = fakeGitHub({ forkPull, slugFails: true });
+  const fresh = { ...env, GITHUB_APP_CLIENT_ID: "Iv1.uncached" };
+  const opts = { route: "/comment", body: runComment, env: fresh };
+  await assert.rejects(request(run, fake, opts), GitHubError);
+  assert.deepEqual(fake.minted, []);
+});
+
 test("a workflow_run comment from another environment is refused", async () => {
   const fake = fakeGitHub({ forkPull });
   const { status } = await runRequest(fake, runComment, {
@@ -298,7 +366,7 @@ test("a workflow_run comment on a closed pull request is refused and revoked", a
 test("a workflow_run comment on a same-repository pull request is refused", async () => {
   const sameRepo = {
     ...forkPull,
-    head: { ...forkPull.head, repo: { full_name: "acme/mylib" } },
+    head: { ...forkPull.head, repo: forkPull.base.repo },
   };
   const fake = fakeGitHub({ forkPull: sameRepo });
   const { status, body } = await runRequest(fake);
@@ -319,7 +387,7 @@ test("a workflow_run comment for a stale head is refused", async () => {
 });
 
 test("a workflow_run comment on an unknown pull request is refused", async () => {
-  const fake = fakeGitHub({ forkPull: "missing" });
+  const fake = fakeGitHub({ forkPull: new GitHubError(404, "Not Found") });
   const { status, body } = await runRequest(fake);
   assert.equal(status, 403);
   assert.match(body.reason ?? "", /pull request 7 does not exist/);
@@ -345,8 +413,8 @@ test("/comment creates the marked comment with a pull_requests-only token and re
 test("/comment updates an existing marked comment and ignores others", async () => {
   const fake = fakeGitHub({
     comments: [
-      { id: 1, body: "<!-- coverage -->\nother bot", html_url: "" },
-      { id: 2, body: "<!-- soothfast-gate -->\nold", html_url: "" },
+      { id: 1, body: "<!-- coverage -->\nother bot", html_url: "", user: bot },
+      { id: 2, body: "<!-- soothfast-gate -->\nold", html_url: "", user: bot },
     ],
   });
   const { status } = await request(pr, fake, {
@@ -357,6 +425,29 @@ test("/comment updates an existing marked comment and ignores others", async () 
   assert.deepEqual(fake.posted, [
     { kind: "update", body: "<!-- soothfast-gate -->\n## soothfast gate\nok" },
   ]);
+});
+
+test("/comment never overwrites a marked comment the bot did not write", async () => {
+  const marked = { body: "<!-- soothfast-gate -->\nmine", html_url: "" };
+  for (const claim of [pr, run]) {
+    const fake = fakeGitHub({
+      forkPull,
+      comments: [
+        { ...marked, id: 1, user: { login: "mallory" } },
+        { ...marked, id: 2, user: null },
+        { ...marked, id: 3, user: { login: "soothfast-bot" } },
+      ],
+    });
+    const { status } = await request(claim, fake, {
+      route: "/comment",
+      body: runComment,
+    });
+    assert.equal(status, 200);
+    assert.deepEqual(
+      fake.posted.map((p) => p.kind),
+      ["create"],
+    );
+  }
 });
 
 test("/comment refuses another pull request's number", async () => {
@@ -402,6 +493,48 @@ test("/comment validates its body", async () => {
   );
   assert.deepEqual(fake.posted, []);
   assert.deepEqual(fake.minted, [], "a rejected body must not cost a mint");
+});
+
+test("/comment rejects a malformed request before any mint", async () => {
+  const numbers = ['"7"', "7.5", "-7", "0", "1e21", "[7]", "null", "true"];
+  const bodies = [
+    ...numbers.map((n) => JSON.stringify(runComment).replace("7", n)),
+    JSON.stringify([runComment]),
+    JSON.stringify({ ...runComment, marker: 7 }),
+    JSON.stringify({ ...runComment, body: ["x"] }),
+    JSON.stringify({ marker: runComment.marker, body: "x" }),
+    `{"__proto__":${JSON.stringify(runComment)}}`,
+    JSON.stringify({ ...runComment, body: "x".repeat(140000) }),
+    "{",
+  ];
+  for (const claim of [pr, run]) {
+    const fake = fakeGitHub({ forkPull });
+    for (const body of bodies) {
+      const { status } = await request(claim, fake, {
+        route: "/comment",
+        body,
+      });
+      assert.equal(status, 400, `${claim.event_name}: ${body.slice(0, 60)}`);
+    }
+    assert.deepEqual(fake.minted, []);
+  }
+});
+
+test("/comment takes an integer written as 1e3", async () => {
+  const fake = fakeGitHub({ forkPull });
+  const body = JSON.stringify(runComment).replace("7", "1e3");
+  assert.equal((await runRequest(fake, body)).status, 200);
+});
+
+test("a pull_request comment ignores head_sha", async () => {
+  for (const head_sha of [7, "nope", "0".repeat(40)]) {
+    const fake = fakeGitHub();
+    const { status } = await request(pr, fake, {
+      route: "/comment",
+      body: { ...commentBody, head_sha },
+    });
+    assert.equal(status, 200);
+  }
 });
 
 test("pull_request_target is refused", async () => {

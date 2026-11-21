@@ -24,6 +24,8 @@ export const LAND_EVENTS: readonly string[] = [
   "workflow_dispatch",
   "schedule",
 ];
+// A workflow_run job runs the default branch's workflow file but speaks for
+// a fork's pull request, so it comments and never lands.
 export const COMMENT_EVENTS: readonly string[] = [
   "pull_request",
   "workflow_run",
@@ -31,9 +33,7 @@ export const COMMENT_EVENTS: readonly string[] = [
 
 // A landing token is handed to the job. A pull request runs code nobody has
 // merged yet, so it never receives a token: the broker posts the comment
-// itself with a short-lived token of its own. A workflow_run job runs the
-// default branch's workflow file but speaks for a fork's pull request, so it
-// is held to the same mode and can never land.
+// itself with a short-lived token of its own.
 export const PERMISSIONS: Record<Mode, Record<string, string>> = {
   land: { contents: "write", pull_requests: "write" },
   comment: { pull_requests: "write" },
@@ -105,19 +105,20 @@ export function decideTag(ref: string, compareStatus: string): Decision {
 
 interface ForkPullRequest {
   state?: string;
-  head: { sha: string; repo: { full_name: string } | null };
-  base: { repo: { full_name: string } };
+  head: { sha: string; repo: { id: number } | null };
+  base: { repo: { id: number } };
 }
 
-// A same-repository pull request has a merge ref, which binds the number in the
-// claims; a workflow_run job has no such binding and may speak only for forks.
+// A same-repository pull request has a merge ref, which binds the number in
+// the claims. A workflow_run job has no such binding and speaks only for forks.
 export function decideForkPullRequest(
   number: number,
-  pr: ForkPullRequest,
-  headSha: string,
+  pr: ForkPullRequest | undefined,
+  headSha: string | undefined,
 ): Decision {
+  if (!pr) return deny(`pull request ${number} does not exist`);
   if (pr.state !== "open") return deny(`pull request ${number} is not open`);
-  if (pr.head.repo?.full_name === pr.base.repo.full_name) {
+  if (pr.head.repo?.id === pr.base.repo.id) {
     return deny(
       `pull request ${number} is from this repository; comment from its pull_request run`,
     );

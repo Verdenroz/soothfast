@@ -31,6 +31,7 @@ export interface IssueComment {
   id: number;
   body: string;
   html_url: string;
+  user: { login: string } | null;
 }
 
 export interface PullRequest {
@@ -40,8 +41,12 @@ export interface PullRequest {
   labels: { name: string }[];
   auto_merge: object | null;
   user: { login: string };
-  head: { sha: string; ref: string; repo: { full_name: string } | null };
-  base: { repo: { full_name: string } };
+  head: {
+    sha: string;
+    ref: string;
+    repo: { id: number; full_name: string } | null;
+  };
+  base: { repo: { id: number; full_name: string } };
   mergeable?: boolean | null;
   state?: string;
   updated_at: string;
