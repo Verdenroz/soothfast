@@ -1071,10 +1071,21 @@ which fails on a stale committed spec. On a pull request, and on any run given
 <code>--base</code>, <code>spec gate</code> compares with the base; a push alone has none. The base
 is the spec committed at the merge-base, which that same check pinned to its
 code, so nothing is built there; a committed spec that does not re-render is
-rebuilt in a worktree instead. A package
+rebuilt in a worktree instead. The head's spec is always built from its
+routes. A package
 with a spec that is not generated runs <code>spec check</code>, and one with an <code>[[sdk]]</code>
 entry runs <code>sdk gen --check</code>. Every step runs even after one fails, and each
 package records a <code>check</code> verdict named <code>spec-PKG</code> with the worst exit code.
+With the <code>bot</code> input on, a pull request into the default branch and a push to
+it run neither <code>spec gen --check</code> nor <code>sdk gen --check</code> and print a line for
+each: that push's regeneration rewrites those files and the bot lands them.
+<code>spec gate</code> and <code>spec check</code> still run, and a package left with no step
+passes. Every other run keeps both checks: a pull request into another branch,
+a push to another branch, and a scheduled, manual or merge-queue run. So does
+a repository without the bot. The workflow turns this on by setting
+<code>SOOTHFAST_REGEN=true</code>. A workspace with no <code>soothfast</code> bench target keeps
+both checks: the regeneration runs in the gate job, which that workspace does
+not have.
 With nothing configured it says so and records nothing.
 <code>ci proto</code> runs <code>spec check-proto</code> for every package with a <code>[[proto]]</code>
 entry, or the <code>-p</code> ones given, which reconciles each message's fields against
@@ -1099,7 +1110,11 @@ warning and its docs are left as committed; everything else still lands.
 <code>[ci] skip = [&quot;capture&quot;]</code> turns off
 both the check and the regeneration. Each
 package records a <code>check</code> verdict named <code>capture-PKG</code>. With no such package it says so
-and records nothing.
+and records nothing. With the <code>bot</code> input on, a pull request into the default
+branch and a push to it plan no capture check, and <code>ci capture</code> run there
+passes with a line saying the output is regenerated on the default branch.
+Every other run, a repository without the bot, and a workspace with no
+<code>soothfast</code> bench target keep the check, as with <code>ci spec</code>.
 <code>ci site</code> builds the docs site with <code>docs build --out DIR</code>, where DIR is
 <code>target/soothfast-site</code> unless <code>--out</code> says otherwise. It builds against the
 <code>head</code> baseline when <code>.soothfast/baselines/head.json</code> exists. It runs only when

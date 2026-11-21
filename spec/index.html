@@ -430,7 +430,8 @@ be silently diffed. It is the right default for CI that already requires
 <code>spec gen --check</code> on every merge, which pins the committed file to what the
 merge-base would generate. <code>--prefer-committed</code> reads the same files and
 rebuilds the merge-base when one does not re-render, as a file written by an
-older release may not. <code>ci spec</code> gates this way.</p>
+older release may not. Either way the head's spec is built from its routes,
+never read from the committed file. <code>ci spec</code> gates this way.</p>
 <p>Every dialect gates on that same asymmetry, read off whichever key states
 the direction. For <strong>AsyncAPI</strong> it is the operation's own <code>action</code>: a
 message you <code>send</code> is one a consumer reads, so dropping a guaranteed field
@@ -445,7 +446,11 @@ tool's structured output are breaking on their own.</p>
 is invisible and a real edit is named at the field it happened to.</p>
 <p><code>spec gen --check</code> is the companion staleness gate: it fails when
 regenerating would change a committed file, so the bot's output can never
-silently diverge from the code.</p>
+silently diverge from the code. With the bot on, <code>ci spec</code> leaves it (and
+<code>sdk gen --check</code>) out of a pull request into the default branch and a push
+to it, where the push's regeneration rewrites those files, and keeps
+<code>spec gate</code> and <code>spec check</code>. Every other run still checks, and so does a
+repository without the bot.</p>
 <h2 id="reconciliation">Reconciliation<a class="anchor" href="#reconciliation" aria-label="Link to this section">#</a></h2>
 <div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_spec::reconcile::reconcile"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">reconcile</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
 <p><code>cargo soothfast spec check -p PKG</code> runs the bench binary with
