@@ -103,6 +103,30 @@ export function decideTag(ref: string, compareStatus: string): Decision {
       );
 }
 
+interface ForkPullRequest {
+  state?: string;
+  head: { sha: string; repo: { full_name: string } | null };
+  base: { repo: { full_name: string } };
+}
+
+// A same-repository pull request has a merge ref, which binds the number in the
+// claims; a workflow_run job has no such binding and may speak only for forks.
+export function decideForkPullRequest(
+  number: number,
+  pr: ForkPullRequest,
+  headSha: string,
+): Decision {
+  if (pr.state !== "open") return deny(`pull request ${number} is not open`);
+  if (pr.head.repo?.full_name === pr.base.repo.full_name) {
+    return deny(
+      `pull request ${number} is from this repository; comment from its pull_request run`,
+    );
+  }
+  return pr.head.sha === headSha
+    ? { ok: true, mode: "comment" }
+    : deny(`pull request ${number} head moved to ${pr.head.sha.slice(0, 7)}`);
+}
+
 export function pullRequestNumber(ref: string): number | undefined {
   const match = /^refs\/pull\/(\d+)\/merge$/.exec(ref);
   return match ? Number(match[1]) : undefined;

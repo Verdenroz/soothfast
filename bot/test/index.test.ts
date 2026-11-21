@@ -53,6 +53,7 @@ function fakeGitHub(
     tagObjects?: Record<string, string>;
     toml?: string;
     pulls?: object[];
+    forkPull?: object | "missing";
   } = {},
 ): Fake {
   const fake: Fake = {
@@ -109,6 +110,9 @@ function fakeGitHub(
         return (opts.pulls ?? []) as never;
       },
       async pullRequest() {
+        if (opts.forkPull === "missing")
+          throw new GitHubError(404, "Not Found");
+        if (opts.forkPull) return opts.forkPull as never;
         return {
           ...(opts.pulls?.[0] as object),
           state: "open",
@@ -172,11 +176,18 @@ async function request(
 
 const pr = { event_name: "pull_request", ref: "refs/pull/7/merge" };
 const run = { event_name: "workflow_run" };
+const headSha = "fedcba9876543210fedcba9876543210fedcba98";
+const forkPull = {
+  state: "open",
+  head: { sha: headSha, ref: "patch-1", repo: { full_name: "fork/mylib" } },
+  base: { repo: { full_name: "acme/mylib" } },
+};
 const commentBody = {
   pull_request: 7,
   marker: "<!-- soothfast-gate -->",
   body: "## soothfast gate\nok",
 };
+const runComment = { ...commentBody, head_sha: headSha };
 
 test("allowed claims mint a scoped landing token", async () => {
   const fake = fakeGitHub();
@@ -225,6 +236,94 @@ test("a workflow_run job can neither mint a token nor sweep", async () => {
     assert.equal(status, 403, route);
     assert.deepEqual(fake.minted, [], route);
   }
+});
+
+async function runRequest(
+  fake: Fake,
+  body: unknown = runComment,
+  overrides: Parameters<typeof claims>[0] = {},
+) {
+  return request({ ...run, ...overrides }, fake, { route: "/comment", body });
+}
+
+test("a workflow_run comment on a fork pull request posts and revokes", async () => {
+  const fake = fakeGitHub({ forkPull });
+  const { status, body } = await runRequest(fake);
+  assert.equal(status, 200);
+  assert.match(body.comment_url ?? "", /issuecomment-99/);
+  assert.deepEqual(fake.minted, [{ pull_requests: "write" }]);
+  assert.deepEqual(fake.posted, [
+    { kind: "create", body: "<!-- soothfast-gate -->\n## soothfast gate\nok" },
+  ]);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a workflow_run comment needs head_sha before any mint", async () => {
+  const fake = fakeGitHub({ forkPull });
+  for (const body of [commentBody, { ...commentBody, head_sha: 7 }]) {
+    const { status, body: reply } = await runRequest(fake, body);
+    assert.equal(status, 400);
+    assert.match(reply.reason ?? "", /head_sha/);
+  }
+  assert.deepEqual(fake.minted, []);
+});
+
+test("a workflow_run comment from another environment is refused", async () => {
+  const fake = fakeGitHub({ forkPull });
+  const { status } = await runRequest(fake, runComment, {
+    environment: "production",
+  });
+  assert.equal(status, 403);
+  assert.deepEqual(fake.minted, []);
+});
+
+test("a workflow_run comment off the default branch is refused and revoked", async () => {
+  const fake = fakeGitHub({ forkPull, defaultBranch: "master" });
+  const { status, body } = await runRequest(fake);
+  assert.equal(status, 403);
+  assert.match(body.reason ?? "", /not the default branch \(master\)/);
+  assert.deepEqual(fake.posted, []);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a workflow_run comment on a closed pull request is refused and revoked", async () => {
+  const fake = fakeGitHub({ forkPull: { ...forkPull, state: "closed" } });
+  const { status, body } = await runRequest(fake);
+  assert.equal(status, 403);
+  assert.match(body.reason ?? "", /pull request 7 is not open/);
+  assert.deepEqual(fake.posted, []);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a workflow_run comment on a same-repository pull request is refused", async () => {
+  const sameRepo = {
+    ...forkPull,
+    head: { ...forkPull.head, repo: { full_name: "acme/mylib" } },
+  };
+  const fake = fakeGitHub({ forkPull: sameRepo });
+  const { status, body } = await runRequest(fake);
+  assert.equal(status, 403);
+  assert.match(body.reason ?? "", /from this repository/);
+  assert.deepEqual(fake.posted, []);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a workflow_run comment for a stale head is refused", async () => {
+  const fake = fakeGitHub({ forkPull });
+  const stale = { ...runComment, head_sha: "0".repeat(40) };
+  const { status, body } = await runRequest(fake, stale);
+  assert.equal(status, 403);
+  assert.match(body.reason ?? "", /head moved/);
+  assert.deepEqual(fake.posted, []);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a workflow_run comment on an unknown pull request is refused", async () => {
+  const fake = fakeGitHub({ forkPull: "missing" });
+  const { status, body } = await runRequest(fake);
+  assert.equal(status, 403);
+  assert.match(body.reason ?? "", /pull request 7 does not exist/);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
 });
 
 test("/comment creates the marked comment with a pull_requests-only token and revokes it", async () => {
