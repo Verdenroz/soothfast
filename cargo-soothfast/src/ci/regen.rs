@@ -14,6 +14,17 @@ const DEFAULT_BASELINE: &str = "base";
 const SPEC_PATHS: [&str; 3] = ["*.yaml", "*.yml", "*.json"];
 const UNCHANGED: &str = "paths=\nchanged=false\n";
 
+/// Whether the bot regenerates the generated files of the run `env`
+/// describes. The workflow regenerates in its gate job, which runs only in a
+/// workspace with a package to gate.
+pub(super) fn bot_regenerates(env: &CiEnv) -> Result<bool, String> {
+    if !env.bot_regenerates() {
+        return Ok(false);
+    }
+    let root = invoke::workspace_root().map_err(|e| e.to_string())?;
+    Ok(!workspace::bench_crates("soothfast", Some(&root))?.is_empty())
+}
+
 /// What the repo configures for regeneration.
 #[derive(Debug, Default, PartialEq)]
 struct Inputs {
