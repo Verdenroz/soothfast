@@ -9,17 +9,18 @@ use serde_json::Value;
 use crate::invoke;
 use crate::store::Inputs;
 
-/// Everything the build read beyond the files of the package directories:
-/// `dep_info` is what rustdoc wrote for the documented crate, and
-/// `cargo_stdout` is cargo's `--message-format=json` output, which names the
-/// dep-info of every workspace dependency and the build scripts that ran.
-/// Registry sources are immutable and covered by the lockfile.
+/// Everything the build read: `dep_info` is what rustdoc wrote for the
+/// documented crate, and `cargo_stdout` is cargo's `--message-format=json`
+/// output, which names the dep-info of every workspace dependency and the
+/// build scripts that ran. Registry sources are immutable and covered by the
+/// lockfile. The inputs are opaque when a dep-info cannot be read.
 pub fn collect(root: &Path, dep_info: &Path, cargo_stdout: &[u8]) -> Inputs {
     let mut inputs = Inputs::default();
-    if let Ok(text) = std::fs::read_to_string(dep_info) {
-        add_dep_info(&mut inputs, root, &text);
+    match std::fs::read_to_string(dep_info) {
+        Ok(text) => add_dep_info(&mut inputs, root, &text),
+        Err(_) => inputs.opaque = true,
     }
-    walk(&mut inputs, root, cargo_stdout);
+    inputs.opaque |= !walk(&mut inputs, root, cargo_stdout).is_empty();
     inputs
 }
 
@@ -169,19 +170,20 @@ fn build_script_output(out_dir: &Path) -> Option<String> {
 
 /// A build script's `rerun-if-changed` paths (for workspace packages, which
 /// are relative to the package) and every package's `rerun-if-env-changed`.
+/// A workspace script that prints no `rerun-if-changed` makes the inputs
+/// opaque: nothing says which files it read.
 fn add_build_script(inputs: &mut Inputs, root: &Path, package_dir: Option<&PathBuf>, msg: &Value) {
-    let Some(out_dir) = msg["out_dir"].as_str().map(Path::new) else {
-        return;
-    };
-    let Some(output) = build_script_output(out_dir) else {
-        return;
-    };
-    for line in output.lines() {
+    let output = msg["out_dir"]
+        .as_str()
+        .and_then(|out| build_script_output(Path::new(out)));
+    let mut watches = false;
+    for line in output.iter().flat_map(|o| o.lines()) {
         let directive = line
             .strip_prefix("cargo::")
             .or_else(|| line.strip_prefix("cargo:"));
         match directive.and_then(|d| d.split_once('=')) {
             Some(("rerun-if-changed", path)) => {
+                watches = true;
                 if let Some(dir) = package_dir {
                     inputs.files.insert(relative(root, &dir.join(path)));
                 }
@@ -192,6 +194,7 @@ fn add_build_script(inputs: &mut Inputs, root: &Path, package_dir: Option<&PathB
             _ => {}
         }
     }
+    inputs.opaque |= package_dir.is_some() && !watches;
 }
 
 /// The files on the first line of a Makefile-style dep-info (spaces in a
@@ -223,6 +226,8 @@ fn add_dep_info(inputs: &mut Inputs, root: &Path, text: &str) {
     for line in text.lines() {
         if let Some(var) = line.strip_prefix("# env-dep:") {
             let name = var.split('=').next().unwrap_or(var);
+            // Unset until the package gains a binary, a file no manifest lists.
+            inputs.opaque |= name == var && name.starts_with("CARGO_BIN_EXE_");
             if !name.starts_with("CARGO_PKG_") {
                 inputs.env.insert(name.to_string());
             }
@@ -259,13 +264,21 @@ mod tests {
         let text = "/w/t/doc/x.json: src/lib.rs /w/docs/a\\ b.md ../README.md\n\
                     src/lib.rs:\n\
                     # env-dep:CARGO_PKG_VERSION=1.0.0\n\
+                    # env-dep:CARGO_BIN_EXE_app=/w/t/app\n\
                     # env-dep:API_BASE=https://example.test\n";
         let mut inputs = Inputs::default();
         add_dep_info(&mut inputs, root, text);
         let files: Vec<_> = inputs.files.iter().map(String::as_str).collect();
         assert_eq!(files, ["../README.md", "docs/a b.md", "src/lib.rs"]);
         let env: Vec<_> = inputs.env.iter().map(String::as_str).collect();
-        assert_eq!(env, ["API_BASE"]);
+        assert_eq!(env, ["API_BASE", "CARGO_BIN_EXE_app"]);
+        assert!(!inputs.opaque);
+        add_dep_info(
+            &mut inputs,
+            root,
+            "x: src/lib.rs\n# env-dep:CARGO_BIN_EXE_app\n",
+        );
+        assert!(inputs.opaque);
     }
 
     #[cfg(unix)]
@@ -393,7 +406,9 @@ mod tests {
         .collect::<Vec<_>>()
         .join("\n");
 
-        let inputs = collect(&root, &root.join("missing.d"), stdout.as_bytes());
+        let dep_info = root.join("doc.d");
+        std::fs::write(&dep_info, "").unwrap();
+        let inputs = collect(&root, &dep_info, stdout.as_bytes());
         let files: Vec<_> = inputs.files.iter().map(String::as_str).collect();
         assert_eq!(
             files,
@@ -406,6 +421,41 @@ mod tests {
         );
         let env: Vec<_> = inputs.env.iter().map(String::as_str).collect();
         assert_eq!(env, ["DEP_TOKEN", "REG_TOKEN"]);
+        assert!(!inputs.opaque);
+        assert!(collect(&root, &root.join("missing.d"), stdout.as_bytes()).opaque);
+        std::fs::remove_file(deps.join("dep-1a2b.d")).unwrap();
+        assert!(collect(&root, &dep_info, stdout.as_bytes()).opaque);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_workspace_build_script_that_watches_nothing_makes_the_inputs_opaque() {
+        let root = temp("opaque");
+        let dep_info = root.join("doc.d");
+        std::fs::write(&dep_info, "").unwrap();
+        let run = |id: &str, output: Option<&str>| {
+            let out_dir = root.join("build").join(id).join("out");
+            std::fs::create_dir_all(&out_dir).unwrap();
+            if let Some(output) = output {
+                std::fs::write(out_dir.with_file_name("output"), output).unwrap();
+            }
+            let local = format!("path+file:///w/{id}#{id}@0.1.0");
+            let stdout = [
+                json!({"reason": "compiler-artifact", "package_id": local,
+                       "manifest_path": root.join(id).join("Cargo.toml"),
+                       "target": {"kind": ["lib"]}, "filenames": []}),
+                json!({"reason": "build-script-executed", "package_id": local,
+                       "out_dir": out_dir}),
+            ]
+            .iter()
+            .map(|m| m.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+            collect(&root, &dep_info, stdout.as_bytes()).opaque
+        };
+        assert!(run("silent", Some("cargo:rustc-cfg=x\n")));
+        assert!(run("unrecorded", None));
+        assert!(!run("watching", Some("cargo:rerun-if-changed=build.rs\n")));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
