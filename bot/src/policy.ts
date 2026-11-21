@@ -24,11 +24,16 @@ export const LAND_EVENTS: readonly string[] = [
   "workflow_dispatch",
   "schedule",
 ];
-export const COMMENT_EVENTS: readonly string[] = ["pull_request"];
+export const COMMENT_EVENTS: readonly string[] = [
+  "pull_request",
+  "workflow_run",
+];
 
 // A landing token is handed to the job. A pull request runs code nobody has
 // merged yet, so it never receives a token: the broker posts the comment
-// itself with a short-lived token of its own.
+// itself with a short-lived token of its own. A workflow_run job runs the
+// default branch's workflow file but speaks for a fork's pull request, so it
+// is held to the same mode and can never land.
 export const PERMISSIONS: Record<Mode, Record<string, string>> = {
   land: { contents: "write", pull_requests: "write" },
   comment: { pull_requests: "write" },
@@ -53,8 +58,17 @@ export function decideClaims(claims: OidcClaims): Decision {
   if (!/^\d+$/.test(claims.repository_id)) {
     return deny("repository_id claim is malformed");
   }
-  if (mode === "comment" && pullRequestNumber(claims.ref) === undefined) {
+  if (
+    claims.event_name === "pull_request" &&
+    pullRequestNumber(claims.ref) === undefined
+  ) {
     return deny(`ref ${claims.ref} is not a pull request merge ref`);
+  }
+  if (
+    claims.event_name === "workflow_run" &&
+    !claims.ref.startsWith("refs/heads/")
+  ) {
+    return deny(`ref ${claims.ref} is not a branch`);
   }
   if (
     mode === "land" &&

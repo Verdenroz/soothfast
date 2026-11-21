@@ -35,6 +35,31 @@ const cases = [
     mode: "comment",
   },
   {
+    name: "workflow_run on a branch ref comments",
+    overrides: { event_name: "workflow_run" },
+    mode: "comment",
+  },
+  {
+    name: "workflow_run on a pull ref is refused",
+    overrides: { event_name: "workflow_run", ref: "refs/pull/7/merge" },
+    reason: /not a branch/,
+  },
+  {
+    name: "workflow_run on a tag is refused",
+    overrides: { event_name: "workflow_run", ref: "refs/tags/v1.0.0" },
+    reason: /not a branch/,
+  },
+  {
+    name: "workflow_run outside the environment is refused",
+    overrides: { event_name: "workflow_run", environment: undefined },
+    reason: /"soothfast-bot" environment/,
+  },
+  {
+    name: "merge_group is refused",
+    overrides: { event_name: "merge_group" },
+    reason: /cannot mint/,
+  },
+  {
     name: "pull_request_target is refused",
     overrides: { event_name: "pull_request_target", ref: "refs/pull/7/merge" },
     reason: /cannot mint/,

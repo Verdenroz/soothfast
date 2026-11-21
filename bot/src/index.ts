@@ -119,7 +119,7 @@ export async function handle(
     );
   }
   if (route === "/comment" && policy.mode !== "comment") {
-    return denied(403, "/comment serves pull_request runs only", claims);
+    return denied(403, "/comment serves pull_request and workflow_run runs only", claims);
   }
 
   const body =

@@ -171,6 +171,7 @@ async function request(
 }
 
 const pr = { event_name: "pull_request", ref: "refs/pull/7/merge" };
+const run = { event_name: "workflow_run" };
 const commentBody = {
   pull_request: 7,
   marker: "<!-- soothfast-gate -->",
@@ -214,7 +215,16 @@ test("a push run cannot use /comment", async () => {
     body: commentBody,
   });
   assert.equal(status, 403);
-  assert.match(body.reason ?? "", /pull_request runs only/);
+  assert.match(body.reason ?? "", /pull_request and workflow_run runs only/);
+});
+
+test("a workflow_run job can neither mint a token nor sweep", async () => {
+  for (const route of ["/token", "/sweep"]) {
+    const fake = fakeGitHub();
+    const { status } = await request(run, fake, { route });
+    assert.equal(status, 403, route);
+    assert.deepEqual(fake.minted, [], route);
+  }
 });
 
 test("/comment creates the marked comment with a pull_requests-only token and revokes it", async () => {
