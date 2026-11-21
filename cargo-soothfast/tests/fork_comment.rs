@@ -70,12 +70,6 @@ impl Case {
 
     fn run(&self) -> Outcome {
         let posted = self.root.join("posted.md");
-        let results = self.results();
-        let results = if results.exists() {
-            results
-        } else {
-            self.root.join("none")
-        };
         let out = Command::new("bash")
             .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../action/fork-comment.sh"))
             .current_dir(self.root.join("work"))
@@ -86,7 +80,7 @@ impl Case {
             )
             .env("CLI", env!("CARGO_BIN_EXE_cargo-soothfast"))
             .env("ARTIFACT_DIR", self.root.join("artifact"))
-            .env("RESULTS", results)
+            .env("RESULTS", self.results())
             .env("RUNNER_TEMP", self.root.join("tmp"))
             .env("HEAD_SHA", &self.head_sha)
             .env("HEAD_REPO", "fork/repo")
@@ -190,12 +184,12 @@ fn an_expectation_with_shell_metacharacters_is_dropped_unrun() {
         ),
     );
     case.upload("expect_shards", "1/2 $(id) x/y 1/2/3\n");
-    case.upload("landing", "true; id\n");
+    case.upload("landing", "true\n");
     let out = case.run();
     assert_eq!(out.code, 0);
     assert!(!marker.exists());
     let body = out.posted.unwrap();
-    assert!(body.contains("### ok#1/2\nerrored | rust"), "{body}");
+    assert!(body.contains("### `ok#1/2`\nerrored | rust"), "{body}");
     assert!(!body.contains("touch") && !body.contains("$(id)"), "{body}");
     assert!(!body.contains("No lane ran"), "{body}");
     assert!(out.stdout.contains("dropped"), "{}", out.stdout);
@@ -211,7 +205,7 @@ fn an_oversized_expectation_list_is_cut_at_the_limit() {
     assert_eq!(out.code, 0);
     let body = out.posted.unwrap();
     assert!(
-        body.contains("### n255\n") && !body.contains("### n256\n"),
+        body.contains("### `n255`\n") && !body.contains("### `n256`\n"),
         "{body}"
     );
     assert!(out.stdout.contains("dropped 44"), "{}", out.stdout);
@@ -294,7 +288,91 @@ fn results_of_a_later_attempt_are_left_out() {
     .unwrap();
     let body = case.run().posted.unwrap();
     assert!(
-        body.contains("### core") && !body.contains("### late"),
+        body.contains("### `core`") && !body.contains("### `late`"),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_lone_artifact_extracted_without_its_directory_is_rendered() {
+    let case = Case::new("flat");
+    fs::write(
+        case.results().join("core.json"),
+        r#"{"name":"core","kind":"rust","verdict":"pass","tail":"ok","seconds":1}"#,
+    )
+    .unwrap();
+    let body = case.run().posted.unwrap();
+    assert!(body.contains("### `core`\npass | rust | 1s"), "{body}");
+}
+
+#[test]
+fn no_field_of_a_result_is_markup_outside_a_fence() {
+    let case = Case::new("fields");
+    let dir = case.results().join("soothfast-result-core-attempt-1");
+    fs::create_dir_all(&dir).unwrap();
+    let hostile = [
+        r##"{"name":"a","kind":"rust","verdict":"pass","seconds":1,"carried":"\n```","tail":"[x](http://evil) @someone"}"##,
+        r##"{"name":"www.evil.example","kind":"https://evil.example","verdict":"pass","seconds":1,"carried":"@harvey","tail":""}"##,
+        r##"{"name":"GH-1\n# forged","kind":"a/b#2","verdict":"regressed","seconds":1e300,"carried":"#2","tail":"~~~\n````"}"##,
+        r##"{"name":"b#<b>","kind":"|\n---|---","verdict":"flaky","seconds":1,"flaky":true,"unevaluated":true,
+            "reuse":{"covered":18446744073709551615,"total":18446744073709551615,"measuring":1},"output":"x"}"##,
+        r##"{"name":"b#2","kind":"test","verdict":"flaky","wall_s":1,
+            "reuse":{"covered":18446744073709551615,"total":18446744073709551615,"measuring":1},"output":"x"}"##,
+    ];
+    for (i, record) in hostile.iter().enumerate() {
+        fs::write(dir.join(format!("{i}.json")), record).unwrap();
+    }
+    let out = case.run();
+    assert_eq!(out.code, 0);
+    let body = out.posted.unwrap();
+    let status = |l: &str| {
+        ["pass", "errored", "regressed", "nothing-to-compare"]
+            .iter()
+            .any(|v| l.starts_with(v))
+            && l.chars()
+                .all(|c| c.is_ascii_alphanumeric() || " ()|/,-?".contains(c))
+    };
+    let mut fenced = false;
+    for line in body.lines().skip(3) {
+        if line == "```" {
+            fenced = !fenced;
+        } else if !fenced {
+            let heading =
+                line.starts_with("### `") && line.ends_with('`') && line.matches('`').count() == 2;
+            let summary = line == "## soothfast verdict" || line.contains(" projects: ");
+            assert!(
+                line.is_empty() || heading || summary || status(line),
+                "{line:?} in\n{body}"
+            );
+        }
+    }
+    assert!(!fenced, "{body}");
+    assert_eq!(body.matches("\n### ").count(), 4, "{body}");
+}
+
+#[test]
+fn a_shard_result_is_read_under_the_name_the_gate_writes() {
+    let case = Case::new("shard");
+    let dir = case
+        .results()
+        .join("soothfast-result-rust-shard-1-of-2-attempt-1");
+    fs::create_dir_all(&dir).unwrap();
+    for shard in ["1", "2"] {
+        fs::write(
+            dir.join(format!("core#{shard}-2.json")),
+            format!(
+                r##"{{"name":"core#{shard}/2","kind":"rust","verdict":"pass","tail":"ok","seconds":1}}"##
+            ),
+        )
+        .unwrap();
+    }
+    case.upload("expect_rust", "core\n");
+    case.upload("expect_shards", "1/2 2/2\n");
+    let out = case.run();
+    assert_eq!(out.code, 0);
+    let body = out.posted.unwrap();
+    assert!(
+        body.contains("1 projects: 0 regressed, 0 errored, 1 pass"),
         "{body}"
     );
 }

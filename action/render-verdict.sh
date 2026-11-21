@@ -4,12 +4,12 @@
 # a passing verdict, 1 for a failing one and anything else when it could not
 # render.
 # Inputs: CLI RESULTS OUT PR_NUMBER GH_TOKEN GITHUB_REPOSITORY, BASE_REF or
-# LABELS_REF (where labels.sh reads the waiver label names from), GH_REPO
-# (optional, to run outside a checkout),
-# EXPECT_RUST, EXPECT_IMPORT, EXPECT_DOCS, EXPECT_TEST, EXPECT_CHECK
-# (space-separated names of the results each kind must have) and EXPECT_SHARDS
-# (I/N of each Rust gate leg, which expects every package once per leg)
-# (optional), LANDING (true when the plan ran no lane for a bot landing).
+# LABELS_REF (where labels.sh reads the waiver label names), and optionally
+# GH_REPO (to run outside a checkout), EXPECT_RUST, EXPECT_IMPORT,
+# EXPECT_DOCS, EXPECT_TEST, EXPECT_CHECK (space-separated names of the results
+# each kind must have), EXPECT_SHARDS (I/N of each Rust gate leg, which
+# expects every package once per leg) and LANDING (true when the plan ran no
+# lane for a bot landing).
 set -euo pipefail
 
 # shellcheck source=action/labels.sh

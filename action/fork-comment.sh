@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# Render a fork pull request's verdict from its run's result files and post it
-# as the pull request's comment. The fork's run controls everything it
-# uploaded, so nothing in it decides the comment's structure: the number is
-# trusted only when it names an open pull request of this repository from the
-# fork branch and commit GitHub reports the run was for (the commit alone is
-# not enough: a fork can push another pull request's head commit to a branch),
-# expectations are cut to a strict grammar, and the results are read by the
-# pinned CLI, which fences their text. The conclusion and link are the run's
-# own, from the event.
-# Inputs: CLI ARTIFACT_DIR (pr-number, expect_*, landing) RESULTS HEAD_SHA
-# HEAD_REPO HEAD_BRANCH RUN_ATTEMPT RUN_CONCLUSION RUN_URL GH_TOKEN
-# GITHUB_REPOSITORY, LABELS_DIR (a checkout of the default branch; default: here).
+# Post the verdict of a fork's pull request run as the pull request's comment,
+# rendered here from the run's result files. Everything the run uploaded is
+# hostile. The number counts only when it names an open pull request from the
+# fork, branch and commit GitHub reports for the run: a fork can push another
+# pull request's head commit, so the commit alone proves nothing. Expectations
+# are cut to a strict grammar, and the pinned CLI fences the results' text.
+# The conclusion and link come from the event.
+# Inputs: CLI ARTIFACT_DIR (pr-number, expect_*) RESULTS HEAD_SHA HEAD_REPO
+# HEAD_BRANCH RUN_ATTEMPT RUN_CONCLUSION RUN_URL GH_TOKEN GITHUB_REPOSITORY,
+# LABELS_DIR (a checkout of the default branch; default: here).
 set -euo pipefail
 
 max_names=256
@@ -26,7 +24,7 @@ skip() {
 }
 
 [ -f "$ARTIFACT_DIR/pr-number" ] || skip "the run uploaded no pull request number"
-number=$(head -n 1 "$ARTIFACT_DIR/pr-number")
+number=$(head -c 16 "$ARTIFACT_DIR/pr-number" | head -n 1)
 [[ $number =~ ^[1-9][0-9]{0,9}$ ]] || skip "the pull request number is not an integer"
 
 pull=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${number}" \
@@ -35,7 +33,8 @@ pull=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${number}" \
 IFS=$'\t' read -r state head repo branch <<<"$pull"
 [ "$state" = open ] || skip "#$number is not open"
 [ "$head" = "$HEAD_SHA" ] || skip "#$number has moved past the commit this run tested"
-[ "$repo" = "$HEAD_REPO" ] && [ "$repo" != "$GITHUB_REPOSITORY" ] || skip "#$number is not from the fork this run belongs to"
+[ "$repo" = "$HEAD_REPO" ] || skip "#$number is not from the fork this run belongs to"
+[ "$repo" != "$GITHUB_REPOSITORY" ] || skip "#$number is not from a fork"
 [ "$branch" = "$HEAD_BRANCH" ] || skip "#$number is not from the branch this run belongs to"
 
 dropped=0
@@ -64,9 +63,6 @@ for kind in rust import docs test check; do
 done
 expectation "$ARTIFACT_DIR/expect_shards" '^[0-9]{1,3}/[0-9]{1,3}$' "$max_shards"
 export EXPECT_SHARDS="${kept[*]-}"
-LANDING=false
-[ "$(head -n 1 "$ARTIFACT_DIR/landing" 2>/dev/null || true)" != true ] || LANDING=true
-export LANDING
 [ "$dropped" -eq 0 ] || echo "::notice::dropped $dropped uploaded expectations that were malformed or over the limit"
 
 # none, large or ok
@@ -89,7 +85,7 @@ else
     echo "::notice::the run's results are over the size limit and were not rendered"
   else
     while IFS= read -r -d '' file; do
-      if [[ ! ${file#"$RESULTS"/} =~ ^[A-Za-z0-9._@+=/-]+$ ]]; then
+      if [[ ! ${file#"$RESULTS"/} =~ ^[A-Za-z0-9._@+=#/-]+$ ]]; then
         rm -f "$file"
         echo "::notice::dropped a result file with an unusual name"
       fi

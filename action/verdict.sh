@@ -19,7 +19,7 @@ if ! MARKER='<!-- soothfast-verdict -->' BODY_FILE="$body" "$(dirname "$0")/comm
   staged="${RUNNER_TEMP:-/tmp}/soothfast-verdict-comment"
   mkdir -p "$staged"
   echo "$PR_NUMBER" >"$staged/pr-number"
-  for var in EXPECT_RUST EXPECT_SHARDS EXPECT_IMPORT EXPECT_DOCS EXPECT_TEST EXPECT_CHECK LANDING; do
+  for var in EXPECT_RUST EXPECT_SHARDS EXPECT_IMPORT EXPECT_DOCS EXPECT_TEST EXPECT_CHECK; do
     echo "${!var:-}" >"$staged/${var,,}"
   done
 fi

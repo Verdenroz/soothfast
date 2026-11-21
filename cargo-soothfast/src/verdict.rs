@@ -13,6 +13,7 @@ const REUSE_ONE_SIDED: &str = "items run code a stored measurement covers";
 const NOTHING_TO_COMPARE: &str = "nothing to compare";
 const CLAIMS_SKIPPED: &str = "claims not evaluated";
 const KINDS: [&str; 5] = ["rust", "import", "docs", "test", "check"];
+const UNREADABLE: &str = "result";
 /// GitHub rejects a comment over 65,536 characters; the rest is the marker.
 const SHORT_SHA: usize = 7;
 const NOTE_SHA: usize = 12;
@@ -176,9 +177,9 @@ impl Record {
         self.verdict = self.verdict.min(other.verdict);
         self.reuse = match (self.reuse, other.reuse) {
             (Some(a), Some(b)) => Some(Reuse {
-                covered: a.covered + b.covered,
-                total: a.total + b.total,
-                measuring: a.measuring + b.measuring,
+                covered: a.covered.saturating_add(b.covered),
+                total: a.total.saturating_add(b.total),
+                measuring: a.measuring.saturating_add(b.measuring),
             }),
             (a, b) => a.or(b),
         };
@@ -410,8 +411,8 @@ fn two_sided(line: &str) -> Option<Reuse> {
             reuse.measuring = n.split_whitespace().next()?.parse().ok()?;
         } else {
             let (covered, total) = part.split_once(' ')?.1.split_once('/')?;
-            reuse.covered += covered.parse::<u64>().ok()?;
-            reuse.total += total.parse::<u64>().ok()?;
+            reuse.covered = reuse.covered.saturating_add(covered.parse().ok()?);
+            reuse.total = reuse.total.saturating_add(total.parse().ok()?);
         }
     }
     Some(reuse)
@@ -500,18 +501,28 @@ fn read_capped(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
-/// A result's name and kind are shown outside the code fence, so only
-/// characters that cannot start markdown survive.
-fn plain(text: &str) -> String {
+/// `text` with every character `keep` rejects replaced by `?`.
+fn only(text: &str, keep: impl Fn(char) -> bool) -> String {
     text.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || "._-+/:#".contains(c) {
-                c
-            } else {
-                '?'
-            }
-        })
+        .map(|c| if keep(c) { c } else { '?' })
         .collect()
+}
+
+/// A result's name is shown outside the code fence, in a code span, which
+/// GitHub does not autolink. Only characters that cannot end the span or the
+/// line survive.
+fn plain(text: &str) -> String {
+    only(text, |c| c.is_ascii_alphanumeric() || "._-+/:#".contains(c))
+}
+
+/// A kind is shown outside the code fence as it is, so only the kinds a
+/// record is written with survive.
+fn known(kind: &str) -> &str {
+    if KINDS.contains(&kind) || kind == UNREADABLE {
+        kind
+    } else {
+        "?"
+    }
 }
 
 /// Every result under `dir`. A directory that is missing is empty, and a
@@ -547,7 +558,7 @@ fn read_records(dir: &Path) -> Vec<Record> {
             });
             record.unwrap_or_else(|e| {
                 let name = f.strip_prefix(dir).unwrap_or(f).display().to_string();
-                errored(name, "result".into(), format!("unreadable result: {e}"))
+                errored(name, UNREADABLE.into(), format!("unreadable result: {e}"))
             })
         })
         .collect()
@@ -628,10 +639,11 @@ fn render(records: &[Record], accepted: Option<&str>) -> String {
         let carried = r
             .carried
             .as_deref()
-            .map(|c| format!(" (carried from {})", short(c, SHORT_SHA)))
+            .map(|c| only(&short(c, SHORT_SHA), |c| c.is_ascii_hexdigit()))
+            .map(|sha| format!(" (carried from {sha})"))
             .unwrap_or_default();
         out.push_str(&format!(
-            "\n### {}\n{}{carried}{}{} | {} | {}s",
+            "\n### `{}`\n{}{carried}{}{} | {} | {}s",
             plain(&r.name),
             r.verdict.name(),
             if r.flaky { " (flaky)" } else { "" },
@@ -640,7 +652,7 @@ fn render(records: &[Record], accepted: Option<&str>) -> String {
             } else {
                 ""
             },
-            plain(&r.kind),
+            known(&r.kind),
             r.seconds
         ));
         if let Some(u) = r.reuse {
@@ -659,6 +671,7 @@ fn render(records: &[Record], accepted: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test::fixture::TempDir;
 
     fn rec(name: &str, verdict: Verdict, tail: &str) -> Record {
         Record {
@@ -819,10 +832,8 @@ mod tests {
         assert_eq!(records[0].verdict, Verdict::Errored);
     }
 
-    fn scratch(tag: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("soothfast-hostile-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+    fn scratch(tag: &str) -> TempDir {
+        let dir = TempDir::new(&format!("hostile-{tag}"));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -839,7 +850,6 @@ mod tests {
         let out = dir.join("body.md");
         merge_dir(&dir, &out, None, &[], false).unwrap();
         let body = fs::read_to_string(&out).unwrap();
-        fs::remove_dir_all(&dir).unwrap();
         assert!(
             !body.lines().any(|l| l.starts_with("##")
                 && !l.starts_with("### ")
@@ -858,13 +868,54 @@ mod tests {
     }
 
     #[test]
+    fn a_record_cannot_link_mention_or_leave_its_fence() {
+        let dir = scratch("inert");
+        let records = [
+            json!({
+                "name": "www.evil.example", "kind": "https://evil.example", "verdict": "pass",
+                "tail": "## forged\n@someone", "seconds": 1, "carried": "\n```",
+            }),
+            json!({
+                "name": "GH-1", "kind": "a/b#2", "verdict": "pass",
+                "tail": "t", "seconds": 1, "carried": "@harvey",
+            }),
+        ];
+        for (i, record) in records.iter().enumerate() {
+            fs::write(dir.join(format!("{i}.json")), record.to_string()).unwrap();
+        }
+        let out = dir.join("body.md");
+        merge_dir(&dir, &out, None, &[], false).unwrap();
+        let body = fs::read_to_string(&out).unwrap();
+        assert_eq!(
+            body,
+            "## soothfast verdict\n2 projects: 0 regressed, 0 errored, 2 pass\n\
+             \n### `GH-1`\npass (carried from ??a??e?) | ? | 1s\n```\nt\n```\n\
+             \n### `www.evil.example`\npass (carried from ????) | ? | 1s\n```\n## forged\n@someone\n```\n"
+        );
+    }
+
+    #[test]
+    fn reuse_counts_saturate() {
+        let shard = |name: &str| Record {
+            reuse: reuse(u64::MAX, u64::MAX, u64::MAX),
+            ..rec(name, Verdict::Pass, "")
+        };
+        let folded = fold(vec![shard("core#1/2"), shard("core#2/2")]);
+        assert_eq!(folded[0].reuse, reuse(u64::MAX, u64::MAX, u64::MAX));
+        let line = format!(
+            "{REUSE_LINE}: head {0}/{0}, base {0}/{0}, measuring 1",
+            u64::MAX
+        );
+        assert_eq!(parse_reuse(&line), reuse(u64::MAX, u64::MAX, 1));
+    }
+
+    #[test]
     fn symlinks_and_oversized_files_are_not_followed_or_read() {
         let dir = scratch("links");
         fs::write(dir.join("big.json"), vec![b' '; RECORD_LIMIT as usize + 1]).unwrap();
         std::os::unix::fs::symlink("/nonexistent/target", dir.join("file.json")).unwrap();
         std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
         let records = read_records(&dir);
-        fs::remove_dir_all(&dir).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].name, "big.json");
         assert!(records[0].tail.contains("over the"), "{}", records[0].tail);
@@ -882,7 +933,6 @@ mod tests {
             fs::write(dir.join(format!("shape{i}.json")), shape).unwrap();
         }
         let records = read_records(&dir);
-        fs::remove_dir_all(&dir).unwrap();
         assert_eq!(records.len(), 3);
         assert!(
             records
@@ -1033,7 +1083,7 @@ mod tests {
         ];
         records.sort_by(|a, b| (a.verdict, &a.name).cmp(&(b.verdict, &b.name)));
         let body = render(&records, None);
-        let pos = |n: &str| body.find(&format!("### {n}\n")).unwrap();
+        let pos = |n: &str| body.find(&format!("### `{n}`\n")).unwrap();
         assert!(pos("c") < pos("b") && pos("b") < pos("a") && pos("a") < pos("d"));
         assert!(body.contains("4 projects: 1 regressed, 1 errored, 2 pass"));
     }
@@ -1107,7 +1157,7 @@ mod tests {
         let dir = carried_in("render");
         let body = render(&read_records(&dir), None);
         fs::remove_dir_all(&dir).unwrap();
-        assert!(body.contains("### core\npass (carried from abababa) | rust | 0s"));
+        assert!(body.contains("### `core`\npass (carried from abababa) | rust | 0s"));
         assert!(body.contains("1 projects: 0 regressed, 0 errored, 1 pass"));
     }
 

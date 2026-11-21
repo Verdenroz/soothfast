@@ -887,13 +887,13 @@ The verdict body is also written to the run's job summary, whoever opened the
 pull request. A fork's run has a read-only token and no OIDC identity, so the
 `verdict` job cannot comment. It uploads only small data as the
 `soothfast-verdict-comment-attempt-<attempt>` artifact: the pull request
-number and what the plan expected of the run (the expected result names, the
-shard list and whether it was a landing), as plain text files. A second
-workflow renders the comment and posts it.
+number and what the plan expected of the run (the expected result names and
+the shard list), as plain text files. A second workflow renders the comment
+and posts it.
 
 That workflow installs the same CLI as the `verdict` job, downloads the
-run's `soothfast-result-*` artifacts for the triggering attempt and runs the
-same `ci verdict` rendering over them, so the markup of the comment is
+run's `soothfast-result-*` artifacts and runs the same `ci verdict`
+rendering over them, so the markup of the comment is
 produced by this repository's pinned code and not by anything the fork's
 workflow file wrote. The comment opens with a line linking the run and giving
 its conclusion, taken from the event. When the rendered verdict passes but
@@ -926,11 +926,14 @@ else is dropped with a notice. Untrusted expectations can hide a missing
 section, which is why the run's conclusion is shown beside the verdict. The
 result files are read only when they total at most 20 MiB in at most 1000
 files, and symbolic links, files with unusual names and results of a later
-attempt are removed first. The CLI shows a result's name and kind as plain
-characters only and fences its text. Each attempt of a run uploads its own
-artifacts and the job reads those of the attempt that triggered it, so a
-re-run posts its own verdict or nothing, and a run for an older commit cannot
-overwrite a newer verdict.
+attempt are removed first. The CLI shows a result's name in a code span,
+with any character outside letters, digits and `._-+/:#` replaced by `?`,
+shows a kind only when it is one it writes, and fences the result's text, so
+nothing in a result becomes a link, a mention or markup. Each attempt of a
+run uploads its own artifacts and the job reads none from an attempt later
+than the one that triggered it, so a re-run posts its own verdict or nothing,
+and a run for an older commit cannot overwrite a newer verdict. The job is
+stopped after 30 minutes.
 
 The perf-accepted label is read with the job's own token, and counts only
 when a writer applied it. The label names come from `soothfast.toml` on the
