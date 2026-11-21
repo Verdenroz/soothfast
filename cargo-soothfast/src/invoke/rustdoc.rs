@@ -220,6 +220,13 @@ pub fn rustdoc_json_in(
     Ok((doc, root))
 }
 
+/// What decides a tree's rustdoc JSON besides its sources: `rustc -vV` of
+/// the toolchain that builds it at `root`, and the build environment.
+pub fn rustdoc_build(root: &Path) -> Option<String> {
+    let rustc = store::rustc_version(Some(&rustdoc_toolchain()), root)?;
+    Some(format!("{rustc}{:?}", store::build_env(&[])))
+}
+
 /// The store key `rustdoc_json_in` looks `pkg` up under in the workspace.
 pub fn rustdoc_key(pkg: &str, features: Option<&str>, visibility: Visibility) -> Option<String> {
     let root = workspace_root().ok()?;
