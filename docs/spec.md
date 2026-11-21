@@ -376,7 +376,8 @@ be silently diffed. It is the right default for CI that already requires
 `spec gen --check` on every merge, which pins the committed file to what the
 merge-base would generate. `--prefer-committed` reads the same files and
 rebuilds the merge-base when one does not re-render, as a file written by an
-older release may not. `ci spec` gates this way.
+older release may not. Either way the head's spec is built from its routes,
+never read from the committed file. `ci spec` gates this way.
 
 Every dialect gates on that same asymmetry, read off whichever key states
 the direction. For **AsyncAPI** it is the operation's own `action`: a
@@ -394,7 +395,11 @@ is invisible and a real edit is named at the field it happened to.
 
 `spec gen --check` is the companion staleness gate: it fails when
 regenerating would change a committed file, so the bot's output can never
-silently diverge from the code.
+silently diverge from the code. With the bot on, `ci spec` leaves it (and
+`sdk gen --check`) out of a pull request into the default branch and a push
+to it, where the push's regeneration rewrites those files, and keeps
+`spec gate` and `spec check`. Every other run still checks, and so does a
+repository without the bot.
 
 ## Reconciliation
 

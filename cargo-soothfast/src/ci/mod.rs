@@ -11,7 +11,7 @@ pub mod checks;
 mod coverage;
 mod docs;
 mod each;
-mod env;
+pub mod env;
 mod gate;
 mod import;
 mod lanes;
