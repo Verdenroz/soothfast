@@ -495,10 +495,11 @@ pub fn prune(dir: &Path, max_bytes: u64) {
     }
     let mut entries: Vec<_> = entries.into_values().collect();
     entries.sort_by_key(|(payload, any, _, _)| std::cmp::Reverse(payload.unwrap_or(*any)));
+    let newest = entries.iter().position(|e| e.0.is_some()).unwrap_or(0);
     let mut kept = 0;
     for (i, (_, _, len, files)) in entries.into_iter().enumerate() {
         kept += len;
-        if i > 0 && kept > max_bytes {
+        if i != newest && kept > max_bytes {
             for file in files {
                 let _ = std::fs::remove_file(file);
             }
@@ -943,6 +944,25 @@ mod tests {
             .filter(|f| f.path().extension().is_some_and(|x| x == "latest"))
             .count();
         assert_eq!(pointers, 0);
+    }
+
+    #[test]
+    fn pruning_keeps_the_newest_payload_over_a_newer_pointer() {
+        let repo = Repo::new("prune-pointer");
+        let store = repo.store_dir();
+        let first = key(&repo, "h");
+        let from = repo.0.join("out");
+        std::fs::write(&from, "bytes").unwrap();
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        let read = inputs(&["app/src/lib.rs"]);
+        insert(&store, &first, &repo.0, &read, future, &from, "json").unwrap();
+        prune(&store, 0);
+        let left: Vec<_> = std::fs::read_dir(&store)
+            .unwrap()
+            .flatten()
+            .map(|f| f.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(left.iter().any(|n| n.starts_with(entry_key(&first))));
     }
 
     #[test]
