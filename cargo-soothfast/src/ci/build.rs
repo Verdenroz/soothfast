@@ -8,7 +8,8 @@ use std::process::Command;
 use soothfast_registry::fnv1a;
 
 use super::env::{CiEnv, Event};
-use crate::config::{self, Group, Settings};
+use super::regen::{bot_regenerates, changelog_listed};
+use crate::config::{self, Config, Group, Settings};
 use crate::init;
 use crate::{invoke, spec_config, workspace};
 
@@ -49,7 +50,7 @@ fn parse(args: &[String]) -> Result<Job, String> {
         };
         match a.as_str() {
             "-p" | "--package" => job.named.push(("-p".into(), value()?)),
-            "--docs" | "--spec" => job.named.push((a.clone(), value()?)),
+            "--docs" | "--spec" | "--changelog" => job.named.push((a.clone(), value()?)),
             "--shards" => match value()?.parse() {
                 Ok(n) if n >= 1 => job.shards = n,
                 _ => return Err("--shards wants a count of at least 1".into()),
@@ -108,6 +109,8 @@ enum Source {
     Spec,
     /// Packages that generate a spec from the code.
     Generating,
+    /// Packages the changelog lists, on the push that regenerates it.
+    Changelog,
 }
 
 /// How `prebuild` takes a lane's packages and which defaults they resolve.
@@ -144,6 +147,12 @@ const LANES: &[LaneKind] = &[
         flag: "--spec",
         group: Group::Spec,
         source: Source::Generating,
+    },
+    LaneKind {
+        name: "rustdoc",
+        flag: "--changelog",
+        group: Group::Docs,
+        source: Source::Changelog,
     },
 ];
 
@@ -202,7 +211,8 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
     let has_parent = || invoke::git(&["rev-parse", "--verify", "--quiet", "HEAD^"]).is_ok();
     let shape = shape(env, job.shards, has_parent);
     let resolve = |pkg: &str, group| config::defaults(&[pkg.to_string()], group);
-    let (packages, calls) = match plan(&job, &shape, load, resolve) {
+    let loaded = |source| load(source, env);
+    let (packages, calls) = match plan(&job, &shape, loaded, resolve) {
         Ok(planned) => planned,
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -238,6 +248,8 @@ pub fn run(env: &CiEnv, args: &[String]) -> i32 {
 
 /// The packages the job builds for and the `prebuild` calls that build them.
 /// With no package named, each entry of the lane builds its own defaults.
+/// The changelog's packages are loaded unless `--changelog` names them, and
+/// ride in the docs call, where `prebuild` builds a shared rustdoc once.
 fn plan(
     job: &Job,
     shape: &Shape,
@@ -245,28 +257,57 @@ fn plan(
     resolve: impl Fn(&str, Group) -> Result<Settings, String>,
 ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
     let mut packages = Vec::new();
-    let mut calls = Vec::new();
+    let mut calls: Vec<Vec<String>> = Vec::new();
     for kind in entries(&job.lane) {
-        let chosen = if job.named.is_empty() {
-            load(kind.source)?
-        } else {
-            let named = job.named.iter().filter(|(flag, _)| flag == kind.flag);
-            named.map(|(_, pkg)| pkg.clone()).collect()
+        let named = job.named.iter().filter(|(flag, _)| flag == kind.flag);
+        let named: Vec<String> = named.map(|(_, pkg)| pkg.clone()).collect();
+        let changelog = kind.source == Source::Changelog;
+        let chosen = match job.named.is_empty() || (changelog && named.is_empty()) {
+            true => load(kind.source)?,
+            false => named,
         };
-        calls.extend(invocations(job, kind, &chosen, shape, &resolve)?);
-        packages.extend(chosen);
+        let docs_call = calls
+            .iter_mut()
+            .find(|call| call.iter().any(|a| a == "--docs"));
+        match docs_call.filter(|_| changelog) {
+            Some(call) => {
+                let flags = chosen
+                    .iter()
+                    .flat_map(|pkg| [kind.flag.into(), pkg.clone()]);
+                call.extend(flags);
+            }
+            None => calls.extend(invocations(job, kind, &chosen, shape, &resolve)?),
+        }
+        for pkg in chosen {
+            if !(changelog && packages.contains(&pkg)) {
+                packages.push(pkg);
+            }
+        }
     }
     Ok((packages, calls))
 }
 
-fn load(source: Source) -> Result<Vec<String>, String> {
+fn load(source: Source, env: &CiEnv) -> Result<Vec<String>, String> {
     let root = invoke::project_root();
     match source {
         Source::Gated => workspace::bench_crates("soothfast", Some(&root)),
         Source::Docs => Ok(init::rust_plan(&root)?.docs_packages),
         Source::Spec => Ok(spec_config::configured(&root)?.0),
         Source::Generating => Ok(spec_config::configured(&root)?.1),
+        Source::Changelog if regenerates_changelog(env)? => {
+            let listed = Config::load(&root)?.changelog()?.packages;
+            let gated = workspace::bench_crates("soothfast", Some(&root))?;
+            Ok(changelog_listed(&listed, &gated).to_vec())
+        }
+        Source::Changelog => Ok(Vec::new()),
     }
+}
+
+/// Whether the run is a push the bot regenerates the changelog on. The
+/// workflow's `--no-changelog` is not visible here, so a repository that
+/// turns it off still prebuilds the changelog's rustdoc.
+fn regenerates_changelog(env: &CiEnv) -> Result<bool, String> {
+    Ok(env.event == Event::Push && bot_regenerates(env)?)
 }
 
 /// Runs every call, then lists the built items and the store's checksums as
@@ -412,8 +453,11 @@ mod tests {
             plan_out: None,
             listing_out: None,
         };
-        let unused = |_| Err("named packages need no defaults".to_string());
-        plan(&job, shape, unused, resolve).map(|(_, calls)| calls)
+        let only_the_changelog = |source| match source {
+            Source::Changelog => Ok(Vec::new()),
+            _ => Err("named packages need no defaults".to_string()),
+        };
+        plan(&job, shape, only_the_changelog, resolve).map(|(_, calls)| calls)
     }
 
     fn no_features(_: &str, _: Group) -> Result<Settings, String> {
@@ -529,7 +573,117 @@ mod tests {
             Source::Docs => argv(&["d"]),
             Source::Spec => argv(&["s", "g"]),
             Source::Generating => argv(&["g"]),
+            Source::Changelog => Vec::new(),
         })
+    }
+
+    fn regenerating(event: Event, default_branch: bool) -> CiEnv {
+        CiEnv {
+            regen: true,
+            into_default_branch: true,
+            ..env(event, None, default_branch)
+        }
+    }
+
+    #[test]
+    fn a_push_the_bot_regenerates_prebuilds_for_the_changelog() {
+        let env = regenerating(Event::Push, true);
+        assert_eq!(regenerates_changelog(&env), Ok(true));
+    }
+
+    #[test]
+    fn a_push_without_the_bot_prebuilds_nothing_for_the_changelog() {
+        let env = env(Event::Push, None, true);
+        assert_eq!(regenerates_changelog(&env), Ok(false));
+    }
+
+    #[test]
+    fn only_a_default_branch_push_prebuilds_for_the_changelog() {
+        for (event, default_branch) in [
+            (Event::Push, false),
+            (Event::PullRequest, true),
+            (Event::Other, true),
+        ] {
+            let env = regenerating(event, default_branch);
+            assert_eq!(regenerates_changelog(&env), Ok(false), "{event:?}");
+        }
+    }
+
+    fn changelog_of(
+        packages: &'static [&'static str],
+    ) -> impl Fn(Source) -> Result<Vec<String>, String> {
+        move |source| match source {
+            Source::Changelog => Ok(argv(packages)),
+            other => configured(other),
+        }
+    }
+
+    fn rustdoc_plan(
+        named: &[(&str, &str)],
+        load: impl Fn(Source) -> Result<Vec<String>, String>,
+    ) -> (Vec<String>, Vec<Vec<String>>) {
+        let shape = shape(&env(Event::Push, None, true), 1, || false);
+        let job = Job {
+            named: named
+                .iter()
+                .map(|(flag, pkg)| (flag.to_string(), pkg.to_string()))
+                .collect(),
+            ..job("rustdoc", None)
+        };
+        plan(&job, &shape, load, no_features).unwrap()
+    }
+
+    const RUSTDOC: [&str; 3] = ["prebuild", "--only", "rustdoc"];
+
+    #[test]
+    fn the_changelogs_packages_ride_in_the_docs_call() {
+        let (packages, calls) = rustdoc_plan(&[], changelog_of(&["c"]));
+        assert_eq!(packages, ["d", "g", "c"]);
+        let docs = [&RUSTDOC[..], &["--docs", "d", "--changelog", "c"]].concat();
+        assert_eq!(calls.first(), Some(&argv(&docs)));
+        assert!(
+            calls[1..]
+                .iter()
+                .all(|c| !c.contains(&"--changelog".into()))
+        );
+    }
+
+    #[test]
+    fn a_named_docs_package_still_takes_the_changelogs_packages() {
+        let (packages, calls) = rustdoc_plan(&[("--docs", "x")], changelog_of(&["c"]));
+        assert_eq!(packages, ["x", "c"]);
+        let docs = [&RUSTDOC[..], &["--docs", "x", "--changelog", "c"]].concat();
+        assert_eq!(calls, [argv(&docs)]);
+    }
+
+    #[test]
+    fn a_named_docs_package_builds_alone_when_the_changelog_loads_nothing() {
+        let (packages, calls) = rustdoc_plan(&[("--docs", "x")], configured);
+        assert_eq!(packages, ["x"]);
+        assert_eq!(calls, [argv(&[&RUSTDOC[..], &["--docs", "x"]].concat())]);
+    }
+
+    #[test]
+    fn a_changelog_package_the_docs_name_is_listed_once_in_one_call() {
+        let (packages, calls) = rustdoc_plan(&[("--docs", "x")], changelog_of(&["x"]));
+        assert_eq!(packages, ["x"]);
+        let docs = [&RUSTDOC[..], &["--docs", "x", "--changelog", "x"]].concat();
+        assert_eq!(calls, [argv(&docs)]);
+    }
+
+    #[test]
+    fn a_named_changelog_package_is_not_loaded() {
+        let named = [("--docs", "x"), ("--changelog", "y")];
+        let (packages, _) = rustdoc_plan(&named, changelog_of(&["c"]));
+        assert_eq!(packages, ["x", "y"]);
+    }
+
+    #[test]
+    fn the_changelogs_packages_build_in_a_call_of_their_own_without_docs() {
+        let (packages, calls) = rustdoc_plan(&[("--spec", "g")], changelog_of(&["c"]));
+        assert_eq!(packages, ["g", "c"]);
+        let own = [&RUSTDOC[..], &["--changelog", "c"]].concat();
+        assert_eq!(calls.last(), Some(&argv(&own)));
     }
 
     #[test]

@@ -2,15 +2,15 @@
 //! recorded data: perf tables, trend charts, badges, and a living
 //! CHANGELOG.md whose Unreleased section is regenerated in place.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use soothfast_report::{badges, changelog, perf_table, trend_chart};
 
 use crate::config::{self, Config, Group, Settings};
 use crate::{
-    buildstamp, coverage_lang, docs_support, headrun, invoke, project_surface, runcache, trend,
-    workspace,
+    buildstamp, coverage_lang, docs_support, headrun, invoke, project_surface, refrun, runcache,
+    trend, workspace,
 };
 
 pub fn run(args: &[String]) -> i32 {
@@ -176,61 +176,118 @@ fn surface_diffs(pkgs: &[String], refname: &str, features: Option<&str>) -> Resu
 /// skipped rather than failing the run, since a newly measured crate simply
 /// has no earlier side to compare against. `Ok(None)` when that leaves
 /// nothing measured, which renders the current-only table as before.
-fn measure_ref(a: &ReportArgs, refname: &str) -> Result<Option<Value>, String> {
-    let features = a.features.clone();
-    let sha = invoke::git(&["merge-base", "HEAD", refname])
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    let key = |pkg: &str| {
-        let common = invoke::CommonArgs::default();
-        let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
-        (!sha.is_empty()).then(|| runcache::report_key(&sha, pkg, features.as_deref(), &stamp))
+///
+/// When HEAD is the merge-base nothing is measured: the figures are
+/// `baseline`'s.
+fn measure_ref(
+    a: &ReportArgs,
+    refname: &str,
+    root: &Path,
+    config: &Config,
+    baseline: &Value,
+) -> Result<Option<Value>, String> {
+    let sha = match refrun::anchor(root, refname) {
+        refrun::Anchor::Head => {
+            println!("report: no commits since {refname}, so its figures are the baseline's own");
+            return Ok(Some(baseline.clone()));
+        }
+        refrun::Anchor::At(sha) => sha,
     };
+    let mut packages = Vec::new();
+    for pkg in &a.pkg {
+        let common = refrun::common(config, pkg)?;
+        let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+        let key = (!sha.is_empty()).then(|| runcache::report_key(&sha, &common, &stamp));
+        packages.push(RefPackage {
+            pkg,
+            common,
+            stamp,
+            key,
+        });
+    }
+    let (mut docs, unmeasured) = stored_ref_docs(&packages, &sha, refname);
+    if !unmeasured.is_empty() {
+        docs.extend(measure_in_worktree(&unmeasured, refname)?);
+    }
+    Ok(merged_ref_doc(&docs))
+}
+
+/// One package of a reference measurement: the flags it is measured under
+/// and the key its measurement is kept under, when the commit is known.
+struct RefPackage<'a> {
+    pkg: &'a str,
+    common: invoke::CommonArgs,
+    stamp: buildstamp::BuildStamp,
+    key: Option<String>,
+}
+
+/// The measurements the run store already holds, and the packages it holds
+/// none for.
+fn stored_ref_docs<'a>(
+    packages: &'a [RefPackage<'a>],
+    sha: &str,
+    refname: &str,
+) -> (Vec<Value>, Vec<&'a RefPackage<'a>>) {
     let mut docs = Vec::new();
     let mut unmeasured = Vec::new();
-    for pkg in &a.pkg {
-        match key(pkg).and_then(|key| runcache::stored_report(&key)) {
-            Some(doc) => docs.push(doc),
-            None => unmeasured.push(pkg.clone()),
-        }
-    }
-    if unmeasured.is_empty() {
-        println!("report: reusing the stored measurement of {refname} for the perf delta");
-    } else {
-        println!("report: measuring {refname} in a worktree for the perf delta");
-        let runs = invoke::with_merge_base_worktree(refname, |wt| {
-            let mut runs = Vec::new();
-            for pkg in &unmeasured {
-                if !workspace::has_bench_target(pkg, "soothfast", Some(wt))
-                    .map_err(|e| e.to_string())?
-                {
-                    continue;
-                }
-                let common = invoke::CommonArgs {
-                    pkg: Some(pkg.clone()),
-                    features: features.clone(),
-                    ..Default::default()
-                };
-                let records =
-                    invoke::run_bench_in(&common, &[], Some(wt)).map_err(|e| e.to_string())?;
-                runs.push((pkg.clone(), invoke::collect(&records)));
-            }
-            Ok(runs)
-        })?;
-        for (pkg, run) in runs {
-            let doc = headrun::ref_doc(&run);
-            if let Some(key) = key(&pkg) {
-                runcache::keep_report(&key, &doc);
-            }
+    for package in packages {
+        let pkg = package.pkg;
+        let Some(key) = &package.key else {
+            unmeasured.push(package);
+            continue;
+        };
+        if let Some(doc) = runcache::stored_report(key) {
+            println!("report: reusing the stored measurement of {refname} for {pkg}");
             docs.push(doc);
+        } else if let Some(doc) = refrun::recorded_for(&package.common, &package.stamp, sha, key) {
+            println!("report: reusing the gate's recorded run of {refname} for {pkg}");
+            docs.push(doc);
+        } else {
+            unmeasured.push(package);
         }
     }
+    (docs, unmeasured)
+}
+
+/// Measures `packages` in one worktree at the merge-base of `refname` and
+/// keeps each measurement under its key.
+fn measure_in_worktree(packages: &[&RefPackage], refname: &str) -> Result<Vec<Value>, String> {
+    println!("report: measuring {refname} in a worktree");
+    let runs = invoke::with_merge_base_worktree(refname, |wt| {
+        let mut runs = Vec::new();
+        for package in packages {
+            let common = &package.common;
+            let target = common.target.as_deref().unwrap_or("soothfast");
+            if !workspace::has_bench_target(package.pkg, target, Some(wt))
+                .map_err(|e| e.to_string())?
+            {
+                continue;
+            }
+            let records = invoke::run_bench_in(common, &[], Some(wt)).map_err(|e| e.to_string())?;
+            runs.push((*package, invoke::collect(&records)));
+        }
+        Ok(runs)
+    })?;
+    let mut docs = Vec::new();
+    for (package, run) in runs {
+        let doc = headrun::ref_doc(&run);
+        if let Some(key) = &package.key {
+            runcache::keep_report(key, &doc);
+        }
+        docs.push(doc);
+    }
+    Ok(docs)
+}
+
+/// The items of every document in one baseline-shaped document, under the
+/// largest noise floor among them. `None` when there are no documents.
+fn merged_ref_doc(docs: &[Value]) -> Option<Value> {
     if docs.is_empty() {
-        return Ok(None);
+        return None;
     }
     let mut items = serde_json::Map::new();
     let mut noise: Option<f64> = None;
-    for doc in &docs {
+    for doc in docs {
         if let Some(obj) = doc["items"].as_object() {
             items.extend(obj.clone());
         }
@@ -242,7 +299,7 @@ fn measure_ref(a: &ReportArgs, refname: &str) -> Result<Option<Value>, String> {
     if let Some(n) = noise {
         doc["noise_pct"] = serde_json::json!(n);
     }
-    Ok(Some(doc))
+    Some(doc)
 }
 
 fn changelog_cmd(args: &[String]) -> i32 {
@@ -374,7 +431,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
     // snapshot into "what moved", which is what a changelog reader wants and
     // what keeps a no-op merge from rewriting the whole table.
     let ref_baseline = match &a.against_ref {
-        Some(refname) => match measure_ref(&a, refname) {
+        Some(refname) => match measure_ref(&a, refname, &root, &config, &baseline) {
             Ok(b) => b,
             Err(e) => return err(&e),
         },
@@ -415,7 +472,7 @@ fn changelog_cmd(args: &[String]) -> i32 {
 
 /// The features `report changelog` reads the API surface under: the command
 /// line first, then `[changelog] features`, then `[gate] features`.
-fn resolve_features(
+pub(crate) fn resolve_features(
     cli: Option<String>,
     changelog: Option<&str>,
     gate: Option<&str>,
