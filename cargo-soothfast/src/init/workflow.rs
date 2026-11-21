@@ -10,11 +10,13 @@ const CALLER_JOB: &str = include_str!("caller_job.yml.tmpl");
 const PAGES_JOB: &str = include_str!("pages_job.yml.tmpl");
 const DOCS_JOB: &str = include_str!("docs_job.yml.tmpl");
 const LABELS_JOB: &str = include_str!("labels_job.yml.tmpl");
+const COMMENT_WORKFLOW: &str = include_str!("comment_workflow.yml.tmpl");
 
 /// How often the labels job sweeps when nothing has pushed.
 const SCHEDULE: &str = "  schedule:\n    - cron: \"*/30 * * * *\"\n";
 
 pub(super) const WORKFLOW_PATH: &str = ".github/workflows/soothfast.yml";
+pub(super) const COMMENT_WORKFLOW_PATH: &str = ".github/workflows/soothfast-comment.yml";
 
 /// What the scaffold is derived from.
 pub(super) struct Workspace {
@@ -66,6 +68,29 @@ pub(super) fn workflow(ws: &Workspace) -> String {
     }
 }
 
+/// The workflow that posts a fork's verdict, which only the reusable
+/// workflow's verdict job produces.
+pub(super) fn comment_workflow(ws: &Workspace) -> Option<String> {
+    (!ws.inline()).then(|| {
+        let mut text = COMMENT_WORKFLOW
+            .replace("@@action@@", &reusable(&ws.action, "comment.yml"))
+            .replace("@@pin@@", action_pin(&ws.action));
+        if ws.ci.labels.is_some() {
+            text.push_str(&format!("      runs_on: '{}'\n", ws.ci.runs_on_json()));
+        }
+        text
+    })
+}
+
+fn reusable(action: &str, file: &str) -> String {
+    action.replacen('@', &format!("/.github/workflows/{file}@"), 1)
+}
+
+fn action_pin(action: &str) -> &str {
+    let pin = action.split_once('@').map_or("", |(_, r)| r);
+    pin.split(" #").next().unwrap_or(pin)
+}
+
 fn cargo_jobs(ws: &Workspace) -> String {
     let mut text = TEST_JOB.to_string();
     if !ws.benched.is_empty() {
@@ -84,8 +109,7 @@ fn cargo_jobs(ws: &Workspace) -> String {
 /// The one job of a repo with other-language projects: the reusable
 /// workflow plans and runs everything from `soothfast.toml`.
 fn caller_job(ws: &Workspace) -> String {
-    let pin = ws.action.split_once('@').map_or("", |(_, r)| r);
-    let pin = pin.split(" #").next().unwrap_or(pin);
+    let pin = action_pin(&ws.action);
     let inputs = [
         ("soothfast_ref", Some(format!("\"{pin}\""))),
         ("bot", ws.bot.then(|| "true".to_string())),
@@ -109,18 +133,12 @@ fn caller_job(ws: &Workspace) -> String {
         .iter()
         .filter_map(|(key, value)| Some(format!("      {key}: {}\n", value.as_ref()?)))
         .collect();
-    let mut text = CALLER_JOB.replace(
-        "@@action@@",
-        &ws.action.replacen('@', "/.github/workflows/run.yml@", 1),
-    );
+    let mut text = CALLER_JOB.replace("@@action@@", &reusable(&ws.action, "run.yml"));
     if !with.is_empty() {
         text.push_str(&format!("    with:\n{with}"));
     }
     if ws.pages {
-        text.push_str(&PAGES_JOB.replace(
-            "@@action@@",
-            &ws.action.replacen('@', "/.github/workflows/pages.yml@", 1),
-        ));
+        text.push_str(&PAGES_JOB.replace("@@action@@", &reusable(&ws.action, "pages.yml")));
     }
     text
 }
@@ -131,8 +149,8 @@ mod tests {
     use crate::init::ecosystem::Ecosystem;
     use crate::init::lookup::{action_ref, pinned};
     use crate::init::report;
-    use crate::init::scaffold::{Kind, Scaffold};
-    use crate::init::test_support::{mixed_ws, project, scratch, ws};
+    use crate::init::scaffold::{Kind, Scaffold, scaffold};
+    use crate::init::test_support::{mixed_ws, project, python_ws, scratch, ws};
     #[test]
     fn a_workspace_without_benches_gets_no_gate_job() {
         let text = workflow(&ws(&[], None));
@@ -238,6 +256,67 @@ mod tests {
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             assert!(!line.starts_with('\t'), "tab indent: {line}");
         }
+    }
+
+    #[test]
+    fn the_comment_workflow_calls_the_reusable_one_with_the_callers_pin() {
+        let sha = "c".repeat(40);
+        let w = Workspace {
+            action: format!("Verdenroz/soothfast@{sha} # v1.2.3"),
+            ..mixed_ws(true, vec![project(Ecosystem::Gradle, "client")])
+        };
+        let text = comment_workflow(&w).unwrap();
+        assert!(text.contains("    workflows: [soothfast]\n    types: [completed]\n"));
+        assert!(text.contains(&format!(
+            "uses: Verdenroz/soothfast/.github/workflows/comment.yml@{sha} # v1.2.3\n"
+        )));
+        assert!(text.contains(&format!("      soothfast_ref: \"{sha}\"\n")));
+        assert!(!text.contains("@@"));
+    }
+
+    #[test]
+    fn the_comment_workflow_passes_the_runner_labels() {
+        let w = Workspace {
+            ci: Ci::parse("[runner]\nlabels = [\"self-hosted\", \"linux\"]\n").unwrap(),
+            ..python_ws()
+        };
+        let text = comment_workflow(&w).unwrap();
+        assert!(
+            text.ends_with("      runs_on: '[\"self-hosted\",\"linux\"]'\n"),
+            "{text}"
+        );
+        assert!(!comment_workflow(&python_ws()).unwrap().contains("runs_on"));
+    }
+
+    #[test]
+    fn only_a_repo_on_the_reusable_workflow_gets_the_comment_workflow() {
+        assert!(comment_workflow(&ws(&["a"], Some("a"))).is_none());
+        let checks = Workspace {
+            checks: true,
+            ..ws(&["a"], None)
+        };
+        assert!(comment_workflow(&checks).is_some());
+        assert!(comment_workflow(&python_ws()).is_some());
+    }
+
+    #[test]
+    fn init_writes_the_comment_workflow_and_check_flags_it_missing_or_changed() {
+        let root = scratch("comment");
+        let files = scaffold(&python_ws());
+        assert_eq!(report(&root, &files, true, false), 1);
+        assert_eq!(report(&root, &files, false, false), 0);
+        assert!(root.join(COMMENT_WORKFLOW_PATH).is_file());
+        assert_eq!(report(&root, &files, true, false), 0);
+        let path = root.join(COMMENT_WORKFLOW_PATH);
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(
+            &path,
+            text.replace("soothfast_ref: \"v0\"", "soothfast_ref: \"old\""),
+        )
+        .unwrap();
+        assert_eq!(report(&root, &files, true, false), 1);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(report(&root, &files, true, false), 1);
     }
 
     #[test]

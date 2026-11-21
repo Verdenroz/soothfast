@@ -156,9 +156,9 @@ by binary.
 Then it measures each package into the
 `baseline` baseline, regenerates `CHANGELOG.md` against the latest tag (or
 lists the initial surface when there is no tag), regenerates any packages
-named in `spec`, and lands whatever changed as one pull request on
-`bot/soothfast-update`. Pushes to other branches do nothing beyond the
-install.
+named in `spec`, records fresh output for each capture block, and lands
+whatever changed as one pull request on `bot/soothfast-update`. Pushes to
+other branches do nothing beyond the install.
 
 The bot PR triggers your workflows like any other pull request, this step
 included, which is how its required checks get satisfied. Under `run.yml` the
@@ -216,6 +216,7 @@ installed on is refused.
 | `save-baseline` | none | Baseline name a passing pull-request gate saves its HEAD measurement under, in `.soothfast/baselines/`. Upload that directory as an artifact and a later job (a `docs check` of claims) reads HEAD's numbers without measuring again. Counters measured from code proven identical to HEAD's (the item cache, a run stored for the same binary, a run-cache hit on HEAD) are saved with their `reused` marker; walltime from those sources is listed as `unmeasured` (`reused-walltime`) instead. A gate whose claims failed, or that errored, saves no numbers and lists the package's items as `gate-failed`; one that failed only on regressions saves HEAD's numbers, and its verdict or the `soothfast:perf-accepted` label decides. With `shard`, each leg's file holds its shard's items; merge them with `cargo soothfast baseline merge`. |
 | `regen-run` | none | Shell run on the default branch after the built-in regeneration, for derived files it does not cover. `$SOOTHFAST` is the `cargo-soothfast` this step installed, so `"$SOOTHFAST" report render` works whether the CLI came from the install or from `binary`. Requires `regen-paths`. |
 | `regen-paths` | none | Space-separated pathspecs `regen-run` may change; they land in the same pull request. Required with `regen-run`; without it the step fails rather than discarding the changes. |
+| `head-runs` | `false` | Restore the runs a gate leg of the same push saved under HEAD's commit, so the regeneration reads HEAD's run back instead of measuring it, and save what it measured under that commit's `-regen` key. For a job with `gate: "false"` that runs after the gate leg. |
 | `baseline` | `base` | Baseline name the regeneration measures into. |
 | `rustdoc-toolchain` | the nightly the release was tested with | Toolchain for rustdoc JSON. A floating `nightly` can change the JSON format under the API diff. |
 | `version` | from `Cargo.lock` | `cargo-soothfast` version to install. |
@@ -867,6 +868,44 @@ regressed or errored, or recorded no result; a perf-accepted label
 (`soothfast:perf-accepted` unless `perf_accepted_labels` renames it) applied by
 a writer waives regressions, never errors or docs drift.
 
+### Pull requests from forks
+
+The verdict body is also written to the run's job summary, whoever opened the
+pull request. A fork's run has a read-only token and no OIDC identity, so the
+`verdict` job cannot comment. It uploads the body and the pull request number
+as the `soothfast-verdict-comment-attempt-<attempt>` artifact, and a second
+workflow posts it.
+
+The contributor sees the comment, headed by a line saying it came from a
+fork's run and was not produced with the repository's token. It is posted
+with `github.token`, not by the bot, under the same marker, so the next
+verdict replaces it. A pull request from the same repository is unaffected:
+its comment is posted directly and nothing is uploaded.
+
+It is two workflows because the fork's own run executes code and a workflow
+file the fork controls. The comment job runs from `workflow_run`, which GitHub
+starts from the base repository with its permissions: `cargo soothfast init`
+writes it as `soothfast-comment.yml`, a caller of the reusable `comment.yml`
+with `actions: read` and `pull-requests: write` and nothing else. It never
+checks out or runs the pull request's code, and it runs only for a
+`pull_request` run whose head repository is not this one. The generated file
+carries a `zizmor: ignore[dangerous-triggers]` on its `on:` line for that
+reason.
+
+The artifact is untrusted, so the job trusts only what GitHub reports about the
+run: its id, head commit, head repository and head branch. The number in the
+artifact is posted to only when it is a plain integer naming an open pull
+request of this repository whose head is that commit, repository and branch,
+and whose head repository is not the base repository. Otherwise nothing is
+posted and a notice says why. The body is capped below GitHub's comment limit
+and truncated with a line saying so. Each attempt of a run uploads its own
+artifact and the job reads the one of the attempt that triggered it, so a
+re-run posts its own verdict or nothing, and a run for an older commit cannot
+overwrite a newer verdict.
+
+A repository on the reusable workflow only needs the `soothfast-comment.yml`
+file; `init --check` reports it missing or changed like the main caller.
+
 ### Bot landings
 
 A pull request the bot opens to land regenerated files runs no lane.
@@ -890,8 +929,9 @@ A pull request is a landing only when all of these hold:
   matches a `[bot] landing_paths` glob, and none is a `soothfast.toml`.
 
 The files regeneration writes are `CHANGELOG.md` when the repository drafts
-one, each `[[spec]]` file with `mode = "generate"`, and everything under each
-`[[sdk]] out` directory. List anything else a job of your own lands through
+one, each `[[spec]]` file with `mode = "generate"`, everything under each
+`[[sdk]] out` directory, and each doc holding a capture block that `ci capture`
+covers. List anything else a job of your own lands through
 `land.sh` in `landing_paths`, including what a `regen-run` hook writes:
 
 ```toml
@@ -1143,7 +1183,12 @@ A lone docs package is checked against every doc. Among several, the blocks of
 all the docs would compile into each package's crate, so only a package whose
 `[package.NAME.docs]` table names its own `paths` is checked. For a lone docs
 package, `capture_paths` under `[ci]` lists the docs to check in place of all
-of them, which leaves out a page whose output changes from run to run. Each
+of them, which leaves out a page whose output changes from run to run. On the
+default branch `ci regen` runs `docs capture` for the same packages and paths
+and lands the docs it changes. A package whose example fails is reported as a
+warning and its docs are left as committed; everything else still lands.
+`[ci] skip = ["capture"]` turns off
+both the check and the regeneration. Each
 package records a `check` verdict named `capture-PKG`. With no such package it says so
 and records nothing. With the `bot` input on, a pull request into the default
 branch and a push to it plan no capture check, and `ci capture` run there
@@ -1224,8 +1269,10 @@ package with a `soothfast` bench target and regenerates `CHANGELOG.md` over
 the `[changelog]` packages, or those same packages when it names none
 (`--no-changelog` skips both), runs `spec gen`
 for each package with a `mode = "generate"` spec and `sdk gen` for each with
-`[[sdk]]`, then runs the `REGEN_RUN` command with `$SOOTHFAST` set when that
-variable is set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
+`[[sdk]]`, then `docs capture` for each docs package `ci capture` checks (it
+runs each capture block once, and the markdown holding one is what lands),
+then runs the `REGEN_RUN` command with `$SOOTHFAST` set when that variable is
+set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
 lines, also written to `--paths-out`, and never commits or pushes.
 `--baseline NAME` names the baseline it measures into (default `base`).
 
@@ -1247,6 +1294,24 @@ just before it regenerates, since the gate between the two can run long. Both
 fail open: without `gh`, a token or an answer, the push regenerates as it
 always has, and `land.sh` stays the final check before anything lands. The
 reference run is recorded either way.
+
+The generated workflow runs the regeneration as a job of its own, `Regenerate`,
+after the gate. The gate job of a push only records the reference run. The
+regeneration job restores the built stores and the runs the gate saved, so
+`measure` reads HEAD's run back. It runs in one concurrency group per branch
+with `cancel-in-progress`: a newer push cancels an older regeneration still
+running, and a burst of merges runs one regeneration to completion. Two
+kinds of push never enter the group. The plan job runs `ci regen --probe`
+first, and the push of the bot's own landing skips the job, so it cannot
+cancel the regeneration of the push before it. A `Regenerate (check)` job
+then asks, once the gate has passed, whether someone other than the bot has
+pushed since. If so the job is skipped: an older push whose gate finishes
+late would otherwise cancel the newer push's regeneration and then find
+itself superseded. A newer push needs its whole plan, build and gate before
+it can enter, so the older one is in the group by then and is the one
+cancelled. The check fails open, like the two the action makes later: a
+script that cannot tell, or a check job that itself fails, reads as not
+superseded and the push regenerates.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. `verdict` applies to pull requests
