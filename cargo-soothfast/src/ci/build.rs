@@ -8,7 +8,7 @@ use std::process::Command;
 use soothfast_registry::fnv1a;
 
 use super::env::{CiEnv, Event};
-use super::regen::changelog_listed;
+use super::regen::{bot_regenerates, changelog_listed};
 use crate::config::{self, Config, Group, Settings};
 use crate::init;
 use crate::{invoke, spec_config, workspace};
@@ -276,7 +276,7 @@ fn load(source: Source, env: &CiEnv) -> Result<Vec<String>, String> {
         Source::Docs => Ok(init::rust_plan(&root)?.docs_packages),
         Source::Spec => Ok(spec_config::configured(&root)?.0),
         Source::Generating => Ok(spec_config::configured(&root)?.1),
-        Source::Changelog if regenerates_changelog(env) => {
+        Source::Changelog if regenerates_changelog(env)? => {
             let listed = Config::load(&root)?.changelog()?.packages;
             let gated = workspace::bench_crates("soothfast", Some(&root))?;
             Ok(changelog_listed(&listed, &gated).to_vec())
@@ -285,11 +285,11 @@ fn load(source: Source, env: &CiEnv) -> Result<Vec<String>, String> {
     }
 }
 
-/// Whether the run is the push `ci regen` regenerates the changelog on. The
+/// Whether the run is a push the bot regenerates the changelog on. The
 /// workflow's `--no-changelog` is not visible here, so a repository that
 /// turns it off still prebuilds the changelog's rustdoc.
-fn regenerates_changelog(env: &CiEnv) -> bool {
-    env.event == Event::Push && env.default_branch
+fn regenerates_changelog(env: &CiEnv) -> Result<bool, String> {
+    Ok(env.event == Event::Push && bot_regenerates(env)?)
 }
 
 /// Runs every call, then lists the built items and the store's checksums as
@@ -556,12 +556,36 @@ mod tests {
         })
     }
 
+    fn regenerating(event: Event, default_branch: bool) -> CiEnv {
+        CiEnv {
+            regen: true,
+            into_default_branch: true,
+            ..env(event, None, default_branch)
+        }
+    }
+
+    #[test]
+    fn a_push_the_bot_regenerates_prebuilds_for_the_changelog() {
+        let env = regenerating(Event::Push, true);
+        assert_eq!(regenerates_changelog(&env), Ok(true));
+    }
+
+    #[test]
+    fn a_push_without_the_bot_prebuilds_nothing_for_the_changelog() {
+        let env = env(Event::Push, None, true);
+        assert_eq!(regenerates_changelog(&env), Ok(false));
+    }
+
     #[test]
     fn only_a_default_branch_push_prebuilds_for_the_changelog() {
-        assert!(regenerates_changelog(&env(Event::Push, None, true)));
-        assert!(!regenerates_changelog(&env(Event::Push, None, false)));
-        assert!(!regenerates_changelog(&env(Event::PullRequest, None, true)));
-        assert!(!regenerates_changelog(&env(Event::Other, None, true)));
+        for (event, default_branch) in [
+            (Event::Push, false),
+            (Event::PullRequest, true),
+            (Event::Other, true),
+        ] {
+            let env = regenerating(event, default_branch);
+            assert_eq!(regenerates_changelog(&env), Ok(false), "{event:?}");
+        }
     }
 
     #[test]
