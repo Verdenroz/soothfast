@@ -84,6 +84,7 @@ fn wanted() -> Wanted {
         }],
         docs_features: None,
         docs_defaults: BTreeMap::new(),
+        changelog: Vec::new(),
         docs_paths: Vec::new(),
         against_ref: Some("origin/main".into()),
         reuse_base: true,
@@ -421,6 +422,85 @@ fn a_docs_package_without_rust_binds_is_skipped_and_never_keyed() {
         described(&steps[0].item, &Outcome::Covered),
         "rustdoc json scry (no Rust binds)"
     );
+}
+
+fn docs_under(pkg: &str, features: &str) -> Item {
+    Item::Rustdoc {
+        pkg: pkg.into(),
+        private: false,
+        features: Some(features.into()),
+        aux: false,
+    }
+}
+
+#[test]
+fn the_changelogs_packages_add_their_public_rustdoc_under_its_features() {
+    let wanted = Wanted {
+        changelog: vec![("core".into(), Some("full".into()))],
+        ..rustdoc_lane(&["core"])
+    };
+    let steps = select(&wanted, &Fake::default());
+    assert_eq!(
+        actions(&steps),
+        [
+            (&docs("core", false), &Action::Build),
+            (&docs_under("core", "full"), &Action::Build),
+        ]
+    );
+}
+
+#[test]
+fn a_changelog_package_the_docs_already_build_adds_nothing() {
+    let wanted = Wanted {
+        changelog: vec![("core".into(), None)],
+        ..rustdoc_lane(&["core"])
+    };
+    let steps = select(&wanted, &Fake::default());
+    assert_eq!(actions(&steps), [(&docs("core", false), &Action::Build)]);
+}
+
+#[test]
+fn a_changelog_package_is_built_when_the_docs_bind_no_rust() {
+    let fake = Fake {
+        no_rust_binds: true,
+        ..Fake::default()
+    };
+    let wanted = Wanted {
+        changelog: vec![("core".into(), None), ("scry".into(), None)],
+        ..rustdoc_lane(&["core"])
+    };
+    let steps = select(&wanted, &fake);
+    assert_eq!(
+        actions(&steps),
+        [
+            (&docs("core", false), &Action::Build),
+            (&docs("scry", false), &Action::Build),
+        ]
+    );
+}
+
+#[test]
+fn the_changelog_is_not_prebuilt_outside_the_rustdoc_lane() {
+    let wanted = Wanted {
+        lanes: BTreeSet::from([Lane::Bench]),
+        changelog: vec![("core".into(), None)],
+        ..wanted()
+    };
+    let steps = select(&wanted, &Fake::default());
+    assert!(
+        steps
+            .iter()
+            .all(|s| !matches!(s.item, Item::Rustdoc { .. }))
+    );
+}
+
+#[test]
+fn the_changelog_flag_names_a_package() {
+    let w = parse(&argv(&["--changelog", "scry", "--only", "rustdoc"]))
+        .unwrap()
+        .wanted;
+    assert_eq!(w.changelog.len(), 1);
+    assert_eq!(w.changelog[0].0, "scry");
 }
 
 #[test]

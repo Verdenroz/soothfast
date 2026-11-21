@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use super::select::{Lane, SpecPackage, Wanted};
-use crate::config::{self, Group};
-use crate::invoke::CommonArgs;
+use crate::config::{self, Config, Group};
+use crate::invoke::{self, CommonArgs};
+use crate::report::resolve_features;
 
 pub(super) struct Args {
     pub(super) common: CommonArgs,
@@ -53,6 +54,7 @@ fn lane(name: &str) -> Result<Lane, String> {
 pub(super) fn parse(args: &[String]) -> Result<Args, String> {
     let mut common = CommonArgs::default();
     let mut lanes = BTreeSet::new();
+    let mut changelog = Vec::new();
     let mut wanted = Wanted {
         lanes: BTreeSet::new(),
         packages: Vec::new(),
@@ -60,6 +62,7 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
         spec: Vec::new(),
         docs_features: None,
         docs_defaults: BTreeMap::new(),
+        changelog: Vec::new(),
         docs_paths: Vec::new(),
         against_ref: None,
         reuse_base: true,
@@ -72,6 +75,7 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
         match a.as_str() {
             "-p" | "--package" => wanted.packages.push(take(&mut it, a)?),
             "--docs" => wanted.docs.push(take(&mut it, a)?),
+            "--changelog" => changelog.push(take(&mut it, a)?),
             "--docs-features" => wanted.docs_features = Some(take(&mut it, a)?),
             "--docs-paths" => {
                 let given = wanted.docs_paths.len();
@@ -112,6 +116,17 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
             wanted
                 .docs_defaults
                 .extend(defaults.features.map(|f| (pkg.clone(), f)));
+        }
+    }
+    if !changelog.is_empty() {
+        let config = Config::load(&invoke::project_root())?;
+        let (listed, gate) = (config.changelog()?.features, config.gate()?.features);
+        for pkg in changelog {
+            let docs = config
+                .resolve(std::slice::from_ref(&pkg), Group::Docs)?
+                .features;
+            let features = resolve_features(docs, listed.as_deref(), gate.as_deref());
+            wanted.changelog.push((pkg, features));
         }
     }
     config::apply_to(&mut common, Group::Gate, &wanted.packages)?;

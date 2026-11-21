@@ -17,10 +17,12 @@
 
 ### 🐛 Fixes
 
+- Skip bot-regenerated checks on pulls and pushes (#465)
 - Keep changelog rows whose delta is unchanged (#463)
 
 ### ⚡ Performance
 
+- Hit stored builds when unread files change (#472)
 - Regenerate in a job of its own (#461)
 
 ---

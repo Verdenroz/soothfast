@@ -294,8 +294,20 @@ Not covered:
 - A package whose sources sit outside the repository, or a tree without
   git, has no key and is always rebuilt.
 
-A package at the repository root hashes every file git lists outside the
-other packages, so a doc or README edit there misses.
+The key has a second, stable half: the same head and variables, with only
+the files that configure the build (`Cargo.toml`, `Cargo.lock`, `build.rs`,
+cargo config and toolchain files, wherever git lists them). When the full key
+misses, the last entry stored under the same stable half is checked against
+its manifest. If every file and variable the build read still holds, it is a
+hit and is kept under the current key too. So a file the build never read (a
+lock file, `CHANGELOG.md`, a generated spec or SDK) does not cost a rebuild,
+even for a package at the repository root, where the full key covers the
+whole repository. A file the build read, or a changed configuration file, is
+still a miss. This trusts dep-info and `rerun-if-changed` lines to list what
+a build reads, as cargo does. An entry whose build script names nothing to
+watch, or whose dep-info could not all be read, is found only by its full
+key. Each stable half points at the entry built last: `cache merge` keeps the
+pointer of whichever side built later, and an exact hit repoints it.
 
 Caches are kept per job, runner OS and architecture, and `cache-suffix`, and
 the rustdoc store is capped at 1 GiB, dropping the least recently used entries
@@ -332,7 +344,8 @@ if every dependency's dep-info could be read.
 Markdown files are left out of the key's file list, so a docs-only change is
 a hit even for a package at the repository root, where that list is the
 whole repository. A markdown file the build included (`include_str!` on a
-README, say) is in the manifest and counts.
+README, say) is in the manifest and counts. The stable half of the key works
+as it does for rustdoc JSON.
 
 **The checkout path is part of the key**, and so are the target directory
 and `CARGO_HOME`. A binary can carry them: `env!("CARGO_MANIFEST_DIR")`,
@@ -1220,7 +1233,7 @@ packages, `routes` every package with a `[[spec]]` entry, and `rustdoc` the
 docs packages and every package that generates a spec. `-p PKG` names the
 packages of `bench`, `--spec PKG[:TARGET]` those of `routes`, and `--docs PKG`
 and `--spec PKG` those of `rustdoc`; naming any leaves the rest of the lane
-unbuilt. `prebuild` reads a spec package's `target` and `features` from its
+unbuilt, but for the changelog's packages on a push the bot regenerates. `prebuild` reads a spec package's `target` and `features` from its
 `[package.NAME.spec]` table and a docs package's `features` from
 `[package.NAME.docs]`, unless `:TARGET`, `--features` or `--docs-features`
 says otherwise.
@@ -1275,6 +1288,19 @@ then runs the `REGEN_RUN` command with `$SOOTHFAST` set when that variable is
 set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
 lines, also written to `--paths-out`, and never commits or pushes.
 `--baseline NAME` names the baseline it measures into (default `base`).
+
+When the latest tag is HEAD the changelog measures nothing for the release.
+Otherwise the tag's measurement comes from the run store (its own entry, or
+the run the gate recorded for that commit under the same conditions) before a
+worktree is built, and its API surface likewise. On a
+default-branch push the bot regenerates, `ci build rustdoc` also builds the
+public rustdoc of the changelog's packages under the features the changelog
+reads, whether or not `--docs` or `--spec` names packages, so the regeneration
+job finds HEAD's surface in the rustdoc store. One the docs already build
+under the same features is built once. `--changelog PKG` names the packages
+instead. A pull request never builds it, nor does a push with
+`SOOTHFAST_REGEN` unset; a repository that turns the changelog off with
+`--no-changelog` still pays for that build.
 
 A push of the bot's own landing regenerates nothing: the bot authored every
 commit in it, every file it changed is one regeneration writes or matches a

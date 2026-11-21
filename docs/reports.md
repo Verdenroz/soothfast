@@ -165,6 +165,22 @@ for one run. That one author is dropped and no other. Every other bot stays,
 `dependabot[bot]` included: it writes the whole Dependencies section, and a
 rule matching any `[bot]` author would delete it without a word.
 
+The perf delta and a Rust package's API diff both compare HEAD with the
+merge-base of `--against-ref`, and neither builds it when something already
+holds it. When the merge-base is HEAD, as on the push of a release commit,
+nothing is measured and no package is diffed: the figures are the baseline's
+own and the API did not move. Otherwise the measurement is read from the
+report's own store, then from the run the gate recorded for that commit (a
+callgrind run that counts every item it holds, taken under the same features
+and build settings), and only then from a build in a worktree. A run found on
+the way is kept under the report's key, so later regenerations hit it after
+the gate's entry is pruned. The API surface of the merge-base is kept the same
+way, keyed on the commit, package, features, rustdoc toolchain and build
+environment. The release is measured under the `gate` features and bench
+target of its package, the settings `measure` saved the baseline under, so
+both sides of the delta are the same build. Each regeneration prints which
+path it took.
+
 Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against `v1.0`, and the measured movement past gate
 thresholds. A section with nothing to report is omitted rather than shipped
