@@ -1291,23 +1291,23 @@ script that cannot tell, or a check job that itself fails, reads as not
 superseded and the push regenerates.
 
 The regeneration job compiles nothing the run already built. It waits for the
-`Build (rustdoc)` job and the spec check jobs, which on a default-branch push
-with the bot on stage their rustdoc and routes builds whether or not the site
-needs them, and merges every `soothfast-store-rustdoc` and
-`soothfast-store-spec-*` artifact the way the docs job does. A build that
-failed or was skipped leaves nothing to download, and the job then builds for
-itself.
+`Build (rustdoc)` job and the spec check jobs, which stage their rustdoc and
+routes builds on a push that regenerates, whether or not the site needs them,
+and merges every `soothfast-store-rustdoc` and `soothfast-store-spec-*`
+artifact the way the docs job does. A build that failed or was skipped leaves
+nothing to download, and the job then builds for itself.
 
 The last release is measured once. With `head-runs`, the action saves the
-regeneration's runs as `soothfast-regen-runs-<branch>-<sha>` and restores the
-newest entry of that prefix before it regenerates, merged with the runs the
-gate saved for the same commit. The prefix is the regeneration's alone, so a
-gate leg's save under `soothfast-runs-<branch>-` can never shadow it, and a
-push that starts while an earlier regeneration is still running reads the
-newest finished one. The runs are saved even when a newer push cancels the
-regeneration or the step fails, since each entry is a file of its own that a
-reader drops when it does not parse. Without `head-runs` the runs are saved under the
-commit's `-regen` key, as before.
+regeneration's runs as `soothfast-regen-runs-<branch>-<sha>-<attempt>`. Before
+it regenerates, it restores the newest entry of that prefix and merges it with
+the runs the gate saved for the same commit. Only the regeneration writes that
+prefix, so a gate leg's save under `soothfast-runs-<branch>-` cannot shadow
+it, and a push that starts while an earlier regeneration is still running
+reads the newest finished one. The runs are saved even when a newer push
+cancels the regeneration or the step fails: each run is a file of its own, and
+a reader drops one that does not parse. A cache entry cannot be replaced, so
+the key names the attempt and a re-run saves what it measured as a new entry.
+Without `head-runs` the runs are saved under the commit's `-regen` key.
 
 `cargo soothfast ci` with no kind runs every kind that applies to the event,
 in order, and stops at the first failure. `verdict` applies to pull requests

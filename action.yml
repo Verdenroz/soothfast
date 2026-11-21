@@ -468,7 +468,7 @@ runs:
           .soothfast/runs
           .soothfast/items
           .soothfast/maps
-        key: soothfast-regen-runs-${{ github.ref_name }}-${{ github.sha }}
+        key: soothfast-regen-runs-${{ github.ref_name }}-${{ github.sha }}-${{ github.run_attempt }}
         restore-keys: |
           soothfast-regen-runs-${{ github.ref_name }}-
     - name: Merge the push's runs
@@ -704,10 +704,8 @@ runs:
         [ "$CHANGELOG" = true ] || args+=(--no-changelog)
         "$CLI" ci regen "${args[@]}"
         cat "$RUNNER_TEMP/soothfast-regen" >>"$GITHUB_OUTPUT"
-    # The changelog measures the last release once and reads it on every
-    # later push, so what the regeneration stored is saved under a key of its own.
-    # With `head-runs` it is saved even when a newer push cancels the job, so a
-    # finished measurement is not thrown away.
+    # The changelog reads the last release's measurement on every later push. With
+    # `head-runs` a failed or cancelled run saves too, under a key naming the attempt.
     - name: Save the runs the regeneration measured
       if: >-
         always() && inputs.changelog == 'true'
@@ -720,7 +718,7 @@ runs:
           .soothfast/runs
           .soothfast/items
           .soothfast/maps
-        key: ${{ inputs.head-runs == 'true' && format('soothfast-regen-runs-{0}-{1}', github.ref_name, github.sha) || format('soothfast-runs-{0}-{1}-regen', github.ref_name, github.sha) }}
+        key: ${{ inputs.head-runs == 'true' && format('soothfast-regen-runs-{0}-{1}-{2}', github.ref_name, github.sha, github.run_attempt) || format('soothfast-runs-{0}-{1}-regen', github.ref_name, github.sha) }}
 
     # Minted after everything that compiles the tree has run.
     - name: Mint a soothfast-bot token

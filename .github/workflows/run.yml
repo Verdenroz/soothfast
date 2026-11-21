@@ -813,7 +813,6 @@ jobs:
         with:
           pattern: soothfast-store-spec-*
           path: ${{ runner.temp }}/run-stores/spec
-      # The executable store is keyed by the compiler, and the spec jobs build on stable.
       - name: Merge the rustdoc and spec builds
         env:
           CLI: ${{ steps.soothfast.outputs.bin }}
@@ -824,7 +823,6 @@ jobs:
             tar -xf "$tar" -C "$dir"
             "$CLI" cache merge --from "$dir"
             rm -rf "$dir"
-            echo "CARGO_INCREMENTAL=0" >>"$GITHUB_ENV"
           done
       - uses: ./.soothfast-action
         with:
@@ -1158,7 +1156,7 @@ jobs:
         run: cargo soothfast ci "$KIND" ${PACKAGE:+-p "$PACKAGE"}
       # Both lanes are store hits after the check, so this only copies what
       # the site's routes pages and the regeneration read.
-      - name: Stage the spec builds for the site
+      - name: Stage the spec builds
         if: >-
           ${{ !cancelled() && matrix.kind == 'spec'
           && (needs.plan.outputs.site_in_docs == 'true'
@@ -1171,16 +1169,12 @@ jobs:
         run: |
           for lane in routes rustdoc; do
             cargo soothfast ci build "$lane" --stage "$STAGE" ${PACKAGE:+--spec "$PACKAGE"} \
-              || echo "::warning::could not stage the $lane builds for the site"
+              || echo "::warning::could not stage the $lane builds"
           done
           if [ -d "$STAGE" ]; then tar -C "$STAGE" -cf "$RUNNER_TEMP/store.tar" .; fi
+      # Only the staging step writes the tar, so nothing uploads without it.
       - name: Upload the spec builds
-        if: >-
-          ${{ !cancelled() && matrix.kind == 'spec'
-          && (needs.plan.outputs.site_in_docs == 'true'
-          || (inputs.bot && github.event_name == 'push'
-          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-          && needs.plan.outputs.generated != 'true')) }}
+        if: ${{ !cancelled() && matrix.kind == 'spec' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: soothfast-store-${{ matrix.name }}
