@@ -171,9 +171,8 @@ pub fn keep_newest(dir: &Path) {
             .or_default()
             .push((born, e.path()));
     }
-    for mut entries in groups.into_values() {
-        entries.sort_by_key(|(born, _)| std::cmp::Reverse(*born));
-        let newest = entries.first().map_or(0, |(born, _)| *born);
+    for entries in groups.into_values() {
+        let newest = entries.iter().map(|(born, _)| *born).max().unwrap_or(0);
         for (_, entry) in entries.into_iter().filter(|(born, _)| *born < newest) {
             for ext in ["digest", "extents"] {
                 let _ = std::fs::remove_file(sidecar(&entry, ext));
@@ -192,21 +191,24 @@ pub fn key_of(entry: &Path) -> Option<String> {
 
 /// The files of the store that belong to `entry`: itself, what is kept beside
 /// it (`<entry>.digest`, `<entry>.extents`), the manifest and group of its
-/// key, and the pointer that finds it by its stable half. An older entry of the same key is not among them.
+/// key, and the pointer that finds it by its stable half. An older entry of
+/// the same key is not among them.
 pub fn entry_files(entry: &Path) -> Vec<PathBuf> {
     let (Some(dir), Some(name), Some(key)) = (entry.parent(), entry.file_name(), key_of(entry))
     else {
         return Vec::new();
     };
     let beside = format!("{}.", name.to_string_lossy());
-    let mut own = vec![
+    let stable = format!("{key}.stable");
+    let pointer = std::fs::read_to_string(dir.join(&stable))
+        .map(|stable| format!("{stable}.latest"))
+        .unwrap_or_default();
+    let own = [
         format!("{key}.manifest"),
         format!("{key}.group"),
-        format!("{key}.stable"),
+        stable,
+        pointer,
     ];
-    if let Ok(stable) = std::fs::read_to_string(dir.join(&own[2])) {
-        own.push(format!("{stable}.latest"));
-    }
     std::fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -544,7 +546,7 @@ mod tests {
         let exe = repo.0.join("bench");
         std::fs::write(&exe, "bytes").unwrap();
         let key = key_with(repo, req);
-        let read = inputs(&["app/src/lib.rs", "dep/src/lib.rs"]);
+        let read = inputs(&["app/src/lib.rs", "dep/src/lib.rs", "app/README.md"]);
         let future = SystemTime::now() + Duration::from_secs(3600);
         let key_now = Some(key.clone());
         store(dir, &key, key_now, &repo.0, &read, future, &exe, "g").unwrap();
@@ -574,9 +576,10 @@ mod tests {
     }
 
     #[test]
-    fn an_executable_misses_when_a_source_it_read_changes() {
-        for file in ["app/src/lib.rs", "dep/src/lib.rs"] {
+    fn an_executable_misses_when_a_source_or_markdown_it_read_changes() {
+        for file in ["app/src/lib.rs", "dep/src/lib.rs", "app/README.md"] {
             let repo = Repo::new("bin-source");
+            repo.write("app/README.md", "included\n");
             let dir = repo.store_dir();
             built(&repo, &dir, &request());
             repo.write("app/soothfast-gate.lock", "pruned\n");
@@ -614,6 +617,18 @@ mod tests {
                 ..request()
             },
             Request {
+                target: "other",
+                ..request()
+            },
+            Request {
+                codegen_units: None,
+                ..request()
+            },
+            Request {
+                target_dir: Path::new("/elsewhere"),
+                ..request()
+            },
+            Request {
                 env: &flags,
                 ..request()
             },
@@ -638,11 +653,10 @@ mod tests {
         keep_newest(&dir);
         assert!(entry.exists() && moved.exists());
 
-        let mut names: Vec<_> = entry_files(&moved)
+        let names: Vec<_> = entry_files(&moved)
             .iter()
             .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
-        names.sort();
         assert_eq!(names.len(), 6);
         assert!(names.iter().any(|n| n.ends_with(".latest")));
     }
