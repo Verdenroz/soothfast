@@ -16,6 +16,7 @@ const KINDS: [&str; 5] = ["rust", "import", "docs", "test", "check"];
 /// GitHub rejects a comment over 65,536 characters; the rest is the marker.
 const SHORT_SHA: usize = 7;
 const NOTE_SHA: usize = 12;
+const RECORD_LIMIT: u64 = 4 << 20;
 const BODY_LIMIT: usize = 65_000;
 const TRUNCATED: &str = "output truncated";
 const LANDING_NOTE: &str = "\nNo lane ran: this pull request is a soothfast-bot landing, which holds only regenerated files.\n";
@@ -491,6 +492,28 @@ pub(crate) fn expected(arg: &str) -> Result<(String, String), String> {
     }
 }
 
+fn read_capped(path: &Path) -> Result<String, String> {
+    let len = fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if len > RECORD_LIMIT {
+        return Err(format!("{len} bytes is over the {RECORD_LIMIT} byte limit"));
+    }
+    fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+/// A result's name and kind are shown outside the code fence, so only
+/// characters that cannot start markdown survive.
+fn plain(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "._-+/:#".contains(c) {
+                c
+            } else {
+                '?'
+            }
+        })
+        .collect()
+}
+
 /// Every result under `dir`. A directory that is missing is empty, and a
 /// file that is unreadable or not a record becomes an errored section named
 /// after it, so a bad artifact cannot stop the comment.
@@ -501,10 +524,14 @@ fn read_records(dir: &Path) -> Vec<Record> {
         let Ok(entries) = fs::read_dir(&d) else {
             continue;
         };
-        for path in entries.flatten().map(|e| e.path()) {
-            if path.is_dir() {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
                 pending.push(path);
-            } else if path.extension().is_some_and(|e| e == "json") {
+            } else if kind.is_file() && path.extension().is_some_and(|e| e == "json") {
                 files.push(path);
             }
         }
@@ -513,7 +540,7 @@ fn read_records(dir: &Path) -> Vec<Record> {
     files
         .iter()
         .map(|f| {
-            let text = fs::read_to_string(f).map_err(|e| e.to_string());
+            let text = read_capped(f);
             let record = text.and_then(|t| {
                 let v: Value = serde_json::from_str(&t).map_err(|e| e.to_string())?;
                 Record::from_json(&v).ok_or("not a verdict record".to_string())
@@ -605,7 +632,7 @@ fn render(records: &[Record], accepted: Option<&str>) -> String {
             .unwrap_or_default();
         out.push_str(&format!(
             "\n### {}\n{}{carried}{}{} | {} | {}s",
-            r.name,
+            plain(&r.name),
             r.verdict.name(),
             if r.flaky { " (flaky)" } else { "" },
             if r.unevaluated {
@@ -613,7 +640,7 @@ fn render(records: &[Record], accepted: Option<&str>) -> String {
             } else {
                 ""
             },
-            r.kind,
+            plain(&r.kind),
             r.seconds
         ));
         if let Some(u) = r.reuse {
@@ -790,6 +817,78 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].name, "soothfast-result-x/result.json");
         assert_eq!(records[0].verdict, Verdict::Errored);
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-hostile-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_name_and_kind_cannot_start_markdown_outside_the_fence() {
+        let dir = scratch("names");
+        let record = json!({
+            "name": "a\n## forged\n[x](http://evil) @someone", "kind": "k\n```\n<b>",
+            "verdict": "pass", "tail": "", "seconds": 1,
+        });
+        fs::write(dir.join("one.json"), record.to_string()).unwrap();
+        fs::write(dir.join("two\n# forged.json"), "{}").unwrap();
+        let out = dir.join("body.md");
+        merge_dir(&dir, &out, None, &[], false).unwrap();
+        let body = fs::read_to_string(&out).unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+        assert!(
+            !body.lines().any(|l| l.starts_with("##")
+                && !l.starts_with("### ")
+                && l != "## soothfast verdict"),
+            "{body}"
+        );
+        assert!(
+            !body.contains('<') && !body.contains("](") && !body.contains('@'),
+            "{body}"
+        );
+        assert_eq!(
+            body.lines().filter(|l| l.starts_with("### ")).count(),
+            2,
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn symlinks_and_oversized_files_are_not_followed_or_read() {
+        let dir = scratch("links");
+        fs::write(dir.join("big.json"), vec![b' '; RECORD_LIMIT as usize + 1]).unwrap();
+        std::os::unix::fs::symlink("/nonexistent/target", dir.join("file.json")).unwrap();
+        std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
+        let records = read_records(&dir);
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].name, "big.json");
+        assert!(records[0].tail.contains("over the"), "{}", records[0].tail);
+    }
+
+    #[test]
+    fn deeply_nested_and_wrongly_shaped_json_is_an_errored_section() {
+        let dir = scratch("deep");
+        fs::write(dir.join("deep.json"), "[".repeat(100_000)).unwrap();
+        let shapes = [
+            r#"{"name":"x","kind":"rust","verdict":"pass","tail":"","seconds":1e999}"#,
+            r#"{"name":1,"kind":[],"verdict":{},"tail":null,"seconds":"s"}"#,
+        ];
+        for (i, shape) in shapes.iter().enumerate() {
+            fs::write(dir.join(format!("shape{i}.json")), shape).unwrap();
+        }
+        let records = read_records(&dir);
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(records.len(), 3);
+        assert!(
+            records
+                .iter()
+                .any(|r| r.name == "deep.json" && r.verdict == Verdict::Errored)
+        );
     }
 
     #[test]
