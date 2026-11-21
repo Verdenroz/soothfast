@@ -17,6 +17,7 @@
 
 ### 🐛 Fixes
 
+- Skip bot-regenerated checks on pulls and pushes (#465)
 - Keep changelog rows whose delta is unchanged (#463)
 
 ### ⚡ Performance
