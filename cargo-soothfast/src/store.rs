@@ -32,6 +32,8 @@ use std::time::SystemTime;
 use serde_json::{Value, json};
 use soothfast_registry::fnv1a;
 
+pub mod pointer;
+
 /// Variable families that change what rustc and rustdoc compile.
 const ENV_PREFIXES: [&str; 4] = [
     "CARGO_ENCODED_",
@@ -354,20 +356,11 @@ pub fn lookup(dir: &Path, key: &str, root: &Path, ext: &str) -> Option<PathBuf> 
         return Some(hit);
     }
     let stable = stable?;
-    let read = |name: String| std::fs::read_to_string(dir.join(name)).ok();
-    let prior = read(format!("{stable}.latest")).filter(|p| is_half(p) && p != cheap)?;
-    // A pointer left by a merge or a torn write can name another build's entry.
-    if read(format!("{prior}.stable")).as_deref() != Some(stable) {
-        return None;
-    }
+    let (prior, born) = pointer::latest(dir, stable).filter(|(prior, _)| prior != cheap)?;
     let hit = lookup_exact(dir, &prior, root, ext)?;
-    reindex(dir, &prior, cheap, stable, &hit)
-}
-
-/// Whether `text` is one half of a key, so a file named for it lies in the
-/// store directory.
-fn is_half(text: &str) -> bool {
-    text.len() == 16 && text.bytes().all(|b| b.is_ascii_hexdigit())
+    let to = reindex(dir, &prior, cheap, &hit)?;
+    pointer::remember(dir, cheap, stable, born);
+    Some(to)
 }
 
 /// The entry named for `cheap` whose inputs still hold what they did.
@@ -383,7 +376,7 @@ pub fn lookup_exact(dir: &Path, cheap: &str, root: &Path, ext: &str) -> Option<P
 /// Link every file of the entry `hit`, stored under the cheap key `from`, under
 /// `cheap`, the payload last so a reader never finds half an entry. Returns the
 /// new payload.
-fn reindex(dir: &Path, from: &str, cheap: &str, stable: &str, hit: &Path) -> Option<PathBuf> {
+fn reindex(dir: &Path, from: &str, cheap: &str, hit: &Path) -> Option<PathBuf> {
     let payload = hit.file_name()?.to_str()?;
     let renamed = |name: &str| Some(format!("{cheap}{}", name.strip_prefix(from)?));
     let beside = format!("{payload}.");
@@ -398,17 +391,7 @@ fn reindex(dir: &Path, from: &str, cheap: &str, stable: &str, hit: &Path) -> Opt
         }
     }
     let to = dir.join(renamed(payload)?);
-    if !link_atomic(hit, &to) {
-        return None;
-    }
-    remember(dir, cheap, stable);
-    Some(to)
-}
-
-/// Record `cheap` as the latest entry of its stable half.
-fn remember(dir: &Path, cheap: &str, stable: &str) {
-    write_atomic(&dir.join(format!("{cheap}.stable")), stable.as_bytes());
-    write_atomic(&dir.join(format!("{stable}.latest")), cheap.as_bytes());
+    link_atomic(hit, &to).then_some(to)
 }
 
 /// Keep `from` as the entry for `key`, unless an input was edited after the
@@ -435,7 +418,7 @@ pub fn insert(
         && !inputs.opaque
         && let Some(stable) = stable
     {
-        remember(dir, cheap, stable);
+        pointer::remember(dir, cheap, stable, pointer::now());
     }
     stored.then_some(path)
 }
@@ -464,6 +447,11 @@ fn link_atomic(from: &Path, to: &Path) -> bool {
 pub fn copy_atomic(from: &Path, to: &Path) -> bool {
     let tmp = temp_for(to);
     std::fs::copy(from, &tmp).is_ok() && std::fs::rename(&tmp, to).is_ok()
+}
+
+/// Whether `name` is what an entry holds, as opposed to a file kept with it.
+fn is_payload(name: &str) -> bool {
+    name.ends_with(".bin") || name.ends_with(".json")
 }
 
 /// The entry a file of the store belongs to: the key it is named for.
@@ -495,8 +483,7 @@ pub fn prune(dir: &Path, max_bytes: u64) {
             entries
                 .entry(entry_of(&name).to_string())
                 .or_insert((None, modified, 0, Vec::new()));
-        let payload = name.ends_with(".bin") || name.ends_with(".json");
-        if payload {
+        if is_payload(&name) {
             entry.0 = entry.0.max(Some(modified));
         }
         entry.1 = entry.1.max(modified);

@@ -199,15 +199,11 @@ pub fn entry_files(entry: &Path) -> Vec<PathBuf> {
         return Vec::new();
     };
     let beside = format!("{}.", name.to_string_lossy());
-    let stable = format!("{key}.stable");
-    let pointer = std::fs::read_to_string(dir.join(&stable))
-        .map(|stable| format!("{stable}.latest"))
-        .unwrap_or_default();
     let own = [
         format!("{key}.manifest"),
         format!("{key}.group"),
-        stable,
-        pointer,
+        format!("{key}.stable"),
+        store::pointer::name_of(dir, &key).unwrap_or_default(),
     ];
     std::fs::read_dir(dir)
         .into_iter()

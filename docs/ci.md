@@ -306,7 +306,8 @@ whole repository. A file the build read, or a changed configuration file, is
 still a miss. This trusts dep-info and `rerun-if-changed` lines to list what
 a build reads, as cargo does. An entry whose build script names nothing to
 watch, or whose dep-info could not all be read, is found only by its full
-key.
+key. Each stable half points at the entry built last: `cache merge` keeps the
+pointer of whichever side built later.
 
 Caches are kept per job, runner OS and architecture, and `cache-suffix`, and
 the rustdoc store is capped at 1 GiB, dropping the least recently used entries
