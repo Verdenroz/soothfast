@@ -294,8 +294,20 @@ Not covered:
 - A package whose sources sit outside the repository, or a tree without
   git, has no key and is always rebuilt.
 
-A package at the repository root hashes every file git lists outside the
-other packages, so a doc or README edit there misses.
+The key has a second, stable half: the same head and variables, with only
+the files that configure the build (`Cargo.toml`, `Cargo.lock`, `build.rs`,
+cargo config and toolchain files, wherever git lists them). When the full key
+misses, the last entry stored under the same stable half is checked against
+its manifest. If every file and variable the build read still holds, it is a
+hit and is kept under the current key too. So a file the build never read (a
+lock file, `CHANGELOG.md`, a generated spec or SDK) does not cost a rebuild,
+even for a package at the repository root, where the full key covers the
+whole repository. A file the build read, or a changed configuration file, is
+still a miss. This trusts dep-info and `rerun-if-changed` lines to list what
+a build reads, as cargo does. An entry whose build script names nothing to
+watch, or whose dep-info could not all be read, is found only by its full
+key. Each stable half points at the entry built last: `cache merge` keeps the
+pointer of whichever side built later, and an exact hit repoints it.
 
 Caches are kept per job, runner OS and architecture, and `cache-suffix`, and
 the rustdoc store is capped at 1 GiB, dropping the least recently used entries
@@ -332,7 +344,8 @@ if every dependency's dep-info could be read.
 Markdown files are left out of the key's file list, so a docs-only change is
 a hit even for a package at the repository root, where that list is the
 whole repository. A markdown file the build included (`include_str!` on a
-README, say) is in the manifest and counts.
+README, say) is in the manifest and counts. The stable half of the key works
+as it does for rustdoc JSON.
 
 **The checkout path is part of the key**, and so are the target directory
 and `CARGO_HOME`. A binary can carry them: `env!("CARGO_MANIFEST_DIR")`,
