@@ -160,6 +160,16 @@ pub(super) fn step(item: Item, state: &impl State) -> Step {
 /// The steps for HEAD's tree, in the order they run.
 pub(super) fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
     let mut items = Vec::new();
+    let changelog: Vec<Item> = wanted
+        .changelog
+        .iter()
+        .map(|(pkg, features)| Item::Rustdoc {
+            pkg: pkg.clone(),
+            private: false,
+            features: features.clone(),
+            aux: false,
+        })
+        .collect();
     if wanted.lanes.contains(&Lane::Bench) {
         items.extend(wanted.packages.iter().map(|pkg| Item::Bench {
             pkg: pkg.clone(),
@@ -188,12 +198,7 @@ pub(super) fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
                 .or_else(|| wanted.docs_defaults.get(pkg).cloned());
             rustdoc(pkg, false, features, false)
         }));
-        items.extend(
-            wanted
-                .changelog
-                .iter()
-                .map(|(pkg, features)| rustdoc(pkg, false, features.clone(), false)),
-        );
+        items.extend(changelog.iter().cloned());
         for s in &wanted.spec {
             let Some(aux) = state.generated_from(&s.pkg) else {
                 continue;
@@ -224,16 +229,6 @@ pub(super) fn select(wanted: &Wanted, state: &impl State) -> Vec<Step> {
     let unbound = wanted.lanes.contains(&Lane::Rustdoc)
         && !wanted.docs.is_empty()
         && !state.docs_bind_rust(&wanted.docs_paths);
-    let changelog: BTreeSet<Item> = wanted
-        .changelog
-        .iter()
-        .map(|(pkg, features)| Item::Rustdoc {
-            pkg: pkg.clone(),
-            private: false,
-            features: features.clone(),
-            aux: false,
-        })
-        .collect();
     unique
         .into_iter()
         .map(|item| match item {

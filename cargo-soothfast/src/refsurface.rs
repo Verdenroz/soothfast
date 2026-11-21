@@ -11,14 +11,15 @@ use crate::invoke::{self, Visibility};
 use crate::runcache;
 
 /// The key a commit's surface is kept under: the commit, the package, the
-/// features, the visibility, and the toolchain and code that turn it into a
-/// surface.
+/// features, the visibility, `build` (the rustdoc toolchain and build
+/// environment, see [`invoke::rustdoc_build`]) and the code that turns
+/// rustdoc JSON into a surface.
 pub fn key(
     sha: &str,
     pkg: &str,
     features: Option<&str>,
     visibility: Visibility,
-    rustc: &str,
+    build: &str,
 ) -> String {
     runcache::hashed(&[
         "surface".to_string(),
@@ -26,29 +27,23 @@ pub fn key(
         pkg.to_string(),
         features.unwrap_or("").to_string(),
         format!("{visibility:?}"),
-        rustc.to_string(),
+        build.to_string(),
         invoke::RUSTDOC_FORMAT_VERSION.to_string(),
         env!("CARGO_PKG_VERSION").to_string(),
     ])
 }
 
-/// The surface kept under `key`, or `build`'s, which is then kept. The
-/// bool says whether it was stored.
-pub fn reuse(
-    key: Option<&str>,
-    build: impl FnOnce() -> Result<Surface, String>,
-) -> Result<(Surface, bool), String> {
-    if let Some(surface) = key
-        .and_then(runcache::stored_doc)
+/// The surface kept under `key`, when there is a key and the store holds it.
+pub fn stored(key: Option<&str>) -> Option<Surface> {
+    key.and_then(runcache::stored_doc)
         .and_then(|doc| from_value(&doc))
-    {
-        return Ok((surface, true));
-    }
-    let surface = build()?;
+}
+
+/// Keeps `surface` under `key`, when there is one.
+pub fn keep(key: Option<&str>, surface: &Surface) {
     if let Some(key) = key {
-        runcache::keep_doc(key, &to_value(&surface));
+        runcache::keep_doc(key, &to_value(surface));
     }
-    Ok((surface, false))
 }
 
 fn to_value(surface: &Surface) -> Value {
@@ -92,11 +87,9 @@ fn from_value(doc: &Value) -> Option<Surface> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
-
     use soothfast_docs::surface::{ItemInfo, Surface};
 
-    use super::{Visibility, from_value, key, reuse, to_value};
+    use super::{Visibility, from_value, keep, key, stored, to_value};
     use crate::runcache;
 
     fn surface() -> Surface {
@@ -118,12 +111,6 @@ mod tests {
         format!("{a:?}") == format!("{b:?}")
     }
 
-    fn forget(key: &str) {
-        if let Some(dir) = runcache::state_dir("runs") {
-            let _ = std::fs::remove_file(dir.join(format!("{key}.json")));
-        }
-    }
-
     #[test]
     fn a_surface_survives_the_store() {
         let s = surface();
@@ -132,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_surface_is_used_without_building() {
+    fn a_kept_surface_is_read_back_under_its_key() {
         let key = key(
             "test-refsurface-hit",
             "demo",
@@ -140,22 +127,16 @@ mod tests {
             Visibility::Public,
             "rustc 1",
         );
-        let built = Cell::new(0);
-        let build = || {
-            built.set(built.get() + 1);
-            Ok(surface())
-        };
-        let (first, stored) = reuse(Some(&key), build).unwrap();
-        assert!(!stored && built.get() == 1);
-        let (second, stored) = reuse(Some(&key), build).unwrap();
-        assert!(stored && built.get() == 1, "built {} times", built.get());
-        assert!(same(&first, &second));
-        forget(&key);
+        assert!(stored(Some(&key)).is_none());
+        keep(Some(&key), &surface());
+        let read = stored(Some(&key)).expect("stored surface");
+        assert!(same(&read, &surface()));
+        runcache::forget(&key);
     }
 
     #[test]
-    fn a_different_toolchain_features_or_visibility_misses() {
-        let at = |features, visibility, rustc| key("aaa", "demo", features, visibility, rustc);
+    fn a_different_build_features_or_visibility_misses() {
+        let at = |features, visibility, build| key("aaa", "demo", features, visibility, build);
         let base = at(None, Visibility::Public, "rustc 1");
         assert_ne!(base, at(None, Visibility::Public, "rustc 2"));
         assert_ne!(base, at(Some("full"), Visibility::Public, "rustc 1"));
@@ -171,8 +152,8 @@ mod tests {
     }
 
     #[test]
-    fn a_build_without_a_key_is_not_kept() {
-        let (_, stored) = reuse(None, || Ok(surface())).unwrap();
-        assert!(!stored);
+    fn a_surface_without_a_key_is_not_kept() {
+        keep(None, &surface());
+        assert!(stored(None).is_none());
     }
 }

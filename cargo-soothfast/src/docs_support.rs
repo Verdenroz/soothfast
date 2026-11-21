@@ -1,5 +1,7 @@
 //! Shared surface plumbing for docs / report / mcp commands.
 
+use std::path::Path;
+
 use serde_json::Value;
 use soothfast_docs::{diff, surface};
 use soothfast_report::surface::SurfaceEntry;
@@ -57,9 +59,9 @@ pub fn surface_entries(pkg: &str, features: Option<&str>) -> Result<Vec<SurfaceE
 
 /// Rendered public-surface diff of `pkg` HEAD vs the merge-base with `refname`.
 ///
-/// A ref that is HEAD has no diff and builds nothing. Otherwise the
-/// merge-base's surface is read from the run store before it is built in a
-/// worktree, since the surface of a commit never changes.
+/// When HEAD is the merge-base there is no diff and nothing is built.
+/// Otherwise the merge-base's surface is read from the run store before it is
+/// built in a worktree, since the surface of a commit never changes.
 pub fn surface_diff_text(
     pkg: &str,
     refname: &str,
@@ -68,30 +70,40 @@ pub fn surface_diff_text(
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let anchor = refrun::anchor(&root, refname);
     if anchor == refrun::Anchor::Head {
-        println!("report: {refname} is HEAD, so {pkg} has no API diff");
+        println!("report: no commits since {refname}, so {pkg} has no API diff");
     }
     surface_diff(
         anchor,
         || load(pkg, features).map(|(surface, _)| surface),
-        |sha| {
-            let visibility = invoke::Visibility::Public;
-            let key = invoke::rustdoc_rustc(&root)
-                .filter(|_| !sha.is_empty())
-                .map(|rustc| refsurface::key(sha, pkg, features, visibility, &rustc));
-            let (surface, stored) = refsurface::reuse(key.as_deref(), || {
-                println!("report: building the API surface of {refname} in a worktree for {pkg}");
-                invoke::with_merge_base_worktree(refname, |wt| {
-                    invoke::rustdoc_json_in(pkg, Some(wt), features, visibility)
-                        .map(|(doc, wt_root)| surface::from_rustdoc(&doc, &wt_root))
-                        .map_err(|e| format!("cannot build surface at the merge-base: {e}"))
-                })
-            })?;
-            if stored {
-                println!("report: reusing the stored API surface of {refname} for {pkg}");
-            }
-            Ok(surface)
-        },
+        |sha| merge_base_surface(&root, sha, pkg, refname, features),
     )
+}
+
+/// The public surface of `pkg` at `sha`, the merge-base with `refname`: the
+/// stored one, else one built in a worktree and then kept.
+fn merge_base_surface(
+    root: &Path,
+    sha: &str,
+    pkg: &str,
+    refname: &str,
+    features: Option<&str>,
+) -> Result<surface::Surface, String> {
+    let visibility = invoke::Visibility::Public;
+    let key = invoke::rustdoc_build(root)
+        .filter(|_| !sha.is_empty())
+        .map(|build| refsurface::key(sha, pkg, features, visibility, &build));
+    if let Some(surface) = refsurface::stored(key.as_deref()) {
+        println!("report: reusing the stored API surface of {refname} for {pkg}");
+        return Ok(surface);
+    }
+    println!("report: building the API surface of {refname} in a worktree for {pkg}");
+    let surface = invoke::with_merge_base_worktree(refname, |wt| {
+        invoke::rustdoc_json_in(pkg, Some(wt), features, visibility)
+            .map(|(doc, wt_root)| surface::from_rustdoc(&doc, &wt_root))
+            .map_err(|e| format!("cannot build surface at the merge-base: {e}"))
+    })?;
+    refsurface::keep(key.as_deref(), &surface);
+    Ok(surface)
 }
 
 fn surface_diff(

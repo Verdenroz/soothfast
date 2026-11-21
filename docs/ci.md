@@ -1276,15 +1276,17 @@ set (it needs `REGEN_PATHS`). It prints `paths=` and `changed=`
 lines, also written to `--paths-out`, and never commits or pushes.
 `--baseline NAME` names the baseline it measures into (default `base`).
 
-The changelog's release side is a lookup. When the latest tag is HEAD nothing
-is measured. Otherwise the tag's measurement comes from the run store (its own
-entry, or the run the gate recorded for that commit under the same
-conditions) before a worktree is built, and its API surface likewise. On a
-default-branch push the bot regenerates, `ci build rustdoc` also builds the
-public rustdoc of the changelog's packages under the features the changelog
-reads, so HEAD's surface is a store hit. A pull request never builds it, nor
-does a push with `SOOTHFAST_REGEN` unset; a repository that turns the
-changelog off with `--no-changelog` still pays for that build.
+When the latest tag is HEAD the changelog measures nothing for the release.
+Otherwise the tag's measurement comes from the run store (its own entry, or
+the run the gate recorded for that commit under the same conditions) before a
+worktree is built, and its API surface likewise. On a
+default-branch push the bot regenerates, `ci build rustdoc` with no package
+named also builds the public rustdoc of the changelog's packages under the
+features the changelog reads, so a job that shares the rustdoc store finds
+HEAD's surface there. `--changelog PKG` names them when other packages are
+named. A pull request never builds it, nor does a push with `SOOTHFAST_REGEN`
+unset; a repository that turns the changelog off with `--no-changelog` still
+pays for that build.
 
 A push of the bot's own landing regenerates nothing: the bot authored every
 commit in it, every file it changed is one regeneration writes or matches a

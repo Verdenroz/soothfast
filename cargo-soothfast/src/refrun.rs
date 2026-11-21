@@ -2,9 +2,8 @@
 //! against: HEAD's own baseline, a stored report, a run the gate recorded, or
 //! a worktree build.
 
-use std::path::Path;
-
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -17,7 +16,7 @@ use crate::runcache::{self, Runs};
 /// The commit a reference measurement stands for, relative to HEAD.
 #[derive(Debug, PartialEq)]
 pub enum Anchor {
-    /// The reference is HEAD itself.
+    /// HEAD is the merge-base: it has no commits the reference lacks.
     Head,
     /// The merge-base of HEAD and the reference; empty when git has none.
     At(String),
@@ -63,8 +62,7 @@ pub fn recorded_for(
 
 /// The run `runs` holds for `sha`, when it is that commit's callgrind
 /// measurement of every item it names, kept under `key`. A run timed on
-/// another backend, or one with an item no counter covers, is not the
-/// measurement a report makes.
+/// another backend, or one with an uncounted item, is not used.
 fn recorded(runs: &Runs, sha: &str, key: &str) -> Option<Value> {
     let doc = runs.load(sha, sha)?;
     let items: BTreeSet<String> = invoke::run_from_items_value(&doc["items"])
@@ -83,53 +81,73 @@ fn recorded(runs: &Runs, sha: &str, key: &str) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-    use std::process::Command;
-
     use serde_json::Value;
 
-    use super::{Anchor, anchor, common, headrun, invoke, recorded};
+    use super::{Anchor, anchor, common, headrun, recorded};
     use crate::buildstamp::BuildStamp;
     use crate::config::Config;
     use crate::invoke::{CommonArgs, HostEnv};
     use crate::runcache::{self, Runs};
-    use crate::test::fixture::TempDir;
+    use crate::test::fixture::{TempDir, TempRepo};
 
-    fn git(dir: &Path, args: &[&str]) {
-        let out = Command::new("git")
-            .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}: {out:?}");
+    fn repo(name: &str) -> TempRepo {
+        let repo = TempRepo::new(name);
+        commit(&repo, "one");
+        repo
     }
 
-    fn repo(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("soothfast-refrun-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        git(&dir, &["init", "-q"]);
-        git(&dir, &["commit", "-q", "--allow-empty", "-m", "one"]);
-        dir
+    fn commit(repo: &TempRepo, content: &str) -> String {
+        repo.write("file", content);
+        repo.git(&["add", "-A"]);
+        repo.commit();
+        repo.git(&["rev-parse", "HEAD"])
     }
 
     #[test]
     fn a_tag_on_head_anchors_at_head() {
-        let dir = repo("at-head");
-        git(&dir, &["tag", "v1"]);
-        assert_eq!(anchor(&dir, "v1"), Anchor::Head);
+        let repo = repo("refrun-at-head");
+        repo.git(&["tag", "v1"]);
+        assert_eq!(anchor(&repo.root, "v1"), Anchor::Head);
     }
 
     #[test]
     fn a_tag_behind_head_anchors_at_its_commit() {
-        let dir = repo("behind");
-        git(&dir, &["tag", "v1"]);
-        git(&dir, &["commit", "-q", "--allow-empty", "-m", "two"]);
-        let tagged = invoke::git_in(&dir, &["rev-parse", "v1"]).unwrap();
-        assert_eq!(anchor(&dir, "v1"), Anchor::At(tagged));
+        let repo = repo("refrun-behind");
+        let tagged = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["tag", "v1"]);
+        commit(&repo, "two");
+        assert_eq!(anchor(&repo.root, "v1"), Anchor::At(tagged));
+    }
+
+    #[test]
+    fn an_annotated_tag_anchors_at_the_commit_it_names() {
+        let repo = repo("refrun-annotated");
+        let tagged = repo.git(&["rev-parse", "HEAD"]);
+        let identity = ["-c", "user.name=t", "-c", "user.email=t@t"];
+        repo.git(&[&identity[..], &["tag", "-a", "v1", "-m", "release"]].concat());
+        assert_ne!(repo.git(&["rev-parse", "v1"]), tagged);
+        assert_eq!(anchor(&repo.root, "v1"), Anchor::Head);
+        commit(&repo, "two");
+        assert_eq!(anchor(&repo.root, "v1"), Anchor::At(tagged));
+    }
+
+    #[test]
+    fn a_tag_off_the_branch_anchors_where_it_forked() {
+        let repo = repo("refrun-forked");
+        let fork = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["checkout", "-q", "-b", "side"]);
+        commit(&repo, "side");
+        repo.git(&["tag", "v1"]);
+        repo.git(&["checkout", "-q", "-"]);
+        assert_eq!(anchor(&repo.root, "v1"), Anchor::Head);
+        commit(&repo, "two");
+        assert_eq!(anchor(&repo.root, "v1"), Anchor::At(fork));
+    }
+
+    #[test]
+    fn a_ref_git_cannot_resolve_anchors_nowhere() {
+        let repo = repo("refrun-unknown");
+        assert_eq!(anchor(&repo.root, "v9"), Anchor::At(String::new()));
     }
 
     fn stamp() -> BuildStamp {
@@ -174,12 +192,6 @@ mod tests {
         })
     }
 
-    fn forget(key: &str) {
-        if let Some(dir) = runcache::state_dir("runs") {
-            let _ = std::fs::remove_file(dir.join(format!("{key}.json")));
-        }
-    }
-
     /// `doc` stored as the gate stores a commit's run, read back through
     /// `recorded` under `backend`'s environment, with the report key it was
     /// kept under.
@@ -187,11 +199,11 @@ mod tests {
         let (stamp, args) = (stamp(), args());
         let runs = Runs::new(&stamp, &args, Some(env(backend)));
         runs.store(sha, doc);
-        let report = runcache::report_key(sha, "demo", None, &stamp);
+        let report = runcache::report_key(sha, &args, &stamp);
         let got = recorded(&runs, sha, &report);
         let kept = runcache::stored_report(&report);
-        forget(&runcache::key(sha, &stamp, &args, &env(backend)));
-        forget(&report);
+        runcache::forget(&runcache::key(sha, &stamp, &args, &env(backend)));
+        runcache::forget(&report);
         (got, kept)
     }
 
@@ -258,18 +270,18 @@ mod tests {
     }
 
     #[test]
-    fn the_report_key_follows_the_gate_groups_features() {
+    fn the_report_key_follows_the_gate_groups_features_and_target() {
         let cfg = configured("refrun-gate-key", TWO_GROUPS);
-        let stamp = crate::buildstamp::BuildStamp {
-            rustc: "1.88.0".into(),
-            codegen_units: "1".into(),
-            profiles: "p".into(),
-            rustflags: "f".into(),
-        };
-        let key = |features: Option<&str>| runcache::report_key("aaa", "demo", features, &stamp);
         let measured = common(&cfg, "demo").unwrap();
-        assert_eq!(key(measured.features.as_deref()), key(Some("bench")));
-        assert_ne!(key(measured.features.as_deref()), key(Some("full")));
+        let key = |common: &CommonArgs| runcache::report_key("aaa", common, &stamp());
+        let with = |features: &str, target: &str| CommonArgs {
+            features: Some(features.into()),
+            target: Some(target.into()),
+            ..args()
+        };
+        assert_eq!(key(&measured), key(&with("bench", "t")));
+        assert_ne!(key(&measured), key(&with("full", "t")));
+        assert_ne!(key(&measured), key(&with("bench", "other")));
     }
 
     #[test]

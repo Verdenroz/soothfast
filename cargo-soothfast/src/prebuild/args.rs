@@ -54,6 +54,7 @@ fn lane(name: &str) -> Result<Lane, String> {
 pub(super) fn parse(args: &[String]) -> Result<Args, String> {
     let mut common = CommonArgs::default();
     let mut lanes = BTreeSet::new();
+    let mut changelog = Vec::new();
     let mut wanted = Wanted {
         lanes: BTreeSet::new(),
         packages: Vec::new(),
@@ -74,7 +75,7 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
         match a.as_str() {
             "-p" | "--package" => wanted.packages.push(take(&mut it, a)?),
             "--docs" => wanted.docs.push(take(&mut it, a)?),
-            "--changelog" => wanted.changelog.push((take(&mut it, a)?, None)),
+            "--changelog" => changelog.push(take(&mut it, a)?),
             "--docs-features" => wanted.docs_features = Some(take(&mut it, a)?),
             "--docs-paths" => {
                 let given = wanted.docs_paths.len();
@@ -117,12 +118,15 @@ pub(super) fn parse(args: &[String]) -> Result<Args, String> {
                 .extend(defaults.features.map(|f| (pkg.clone(), f)));
         }
     }
-    if !wanted.changelog.is_empty() {
+    if !changelog.is_empty() {
         let config = Config::load(&invoke::project_root())?;
-        let (changelog, gate) = (config.changelog()?.features, config.gate()?.features);
-        for (pkg, features) in &mut wanted.changelog {
-            let docs = config::defaults(std::slice::from_ref(pkg), Group::Docs)?.features;
-            *features = resolve_features(docs, changelog.as_deref(), gate.as_deref());
+        let (listed, gate) = (config.changelog()?.features, config.gate()?.features);
+        for pkg in changelog {
+            let docs = config
+                .resolve(std::slice::from_ref(&pkg), Group::Docs)?
+                .features;
+            let features = resolve_features(docs, listed.as_deref(), gate.as_deref());
+            wanted.changelog.push((pkg, features));
         }
     }
     config::apply_to(&mut common, Group::Gate, &wanted.packages)?;
