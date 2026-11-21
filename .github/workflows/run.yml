@@ -375,6 +375,8 @@ jobs:
       - id: soothfast
         uses: ./.soothfast-action/action/install
       - uses: ./.soothfast-action
+        env:
+          SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
           packages: ${{ needs.plan.outputs.packages }}
