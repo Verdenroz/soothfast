@@ -391,8 +391,20 @@ pull request's <code>docs diff</code>.</p>
 <li>Absolute paths rustdoc records for sources outside the workspace.</li>
 <li>A package whose sources sit outside the repository, or a tree without git, has no key and is always rebuilt.</li>
 </ul>
-<p>A package at the repository root hashes every file git lists outside the
-other packages, so a doc or README edit there misses.</p>
+<p>The key has a second, stable half: the same head and variables, with only
+the files that configure the build (<code>Cargo.toml</code>, <code>Cargo.lock</code>, <code>build.rs</code>,
+cargo config and toolchain files, wherever git lists them). When the full key
+misses, the last entry stored under the same stable half is checked against
+its manifest. If every file and variable the build read still holds, it is a
+hit and is kept under the current key too. So a file the build never read (a
+lock file, <code>CHANGELOG.md</code>, a generated spec or SDK) does not cost a rebuild,
+even for a package at the repository root, where the full key covers the
+whole repository. A file the build read, or a changed configuration file, is
+still a miss. This trusts dep-info and <code>rerun-if-changed</code> lines to list what
+a build reads, as cargo does. An entry whose build script names nothing to
+watch, or whose dep-info could not all be read, is found only by its full
+key. Each stable half points at the entry built last: <code>cache merge</code> keeps the
+pointer of whichever side built later, and an exact hit repoints it.</p>
 <p>Caches are kept per job, runner OS and architecture, and <code>cache-suffix</code>, and
 the rustdoc store is capped at 1 GiB, dropping the least recently used entries
 first. The action saves through <code>actions/cache</code>, which saves a new entry at
@@ -424,7 +436,8 @@ if every dependency's dep-info could be read.</p>
 <p>Markdown files are left out of the key's file list, so a docs-only change is
 a hit even for a package at the repository root, where that list is the
 whole repository. A markdown file the build included (<code>include_str!</code> on a
-README, say) is in the manifest and counts.</p>
+README, say) is in the manifest and counts. The stable half of the key works
+as it does for rustdoc JSON.</p>
 <p><strong>The checkout path is part of the key</strong>, and so are the target directory
 and <code>CARGO_HOME</code>. A binary can carry them: <code>env!(&quot;CARGO_MANIFEST_DIR&quot;)</code>,
 <code>file!()</code>, <code>OUT_DIR</code> and debug info all write absolute paths into its bytes,
