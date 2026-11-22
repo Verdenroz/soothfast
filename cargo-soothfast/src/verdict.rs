@@ -14,6 +14,10 @@ const NOTHING_TO_COMPARE: &str = "nothing to compare";
 const CLAIMS_SKIPPED: &str = "claims not evaluated";
 const KINDS: [&str; 5] = ["rust", "import", "docs", "test", "check"];
 const UNREADABLE: &str = "result";
+/// The exit code a `check` job ends with when it found only advisory
+/// findings. The job's record reads it as `advisory`; the caller's own exit
+/// status is 0.
+pub(crate) const ADVISORY_EXIT: i32 = 75;
 /// GitHub rejects a comment over 65,536 characters; the rest is the marker.
 const SHORT_SHA: usize = 7;
 const NOTE_SHA: usize = 12;
@@ -28,6 +32,7 @@ const LANDING_NOTE: &str = "\nNo lane ran: this pull request is a soothfast-bot 
 enum Verdict {
     Errored,
     Regressed,
+    Advisory,
     Pass,
     NothingToCompare,
 }
@@ -37,6 +42,7 @@ impl Verdict {
         match self {
             Verdict::Errored => "errored",
             Verdict::Regressed => "regressed",
+            Verdict::Advisory => "advisory",
             Verdict::Pass => "pass",
             Verdict::NothingToCompare => "nothing-to-compare",
         }
@@ -46,6 +52,7 @@ impl Verdict {
         [
             Verdict::Errored,
             Verdict::Regressed,
+            Verdict::Advisory,
             Verdict::Pass,
             Verdict::NothingToCompare,
         ]
@@ -301,7 +308,7 @@ fn build(name: String, kind: String, code: i32, output: &str, seconds: u64) -> R
     let verdict = classify(code, &kind, &output);
     Record {
         name,
-        tail: if verdict == Verdict::Errored {
+        tail: if matches!(verdict, Verdict::Errored | Verdict::Advisory) {
             tail(&output)
         } else {
             tail(&drop_warnings(&output))
@@ -323,6 +330,7 @@ fn classify(code: i32, kind: &str, output: &str) -> Verdict {
         0 if output.contains(NOTHING_TO_COMPARE) => Verdict::NothingToCompare,
         0 => Verdict::Pass,
         1 if matches!(kind, "rust" | "import") => Verdict::Regressed,
+        ADVISORY_EXIT if kind == "check" => Verdict::Advisory,
         _ => Verdict::Errored,
     }
 }
@@ -600,6 +608,7 @@ fn fold(records: Vec<Record>) -> Vec<Record> {
 }
 
 /// Regressions fail unless a writer accepted them; an error never waives.
+/// An advisory finding never fails.
 fn fails(records: &[Record], accepted: bool) -> bool {
     records.iter().any(|r| match r.verdict {
         Verdict::Errored => true,
@@ -625,13 +634,22 @@ fn fit(records: &[Record], accepted: Option<&str>) -> String {
 
 fn render(records: &[Record], accepted: Option<&str>) -> String {
     let count = |v: Verdict| records.iter().filter(|r| r.verdict == v).count();
+    let advisory = count(Verdict::Advisory);
+    let advisory_count = if advisory > 0 {
+        format!(" {advisory} advisory,")
+    } else {
+        String::new()
+    };
     let mut out = format!(
-        "## soothfast verdict\n{} projects: {} regressed, {} errored, {} pass\n",
+        "## soothfast verdict\n{} projects: {} regressed, {} errored,{advisory_count} {} pass\n",
         records.len(),
         count(Verdict::Regressed),
         count(Verdict::Errored),
         count(Verdict::Pass) + count(Verdict::NothingToCompare),
     );
+    if advisory > 0 {
+        out.push_str("\nAdvisory findings are reported and do not fail the run.\n");
+    }
     if let Some(label) = accepted.filter(|_| count(Verdict::Regressed) > 0) {
         out.push_str(&format!("\nRegressions accepted by the `{label}` label.\n"));
     }
@@ -703,6 +721,39 @@ mod tests {
         assert_eq!(classify(2, "rust", ""), Verdict::Errored);
         assert_eq!(classify(3, "import", ""), Verdict::Errored);
         assert_eq!(classify(1, "docs", ""), Verdict::Errored);
+    }
+
+    #[test]
+    fn the_advisory_exit_is_a_check_finding_that_does_not_fail() {
+        assert_eq!(
+            classify(ADVISORY_EXIT, "check", "BREAKING"),
+            Verdict::Advisory
+        );
+        assert_eq!(classify(ADVISORY_EXIT, "docs", ""), Verdict::Errored);
+        let advisory = [rec("a", Verdict::Advisory, "")];
+        assert!(!fails(&advisory, false));
+        assert!(fails(
+            &[advisory[0].clone(), rec("b", Verdict::Errored, "")],
+            false
+        ));
+        assert_eq!(Verdict::parse("advisory"), Some(Verdict::Advisory));
+    }
+
+    #[test]
+    fn an_advisory_section_is_counted_apart_and_sorts_after_the_failures() {
+        let mut records = vec![
+            rec("a", Verdict::Pass, ""),
+            rec("b", Verdict::Advisory, "BREAKING  GET /x"),
+            rec("c", Verdict::Errored, ""),
+        ];
+        records.sort_by(|a, b| (a.verdict, &a.name).cmp(&(b.verdict, &b.name)));
+        let body = render(&records, None);
+        assert!(body.contains("3 projects: 0 regressed, 1 errored, 1 advisory, 1 pass"));
+        assert!(body.contains("do not fail the run"));
+        assert!(body.contains("### `b`\nadvisory | rust"), "{body}");
+        let order = |name: &str| body.find(&format!("### `{name}`")).unwrap();
+        assert!(order("c") < order("b") && order("b") < order("a"));
+        assert!(!render(&[rec("a", Verdict::Pass, "")], None).contains("advisory"));
     }
 
     #[test]
