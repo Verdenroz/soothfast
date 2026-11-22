@@ -55,15 +55,17 @@ impl BuildStamp {
         ]
     }
 
-    /// The default mask leaves `cpu` out, so a stamp written before the mask
-    /// existed reads back the same.
-    pub fn to_json(&self) -> Value {
-        let mut doc = json!({});
-        for (k, v) in self
-            .fields()
+    /// The fields a stamp persists and hashes. An empty `cpu` is left out, so
+    /// the default mask adds nothing to a stamp or its digest.
+    fn written(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        self.fields()
             .into_iter()
             .filter(|(k, v)| *k != "cpu" || !v.is_empty())
-        {
+    }
+
+    pub fn to_json(&self) -> Value {
+        let mut doc = json!({});
+        for (k, v) in self.written() {
             doc[k] = json!(v);
         }
         doc
@@ -84,10 +86,8 @@ impl BuildStamp {
     /// Short form for the gate banner.
     pub fn digest(&self) -> String {
         let joined = self
-            .fields()
-            .iter()
-            .filter(|(k, v)| *k != "cpu" || !v.is_empty())
-            .map(|(_, v)| *v)
+            .written()
+            .map(|(_, v)| v)
             .collect::<Vec<_>>()
             .join("\u{1}");
         format!(
@@ -135,10 +135,7 @@ pub fn compare(reference: &Value, current: &BuildStamp) -> Option<Mismatch> {
     }
     current.fields().into_iter().find_map(|(field, new)| {
         let was = old[field].as_str().unwrap_or_default();
-        let shown = |v: &str| match (field, v) {
-            ("cpu", "") => "default".to_string(),
-            _ => v.to_string(),
-        };
+        let shown = |v| if field == "cpu" { shown_cpu(v) } else { v };
         (was != new).then(|| Mismatch {
             reason: format!("build settings differ: {field}"),
             detail: format!(
@@ -151,18 +148,22 @@ pub fn compare(reference: &Value, current: &BuildStamp) -> Option<Mismatch> {
 }
 
 /// Why a baseline's counts cannot back a claim read under the mask `expected`
-/// names, or `None` when it was measured under the same one.
+/// names, or `None` when it was measured under the same one. A baseline with
+/// no build stamp, such as an imported one, was not measured under any mask.
 pub fn cpu_drift(baseline: &Value, expected: &str) -> Option<String> {
-    let was = baseline["build"]["cpu"].as_str().unwrap_or_default();
-    let shown = |v: &str| if v.is_empty() { "default" } else { v }.to_string();
+    let was = baseline.get("build")?["cpu"].as_str().unwrap_or_default();
     (was != expected).then(|| {
         format!(
-            "the baseline was measured hiding cpu features {} but this repo measures hiding {}; \
+            "the baseline was measured under cpu = {}, soothfast.toml asks for {}; \
              re-save it with `measure --save-baseline`",
-            shown(was),
-            shown(expected)
+            shown_cpu(was),
+            shown_cpu(expected)
         )
     })
+}
+
+fn shown_cpu(mask: &str) -> &str {
+    if mask.is_empty() { "default" } else { mask }
 }
 
 /// `rustc -vV`, which names the compiler by release, commit and host.
@@ -294,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_mask_leaves_the_stamp_as_it_was_written_before_masks() {
+    fn the_default_mask_adds_nothing_to_the_stamp() {
         let default = stamp("aaaa");
         assert!(default.to_json().get("cpu").is_none());
         assert_eq!(BuildStamp::from_json(&default.to_json()).unwrap().cpu, "");
@@ -320,9 +321,10 @@ mod tests {
         assert!(cpu_drift(&saved(""), "").is_none());
         assert!(cpu_drift(&saved("AVX2"), "AVX2").is_none());
         assert!(cpu_drift(&json!({}), "").is_none());
+        assert!(cpu_drift(&json!({ "items": {} }), "AVX2").is_none());
         let why = cpu_drift(&saved(""), "AVX2").expect("drift");
         assert!(
-            why.contains("default but this repo measures hiding AVX2"),
+            why.contains("cpu = default, soothfast.toml asks for AVX2"),
             "{why}"
         );
     }

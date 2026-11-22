@@ -177,9 +177,9 @@ fn bench_command(
 
 /// Tell the harness which CPU features to hide, when the mask hides any.
 pub(super) fn cpu_args(cmd: &mut Command, common: &CommonArgs) -> Result<(), String> {
-    let hidden = common.cpu_hidden()?;
+    let hidden = common.cpu_mask()?.identity();
     if !hidden.is_empty() {
-        cmd.args(["--cpu-hide", &hidden.join(",")]);
+        cmd.args(["--cpu-hide", &hidden]);
     }
     Ok(())
 }
@@ -352,8 +352,13 @@ fn run_records(
             )));
         }
         let reason = failure_reason(&stderr);
+        let hint = if reason.contains("unknown runner arg \"--cpu-hide\"") {
+            "this soothfast dependency predates `cpu`: update it, or unset `cpu`".to_string()
+        } else {
+            format!("is the [[bench]] name = \"{target}\", harness = false target set up?")
+        };
         return Err(io::Error::other(format!(
-            "cargo bench failed with {}: {reason} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
+            "cargo bench failed with {}: {reason} ({hint})",
             out.status
         )));
     }

@@ -576,8 +576,8 @@ in the same run.
 ## Switching the CPU mask
 
 Setting `cpu = "portable"` changes every callgrind count in the repository
-once, for the reason [measuring](measuring.md) gives, so what the first
-gate, `docs check` and `measure` see is a one-time effect to expect:
+once, for the reason [measuring](measuring.md) gives. The first runs after
+the switch behave like this:
 
 - `gate` against the merge-base measures both sides under the new mask, so
   the verdict is unaffected. Neither side is found in the run cache or the
@@ -588,8 +588,9 @@ gate, `docs check` and `measure` see is a one-time effect to expect:
   does. The run passes. `measure --save-baseline NAME` under the new mask
   makes the baseline comparable again.
 - `docs check` refuses claims read against a baseline saved under another
-  mask, and names the `measure --save-baseline` that fixes it. It never
-  evaluates a claim against counts taken another way.
+  mask, and names the `measure --save-baseline` that fixes it. A baseline
+  file carries one build stamp, its last save's, so re-save every package
+  that shares the file.
 - Numbers in claims, and the ceilings in `soothfast-gate.lock`, were taken
   under the old mask. A claim that was close to its limit may now fail, and
   a locked entry no longer describes the new counts. Rewording the claim or

@@ -1,5 +1,7 @@
 //! `CommonArgs` flag parsing and `--shard` item selection.
 
+use std::sync::Once;
+
 use crate::cpu::{self, CpuMask};
 
 /// Flags shared by `measure` and `gate`.
@@ -114,14 +116,21 @@ impl CommonArgs {
             .map_err(|e| format!("--cpu: {e}"))
     }
 
-    /// Check `cpu`, and drop it with one line where the harness has no
-    /// `hwcaps` tunable to apply it to.
+    /// Check `cpu`, and drop it where the harness has no `hwcaps` tunable to
+    /// apply it to, saying so once per process.
     pub fn settle_cpu(&mut self) -> Result<(), String> {
+        self.settle_cpu_where(cpu::SUPPORTED)
+    }
+
+    fn settle_cpu_where(&mut self, supported: bool) -> Result<(), String> {
+        static SAID: Once = Once::new();
         let mask = self.cpu_mask()?;
-        if mask != CpuMask::Default && !cpu::SUPPORTED {
-            println!(
-                "cpu = {mask}: ignored, glibc's hwcaps tunable exists only on x86-64 gnu targets"
-            );
+        if mask != CpuMask::Default && !supported {
+            SAID.call_once(|| {
+                println!(
+                    "cpu = {mask}: ignored, glibc's hwcaps tunable exists only on x86-64 gnu targets"
+                )
+            });
             self.cpu = None;
         }
         Ok(())
@@ -130,11 +139,6 @@ impl CommonArgs {
     /// What the mask adds to a measurement's identity, empty for the default.
     pub fn cpu_stamp(&self) -> String {
         self.cpu_mask().map(|m| m.identity()).unwrap_or_default()
-    }
-
-    /// The names the harness hides beyond AVX-512.
-    pub fn cpu_hidden(&self) -> Result<Vec<String>, String> {
-        Ok(self.cpu_mask()?.hidden())
     }
 }
 
@@ -174,12 +178,30 @@ mod tests {
         };
         assert_eq!(with(None).cpu_mask(), Ok(CpuMask::Default));
         assert_eq!(with(Some("portable")).cpu_mask(), Ok(CpuMask::Portable));
-        assert!(with(None).cpu_hidden().unwrap().is_empty());
+        assert!(with(None).cpu_mask().unwrap().hidden().is_empty());
         assert!(
             with(Some("AVX2,"))
                 .cpu_mask()
                 .unwrap_err()
                 .starts_with("--cpu:")
         );
+    }
+
+    #[test]
+    fn a_mask_is_dropped_where_there_is_no_tunable_and_stamps_as_the_default() {
+        let mut common = CommonArgs {
+            cpu: Some("portable".into()),
+            ..CommonArgs::default()
+        };
+        common.settle_cpu_where(true).unwrap();
+        assert_eq!(common.cpu.as_deref(), Some("portable"));
+        common.settle_cpu_where(false).unwrap();
+        assert_eq!(common.cpu, None);
+        assert_eq!(common.cpu_stamp(), CommonArgs::default().cpu_stamp());
+        let mut bad = CommonArgs {
+            cpu: Some("AVX512F".into()),
+            ..CommonArgs::default()
+        };
+        assert!(bad.settle_cpu_where(false).is_err());
     }
 }

@@ -35,6 +35,7 @@ pub fn apply(common: &mut CommonArgs, group: Group) -> Result<Applied, String> {
 /// [`apply`] for a command that works on `pkgs` together.
 pub fn apply_to(common: &mut CommonArgs, group: Group, pkgs: &[String]) -> Result<Applied, String> {
     let Ok(root) = invoke::workspace_root() else {
+        common.settle_cpu()?;
         return Ok(Applied::default());
     };
     Config::load(&root)?.fill(common, group, pkgs)
@@ -50,10 +51,7 @@ pub fn defaults(pkgs: &[String], group: Group) -> Result<Settings, String> {
 /// the gate's mask for them, or the repo-wide one when they resolve
 /// differently, and nothing where the harness has no mask to apply.
 pub fn gate_cpu(pkgs: &[String]) -> Result<String, String> {
-    let config = Config::load(&invoke::project_root())?;
-    let settings = config
-        .resolve(pkgs, Group::Gate)
-        .or_else(|_| config.resolve(&[], Group::Gate))?;
+    let settings = defaults(pkgs, Group::Gate).or_else(|_| defaults(&[], Group::Gate))?;
     Ok(settings
         .cpu
         .filter(|_| crate::cpu::SUPPORTED)
@@ -100,7 +98,7 @@ impl Config {
         if common.target.is_none() {
             common.target = settings.target.clone();
         }
-        if common.cpu.is_none() {
+        if group == Group::Gate && common.cpu.is_none() {
             common.cpu = settings.cpu.as_ref().map(ToString::to_string);
         }
         common.settle_cpu()?;

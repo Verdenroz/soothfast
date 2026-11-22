@@ -46,9 +46,9 @@ callgrind counts are exact for a given binary, valgrind and libc, but not for
 a given binary alone. glibc picks its `memcpy`, `strlen` and `memchr` variants
 at load time (ifunc) from the CPU features it sees, and valgrind passes most
 of the host's features through to the guest. An unchanged bench can therefore
-count a few thousand instructions more or fewer on a runner with another CPU
-model, and the difference moves with the items that lean on string and memory
-routines.
+count differently on a runner with another CPU model, by up to 6% on
+soothfast's own benches, and the difference moves with the items that lean on
+string and memory routines.
 
 The harness always hides AVX-512 from the measured process with
 `GLIBC_TUNABLES=glibc.cpu.hwcaps=-AVX512F,...`, because valgrind cannot
@@ -73,10 +73,11 @@ thing and wins over the file. A package can set its own in
 `[package.NAME]` or `[package.NAME.gate]`, resolved the way `features` is:
 the flag, then the group table, then the package table, then `[gate]`.
 
-The portable preset hides these names. glibc 2.35 through 2.42 accept every
-one of them in `glibc.cpu.hwcaps`; they come from `sysdeps/x86/cpu-tunables.c`
+The portable preset hides these names. glibc 2.41 and 2.42 accept every one
+of them in `glibc.cpu.hwcaps`; they come from `sysdeps/x86/cpu-tunables.c`
 in the glibc source (the `CHECK_GLIBC_IFUNC_*` entries), and `ld.so
---list-tunables` shows the `glibc.cpu.hwcaps` tunable that takes them. The
+--list-tunables` shows the `glibc.cpu.hwcaps` tunable that takes them. Back
+to 2.35 only `Avoid_STOSB` and `Avoid_Non_Temporal_Memset` are missing. The
 CPU features are `AVX`, `AVX2`, `BMI1`, `BMI2`, `ERMS`, `FMA`, `FMA4`,
 `LZCNT`, `MOVBE`, `RTM` and `XSAVEC` (the dynamic linker's lazy-binding
 trampoline selects on the last). The preferred bits are

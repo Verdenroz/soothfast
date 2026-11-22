@@ -132,6 +132,7 @@ mod tests {
             cpu("[\"AVX2\", \"ERMS\"]"),
             Some(CpuMask::Hide(vec!["AVX2".into(), "ERMS".into()]))
         );
+        assert_eq!(cpu("[]"), Some(CpuMask::Default));
         assert_eq!(GateConfig::default().cpu, None);
     }
 

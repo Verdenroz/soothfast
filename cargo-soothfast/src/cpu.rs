@@ -6,10 +6,10 @@
 
 use std::fmt;
 
-/// glibc 2.35 through 2.42 name these in `sysdeps/x86/cpu-tunables.c` and
-/// accept them in `glibc.cpu.hwcaps`: the CPU features above x86-64-v2 that
-/// an ifunc or the lazy-binding trampoline selects on, then the preferred
-/// bits their selectors read, which glibc sets per CPU model.
+/// Names glibc 2.42 takes in `glibc.cpu.hwcaps` (`sysdeps/x86/cpu-tunables.c`):
+/// the CPU features above x86-64-v2 that an ifunc or the lazy-binding
+/// trampoline selects on, then the preferred bits their selectors read, which
+/// glibc sets per CPU model. An older glibc ignores the names it lacks.
 const PORTABLE: &[&str] = &[
     "AVX",
     "AVX2",
@@ -64,8 +64,11 @@ impl CpuMask {
         }
     }
 
-    /// A list of feature names.
+    /// A list of feature names. An empty one is the default mask.
     pub fn hide(names: Vec<String>) -> Result<Self, String> {
+        if names.is_empty() {
+            return Ok(CpuMask::Default);
+        }
         for name in &names {
             let word =
                 !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
@@ -99,8 +102,8 @@ impl CpuMask {
         names
     }
 
-    /// What the mask adds to the measurement's identity: empty under the
-    /// default, so nothing keyed before the mask existed changes.
+    /// What the mask adds to a measurement's identity. Empty under the
+    /// default, which keys like a run with no mask.
     pub fn identity(&self) -> String {
         self.hidden().join(",")
     }
@@ -128,6 +131,11 @@ mod tests {
             CpuMask::parse("AVX2,ERMS"),
             Ok(CpuMask::Hide(vec!["AVX2".into(), "ERMS".into()]))
         );
+    }
+
+    #[test]
+    fn an_empty_list_is_the_default_mask() {
+        assert_eq!(CpuMask::hide(Vec::new()), Ok(CpuMask::Default));
     }
 
     #[test]
