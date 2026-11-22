@@ -1,13 +1,58 @@
 # Changelog
 
-## Unreleased (draft vs v0.6.0)
+## 0.7.0 - 2026-11-21
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+Regeneration is cheaper and blocks less. A push to the default branch
+regenerates in a `Regenerate` job of its own, in one concurrency group per
+branch, so a burst of merges runs one regeneration to completion. The job
+reuses the run's rustdoc and spec builds, looks up the last release's
+measurement and API surface instead of rebuilding them, and finds a stored
+build again when only files it never read changed. It also regenerates
+captured example output. A failing capture or a release that cannot be
+measured is reported as a warning while the rest lands. With the bot on, a
+pull request into the default branch and a push to it no longer fail for
+stale generated specs, SDKs or captured output, and the findings of
+`spec gate` and `spec check` are advisory unless `[ci] enforce = ["spec"]`.
+The verdict of a fork's pull request is rendered by trusted code from the
+run's result files and posted as the bot through the broker, which can
+verify the run it came from. The callgrind backend takes a `cpu` setting
+with a `portable` preset that makes instruction counts independent of the
+runner's CPU model. A changelog row keeps its text when only noise moved,
+and the release is measured under the gate's settings.
+
+### Upgrade notes
+
+- Run `cargo soothfast init`. It writes `soothfast-comment.yml`, the caller
+  that posts a fork's verdict. Its job needs `contents: read` and
+  `id-token: write`; a caller written by an earlier release does not grant
+  them and the job fails to start.
+- The `soothfast-bot` environment must have no required reviewers. With
+  them, every comment on a fork's pull request waits for an approval.
+- `[ci] skip = ["capture"]` now turns off the regeneration of captured
+  output as well as the check.
+- Findings of `spec gate` and `spec check` are advisory in `ci spec`: the
+  job passes and the verdict comment shows the section as `advisory`. Set
+  `[ci] enforce = ["spec"]` to make a finding fail again.
+- `spec gate`, `spec check` and `sdk gate` exit 2 when they cannot run
+  (the routes target does not build, a spec file does not parse, the base
+  cannot be read). Exit 1 means a finding. A script that treated any
+  nonzero exit alike needs no change; one that tells them apart does.
+- The changelog's perf delta now measures the release under the gate's
+  features, bench target and codegen-units. Each repository measures its
+  release once more, and printed deltas can move.
+- Optional: give the soothfast-bot App the permission Actions: Read-only
+  and accept it on each installation. The broker then verifies that a
+  fork's verdict came from a `pull_request` run for the same pull request.
+  Without it the comment is posted unverified, with a notice.
+- `cpu = "portable"` in `[gate]`, `[package.X]` or `[package.X.gate]`, or
+  `--cpu portable` on `measure` and `gate`, is opt-in. Switching changes
+  every callgrind count once, so read "Switching the CPU mask" in
+  `docs/gating.md` first. The setting needs this release of the `soothfast`
+  harness crate.
+- Section headings in the verdict comment show the name in a code span.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
