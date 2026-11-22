@@ -311,8 +311,9 @@ revokes itself. The broker takes the same request from a <code>workflow_run</cod
 on the default branch, for a fork's pull request only. That job gets no token
 either, and the broker posts only after it finds the named pull request open,
 from a fork and not this repository, and still at the head commit the job
-names. Every other event, ref, or repository the App is not installed on is
-refused.</p>
+names (and, with the optional Actions permission, after it verifies the run
+too; see <a href="#pull-requests-from-forks">Pull requests from forks</a>). Every other
+event, ref, or repository the App is not installed on is refused.</p>
 <h2 id="inputs">Inputs<a class="anchor" href="#inputs" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap"><table>
 <thead><tr><th>Input</th><th>Default</th><th>Meaning</th></tr></thead>
@@ -590,7 +591,7 @@ repository's "Automatically delete head branches" setting.</p>
 <ol>
 <li>In the App's settings, set the webhook URL to <code>https://&lt;worker&gt;/webhook</code>, choose a secret, and subscribe to the Pull request and Push events.</li>
 <li>Store the same secret in the Worker: `wrangler secret put GITHUB_WEBHOOK_SECRET<code>. Without it</code>/webhook` answers 500.</li>
-<li>The App needs Contents write, Pull requests write and Metadata read.</li>
+<li>The App needs Contents write, Pull requests write and Metadata read. Actions: Read-only is optional; it lets the broker verify the run a fork's verdict came from. Add it under the App's Permissions and events; until each installation accepts the new permission the broker keeps working without it.</li>
 </ol>
 <h3 id="reconciling-missed-deliveries">Reconciling missed deliveries<a class="anchor" href="#reconciling-missed-deliveries" aria-label="Link to this section">#</a></h3>
 <p>GitHub does not redeliver a webhook that failed. On default-branch pushes and
@@ -884,10 +885,19 @@ verdict replaces it. The job runs in the <code>soothfast-bot</code> environment 
 sends the broker its OIDC token with the pull request number, the body and
 the head commit the run was for. The broker posts only for a <code>workflow_run</code>
 job in that environment on the default branch, and only while the pull
-request is open, from a fork, and still at that commit. When the broker does
-not post (the App is not installed, the broker cannot be reached or refuses,
-the job has no OIDC token), the job posts with <code>github.token</code> instead, and a
-notice gives the broker's reason. It reads the pull request's head again
+request is open, from a fork, and still at that commit.</p>
+<p>The head commit alone does not name a pull request, because two fork pull
+requests can share one. The job therefore also sends the id of the run it
+was triggered by. When the App holds Actions: Read-only, the broker reads
+that run and posts only if it is a <code>pull_request</code> run of this repository
+with the same head commit, head repository and head branch as the pull
+request. The reply says <code>run_verified</code> and the job logs a notice when it was
+not. Without the permission, or from an older action that sends no run id,
+the broker makes the checks above and nothing more, and the comment is
+still posted.</p>
+<p>When the broker does not post (the App is not installed, the broker cannot be
+reached or refuses, the job has no OIDC token), the job posts with
+<code>github.token</code> instead, and a notice gives the broker's reason. It reads the pull request's head again
 first: a verdict for a commit the pull request has moved past is posted by
 neither. A pull request from the same repository is unaffected: its comment
 is posted directly and nothing is uploaded.</p>
