@@ -149,6 +149,11 @@ impl Config {
             .trend_url)
     }
 
+    /// The `[ci] enforce` list: the CI job kinds whose findings fail the run.
+    pub fn enforce(&self) -> Result<Vec<String>, String> {
+        Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.enforce)
+    }
+
     /// The `[ci]` table's `skip` list: the CI job kinds not to run.
     /// `[test] ci = false` adds `"test"` when the list doesn't name it.
     #[allow(dead_code, reason = "read by the CI job planner")]
@@ -256,6 +261,14 @@ mod tests {
     }
 
     const TEXT: &str = "[gate]\nfeatures = \"repo\"\n\n[package.core]\nfeatures = \"all\"\n\n[package.core.gate]\nfeatures = \"bench\"\ntarget = \"t\"\n\n[package.core.docs]\nbaseline = \"main\"\n\n[package.other]\nfeatures = \"x\"\n";
+
+    #[test]
+    fn enforce_reads_the_list_and_defaults_to_none() {
+        assert!(config("").enforce().unwrap().is_empty());
+        let cfg = config("[ci]\nenforce = [\"spec\"]\n");
+        assert_eq!(cfg.enforce().unwrap(), ["spec"]);
+        assert!(config("[ci]\nenforce = [\"x\"]\n").enforce().is_err());
+    }
 
     #[test]
     fn precedence_is_group_then_package_then_repo_wide() {
