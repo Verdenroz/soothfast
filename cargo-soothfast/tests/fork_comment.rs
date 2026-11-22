@@ -181,6 +181,27 @@ fn a_valid_run_posts_the_rendered_verdict_under_trusted_lines() {
 }
 
 #[test]
+fn an_advisory_result_is_rendered_and_does_not_fail() {
+    let case = Case::new("advisory");
+    let dir = case.results().join("soothfast-result-spec-api-attempt-1");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("spec-api.json"),
+        r#"{"name":"spec-api","kind":"check","verdict":"advisory","tail":"BREAKING","seconds":1}"#,
+    )
+    .unwrap();
+    case.upload("expect_check", "spec-api\n");
+    let out = case.run();
+    assert_eq!(out.code, 0);
+    let body = out.posted.unwrap();
+    assert!(
+        body.contains("1 projects: 0 regressed, 0 errored, 1 advisory, 0 pass"),
+        "{body}"
+    );
+    assert!(body.contains("### `spec-api`\nadvisory | check"), "{body}");
+}
+
+#[test]
 fn an_invalid_pull_request_number_posts_nothing() {
     for number in ["abc", "0", "-1", "01", "1 2", "12345678901", "", "7; id"] {
         let case = Case::new("number");
@@ -373,9 +394,15 @@ fn no_field_of_a_result_is_markup_outside_a_fence() {
     assert_eq!(out.code, 0);
     let body = out.posted.unwrap();
     let status = |l: &str| {
-        ["pass", "errored", "regressed", "nothing-to-compare"]
-            .iter()
-            .any(|v| l.starts_with(v))
+        [
+            "pass",
+            "errored",
+            "regressed",
+            "advisory",
+            "nothing-to-compare",
+        ]
+        .iter()
+        .any(|v| l.starts_with(v))
             && l.chars()
                 .all(|c| c.is_ascii_alphanumeric() || " ()|/,-?".contains(c))
     };

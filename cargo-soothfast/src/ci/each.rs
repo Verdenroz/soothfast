@@ -5,6 +5,7 @@ use std::process::Command;
 
 use super::env::CiEnv;
 use super::record::run_recorded;
+use crate::verdict::ADVISORY_EXIT;
 
 /// A record's name and the arguments `cargo soothfast` runs for it.
 #[derive(Debug, PartialEq)]
@@ -31,7 +32,10 @@ pub fn run_jobs(env: &CiEnv, none: &str, jobs: &[Job]) -> i32 {
         .map(|job| {
             let mut cmd = Command::new(&exe);
             cmd.args(&job.args);
-            run_recorded(env, &job.name, "check", &mut cmd)
+            match run_recorded(env, &job.name, "check", &mut cmd) {
+                ADVISORY_EXIT => 0,
+                code => code,
+            }
         })
         .max()
         .unwrap_or(0)
@@ -92,18 +96,12 @@ pub fn run_packages(
     run_jobs(env, none, &jobs)
 }
 
-/// Runs every step through `run`, which takes a command's arguments and
-/// returns its exit code, and returns the worst. A failed step does not stop
-/// the ones after it.
-pub fn run_steps(steps: &[Vec<String>], mut run: impl FnMut(&[String]) -> i32) -> i32 {
-    steps.iter().map(|args| run(args)).max().unwrap_or(0)
-}
-
-/// Runs `cargo soothfast` with `args` and returns its exit code.
+/// Runs `cargo soothfast` with `args` and returns its exit code, or 2 when
+/// a signal killed it: 1 is a finding, which a killed command did not make.
 pub fn spawn(args: &[String]) -> i32 {
     let status = std::env::current_exe().and_then(|exe| Command::new(exe).args(args).status());
     match status {
-        Ok(status) => status.code().unwrap_or(1),
+        Ok(status) => status.code().unwrap_or(2),
         Err(e) => {
             eprintln!("soothfast: {e}");
             2
@@ -119,19 +117,6 @@ mod tests {
 
     fn argv(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn every_step_runs_and_the_worst_code_wins() {
-        let steps = [argv(&["a"]), argv(&["b"]), argv(&["c"])];
-        let mut ran = Vec::new();
-        let code = run_steps(&steps, |args| {
-            ran.push(args[0].clone());
-            if args[0] == "b" { 1 } else { 0 }
-        });
-        assert_eq!(code, 1);
-        assert_eq!(ran, ["a", "b", "c"]);
-        assert_eq!(run_steps(&[], |_| 1), 0);
     }
 
     #[test]

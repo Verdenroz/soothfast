@@ -825,6 +825,14 @@ job is named for its record, `spec-PKG` or `site`, runs
 when its command reads rustdoc JSON (`spec`, `coverage` and `site`). The
 verdict expects a result from each. A kind named in `[ci] skip` gets no job.
 
+A finding of `ci spec` (`spec gate` found a consumer-breaking change, or
+`spec check` found a spec that no longer matches its routes) is advisory:
+the job exits 0, its output is in the log and the comment, and the section
+reads `advisory`. A command that could not run still fails, and so does a
+stale generated spec or SDK where `ci spec` checks one. `[ci] enforce =
+["spec"]` makes a finding fail the job; `"spec"` is the only kind it
+accepts.
+
 When the repository has a docs package, the site is built in the docs job
 and has no job of its own. That job has the gate's merged baseline, so the
 pages and a `site_run` hook can read the run's measured numbers. The site is
@@ -879,7 +887,7 @@ lines of output, reuse counts, seconds) and uploads it as
 `soothfast-result-<name>`. The `verdict` job downloads them all, runs
 `cargo soothfast ci verdict`, and posts one comment marked
 `<!-- soothfast-verdict -->` with a section per project, regressed and
-errored first. Shards of one project fold into one section.
+errored first, then advisory. Shards of one project fold into one section.
 
 Each section keeps the output of its job without terminal colour codes, and
 without cargo's `warning:` blocks unless the job errored. A docs check that
@@ -889,7 +897,8 @@ evaluated)`. `run.yml` sets `CARGO_TERM_COLOR: never` for every job.
 Branch protection needs only the `verdict` check, named `<caller job id> /
 verdict`. The caller `cargo soothfast init` writes names its job `soothfast`,
 so a repo set up with init requires `soothfast / verdict`. The check fails when any project
-regressed or errored, or recorded no result; a perf-accepted label
+regressed or errored, or recorded no result; advisory findings do not fail it, and the summary
+line counts them apart (`1 advisory`). A perf-accepted label
 (`soothfast:perf-accepted` unless `perf_accepted_labels` renames it) applied by
 a writer waives regressions, never errors or docs drift.
 
@@ -1226,6 +1235,9 @@ routes. A package
 with a spec that is not generated runs `spec check`, and one with an `[[sdk]]`
 entry runs `sdk gen --check`. Every step runs even after one fails, and each
 package records a `check` verdict named `spec-PKG` with the worst exit code.
+A finding of `spec gate` or `spec check` does not count towards it unless
+`[ci] enforce` names `spec`: with nothing worse the record is `advisory` and
+the exit code is 0, and the last lines of the output name the step.
 With the `bot` input on, a pull request into the default branch and a push to
 it run neither `spec gen --check` nor `sdk gen --check` and print a line for
 each: that push's regeneration rewrites those files and the bot lands them.

@@ -713,6 +713,9 @@ and `sdk publish` keep their own meaning without `-p`.
 skip = ["sdk"]
 ```
 
+`enforce = ["spec"]` makes a `spec gate` or `spec check` finding fail the
+job; see [Findings in CI](spec.md#findings-in-ci).
+
 `pages = true` in the same table deploys the docs site on a push to the
 default branch; see [CI](ci.md#deploying-the-site).
 

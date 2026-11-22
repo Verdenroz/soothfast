@@ -149,6 +149,12 @@ impl Config {
             .trend_url)
     }
 
+    /// Whether `[ci] enforce` names `kind`, so its findings fail the run.
+    pub fn enforces(&self, kind: &str) -> Result<bool, String> {
+        let enforce = ci::parse(&self.text).map_err(|e| self.located(e))?.enforce;
+        Ok(enforce.iter().any(|k| k == kind))
+    }
+
     /// The `[ci]` table's `skip` list: the CI job kinds not to run.
     /// `[test] ci = false` adds `"test"` when the list doesn't name it.
     #[allow(dead_code, reason = "read by the CI job planner")]
@@ -256,6 +262,14 @@ mod tests {
     }
 
     const TEXT: &str = "[gate]\nfeatures = \"repo\"\n\n[package.core]\nfeatures = \"all\"\n\n[package.core.gate]\nfeatures = \"bench\"\ntarget = \"t\"\n\n[package.core.docs]\nbaseline = \"main\"\n\n[package.other]\nfeatures = \"x\"\n";
+
+    #[test]
+    fn enforce_names_a_kind_and_skips_nothing() {
+        assert_eq!(config("").enforces("spec"), Ok(false));
+        let cfg = config("[ci]\nenforce = [\"spec\"]\n");
+        assert_eq!(cfg.enforces("spec"), Ok(true));
+        assert!(cfg.ci().unwrap().is_empty(), "enforce skips nothing");
+    }
 
     #[test]
     fn precedence_is_group_then_package_then_repo_wide() {

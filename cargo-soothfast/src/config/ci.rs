@@ -10,6 +10,9 @@ use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 pub struct CiTable {
     /// The CI job kinds not to run. The names are free-form.
     pub skip: Vec<String>,
+    /// The CI job kinds whose findings fail the run, where they are
+    /// advisory by default. Only `"spec"` is accepted.
+    pub enforce: Vec<String>,
     /// Whether a default-branch push deploys the built site to GitHub Pages.
     pub pages: bool,
     /// The published site's `https://` URL, which holds the trend series.
@@ -25,6 +28,8 @@ pub struct CiTable {
     /// which a pull request touching none of them need not rerun.
     pub inputs: Vec<String>,
 }
+
+const ENFORCEABLE: [&str; 1] = ["spec"];
 
 /// Parse the `[ci]` table of a `soothfast.toml`.
 pub fn parse(text: &str) -> Result<CiTable, String> {
@@ -47,6 +52,15 @@ pub fn parse(text: &str) -> Result<CiTable, String> {
         let value = parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
         match (key.trim(), value) {
             ("skip", TomlValue::StrArray(kinds)) => table.skip = kinds,
+            ("enforce", TomlValue::StrArray(kinds)) => {
+                if let Some(kind) = kinds.iter().find(|k| !ENFORCEABLE.contains(&k.as_str())) {
+                    return Err(format!(
+                        "line {lineno}: `{kind}` cannot be enforced under [ci]; only {} can",
+                        ENFORCEABLE.join(", ")
+                    ));
+                }
+                table.enforce = kinds;
+            }
             ("pages", TomlValue::Bool(pages)) => table.pages = pages,
             ("trend_url", TomlValue::Str(url)) if url.starts_with("https://") => {
                 table.trend_url = Some(url);
@@ -75,6 +89,28 @@ mod tests {
         assert_eq!(
             parse("[gate]\nfeatures = \"a\"\n").unwrap(),
             CiTable::default()
+        );
+    }
+
+    #[test]
+    fn enforce_lists_the_kinds_whose_findings_fail() {
+        let on = parse("[ci]\nenforce = [\"spec\"]\n").unwrap();
+        assert_eq!(on.enforce, ["spec"]);
+        assert!(
+            parse("[ci]\nskip = [\"spec\"]\n")
+                .unwrap()
+                .enforce
+                .is_empty()
+        );
+        assert!(parse("[ci]\nenforce = \"spec\"\n").is_err());
+    }
+
+    #[test]
+    fn enforce_rejects_a_kind_that_is_not_enforceable() {
+        let e = parse("[ci]\nenforce = [\"spec\", \"docs\"]\n").unwrap_err();
+        assert_eq!(
+            e,
+            "line 2: `docs` cannot be enforced under [ci]; only spec can"
         );
     }
 

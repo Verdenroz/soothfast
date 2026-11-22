@@ -92,7 +92,8 @@ fn inner(out: &str) -> Result<i32, String> {
             .status()
             .map_err(|e| e.to_string())?;
         if !status.success() {
-            return Ok(status.code().unwrap_or(1));
+            // Not the hook's own code: 75 would record the job as advisory.
+            return Ok(1);
         }
     }
     Ok(each::spawn(&command(out, head)))
