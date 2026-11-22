@@ -8,10 +8,11 @@
 # soothfast.toml on the base branch. A pull request can edit its own copy, so
 # its checkout never decides which label waives. Falls back to the default
 # name, with a warning, when the CLI cannot read the table.
-# Needs CLI and BASE_REF; LABELS_DIR is where to run it (default: here).
+# Needs CLI and BASE_REF or LABELS_REF (a ref to read it from instead);
+# LABELS_DIR is where to run it (default: here).
 perf_accepted_names() {
-  (cd "${LABELS_DIR:-.}" && "$CLI" labels --ref "origin/${BASE_REF}" --role perf-accepted 2>/dev/null) && return
-  echo "::warning::could not read perf_accepted_labels from origin/${BASE_REF}, so only soothfast:perf-accepted waives regressions" >&2
+  (cd "${LABELS_DIR:-.}" && "$CLI" labels --ref "${LABELS_REF:-origin/${BASE_REF}}" --role perf-accepted 2>/dev/null) && return
+  echo "::warning::could not read perf_accepted_labels from ${LABELS_REF:-origin/${BASE_REF}}, so only soothfast:perf-accepted waives regressions" >&2
   echo soothfast:perf-accepted
 }
 

@@ -4,7 +4,9 @@
 # identity (a fork pull request) falls back to GH_TOKEN, whose author is
 # shared with every other action in the repository, hence the marker rather
 # than "edit my last comment".
-# Inputs: GH_TOKEN PR_NUMBER MARKER BODY_FILE, BROKER (optional).
+# Inputs: GH_TOKEN PR_NUMBER MARKER BODY_FILE, BROKER (optional), HEAD_SHA
+# (optional: the commit the body is about, which a workflow_run job must send
+# the broker; when the pull request has moved past it nothing is posted).
 set -euo pipefail
 
 # shellcheck source=action/oidc.sh
@@ -13,7 +15,8 @@ source "$(dirname "$0")/oidc.sh"
 if oidc=$(oidc_token); then
   command -v jq >/dev/null || { echo "::error::jq must be installed on the runner to comment as soothfast-bot; see docs/ci.md, Self-hosted runners"; exit 1; }
   payload=$(jq -n --argjson pr "$PR_NUMBER" --arg marker "$MARKER" --rawfile body "$BODY_FILE" \
-    '{pull_request: $pr, marker: $marker, body: $body}')
+    --arg head "${HEAD_SHA:-}" \
+    '{pull_request: $pr, marker: $marker, body: $body} + if $head == "" then {} else {head_sha: $head} end')
   broker_post /comment -H "Authorization: Bearer $oidc" -H "content-type: application/json" --data-binary "$payload" || true
   if [ "$status" = 200 ]; then
     echo "commented as $(jq -r .app_slug <<<"$body")"
@@ -24,6 +27,14 @@ if oidc=$(oidc_token); then
 fi
 
 command -v gh >/dev/null || { echo "::error::gh must be installed on the runner to comment with the job token; see docs/ci.md, Self-hosted runners"; exit 1; }
+# The broker refuses a stale head, and so must the job token.
+if [ -n "${HEAD_SHA:-}" ]; then
+  head=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha) || head=
+  if [ "$head" != "$HEAD_SHA" ]; then
+    echo "::notice::no comment posted: #$PR_NUMBER has moved past the commit this verdict is for"
+    exit 0
+  fi
+fi
 with_marker="${RUNNER_TEMP:-/tmp}/soothfast-comment.md"
 { echo "$MARKER"; cat "$BODY_FILE"; } >"$with_marker"
 id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \

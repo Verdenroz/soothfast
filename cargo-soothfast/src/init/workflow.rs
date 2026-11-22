@@ -271,6 +271,9 @@ mod tests {
             "uses: Verdenroz/soothfast/.github/workflows/comment.yml@{sha} # v1.2.3\n"
         )));
         assert!(text.contains(&format!("      soothfast_ref: \"{sha}\"\n")));
+        assert!(text.contains(
+            "    permissions:\n      actions: read\n      contents: read\n      id-token: write\n      pull-requests: write\n"
+        ));
         assert!(!text.contains("@@"));
     }
 

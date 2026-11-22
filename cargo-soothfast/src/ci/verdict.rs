@@ -108,7 +108,7 @@ mod tests {
         let dir = scratch("body");
         put(&dir, "core", "rust", "pass", "ok");
         assert_eq!(run(&env(Some(&dir)), &[]), 0);
-        assert!(body(&dir).contains("### core\npass | rust | 3s"));
+        assert!(body(&dir).contains("### `core`\npass | rust | 3s"));
         let custom = dir.join("custom.md");
         let out = custom.to_str().unwrap();
         assert_eq!(run(&env(Some(&dir)), &argv(&["--out", out])), 0);
@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(run(&env(Some(&dir)), &present), 0);
         let missing = argv(&["--expect", "core:rust", "--expect", "docs:docs"]);
         assert_eq!(run(&env(Some(&dir)), &missing), 1);
-        assert!(body(&dir).contains("### docs\nerrored | docs"));
+        assert!(body(&dir).contains("### `docs`\nerrored | docs"));
         fs::remove_dir_all(dir).unwrap();
     }
 
