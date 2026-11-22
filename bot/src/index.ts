@@ -3,6 +3,7 @@ import {
   GitHubError,
   githubApi,
   importPrivateKey,
+  permissionNotGranted,
   type GitHubApi,
   type Repository,
 } from "./github.ts";
@@ -17,9 +18,11 @@ import {
   AUDIENCE,
   COMMENT_MAX_BYTES,
   PERMISSIONS,
+  RUN_PERMISSIONS,
   decideBranch,
   decideClaims,
   decideForkPullRequest,
+  decideRun,
   decideTag,
   pullRequestNumber,
   type Decision,
@@ -44,12 +47,14 @@ interface CommentRequest {
   marker: string;
   body: string;
   head_sha?: string;
+  run_id?: number;
 }
 
 interface Minted {
   token: string;
   expires_at: string;
   slug: string;
+  actionsReadable: boolean;
 }
 
 type Ctx = Pick<ExecutionContext, "waitUntil">;
@@ -269,13 +274,21 @@ async function authenticate(
     );
   }
   const slug = await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt);
-  const minted = await deps.github.mintToken(
-    installation.id,
-    Number(claims.repository_id),
-    PERMISSIONS[mode],
-    jwt,
-  );
-  return { ...minted, slug };
+  const mint = (permissions: Record<string, string>) =>
+    deps.github.mintToken(
+      installation.id,
+      Number(claims.repository_id),
+      permissions,
+      jwt,
+    );
+  if (claims.event_name === "workflow_run") {
+    const withActions = await mint(RUN_PERMISSIONS).catch((e: unknown) =>
+      permissionNotGranted(e) ? undefined : Promise.reject(e),
+    );
+    if (withActions) return { ...withActions, slug, actionsReadable: true };
+  }
+  const minted = await mint(PERMISSIONS[mode]);
+  return { ...minted, slug, actionsReadable: false };
 }
 
 async function revoke(token: string, deps: Deps): Promise<void> {
@@ -363,15 +376,13 @@ async function comment(
   minted: Minted,
   deps: Deps,
 ): Promise<Response> {
+  let runVerified: boolean | undefined;
   try {
     if (claims.event_name === "workflow_run") {
-      const decision = await decideWorkflowRun(
-        claims,
-        body,
-        minted.token,
-        deps,
-      );
-      if (!decision.ok) return denied(403, decision.reason, claims);
+      const checked = await decideWorkflowRun(claims, body, minted, deps);
+      if (!checked.decision.ok)
+        return denied(403, checked.decision.reason, claims);
+      runVerified = checked.runVerified;
     }
     const text = `${body.marker}\n${body.body}`;
     const author = `${minted.slug}[bot]`;
@@ -395,7 +406,11 @@ async function comment(
           text,
           minted.token,
         );
-    return json(200, { comment_url: posted.html_url, app_slug: minted.slug });
+    return json(200, {
+      comment_url: posted.html_url,
+      app_slug: minted.slug,
+      ...(runVerified === undefined ? {} : { run_verified: runVerified }),
+    });
   } finally {
     await revoke(minted.token, deps);
   }
@@ -404,11 +419,12 @@ async function comment(
 async function decideWorkflowRun(
   claims: OidcClaims,
   body: CommentRequest,
-  token: string,
+  minted: Minted,
   deps: Deps,
-): Promise<Decision> {
+): Promise<{ decision: Decision; runVerified: boolean }> {
+  const { token } = minted;
   const { decision } = await resolveRef(claims, token, deps);
-  if (!decision.ok) return decision;
+  if (!decision.ok) return { decision, runVerified: false };
   const found = await deps.github
     .pullRequest(claims.repository, body.pull_request, token)
     .catch((e: unknown) =>
@@ -416,7 +432,21 @@ async function decideWorkflowRun(
         ? undefined
         : Promise.reject(e),
     );
-  return decideForkPullRequest(body.pull_request, found, body.head_sha);
+  const forked = decideForkPullRequest(body.pull_request, found, body.head_sha);
+  if (!forked.ok || !found || !minted.actionsReadable || !body.run_id)
+    return { decision: forked, runVerified: false };
+  const triggering = await deps.github.workflowRun(
+    claims.repository,
+    body.run_id,
+    token,
+  );
+  const checked = decideRun(
+    triggering,
+    Number(claims.repository_id),
+    body.head_sha,
+    found,
+  );
+  return { decision: checked, runVerified: checked.ok };
 }
 
 function parseComment(
@@ -433,7 +463,7 @@ function parseComment(
   }
   if (typeof parsed !== "object" || parsed === null)
     return json(400, { reason: "body is not an object" });
-  const { pull_request, marker, body, head_sha } =
+  const { pull_request, marker, body, head_sha, run_id } =
     parsed as Partial<CommentRequest>;
   if (
     typeof pull_request !== "number" ||
@@ -462,6 +492,12 @@ function parseComment(
       claims,
     );
   }
+  if (
+    run_id !== undefined &&
+    (typeof run_id !== "number" || !Number.isSafeInteger(run_id) || run_id <= 0)
+  ) {
+    return json(400, { reason: "run_id must be a positive integer" });
+  }
   if (!/^<!-- [\w-]+ -->$/.test(marker)) {
     return json(400, {
       reason: "marker must be an HTML comment like <!-- soothfast-gate -->",
@@ -477,6 +513,7 @@ function parseComment(
     marker,
     body,
     head_sha: forFork ? head_sha : undefined,
+    run_id: forFork ? run_id : undefined,
   };
 }
 

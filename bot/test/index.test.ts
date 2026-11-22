@@ -33,6 +33,12 @@ test.before(async () => {
   };
 });
 
+const notGranted = () =>
+  new GitHubError(
+    422,
+    "The permissions requested are not granted to this installation.",
+  );
+
 interface Fake {
   github: GitHubApi;
   revoked: string[];
@@ -42,6 +48,7 @@ interface Fake {
   posted: { kind: "create" | "update"; body: string }[];
   disabled: string[];
   closed: string[];
+  runsRead: number[];
 }
 
 function fakeGitHub(
@@ -55,6 +62,9 @@ function fakeGitHub(
     pulls?: object[];
     forkPull?: object | GitHubError;
     slugFails?: boolean;
+    actionsGranted?: boolean;
+    mintError?: GitHubError;
+    triggeringRun?: object;
   } = {},
 ): Fake {
   const fake: Fake = {
@@ -65,6 +75,7 @@ function fakeGitHub(
     posted: [],
     disabled: [],
     closed: [],
+    runsRead: [],
     github: {
       async installationFor() {
         return opts.installed === false ? undefined : { id: 7 };
@@ -73,6 +84,9 @@ function fakeGitHub(
         assert.equal(installationId, 7);
         assert.equal(repositoryId, 12345);
         fake.minted.push(permissions);
+        if (opts.mintError) throw opts.mintError;
+        if (permissions.actions && opts.actionsGranted === false)
+          throw notGranted();
         return { token: "ghs_minted", expires_at: "2026-01-01T01:00:00Z" };
       },
       async repository() {
@@ -106,6 +120,10 @@ function fakeGitHub(
       },
       async fileContents() {
         return opts.toml;
+      },
+      async workflowRun(_repository, runId) {
+        fake.runsRead.push(runId);
+        return opts.triggeringRun as never;
       },
       async openPullRequests() {
         return (opts.pulls ?? []) as never;
@@ -141,6 +159,7 @@ interface Body {
   token?: string;
   app_slug?: string;
   comment_url?: string;
+  run_verified?: boolean;
   reason?: string;
 }
 
@@ -194,6 +213,16 @@ const commentBody = {
   body: "## soothfast gate\nok",
 };
 const runComment = { ...commentBody, head_sha: headSha };
+const runId = 4242;
+const fromRun = { ...runComment, run_id: runId };
+const triggeringRun = {
+  event: "pull_request",
+  head_sha: headSha,
+  head_branch: "patch-1",
+  head_repository: { id: 999 },
+  repository: { id: 12345 },
+};
+const actions = { pull_requests: "write", actions: "read" };
 
 test("allowed claims mint a scoped landing token", async () => {
   const fake = fakeGitHub();
@@ -257,11 +286,95 @@ test("a workflow_run comment on a fork pull request posts and revokes", async ()
   const { status, body } = await runRequest(fake);
   assert.equal(status, 200);
   assert.match(body.comment_url ?? "", /issuecomment-99/);
-  assert.deepEqual(fake.minted, [{ pull_requests: "write" }]);
+  assert.deepEqual(fake.minted, [actions]);
   assert.deepEqual(fake.posted, [
     { kind: "create", body: "<!-- soothfast-gate -->\n## soothfast gate\nok" },
   ]);
   assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a workflow_run comment whose run matches is posted as verified", async () => {
+  const fake = fakeGitHub({ forkPull, triggeringRun });
+  const { status, body } = await runRequest(fake, fromRun);
+  assert.equal(status, 200);
+  assert.equal(body.run_verified, true);
+  assert.deepEqual(fake.runsRead, [runId]);
+  assert.equal(fake.posted.length, 1);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a workflow_run comment whose run does not match is refused and revoked", async () => {
+  const mismatches: [string, object | undefined, RegExp][] = [
+    ["repository", { ...triggeringRun, repository: { id: 1 } }, /repository/],
+    ["event", { ...triggeringRun, event: "push" }, /push run/],
+    ["head sha", { ...triggeringRun, head_sha: "0".repeat(40) }, /commit/],
+    [
+      "head repository",
+      { ...triggeringRun, head_repository: { id: 1 } },
+      /head repository/,
+    ],
+    [
+      "deleted head repository",
+      { ...triggeringRun, head_repository: null },
+      /head repository/,
+    ],
+    ["branch", { ...triggeringRun, head_branch: "other" }, /branch/],
+    ["missing run", undefined, /does not exist/],
+  ];
+  for (const [name, run, reason] of mismatches) {
+    const fake = fakeGitHub({ forkPull, triggeringRun: run });
+    const { status, body } = await runRequest(fake, fromRun);
+    assert.equal(status, 403, name);
+    assert.match(body.reason ?? "", reason, name);
+    assert.deepEqual(fake.posted, [], name);
+    assert.deepEqual(fake.revoked, ["ghs_minted"], name);
+  }
+});
+
+test("a workflow_run comment falls back when Actions is not granted", async () => {
+  const fake = fakeGitHub({
+    forkPull,
+    triggeringRun,
+    actionsGranted: false,
+  });
+  const { status, body } = await runRequest(fake, fromRun);
+  assert.equal(status, 200);
+  assert.equal(body.run_verified, false);
+  assert.deepEqual(fake.minted, [actions, { pull_requests: "write" }]);
+  assert.deepEqual(fake.runsRead, []);
+  assert.equal(fake.posted.length, 1);
+  assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a workflow_run comment without run_id is posted unverified", async () => {
+  const fake = fakeGitHub({ forkPull, triggeringRun });
+  const { status, body } = await runRequest(fake);
+  assert.equal(status, 200);
+  assert.equal(body.run_verified, false);
+  assert.deepEqual(fake.runsRead, []);
+});
+
+test("a workflow_run comment rejects a run_id that is not a positive integer", async () => {
+  const fake = fakeGitHub({ forkPull, triggeringRun });
+  for (const run_id of [0, -1, 1.5, "4242", null, 2 ** 60]) {
+    const { status } = await runRequest(fake, { ...runComment, run_id });
+    assert.equal(status, 400, JSON.stringify(run_id));
+  }
+  assert.deepEqual(fake.minted, []);
+});
+
+test("a mint failure other than a missing permission stays an error", async () => {
+  const failures = [
+    new GitHubError(422, "Validation failed"),
+    new GitHubError(403, "The permissions requested are not granted"),
+    new GitHubError(500, "boom"),
+  ];
+  for (const mintError of failures) {
+    const fake = fakeGitHub({ forkPull, triggeringRun, mintError });
+    await assert.rejects(runRequest(fake, fromRun), GitHubError);
+    assert.equal(fake.minted.length, 1);
+    assert.deepEqual(fake.posted, []);
+  }
 });
 
 test("a workflow_run comment needs head_sha before any mint", async () => {
@@ -392,6 +505,18 @@ test("a workflow_run comment on an unknown pull request is refused", async () =>
   assert.equal(status, 403);
   assert.match(body.reason ?? "", /pull request 7 does not exist/);
   assert.deepEqual(fake.revoked, ["ghs_minted"]);
+});
+
+test("a pull_request comment never asks for actions or reads a run", async () => {
+  const fake = fakeGitHub({ triggeringRun });
+  const { status, body } = await request(pr, fake, {
+    route: "/comment",
+    body: { ...commentBody, run_id: runId },
+  });
+  assert.equal(status, 200);
+  assert.equal("run_verified" in body, false);
+  assert.deepEqual(fake.minted, [{ pull_requests: "write" }]);
+  assert.deepEqual(fake.runsRead, []);
 });
 
 test("/comment creates the marked comment with a pull_requests-only token and revokes it", async () => {

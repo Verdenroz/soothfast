@@ -52,6 +52,14 @@ export interface PullRequest {
   updated_at: string;
 }
 
+export interface WorkflowRun {
+  event: string;
+  head_sha: string;
+  head_branch: string | null;
+  head_repository: { id: number } | null;
+  repository: { id: number };
+}
+
 interface IssueEvent {
   event: string;
   label?: { name: string };
@@ -81,6 +89,13 @@ export class GitHubError extends Error {
     this.status = status;
   }
 }
+
+// GitHub answers 422 when a token asks for a permission the App or the
+// installation does not hold yet (not yet accepted counts as not held).
+export const permissionNotGranted = (e: unknown): boolean =>
+  e instanceof GitHubError &&
+  e.status === 422 &&
+  /permissions requested are not granted/i.test(e.message);
 
 export interface GitHubApi {
   installationFor(
@@ -133,6 +148,11 @@ export interface GitHubApi {
     number: number,
     token: string,
   ): Promise<PullRequest>;
+  workflowRun(
+    repository: string,
+    runId: number,
+    token: string,
+  ): Promise<WorkflowRun | undefined>;
   openPullRequests(
     repository: string,
     base: string,
@@ -398,6 +418,11 @@ export function githubApi(fetchFn: typeof fetch = fetch): GitHubApi {
     async pullRequest(repository, number, token) {
       const path = `/repos/${repository}/pulls/${number}`;
       return expectOk(await call<PullRequest>("GET", path, token));
+    },
+    async workflowRun(repository, runId, token) {
+      const path = `/repos/${repository}/actions/runs/${runId}`;
+      const result = await call<WorkflowRun>("GET", path, token);
+      return result.status === 404 ? undefined : expectOk(result);
     },
     async openPullRequests(repository, base, token) {
       const path = `/repos/${repository}/pulls?state=open&sort=updated&direction=desc&per_page=100&base=${encodeURIComponent(base)}`;
