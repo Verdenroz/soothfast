@@ -152,7 +152,7 @@ directions are opposites:</p>
 <tr><td>mode</td><td><code>generate</code></td><td><code>check</code></td></tr>
 <tr><td>source of truth</td><td>the code</td><td>the spec file</td></tr>
 <tr><td>command</td><td><code>spec gen</code></td><td><code>spec check</code></td></tr>
-<tr><td>what fails CI</td><td>a consumer-breaking change (<code>spec gate</code>)</td><td>drift in either direction</td></tr>
+<tr><td>what CI reports</td><td>a consumer-breaking change (<code>spec gate</code>)</td><td>drift in either direction</td></tr>
 </tbody>
 </table></div>
 <p>A contract you serve can be derived from your handlers, so the spec and the
@@ -451,6 +451,21 @@ silently diverge from the code. With the bot on, <code>ci spec</code> leaves it 
 to it, where the push's regeneration rewrites those files, and keeps
 <code>spec gate</code> and <code>spec check</code>. Every other run still checks, and so does a
 repository without the bot.</p>
+<h3 id="findings-in-ci">Findings in CI<a class="anchor" href="#findings-in-ci" aria-label="Link to this section">#</a></h3>
+<p>In <code>ci spec</code> a finding of <code>spec gate</code> (a consumer-breaking change) or of
+<code>spec check</code> (a spec that no longer matches its routes) is advisory. The
+job runs both and prints what they found, the verdict comment shows
+the section as <code>advisory</code> and counts it apart, and neither the job nor the
+verdict fails. A command that could not run (the routes target does not
+build, a spec file does not parse, the base cannot be read) is not a
+finding and fails the job. So does a stale file that <code>spec gen --check</code> or
+<code>sdk gen --check</code> finds.</p>
+<p>A repository that publishes an API contract can make a finding fail the job:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[ci]</span>
+<span class="tok-ty">enforce </span>=<span class="tok-str"> [&quot;spec&quot;]</span></code></pre></figure>
+<p>With it, <code>ci spec</code> fails on a finding. Run directly,
+<code>spec gate</code> and <code>spec check</code> exit 0 when clean, 1 on a finding and 2 when
+they could not run, whatever <code>enforce</code> says.</p>
 <h2 id="reconciliation">Reconciliation<a class="anchor" href="#reconciliation" aria-label="Link to this section">#</a></h2>
 <div class="claimline"><span class="chip chip-bind" data-soothfast-bind data-state="bind" title="soothfast_spec::reconcile::reconcile"><span class="chip-head"><span class="chip-mark">⌖</span><span class="chip-item">reconcile</span><span class="chip-sep">·</span><span class="chip-detail">verified current</span></span></span></div>
 <p><code>cargo soothfast spec check -p PKG</code> runs the bench binary with
@@ -620,6 +635,8 @@ scheduled workflow that files an issue on failure, not in PR CI.</p>
     <li><a class="toc-l3" href="#two-types-one-name">Two types, one name</a></li>
   
     <li><a class="toc-l2" href="#gating">Gating</a></li>
+  
+    <li><a class="toc-l3" href="#findings-in-ci">Findings in CI</a></li>
   
     <li><a class="toc-l2" href="#reconciliation">Reconciliation</a></li>
   

@@ -808,6 +808,13 @@ job is named for its record, <code>spec-PKG</code> or <code>site</code>, runs
 <code>cargo soothfast ci KIND -p PKG</code>, and installs the pinned rustdoc toolchain
 when its command reads rustdoc JSON (<code>spec</code>, <code>coverage</code> and <code>site</code>). The
 verdict expects a result from each. A kind named in <code>[ci] skip</code> gets no job.</p>
+<p>A finding of <code>ci spec</code> (<code>spec gate</code> found a consumer-breaking change, or
+<code>spec check</code> found a spec that no longer matches its routes) is advisory:
+the job exits 0, its output is in the log and the comment, and the section
+reads <code>advisory</code>. A command that could not run still fails, and so does a
+stale generated spec or SDK where <code>ci spec</code> checks one. <code>[ci] enforce =
+[&quot;spec&quot;]</code> makes a finding fail the job; <code>&quot;spec&quot;</code> is the only kind it
+accepts.</p>
 <p>When the repository has a docs package, the site is built in the docs job
 and has no job of its own. That job has the gate's merged baseline, so the
 pages and a <code>site_run</code> hook can read the run's measured numbers. The site is
@@ -853,7 +860,7 @@ lines of output, reuse counts, seconds) and uploads it as
 <code>soothfast-result-&lt;name&gt;</code>. The <code>verdict</code> job downloads them all, runs
 <code>cargo soothfast ci verdict</code>, and posts one comment marked
 <code>&lt;!-- soothfast-verdict --&gt;</code> with a section per project, regressed and
-errored first. Shards of one project fold into one section.</p>
+errored first, then advisory. Shards of one project fold into one section.</p>
 <p>Each section keeps the output of its job without terminal colour codes, and
 without cargo's <code>warning:</code> blocks unless the job errored. A docs check that
 skipped its claims for lack of a measurement reads <code>pass (claims not
@@ -861,7 +868,8 @@ evaluated)</code>. <code>run.yml</code> sets <code>CARGO_TERM_COLOR: never</code
 <p>Branch protection needs only the <code>verdict</code> check, named <code>&lt;caller job id&gt; /
 verdict</code>. The caller <code>cargo soothfast init</code> writes names its job <code>soothfast</code>,
 so a repo set up with init requires <code>soothfast / verdict</code>. The check fails when any project
-regressed or errored, or recorded no result; a perf-accepted label
+regressed or errored, or recorded no result; advisory findings do not fail it, and the summary
+line counts them apart (<code>1 advisory</code>). A perf-accepted label
 (<code>soothfast:perf-accepted</code> unless <code>perf_accepted_labels</code> renames it) applied by
 a writer waives regressions, never errors or docs drift.</p>
 <h3 id="pull-requests-from-forks">Pull requests from forks<a class="anchor" href="#pull-requests-from-forks" aria-label="Link to this section">#</a></h3>
@@ -1135,6 +1143,9 @@ routes. A package
 with a spec that is not generated runs <code>spec check</code>, and one with an <code>[[sdk]]</code>
 entry runs <code>sdk gen --check</code>. Every step runs even after one fails, and each
 package records a <code>check</code> verdict named <code>spec-PKG</code> with the worst exit code.
+A finding of <code>spec gate</code> or <code>spec check</code> does not count towards it unless
+<code>[ci] enforce</code> names <code>spec</code>: with nothing worse the record is <code>advisory</code> and
+the exit code is 0, and the last lines of the output name the step.
 With the <code>bot</code> input on, a pull request into the default branch and a push to
 it run neither <code>spec gen --check</code> nor <code>sdk gen --check</code> and print a line for
 each: that push's regeneration rewrites those files and the bot lands them.
