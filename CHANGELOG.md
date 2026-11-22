@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased (draft vs v0.7.0)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### 🐛 Fixes
+
+- Resolve pub use re-exports from workspace member crates (#488)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-docs
+ADDED    soothfast_docs::surface::from_rustdoc_with
+ADDED    soothfast_docs::surface::reexported_crates
+CHANGED  soothfast_docs::surface::from_rustdoc (body)
+```
+
+
 ## 0.7.0 - 2026-11-21
 
 <!-- soothfast:notes -->
