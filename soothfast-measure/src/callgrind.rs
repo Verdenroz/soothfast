@@ -29,22 +29,35 @@ use crate::ctl;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// Disable runtime AVX-512 dispatch in the child: valgrind's VEX can't
 /// decode EVEX. Helps hosts whose *loader* is decodable; a loader compiled
 /// with AVX-512 (CachyOS x86-64-v4 glibc) still SIGILLs — probe catches it.
 const HIDDEN_AVX512: &str = "-AVX512F,-AVX512VL,-AVX512BW,-AVX512DQ,-AVX512CD,-AVX512_VBMI,-AVX512_VBMI2,-AVX512_VNNI,-AVX512_BITALG,-AVX512_VPOPCNTDQ";
 
-/// The `GLIBC_TUNABLES` value that hides AVX-512 and then each of `extra`.
-fn glibc_tunables(extra: &[&str]) -> String {
+static HIDDEN_CPU: OnceLock<String> = OnceLock::new();
+
+/// Hide these comma-separated CPU features from every callgrind child, on top
+/// of AVX-512. Set once, before the first child runs.
+pub fn hide_cpu(features: &str) {
+    let _ = HIDDEN_CPU.set(features.to_string());
+}
+
+/// The `GLIBC_TUNABLES` value that hides AVX-512 and then each of the
+/// comma-separated `extra`.
+fn glibc_tunables(extra: &str) -> String {
     let mut caps = HIDDEN_AVX512.to_string();
-    for name in extra {
+    for name in extra.split(',').filter(|n| !n.is_empty()) {
         caps.push_str(",-");
         caps.push_str(name);
     }
     format!("glibc.cpu.hwcaps={caps}")
+}
+
+fn tunables() -> String {
+    glibc_tunables(HIDDEN_CPU.get().map_or("", String::as_str))
 }
 
 /// Can valgrind actually run THIS binary? `valgrind --version` is not
@@ -53,7 +66,7 @@ pub fn probe() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let out = out_file("probe");
     let result = Command::new("valgrind")
-        .env("GLIBC_TUNABLES", glibc_tunables(&[]))
+        .env("GLIBC_TUNABLES", tunables())
         .args([
             "--tool=callgrind",
             &format!("--callgrind-out-file={}", out.display()),
@@ -101,7 +114,7 @@ pub fn guest() -> Option<Guest> {
     let exe = std::env::current_exe().ok()?;
     let out = out_file("guest");
     let run = Command::new("valgrind")
-        .env("GLIBC_TUNABLES", glibc_tunables(&[]))
+        .env("GLIBC_TUNABLES", tunables())
         .args([
             "--tool=callgrind",
             &format!("--callgrind-out-file={}", out.display()),
@@ -215,7 +228,7 @@ fn out_file(tag: &str) -> PathBuf {
 fn valgrind_cmd(out: &Path, mangled: bool) -> Result<Command, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut cmd = Command::new("valgrind");
-    cmd.env("GLIBC_TUNABLES", glibc_tunables(&[]))
+    cmd.env("GLIBC_TUNABLES", tunables())
         .args([
             "--tool=callgrind",
             "--compress-strings=no",
@@ -589,14 +602,14 @@ mod tests {
     #[test]
     fn no_extra_features_leaves_the_avx512_mask_as_it_always_was() {
         assert_eq!(
-            glibc_tunables(&[]),
+            tunables(),
             "glibc.cpu.hwcaps=-AVX512F,-AVX512VL,-AVX512BW,-AVX512DQ,-AVX512CD,-AVX512_VBMI,-AVX512_VBMI2,-AVX512_VNNI,-AVX512_BITALG,-AVX512_VPOPCNTDQ"
         );
     }
 
     #[test]
     fn extra_features_follow_the_avx512_set() {
-        let tunables = glibc_tunables(&["AVX2", "ERMS"]);
+        let tunables = glibc_tunables("AVX2,ERMS");
         assert!(tunables.starts_with("glibc.cpu.hwcaps=-AVX512F,"));
         assert!(tunables.ends_with(",-AVX512_VPOPCNTDQ,-AVX2,-ERMS"));
     }

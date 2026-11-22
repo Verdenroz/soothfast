@@ -111,6 +111,10 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
             },
             "--skip-gating-counters" => args.skip_gating_counters = true,
             "--guest-view" => args.guest_view = true,
+            "--cpu-hide" => match it.next() {
+                Some(features) => callgrind::hide_cpu(&features),
+                None => die("--cpu-hide needs a comma-separated feature list"),
+            },
             "--env" => {
                 args.env = true;
                 args.json = true;

@@ -6,6 +6,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
+use super::CommonArgs;
+
 /// What a bench binary resolves on this host, from the env line a run starts
 /// with.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,12 +66,13 @@ impl HostEnv {
 /// What `exe` resolves on this host for `backend`, as the env line of a real
 /// run would name it. A harness older than `--env`, or a named backend this
 /// host cannot run, exits non-zero and reads as unresolved.
-pub fn host_env(exe: &Path, backend: Option<&str>) -> Result<HostEnv, String> {
+pub fn host_env(exe: &Path, common: &CommonArgs) -> Result<HostEnv, String> {
     let mut cmd = Command::new(exe);
     cmd.arg("--env");
-    if let Some(b) = backend {
+    if let Some(b) = &common.backend {
         cmd.args(["--backend", b]);
     }
+    super::bench::cpu_args(&mut cmd, common)?;
     let out = cmd
         .output()
         .map_err(|e| format!("could not run the bench harness: {e}"))?;

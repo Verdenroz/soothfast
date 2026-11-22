@@ -56,7 +56,7 @@ pub fn recorded_for(
     key: &str,
 ) -> Option<Value> {
     let exe = invoke::bench_executable(common, None, None)?;
-    let env = invoke::host_env(&exe, common.backend.as_deref()).ok()?;
+    let env = invoke::host_env(&exe, common).ok()?;
     recorded(&Runs::new(stamp, common, Some(env)), sha, key)
 }
 

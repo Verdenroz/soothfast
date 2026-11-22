@@ -291,7 +291,7 @@ pub fn binary_digest(exe: &Path) -> Option<String> {
 fn resolved_env(cmd: &str, common: &CommonArgs, exe: Option<&Path>) -> Option<invoke::HostEnv> {
     let resolved = exe
         .ok_or_else(|| "HEAD's bench binary did not build".to_string())
-        .and_then(|exe| invoke::host_env(exe, common.backend.as_deref()));
+        .and_then(|exe| invoke::host_env(exe, common));
     match resolved {
         Ok(env) => {
             println!(

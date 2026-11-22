@@ -64,7 +64,7 @@ pub(super) fn build_item(step: &Step, live: &Live) -> Result<Option<PathBuf>, St
             let exe = benchexe::executable(&one, dir, target_dir, Build::Measure)
                 .ok_or_else(|| missing(pkg))?;
             let digest = headrun::binary_digest(&exe);
-            let env = invoke::host_env(&exe, one.backend.as_deref()).ok();
+            let env = invoke::host_env(&exe, &one).ok();
             // Identical binaries need no map of the merge-base: the gate
             // measures the one pass.
             let same_as_head = *side == Side::Base

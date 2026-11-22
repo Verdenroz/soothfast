@@ -157,7 +157,7 @@ pub(super) fn measure_ref_interleaved(
         let base_env = head_cg
             .zip(digests.as_ref())
             .filter(|(_, d)| d.head != d.base)
-            .map(|(_, d)| invoke::host_env(&d.base_exe, common.backend.as_deref()));
+            .map(|(_, d)| invoke::host_env(&d.base_exe, common));
         let harness = match head_cg
             .and_then(|head| base_method_differs(head, digests.is_some(), base_env.as_ref()))
         {
