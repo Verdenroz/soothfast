@@ -20,6 +20,7 @@ mod codekey;
 mod config;
 mod coverage;
 mod coverage_lang;
+mod cpu;
 mod docs;
 mod docs_binds;
 mod docs_claims;
@@ -219,7 +220,7 @@ commands:
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]
-           [--no-item-cache]
+           [--no-item-cache] [--cpu default|portable|NAMES]
            (under callgrind, reuses the counts stored for this bench binary
            and measures only timing again; --no-reuse measures in full;
            --no-item-cache measures every item rather than reusing those
@@ -228,7 +229,7 @@ commands:
            [--baseline NAME] [--ratchet NAME] [--against-ref REF] [--deps]
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
            [--codegen-units N|inherit] [--no-reuse-base] [--allow-gone]
-           [--allow-harness-change] [--no-item-cache]
+           [--allow-harness-change] [--no-item-cache] [--cpu default|portable|NAMES]
            (--save-baseline persists the head run after a pass, listing
            walltime another run measured as unmeasured; a failed or errored
            gate lists its items as gate-failed; with --shard the file holds
@@ -236,6 +237,8 @@ commands:
            (--allow-harness-change passes a run whose reference could not be
            pinned to HEAD's soothfast, where the delta may be the harness)
            (--codegen-units pins both sides' partitioning; default 1)
+           (--cpu names the CPU features callgrind hides beyond AVX-512:
+           default, portable, or comma-separated glibc feature names)
            (--no-reuse-base re-measures the reference instead of reusing it)
   gate     --import FORMAT FILE [--prefix P] [--walltime hard|advisory] [--allow-gone]
            (--baseline NAME | --reference-import FORMAT FILE)

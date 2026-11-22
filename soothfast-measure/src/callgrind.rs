@@ -35,10 +35,17 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 /// Disable runtime AVX-512 dispatch in the child: valgrind's VEX can't
 /// decode EVEX. Helps hosts whose *loader* is decodable; a loader compiled
 /// with AVX-512 (CachyOS x86-64-v4 glibc) still SIGILLs — probe catches it.
-const GLIBC_TUNABLES: (&str, &str) = (
-    "GLIBC_TUNABLES",
-    "glibc.cpu.hwcaps=-AVX512F,-AVX512VL,-AVX512BW,-AVX512DQ,-AVX512CD,-AVX512_VBMI,-AVX512_VBMI2,-AVX512_VNNI,-AVX512_BITALG,-AVX512_VPOPCNTDQ",
-);
+const HIDDEN_AVX512: &str = "-AVX512F,-AVX512VL,-AVX512BW,-AVX512DQ,-AVX512CD,-AVX512_VBMI,-AVX512_VBMI2,-AVX512_VNNI,-AVX512_BITALG,-AVX512_VPOPCNTDQ";
+
+/// The `GLIBC_TUNABLES` value that hides AVX-512 and then each of `extra`.
+fn glibc_tunables(extra: &[&str]) -> String {
+    let mut caps = HIDDEN_AVX512.to_string();
+    for name in extra {
+        caps.push_str(",-");
+        caps.push_str(name);
+    }
+    format!("glibc.cpu.hwcaps={caps}")
+}
 
 /// Can valgrind actually run THIS binary? `valgrind --version` is not
 /// enough: an AVX-512-compiled glibc loader SIGILLs before main().
@@ -46,7 +53,7 @@ pub fn probe() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let out = out_file("probe");
     let result = Command::new("valgrind")
-        .env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
+        .env("GLIBC_TUNABLES", glibc_tunables(&[]))
         .args([
             "--tool=callgrind",
             &format!("--callgrind-out-file={}", out.display()),
@@ -94,7 +101,7 @@ pub fn guest() -> Option<Guest> {
     let exe = std::env::current_exe().ok()?;
     let out = out_file("guest");
     let run = Command::new("valgrind")
-        .env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
+        .env("GLIBC_TUNABLES", glibc_tunables(&[]))
         .args([
             "--tool=callgrind",
             &format!("--callgrind-out-file={}", out.display()),
@@ -208,7 +215,7 @@ fn out_file(tag: &str) -> PathBuf {
 fn valgrind_cmd(out: &Path, mangled: bool) -> Result<Command, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut cmd = Command::new("valgrind");
-    cmd.env(GLIBC_TUNABLES.0, GLIBC_TUNABLES.1)
+    cmd.env("GLIBC_TUNABLES", glibc_tunables(&[]))
         .args([
             "--tool=callgrind",
             "--compress-strings=no",
@@ -575,7 +582,24 @@ pub fn annotate(id: &str) -> Result<String, String> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{executed, function_costs, out_file, summary_ir, take_dumps, window_for};
+    use super::{
+        executed, function_costs, glibc_tunables, out_file, summary_ir, take_dumps, window_for,
+    };
+
+    #[test]
+    fn no_extra_features_leaves_the_avx512_mask_as_it_always_was() {
+        assert_eq!(
+            glibc_tunables(&[]),
+            "glibc.cpu.hwcaps=-AVX512F,-AVX512VL,-AVX512BW,-AVX512DQ,-AVX512CD,-AVX512_VBMI,-AVX512_VBMI2,-AVX512_VNNI,-AVX512_BITALG,-AVX512_VPOPCNTDQ"
+        );
+    }
+
+    #[test]
+    fn extra_features_follow_the_avx512_set() {
+        let tunables = glibc_tunables(&["AVX2", "ERMS"]);
+        assert!(tunables.starts_with("glibc.cpu.hwcaps=-AVX512F,"));
+        assert!(tunables.ends_with(",-AVX512_VPOPCNTDQ,-AVX2,-ERMS"));
+    }
 
     const OUT: &str = "\
 events: Ir

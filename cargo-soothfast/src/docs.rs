@@ -1068,6 +1068,7 @@ mod tests {
             baseline: Some("main".into()),
             paths: Some(vec!["book".into()]),
             coverage: None,
+            cpu: None,
         };
         let mut a = DocsArgs {
             baseline: "base".into(),

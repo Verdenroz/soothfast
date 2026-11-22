@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
+use crate::cpu::CpuMask;
+
 /// The command groups a package's defaults can differ across.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Group {
@@ -47,6 +49,7 @@ impl Group {
     fn takes(self, key: &str) -> bool {
         match key {
             "features" => true,
+            "cpu" => self == Group::Gate,
             "target" => self != Group::Test,
             "baseline" => matches!(self, Group::Gate | Group::Docs),
             "paths" | "coverage" => self == Group::Docs,
@@ -64,6 +67,8 @@ pub struct Settings {
     /// The bench target a command builds and runs, as `--bench` takes it. Only
     /// a group table sets it, and `test` has none.
     pub target: Option<String>,
+    /// The CPU features callgrind hides, as `--cpu` takes them.
+    pub cpu: Option<CpuMask>,
     /// The baseline a command compares against or saves to.
     pub baseline: Option<String>,
     /// The PATHS `docs` commands scan when none are given, in place of
@@ -79,6 +84,7 @@ impl Settings {
         Settings {
             features: self.features.or(lower.features),
             target: self.target.or(lower.target),
+            cpu: self.cpu.or(lower.cpu),
             baseline: self.baseline.or(lower.baseline),
             paths: self.paths.or(lower.paths),
             coverage: self.coverage.or(lower.coverage),
@@ -201,6 +207,7 @@ fn set(
     match (key, value) {
         ("features", TomlValue::Str(s)) => settings.features = Some(s),
         ("target", TomlValue::Str(s)) if group.is_some() => settings.target = Some(s),
+        ("cpu", value) => settings.cpu = Some(super::gate::cpu_mask(value).map_err(|_| ())?),
         ("baseline", TomlValue::Str(s)) => settings.baseline = Some(s),
         ("paths", TomlValue::StrArray(v)) => settings.paths = Some(v),
         ("coverage", TomlValue::Int(n)) if group.is_some() => {
@@ -289,6 +296,21 @@ mod tests {
         assert!(parse("[package.a]\ncoverage = 85\n").is_err());
         assert!(parse("[package.a.docs]\ncoverage = 101\n").is_err());
         assert!(parse("[package.a.docs]\ncoverage = \"85\"\n").is_err());
+    }
+
+    #[test]
+    fn cpu_is_a_package_key_and_a_gate_group_key() {
+        let tables =
+            parse("[package.a]\ncpu = \"portable\"\n\n[package.a.gate]\ncpu = [\"ERMS\"]\n")
+                .unwrap();
+        let gate = tables["a"].settings(Group::Gate);
+        assert_eq!(gate.cpu, Some(CpuMask::Hide(vec!["ERMS".into()])));
+        assert_eq!(
+            tables["a"].settings(Group::Docs).cpu,
+            Some(CpuMask::Portable)
+        );
+        assert!(parse("[package.a.docs]\ncpu = \"portable\"\n").is_err());
+        assert!(parse("[package.a]\ncpu = \"nonsense words\"\n").is_err());
     }
 
     #[test]
