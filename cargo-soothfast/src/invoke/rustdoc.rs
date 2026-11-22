@@ -150,6 +150,82 @@ pub fn rustdoc_json_in(
     features: Option<&str>,
     visibility: Visibility,
 ) -> io::Result<(Value, PathBuf)> {
+    rustdoc_json_with(pkg, dir, Features::Requested(features), visibility)
+}
+
+/// [`rustdoc_json_in`] for workspace member `pkg` built with exactly
+/// `features`, the comma-separated set another package's build enables in it
+/// (see [`dependency_features`]); `default` is on only when listed.
+pub fn rustdoc_json_exactly(
+    pkg: &str,
+    dir: Option<&Path>,
+    features: &str,
+    visibility: Visibility,
+) -> io::Result<(Value, PathBuf)> {
+    rustdoc_json_with(pkg, dir, Features::Exactly(features), visibility)
+}
+
+/// The features `pkg`'s own build enables in each package it depends on,
+/// by lib crate name: what `cargo tree` resolves for `pkg` with `features`.
+pub fn dependency_features(
+    pkg: &str,
+    dir: Option<&Path>,
+    features: Option<&str>,
+) -> io::Result<BTreeMap<String, String>> {
+    let mut cmd = Command::new("cargo");
+    cmd.args([&format!("+{}", rustdoc_toolchain()), "tree", "-p", pkg]);
+    if let Some(f) = features {
+        cmd.args(["--features", f]);
+    }
+    cmd.args(["-e", "normal", "--prefix", "none", "-f", "{lib}|{f}"]);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    let out = timed(&format!("cargo tree {pkg}"), || cmd.output())?;
+    if !out.status.success() {
+        return Err(io::Error::other(format!(
+            "cargo tree failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(parse_tree_features(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// `{lib}|{f}` lines, a repeated package marked ` (*)` after its first line.
+fn parse_tree_features(text: &str) -> BTreeMap<String, String> {
+    text.lines()
+        .filter_map(|line| {
+            let (lib, features) = line.trim_end_matches(" (*)").split_once('|')?;
+            Some((lib.to_string(), features.to_string()))
+        })
+        .collect()
+}
+
+/// The features a rustdoc build is asked for.
+#[derive(Clone, Copy)]
+enum Features<'a> {
+    /// `--features` as given, defaults on.
+    Requested(Option<&'a str>),
+    /// This set and nothing else.
+    Exactly(&'a str),
+}
+
+impl Features<'_> {
+    fn key(self) -> Option<String> {
+        match self {
+            Features::Requested(f) => f.map(str::to_string),
+            Features::Exactly(f) => Some(format!("--no-default-features {f}")),
+        }
+    }
+}
+
+fn rustdoc_json_with(
+    pkg: &str,
+    dir: Option<&Path>,
+    features: Features<'_>,
+    visibility: Visibility,
+) -> io::Result<(Value, PathBuf)> {
     let toolchain = rustdoc_toolchain();
     let root = match dir {
         Some(d) => d.to_path_buf(),
@@ -161,7 +237,8 @@ pub fn rustdoc_json_in(
         .join("doc")
         .join(format!("{}.json", pkg.replace('-', "_")));
 
-    let store_key = || rustdoc_store_key(pkg, dir, &root, features, visibility, &toolchain);
+    let keyed = features.key();
+    let store_key = || rustdoc_store_key(pkg, dir, &root, keyed.as_deref(), visibility, &toolchain);
     let key = store_key();
     if let Some(doc) = key.as_deref().and_then(|k| rustdocstore::load(k, &root)) {
         warn_on_format_version(&doc);
@@ -243,7 +320,7 @@ fn rustdoc_command(
     toolchain: &str,
     pkg: &str,
     dir: Option<&Path>,
-    features: Option<&str>,
+    features: Features<'_>,
     visibility: Visibility,
     dep_info: Option<&Path>,
 ) -> Command {
@@ -253,8 +330,14 @@ fn rustdoc_command(
         cmd.arg("--message-format=json-render-diagnostics");
     }
     // Feature-gated items are invisible to the surface unless enabled.
-    if let Some(f) = features {
-        cmd.args(["--features", f]);
+    match features {
+        Features::Requested(Some(f)) => {
+            cmd.args(["--features", f]);
+        }
+        Features::Requested(None) => {}
+        Features::Exactly(f) => {
+            cmd.args(["--no-default-features", "--features", f]);
+        }
     }
     cmd.args(["--", "--output-format", "json", "-Zunstable-options"]);
     if let Some(path) = dep_info {
@@ -487,6 +570,15 @@ mod tests {
         for stderr in elsewhere {
             assert_eq!(super::toolchain_trouble(stderr, tc), None, "{stderr}");
         }
+    }
+
+    #[test]
+    fn tree_features_keep_each_package_once_and_an_empty_set() {
+        let text = "a|extra\nb|default,extra\nc|\nb|default,extra (*)\n";
+        let got = super::parse_tree_features(text);
+        assert_eq!(got["b"], "default,extra");
+        assert_eq!(got["c"], "");
+        assert_eq!(got.len(), 3);
     }
 
     #[test]
