@@ -147,6 +147,9 @@ jobs:
                        soothfast-docs soothfast-spec soothfast-sdk soothfast-report soothfast-site; do
             bin/cargo-soothfast coverage docs -p "$crate" --min 100
           done
+      # Ignored in `check`: they build rustdoc JSON with the toolchain pinned here.
+      - name: A facade keeps its surface across a crate split
+        run: cargo test -p cargo-soothfast --bin cargo-soothfast reexport_tests -- --ignored
 
   # Regenerate every derivable docs artifact on the default branch and commit
   # the result. Mirrors the spec workflow: a contributor never has to
