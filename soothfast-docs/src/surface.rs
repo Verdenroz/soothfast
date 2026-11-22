@@ -871,6 +871,44 @@ mod tests {
     }
 
     #[test]
+    fn a_glob_of_a_local_module_takes_a_local_named_reexport_once() {
+        // `mod inner { pub use crate::indicators::sma; } pub use inner::*;`
+        let mut doc = private_submodule_reexport_doc();
+        doc["index"]["1"]["inner"]["module"]["items"] = json!([2, 3, 8]);
+        doc["index"]["7"] = json!({
+            "visibility": "default",
+            "inner": { "module": { "items": [9] } },
+        });
+        doc["index"]["8"] = json!({
+            "visibility": "public",
+            "inner": { "use": { "name": "inner", "id": 7, "is_glob": true } },
+        });
+        doc["index"]["9"] = json!({
+            "visibility": "public",
+            "inner": { "use": { "name": "average", "id": 2, "is_glob": false } },
+        });
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-surface-inner-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/sma.rs"), "pub fn sma() {}\n").unwrap();
+
+        let surface = from_rustdoc(&doc, &dir);
+        let alias = &surface.items["myc::indicators::average"];
+        assert_eq!(
+            alias.fingerprint,
+            surface.items["myc::indicators::sma"].fingerprint
+        );
+        let functions: Vec<_> = surface
+            .grouped()
+            .into_iter()
+            .filter(|g| surface.items[g.representative].kind == "function")
+            .collect();
+        assert_eq!(functions.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_crate_without_a_known_surface_stays_unresolved() {
         let surface = from_rustdoc(&facade_doc(), Path::new("."));
         assert_eq!(surface.items.keys().collect::<Vec<_>>(), ["a"]);
