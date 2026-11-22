@@ -247,6 +247,9 @@ fn surface_diff(
 }
 
 #[cfg(test)]
+mod reexport_tests;
+
+#[cfg(test)]
 mod tests {
     use soothfast_docs::surface::{ItemInfo, Surface};
 
