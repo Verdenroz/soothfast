@@ -307,8 +307,12 @@ requests write) for <code>push</code>, <code>workflow_dispatch</code>, or <code>
 default branch, or on a tag whose commit is already on it. A <code>pull_request</code>
 run from the repository itself gets no token at all; it asks the broker to
 post the gate comment, and the broker does so with a token it holds and
-revokes itself. Every other event, ref, or repository the App is not
-installed on is refused.</p>
+revokes itself. The broker takes the same request from a <code>workflow_run</code> job
+on the default branch, for a fork's pull request only. That job gets no token
+either, and the broker posts only after it finds the named pull request open,
+from a fork and not this repository, and still at the head commit the job
+names. Every other event, ref, or repository the App is not installed on is
+refused.</p>
 <h2 id="inputs">Inputs<a class="anchor" href="#inputs" aria-label="Link to this section">#</a></h2>
 <div class="tablewrap"><table>
 <thead><tr><th>Input</th><th>Default</th><th>Meaning</th></tr></thead>
