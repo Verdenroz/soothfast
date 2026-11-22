@@ -148,16 +148,20 @@ impl<'a> Runs<'a> {
 /// Callgrind counts also depend on how the harness takes them, so the method
 /// is part of the key and a count is never reused across methods.
 pub fn host(env: &HostEnv) -> String {
+    let hidden = match env.cpu.as_str() {
+        "" => String::new(),
+        names => format!(" hiding {names}"),
+    };
     match (env.gating_backend.as_str(), &env.guest) {
         ("callgrind", Some(g)) => format!(
-            "guest {} glibc {} {} {} method {}",
+            "guest {} glibc {} {} {} method {}{hidden}",
             g.cpu,
             g.glibc,
             g.libc,
             g.valgrind,
             env.method()
         ),
-        ("callgrind", None) => format!("{} method {}", cpu_model(), env.method()),
+        ("callgrind", None) => format!("{} method {}{hidden}", cpu_model(), env.method()),
         _ => cpu_model(),
     }
 }
@@ -175,6 +179,9 @@ pub fn measured_on(env: &HostEnv) -> Value {
     }
     if env.gating_backend == "callgrind" {
         on["callgrind_method"] = serde_json::json!(env.method());
+        if !env.cpu.is_empty() {
+            on["cpu_hidden"] = serde_json::json!(env.cpu);
+        }
     }
     on
 }
@@ -376,6 +383,7 @@ mod tests {
             codegen_units: "1".into(),
             profiles: "aaaa".into(),
             rustflags: "bbbb".into(),
+            cpu: String::new(),
         }
     }
 
@@ -418,6 +426,7 @@ mod tests {
             guest: None,
             callgrind_method: None,
             item_reuse: true,
+            cpu: String::new(),
         }
     }
 
@@ -425,6 +434,7 @@ mod tests {
         HostEnv {
             gating_backend: "callgrind".into(),
             item_reuse: true,
+            cpu: String::new(),
             callgrind_method: Some("one-process".into()),
             guest: Some(invoke::Guest {
                 cpu: "0123456789abcdef".into(),
@@ -581,6 +591,34 @@ mod tests {
             Runs::new(&stamp(), &args(), Some(one)).item_scope(),
             Runs::new(&stamp(), &args(), Some(two)).item_scope()
         );
+    }
+
+    #[test]
+    fn a_cpu_mask_is_part_of_the_key_only_when_it_is_not_the_default() {
+        let hiding = |names: &str| HostEnv {
+            cpu: names.into(),
+            ..callgrind_guest()
+        };
+        let key = |env: &HostEnv| key("aaa", &stamp(), &args(), env);
+        assert_eq!(host(&hiding("")), host(&callgrind_guest()));
+        assert!(host(&hiding("AVX2,ERMS")).ends_with(" method one-process hiding AVX2,ERMS"));
+        assert_eq!(key(&hiding("")), key(&callgrind_guest()));
+        assert_ne!(key(&hiding("AVX2")), key(&callgrind_guest()));
+        assert_ne!(key(&hiding("AVX2")), key(&hiding("AVX2,ERMS")));
+        assert_ne!(
+            Runs::new(&stamp(), &args(), Some(hiding("AVX2"))).item_scope(),
+            Runs::new(&stamp(), &args(), Some(callgrind_guest())).item_scope()
+        );
+    }
+
+    #[test]
+    fn a_mask_is_recorded_beside_the_conditions_only_when_set() {
+        let hiding = HostEnv {
+            cpu: "AVX2".into(),
+            ..callgrind_guest()
+        };
+        assert_eq!(measured_on(&hiding)["cpu_hidden"], "AVX2");
+        assert!(measured_on(&callgrind_guest())["cpu_hidden"].is_null());
     }
 
     #[test]

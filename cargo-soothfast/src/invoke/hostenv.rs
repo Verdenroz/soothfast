@@ -6,6 +6,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
+use super::CommonArgs;
+
 /// What a bench binary resolves on this host, from the env line a run starts
 /// with.
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +20,10 @@ pub struct HostEnv {
     pub callgrind_method: Option<String>,
     /// Whether the harness takes `--id` and reports `executed` records.
     pub item_reuse: bool,
+    /// The CPU features callgrind hides beyond AVX-512; empty for the default
+    /// mask. It is what the run was asked for, not something the harness
+    /// reports.
+    pub cpu: String,
 }
 
 /// What callgrind's counts depend on besides the binary.
@@ -57,6 +63,7 @@ impl HostEnv {
             guest,
             callgrind_method: field("callgrind_method"),
             item_reuse: v["item_reuse"].as_bool().unwrap_or(false),
+            cpu: String::new(),
         })
     }
 }
@@ -64,12 +71,13 @@ impl HostEnv {
 /// What `exe` resolves on this host for `backend`, as the env line of a real
 /// run would name it. A harness older than `--env`, or a named backend this
 /// host cannot run, exits non-zero and reads as unresolved.
-pub fn host_env(exe: &Path, backend: Option<&str>) -> Result<HostEnv, String> {
+pub fn host_env(exe: &Path, common: &CommonArgs) -> Result<HostEnv, String> {
     let mut cmd = Command::new(exe);
     cmd.arg("--env");
-    if let Some(b) = backend {
+    if let Some(b) = &common.backend {
         cmd.args(["--backend", b]);
     }
+    super::bench::cpu_args(&mut cmd, common)?;
     let out = cmd
         .output()
         .map_err(|e| format!("could not run the bench harness: {e}"))?;
@@ -83,6 +91,10 @@ pub fn host_env(exe: &Path, backend: Option<&str>) -> Result<HostEnv, String> {
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .find(|v| v["type"] == "env")
         .and_then(|v| HostEnv::from_line(&v))
+        .map(|env| HostEnv {
+            cpu: common.cpu_stamp(),
+            ..env
+        })
         .ok_or_else(|| "bench harness printed no env line for --env".into())
 }
 
@@ -158,6 +170,7 @@ mod tests {
                 }),
                 callgrind_method: Some("one-process".into()),
                 item_reuse: false,
+                cpu: String::new(),
             })
         );
         let partial = serde_json::json!({

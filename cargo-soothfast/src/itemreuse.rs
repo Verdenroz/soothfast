@@ -85,11 +85,10 @@ impl Reuse {
             println!("{cmd}: per-item reuse off (--no-item-cache); {otherwise}");
             return None;
         }
-        let backend = common.backend.as_deref();
         let capable = reads_maps(env, common)
             && bins[1..].iter().all(|bin| match bin.env {
                 Some(env) => env.item_reuse,
-                None => invoke::host_env(bin.exe, backend).is_ok_and(|e| e.item_reuse),
+                None => invoke::host_env(bin.exe, common).is_ok_and(|e| e.item_reuse),
             });
         if !capable {
             harness_lacks_id(cmd);

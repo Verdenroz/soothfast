@@ -170,8 +170,18 @@ fn bench_command(
     if let Some(s) = &common.samples {
         cmd.args(["--samples", s]);
     }
+    cpu_args(&mut cmd, common).map_err(io::Error::other)?;
     cmd.args(extra);
     Ok(cmd)
+}
+
+/// Tell the harness which CPU features to hide, when the mask hides any.
+pub(super) fn cpu_args(cmd: &mut Command, common: &CommonArgs) -> Result<(), String> {
+    let hidden = common.cpu_mask()?.identity();
+    if !hidden.is_empty() {
+        cmd.args(["--cpu-hide", &hidden]);
+    }
+    Ok(())
 }
 
 /// Run the bench binary with `--json` (optionally in another worktree) and
@@ -342,8 +352,13 @@ fn run_records(
             )));
         }
         let reason = failure_reason(&stderr);
+        let hint = if reason.contains("unknown runner arg \"--cpu-hide\"") {
+            "this soothfast dependency predates `cpu`: update it, or unset `cpu`".to_string()
+        } else {
+            format!("is the [[bench]] name = \"{target}\", harness = false target set up?")
+        };
         return Err(io::Error::other(format!(
-            "cargo bench failed with {}: {reason} (is the [[bench]] name = \"{target}\", harness = false target set up?)",
+            "cargo bench failed with {}: {reason} ({hint})",
             out.status
         )));
     }
@@ -473,6 +488,36 @@ pub fn bench_executable(
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
+    use super::{CommonArgs, cpu_args};
+
+    fn cpu_flags(cpu: Option<&str>) -> Vec<String> {
+        let common = CommonArgs {
+            cpu: cpu.map(String::from),
+            ..CommonArgs::default()
+        };
+        let mut cmd = Command::new("bench");
+        cpu_args(&mut cmd, &common).unwrap();
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn the_default_mask_adds_nothing_to_the_harness_command() {
+        assert!(cpu_flags(None).is_empty());
+        assert!(cpu_flags(Some("default")).is_empty());
+    }
+
+    #[test]
+    fn a_mask_reaches_the_harness_as_its_sorted_hidden_names() {
+        assert_eq!(cpu_flags(Some("ERMS,AVX2")), ["--cpu-hide", "AVX2,ERMS"]);
+        let portable = cpu_flags(Some("portable"));
+        assert_eq!(portable[0], "--cpu-hide");
+        assert!(portable[1].split(',').any(|n| n == "AVX2"));
+    }
+
     #[test]
     fn a_failed_build_is_shown_from_its_first_error_and_its_last_lines() {
         let mut lines: Vec<String> = (0..5).map(|i| format!("   Compiling c{i}")).collect();

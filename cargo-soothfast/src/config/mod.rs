@@ -35,6 +35,7 @@ pub fn apply(common: &mut CommonArgs, group: Group) -> Result<Applied, String> {
 /// [`apply`] for a command that works on `pkgs` together.
 pub fn apply_to(common: &mut CommonArgs, group: Group, pkgs: &[String]) -> Result<Applied, String> {
     let Ok(root) = invoke::workspace_root() else {
+        common.settle_cpu()?;
         return Ok(Applied::default());
     };
     Config::load(&root)?.fill(common, group, pkgs)
@@ -44,6 +45,18 @@ pub fn apply_to(common: &mut CommonArgs, group: Group, pkgs: &[String]) -> Resul
 /// a command that has no [`CommonArgs`] to fill.
 pub fn defaults(pkgs: &[String], group: Group) -> Result<Settings, String> {
     Config::load(&invoke::project_root())?.resolve(pkgs, group)
+}
+
+/// What a measurement of `pkgs` hides beyond AVX-512, as a stamp records it:
+/// the gate's mask for them, or the repo-wide one when they resolve
+/// differently, and nothing where the harness has no mask to apply.
+pub fn gate_cpu(pkgs: &[String]) -> Result<String, String> {
+    let settings = defaults(pkgs, Group::Gate).or_else(|_| defaults(&[], Group::Gate))?;
+    Ok(settings
+        .cpu
+        .filter(|_| crate::cpu::SUPPORTED)
+        .map(|mask| mask.identity())
+        .unwrap_or_default())
 }
 
 /// A root `soothfast.toml`'s text. Sections parse on demand, so a malformed
@@ -85,6 +98,10 @@ impl Config {
         if common.target.is_none() {
             common.target = settings.target.clone();
         }
+        if group == Group::Gate && common.cpu.is_none() {
+            common.cpu = settings.cpu.as_ref().map(ToString::to_string);
+        }
+        common.settle_cpu()?;
         Ok(Applied { gate, settings })
     }
 
@@ -191,10 +208,14 @@ impl Config {
 
     fn repo_wide(&self, group: Group) -> Result<Settings, String> {
         Ok(match group {
-            Group::Gate | Group::Spec => Settings {
-                features: self.gate()?.features,
-                ..Settings::default()
-            },
+            Group::Gate | Group::Spec => {
+                let gate = self.gate()?;
+                Settings {
+                    features: gate.features,
+                    cpu: gate.cpu,
+                    ..Settings::default()
+                }
+            }
             Group::Docs => {
                 let docs = self.docs()?;
                 Settings {
@@ -215,6 +236,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cpu::CpuMask;
 
     fn config(text: &str) -> Config {
         Config {
@@ -282,6 +304,30 @@ mod tests {
         assert_eq!(docs.baseline.as_deref(), Some("main"));
         let spec = cfg.resolve(&pkgs(&["unlisted"]), Group::Spec).unwrap();
         assert_eq!(spec.features.as_deref(), Some("repo"));
+    }
+
+    #[test]
+    fn cpu_resolves_group_then_package_then_repo_wide() {
+        let text = "[gate]\ncpu = \"portable\"\n\n[package.a]\ncpu = [\"AVX2\"]\n\n[package.b]\ncpu = [\"AVX2\"]\n\n[package.b.gate]\ncpu = \"default\"\n";
+        let cfg = config(text);
+        let cpu = |p: &str| cfg.resolve(&pkgs(&[p]), Group::Gate).unwrap().cpu;
+        assert_eq!(cpu("unlisted"), Some(CpuMask::Portable));
+        assert_eq!(cpu("a"), Some(CpuMask::Hide(vec!["AVX2".into()])));
+        assert_eq!(cpu("b"), Some(CpuMask::Default));
+    }
+
+    #[test]
+    fn a_flag_beats_every_configured_cpu() {
+        let cfg = config("[gate]\ncpu = \"portable\"\n");
+        let mut flagged = CommonArgs {
+            cpu: Some("AVX2".into()),
+            ..CommonArgs::default()
+        };
+        cfg.fill(&mut flagged, Group::Gate, &[]).unwrap();
+        assert_eq!(flagged.cpu.as_deref(), Some("AVX2"));
+        let mut bare = CommonArgs::default();
+        cfg.fill(&mut bare, Group::Gate, &[]).unwrap();
+        assert_eq!(bare.cpu.as_deref(), Some("portable"));
     }
 
     #[test]

@@ -34,7 +34,7 @@ pub fn probe<'a>(
 /// timing is measured again; everything else measures in full and stores
 /// the result for the next gate or measure.
 pub fn measure(common: &CommonArgs, reuse: bool) -> Result<Run, String> {
-    let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+    let stamp = buildstamp::capture(common, None);
     let (digest, runs, exe) = probe("measure", common, &stamp);
     let expected = exe.as_deref().and_then(|exe| expected_ids(common, exe));
     let stored = match (
@@ -291,7 +291,7 @@ pub fn binary_digest(exe: &Path) -> Option<String> {
 fn resolved_env(cmd: &str, common: &CommonArgs, exe: Option<&Path>) -> Option<invoke::HostEnv> {
     let resolved = exe
         .ok_or_else(|| "HEAD's bench binary did not build".to_string())
-        .and_then(|exe| invoke::host_env(exe, common.backend.as_deref()));
+        .and_then(|exe| invoke::host_env(exe, common));
     match resolved {
         Ok(env) => {
             println!(
@@ -716,6 +716,7 @@ mod tests {
             codegen_units: "1".into(),
             profiles: "p".into(),
             rustflags: "f".into(),
+            cpu: String::new(),
         };
         let common = CommonArgs {
             pkg: Some("test-headrun-refused".into()),
@@ -726,6 +727,7 @@ mod tests {
             guest: None,
             callgrind_method: None,
             item_reuse: true,
+            cpu: String::new(),
         };
         let runs = Runs::new(&stamp, &common, Some(env));
         cache_head(
@@ -744,6 +746,7 @@ mod tests {
             codegen_units: "1".into(),
             profiles: "p".into(),
             rustflags: "f".into(),
+            cpu: String::new(),
         };
         let common = CommonArgs {
             pkg: Some("test-headrun-failed-claim".into()),
@@ -754,6 +757,7 @@ mod tests {
             guest: None,
             callgrind_method: None,
             item_reuse: true,
+            cpu: String::new(),
         };
         let runs = Runs::new(&stamp, &common, Some(env));
         let mut failing = timing();
@@ -784,6 +788,7 @@ mod tests {
             guest: None,
             callgrind_method: None,
             item_reuse: true,
+            cpu: String::new(),
         };
         let runs = Runs::new(&stamp, &common, Some(env));
         let counted = |ir| {
@@ -836,6 +841,7 @@ mod tests {
             guest: None,
             callgrind_method: None,
             item_reuse: true,
+            cpu: String::new(),
         };
         let stamp = BuildStamp::fixture();
         let runs = Runs::new(&stamp, &common, Some(env));
@@ -1020,6 +1026,7 @@ mod tests {
             guest: None,
             callgrind_method: None,
             item_reuse: true,
+            cpu: String::new(),
         }
     }
 
@@ -1029,6 +1036,7 @@ mod tests {
             codegen_units: "1".into(),
             profiles: "p".into(),
             rustflags: "f".into(),
+            cpu: String::new(),
         }
     }
 

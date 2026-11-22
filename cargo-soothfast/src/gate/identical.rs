@@ -306,6 +306,7 @@ mod tests {
             guest: None,
             callgrind_method: method.map(String::from),
             item_reuse: true,
+            cpu: String::new(),
         }
     }
 

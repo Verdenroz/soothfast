@@ -85,6 +85,10 @@ outside it that moves the numbers:
   synthesizes the same guest CPU on different host models, so callgrind runs
   from differently named CI hosts share a key, while a machine with another
   glibc or valgrind does not;
+- for `callgrind`, the CPU features the harness hides beyond AVX-512 (`cpu`
+  under `[gate]`, see [measuring](measuring.md)), when any are hidden. The
+  default hides none and adds nothing to the key, so no stored run is
+  invalidated by upgrading;
 - for `callgrind`, the method the harness counts with, `one-process` or
   `two-process` (`SOOTHFAST_CALLGRIND_TWO_PROCESS=1` forces the latter). The
   two differ slightly (teardown, the dump requests), so a count taken one way
@@ -538,6 +542,11 @@ build time, which is the price of a comparison that means something;
 codegen-units = "inherit"
 ```
 
+The mask of hidden CPU features is part of the build stamp too, but only
+when it is not the default. A reference saved under another `cpu` setting
+than the run has reads as `build settings differ: cpu (default -> AVX,...)`
+and the deterministic counters soften as above.
+
 Dependencies are left alone. They are identical on both sides, so they
 already partition identically, and pinning them as well would compile the
 whole graph a second time for nothing.
@@ -563,6 +572,33 @@ codegen does not move them.
 A baseline saved before build stamps existed compares the same way, and says
 to re-save it. `--against-ref` never hits that: both sides are measured fresh
 in the same run.
+
+## Switching the CPU mask
+
+Setting `cpu = "portable"` changes every callgrind count in the repository
+once, for the reason [measuring](measuring.md) gives. The first runs after
+the switch behave like this:
+
+- `gate` against the merge-base measures both sides under the new mask, so
+  the verdict is unaffected. Neither side is found in the run cache or the
+  item cache, so that first run measures in full.
+- `gate --baseline NAME` and `--ratchet NAME` against a baseline saved under
+  the old mask print `build settings differ: cpu (default -> ...)` and soften
+  the deterministic counters to SOFT, the way a changed `rustc` or profile
+  does. The run passes. `measure --save-baseline NAME` under the new mask
+  makes the baseline comparable again.
+- `docs check` refuses claims read against a baseline saved under another
+  mask, and names the `measure --save-baseline` that fixes it. A baseline
+  file carries one build stamp, its last save's, so re-save every package
+  that shares the file.
+- `report changelog --against-ref` measures the last release with that
+  release's own harness. Until a release ships with a harness that knows
+  `cpu`, the changelog's perf delta against it is left out with a warning.
+- Numbers in claims, and the ceilings in `soothfast-gate.lock`, were taken
+  under the old mask. A claim that was close to its limit may now fail, and
+  a locked entry no longer describes the new counts. Rewording the claim or
+  running `gate accept` again is a maintainer's call; nothing does it for
+  you.
 
 ## When the harness moves under a PR
 
@@ -657,14 +693,16 @@ paths = ["README.md", "docs/server"]
 
 | Group | Commands | Keys |
 | --- | --- | --- |
-| `gate` | `gate`, `measure`, `baseline`, `prebuild`, `trend append`, `buildcost` | `features`, `target`, `baseline` |
+| `gate` | `gate`, `measure`, `baseline`, `prebuild`, `trend append`, `buildcost` | `features`, `target`, `baseline`, `cpu` |
 | `docs` | `docs *`, `coverage`, `report`, `mcp` | `features`, `target`, `baseline`, `paths`, `coverage` |
 | `spec` | `spec *`, `sdk *` | `features`, `target` |
 | `test` | `test` | `features` |
 
 `features` takes what `--features` takes. `target` is the bench target a
 command builds, what `--bench` takes, and only a group table sets it.
-`baseline` is the baseline `--baseline` names. `paths` replaces `[docs] paths`
+`baseline` is the baseline `--baseline` names. `cpu` is the CPU features
+callgrind hides, what `--cpu` takes; the `gate` group and the package table
+set it, and so does `[gate] cpu` repo-wide. `paths` replaces `[docs] paths`
 as the PATHS `docs` commands scan when none are given. `coverage` is a whole
 percent from 0 to 100, the `--min` of `coverage docs` when the flag is absent;
 it is also a key of the repo-wide `[docs]` table. An older `cargo soothfast`

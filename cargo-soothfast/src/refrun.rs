@@ -56,7 +56,7 @@ pub fn recorded_for(
     key: &str,
 ) -> Option<Value> {
     let exe = invoke::bench_executable(common, None, None)?;
-    let env = invoke::host_env(&exe, common.backend.as_deref()).ok()?;
+    let env = invoke::host_env(&exe, common).ok()?;
     recorded(&Runs::new(stamp, common, Some(env)), sha, key)
 }
 
@@ -156,6 +156,7 @@ mod tests {
             codegen_units: "1".into(),
             profiles: "p".into(),
             rustflags: "f".into(),
+            cpu: String::new(),
         }
     }
 
@@ -165,6 +166,7 @@ mod tests {
             guest: None,
             callgrind_method: None,
             item_reuse: true,
+            cpu: String::new(),
         }
     }
 

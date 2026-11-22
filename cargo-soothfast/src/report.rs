@@ -175,7 +175,9 @@ fn surface_diffs(pkgs: &[String], refname: &str, features: Option<&str>) -> Resu
 /// One worktree for all of them; packages without a bench target there are
 /// skipped rather than failing the run, since a newly measured crate simply
 /// has no earlier side to compare against. `Ok(None)` when that leaves
-/// nothing measured, which renders the current-only table as before.
+/// nothing measured, which renders the current-only table as before. A
+/// package that cannot be measured there is warned about and left out of
+/// the table; only a configuration error is an `Err`.
 ///
 /// When HEAD is the merge-base nothing is measured: the figures are
 /// `baseline`'s.
@@ -196,7 +198,7 @@ fn measure_ref(
     let mut packages = Vec::new();
     for pkg in &a.pkg {
         let common = refrun::common(config, pkg)?;
-        let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+        let stamp = buildstamp::capture(&common, None);
         let key = (!sha.is_empty()).then(|| runcache::report_key(&sha, &common, &stamp));
         packages.push(RefPackage {
             pkg,
@@ -206,10 +208,33 @@ fn measure_ref(
         });
     }
     let (mut docs, unmeasured) = stored_ref_docs(&packages, &sha, refname);
+    let mut failed = Vec::new();
     if !unmeasured.is_empty() {
-        docs.extend(measure_in_worktree(&unmeasured, refname)?);
+        let (measured, why) = measure_in_worktree(&unmeasured, refname);
+        docs.extend(measured);
+        failed = why;
     }
-    Ok(merged_ref_doc(&docs))
+    Ok(ref_figures(&docs, &failed, refname))
+}
+
+/// A package the worktree could not measure, and why.
+type Failed = (String, String);
+
+/// The figures the draft compares the baseline with. A package that failed
+/// to measure gets a warning and no rows. When nothing else was measured the
+/// reference is empty, so the draft has no table instead of the current one.
+fn ref_figures(docs: &[Value], failed: &[Failed], refname: &str) -> Option<Value> {
+    for (pkg, why) in failed {
+        println!("{}", left_out(refname, pkg, why));
+    }
+    merged_ref_doc(docs)
+        .or_else(|| (!failed.is_empty()).then(|| serde_json::json!({ "version": 1, "items": {} })))
+}
+
+/// The warning for a package whose release could not be measured.
+fn left_out(refname: &str, pkg: &str, why: &str) -> String {
+    let why = why.lines().collect::<Vec<_>>().join(" ");
+    format!("::warning::report: perf delta against {refname} left out for {pkg}: {why}")
 }
 
 /// One package of a reference measurement: the flags it is measured under
@@ -250,24 +275,20 @@ fn stored_ref_docs<'a>(
 }
 
 /// Measures `packages` in one worktree at the merge-base of `refname` and
-/// keeps each measurement under its key.
-fn measure_in_worktree(packages: &[&RefPackage], refname: &str) -> Result<Vec<Value>, String> {
+/// keeps each measurement under its key. A package that fails is returned
+/// with its reason; a worktree that cannot be made fails them all.
+fn measure_in_worktree(packages: &[&RefPackage], refname: &str) -> (Vec<Value>, Vec<Failed>) {
     println!("report: measuring {refname} in a worktree");
-    let runs = invoke::with_merge_base_worktree(refname, |wt| {
-        let mut runs = Vec::new();
-        for package in packages {
-            let common = &package.common;
-            let target = common.target.as_deref().unwrap_or("soothfast");
-            if !workspace::has_bench_target(package.pkg, target, Some(wt))
-                .map_err(|e| e.to_string())?
-            {
-                continue;
-            }
-            let records = invoke::run_bench_in(common, &[], Some(wt)).map_err(|e| e.to_string())?;
-            runs.push((*package, invoke::collect(&records)));
+    let measured = invoke::with_merge_base_worktree(refname, |wt| {
+        Ok(measure_each(packages, |package| measure_at(package, wt)))
+    });
+    let (runs, failed) = match measured {
+        Ok(measured) => measured,
+        Err(why) => {
+            let all = packages.iter().map(|p| (p.pkg.to_string(), why.clone()));
+            (Vec::new(), all.collect())
         }
-        Ok(runs)
-    })?;
+    };
     let mut docs = Vec::new();
     for (package, run) in runs {
         let doc = headrun::ref_doc(&run);
@@ -276,7 +297,37 @@ fn measure_in_worktree(packages: &[&RefPackage], refname: &str) -> Result<Vec<Va
         }
         docs.push(doc);
     }
-    Ok(docs)
+    (docs, failed)
+}
+
+/// The run of each package `measure` gives one for, and the packages it
+/// failed on. `Ok(None)` is a package with nothing to measure there.
+fn measure_each<'a, 'p>(
+    packages: &[&'a RefPackage<'p>],
+    mut measure: impl FnMut(&RefPackage) -> Result<Option<invoke::Run>, String>,
+) -> (Vec<(&'a RefPackage<'p>, invoke::Run)>, Vec<Failed>) {
+    let mut runs = Vec::new();
+    let mut failed = Vec::new();
+    for package in packages {
+        match measure(package) {
+            Ok(Some(run)) => runs.push((*package, run)),
+            Ok(None) => {}
+            Err(why) => failed.push((package.pkg.to_string(), why)),
+        }
+    }
+    (runs, failed)
+}
+
+/// `package` measured in the worktree `wt`, or `None` when it has no bench
+/// target there.
+fn measure_at(package: &RefPackage, wt: &Path) -> Result<Option<invoke::Run>, String> {
+    let common = &package.common;
+    let target = common.target.as_deref().unwrap_or("soothfast");
+    if !workspace::has_bench_target(package.pkg, target, Some(wt)).map_err(|e| e.to_string())? {
+        return Ok(None);
+    }
+    let records = invoke::run_bench_in(common, &[], Some(wt)).map_err(|e| e.to_string())?;
+    Ok(Some(invoke::collect(&records)))
 }
 
 /// The items of every document in one baseline-shaped document, under the
@@ -713,10 +764,125 @@ fn err(msg: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{Value, json};
+    use soothfast_report::changelog;
+
     use super::{
-        DEFAULT_BOT_AUTHOR, PriorRelease, changelog_already_cut, merge_changelog,
-        prior_release_ref, resolve_bot_author, resolve_features, subjects_excluding_author,
+        DEFAULT_BOT_AUTHOR, PriorRelease, RefPackage, changelog_already_cut, left_out,
+        measure_each, merge_changelog, prior_release_ref, ref_figures, resolve_bot_author,
+        resolve_features, stored_ref_docs, subjects_excluding_author,
     };
+    use crate::buildstamp::BuildStamp;
+    use crate::invoke::{self, CommonArgs};
+    use crate::runcache;
+
+    fn package<'a>(pkg: &'a str, key: Option<&str>) -> RefPackage<'a> {
+        RefPackage {
+            pkg,
+            common: CommonArgs::default(),
+            stamp: BuildStamp::fixture(),
+            key: key.map(String::from),
+        }
+    }
+
+    fn counts(id: &str, instructions: u64) -> Value {
+        json!({ "version": 1, "items": { id: { "perfcnt": { "instructions": instructions } } } })
+    }
+
+    fn draft_against(old: Option<&Value>, new: &Value) -> String {
+        changelog::draft(&changelog::DraftInputs {
+            api: changelog::ApiSection::Diff {
+                against: "v1",
+                text: "",
+            },
+            changes: &[],
+            icons: &changelog::Icons::default(),
+            old_baseline: old,
+            new_baseline: new,
+            thresholds: changelog::PerfThresholds {
+                instructions_pct: 5.0,
+                allocs_pct: 5.0,
+            },
+        })
+    }
+
+    const HARNESS: &str = "cargo bench failed: unknown runner arg \"--cpu-hide\"";
+
+    #[test]
+    fn a_package_that_fails_to_measure_is_reported_and_the_rest_are_measured() {
+        let (a, b, c) = (package("a", None), package("b", None), package("c", None));
+        let (runs, failed) = measure_each(&[&a, &b, &c], |package| match package.pkg {
+            "a" => Err(HARNESS.to_string()),
+            "b" => Ok(None),
+            _ => Ok(Some(invoke::Run::default())),
+        });
+        assert_eq!(runs.iter().map(|(p, _)| p.pkg).collect::<Vec<_>>(), ["c"]);
+        assert_eq!(failed, [("a".to_string(), HARNESS.to_string())]);
+    }
+
+    #[test]
+    fn the_warning_names_the_ref_the_package_and_the_cause_on_one_line() {
+        let line = left_out("v1", "a", "the build failed\nerror: no such crate");
+        assert_eq!(
+            line,
+            "::warning::report: perf delta against v1 left out for a: the build failed error: no such crate"
+        );
+    }
+
+    #[test]
+    fn a_release_that_cannot_be_measured_yields_a_changelog_with_no_table() {
+        let failed = [("a".to_string(), HARNESS.to_string())];
+        let figures = ref_figures(&[], &failed, "v1").expect("an empty reference");
+        let draft = draft_against(Some(&figures), &counts("a::bench", 200));
+        assert!(draft.starts_with("## Unreleased (draft vs v1)"), "{draft}");
+        assert!(!draft.contains("Gate movement"), "{draft}");
+    }
+
+    #[test]
+    fn a_table_in_the_file_is_dropped_when_the_release_cannot_be_measured() {
+        let new = counts("a::bench", 200);
+        let before = merge_changelog("", &draft_against(Some(&counts("a::bench", 100)), &new));
+        assert!(before.contains("| `a::bench` | instructions |"), "{before}");
+        let failed = [("a".to_string(), HARNESS.to_string())];
+        let figures = ref_figures(&[], &failed, "v1");
+        let after = merge_changelog(&before, &draft_against(figures.as_ref(), &new));
+        assert!(!after.contains("a::bench"), "{after}");
+        assert!(after.contains("## Unreleased (draft vs v1)"), "{after}");
+    }
+
+    #[test]
+    fn the_packages_that_measured_keep_their_rows_beside_one_that_failed() {
+        let failed = [("a".to_string(), HARNESS.to_string())];
+        let figures = ref_figures(&[counts("b::bench", 100)], &failed, "v1").unwrap();
+        let new = json!({ "version": 1, "items": {
+            "a::bench": { "perfcnt": { "instructions": 200 } },
+            "b::bench": { "perfcnt": { "instructions": 200 } },
+        }});
+        let draft = draft_against(Some(&figures), &new);
+        assert!(draft.contains("| `b::bench` | instructions |"), "{draft}");
+        assert!(!draft.contains("a::bench"), "{draft}");
+    }
+
+    #[test]
+    fn nothing_measured_and_nothing_failed_renders_the_current_table() {
+        assert_eq!(ref_figures(&[], &[], "v1"), None);
+    }
+
+    #[test]
+    fn a_stored_measurement_still_gives_the_table_without_a_worktree() {
+        let key = "test-report-stored-release";
+        runcache::keep_report(key, &counts("a::bench", 100));
+        let packages = [package("a", Some(key))];
+        let (docs, unmeasured) = stored_ref_docs(&packages, "aaa", "v1");
+        runcache::forget(key);
+        assert!(unmeasured.is_empty());
+        let figures = ref_figures(&docs, &[], "v1");
+        let draft = draft_against(figures.as_ref(), &counts("a::bench", 200));
+        assert!(
+            draft.contains("| `a::bench` | instructions | 100.0 | 200.0 | +100.0% |"),
+            "{draft}"
+        );
+    }
 
     #[test]
     fn an_imported_harness_section_does_not_split_the_changelog() {

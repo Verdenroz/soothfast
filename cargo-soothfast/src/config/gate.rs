@@ -5,12 +5,16 @@
 
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
+use crate::cpu::CpuMask;
+
 /// Repo-level gate settings. CLI flags override these.
 #[derive(Default, Debug, PartialEq)]
 pub struct GateConfig {
     pub codegen_units: Option<String>,
     /// Cargo features every `gate`, `measure` and `spec gen` build carries.
     pub features: Option<String>,
+    /// The CPU features callgrind hides beyond AVX-512.
+    pub cpu: Option<CpuMask>,
     /// `walltime = "advisory"`: a walltime overrun prints as SOFT and never
     /// fails the gate. Deterministic counters gate as usual.
     pub walltime_advisory: bool,
@@ -45,6 +49,7 @@ fn set(cfg: &mut GateConfig, key: &str, value: TomlValue) -> Result<(), String> 
         ("codegen-units", TomlValue::Int(n)) => cfg.codegen_units = Some(n.to_string()),
         ("codegen-units", TomlValue::Str(s)) => cfg.codegen_units = Some(s),
         ("features", TomlValue::Str(s)) => cfg.features = Some(s),
+        ("cpu", value) => cfg.cpu = Some(cpu_mask(value)?),
         ("walltime", TomlValue::Str(s)) if s == "hard" || s == "advisory" => {
             cfg.walltime_advisory = s == "advisory"
         }
@@ -52,6 +57,15 @@ fn set(cfg: &mut GateConfig, key: &str, value: TomlValue) -> Result<(), String> 
         (k, _) => return Err(format!("unknown or mistyped `{k}` under [gate]")),
     }
     Ok(())
+}
+
+/// `cpu` is `"default"`, `"portable"`, or a list of feature names.
+pub(super) fn cpu_mask(value: TomlValue) -> Result<CpuMask, String> {
+    match value {
+        TomlValue::Str(s) if s == "default" || s == "portable" => CpuMask::parse(&s),
+        TomlValue::StrArray(names) => CpuMask::hide(names),
+        _ => Err("`cpu` is \"default\", \"portable\" or a list of feature names".into()),
+    }
 }
 
 #[cfg(test)]
@@ -107,6 +121,26 @@ mod tests {
     fn an_unknown_walltime_mode_is_an_error() {
         assert!(parse("[gate]\nwalltime = \"soft\"\n").is_err());
         assert!(parse("[gate]\nwalltime = true\n").is_err());
+    }
+
+    #[test]
+    fn reads_the_three_forms_of_cpu() {
+        let cpu = |v: &str| parse(&format!("[gate]\ncpu = {v}\n")).unwrap().cpu;
+        assert_eq!(cpu("\"default\""), Some(CpuMask::Default));
+        assert_eq!(cpu("\"portable\""), Some(CpuMask::Portable));
+        assert_eq!(
+            cpu("[\"AVX2\", \"ERMS\"]"),
+            Some(CpuMask::Hide(vec!["AVX2".into(), "ERMS".into()]))
+        );
+        assert_eq!(cpu("[]"), Some(CpuMask::Default));
+        assert_eq!(GateConfig::default().cpu, None);
+    }
+
+    #[test]
+    fn an_invalid_cpu_is_an_error() {
+        for bad in ["3", "\"fast\"", "[\"AVX2;\"]", "[\"AVX512F\"]", "[3]"] {
+            assert!(parse(&format!("[gate]\ncpu = {bad}\n")).is_err(), "{bad}");
+        }
     }
 
     #[test]

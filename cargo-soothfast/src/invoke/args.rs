@@ -1,5 +1,9 @@
 //! `CommonArgs` flag parsing and `--shard` item selection.
 
+use std::sync::Once;
+
+use crate::cpu::{self, CpuMask};
+
 /// Flags shared by `measure` and `gate`.
 #[derive(Default, Clone)]
 pub struct CommonArgs {
@@ -13,6 +17,9 @@ pub struct CommonArgs {
     /// `codegen-units` measurement builds are pinned to, or `"inherit"` to
     /// leave the project's own profile alone.
     pub codegen_units: Option<String>,
+    /// `--cpu`: what callgrind hides from the measured process beyond
+    /// AVX-512, in the form [`CpuMask::parse`] takes.
+    pub cpu: Option<String>,
     /// `--no-item-cache`: measure every item even where a stored measurement
     /// of the same executed code exists.
     pub no_item_cache: bool,
@@ -76,6 +83,7 @@ impl CommonArgs {
             // it — which is why the other name had to exist.
             "--bench" | "--target" => &mut self.target,
             "--codegen-units" => &mut self.codegen_units,
+            "--cpu" => &mut self.cpu,
             _ => return false,
         };
         *slot = it.next().cloned();
@@ -99,6 +107,41 @@ impl CommonArgs {
     }
 }
 
+impl CommonArgs {
+    /// The mask `cpu` names, which is the default when unset.
+    pub fn cpu_mask(&self) -> Result<CpuMask, String> {
+        self.cpu
+            .as_deref()
+            .map_or(Ok(CpuMask::Default), CpuMask::parse)
+            .map_err(|e| format!("--cpu: {e}"))
+    }
+
+    /// Check `cpu`, and drop it where the harness has no `hwcaps` tunable to
+    /// apply it to, saying so once per process.
+    pub fn settle_cpu(&mut self) -> Result<(), String> {
+        self.settle_cpu_where(cpu::SUPPORTED)
+    }
+
+    fn settle_cpu_where(&mut self, supported: bool) -> Result<(), String> {
+        static SAID: Once = Once::new();
+        let mask = self.cpu_mask()?;
+        if mask != CpuMask::Default && !supported {
+            SAID.call_once(|| {
+                println!(
+                    "cpu = {mask}: ignored, glibc's hwcaps tunable exists only on x86-64 gnu targets"
+                )
+            });
+            self.cpu = None;
+        }
+        Ok(())
+    }
+
+    /// What the mask adds to a measurement's identity, empty for the default.
+    pub fn cpu_stamp(&self) -> String {
+        self.cpu_mask().map(|m| m.identity()).unwrap_or_default()
+    }
+}
+
 /// Codegen partitioning varies with unrelated edits: rustc reassigns modules
 /// to units whenever a crate's contents change, which moves inlining and
 /// register allocation in functions nobody touched. One unit cannot be
@@ -107,7 +150,8 @@ const CANONICAL_CODEGEN_UNITS: &str = "1";
 
 #[cfg(test)]
 mod tests {
-    use super::Shard;
+    use super::{CommonArgs, Shard};
+    use crate::cpu::CpuMask;
 
     #[test]
     fn a_shard_parses_from_one_and_rejects_out_of_range() {
@@ -124,5 +168,40 @@ mod tests {
             let id = format!("pkg::item_{n}");
             assert_eq!(shards.iter().filter(|s| s.owns(&id)).count(), 1, "{id}");
         }
+    }
+
+    #[test]
+    fn the_cpu_flag_names_a_mask_and_an_unset_one_is_the_default() {
+        let with = |cpu: Option<&str>| CommonArgs {
+            cpu: cpu.map(String::from),
+            ..CommonArgs::default()
+        };
+        assert_eq!(with(None).cpu_mask(), Ok(CpuMask::Default));
+        assert_eq!(with(Some("portable")).cpu_mask(), Ok(CpuMask::Portable));
+        assert!(with(None).cpu_mask().unwrap().hidden().is_empty());
+        assert!(
+            with(Some("AVX2,"))
+                .cpu_mask()
+                .unwrap_err()
+                .starts_with("--cpu:")
+        );
+    }
+
+    #[test]
+    fn a_mask_is_dropped_where_there_is_no_tunable_and_stamps_as_the_default() {
+        let mut common = CommonArgs {
+            cpu: Some("portable".into()),
+            ..CommonArgs::default()
+        };
+        common.settle_cpu_where(true).unwrap();
+        assert_eq!(common.cpu.as_deref(), Some("portable"));
+        common.settle_cpu_where(false).unwrap();
+        assert_eq!(common.cpu, None);
+        assert_eq!(common.cpu_stamp(), CommonArgs::default().cpu_stamp());
+        let mut bad = CommonArgs {
+            cpu: Some("AVX512F".into()),
+            ..CommonArgs::default()
+        };
+        assert!(bad.settle_cpu_where(false).is_err());
     }
 }

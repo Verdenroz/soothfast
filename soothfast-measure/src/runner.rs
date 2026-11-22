@@ -38,6 +38,7 @@ struct Args {
     skip_gating_counters: bool,
     env: bool,
     guest_view: bool,
+    cpu_hide: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -61,6 +62,7 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
         skip_gating_counters: false,
         env: false,
         guest_view: false,
+        cpu_hide: None,
     };
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -111,6 +113,10 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
             },
             "--skip-gating-counters" => args.skip_gating_counters = true,
             "--guest-view" => args.guest_view = true,
+            "--cpu-hide" => match it.next() {
+                Some(features) => args.cpu_hide = Some(features),
+                None => die("--cpu-hide needs a comma-separated feature list"),
+            },
             "--env" => {
                 args.env = true;
                 args.json = true;
@@ -302,6 +308,9 @@ fn print_env(args: &Args) -> Env {
 /// Entry point installed by `soothfast::bench_main!`.
 pub fn main() {
     let args = parse_args();
+    if let Some(features) = &args.cpu_hide {
+        callgrind::hide_cpu(features);
+    }
 
     // Hidden mode: execute one item's body under valgrind (see callgrind.rs).
     if let Some(id) = &args.callgrind_exec {
@@ -983,6 +992,14 @@ mod tests {
         let args = parse_args_from(argv.into_iter());
         assert_eq!(args.size, Some(4096));
         assert_eq!(parse_args_from(std::iter::empty()).size, None);
+    }
+
+    #[test]
+    fn cpu_hide_flag_parses() {
+        let argv = ["--cpu-hide", "AVX2,ERMS"].map(String::from);
+        let args = parse_args_from(argv.into_iter());
+        assert_eq!(args.cpu_hide.as_deref(), Some("AVX2,ERMS"));
+        assert_eq!(parse_args_from(std::iter::empty()).cpu_hide, None);
     }
 
     #[test]
