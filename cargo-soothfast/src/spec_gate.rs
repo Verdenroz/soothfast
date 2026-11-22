@@ -88,7 +88,7 @@ pub fn run(args: &[String]) -> i32 {
         Ok(code) => code,
         Err(e) => {
             eprintln!("soothfast: {e}");
-            1
+            2
         }
     }
 }

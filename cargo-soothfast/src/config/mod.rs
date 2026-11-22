@@ -267,6 +267,7 @@ mod tests {
         assert!(config("").enforce().unwrap().is_empty());
         let cfg = config("[ci]\nenforce = [\"spec\"]\n");
         assert_eq!(cfg.enforce().unwrap(), ["spec"]);
+        assert!(cfg.ci().unwrap().is_empty(), "enforce skips nothing");
         assert!(config("[ci]\nenforce = [\"x\"]\n").enforce().is_err());
     }
 

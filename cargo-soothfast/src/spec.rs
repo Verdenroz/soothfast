@@ -106,7 +106,7 @@ fn run_check(args: &[String]) -> i32 {
         Ok(r) => r,
         Err(e) => {
             eprintln!("soothfast: {e}");
-            return 1;
+            return 2;
         }
     };
 

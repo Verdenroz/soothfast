@@ -1,13 +1,16 @@
 //! `ci spec`: the workflow's spec checks, per package: a stale generated
 //! spec, a breaking change since the base, a hand-written spec that no longer
-//! matches its routes, and a stale generated SDK.
+//! matches its routes, and a stale generated SDK. The gate and the reconcile
+//! check are advisory unless `[ci] enforce` names `spec`.
 
 use std::path::Path;
 
 use super::each::{self, Job};
 use super::env::{CiEnv, Event};
 use super::regen;
+use crate::config::Config;
 use crate::spec_config::Mode;
+use crate::verdict::ADVISORY_EXIT;
 use crate::{invoke, sdk_config, spec_config};
 
 /// What `ci spec` takes on the command line. `inner` and `against` are how a
@@ -95,6 +98,40 @@ fn steps(pkg: &Package, against: Option<&str>, regen: bool) -> Vec<Vec<String>> 
     steps
 }
 
+/// The steps whose exit code 1 is a finding about the API, as opposed to 2 or
+/// more, where the command could not run.
+fn finds_advisory(step: &[String]) -> bool {
+    matches!(
+        (
+            step.first().map(String::as_str),
+            step.get(1).map(String::as_str)
+        ),
+        (Some("spec"), Some("gate" | "check"))
+    )
+}
+
+/// Runs every step and returns the worst exit code. Unless `enforce`, a
+/// finding of the gate or the reconcile check is advisory: it does not count,
+/// and a run with nothing worse returns [`ADVISORY_EXIT`].
+fn settle(steps: &[Vec<String>], enforce: bool, mut run: impl FnMut(&[String]) -> i32) -> i32 {
+    let mut worst = 0;
+    let mut advisory = false;
+    for step in steps {
+        let code = run(step);
+        if code == 1 && !enforce && finds_advisory(step) {
+            println!("ci spec: advisory finding, not failing the run");
+            advisory = true;
+        } else {
+            worst = worst.max(code);
+        }
+    }
+    if worst == 0 && advisory {
+        ADVISORY_EXIT
+    } else {
+        worst
+    }
+}
+
 fn jobs(packages: &[String], against: Option<&str>) -> Vec<Job> {
     packages
         .iter()
@@ -138,16 +175,19 @@ fn inner(env: &CiEnv, opts: &Options) -> i32 {
     };
     let read = package(name).and_then(|pkg| {
         let regen = (pkg.generates || pkg.sdk) && regen::bot_regenerates(env)?;
-        Ok((pkg, regen))
+        let root = invoke::workspace_root().map_err(|e| e.to_string())?;
+        let enforce = Config::load(&root)?.enforce()?.iter().any(|k| k == "spec");
+        Ok((pkg, regen, enforce))
     });
     match read {
-        Ok((pkg, regen)) => {
+        Ok((pkg, regen, enforce)) => {
             if regen {
                 for skipped in regenerated(&pkg) {
                     println!("ci spec: {skipped} skipped, regenerated on the default branch");
                 }
             }
-            each::run_steps(&steps(&pkg, opts.against.as_deref(), regen), each::spawn)
+            let steps = steps(&pkg, opts.against.as_deref(), regen);
+            settle(&steps, enforce, each::spawn)
         }
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -289,6 +329,52 @@ mod tests {
             ["spec gen --check", "sdk gen --check"]
         );
         assert_eq!(regenerated(&pkg(false, true, false)), Vec::<&str>::new());
+    }
+
+    fn finding_on(step: &str, code: i32) -> impl FnMut(&[String]) -> i32 + '_ {
+        move |args| if args[1] == step { code } else { 0 }
+    }
+
+    fn all_steps() -> Vec<Vec<String>> {
+        steps(&pkg(true, true, true), Some("b4se"), false)
+    }
+
+    #[test]
+    fn a_gate_finding_is_advisory_by_default() {
+        let found = settle(&all_steps(), false, finding_on("gate", 1));
+        assert_eq!(found, ADVISORY_EXIT);
+        let reconcile = settle(&all_steps(), false, finding_on("check", 1));
+        assert_eq!(reconcile, ADVISORY_EXIT);
+        assert_eq!(settle(&all_steps(), false, |_| 0), 0);
+    }
+
+    #[test]
+    fn an_enforced_finding_fails_as_before() {
+        assert_eq!(settle(&all_steps(), true, finding_on("gate", 1)), 1);
+        assert_eq!(settle(&all_steps(), true, finding_on("check", 1)), 1);
+    }
+
+    #[test]
+    fn a_step_that_could_not_run_fails_with_or_without_enforce() {
+        for enforce in [false, true] {
+            assert_eq!(settle(&all_steps(), enforce, finding_on("gate", 2)), 2);
+            assert_eq!(settle(&all_steps(), enforce, finding_on("check", 2)), 2);
+        }
+    }
+
+    #[test]
+    fn a_stale_generated_file_is_never_advisory() {
+        assert_eq!(settle(&all_steps(), false, finding_on("gen", 1)), 1);
+        let both = |args: &[String]| if args[1] == "gate" { 1 } else { 2 };
+        assert_eq!(settle(&all_steps(), false, both), 2);
+        let mixed = |args: &[String]| {
+            if args[0] == "sdk" || args[1] == "gate" {
+                1
+            } else {
+                0
+            }
+        };
+        assert_eq!(settle(&all_steps(), false, mixed), 1);
     }
 
     #[test]
