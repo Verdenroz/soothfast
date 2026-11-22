@@ -68,6 +68,8 @@ runs:
         version: ${{ steps.resolve.outputs.version }}
         gate: "false"
         changelog: "false"
+        # Installing never sweeps labels, whatever identity the job holds.
+        labels: "false"
     - name: Restore the build of this ref
       if: steps.resolve.outputs.released != 'true'
       id: cache

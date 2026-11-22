@@ -8,7 +8,7 @@
 # The conclusion and link come from the event.
 # Inputs: CLI ARTIFACT_DIR (pr-number, expect_*) RESULTS HEAD_SHA HEAD_REPO
 # HEAD_BRANCH RUN_ATTEMPT RUN_CONCLUSION RUN_URL GH_TOKEN GITHUB_REPOSITORY,
-# LABELS_DIR (a checkout of the default branch; default: here).
+# LABELS_DIR (a checkout of the default branch; default: here), BROKER (optional).
 set -euo pipefail
 
 max_names=256
@@ -116,4 +116,4 @@ esac
   cat "$verdict"
 } >"$body"
 
-MARKER='<!-- soothfast-verdict -->' BODY_FILE="$body" PR_NUMBER="$number" "$(dirname "$0")/comment.sh"
+MARKER='<!-- soothfast-verdict -->' BODY_FILE="$body" PR_NUMBER="$number" HEAD_SHA="$HEAD_SHA" "$(dirname "$0")/comment.sh"

@@ -272,7 +272,7 @@ mod tests {
         )));
         assert!(text.contains(&format!("      soothfast_ref: \"{sha}\"\n")));
         assert!(text.contains(
-            "    permissions:\n      actions: read\n      contents: read\n      pull-requests: write\n"
+            "    permissions:\n      actions: read\n      contents: read\n      id-token: write\n      pull-requests: write\n"
         ));
         assert!(!text.contains("@@"));
     }

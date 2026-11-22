@@ -1,6 +1,6 @@
 //! `action/fork-comment.sh` renders a fork's verdict from its run's results
 //! with a stub `gh`, outside any repository. Everything the fork uploaded is
-//! hostile input.
+//! hostile input. A stub `curl` stands in for the OIDC endpoint and the broker.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,15 +8,30 @@ use std::process::Command;
 
 const GH: &str = r#"#!/bin/sh
 case "$*" in
+*"--jq .head.sha") printf '%s\n' "${STUB_HEAD_NOW-$(printf '%s' "${STUB_PULL-}" | cut -f 2)}" ;;
 */pulls/*) [ -n "${STUB_PULL-}" ] || exit 1; printf '%s\n' "$STUB_PULL" ;;
 *"-X POST"* | *"-X PATCH"*)
   for a; do case $a in body=@*) cp "${a#body=@}" "$STUB_POSTED" ;; esac; done ;;
 esac
 "#;
 
+const CURL: &str = r#"#!/bin/sh
+case "$*" in
+*audience=soothfast-bot*) printf '{"value":"jwt"}' ;;
+*/comment*)
+  [ "$STUB_BROKER_STATUS" != unreachable ] || exit 7
+  prev=
+  for a; do [ "$prev" != --data-binary ] || printf '%s' "$a" >"$STUB_PAYLOAD"; prev=$a; done
+  printf '%s\n%s' "$STUB_BROKER_BODY" "$STUB_BROKER_STATUS" ;;
+esac
+"#;
+
 struct Outcome {
     code: i32,
+    /// The body the job token posted.
     posted: Option<String>,
+    /// The JSON the broker was sent.
+    payload: Option<String>,
     stdout: String,
 }
 
@@ -25,6 +40,11 @@ struct Case {
     pull: Option<String>,
     head_sha: String,
     conclusion: String,
+    /// The head `gh` reports when the fallback re-reads it, when it has moved.
+    head_now: Option<String>,
+    /// The broker's HTTP status (or `unreachable`) and body. `None` is a job
+    /// with no OIDC token.
+    broker: Option<(&'static str, &'static str)>,
 }
 
 impl Case {
@@ -35,17 +55,21 @@ impl Case {
         for dir in ["bin", "work", "tmp", "artifact", "results"] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
-        fs::write(root.join("bin/gh"), GH).unwrap();
-        Command::new("chmod")
-            .arg("+x")
-            .arg(root.join("bin/gh"))
-            .status()
-            .unwrap();
+        for (tool, script) in [("gh", GH), ("curl", CURL)] {
+            fs::write(root.join("bin").join(tool), script).unwrap();
+            Command::new("chmod")
+                .arg("+x")
+                .arg(root.join("bin").join(tool))
+                .status()
+                .unwrap();
+        }
         let case = Case {
             root,
             pull: Some("open\tabc123\tfork/repo\tfeature".into()),
             head_sha: "abc123".into(),
             conclusion: "success".into(),
+            head_now: None,
+            broker: None,
         };
         case.upload("pr-number", "7\n");
         case
@@ -69,46 +93,69 @@ impl Case {
     }
 
     fn run(&self) -> Outcome {
-        let posted = self.root.join("posted.md");
-        let out = Command::new("bash")
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../action/fork-comment.sh"))
-            .current_dir(self.root.join("work"))
-            .env_clear()
-            .env(
-                "PATH",
-                format!("{}:/usr/bin:/bin", self.root.join("bin").display()),
-            )
-            .env("CLI", env!("CARGO_BIN_EXE_cargo-soothfast"))
-            .env("ARTIFACT_DIR", self.root.join("artifact"))
-            .env("RESULTS", self.results())
-            .env("RUNNER_TEMP", self.root.join("tmp"))
-            .env("HEAD_SHA", &self.head_sha)
-            .env("HEAD_REPO", "fork/repo")
-            .env("HEAD_BRANCH", "feature")
-            .env("RUN_ATTEMPT", "1")
-            .env("RUN_CONCLUSION", &self.conclusion)
-            .env("RUN_URL", "https://github.com/base/repo/actions/runs/9")
-            .env("GH_TOKEN", "t")
-            .env("GITHUB_REPOSITORY", "base/repo")
-            .env("STUB_POSTED", &posted)
-            .envs(self.pull.iter().map(|p| ("STUB_PULL", p)))
-            .output()
-            .unwrap();
-        let outcome = Outcome {
-            code: out.status.code().unwrap(),
-            posted: fs::read_to_string(&posted).ok(),
-            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-        };
+        let out = self.script("fork-comment.sh", &[]);
         println!(
             "| {} | {} | {} |",
             self.root.file_name().unwrap().to_string_lossy(),
-            outcome.code,
-            outcome
-                .posted
+            out.code,
+            out.posted
                 .as_deref()
                 .map_or("nothing", |b| b.lines().nth(3).unwrap_or(""))
         );
-        outcome
+        out
+    }
+
+    /// Runs `action/NAME` the way `comment.yml` runs `fork-comment.sh`, with
+    /// `more` set on top.
+    fn script(&self, name: &str, more: &[(&str, &str)]) -> Outcome {
+        let posted = self.root.join("posted.md");
+        let payload = self.root.join("payload.json");
+        let mut cmd = Command::new("bash");
+        cmd.arg(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../action")
+                .join(name),
+        )
+        .current_dir(self.root.join("work"))
+        .env_clear()
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", self.root.join("bin").display()),
+        )
+        .env("CLI", env!("CARGO_BIN_EXE_cargo-soothfast"))
+        .env("ARTIFACT_DIR", self.root.join("artifact"))
+        .env("RESULTS", self.results())
+        .env("RUNNER_TEMP", self.root.join("tmp"))
+        .env("HEAD_SHA", &self.head_sha)
+        .env("HEAD_REPO", "fork/repo")
+        .env("HEAD_BRANCH", "feature")
+        .env("RUN_ATTEMPT", "1")
+        .env("RUN_CONCLUSION", &self.conclusion)
+        .env("RUN_URL", "https://github.com/base/repo/actions/runs/9")
+        .env("GH_TOKEN", "t")
+        .env("GITHUB_REPOSITORY", "base/repo")
+        .env("STUB_POSTED", &posted)
+        .env("STUB_PAYLOAD", &payload)
+        .envs(self.pull.iter().map(|p| ("STUB_PULL", p)))
+        .envs(self.head_now.iter().map(|h| ("STUB_HEAD_NOW", h)))
+        .envs(more.iter().copied());
+        if let Some((status, body)) = self.broker {
+            cmd.env(
+                "ACTIONS_ID_TOKEN_REQUEST_URL",
+                "https://oidc.invalid/token?v=1",
+            )
+            .env("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "request")
+            .env("BROKER", "https://broker.invalid")
+            .env("STUB_BROKER_STATUS", status)
+            .env("STUB_BROKER_BODY", body);
+        }
+        let out = cmd.output().unwrap();
+        Outcome {
+            code: out.status.code().unwrap(),
+            posted: fs::read_to_string(&posted).ok(),
+            payload: fs::read_to_string(&payload).ok(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        }
     }
 }
 
@@ -374,5 +421,96 @@ fn a_shard_result_is_read_under_the_name_the_gate_writes() {
     assert!(
         body.contains("1 projects: 0 regressed, 0 errored, 1 pass"),
         "{body}"
+    );
+}
+
+const POSTED_BY_BOT: &str =
+    r#"{"comment_url":"https://github.com/base/repo/pull/7#c","app_slug":"soothfast-bot"}"#;
+
+#[test]
+fn the_broker_posts_the_verdict_with_the_head_it_is_for() {
+    let mut case = Case::new("broker");
+    case.result("core", "pass", "ok");
+    case.broker = Some(("200", POSTED_BY_BOT));
+    let out = case.run();
+    assert_eq!((out.code, out.posted), (0, None));
+    assert!(
+        out.stdout.contains("commented as soothfast-bot"),
+        "{}",
+        out.stdout
+    );
+    let sent: serde_json::Value = serde_json::from_str(&out.payload.unwrap()).unwrap();
+    assert_eq!(sent["pull_request"], 7);
+    assert_eq!(sent["marker"], "<!-- soothfast-verdict -->");
+    assert_eq!(sent["head_sha"], "abc123");
+    let body = sent["body"].as_str().unwrap();
+    assert!(
+        body.starts_with("Verdict of [the fork's run](") && body.contains("### `core`"),
+        "{body}"
+    );
+}
+
+#[test]
+fn a_broker_that_does_not_post_leaves_it_to_the_job_token() {
+    let refusals = [
+        Some((
+            "403",
+            r#"{"reason":"/comment serves pull_request runs only"}"#,
+        )),
+        Some(("unreachable", "")),
+        Some(("502", "<html>bad gateway</html>")),
+        None,
+    ];
+    for broker in refusals {
+        let mut case = Case::new("refused");
+        case.result("core", "pass", "ok");
+        case.broker = broker;
+        let out = case.run();
+        assert_eq!(out.code, 0, "{broker:?}");
+        let body = out
+            .posted
+            .unwrap_or_else(|| panic!("{broker:?}: {}", out.stdout));
+        assert!(body.contains("### `core`"), "{broker:?}");
+    }
+}
+
+#[test]
+fn a_head_that_moved_is_posted_by_neither_the_broker_nor_the_job_token() {
+    let brokers = [
+        Some((
+            "403",
+            r#"{"reason":"pull request 7 head moved to def4567"}"#,
+        )),
+        Some(("unreachable", "")),
+        None,
+    ];
+    for broker in brokers {
+        let mut case = Case::new("moved");
+        case.result("core", "pass", "ok");
+        case.broker = broker;
+        case.head_now = Some("def456".into());
+        let out = case.run();
+        assert_eq!((out.code, out.posted), (0, None), "{broker:?}");
+        assert!(out.stdout.contains("has moved past"), "{}", out.stdout);
+    }
+}
+
+#[test]
+fn a_pull_request_job_sends_the_broker_no_head() {
+    let mut case = Case::new("samerepo");
+    case.broker = Some(("200", POSTED_BY_BOT));
+    let body = case.root.join("body.md");
+    fs::write(&body, "hello\n").unwrap();
+    let env = [
+        ("PR_NUMBER", "7"),
+        ("MARKER", "<!-- soothfast-verdict -->"),
+        ("BODY_FILE", body.to_str().unwrap()),
+        ("HEAD_SHA", ""),
+    ];
+    let out = case.script("comment.sh", &env);
+    assert_eq!((out.code, out.posted), (0, None));
+    assert_eq!(
+        out.payload.unwrap(),
+        "{\n  \"pull_request\": 7,\n  \"marker\": \"<!-- soothfast-verdict -->\",\n  \"body\": \"hello\\n\"\n}"
     );
 }

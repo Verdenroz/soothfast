@@ -36,7 +36,10 @@ Two one-time settings, no secrets:
    no deployment branch policy and no required reviewers. The job above runs
    on pull requests too, and a branch policy would fail every one of them,
    the bot's own included. The broker enforces the default-branch rule
-   itself.
+   itself. The job that comments on a fork's pull request uses the
+   environment too: with required reviewers it waits for an approval before
+   every comment. A repository without the environment gets one from GitHub
+   on the first run, with no protection rules.
 
 Because the job names an environment, every run of it, pull request or push,
 appears under Environments and Deployments and on the pull request as
@@ -900,19 +903,29 @@ its conclusion, taken from the event. When the rendered verdict passes but
 the run did not succeed, a second line says so and asks the reader to read
 the run. A run that left no results gets a comment saying that.
 
-It is posted with `github.token`, not by the bot, under the same marker, so
-the next verdict replaces it. A pull request from the same repository is
-unaffected: its comment is posted directly and nothing is uploaded.
+The comment is posted as soothfast-bot, under the same marker, so the next
+verdict replaces it. The job runs in the `soothfast-bot` environment and
+sends the broker its OIDC token with the pull request number, the body and
+the head commit the run was for. The broker posts only for a `workflow_run`
+job in that environment on the default branch, and only while the pull
+request is open, from a fork, and still at that commit. When the broker does
+not post (the App is not installed, the broker cannot be reached or refuses,
+the job has no OIDC token), the job posts with `github.token` instead, and a
+notice gives the broker's reason. It reads the pull request's head again
+first: a verdict for a commit the pull request has moved past is posted by
+neither. A pull request from the same repository is unaffected: its comment
+is posted directly and nothing is uploaded.
 
 It is two workflows because the fork's own run executes code and a workflow
 file the fork controls. The comment job runs from `workflow_run`, which GitHub
 starts from the base repository with its permissions: `cargo soothfast init`
 writes it as `soothfast-comment.yml`, a caller of the reusable `comment.yml`
-with `actions: read`, `contents: read` (for `soothfast.toml`) and
-`pull-requests: write` and nothing else. It never checks out or runs the pull
-request's code, and it runs only for a `pull_request` run whose head
-repository is not this one. The generated file carries a `zizmor:
-ignore[dangerous-triggers]` on its `on:` line for that reason.
+with `actions: read`, `contents: read` (for `soothfast.toml`), `id-token:
+write` (for the broker) and `pull-requests: write` and nothing else. It never
+checks out or runs the pull request's code, and it runs only for a
+`pull_request` run whose head repository is not this one. The generated file
+carries a `zizmor: ignore[dangerous-triggers]` on its `on:` line for that
+reason.
 
 Everything the fork's run uploaded is untrusted, so the job trusts only what
 GitHub reports about the run: its id, attempt, conclusion, head commit, head
