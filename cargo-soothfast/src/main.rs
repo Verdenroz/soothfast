@@ -148,8 +148,9 @@ commands:
            spec gen --check for a generated spec, spec gate against the
            pull request's base or --base, spec check for a hand-written
            spec and sdk gen --check for an SDK; every step runs and the
-           exit code is the worst; with no -p, every package with a
-           [[spec]] entry)
+           exit code is the worst, but a finding of spec gate or spec
+           check is advisory and exits 0 unless [ci] enforce names spec;
+           with no -p, every package with a [[spec]] entry)
   ci       proto [-p PKG]...
            (spec check-proto for each package, recorded as proto-PKG; with
            no -p, every package with a [[proto]] entry)

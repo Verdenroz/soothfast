@@ -16,7 +16,8 @@ const KINDS: [&str; 5] = ["rust", "import", "docs", "test", "check"];
 const UNREADABLE: &str = "result";
 /// The exit code a `check` job ends with when it found only advisory
 /// findings. The job's record reads it as `advisory`; the caller's own exit
-/// status is 0.
+/// status is 0. Only `ci spec` exits with it, so a check job must not pass
+/// on the exit code of a command that is not `cargo soothfast`.
 pub(crate) const ADVISORY_EXIT: i32 = 75;
 /// GitHub rejects a comment over 65,536 characters; the rest is the marker.
 const SHORT_SHA: usize = 7;
@@ -634,20 +635,18 @@ fn fit(records: &[Record], accepted: Option<&str>) -> String {
 
 fn render(records: &[Record], accepted: Option<&str>) -> String {
     let count = |v: Verdict| records.iter().filter(|r| r.verdict == v).count();
-    let advisory = count(Verdict::Advisory);
-    let advisory_count = if advisory > 0 {
-        format!(" {advisory} advisory,")
-    } else {
-        String::new()
+    let advisory = match count(Verdict::Advisory) {
+        0 => String::new(),
+        n => format!(" {n} advisory,"),
     };
     let mut out = format!(
-        "## soothfast verdict\n{} projects: {} regressed, {} errored,{advisory_count} {} pass\n",
+        "## soothfast verdict\n{} projects: {} regressed, {} errored,{advisory} {} pass\n",
         records.len(),
         count(Verdict::Regressed),
         count(Verdict::Errored),
         count(Verdict::Pass) + count(Verdict::NothingToCompare),
     );
-    if advisory > 0 {
+    if !advisory.is_empty() {
         out.push_str("\nAdvisory findings are reported and do not fail the run.\n");
     }
     if let Some(label) = accepted.filter(|_| count(Verdict::Regressed) > 0) {
@@ -737,6 +736,22 @@ mod tests {
             false
         ));
         assert_eq!(Verdict::parse("advisory"), Some(Verdict::Advisory));
+    }
+
+    #[test]
+    fn an_advisory_record_is_not_a_pass_a_lane_may_carry() {
+        let dir = TempDir::new("advisory-lane");
+        let write = |name: &str, code: i32| {
+            let out = dir.join(format!("{name}.json"));
+            let log = dir.join("none.log");
+            write_record(name.into(), "check".into(), code, &log, 1, &out).unwrap();
+        };
+        write("spec-clean", 0);
+        write("spec-found", ADVISORY_EXIT);
+        assert_eq!(
+            plain_passes(&dir),
+            BTreeSet::from(["spec-clean".to_string()])
+        );
     }
 
     #[test]

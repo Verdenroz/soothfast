@@ -96,11 +96,12 @@ pub fn run_packages(
     run_jobs(env, none, &jobs)
 }
 
-/// Runs `cargo soothfast` with `args` and returns its exit code.
+/// Runs `cargo soothfast` with `args` and returns its exit code, or 2 when
+/// a signal killed it: 1 is a finding, which a killed command did not make.
 pub fn spawn(args: &[String]) -> i32 {
     let status = std::env::current_exe().and_then(|exe| Command::new(exe).args(args).status());
     match status {
-        Ok(status) => status.code().unwrap_or(1),
+        Ok(status) => status.code().unwrap_or(2),
         Err(e) => {
             eprintln!("soothfast: {e}");
             2

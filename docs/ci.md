@@ -830,9 +830,8 @@ A finding of `ci spec` (`spec gate` found a consumer-breaking change, or
 the job exits 0, its output is in the log and the comment, and the section
 reads `advisory`. A command that could not run still fails, and so does a
 stale generated spec or SDK where `ci spec` checks one. `[ci] enforce =
-["spec"]` makes a finding fail the job again; `"spec"` is the only kind it
-accepts. This changes the default for repositories that relied on the gate
-to block.
+["spec"]` makes a finding fail the job; `"spec"` is the only kind it
+accepts.
 
 When the repository has a docs package, the site is built in the docs job
 and has no job of its own. That job has the gate's merged baseline, so the
@@ -1236,6 +1235,9 @@ routes. A package
 with a spec that is not generated runs `spec check`, and one with an `[[sdk]]`
 entry runs `sdk gen --check`. Every step runs even after one fails, and each
 package records a `check` verdict named `spec-PKG` with the worst exit code.
+A finding of `spec gate` or `spec check` does not count towards it unless
+`[ci] enforce` names `spec`: with nothing worse the record is `advisory` and
+the exit code is 0, and the last lines of the output name the step.
 With the `bot` input on, a pull request into the default branch and a push to
 it run neither `spec gen --check` nor `sdk gen --check` and print a line for
 each: that push's regeneration rewrites those files and the bot lands them.

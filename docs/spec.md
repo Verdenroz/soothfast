@@ -405,21 +405,21 @@ repository without the bot.
 
 In `ci spec` a finding of `spec gate` (a consumer-breaking change) or of
 `spec check` (a spec that no longer matches its routes) is advisory. The
-job still runs both and prints what they found, the verdict comment shows
+job runs both and prints what they found, the verdict comment shows
 the section as `advisory` and counts it apart, and neither the job nor the
 verdict fails. A command that could not run (the routes target does not
 build, a spec file does not parse, the base cannot be read) is not a
-finding and still fails the job. `spec gen --check` and `sdk gen --check`
-are unchanged.
+finding and fails the job. So does a stale file that `spec gen --check` or
+`sdk gen --check` finds.
 
-A repository that publishes an API contract can keep a finding blocking:
+A repository that publishes an API contract can make a finding fail the job:
 
 ```toml
 [ci]
 enforce = ["spec"]
 ```
 
-With it, `ci spec` fails on a finding as it always has. Run directly,
+With it, `ci spec` fails on a finding. Run directly,
 `spec gate` and `spec check` exit 0 when clean, 1 on a finding and 2 when
 they could not run, whatever `enforce` says.
 

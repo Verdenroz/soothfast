@@ -149,9 +149,10 @@ impl Config {
             .trend_url)
     }
 
-    /// The `[ci] enforce` list: the CI job kinds whose findings fail the run.
-    pub fn enforce(&self) -> Result<Vec<String>, String> {
-        Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.enforce)
+    /// Whether `[ci] enforce` names `kind`, so its findings fail the run.
+    pub fn enforces(&self, kind: &str) -> Result<bool, String> {
+        let enforce = ci::parse(&self.text).map_err(|e| self.located(e))?.enforce;
+        Ok(enforce.iter().any(|k| k == kind))
     }
 
     /// The `[ci]` table's `skip` list: the CI job kinds not to run.
@@ -263,12 +264,11 @@ mod tests {
     const TEXT: &str = "[gate]\nfeatures = \"repo\"\n\n[package.core]\nfeatures = \"all\"\n\n[package.core.gate]\nfeatures = \"bench\"\ntarget = \"t\"\n\n[package.core.docs]\nbaseline = \"main\"\n\n[package.other]\nfeatures = \"x\"\n";
 
     #[test]
-    fn enforce_reads_the_list_and_defaults_to_none() {
-        assert!(config("").enforce().unwrap().is_empty());
+    fn enforce_names_a_kind_and_skips_nothing() {
+        assert_eq!(config("").enforces("spec"), Ok(false));
         let cfg = config("[ci]\nenforce = [\"spec\"]\n");
-        assert_eq!(cfg.enforce().unwrap(), ["spec"]);
+        assert_eq!(cfg.enforces("spec"), Ok(true));
         assert!(cfg.ci().unwrap().is_empty(), "enforce skips nothing");
-        assert!(config("[ci]\nenforce = [\"x\"]\n").enforce().is_err());
     }
 
     #[test]

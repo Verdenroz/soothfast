@@ -98,16 +98,10 @@ fn steps(pkg: &Package, against: Option<&str>, regen: bool) -> Vec<Vec<String>> 
     steps
 }
 
-/// The steps whose exit code 1 is a finding about the API, as opposed to 2 or
-/// more, where the command could not run.
+/// Whether exit code 1 of `step` is a finding about the API. 2 or more means
+/// the command could not run.
 fn finds_advisory(step: &[String]) -> bool {
-    matches!(
-        (
-            step.first().map(String::as_str),
-            step.get(1).map(String::as_str)
-        ),
-        (Some("spec"), Some("gate" | "check"))
-    )
+    matches!(step, [a, b, ..] if a == "spec" && matches!(b.as_str(), "gate" | "check"))
 }
 
 /// Runs every step and returns the worst exit code. Unless `enforce`, a
@@ -115,17 +109,23 @@ fn finds_advisory(step: &[String]) -> bool {
 /// and a run with nothing worse returns [`ADVISORY_EXIT`].
 fn settle(steps: &[Vec<String>], enforce: bool, mut run: impl FnMut(&[String]) -> i32) -> i32 {
     let mut worst = 0;
-    let mut advisory = false;
+    let mut advisory = Vec::new();
     for step in steps {
         let code = run(step);
         if code == 1 && !enforce && finds_advisory(step) {
-            println!("ci spec: advisory finding, not failing the run");
-            advisory = true;
+            advisory.push(step);
         } else {
             worst = worst.max(code);
         }
     }
-    if worst == 0 && advisory {
+    // Printed after every step, so the record's tail keeps them.
+    for step in &advisory {
+        println!(
+            "ci spec: the finding of `{}` is advisory and does not fail the job",
+            step.join(" ")
+        );
+    }
+    if worst == 0 && !advisory.is_empty() {
         ADVISORY_EXIT
     } else {
         worst
@@ -176,7 +176,7 @@ fn inner(env: &CiEnv, opts: &Options) -> i32 {
     let read = package(name).and_then(|pkg| {
         let regen = (pkg.generates || pkg.sdk) && regen::bot_regenerates(env)?;
         let root = invoke::workspace_root().map_err(|e| e.to_string())?;
-        let enforce = Config::load(&root)?.enforce()?.iter().any(|k| k == "spec");
+        let enforce = Config::load(&root)?.enforces("spec")?;
         Ok((pkg, regen, enforce))
     });
     match read {
@@ -360,6 +360,17 @@ mod tests {
             assert_eq!(settle(&all_steps(), enforce, finding_on("gate", 2)), 2);
             assert_eq!(settle(&all_steps(), enforce, finding_on("check", 2)), 2);
         }
+    }
+
+    #[test]
+    fn every_step_runs_after_one_fails() {
+        let mut ran = Vec::new();
+        let code = settle(&all_steps(), false, |args| {
+            ran.push(args[..2].join(" "));
+            2
+        });
+        assert_eq!(code, 2);
+        assert_eq!(ran, ["spec gen", "spec gate", "spec check", "sdk gen"]);
     }
 
     #[test]
