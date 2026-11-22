@@ -8,7 +8,7 @@
 //! so its declaration and fingerprint come from the JSON item instead, with
 //! ids left out.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use serde_json::Value;
@@ -112,6 +112,23 @@ const KINDS: &[&str] = &[
 /// Build a surface from a rustdoc JSON document. `source_root` resolves the
 /// relative filenames in spans (the directory rustdoc ran in).
 pub fn from_rustdoc(doc: &Value, source_root: &Path) -> Surface {
+    from_rustdoc_with(doc, source_root, &BTreeMap::new())
+}
+
+/// [`from_rustdoc`] for a crate that re-exports items of other crates.
+///
+/// `dependencies` holds the surface of each such crate under its rustdoc
+/// crate name (see [`reexported_crates`]). A re-exported item registers under
+/// the re-exporting path with the defining crate's kind, fingerprint,
+/// signature and docs, and so does everything under it (a module's items, a
+/// type's inherent members), exactly as if it were defined there. The
+/// defining crate's own paths are not added. A `pub use` of a crate absent
+/// from `dependencies` registers nothing, as in [`from_rustdoc`].
+pub fn from_rustdoc_with(
+    doc: &Value,
+    source_root: &Path,
+    dependencies: &BTreeMap<String, Surface>,
+) -> Surface {
     let mut surface = Surface::default();
     let (Some(index), Some(paths)) = (doc["index"].as_object(), doc["paths"].as_object()) else {
         return surface;
@@ -152,9 +169,34 @@ pub fn from_rustdoc(doc: &Value, source_root: &Path) -> Surface {
         );
     }
 
-    alias_reexports(index, paths, &mut surface);
+    let links = Links {
+        index,
+        paths,
+        crates: &doc["external_crates"],
+        dependencies,
+    };
+    alias_reexports(&links, &mut surface);
     index_members(index, paths, source_root, &mut file_cache, &mut surface);
     surface
+}
+
+/// The rustdoc name of every other crate a `pub use` in `doc` re-exports an
+/// item from, the keys [`from_rustdoc_with`] looks dependencies up by.
+pub fn reexported_crates(doc: &Value) -> BTreeSet<String> {
+    let (Some(index), Some(paths)) = (doc["index"].as_object(), doc["paths"].as_object()) else {
+        return BTreeSet::new();
+    };
+    index
+        .values()
+        .filter(|item| item["visibility"] == "public")
+        .filter_map(|item| item["inner"]["use"]["id"].as_u64())
+        .filter(|id| !index.contains_key(&id.to_string()))
+        .filter_map(|id| {
+            let crate_id = paths.get(&id.to_string())?["crate_id"].as_u64()?;
+            let name = doc["external_crates"][crate_id.to_string()]["name"].as_str()?;
+            Some(name.to_string())
+        })
+        .collect()
 }
 
 /// Register the pub methods and associated consts of inherent impls under
@@ -232,19 +274,15 @@ fn index_members(
 /// tags, and doc prose all read naturally as the flattened path a consumer
 /// would actually import, so both spellings are registered (see
 /// `Surface::grouped` for how counting avoids double-charging the alias).
-fn alias_reexports(
-    index: &serde_json::Map<String, Value>,
-    paths: &serde_json::Map<String, Value>,
-    surface: &mut Surface,
-) {
-    for (mod_id, item) in index {
+fn alias_reexports(links: &Links<'_>, surface: &mut Surface) {
+    for (mod_id, item) in links.index {
         if item["visibility"] != "public" {
             continue;
         }
         let Some(children) = item["inner"]["module"]["items"].as_array() else {
             continue;
         };
-        let Some(mod_path) = item_path(paths, mod_id) else {
+        let Some(mod_path) = item_path(links.paths, mod_id) else {
             continue;
         };
 
@@ -253,7 +291,7 @@ fn alias_reexports(
                 continue;
             };
             let child_id = child_id.to_string();
-            let Some(use_) = index.get(&child_id).map(|c| &c["inner"]["use"]) else {
+            let Some(use_) = links.index.get(&child_id).map(|c| &c["inner"]["use"]) else {
                 continue;
             };
             let Some(target_id) = use_["id"].as_u64() else {
@@ -264,39 +302,84 @@ fn alias_reexports(
             // codebase flattens a whole file-per-item submodule — aliases
             // every one of the target module's own children under its own
             // name instead.
-            let targets: Vec<(String, u64)> = if use_["is_glob"].as_bool().unwrap_or(false) {
-                glob_targets(index, target_id)
-            } else {
-                match use_["name"].as_str() {
-                    Some(name) => vec![(name.to_string(), target_id)],
-                    None => continue,
-                }
-            };
-
-            for (name, target_id) in targets {
-                alias_one(paths, surface, &mod_path, &name, target_id);
+            if use_["is_glob"].as_bool().unwrap_or(false) {
+                links.alias_glob(surface, &mod_path, target_id);
+            } else if let Some(name) = use_["name"].as_str() {
+                links.alias(surface, &mod_path, name, target_id);
             }
         }
     }
 }
 
-/// Every direct child of a glob-imported module, as `(its own name, id)` —
-/// what `pub use module::*;` actually brings into scope.
-fn glob_targets(index: &serde_json::Map<String, Value>, module_id: u64) -> Vec<(String, u64)> {
-    let Some(children) = index
-        .get(&module_id.to_string())
-        .and_then(|m| m["inner"]["module"]["items"].as_array())
-    else {
-        return Vec::new();
-    };
-    children
-        .iter()
-        .filter_map(|c| {
-            let id = c.as_u64()?;
-            let name = index.get(&id.to_string())?["name"].as_str()?;
-            Some((name.to_string(), id))
-        })
-        .collect()
+/// What a `pub use` target resolves against: the documented crate's own
+/// items, and the surfaces of the crates it re-exports from.
+struct Links<'a> {
+    index: &'a serde_json::Map<String, Value>,
+    paths: &'a serde_json::Map<String, Value>,
+    crates: &'a Value,
+    dependencies: &'a BTreeMap<String, Surface>,
+}
+
+impl Links<'_> {
+    /// The surface defining `id` and the item's path there, when `id` is
+    /// another crate's item and that crate's surface is known.
+    fn external(&self, id: u64) -> Option<(&Surface, String)> {
+        let id = id.to_string();
+        if self.index.contains_key(&id) {
+            return None;
+        }
+        let crate_id = self.paths.get(&id)?["crate_id"].as_u64()?;
+        let name = self.crates[crate_id.to_string()]["name"].as_str()?;
+        Some((self.dependencies.get(name)?, item_path(self.paths, &id)?))
+    }
+
+    fn alias(&self, surface: &mut Surface, mod_path: &str, name: &str, target_id: u64) {
+        match self.external(target_id) {
+            Some((dep, from)) => {
+                alias_external(dep, &from, &format!("{mod_path}::{name}"), false, surface)
+            }
+            None => alias_one(self.paths, surface, mod_path, name, target_id),
+        }
+    }
+
+    /// What `pub use module::*;` brings into scope: every direct child under
+    /// its own name, a named re-export under the name it is re-exported as.
+    fn alias_glob(&self, surface: &mut Surface, mod_path: &str, module_id: u64) {
+        if let Some((dep, from)) = self.external(module_id) {
+            return alias_external(dep, &from, mod_path, true, surface);
+        }
+        let Some(children) = self
+            .index
+            .get(&module_id.to_string())
+            .and_then(|m| m["inner"]["module"]["items"].as_array())
+        else {
+            return;
+        };
+        for id in children.iter().filter_map(Value::as_u64) {
+            let Some(child) = self.index.get(&id.to_string()) else {
+                continue;
+            };
+            let use_ = &child["inner"]["use"];
+            match (use_["id"].as_u64(), use_["is_glob"].as_bool()) {
+                // Only another crate's module: a glob of a local glob can cycle.
+                (Some(target), Some(true)) => {
+                    if let Some((dep, from)) = self.external(target) {
+                        alias_external(dep, &from, mod_path, true, surface);
+                    }
+                }
+                (Some(target), _) => {
+                    if let Some(name) = use_["name"].as_str() {
+                        self.alias(surface, mod_path, name, target);
+                    }
+                }
+                (None, _) => {
+                    if let Some(name) = child["name"].as_str() {
+                        alias_one(self.paths, surface, mod_path, name, id);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Register one alias (`{mod_path}::{name}` -> the target's info) alongside
@@ -321,6 +404,28 @@ fn alias_one(
         return;
     }
     surface.items.entry(alias).or_insert(info);
+}
+
+/// Register the item `dep` holds at `from` under `to`, and every item and
+/// member below it at the same place below `to`: where they would sit had
+/// they been defined at `to`. A glob takes only what is below `from`.
+fn alias_external(dep: &Surface, from: &str, to: &str, glob: bool, surface: &mut Surface) {
+    let below = |entries: &BTreeMap<String, ItemInfo>| -> Vec<(String, ItemInfo)> {
+        entries
+            .iter()
+            .filter_map(|(path, info)| {
+                let rest = path.strip_prefix(from)?;
+                let taken = rest.starts_with("::") || (rest.is_empty() && !glob);
+                taken.then(|| (format!("{to}{rest}"), info.clone()))
+            })
+            .collect()
+    };
+    for (path, info) in below(&dep.items) {
+        surface.items.entry(path).or_insert(info);
+    }
+    for (path, info) in below(&dep.members) {
+        surface.members.entry(path).or_insert(info);
+    }
 }
 
 fn item_path(paths: &serde_json::Map<String, Value>, id: &str) -> Option<String> {
@@ -673,6 +778,109 @@ mod tests {
             items: items.into_iter().map(|(p, i)| (p.to_string(), i)).collect(),
             ..Surface::default()
         }
+    }
+
+    fn facade_doc() -> Value {
+        let use_ = |name: &str, id: u64, is_glob: bool| {
+            json!({
+                "visibility": "public",
+                "inner": { "use": { "name": name, "id": id, "is_glob": is_glob } },
+            })
+        };
+        json!({
+            "index": {
+                "1": { "visibility": "public", "inner": { "module": { "items": [2, 3, 4, 5, 8, 9] } } },
+                "2": use_("named", 20, false),
+                "3": use_("indicators", 21, false),
+                "4": use_("prelude", 22, true),
+                "5": use_("Counter", 23, false),
+                "6": { "visibility": "default", "inner": { "module": { "items": [7] } } },
+                "7": use_("Two", 24, false),
+                "8": use_("inner", 6, true),
+                "9": use_("fmt", 30, false),
+            },
+            "paths": {
+                "1": { "crate_id": 0, "path": ["a"], "kind": "module" },
+                "6": { "crate_id": 0, "path": ["a", "inner"], "kind": "module" },
+                "20": { "crate_id": 1, "path": ["b", "named"], "kind": "function" },
+                "21": { "crate_id": 1, "path": ["b", "indicators"], "kind": "module" },
+                "22": { "crate_id": 1, "path": ["b", "prelude"], "kind": "module" },
+                "23": { "crate_id": 1, "path": ["b", "Counter"], "kind": "struct" },
+                "24": { "crate_id": 1, "path": ["b", "Two"], "kind": "struct" },
+                "30": { "crate_id": 2, "path": ["std", "fmt"], "kind": "module" },
+            },
+            "external_crates": { "1": { "name": "b" }, "2": { "name": "std" } },
+        })
+    }
+
+    fn documented(kind: &str, fingerprint: u64) -> ItemInfo {
+        ItemInfo {
+            has_docs: true,
+            ..item(kind, fingerprint)
+        }
+    }
+
+    fn dependency_b() -> BTreeMap<String, Surface> {
+        let mut b = surface_of(vec![
+            ("b", item("module", 1)),
+            ("b::named", documented("function", 2)),
+            ("b::indicators", item("module", 3)),
+            ("b::indicators::sma", documented("function", 4)),
+            ("b::prelude", item("module", 5)),
+            ("b::prelude::one", documented("function", 6)),
+            ("b::Counter", documented("struct", 7)),
+            ("b::Two", item("struct", 8)),
+        ]);
+        b.members
+            .insert("b::Counter::new".to_string(), documented("function", 9));
+        BTreeMap::from([("b".to_string(), b)])
+    }
+
+    #[test]
+    fn a_reexport_from_another_crate_takes_the_defining_crates_info() {
+        let surface = from_rustdoc_with(&facade_doc(), Path::new("."), &dependency_b());
+
+        let named = &surface.items["a::named"];
+        assert_eq!((named.kind.as_str(), named.fingerprint), ("function", 2));
+        assert!(named.has_docs);
+        assert_eq!(surface.items["a::Counter"].fingerprint, 7);
+        assert_eq!(surface.members["a::Counter::new"].fingerprint, 9);
+        assert!(surface.lookup("a::Counter::new").unwrap().has_docs);
+        assert!(surface.items.keys().all(|k| !k.starts_with("b::")));
+        assert!(surface.members.keys().all(|k| !k.starts_with("b::")));
+    }
+
+    #[test]
+    fn a_reexported_module_brings_what_is_below_it() {
+        let surface = from_rustdoc_with(&facade_doc(), Path::new("."), &dependency_b());
+        assert_eq!(surface.items["a::indicators"].kind, "module");
+        assert_eq!(surface.items["a::indicators::sma"].fingerprint, 4);
+    }
+
+    #[test]
+    fn a_glob_of_another_crates_module_takes_its_children_not_the_module() {
+        let surface = from_rustdoc_with(&facade_doc(), Path::new("."), &dependency_b());
+        assert_eq!(surface.items["a::one"].fingerprint, 6);
+        assert!(!surface.items.contains_key("a::prelude"));
+    }
+
+    #[test]
+    fn a_glob_of_a_local_module_takes_its_named_reexports() {
+        let surface = from_rustdoc_with(&facade_doc(), Path::new("."), &dependency_b());
+        assert_eq!(surface.items["a::Two"].fingerprint, 8);
+    }
+
+    #[test]
+    fn a_crate_without_a_known_surface_stays_unresolved() {
+        let surface = from_rustdoc(&facade_doc(), Path::new("."));
+        assert_eq!(surface.items.keys().collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test]
+    fn reexported_crates_names_each_crate_a_pub_use_reaches() {
+        let crates = reexported_crates(&facade_doc());
+        assert_eq!(crates.into_iter().collect::<Vec<_>>(), ["b", "std"]);
+        assert!(reexported_crates(&impl_doc()).is_empty());
     }
 
     #[test]
