@@ -77,10 +77,7 @@ pub(super) fn resolve(g: &GateArgs, walltime_advisory: bool) -> Result<Option<Re
     }
     let records = invoke::run_bench(&g.common, &[]).map_err(|e| e.to_string())?;
     let mut current = invoke::collect(&records);
-    current.build = Some(buildstamp::capture(
-        g.common.codegen_units_stamp().as_deref(),
-        None,
-    ));
+    current.build = Some(buildstamp::capture(&g.common, None));
     let baseline = invoke::load_baseline(&g.baseline)
         .map_err(|e| format!("failed to load baseline: {e}"))?
         .ok_or_else(|| {

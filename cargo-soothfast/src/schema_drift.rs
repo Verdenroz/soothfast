@@ -62,6 +62,7 @@ fn full_run() -> Run {
             codegen_units: "1".into(),
             profiles: "abc".into(),
             rustflags: "def".into(),
+            cpu: String::new(),
         }),
         items: [
             ("pkg::bench".to_string(), full_item()),

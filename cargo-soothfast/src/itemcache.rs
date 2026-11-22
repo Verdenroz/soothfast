@@ -462,6 +462,7 @@ mod tests {
                 guest: None,
                 callgrind_method: Some(method.into()),
                 item_reuse: true,
+                cpu: String::new(),
             };
             Runs::new(&stamp, &common, Some(env)).item_scope().unwrap()
         };

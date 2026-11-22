@@ -13,6 +13,8 @@ use std::sync::{Mutex, PoisonError};
 use serde_json::{Value, json};
 use soothfast_site::toml::logical_lines;
 
+use crate::invoke::CommonArgs;
+
 /// The build settings behind one measurement run.
 #[derive(Debug, Clone)]
 pub struct BuildStamp {
@@ -24,6 +26,9 @@ pub struct BuildStamp {
     pub profiles: String,
     /// Hash of the flags reaching rustc from the environment and config.
     pub rustflags: String,
+    /// The CPU features callgrind hides beyond AVX-512, or empty for the
+    /// default mask.
+    pub cpu: String,
 }
 
 #[cfg(test)]
@@ -34,23 +39,31 @@ impl BuildStamp {
             codegen_units: "1".into(),
             profiles: "a".into(),
             rustflags: "b".into(),
+            cpu: String::new(),
         }
     }
 }
 
 impl BuildStamp {
-    fn fields(&self) -> [(&'static str, &str); 4] {
+    fn fields(&self) -> [(&'static str, &str); 5] {
         [
             ("rustc", &self.rustc),
             ("codegen_units", &self.codegen_units),
             ("profiles", &self.profiles),
             ("rustflags", &self.rustflags),
+            ("cpu", &self.cpu),
         ]
     }
 
+    /// The default mask leaves `cpu` out, so a stamp written before the mask
+    /// existed reads back the same.
     pub fn to_json(&self) -> Value {
         let mut doc = json!({});
-        for (k, v) in self.fields() {
+        for (k, v) in self
+            .fields()
+            .into_iter()
+            .filter(|(k, v)| *k != "cpu" || !v.is_empty())
+        {
             doc[k] = json!(v);
         }
         doc
@@ -64,6 +77,7 @@ impl BuildStamp {
             codegen_units: field("codegen_units")?,
             profiles: field("profiles")?,
             rustflags: field("rustflags")?,
+            cpu: field("cpu").unwrap_or_default(),
         })
     }
 
@@ -72,6 +86,7 @@ impl BuildStamp {
         let joined = self
             .fields()
             .iter()
+            .filter(|(k, v)| *k != "cpu" || !v.is_empty())
             .map(|(_, v)| *v)
             .collect::<Vec<_>>()
             .join("\u{1}");
@@ -83,17 +98,20 @@ impl BuildStamp {
 }
 
 /// Capture the settings a bench build in `dir` (the current workspace when
-/// `None`) will use, with `codegen_units` as the gate pinned it.
-pub fn capture(codegen_units: Option<&str>, dir: Option<&Path>) -> BuildStamp {
+/// `None`) will use, with the codegen units and CPU mask `common` pins.
+pub fn capture(common: &CommonArgs, dir: Option<&Path>) -> BuildStamp {
     let root = match dir {
         Some(d) => Some(d.to_path_buf()),
         None => crate::invoke::workspace_root().ok(),
     };
     BuildStamp {
         rustc: rustc_version(dir),
-        codegen_units: codegen_units.unwrap_or("inherit").to_string(),
+        codegen_units: common
+            .codegen_units_stamp()
+            .unwrap_or_else(|| "inherit".into()),
         profiles: hash(&profile_lines(root.as_deref())),
         rustflags: hash(&rustflag_lines(root.as_deref())),
+        cpu: common.cpu_stamp(),
     }
 }
 
@@ -117,10 +135,33 @@ pub fn compare(reference: &Value, current: &BuildStamp) -> Option<Mismatch> {
     }
     current.fields().into_iter().find_map(|(field, new)| {
         let was = old[field].as_str().unwrap_or_default();
+        let shown = |v: &str| match (field, v) {
+            ("cpu", "") => "default".to_string(),
+            _ => v.to_string(),
+        };
         (was != new).then(|| Mismatch {
             reason: format!("build settings differ: {field}"),
-            detail: format!("build settings differ: {field} ({was} -> {new})"),
+            detail: format!(
+                "build settings differ: {field} ({} -> {})",
+                shown(was),
+                shown(new)
+            ),
         })
+    })
+}
+
+/// Why a baseline's counts cannot back a claim read under the mask `expected`
+/// names, or `None` when it was measured under the same one.
+pub fn cpu_drift(baseline: &Value, expected: &str) -> Option<String> {
+    let was = baseline["build"]["cpu"].as_str().unwrap_or_default();
+    let shown = |v: &str| if v.is_empty() { "default" } else { v }.to_string();
+    (was != expected).then(|| {
+        format!(
+            "the baseline was measured hiding cpu features {} but this repo measures hiding {}; \
+             re-save it with `measure --save-baseline`",
+            shown(was),
+            shown(expected)
+        )
     })
 }
 
@@ -241,7 +282,49 @@ mod tests {
             codegen_units: "1".into(),
             profiles: profiles.into(),
             rustflags: "0".into(),
+            cpu: String::new(),
         }
+    }
+
+    fn hiding(names: &str) -> BuildStamp {
+        BuildStamp {
+            cpu: names.into(),
+            ..stamp("aaaa")
+        }
+    }
+
+    #[test]
+    fn the_default_mask_leaves_the_stamp_as_it_was_written_before_masks() {
+        let default = stamp("aaaa");
+        assert!(default.to_json().get("cpu").is_none());
+        assert_eq!(BuildStamp::from_json(&default.to_json()).unwrap().cpu, "");
+        assert_ne!(default.digest(), hiding("AVX2").digest());
+        assert_eq!(hiding("AVX2").to_json()["cpu"], "AVX2");
+    }
+
+    #[test]
+    fn a_reference_under_another_mask_is_not_comparable() {
+        let reference = json!({ "build": stamp("aaaa").to_json() });
+        let why = compare(&reference, &hiding("AVX2")).expect("mismatch");
+        assert_eq!(why.reason, "build settings differ: cpu");
+        assert!(why.detail.contains("default -> AVX2"), "{}", why.detail);
+        let hidden = json!({ "build": hiding("AVX2").to_json() });
+        assert!(compare(&hidden, &hiding("AVX2")).is_none());
+        let back = compare(&hidden, &stamp("aaaa")).expect("mismatch");
+        assert!(back.detail.contains("AVX2 -> default"), "{}", back.detail);
+    }
+
+    #[test]
+    fn a_baseline_under_another_mask_cannot_back_claims() {
+        let saved = |names: &str| json!({ "build": hiding(names).to_json() });
+        assert!(cpu_drift(&saved(""), "").is_none());
+        assert!(cpu_drift(&saved("AVX2"), "AVX2").is_none());
+        assert!(cpu_drift(&json!({}), "").is_none());
+        let why = cpu_drift(&saved(""), "AVX2").expect("drift");
+        assert!(
+            why.contains("default but this repo measures hiding AVX2"),
+            "{why}"
+        );
     }
 
     #[test]

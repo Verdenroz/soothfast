@@ -16,6 +16,7 @@ fn stamp(profiles: &str) -> buildstamp::BuildStamp {
         codegen_units: "1".into(),
         profiles: profiles.into(),
         rustflags: "0".into(),
+        cpu: String::new(),
     }
 }
 

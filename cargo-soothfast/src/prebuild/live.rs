@@ -80,7 +80,7 @@ impl Live<'_> {
 
     pub(super) fn find_reference(&self, pkg: &str) -> Option<Vec<PathBuf>> {
         let one = self.one(pkg, None);
-        let stamp = buildstamp::capture(one.codegen_units_stamp().as_deref(), None);
+        let stamp = buildstamp::capture(&one, None);
         let env = self
             .memo
             .heads

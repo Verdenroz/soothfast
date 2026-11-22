@@ -196,7 +196,7 @@ fn measure_ref(
     let mut packages = Vec::new();
     for pkg in &a.pkg {
         let common = refrun::common(config, pkg)?;
-        let stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+        let stamp = buildstamp::capture(&common, None);
         let key = (!sha.is_empty()).then(|| runcache::report_key(&sha, &common, &stamp));
         packages.push(RefPackage {
             pkg,

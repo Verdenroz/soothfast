@@ -156,6 +156,7 @@ mod tests {
             codegen_units: "1".into(),
             profiles: "p".into(),
             rustflags: "f".into(),
+            cpu: String::new(),
         }
     }
 
@@ -165,6 +166,7 @@ mod tests {
             guest: None,
             callgrind_method: None,
             item_reuse: true,
+            cpu: String::new(),
         }
     }
 

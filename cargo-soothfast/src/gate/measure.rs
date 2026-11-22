@@ -71,17 +71,14 @@ pub(super) fn measure_ref_interleaved(
         let td = dir.and(wt_target.as_deref());
         let recs = invoke::run_bench_dir(common, extra, dir, td).map_err(|e| e.to_string())?;
         let mut run = invoke::collect(&recs);
-        run.build = Some(buildstamp::capture(
-            common.codegen_units_stamp().as_deref(),
-            dir,
-        ));
+        run.build = Some(buildstamp::capture(common, dir));
         Ok(run)
     };
 
     let base_sha = invoke::git(&["merge-base", "HEAD", refname])
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    let head_stamp = buildstamp::capture(common.codegen_units_stamp().as_deref(), None);
+    let head_stamp = buildstamp::capture(common, None);
     // Naming HEAD's binary costs a no-run build plus an objdump, so it is
     // taken once and threaded to every lookup and store below.
     let (head_dig, runs, head_exe) = headrun::probe("gate", common, &head_stamp);
@@ -96,7 +93,7 @@ pub(super) fn measure_ref_interleaved(
                 exe.map(|exe| Bin::head(exe, head_dig.as_deref())),
                 recording(),
                 unplanned,
-                || buildstamp::capture(common.codegen_units_stamp().as_deref(), None),
+                || buildstamp::capture(common, None),
                 |args| measure(None, args),
             )
         };
@@ -271,7 +268,7 @@ pub(super) fn measure_ref_interleaved(
             let Some(reuse) = &item_reuse else {
                 return measure(dir, extra);
             };
-            let stamp = || buildstamp::capture(common.codegen_units_stamp().as_deref(), dir);
+            let stamp = || buildstamp::capture(common, dir);
             reuse.measure_side(side, extra, stamp, |args| measure(dir, args))
         };
         let total = if walltime_advisory { 2 } else { 4 };

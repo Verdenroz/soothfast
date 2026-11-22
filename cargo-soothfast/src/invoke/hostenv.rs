@@ -20,6 +20,10 @@ pub struct HostEnv {
     pub callgrind_method: Option<String>,
     /// Whether the harness takes `--id` and reports `executed` records.
     pub item_reuse: bool,
+    /// The CPU features callgrind hides beyond AVX-512; empty for the default
+    /// mask. It is what the run was asked for, not something the harness
+    /// reports.
+    pub cpu: String,
 }
 
 /// What callgrind's counts depend on besides the binary.
@@ -59,6 +63,7 @@ impl HostEnv {
             guest,
             callgrind_method: field("callgrind_method"),
             item_reuse: v["item_reuse"].as_bool().unwrap_or(false),
+            cpu: String::new(),
         })
     }
 }
@@ -86,6 +91,10 @@ pub fn host_env(exe: &Path, common: &CommonArgs) -> Result<HostEnv, String> {
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
         .find(|v| v["type"] == "env")
         .and_then(|v| HostEnv::from_line(&v))
+        .map(|env| HostEnv {
+            cpu: common.cpu_stamp(),
+            ..env
+        })
         .ok_or_else(|| "bench harness printed no env line for --env".into())
 }
 
@@ -161,6 +170,7 @@ mod tests {
                 }),
                 callgrind_method: Some("one-process".into()),
                 item_reuse: false,
+                cpu: String::new(),
             })
         );
         let partial = serde_json::json!({

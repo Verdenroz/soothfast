@@ -8,7 +8,9 @@ use serde_json::Value;
 use soothfast_docs::{diff, gentests, lockfile, markdown, reference, surface};
 
 use crate::config::{Config, Group, Settings};
-use crate::{docs_binds, docs_claims, docs_generated, docs_support, glob, invoke};
+use crate::{
+    buildstamp, config, docs_binds, docs_claims, docs_generated, docs_support, glob, invoke,
+};
 
 #[derive(Default)]
 struct DocsArgs {
@@ -559,6 +561,15 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
                 Err(e) => return err(&format!("cannot load baseline: {e}")),
             }
         };
+        if let Some(b) = &baseline {
+            let expected = match config::gate_cpu(&a.pkgs) {
+                Ok(expected) => expected,
+                Err(e) => return err(&e),
+            };
+            if let Some(why) = buildstamp::cpu_drift(b, &expected) {
+                return err(&why);
+            }
+        }
         let docs: Vec<(&str, &markdown::Doc)> = scanned
             .docs
             .iter()

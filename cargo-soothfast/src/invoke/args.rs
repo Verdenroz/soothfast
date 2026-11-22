@@ -127,6 +127,11 @@ impl CommonArgs {
         Ok(())
     }
 
+    /// What the mask adds to a measurement's identity, empty for the default.
+    pub fn cpu_stamp(&self) -> String {
+        self.cpu_mask().map(|m| m.identity()).unwrap_or_default()
+    }
+
     /// The names the harness hides beyond AVX-512.
     pub fn cpu_hidden(&self) -> Result<Vec<String>, String> {
         Ok(self.cpu_mask()?.hidden())
