@@ -48,7 +48,7 @@ pub(super) fn measure_ref_interleaved(
         /// The one pass, whether it carries the gating counters, and the run
         /// stored for the identical binary with its label.
         IdenticalBinaries {
-            run: Result<Run, String>,
+            run: Box<Result<Run, String>>,
             counted: bool,
             stored: Option<StoredFor>,
         },
@@ -226,7 +226,7 @@ pub(super) fn measure_ref_interleaved(
             }
             let stored = covering.filter(|_| !counted);
             let identical = Ref::IdenticalBinaries {
-                run,
+                run: Box::new(run),
                 counted,
                 stored,
             };
@@ -351,7 +351,7 @@ pub(super) fn measure_ref_interleaved(
             counted,
             stored,
         } => {
-            let pass = run?;
+            let pass = (*run)?;
             let (head, source) = identical_head(pass, counted, stored);
             return Ok(Some(Resolved {
                 reference: ref_doc(&head),
