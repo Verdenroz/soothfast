@@ -24,7 +24,8 @@ skip() {
 }
 
 [ -f "$ARTIFACT_DIR/pr-number" ] || skip "the run uploaded no pull request number"
-number=$(head -c 16 "$ARTIFACT_DIR/pr-number" | head -n 1)
+# A builtin read: a pipe into `head -n 1` can die of SIGPIPE under pipefail.
+IFS= read -r -n 16 number <"$ARTIFACT_DIR/pr-number" || true
 [[ $number =~ ^[1-9][0-9]{0,9}$ ]] || skip "the pull request number is not an integer"
 
 pull=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${number}" \
@@ -45,7 +46,7 @@ expectation() {
   local -a tokens=()
   kept=()
   if [ -f "$file" ]; then
-    read -ra tokens < <(head -c "$max_file_bytes" "$file" | head -n 1) || true
+    read -r -n "$max_file_bytes" -a tokens <"$file" || true
   fi
   for token in "${tokens[@]}"; do
     if [[ $token =~ $pattern ]] && [ "${#kept[@]}" -lt "$limit" ]; then
