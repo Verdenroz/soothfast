@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Verify the run behind a fork's verdict in the broker (#481)
 - Accept workflow_run in broker comment mode (#477)
 - Render and post a fork's verdict from trusted code (#478)
 - Regenerate captured example output (#464)
