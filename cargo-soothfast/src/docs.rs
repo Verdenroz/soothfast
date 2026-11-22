@@ -418,11 +418,11 @@ fn surfaces_for_binds(
         .collect()
 }
 
-fn build_surface(a: &DocsArgs, pkg: &str) -> Result<(surface::Surface, Value, PathBuf), String> {
-    let (doc, root) =
-        invoke::rustdoc_json_in(pkg, None, a.features.as_deref(), invoke::Visibility::Public)
-            .map_err(|e| e.to_string())?;
-    Ok((surface::from_rustdoc(&doc, &root), doc, root))
+fn build_surface(
+    a: &DocsArgs,
+    pkg: &str,
+) -> Result<(surface::Surface, docs_support::DocsText, PathBuf), String> {
+    docs_support::surface_in(pkg, None, a.features.as_deref())
 }
 
 /// Whether the scan covered every page of the repository's `[docs] paths`.
@@ -980,14 +980,9 @@ fn surface_diff(a: &DocsArgs) -> i32 {
         Err(e) => return err(&e.to_string()),
     };
     let old_surf = match invoke::with_merge_base_worktree(&refname, |wt| {
-        invoke::rustdoc_json_in(
-            &pkg,
-            Some(wt),
-            a.features.as_deref(),
-            invoke::Visibility::Public,
-        )
-        .map(|(doc, wt_root)| surface::from_rustdoc(&doc, &wt_root))
-        .map_err(|e| format!("cannot build surface at {sha}: {e}"))
+        docs_support::surface_in(&pkg, Some(wt), a.features.as_deref())
+            .map(|(surface, _, _)| surface)
+            .map_err(|e| format!("cannot build surface at {sha}: {e}"))
     }) {
         Ok(s) => s,
         Err(e) => return err(&e),
@@ -1008,7 +1003,7 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
     let Some(pkg) = a.pkg.clone() else {
         return err("reference needs -p PKG or [docs] package");
     };
-    let (surf, doc, root) = match build_surface(a, &pkg) {
+    let (surf, docs, root) = match build_surface(a, &pkg) {
         Ok(s) => s,
         Err(e) => return err(&e),
     };
@@ -1017,7 +1012,7 @@ fn reference_cmd(a: &DocsArgs) -> i32 {
         .ok()
         .flatten()
         .unwrap_or(serde_json::Value::Null);
-    let text = reference::render(&pkg, &surf, &docs_support::docs_text(&doc), &baseline);
+    let text = reference::render(&pkg, &surf, &docs, &baseline);
     let out_dir = a.out.clone().unwrap_or_else(|| root.join("docs/reference"));
     let _ = std::fs::create_dir_all(&out_dir);
     let path = out_dir.join(format!("{pkg}.md"));

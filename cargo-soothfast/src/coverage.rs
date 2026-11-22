@@ -219,9 +219,7 @@ fn load_surface(
     pkg: &str,
     features: Option<&str>,
 ) -> Result<soothfast_docs::surface::Surface, String> {
-    let (doc, root) = invoke::rustdoc_json_in(pkg, None, features, invoke::Visibility::Public)
-        .map_err(|e| e.to_string())?;
-    Ok(soothfast_docs::surface::from_rustdoc(&doc, &root))
+    crate::docs_support::surface_in(pkg, None, features).map(|(surface, _, _)| surface)
 }
 
 fn report(what: &str, total: u32, missing: u32) -> u32 {
