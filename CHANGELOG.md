@@ -1,13 +1,29 @@
 # Changelog
 
-## Unreleased (draft vs v0.7.0)
+## 0.8.0 - 2026-11-22
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+A crate can move items into a sibling workspace crate and re-export them at
+the same paths without its surface changing. A `pub use` of another
+workspace member's item, module or glob now resolves in that member's
+rustdoc JSON, built with the features the re-exporting crate enables in it,
+so the item keeps its key, fingerprint, docs and inherent members under the
+re-exporting path. Coverage, `docs diff`, `docs check` binds, bench
+`covers` resolution, the API reference, reports and the MCP surface all
+read the merged surface. Re-exports of crates outside the workspace are
+unchanged.
+
+### Upgrade notes
+
+- Nothing is required. Expect new keys the first time `docs diff` runs
+  against a pre-0.8.0 base: items a crate re-exports from other workspace
+  members, and a named `pub use` inside a glob-imported module, now appear
+  in the surface. Coverage counts do not move for the second case.
+- Binds and `covers` tags keyed on a definition path inside a private
+  module still break when that definition moves to another crate. Key them
+  on the public re-export path instead.
 <!-- /soothfast:notes -->
 
 ### 🐛 Fixes
