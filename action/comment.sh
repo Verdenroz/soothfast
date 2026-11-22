@@ -6,7 +6,9 @@
 # than "edit my last comment".
 # Inputs: GH_TOKEN PR_NUMBER MARKER BODY_FILE, BROKER (optional), HEAD_SHA
 # (optional: the commit the body is about, which a workflow_run job must send
-# the broker; when the pull request has moved past it nothing is posted).
+# the broker; when the pull request has moved past it nothing is posted),
+# RUN_ID (optional: the run that head came from, which lets a broker whose App
+# can read Actions check it).
 set -euo pipefail
 
 # shellcheck source=action/oidc.sh
@@ -15,11 +17,16 @@ source "$(dirname "$0")/oidc.sh"
 if oidc=$(oidc_token); then
   command -v jq >/dev/null || { echo "::error::jq must be installed on the runner to comment as soothfast-bot; see docs/ci.md, Self-hosted runners"; exit 1; }
   payload=$(jq -n --argjson pr "$PR_NUMBER" --arg marker "$MARKER" --rawfile body "$BODY_FILE" \
-    --arg head "${HEAD_SHA:-}" \
-    '{pull_request: $pr, marker: $marker, body: $body} + if $head == "" then {} else {head_sha: $head} end')
+    --arg head "${HEAD_SHA:-}" --arg run "${RUN_ID:-}" \
+    '{pull_request: $pr, marker: $marker, body: $body}
+      + if $head == "" then {} else {head_sha: $head} end
+      + if $run == "" then {} else {run_id: ($run | tonumber)} end')
   broker_post /comment -H "Authorization: Bearer $oidc" -H "content-type: application/json" --data-binary "$payload" || true
   if [ "$status" = 200 ]; then
     echo "commented as $(jq -r .app_slug <<<"$body")"
+    if [ "$(jq -r .run_verified <<<"$body")" = false ]; then
+      echo "::notice::the broker did not verify the run this comment came from; grant the soothfast-bot App Actions: Read-only (see docs/ci.md) to have it check"
+    fi
     exit 0
   fi
   reason=$(jq -r '.reason // empty' <<<"$body" 2>/dev/null || true)

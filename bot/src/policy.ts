@@ -39,6 +39,13 @@ export const PERMISSIONS: Record<Mode, Record<string, string>> = {
   comment: { pull_requests: "write" },
 };
 
+// Only a workflow_run comment asks for this; a grant GitHub has not seen yet
+// is refused at mint time and the broker falls back to PERMISSIONS.comment.
+export const RUN_PERMISSIONS: Record<string, string> = {
+  ...PERMISSIONS.comment,
+  actions: "read",
+};
+
 export const COMMENT_MAX_BYTES = 65536;
 
 const deny = (reason: string): Decision => ({ ok: false, reason });
@@ -105,7 +112,7 @@ export function decideTag(ref: string, compareStatus: string): Decision {
 
 interface ForkPullRequest {
   state?: string;
-  head: { sha: string; repo: { id: number } | null };
+  head: { sha: string; ref: string; repo: { id: number } | null };
   base: { repo: { id: number } };
 }
 
@@ -126,6 +133,40 @@ export function decideForkPullRequest(
   return pr.head.sha === headSha
     ? { ok: true, mode: "comment" }
     : deny(`pull request ${number} head moved to ${pr.head.sha.slice(0, 7)}`);
+}
+
+interface TriggeringRun {
+  event: string;
+  head_sha: string;
+  head_branch: string | null;
+  head_repository: { id: number } | null;
+  repository: { id: number };
+}
+
+// The head commit alone does not name a pull request, so the run the verdict
+// came from must be a pull_request run for this one.
+export function decideRun(
+  run: TriggeringRun | undefined,
+  repositoryId: number,
+  headSha: string | undefined,
+  pr: ForkPullRequest,
+): Decision {
+  if (!run) return deny("the workflow run does not exist in this repository");
+  if (run.repository.id !== repositoryId) {
+    return deny("the workflow run belongs to another repository");
+  }
+  if (run.event !== "pull_request") {
+    return deny(`the workflow run is a ${run.event} run, not pull_request`);
+  }
+  if (run.head_sha !== headSha) {
+    return deny("the workflow run is for another commit");
+  }
+  if (!run.head_repository || run.head_repository.id !== pr.head.repo?.id) {
+    return deny("the workflow run is for another head repository");
+  }
+  return run.head_branch === pr.head.ref
+    ? { ok: true, mode: "comment" }
+    : deny("the workflow run is for another branch");
 }
 
 export function pullRequestNumber(ref: string): number | undefined {
