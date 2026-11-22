@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Render and post a fork's verdict from trusted code (#478)
 - Regenerate captured example output (#464)
 - Comment a fork's verdict from workflow_run (#462)
 
