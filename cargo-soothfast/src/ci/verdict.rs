@@ -165,6 +165,17 @@ mod tests {
     }
 
     #[test]
+    fn advisory_sections_alone_exit_zero_and_an_error_beside_them_fails() {
+        let dir = scratch("advisory");
+        put(&dir, "spec-api", "check", "advisory", "BREAKING GET /x");
+        assert_eq!(run(&env(Some(&dir)), &[]), 0);
+        assert!(body(&dir).contains("1 advisory"));
+        put(&dir, "spec-web", "check", "errored", "build failed");
+        assert_eq!(run(&env(Some(&dir)), &[]), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn job_output_cannot_close_the_comment_fence() {
         let dir = scratch("fence");
         put(&dir, "core", "rust", "pass", "x\n```\n@everyone");
