@@ -602,7 +602,7 @@ mod tests {
     #[test]
     fn no_extra_features_leaves_the_avx512_mask_as_it_always_was() {
         assert_eq!(
-            tunables(),
+            glibc_tunables(""),
             "glibc.cpu.hwcaps=-AVX512F,-AVX512VL,-AVX512BW,-AVX512DQ,-AVX512CD,-AVX512_VBMI,-AVX512_VBMI2,-AVX512_VNNI,-AVX512_BITALG,-AVX512_VPOPCNTDQ"
         );
     }
