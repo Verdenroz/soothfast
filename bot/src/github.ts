@@ -90,12 +90,11 @@ export class GitHubError extends Error {
   }
 }
 
-// GitHub answers 422 when a token asks for a permission the App or the
-// installation does not hold yet (not yet accepted counts as not held).
-export const permissionNotGranted = (e: unknown): boolean =>
-  e instanceof GitHubError &&
-  e.status === 422 &&
-  /permissions requested are not granted/i.test(e.message);
+// GitHub answers a mint that asks for a permission the App or installation
+// does not hold (or has not accepted yet) with 422. The wording is not relied
+// on, so any 422 qualifies.
+export const mintRefused = (e: unknown): boolean =>
+  e instanceof GitHubError && e.status === 422;
 
 export interface GitHubApi {
   installationFor(

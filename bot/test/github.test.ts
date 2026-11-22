@@ -6,7 +6,7 @@ import {
   appJwt,
   githubApi,
   importPrivateKey,
-  permissionNotGranted,
+  mintRefused,
   wrapPkcs1,
 } from "../src/github.ts";
 import { NOW, generateKeys, toPem, type TestKeys } from "./keys.ts";
@@ -168,15 +168,16 @@ test("workflowRun returns the run and undefined on 404", async () => {
   assert.equal(calls[0].auth, "Bearer ghs_x");
 });
 
-test("only a 422 saying the permissions are not granted is that case", () => {
+test("only a 422 counts as a refused mint", () => {
+  const refused = (status: number, text: string) =>
+    mintRefused(new GitHubError(status, text));
+  assert.equal(refused(422, "Validation failed"), true);
   const message =
     "The permissions requested are not granted to this installation.";
-  const refused = (status: number, text: string) =>
-    permissionNotGranted(new GitHubError(status, text));
   assert.equal(refused(422, message), true);
-  assert.equal(refused(403, message), false);
-  assert.equal(refused(422, "Validation failed"), false);
-  assert.equal(permissionNotGranted(new Error(message)), false);
+  for (const status of [401, 403, 404, 500])
+    assert.equal(refused(status, "anything"), false, String(status));
+  assert.equal(mintRefused(new Error("x")), false);
 });
 
 test("revoke accepts 204", async () => {

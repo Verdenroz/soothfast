@@ -363,20 +363,40 @@ test("a workflow_run comment rejects a run_id that is not a positive integer", a
   assert.deepEqual(fake.minted, []);
 });
 
-test("a mint failure other than a missing permission stays an error", async () => {
-  const failures = [
-    new GitHubError(422, "Validation failed"),
-    new GitHubError(403, "The permissions requested are not granted"),
-    new GitHubError(500, "boom"),
-  ];
-  for (const mintError of failures) {
-    const fake = fakeGitHub({ forkPull, triggeringRun, mintError });
-    await assert.rejects(runRequest(fake, fromRun), GitHubError);
-    assert.equal(fake.minted.length, 1);
-    assert.deepEqual(fake.posted, []);
-  }
+test("any 422 on the actions mint falls back to pull requests alone", async () => {
+  const fake = fakeGitHub({ forkPull, triggeringRun, actionsGranted: false });
+  fake.github.mintToken = async (_id, _repo, permissions) => {
+    fake.minted.push(permissions);
+    if (permissions.actions) throw new GitHubError(422, "Validation failed");
+    return { token: "ghs_minted", expires_at: "2026-01-01T01:00:00Z" };
+  };
+  const { status, body } = await runRequest(fake, fromRun);
+  assert.equal(status, 200);
+  assert.equal(body.run_verified, false);
+  assert.deepEqual(fake.minted, [actions, { pull_requests: "write" }]);
 });
 
+test("the fallback mint's own failure is the error reported", async () => {
+  const fake = fakeGitHub({ forkPull, triggeringRun });
+  const second = new GitHubError(422, "Repository not accessible");
+  fake.github.mintToken = async (_id, _repo, permissions) => {
+    fake.minted.push(permissions);
+    throw permissions.actions ? notGranted() : second;
+  };
+  await assert.rejects(runRequest(fake, fromRun), second);
+  assert.equal(fake.minted.length, 2);
+  assert.deepEqual(fake.posted, []);
+});
+
+test("a mint failure other than 422 is not retried", async () => {
+  for (const status of [401, 403, 404, 500]) {
+    const mintError = new GitHubError(status, "not granted");
+    const fake = fakeGitHub({ forkPull, triggeringRun, mintError });
+    await assert.rejects(runRequest(fake, fromRun), GitHubError);
+    assert.equal(fake.minted.length, 1, String(status));
+    assert.deepEqual(fake.posted, [], String(status));
+  }
+});
 test("a workflow_run comment needs head_sha before any mint", async () => {
   const fake = fakeGitHub({ forkPull });
   for (const body of [commentBody, { ...commentBody, head_sha: 7 }]) {

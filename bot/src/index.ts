@@ -3,7 +3,7 @@ import {
   GitHubError,
   githubApi,
   importPrivateKey,
-  permissionNotGranted,
+  mintRefused,
   type GitHubApi,
   type Repository,
 } from "./github.ts";
@@ -283,7 +283,7 @@ async function authenticate(
     );
   if (claims.event_name === "workflow_run") {
     const withActions = await mint(RUN_PERMISSIONS).catch((e: unknown) =>
-      permissionNotGranted(e) ? undefined : Promise.reject(e),
+      mintRefused(e) ? undefined : Promise.reject(e),
     );
     if (withActions) return { ...withActions, slug, actionsReadable: true };
   }
