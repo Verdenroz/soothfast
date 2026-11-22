@@ -36,7 +36,10 @@ Two one-time settings, no secrets:
    no deployment branch policy and no required reviewers. The job above runs
    on pull requests too, and a branch policy would fail every one of them,
    the bot's own included. The broker enforces the default-branch rule
-   itself.
+   itself. The job that comments on a fork's pull request uses the
+   environment too: with required reviewers it waits for an approval before
+   every comment. A repository without the environment gets one from GitHub
+   on the first run, with no protection rules.
 
 Because the job names an environment, every run of it, pull request or push,
 appears under Environments and Deployments and on the pull request as
@@ -885,36 +888,70 @@ a writer waives regressions, never errors or docs drift.
 
 The verdict body is also written to the run's job summary, whoever opened the
 pull request. A fork's run has a read-only token and no OIDC identity, so the
-`verdict` job cannot comment. It uploads the body and the pull request number
-as the `soothfast-verdict-comment-attempt-<attempt>` artifact, and a second
-workflow posts it.
+`verdict` job cannot comment. It uploads only small data as the
+`soothfast-verdict-comment-attempt-<attempt>` artifact: the pull request
+number and what the plan expected of the run (the expected result names and
+the shard list), as plain text files. A second workflow renders the comment
+and posts it.
 
-The contributor sees the comment, headed by a line saying it came from a
-fork's run and was not produced with the repository's token. It is posted
-with `github.token`, not by the bot, under the same marker, so the next
-verdict replaces it. A pull request from the same repository is unaffected:
-its comment is posted directly and nothing is uploaded.
+That workflow installs the same CLI as the `verdict` job, downloads the
+run's `soothfast-result-*` artifacts and runs the same `ci verdict`
+rendering over them, so the markup of the comment is
+produced by this repository's pinned code and not by anything the fork's
+workflow file wrote. The comment opens with a line linking the run and giving
+its conclusion, taken from the event. When the rendered verdict passes but
+the run did not succeed, a second line says so and asks the reader to read
+the run. A run that left no results gets a comment saying that.
+
+The comment is posted as soothfast-bot, under the same marker, so the next
+verdict replaces it. The job runs in the `soothfast-bot` environment and
+sends the broker its OIDC token with the pull request number, the body and
+the head commit the run was for. The broker posts only for a `workflow_run`
+job in that environment on the default branch, and only while the pull
+request is open, from a fork, and still at that commit. When the broker does
+not post (the App is not installed, the broker cannot be reached or refuses,
+the job has no OIDC token), the job posts with `github.token` instead, and a
+notice gives the broker's reason. It reads the pull request's head again
+first: a verdict for a commit the pull request has moved past is posted by
+neither. A pull request from the same repository is unaffected: its comment
+is posted directly and nothing is uploaded.
 
 It is two workflows because the fork's own run executes code and a workflow
 file the fork controls. The comment job runs from `workflow_run`, which GitHub
 starts from the base repository with its permissions: `cargo soothfast init`
 writes it as `soothfast-comment.yml`, a caller of the reusable `comment.yml`
-with `actions: read` and `pull-requests: write` and nothing else. It never
+with `actions: read`, `contents: read` (for `soothfast.toml`), `id-token:
+write` (for the broker) and `pull-requests: write` and nothing else. It never
 checks out or runs the pull request's code, and it runs only for a
 `pull_request` run whose head repository is not this one. The generated file
 carries a `zizmor: ignore[dangerous-triggers]` on its `on:` line for that
 reason.
 
-The artifact is untrusted, so the job trusts only what GitHub reports about the
-run: its id, head commit, head repository and head branch. The number in the
-artifact is posted to only when it is a plain integer naming an open pull
-request of this repository whose head is that commit, repository and branch,
-and whose head repository is not the base repository. Otherwise nothing is
-posted and a notice says why. The body is capped below GitHub's comment limit
-and truncated with a line saying so. Each attempt of a run uploads its own
-artifact and the job reads the one of the attempt that triggered it, so a
-re-run posts its own verdict or nothing, and a run for an older commit cannot
-overwrite a newer verdict.
+Everything the fork's run uploaded is untrusted, so the job trusts only what
+GitHub reports about the run: its id, attempt, conclusion, head commit, head
+repository and head branch. The number in the artifact is posted to only when
+it is a plain integer naming an open pull request of this repository whose
+head is that commit, repository and branch, and whose head repository is not
+the base repository. Otherwise nothing is posted and a notice says why. Each
+expectation is a name of letters, digits and `._+-` of at most 64
+characters (a shard is `I/N`), with at most 256 names and 64 shards; anything
+else is dropped with a notice. Untrusted expectations can hide a missing
+section, which is why the run's conclusion is shown beside the verdict. The
+result files are read only when they total at most 20 MiB in at most 1000
+files, and symbolic links, files with unusual names and results of a later
+attempt are removed first. The CLI shows a result's name in a code span,
+with any character outside letters, digits and `._-+/:#` replaced by `?`,
+shows a kind only when it is one it writes, and fences the result's text, so
+nothing in a result becomes a link, a mention or markup. Each attempt of a
+run uploads its own artifacts and the job reads none from an attempt later
+than the one that triggered it, so a re-run posts its own verdict or nothing,
+and a run for an older commit cannot overwrite a newer verdict. The job is
+stopped after 30 minutes.
+
+The perf-accepted label is read with the job's own token, and counts only
+when a writer applied it. The label names come from `soothfast.toml` on the
+default branch, so a pull request into another branch uses the default
+branch's names.
 
 A repository on the reusable workflow only needs the `soothfast-comment.yml`
 file; `init --check` reports it missing or changed like the main caller.
