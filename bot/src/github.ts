@@ -90,9 +90,8 @@ export class GitHubError extends Error {
   }
 }
 
-// GitHub answers a mint that asks for a permission the App or installation
-// does not hold (or has not accepted yet) with 422. The wording is not relied
-// on, so any 422 qualifies.
+// GitHub refuses a mint that asks for a permission the installation does not
+// hold with 422. Its wording varies, so any 422 qualifies.
 export const mintRefused = (e: unknown): boolean =>
   e instanceof GitHubError && e.status === 422;
 
