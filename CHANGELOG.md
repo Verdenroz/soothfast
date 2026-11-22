@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Make the callgrind cpu mask configurable (#485)
 - Make spec findings advisory in CI (#483)
 - Verify the run behind a fork's verdict in the broker (#481)
 - Accept workflow_run in broker comment mode (#477)
@@ -36,6 +37,13 @@
 ### 🔍 API surface
 
 ```
+# soothfast-measure
+ADDED    soothfast_measure::callgrind::hide_cpu
+CHANGED  soothfast_measure::callgrind::guest (body)
+CHANGED  soothfast_measure::callgrind::probe (body)
+CHANGED  soothfast_measure::main (body)
+CHANGED  soothfast_measure::runner::main (body)
+
 # soothfast-report
 ADDED    soothfast_report::changelog::keep_stable_rows
 ```
