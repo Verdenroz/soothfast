@@ -201,6 +201,7 @@ outside it that moves the numbers:</p>
 <li>the measurement scope: <code>-p</code>, <code>--features</code>, <code>--bench</code>, <code>--backend</code>, <code>--samples</code>, <code>--filter</code>;</li>
 <li>the gating backend that actually measured, which under the default <code>auto</code> is whichever this host can run, so a <code>perfcnt</code> run is never served to a gate that fell back to <code>callgrind</code>, or the reverse;</li>
 <li>the machine the counts came from. For <code>perfcnt</code> and <code>walltime</code> that is the CPU model, since retired instructions and time differ across microarchitectures. For <code>callgrind</code> it is the CPU valgrind presents to the guest, the libc file the guest loads (its contents, so a distro rebuild that keeps the version number still counts), and the valgrind version string, which a distro-patched valgrind may keep unchanged. valgrind synthesizes the same guest CPU on different host models, so callgrind runs from differently named CI hosts share a key, while a machine with another glibc or valgrind does not;</li>
+<li>for <code>callgrind</code>, the CPU features the harness hides beyond AVX-512 (<code>cpu</code> under <code>[gate]</code>, see <a href="../measuring/">measuring</a>), when any are hidden. The default hides none and adds nothing to the key, so no stored run is invalidated by upgrading;</li>
 <li>for <code>callgrind</code>, the method the harness counts with, <code>one-process</code> or <code>two-process</code> (<code>SOOTHFAST_CALLGRIND_TWO_PROCESS=1</code> forces the latter). The two differ slightly (teardown, the dump requests), so a count taken one way is never served to a gate that counts the other. A harness that does not name its method counts as <code>two-process</code>.</li>
 </ul>
 <p>A merge-base with a stored run under the same key is served from there, and
@@ -556,6 +557,10 @@ build time, which is the price of a comparison that means something;
 <code>--codegen-units N</code> or <code>inherit</code> opts out, as does</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[gate]</span>
 <span class="tok-ty">codegen-units </span>=<span class="tok-str"> &quot;inherit&quot;</span></code></pre></figure>
+<p>The mask of hidden CPU features is part of the build stamp too, but only
+when it is not the default. A reference saved under another <code>cpu</code> setting
+than the run has reads as <code>build settings differ: cpu (default -&gt; AVX,...)</code>
+and the deterministic counters soften as above.</p>
 <p>Dependencies are left alone. They are identical on both sides, so they
 already partition identically, and pinning them as well would compile the
 whole graph a second time for nothing.</p>
@@ -576,6 +581,17 @@ codegen does not move them.</p>
 <p>A baseline saved before build stamps existed compares the same way, and says
 to re-save it. <code>--against-ref</code> never hits that: both sides are measured fresh
 in the same run.</p>
+<h2 id="switching-the-cpu-mask">Switching the CPU mask<a class="anchor" href="#switching-the-cpu-mask" aria-label="Link to this section">#</a></h2>
+<p>Setting <code>cpu = &quot;portable&quot;</code> changes every callgrind count in the repository
+once, for the reason <a href="../measuring/">measuring</a> gives. The first runs after
+the switch behave like this:</p>
+<ul>
+<li><code>gate</code> against the merge-base measures both sides under the new mask, so the verdict is unaffected. Neither side is found in the run cache or the item cache, so that first run measures in full.</li>
+<li><code>gate --baseline NAME</code> and <code>--ratchet NAME</code> against a baseline saved under the old mask print <code>build settings differ: cpu (default -&gt; ...)</code> and soften the deterministic counters to SOFT, the way a changed <code>rustc</code> or profile does. The run passes. <code>measure --save-baseline NAME</code> under the new mask makes the baseline comparable again.</li>
+<li><code>docs check</code> refuses claims read against a baseline saved under another mask, and names the <code>measure --save-baseline</code> that fixes it. A baseline file carries one build stamp, its last save's, so re-save every package that shares the file.</li>
+<li><code>report changelog --against-ref</code> measures the last release with that release's own harness. Until a release ships with a harness that knows <code>cpu</code>, the changelog's perf delta against it is left out with a warning.</li>
+<li>Numbers in claims, and the ceilings in <code>soothfast-gate.lock</code>, were taken under the old mask. A claim that was close to its limit may now fail, and a locked entry no longer describes the new counts. Rewording the claim or running <code>gate accept</code> again is a maintainer's call; nothing does it for you.</li>
+</ul>
 <h2 id="when-the-harness-moves-under-a-pr">When the harness moves under a PR<a class="anchor" href="#when-the-harness-moves-under-a-pr" aria-label="Link to this section">#</a></h2>
 <p>The same argument applies to soothfast itself. A <code>--against-ref</code> run builds
 the merge-base's bench binary from the merge-base's lockfile, so a PR that
@@ -645,7 +661,7 @@ those once. <code>[package.NAME.GROUP]</code> overrides it for one group of comm
 <div class="tablewrap"><table>
 <thead><tr><th>Group</th><th>Commands</th><th>Keys</th></tr></thead>
 <tbody>
-<tr><td><code>gate</code></td><td><code>gate</code>, <code>measure</code>, <code>baseline</code>, <code>prebuild</code>, <code>trend append</code>, <code>buildcost</code></td><td><code>features</code>, <code>target</code>, <code>baseline</code></td></tr>
+<tr><td><code>gate</code></td><td><code>gate</code>, <code>measure</code>, <code>baseline</code>, <code>prebuild</code>, <code>trend append</code>, <code>buildcost</code></td><td><code>features</code>, <code>target</code>, <code>baseline</code>, <code>cpu</code></td></tr>
 <tr><td><code>docs</code></td><td><code>docs *</code>, <code>coverage</code>, <code>report</code>, <code>mcp</code></td><td><code>features</code>, <code>target</code>, <code>baseline</code>, <code>paths</code>, <code>coverage</code></td></tr>
 <tr><td><code>spec</code></td><td><code>spec *</code>, <code>sdk *</code></td><td><code>features</code>, <code>target</code></td></tr>
 <tr><td><code>test</code></td><td><code>test</code></td><td><code>features</code></td></tr>
@@ -653,7 +669,9 @@ those once. <code>[package.NAME.GROUP]</code> overrides it for one group of comm
 </table></div>
 <p><code>features</code> takes what <code>--features</code> takes. <code>target</code> is the bench target a
 command builds, what <code>--bench</code> takes, and only a group table sets it.
-<code>baseline</code> is the baseline <code>--baseline</code> names. <code>paths</code> replaces <code>[docs] paths</code>
+<code>baseline</code> is the baseline <code>--baseline</code> names. <code>cpu</code> is the CPU features
+callgrind hides, what <code>--cpu</code> takes; the <code>gate</code> group and the package table
+set it, and so does <code>[gate] cpu</code> repo-wide. <code>paths</code> replaces <code>[docs] paths</code>
 as the PATHS <code>docs</code> commands scan when none are given. <code>coverage</code> is a whole
 percent from 0 to 100, the <code>--min</code> of <code>coverage docs</code> when the flag is absent;
 it is also a key of the repo-wide <code>[docs]</code> table. An older <code>cargo soothfast</code>
@@ -835,6 +853,8 @@ cost a hundred allocations of bookkeeping.</p>
     <li><a class="toc-l2" href="#thresholds">Thresholds</a></li>
   
     <li><a class="toc-l2" href="#build-settings">Build settings</a></li>
+  
+    <li><a class="toc-l2" href="#switching-the-cpu-mask">Switching the CPU mask</a></li>
   
     <li><a class="toc-l2" href="#when-the-harness-moves-under-a-pr">When the harness moves under a PR</a></li>
   

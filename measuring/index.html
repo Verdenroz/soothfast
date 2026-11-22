@@ -175,6 +175,63 @@ suite. Every soothfast crate carries one and measures itself this way.
 <code>cargo soothfast measure</code> runs it under every available backend, and <code>cargo
 soothfast gate</code> compares against a baseline or merge-base and exits non-zero
 on a regression.</p>
+<h2 id="what-callgrind-s-counts-depend-on">What callgrind's counts depend on<a class="anchor" href="#what-callgrind-s-counts-depend-on" aria-label="Link to this section">#</a></h2>
+<p>callgrind counts are exact for a given binary, valgrind and libc, but not for
+a given binary alone. glibc picks its <code>memcpy</code>, <code>strlen</code> and <code>memchr</code> variants
+at load time (ifunc) from the CPU features it sees, and valgrind passes most
+of the host's features through to the guest. An unchanged bench can therefore
+count differently on a runner with another CPU model, by up to 6% on
+soothfast's own benches, and the difference moves with the items that lean on
+string and memory routines.</p>
+<p>The harness always hides AVX-512 from the measured process with
+<code>GLIBC_TUNABLES=glibc.cpu.hwcaps=-AVX512F,...</code>, because valgrind cannot
+decode it. <code>cpu</code> under <code>[gate]</code> hides more:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[gate]</span>
+<span class="tok-ty">cpu </span>=<span class="tok-str"> &quot;portable&quot;   # or &quot;default&quot;, or [&quot;AVX2&quot;, &quot;ERMS&quot;]</span></code></pre></figure>
+<ul>
+<li><code>&quot;default&quot;</code> hides AVX-512 and nothing else. It is what you get when <code>cpu</code> is unset, and it keeps every existing baseline and cached run valid.</li>
+<li><code>&quot;portable&quot;</code> also hides every CPU feature above x86-64-v2 that glibc dispatches on, and pins the per-model preferred bits those dispatchers read, so the same routines run whatever the runner's CPU.</li>
+<li>A list hides AVX-512 and the names it holds. Names are glibc's, spelled as <code>glibc.cpu.hwcaps</code> takes them: letters, digits and underscores, and never an AVX-512 name, which is always hidden.</li>
+</ul>
+<p><code>--cpu default|portable|NAME,NAME</code> on <code>measure</code> and <code>gate</code> sets the same
+thing and wins over the file. A package can set its own in
+<code>[package.NAME]</code> or <code>[package.NAME.gate]</code>, resolved the way <code>features</code> is:
+the flag, then the group table, then the package table, then <code>[gate]</code>.</p>
+<p>The portable preset hides these names. glibc 2.41 and 2.42 accept every one
+of them in <code>glibc.cpu.hwcaps</code>; they come from <code>sysdeps/x86/cpu-tunables.c</code>
+in the glibc source (the <code>CHECK_GLIBC_IFUNC_*</code> entries), and <code>ld.so
+--list-tunables</code> shows the <code>glibc.cpu.hwcaps</code> tunable that takes them. Back
+to 2.35 only <code>Avoid_STOSB</code> and <code>Avoid_Non_Temporal_Memset</code> are missing. The
+CPU features are <code>AVX</code>, <code>AVX2</code>, <code>BMI1</code>, <code>BMI2</code>, <code>ERMS</code>, <code>FMA</code>, <code>FMA4</code>,
+<code>LZCNT</code>, <code>MOVBE</code>, <code>RTM</code> and <code>XSAVEC</code> (the dynamic linker's lazy-binding
+trampoline selects on the last). The preferred bits are
+<code>AVX_Fast_Unaligned_Load</code>, <code>Avoid_Non_Temporal_Memset</code>, <code>Avoid_STOSB</code>,
+<code>Fast_Copy_Backward</code>, <code>Fast_Rep_String</code>, <code>Fast_Unaligned_Copy</code>,
+<code>Fast_Unaligned_Load</code>, <code>MathVec_Prefer_No_AVX512</code>, <code>Prefer_ERMS</code>,
+<code>Prefer_FSRM</code>, <code>Prefer_No_AVX512</code>, <code>Prefer_No_VZEROUPPER</code>,
+<code>Prefer_PMINUB_for_stringop</code>, <code>Slow_BSF</code> and <code>Slow_SSE4_2</code>. What stays is the
+x86-64-v2 level: <code>CMOV</code>, <code>CX8</code>, <code>POPCNT</code>, <code>SSE2</code>, <code>SSSE3</code>, <code>SSE4_1</code> and
+<code>SSE4_2</code>. A name a glibc does not know is ignored by it.</p>
+<p>The trade-off is that <code>&quot;portable&quot;</code> hides fast paths. Its absolute counts
+differ from a default run, and from what your users' machines execute, since
+those use AVX2 and <code>rep movsb</code>. The gate compares two measurements under the
+same setting, so its relative verdict is unaffected, and the counts stop
+moving when the runner image changes CPU model.</p>
+<p>The mask is part of what a measurement is. Under the default nothing about a
+run's identity changes. Under any other mask it joins the run cache and item
+cache keys, the stored release measurement of <code>report</code>, and the build stamp
+saved with every baseline, so runs under different masks never reuse each
+other. The cache line names it:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>gate: run cache keyed on callgrind (guest 80eb05cd5d172b67 glibc 2.41 88c81164b46fbdd3 valgrind-3.24.0 method one-process hiding AVX,AVX2,...)
+</code></pre></figure>
+<p><code>cpu</code> has no effect off x86-64 and glibc, where there is no <code>hwcaps</code> tunable
+to set (musl, aarch64). The setting is accepted, one line says it was
+ignored, and measurements key as under the default. The bench harness has to
+be this release or newer: an older one exits with <code>unknown runner arg
+&quot;--cpu-hide&quot;</code> rather than measure under a mask it ignores. That includes the
+last release when <code>report changelog</code> measures it: until a release ships with
+a harness that knows the setting, the changelog's perf delta against that
+release is left out with a warning (see <a href="../gating/">gating</a>).</p>
 <h2 id="the-statistics-underneath">The statistics underneath<a class="anchor" href="#the-statistics-underneath" aria-label="Link to this section">#</a></h2>
 <p>Every walltime measurement is reduced with <code>summarize</code>, which reports median
 and median absolute deviation rather than mean and standard deviation. That
@@ -207,6 +264,8 @@ that keeps every page on this site honest.</p>
   <ul class="toc-list" id="toc">
   
     <li><a class="toc-l2" href="#from-annotation-to-measurement">From annotation to measurement</a></li>
+  
+    <li><a class="toc-l2" href="#what-callgrind-s-counts-depend-on">What callgrind&#39;s counts depend on</a></li>
   
     <li><a class="toc-l2" href="#the-statistics-underneath">The statistics underneath</a></li>
   
