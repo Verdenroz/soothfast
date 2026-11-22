@@ -13,7 +13,7 @@ directions are opposites:
 | mode | `generate` | `check` |
 | source of truth | the code | the spec file |
 | command | `spec gen` | `spec check` |
-| what fails CI | a consumer-breaking change (`spec gate`) | drift in either direction |
+| what CI reports | a consumer-breaking change (`spec gate`) | drift in either direction |
 
 A contract you serve can be derived from your handlers, so the spec and the
 code cannot disagree and there is nothing to remember to update. A contract
@@ -400,6 +400,28 @@ silently diverge from the code. With the bot on, `ci spec` leaves it (and
 to it, where the push's regeneration rewrites those files, and keeps
 `spec gate` and `spec check`. Every other run still checks, and so does a
 repository without the bot.
+
+### Findings in CI
+
+In `ci spec` a finding of `spec gate` (a consumer-breaking change) or of
+`spec check` (a spec that no longer matches its routes) is advisory. The
+job still runs both and prints what they found, the verdict comment shows
+the section as `advisory` and counts it apart, and neither the job nor the
+verdict fails. A command that could not run (the routes target does not
+build, a spec file does not parse, the base cannot be read) is not a
+finding and still fails the job. `spec gen --check` and `sdk gen --check`
+are unchanged.
+
+A repository that publishes an API contract can keep a finding blocking:
+
+```toml
+[ci]
+enforce = ["spec"]
+```
+
+With it, `ci spec` fails on a finding as it always has. Run directly,
+`spec gate` and `spec check` exit 0 when clean, 1 on a finding and 2 when
+they could not run, whatever `enforce` says.
 
 ## Reconciliation
 
