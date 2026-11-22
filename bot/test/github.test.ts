@@ -6,6 +6,7 @@ import {
   appJwt,
   githubApi,
   importPrivateKey,
+  mintRefused,
   wrapPkcs1,
 } from "../src/github.ts";
 import { NOW, generateKeys, toPem, type TestKeys } from "./keys.ts";
@@ -151,6 +152,32 @@ test("mintToken scopes by repository id and permissions", async () => {
     repository_ids: [12345],
     permissions: { contents: "write", pull_requests: "write" },
   });
+});
+
+test("workflowRun returns the run and undefined on 404", async () => {
+  const run = { event: "pull_request" };
+  const { api, calls } = fakeGitHub({
+    "GET /repos/acme/mylib/actions/runs/9": { status: 200, body: run },
+    "GET /repos/acme/mylib/actions/runs/10": {
+      status: 404,
+      body: { message: "Not Found" },
+    },
+  });
+  assert.deepEqual(await api.workflowRun("acme/mylib", 9, "ghs_x"), run);
+  assert.equal(await api.workflowRun("acme/mylib", 10, "ghs_x"), undefined);
+  assert.equal(calls[0].auth, "Bearer ghs_x");
+});
+
+test("only a 422 counts as a refused mint", () => {
+  const refused = (status: number, text: string) =>
+    mintRefused(new GitHubError(status, text));
+  assert.equal(refused(422, "Validation failed"), true);
+  const message =
+    "The permissions requested are not granted to this installation.";
+  assert.equal(refused(422, message), true);
+  for (const status of [401, 403, 404, 500])
+    assert.equal(refused(status, "anything"), false, String(status));
+  assert.equal(mintRefused(new Error("x")), false);
 });
 
 test("revoke accepts 204", async () => {

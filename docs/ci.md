@@ -209,8 +209,9 @@ revokes itself. The broker takes the same request from a `workflow_run` job
 on the default branch, for a fork's pull request only. That job gets no token
 either, and the broker posts only after it finds the named pull request open,
 from a fork and not this repository, and still at the head commit the job
-names. Every other event, ref, or repository the App is not installed on is
-refused.
+names (and, with the optional Actions permission, after it verifies the run
+too; see [Pull requests from forks](#pull-requests-from-forks)). Every other
+event, ref, or repository the App is not installed on is refused.
 
 ## Inputs
 
@@ -543,6 +544,10 @@ Once per broker deployment (see `bot/`):
 2. Store the same secret in the Worker: `wrangler secret put
    GITHUB_WEBHOOK_SECRET`. Without it `/webhook` answers 500.
 3. The App needs Contents write, Pull requests write and Metadata read.
+   Actions: Read-only is optional; it lets the broker verify the run a
+   fork's verdict came from. Add it under the App's Permissions and events;
+   until each installation accepts the new permission the broker keeps
+   working without it.
 
 ### Reconciling missed deliveries
 
@@ -922,10 +927,21 @@ verdict replaces it. The job runs in the `soothfast-bot` environment and
 sends the broker its OIDC token with the pull request number, the body and
 the head commit the run was for. The broker posts only for a `workflow_run`
 job in that environment on the default branch, and only while the pull
-request is open, from a fork, and still at that commit. When the broker does
-not post (the App is not installed, the broker cannot be reached or refuses,
-the job has no OIDC token), the job posts with `github.token` instead, and a
-notice gives the broker's reason. It reads the pull request's head again
+request is open, from a fork, and still at that commit.
+
+The head commit alone does not name a pull request, because two fork pull
+requests can share one. The job therefore also sends the id of the run it
+was triggered by. When the App holds Actions: Read-only, the broker reads
+that run and posts only if it is a `pull_request` run of this repository
+with the same head commit, head repository and head branch as the pull
+request. The reply says `run_verified` and the job logs a notice when it was
+not. Without the permission, or from an older action that sends no run id,
+the broker makes the checks above and nothing more, and the comment is
+still posted.
+
+When the broker does not post (the App is not installed, the broker cannot be
+reached or refuses, the job has no OIDC token), the job posts with
+`github.token` instead, and a notice gives the broker's reason. It reads the pull request's head again
 first: a verdict for a commit the pull request has moved past is posted by
 neither. A pull request from the same repository is unaffected: its comment
 is posted directly and nothing is uploaded.

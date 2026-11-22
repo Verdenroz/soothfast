@@ -93,7 +93,7 @@ impl Case {
     }
 
     fn run(&self) -> Outcome {
-        let out = self.script("fork-comment.sh", &[]);
+        let out = self.script("fork-comment.sh", &[("RUN_ID", "9")]);
         println!(
             "| {} | {} | {} |",
             self.root.file_name().unwrap().to_string_lossy(),
@@ -443,11 +443,31 @@ fn the_broker_posts_the_verdict_with_the_head_it_is_for() {
     assert_eq!(sent["pull_request"], 7);
     assert_eq!(sent["marker"], "<!-- soothfast-verdict -->");
     assert_eq!(sent["head_sha"], "abc123");
+    assert_eq!(sent["run_id"], 9);
     let body = sent["body"].as_str().unwrap();
     assert!(
         body.starts_with("Verdict of [the fork's run](") && body.contains("### `core`"),
         "{body}"
     );
+}
+
+const NOTICE: &str = "::notice::the broker did not verify the run";
+
+#[test]
+fn an_unverified_run_is_noticed_and_a_verified_one_is_not() {
+    let replies = [
+        (r#"{"app_slug":"soothfast-bot","run_verified":false}"#, true),
+        (r#"{"app_slug":"soothfast-bot","run_verified":true}"#, false),
+        (r#"{"app_slug":"soothfast-bot"}"#, false),
+    ];
+    for (reply, noticed) in replies {
+        let mut case = Case::new("verified");
+        case.result("core", "pass", "ok");
+        case.broker = Some(("200", reply));
+        let out = case.run();
+        assert_eq!(out.code, 0, "{reply}");
+        assert_eq!(out.stdout.contains(NOTICE), noticed, "{}", out.stdout);
+    }
 }
 
 #[test]

@@ -363,7 +363,10 @@ broker's `/comment`, which posts it as the bot with its own token and
 revokes it. A `workflow_run` job on the default branch, which posts a fork
 pull request's verdict, is held to the same comment mode: the broker posts
 and revokes for it after checking the pull request is open, from a fork, and
-still at the `head_sha` the job names. The broker also acts on labels: App webhooks land on `/webhook`
+still at the `head_sha` the job names, and, when the App holds Actions
+read (an optional permission; without it the mint falls back to pull
+requests write alone), that the `run_id` it sends is a `pull_request` run of
+that repository for that very pull request. The broker also acts on labels: App webhooks land on `/webhook`
 (HMAC-verified with `GITHUB_WEBHOOK_SECRET`, answered 202, worked in
 `waitUntil` with a token minted from the signed payload's installation and
 revoked after), and the action's label sweep POSTs land-mode OIDC to
