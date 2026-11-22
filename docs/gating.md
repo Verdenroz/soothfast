@@ -591,6 +591,9 @@ the switch behave like this:
   mask, and names the `measure --save-baseline` that fixes it. A baseline
   file carries one build stamp, its last save's, so re-save every package
   that shares the file.
+- `report changelog --against-ref` measures the last release with that
+  release's own harness. Until a release ships with a harness that knows
+  `cpu`, the changelog's perf delta against it is left out with a warning.
 - Numbers in claims, and the ceilings in `soothfast-gate.lock`, were taken
   under the old mask. A claim that was close to its limit may now fail, and
   a locked entry no longer describes the new counts. Rewording the claim or

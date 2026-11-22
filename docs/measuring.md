@@ -109,7 +109,10 @@ gate: run cache keyed on callgrind (guest 80eb05cd5d172b67 glibc 2.41 88c81164b4
 to set (musl, aarch64). The setting is accepted, one line says it was
 ignored, and measurements key as under the default. The bench harness has to
 be this release or newer: an older one exits with `unknown runner arg
-"--cpu-hide"` rather than measure under a mask it ignores.
+"--cpu-hide"` rather than measure under a mask it ignores. That includes the
+last release when `report changelog` measures it: until a release ships with
+a harness that knows the setting, the changelog's perf delta against that
+release is left out with a warning (see [gating](gating.md)).
 
 ## The statistics underneath
 

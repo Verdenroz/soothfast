@@ -181,6 +181,11 @@ target of its package, the settings `measure` saved the baseline under, so
 both sides of the delta are the same build. Each regeneration prints which
 path it took.
 
+A release that cannot be measured in the worktree (it no longer builds, or
+its harness rejects a flag) does not fail the command. One `::warning::`
+line per package names the ref and the cause, that package's rows are left
+out of the movement table, and the rest of the changelog is written.
+
 Below a rule sit the derived sections, evidence rather than narrative: the
 public API diff against `v1.0`, and the measured movement past gate
 thresholds. A section with nothing to report is omitted rather than shipped
