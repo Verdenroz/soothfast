@@ -19,6 +19,7 @@ import {
   PERMISSIONS,
   decideBranch,
   decideClaims,
+  decideForkPullRequest,
   decideTag,
   pullRequestNumber,
   type Decision,
@@ -42,6 +43,7 @@ interface CommentRequest {
   pull_request: number;
   marker: string;
   body: string;
+  head_sha?: string;
 }
 
 interface Minted {
@@ -119,7 +121,11 @@ export async function handle(
     );
   }
   if (route === "/comment" && policy.mode !== "comment") {
-    return denied(403, "/comment serves pull_request runs only", claims);
+    return denied(
+      403,
+      "/comment serves pull_request and workflow_run runs only",
+      claims,
+    );
   }
 
   const body =
@@ -262,13 +268,13 @@ async function authenticate(
       claims,
     );
   }
+  const slug = await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt);
   const minted = await deps.github.mintToken(
     installation.id,
     Number(claims.repository_id),
     PERMISSIONS[mode],
     jwt,
   );
-  const slug = await appSlug(deps.github, env.GITHUB_APP_CLIENT_ID, jwt);
   return { ...minted, slug };
 }
 
@@ -358,14 +364,24 @@ async function comment(
   deps: Deps,
 ): Promise<Response> {
   try {
+    if (claims.event_name === "workflow_run") {
+      const decision = await decideWorkflowRun(
+        claims,
+        body,
+        minted.token,
+        deps,
+      );
+      if (!decision.ok) return denied(403, decision.reason, claims);
+    }
     const text = `${body.marker}\n${body.body}`;
+    const author = `${minted.slug}[bot]`;
     const existing = (
       await deps.github.listComments(
         claims.repository,
         body.pull_request,
         minted.token,
       )
-    ).find((c) => c.body.startsWith(body.marker));
+    ).find((c) => c.user?.login === author && c.body.startsWith(body.marker));
     const posted = existing
       ? await deps.github.updateComment(
           claims.repository,
@@ -385,6 +401,24 @@ async function comment(
   }
 }
 
+async function decideWorkflowRun(
+  claims: OidcClaims,
+  body: CommentRequest,
+  token: string,
+  deps: Deps,
+): Promise<Decision> {
+  const { decision } = await resolveRef(claims, token, deps);
+  if (!decision.ok) return decision;
+  const found = await deps.github
+    .pullRequest(claims.repository, body.pull_request, token)
+    .catch((e: unknown) =>
+      e instanceof GitHubError && e.status === 404
+        ? undefined
+        : Promise.reject(e),
+    );
+  return decideForkPullRequest(body.pull_request, found, body.head_sha);
+}
+
 function parseComment(
   raw: string,
   claims: OidcClaims,
@@ -399,17 +433,29 @@ function parseComment(
   }
   if (typeof parsed !== "object" || parsed === null)
     return json(400, { reason: "body is not an object" });
-  const { pull_request, marker, body } = parsed as Partial<CommentRequest>;
+  const { pull_request, marker, body, head_sha } =
+    parsed as Partial<CommentRequest>;
   if (
     typeof pull_request !== "number" ||
+    !Number.isSafeInteger(pull_request) ||
+    pull_request <= 0 ||
     typeof marker !== "string" ||
     typeof body !== "string"
   ) {
     return json(400, {
-      reason: "expected {pull_request: number, marker: string, body: string}",
+      reason:
+        "expected {pull_request: positive integer, marker: string, body: string}",
     });
   }
-  if (pull_request !== pullRequestNumber(claims.ref)) {
+  const forFork = claims.event_name === "workflow_run";
+  if (forFork) {
+    if (typeof head_sha !== "string" || !/^[0-9a-f]{40}$/.test(head_sha)) {
+      return json(400, {
+        reason:
+          "workflow_run comments require head_sha: the 40-hex pull request head",
+      });
+    }
+  } else if (pull_request !== pullRequestNumber(claims.ref)) {
     return denied(
       403,
       `pull request ${pull_request} is not the one this run belongs to`,
@@ -426,7 +472,12 @@ function parseComment(
   ) {
     return json(400, { reason: `comment exceeds ${COMMENT_MAX_BYTES} bytes` });
   }
-  return { pull_request, marker, body };
+  return {
+    pull_request,
+    marker,
+    body,
+    head_sha: forFork ? head_sha : undefined,
+  };
 }
 
 const deps: Deps = { jwks: githubJwks(), github: githubApi() };

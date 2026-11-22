@@ -24,7 +24,12 @@ export const LAND_EVENTS: readonly string[] = [
   "workflow_dispatch",
   "schedule",
 ];
-export const COMMENT_EVENTS: readonly string[] = ["pull_request"];
+// A workflow_run job runs the default branch's workflow file but speaks for
+// a fork's pull request, so it comments and never lands.
+export const COMMENT_EVENTS: readonly string[] = [
+  "pull_request",
+  "workflow_run",
+];
 
 // A landing token is handed to the job. A pull request runs code nobody has
 // merged yet, so it never receives a token: the broker posts the comment
@@ -53,8 +58,17 @@ export function decideClaims(claims: OidcClaims): Decision {
   if (!/^\d+$/.test(claims.repository_id)) {
     return deny("repository_id claim is malformed");
   }
-  if (mode === "comment" && pullRequestNumber(claims.ref) === undefined) {
+  if (
+    claims.event_name === "pull_request" &&
+    pullRequestNumber(claims.ref) === undefined
+  ) {
     return deny(`ref ${claims.ref} is not a pull request merge ref`);
+  }
+  if (
+    claims.event_name === "workflow_run" &&
+    !claims.ref.startsWith("refs/heads/")
+  ) {
+    return deny(`ref ${claims.ref} is not a branch`);
   }
   if (
     mode === "land" &&
@@ -87,6 +101,31 @@ export function decideTag(ref: string, compareStatus: string): Decision {
     : deny(
         `tag ${ref} points at a commit that is not on the default branch (compare status ${compareStatus})`,
       );
+}
+
+interface ForkPullRequest {
+  state?: string;
+  head: { sha: string; repo: { id: number } | null };
+  base: { repo: { id: number } };
+}
+
+// A same-repository pull request has a merge ref, which binds the number in
+// the claims. A workflow_run job has no such binding and speaks only for forks.
+export function decideForkPullRequest(
+  number: number,
+  pr: ForkPullRequest | undefined,
+  headSha: string | undefined,
+): Decision {
+  if (!pr) return deny(`pull request ${number} does not exist`);
+  if (pr.state !== "open") return deny(`pull request ${number} is not open`);
+  if (pr.head.repo?.id === pr.base.repo.id) {
+    return deny(
+      `pull request ${number} is from this repository; comment from its pull_request run`,
+    );
+  }
+  return pr.head.sha === headSha
+    ? { ok: true, mode: "comment" }
+    : deny(`pull request ${number} head moved to ${pr.head.sha.slice(0, 7)}`);
 }
 
 export function pullRequestNumber(ref: string): number | undefined {

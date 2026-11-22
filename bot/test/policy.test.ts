@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   decideBranch,
   decideClaims,
+  decideForkPullRequest,
   decideTag,
   pullRequestNumber,
 } from "../src/policy.ts";
@@ -33,6 +34,31 @@ const cases = [
     name: "pull_request on a merge ref comments",
     overrides: { event_name: "pull_request", ref: "refs/pull/7/merge" },
     mode: "comment",
+  },
+  {
+    name: "workflow_run on a branch ref comments",
+    overrides: { event_name: "workflow_run" },
+    mode: "comment",
+  },
+  {
+    name: "workflow_run on a pull ref is refused",
+    overrides: { event_name: "workflow_run", ref: "refs/pull/7/merge" },
+    reason: /not a branch/,
+  },
+  {
+    name: "workflow_run on a tag is refused",
+    overrides: { event_name: "workflow_run", ref: "refs/tags/v1.0.0" },
+    reason: /not a branch/,
+  },
+  {
+    name: "workflow_run outside the environment is refused",
+    overrides: { event_name: "workflow_run", environment: undefined },
+    reason: /"soothfast-bot" environment/,
+  },
+  {
+    name: "merge_group is refused",
+    overrides: { event_name: "merge_group" },
+    reason: /cannot mint/,
   },
   {
     name: "pull_request_target is refused",
@@ -134,4 +160,54 @@ test("pullRequestNumber reads the merge ref only", () => {
   assert.equal(pullRequestNumber("refs/pull/7/merge"), 7);
   assert.equal(pullRequestNumber("refs/pull/7/head"), undefined);
   assert.equal(pullRequestNumber("refs/heads/main"), undefined);
+});
+
+const fork = {
+  state: "open",
+  head: { sha: "abc", repo: { id: 2, full_name: "fork/lib" } },
+  base: { repo: { id: 1, full_name: "acme/lib" } },
+};
+
+test("an open fork pull request at the named head is accepted", () => {
+  assert.deepEqual(decideForkPullRequest(7, fork, "abc"), {
+    ok: true,
+    mode: "comment",
+  });
+});
+
+test("a fork pull request whose fork was deleted is still a fork", () => {
+  const gone = { ...fork, head: { sha: "abc", repo: null } };
+  assert.equal(decideForkPullRequest(7, gone, "abc").ok, true);
+});
+
+test("a fork is told from the base by repository id, not by name", () => {
+  const namesake = { id: 2, full_name: "acme/lib" };
+  const renamed = { id: 1, full_name: "acme/old-name" };
+  const withHead = (repo: typeof namesake) => ({
+    ...fork,
+    head: { sha: "abc", repo },
+  });
+  assert.equal(decideForkPullRequest(7, withHead(namesake), "abc").ok, true);
+  assert.equal(decideForkPullRequest(7, withHead(renamed), "abc").ok, false);
+});
+
+test("closed, same-repository and stale pull requests are refused", () => {
+  const closed = { ...fork, state: "closed" };
+  const same = { ...fork, head: { sha: "abc", repo: fork.base.repo } };
+  const reasons = [
+    [decideForkPullRequest(7, undefined, "abc"), /does not exist/],
+    [decideForkPullRequest(7, closed, "abc"), /not open/],
+    [
+      decideForkPullRequest(7, { ...fork, state: undefined }, "abc"),
+      /not open/,
+    ],
+    [decideForkPullRequest(7, same, "abc"), /from this repository/],
+    [decideForkPullRequest(7, fork, "def"), /head moved/],
+    [decideForkPullRequest(7, fork, "ab"), /head moved/],
+    [decideForkPullRequest(7, fork, undefined), /head moved/],
+  ] as const;
+  for (const [decision, reason] of reasons) {
+    assert.equal(decision.ok, false);
+    assert.match(decision.ok ? "" : decision.reason, reason);
+  }
 });

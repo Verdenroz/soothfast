@@ -360,7 +360,10 @@ repository: a landing token (contents + pull requests write) on a
 tag whose commit (the OIDC `sha`, never the tag name) is already on it. A
 `pull_request` run gets no token; it POSTs the gate comment text to the
 broker's `/comment`, which posts it as the bot with its own token and
-revokes it. The broker also acts on labels: App webhooks land on `/webhook`
+revokes it. A `workflow_run` job on the default branch, which posts a fork
+pull request's verdict, is held to the same comment mode: the broker posts
+and revokes for it after checking the pull request is open, from a fork, and
+still at the `head_sha` the job names. The broker also acts on labels: App webhooks land on `/webhook`
 (HMAC-verified with `GITHUB_WEBHOOK_SECRET`, answered 202, worked in
 `waitUntil` with a token minted from the signed payload's installation and
 revoked after), and the action's label sweep POSTs land-mode OIDC to
@@ -371,8 +374,9 @@ head that was labelled (`expectedHeadOid`, after re-reading the pull
 request). Both read the `[bot]` table of `soothfast.toml` from the default
 branch and act on nothing for a repo without `labels = true` or with a
 malformed table. Gate comments, `deploy-docs`' gh-pages push, and the GitHub
-Release all carry the bot identity this way; a fork pull request has no OIDC
-token and its gate comment falls back to `github.token`. This repo's
+Release all carry the bot identity this way; a fork pull request's own run
+has no OIDC token, so `comment.yml` renders and posts its verdict from
+`workflow_run`, falling back to `github.token` when the broker refuses. This repo's
 `soothfast-bot` environment must have no deployment branch policy: the gate
 runs on `refs/pull/*` and the release on `refs/tags/*`. Anything a bot comment
 quotes from a pull request's build output is untrusted text under a
