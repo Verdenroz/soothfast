@@ -816,14 +816,54 @@ packages with `[[spec]]` entries, and `prebuild-docs: PKG` alone runs
 ## Checks from the file
 
 `cargo soothfast plan` also reads what else `soothfast.toml` configures and
-gives `run.yml` one job for each: `ci spec` for every package with a
-`[[spec]]` entry, `ci proto` for every package with a `[[proto]]` entry,
-`ci coverage` for every workspace member with a library target, `ci capture`
-for every docs package with docs of its own, and `ci site` when the file has a `[site]` table. A
-job is named for its record, `spec-PKG` or `site`, runs
-`cargo soothfast ci KIND -p PKG`, and installs the pinned rustdoc toolchain
-when its command reads rustdoc JSON (`spec`, `coverage` and `site`). The
-verdict expects a result from each. A kind named in `[ci] skip` gets no job.
+plans a check for each: `ci spec` for every package with a `[[spec]]` entry,
+`ci proto` for every package with a `[[proto]]` entry, `ci coverage` for every
+workspace member with a library target, `ci capture` for every docs package
+with docs of its own, and `ci site` when the file has a `[site]` table. A
+check leaves a record named for it, `spec-PKG` or `site`, and the verdict
+expects one from each, whichever job ran it. A kind named in `[ci] skip` gets
+no check.
+
+Checks share jobs, since a job costs a runner, a toolchain and a checkout
+before it checks anything. A job runs `cargo soothfast ci checks
+KIND[:PKG]...`, which runs each kind once over its packages and exits with the
+worst code, and installs the pinned rustdoc toolchain when one of its
+commands reads rustdoc JSON (`spec`, `coverage` and `site`). Records stay one
+per package, so the verdict, the comment and the carried lanes see the same
+names as before.
+
+- The spec checks of packages that reach a workspace crate in common (through
+  a dependency of any kind) run in one job, `spec-shared`, because they would
+  each compile that crate. When the packages split into several such groups,
+  each is `spec-PKG-group`, named for its first package. A shared core crate
+  usually puts every spec package in one group, so they run one after
+  another in one job. `[ci] separate = ["spec"]` brings parallel jobs back for
+  an account with runners to spare.
+- The proto, coverage and capture checks, and a site that is not built in the
+  docs job, run together in one job, `checks`.
+- A spec group with one package, and a lone check of another kind, keep the
+  job named for their record.
+
+`[ci] separate` names the kinds or records that keep a job of their own:
+
+```toml
+[ci]
+separate = ["spec", "coverage-core"]
+```
+
+A kind (`spec`) splits every check of that kind into its own job, and a record
+name (`coverage-core`) splits that one, whichever the kind.
+
+A cache or artifact is named for its job, so the first run of a regrouped job
+starts from the cache of its first package's earlier job where there is one.
+
+The build, test and check jobs restore the cargo cache on every run and save
+it only on a push to the default branch, so pull requests do not spend the
+repository's cache budget. A job whose stores all hit compiles nothing, and
+an empty target saved under a key that is never saved again would leave later
+runs to compile cold. When a build or check job of a push finds its target
+empty, it clears the stores and runs once more, so the entry it saves holds a
+real target. That costs time once per cache key.
 
 A finding of `ci spec` (`spec gate` found a consumer-breaking change, or
 `spec check` found a spec that no longer matches its routes) is advisory:
@@ -837,10 +877,12 @@ When the repository has a docs package, the site is built in the docs job
 and has no job of its own. That job has the gate's merged baseline, so the
 pages and a `site_run` hook can read the run's measured numbers. The site is
 built even when the docs check failed, so its result still reaches the
-verdict. The docs job starts after the check jobs, since each spec job
-uploads the routes executable and rustdoc JSON it built and the docs job
-merges them into its stores. A `site_run` hook that renders routes pages
-then compiles nothing.
+verdict. `docs check` reads nothing the spec jobs built, so the docs job waits
+for them only when `[ci] site_run` hooks the site build. Then the spec checks
+run in a job of their own, `check-docs`, and each uploads the routes
+executable and rustdoc JSON it built, which the docs job merges into its
+stores, so a hook that renders routes pages compiles nothing. Without a hook
+the spec jobs run beside the docs job.
 
 Only `run.yml` runs these jobs. `cargo soothfast init` writes a workflow that
 calls it whenever the file configures one of them or `[ci] pages`. A cargo
@@ -1036,7 +1078,8 @@ token can then write to the default branch unreviewed, which is why
 A lane is a unit of work a pull request may not need: `rust:<package>` (the
 bench build and gate of one package), `import:<project>` (the bench of a
 non-Rust project), `check:<name>` (one spec, proto, coverage, capture or site
-job) and `docs` (the docs check, with the site when it builds there).
+check; a shared job runs only the checks of its group that are not
+carried) and `docs` (the docs check, with the site when it builds there).
 `cargo soothfast plan` drops the job of a lane the pull request does not
 touch and leaves its result to a stored pass, so a pull request that changed
 one container file pays for no build that would find nothing to do. The lane

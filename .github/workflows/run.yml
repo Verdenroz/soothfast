@@ -72,6 +72,8 @@ jobs:
       shards: ${{ steps.plan.outputs.shards }}
       checks: ${{ steps.plan.outputs.checks }}
       checks_any: ${{ steps.plan.outputs.checks_any }}
+      checks_docs: ${{ steps.plan.outputs.checks_docs }}
+      checks_docs_any: ${{ steps.plan.outputs.checks_docs_any }}
       checks_expect: ${{ steps.plan.outputs.checks_expect }}
       site_in_docs: ${{ steps.plan.outputs.site_in_docs }}
       site_deploy: ${{ steps.plan.outputs.site_deploy }}
@@ -265,9 +267,27 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: bench
+          save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - id: soothfast
         uses: ./.soothfast-action/action/install
       - id: prebuild
+        uses: ./.soothfast-action
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: "false"
+          labels: "false"
+          prebuild: bench
+          prebuild-shards: ${{ github.event_name == 'pull_request' && inputs.shard || 1 }}
+          prebuild-stage: ${{ runner.temp }}/store
+          bin-cache: "true"
+      - id: target
+        name: Check the target is not empty
+        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        run: ./.soothfast-action/action/clear-stores-if-no-target.sh
+      - name: Build again with the stores cleared
+        if: steps.target.outputs.empty == 'true'
+        continue-on-error: true
         uses: ./.soothfast-action
         with:
           binary: ${{ steps.soothfast.outputs.bin }}
@@ -372,9 +392,29 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: rustdoc
+          save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - id: soothfast
         uses: ./.soothfast-action/action/install
       - uses: ./.soothfast-action
+        env:
+          SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
+        with:
+          binary: ${{ steps.soothfast.outputs.bin }}
+          packages: ${{ needs.plan.outputs.packages }}
+          changelog: "false"
+          labels: "false"
+          prebuild: rustdoc
+          prebuild-docs: ${{ needs.plan.outputs.docs_package }}
+          prebuild-stage: ${{ runner.temp }}/store
+          rustdoc-cache: "true"
+      - id: target
+        name: Check the target is not empty
+        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        run: ./.soothfast-action/action/clear-stores-if-no-target.sh
+      - name: Build again with the stores cleared
+        if: steps.target.outputs.empty == 'true'
+        continue-on-error: true
+        uses: ./.soothfast-action
         env:
           SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
         with:
@@ -428,6 +468,8 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - uses: ./.soothfast-action/action/install
       - name: Test
         env:
@@ -547,7 +589,7 @@ jobs:
   # Stores the lanes a pull request or the default branch passed, under the run's own ref, for later runs to carry.
   lane-store:
     name: Save lane passes
-    needs: [plan, build-bench, gate-rust, gate, docs, check]
+    needs: [plan, build-bench, gate-rust, gate, docs, check, check-docs, verdict]
     if: >-
       ${{ !cancelled() && needs.plan.result == 'success' && (github.event_name == 'pull_request'
       || (github.event_name == 'push'
@@ -697,10 +739,10 @@ jobs:
   # regeneration and then skip its own, so it is kept out of the regen group.
   regen-check:
     name: Regenerate (check)
-    needs: [plan, gate-rust, check, build-rustdoc]
+    needs: [plan, gate-rust, check, check-docs, build-rustdoc]
     if: >-
       ${{ !cancelled() && needs.gate-rust.result == 'success'
-      && needs.check.result != 'cancelled' && needs.build-rustdoc.result != 'cancelled'
+      && needs.check.result != 'cancelled' && needs.check-docs.result != 'cancelled' && needs.build-rustdoc.result != 'cancelled'
       && inputs.bot && github.event_name == 'push'
       && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
       && needs.plan.outputs.generated != 'true' }}
@@ -736,10 +778,10 @@ jobs:
 
   regen:
     name: Regenerate
-    needs: [plan, gate-rust, check, build-rustdoc, regen-check]
+    needs: [plan, gate-rust, check, check-docs, build-rustdoc, regen-check]
     if: >-
       ${{ !cancelled() && needs.gate-rust.result == 'success'
-      && needs.check.result != 'cancelled' && needs.build-rustdoc.result != 'cancelled'
+      && needs.check.result != 'cancelled' && needs.check-docs.result != 'cancelled' && needs.build-rustdoc.result != 'cancelled'
       && (needs.regen-check.result == 'success' || needs.regen-check.result == 'failure')
       && needs.regen-check.outputs.superseded != 'true'
       && inputs.bot && github.event_name == 'push'
@@ -902,7 +944,7 @@ jobs:
 
   docs:
     name: Docs check
-    needs: [plan, build-rustdoc, build-bench, gate-rust, gate, check]
+    needs: [plan, build-rustdoc, build-bench, gate-rust, gate, check-docs]
     if: ${{ !cancelled() && github.event_name != 'schedule' && needs.plan.outputs.docs == 'true' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
     permissions:
@@ -1006,10 +1048,10 @@ jobs:
             mkdir -p .soothfast
             tar -xf "$RUNNER_TEMP/store-in/store.tar" -C .soothfast
           fi
-      # A site with routes pages reads the executables and rustdoc JSON the
-      # spec jobs built, so this job compiles neither again.
+      # A site hook reads the executables and rustdoc JSON the spec jobs
+      # built, so this job compiles neither again.
       - name: Download the spec jobs' builds
-        if: needs.plan.outputs.site_in_docs == 'true'
+        if: needs.plan.outputs.checks_docs_any == 'true'
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -1018,7 +1060,7 @@ jobs:
       # The executable store is keyed by the compiler, and the spec jobs build on stable.
       - name: Merge the spec jobs' builds
         id: spec-stores
-        if: needs.plan.outputs.site_in_docs == 'true'
+        if: needs.plan.outputs.checks_docs_any == 'true'
         env:
           CLI: ${{ steps.soothfast.outputs.bin }}
         run: |
@@ -1101,7 +1143,7 @@ jobs:
   # in soothfast.toml. Each is `cargo soothfast ci KIND`, so its flags and
   # packages come from the file.
   check:
-    name: ${{ matrix.name }}
+    name: ${{ matrix.slug }}
     needs: plan
     if: github.event_name != 'schedule' && needs.plan.outputs.checks_any == 'true'
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
@@ -1129,74 +1171,63 @@ jobs:
             action.yml
             Cargo.toml
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: ./.soothfast-action/action/check
         with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+          slug: ${{ matrix.slug }}
+          runs: ${{ matrix.runs }}
+          spec: ${{ matrix.spec }}
+          legacy: ${{ matrix.legacy }}
+          rustdoc: ${{ matrix.rustdoc }}
+          stage: >-
+            ${{ inputs.bot && github.event_name == 'push'
+            && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+            && needs.plan.outputs.generated != 'true' }}
+          regen: ${{ inputs.bot }}
+
+  # The spec checks a `site_run` hook reads, split out so the docs job waits
+  # for these and not for every check.
+  check-docs:
+    name: ${{ matrix.slug }}
+    needs: plan
+    if: github.event_name != 'schedule' && needs.plan.outputs.checks_docs_any == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.checks_docs) }}
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
-          shared-key: check-${{ matrix.kind }}
-      - uses: ./.soothfast-action/action/install
-      - name: Install the pinned rustdoc toolchain
-        if: matrix.rustdoc
-        run: ./.soothfast-action/action/rustdoc-toolchain.sh
-      # Entries are named for the toolchain, flags and sources they came from,
-      # so a restored store only saves the builds whose inputs did not change.
-      - name: Restore and save the rustdoc and executable stores
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+          egress-policy: audit
+      # History for the base a spec is gated against.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: |
-            .soothfast/rustdoc
-            .soothfast/bins
-          key: soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-
-            soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
-            soothfast-check-${{ matrix.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.repository.default_branch }}-
-      - name: Check
-        env:
-          KIND: ${{ matrix.kind }}
-          PACKAGE: ${{ matrix.package }}
-          SOOTHFAST_REGEN: ${{ inputs.bot && 'true' || '' }}
-        run: cargo soothfast ci "$KIND" ${PACKAGE:+-p "$PACKAGE"}
-      # Both lanes are store hits after the check, so this only copies what
-      # the site's routes pages and the regeneration read.
-      - name: Stage the spec builds
-        if: >-
-          ${{ !cancelled() && matrix.kind == 'spec'
-          && (needs.plan.outputs.site_in_docs == 'true'
-          || (inputs.bot && github.event_name == 'push'
-          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-          && needs.plan.outputs.generated != 'true')) }}
-        env:
-          PACKAGE: ${{ matrix.package }}
-          STAGE: ${{ runner.temp }}/store
-        run: |
-          for lane in routes rustdoc; do
-            cargo soothfast ci build "$lane" --stage "$STAGE" ${PACKAGE:+--spec "$PACKAGE"} \
-              || echo "::warning::could not stage the $lane builds"
-          done
-          if [ -d "$STAGE" ]; then tar -C "$STAGE" -cf "$RUNNER_TEMP/store.tar" .; fi
-      # Only the staging step writes the tar, so nothing uploads without it.
-      - name: Upload the spec builds
-        if: ${{ !cancelled() && matrix.kind == 'spec' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          name: soothfast-store-${{ matrix.name }}
-          path: ${{ runner.temp }}/store.tar
-          if-no-files-found: ignore
-          retention-days: 1
-          compression-level: 1
-      - name: Upload the check result
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          repository: Verdenroz/soothfast
+          ref: ${{ inputs.soothfast_ref }}
+          path: .soothfast-action
+          sparse-checkout: |
+            action
+            action.yml
+            Cargo.toml
+          persist-credentials: false
+      - uses: ./.soothfast-action/action/check
         with:
-          name: soothfast-result-${{ matrix.name }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/soothfast-results
-          if-no-files-found: ignore
+          slug: ${{ matrix.slug }}
+          runs: ${{ matrix.runs }}
+          spec: ${{ matrix.spec }}
+          legacy: ${{ matrix.legacy }}
+          rustdoc: ${{ matrix.rustdoc }}
+          stage: "true"
+          regen: ${{ inputs.bot }}
 
   verdict:
     name: verdict
-    needs: [plan, test, test-projects, build-bench, gate-rust, gate, docs, check]
+    needs: [plan, test, test-projects, build-bench, gate-rust, gate, docs, check, check-docs]
     if: always() && github.event_name == 'pull_request'
     runs-on: ${{ fromJSON(inputs.runs_on) }}
     environment: soothfast-bot

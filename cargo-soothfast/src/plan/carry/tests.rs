@@ -221,7 +221,7 @@ fn a_carried_check_leaves_the_matrix_but_is_still_expected() {
     assert!(p.carries("check:spec-core") && !p.carries("check:spec-cli"));
     let out = p.outputs();
     assert!(
-        out.contains("checks_any=true\nchecks_expect=spec-core spec-cli\n"),
+        out.contains("checks_any=true\nchecks_docs={\"include\":[]}\nchecks_docs_any=false\nchecks_expect=spec-core spec-cli\n"),
         "{out}"
     );
     assert_eq!(
@@ -233,7 +233,7 @@ fn a_carried_check_leaves_the_matrix_but_is_still_expected() {
     let out = p.outputs();
     assert!(
         out.contains(
-            "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=spec-core spec-cli\n"
+            "checks={\"include\":[]}\nchecks_any=false\nchecks_docs={\"include\":[]}\nchecks_docs_any=false\nchecks_expect=spec-core spec-cli\n"
         ),
         "{out}"
     );
@@ -306,7 +306,7 @@ fn the_site_in_the_docs_job_is_carried_with_it() {
     pull(&mut p, &repo, &store, Some(&site()), &["docs/data.txt"]);
     assert!(p.carries("docs"));
     let out = p.outputs();
-    assert!(out.ends_with("checks={\"include\":[]}\nchecks_any=false\nchecks_expect=site\nsite_in_docs=false\nsite_deploy=false\ntrend_url=\n"), "{out}");
+    assert!(out.ends_with("checks={\"include\":[]}\nchecks_any=false\nchecks_docs={\"include\":[]}\nchecks_docs_any=false\nchecks_expect=site\nsite_in_docs=false\nsite_deploy=false\ntrend_url=\n"), "{out}");
     let shown: Vec<_> = p.carried.iter().flat_map(|c| &c.shown).collect();
     assert!(shown.contains(&&("site".to_string(), "check")));
 

@@ -21,6 +21,12 @@ pub fn key(lane: &str, fingerprint: &str, base_delta: &str) -> String {
     ])
 }
 
+/// Whether `key` has the shape [`key`] gives, which is safe to use as a file
+/// name.
+pub fn is_key(key: &str) -> bool {
+    key.len() == 16 && key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// Where a lane passed.
 #[derive(Debug, PartialEq)]
 pub struct Pass {
@@ -117,6 +123,14 @@ mod tests {
         assert_ne!(k, key("rust:other", "f1", ""));
         assert_ne!(k, key("rust:core", "f2", ""));
         assert_ne!(k, key("rust:core", "f1", "delta"));
+    }
+
+    #[test]
+    fn only_a_digest_is_a_key() {
+        assert!(is_key(&key("rust:core", "f1", "")));
+        for bad in ["", "../x", "k-docs", "ABCDEF0123456789", "0123456789abcde/"] {
+            assert!(!is_key(bad), "{bad}");
+        }
     }
 
     #[test]
