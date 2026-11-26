@@ -222,6 +222,10 @@ is a table with no <code>files</code>.</p>
 <code>.soothfast/tests/&lt;key&gt;</code> means the executable is skipped, with a line naming
 it. Only passes are stored, never failures, and the store keeps the 2048 most
 recently used entries.</p>
+<p>Linked git worktrees share the main worktree's <code>.soothfast/tests</code> rather
+than each keeping its own, so a fresh <code>git worktree add</code> starts with every
+pass the main worktree has. A pass is written to a temporary file and renamed
+into place, so worktrees running at once never read a partial entry.</p>
 <p>The key hashes:</p>
 <ul>
 <li>the executable's loaded sections, so source changes, features, profile and target are all covered by the code itself. Files pulled in with <code>include_str!</code> or <code>include_bytes!</code> are compiled in, so they count even when they live outside the package;</li>
