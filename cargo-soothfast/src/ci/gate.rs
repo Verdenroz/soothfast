@@ -119,9 +119,10 @@ fn packages(opts: &Options) -> Result<Vec<String>, String> {
         return Ok(opts.packages.clone());
     }
     let meta = crate::workspace::metadata(None, true).map_err(|e| e.to_string())?;
-    let found = crate::init::benched(&meta);
+    let config = crate::config::Config::load(&crate::invoke::project_root())?;
+    let found = crate::init::benched(&meta, |p| config.bench_target(p));
     if found.is_empty() {
-        return Err("no package has a bench target named soothfast; pass -p".into());
+        return Err("no package has a gate bench target (soothfast by default); pass -p".into());
     }
     Ok(found)
 }

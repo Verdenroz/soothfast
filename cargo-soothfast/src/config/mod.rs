@@ -130,6 +130,15 @@ impl Config {
         Landing::parse(&self.text).map_err(|e| self.located(e))
     }
 
+    /// The bench target `pkg`'s gate builds: its `[package.NAME.gate] target`,
+    /// else `soothfast`.
+    pub fn bench_target(&self, pkg: &str) -> String {
+        self.resolve(&[pkg.to_string()], Group::Gate)
+            .ok()
+            .and_then(|s| s.target)
+            .unwrap_or_else(|| "soothfast".into())
+    }
+
     /// The names of the `[package.NAME]` tables, in name order.
     pub fn package_names(&self) -> Result<Vec<String>, String> {
         let tables = package::parse(&self.text).map_err(|e| self.located(e))?;
@@ -403,6 +412,13 @@ mod tests {
         assert!(e.contains("core and other") && e.contains("docs"), "{e}");
         let same = config(TEXT).resolve(&pkgs(&["core", "core"]), Group::Docs);
         assert!(same.is_ok());
+    }
+
+    #[test]
+    fn a_package_bench_target_defaults_to_soothfast() {
+        let cfg = config("[package.api.gate]\ntarget = \"api-bench\"\n");
+        assert_eq!(cfg.bench_target("api"), "api-bench");
+        assert_eq!(cfg.bench_target("core"), "soothfast");
     }
 
     #[test]
