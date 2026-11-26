@@ -11,6 +11,7 @@ use soothfast_report::badges;
 use crate::config::{self, Config, Group, Settings};
 use crate::coverage::{self, dangling_covers, declared_covers};
 use crate::coverage_features;
+use crate::coverage_fixtures;
 use crate::coverage_lang;
 use crate::invoke::{self, Build, CommonArgs};
 use crate::{benchexe, docs, docs_support, workspace};
@@ -308,6 +309,10 @@ fn rows(
             continue;
         };
         for warning in dangling_covers(&records, &surf, pkg) {
+            eprintln!("{warning}");
+        }
+        let dir = invoke::pkg_dir(pkg).map_err(|e| (1, e.to_string()))?;
+        for warning in coverage_fixtures::unreferenced(&coverage_fixtures::sources(&dir), pkg) {
             eprintln!("{warning}");
         }
         let declared = declared_covers(&records);

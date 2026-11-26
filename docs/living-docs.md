@@ -205,6 +205,12 @@ features` object per package, and
 tree cannot tell, such as `documented+` for a non-Rust tree, is `null`, and
 the text report shows `n/a`.
 
+`coverage report` also prints `warning: fixture NAME in PATH is referenced by
+no bench of PKG` on stderr for each `#[soothfast::fixture]` in the package's
+`src` and `benches` whose name appears nowhere else in those files, since a
+bench names its fixture in `setup` or `setup_sized`. It reads source text, so
+a mention in a comment counts as a reference. The warning is advisory.
+
 With `--check`, the report prints only the per-dimension summary, then a
 line for each dimension below its configured minimum
 (`coverage_min.DIMENSION`, see [gating](gating.md#per-package-defaults)), then
@@ -398,6 +404,25 @@ dropping the others. A recorded page that was deleted, or has no blocks
 left, is dropped. To move a page to another package, delete its generated
 files and run gen-tests for both. A run without paths covers exactly the
 default scope.
+
+## Which blocks run
+
+A block that compiles is not a block that executes. `cargo soothfast docs
+stats [PATH ...] [--json]` reads the scanned pages and prints, for each, the
+rust blocks gen-tests turns into a running test (`executed`), the ones that
+only compile (`compile-only`: `no_run`, and `ignore`, `compile_fail` and the
+other rustdoc attributes, which gen-tests does not generate at all), and the
+page's `bind` and `claim` marker counts. A page with neither marker is
+flagged, since nothing ties its prose to code or a measurement. Capture
+blocks run in the capture example, so they are in neither count. The report
+is advisory and fails nothing.
+
+```console
+$ cargo soothfast docs stats
+docs/measuring.md: 4 executed, 2 compile-only, 6 bind(s), 3 claim(s)
+docs/ci.md: 0 executed, 5 compile-only, 0 bind(s), 0 claim(s)  no bind or claim
+docs stats: 4 of 11 doc block(s) execute; 1 of 2 page(s) have no bind or claim
+```
 
 ## Why this page has almost no `ignore`d code
 

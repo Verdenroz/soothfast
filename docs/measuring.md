@@ -239,6 +239,17 @@ Mapping is by source span rather than by symbol, so an item reached only
 through an inlined call is still credited: the counters sit in the compiler's
 MIR, ahead of inlining.
 
+### Setup is not measured
+
+llvm counters span the whole bench process, so by themselves they would credit
+a builder method a bench only calls to construct its input. The bench build
+therefore passes `--cfg soothfast_coverage`, and the runner then resets the
+profile counters right before each item's measured region and merges them into
+the profile right after it. Only code the region runs counts as `measured`.
+Normal bench builds do not set the cfg, so the runner compiles without this
+code. Runner code that executes after the last item's region, such as
+printing results, still counts.
+
 ### What it does not see
 
 - Doc tests are not instrumented, so an item only a doc test runs is untested.
@@ -258,7 +269,8 @@ MIR, ahead of inlining.
 ### Cost
 
 The instrumented build has its own target directory,
-`target/soothfast-coverage`, and the flags reach only the `--target <host>`
+`target/soothfast-coverage`, with the benches in its `benches` subdirectory
+because their cfg changes the build of every crate, and the flags reach only the `--target <host>`
 artifacts of that cargo, so build scripts and proc macros are not
 instrumented and the artifacts `gate` and `measure` use are not touched.
 Profiles go to a temporary directory and are merged by `llvm-profdata`, then

@@ -10,7 +10,7 @@ use soothfast_registry::{Bencher, MeasuredItem, fixture_items, measured_items, r
 use std::cell::Cell;
 
 use crate::json::esc;
-use crate::{alloc, asyncexec, callgrind, clientreq, sweep, walltime};
+use crate::{alloc, asyncexec, callgrind, clientreq, profile, sweep, walltime};
 use soothfast_registry::filter;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -539,7 +539,7 @@ pub fn main() {
             }
         }
         if use_alloc {
-            let m = alloc::measure(item.runner);
+            let m = profile::alloc(item.runner);
             emit_result(
                 e,
                 "alloc",

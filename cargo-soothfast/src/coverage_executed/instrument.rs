@@ -10,6 +10,11 @@ use crate::invoke;
 
 const FLAG: &str = "-Cinstrument-coverage";
 
+/// Makes the runner's alloc backend hand each item's measured region the
+/// profile. Benches build into a target directory of their own, since tests
+/// compiled with it would reset their own counters mid-run.
+const PROFILE_CFG: &str = "soothfast_coverage";
+
 /// A package's instrumented build. Everything lands in its own target
 /// directory, so the artifacts `gate` and `measure` keep are never touched.
 pub struct Instrumented<'a> {
@@ -42,7 +47,7 @@ impl<'a> Instrumented<'a> {
     /// `cargo test` over every test target but the doc tests, which rustdoc
     /// compiles without these flags.
     pub fn tests(&self, no_run: bool) -> Command {
-        let mut cmd = self.cargo("test");
+        let mut cmd = self.cargo("test", &self.target_dir, &[]);
         cmd.args(self.members.iter().flat_map(|m| ["-p", m]));
         cmd.arg("--tests");
         if no_run {
@@ -55,7 +60,11 @@ impl<'a> Instrumented<'a> {
     /// which executes the same code as the bench profile, and with the
     /// runner's cheapest backend: one pass over each item.
     pub fn benches(&self, target: &str, no_run: bool) -> Command {
-        let mut cmd = self.cargo("bench");
+        let mut cmd = self.cargo(
+            "bench",
+            &self.target_dir.join("benches"),
+            &["--cfg", PROFILE_CFG],
+        );
         cmd.args(["--bench", target, "--profile", "dev"]);
         if no_run {
             cmd.args(["--no-run", "--message-format=json"]);
@@ -67,16 +76,17 @@ impl<'a> Instrumented<'a> {
 
     /// The flags reach only the artifacts of an explicit `--target`, so
     /// build scripts and proc macros stay uninstrumented.
-    fn cargo(&self, verb: &str) -> Command {
-        let env = |k: &str| std::env::var(k).ok();
-        let mut flags = existing(env, "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS");
-        flags.push(FLAG.into());
+    fn cargo(&self, verb: &str, target_dir: &Path, extra: &[&str]) -> Command {
         let mut cmd = Command::new("cargo");
         cmd.arg(verb).args(["-p", self.pkg, "--target", &self.host]);
         if let Some(features) = self.features {
             cmd.args(["--features", features]);
         }
-        cmd.env("CARGO_TARGET_DIR", &self.target_dir);
+        let env = |k: &str| std::env::var(k).ok();
+        let mut flags = existing(env, "CARGO_ENCODED_RUSTFLAGS", "RUSTFLAGS");
+        flags.push(FLAG.into());
+        flags.extend(extra.iter().map(|f| f.to_string()));
+        cmd.env("CARGO_TARGET_DIR", target_dir);
         cmd.env("CARGO_ENCODED_RUSTFLAGS", flags.join("\u{1f}"));
         cmd
     }
@@ -224,33 +234,30 @@ mod tests {
     }
 
     #[test]
-    fn member_tests_build_beside_the_packages() {
-        let members = ["types".to_string()];
+    fn a_bench_build_profiles_per_item_in_a_target_directory_of_its_own() {
         let build = Instrumented {
             pkg: "demo",
             features: None,
             host: "h".into(),
             target_dir: PathBuf::from("/t"),
             members: &[],
-        }
-        .with_members(&members);
-        let args: Vec<_> = build
-            .tests(false)
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(
-            args,
-            [
-                "test", "-p", "demo", "--target", "h", "-p", "types", "--tests"
-            ]
+        };
+        let env = |cmd: &Command, key: &str| -> Option<String> {
+            cmd.get_envs()
+                .find(|(k, _)| *k == key)
+                .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+        };
+        let bench = build.benches("soothfast", true);
+        let test = build.tests(true);
+        let flags = env(&bench, "CARGO_ENCODED_RUSTFLAGS").unwrap();
+        assert!(flags.ends_with("-Cinstrument-coverage\u{1f}--cfg\u{1f}soothfast_coverage"));
+        assert!(
+            !env(&test, "CARGO_ENCODED_RUSTFLAGS")
+                .unwrap()
+                .contains("--cfg")
         );
-        let benches: Vec<_> = build
-            .benches("soothfast", false)
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert!(!benches.contains(&"types".to_string()));
+        assert_eq!(env(&bench, "CARGO_TARGET_DIR").unwrap(), "/t/benches");
+        assert_eq!(env(&test, "CARGO_TARGET_DIR").unwrap(), "/t");
     }
 
     #[test]
@@ -288,5 +295,30 @@ mod tests {
             args(build.benches("soothfast", true))
                 .ends_with(&["--no-run".to_string(), "--message-format=json".to_string()])
         );
+    }
+
+    #[test]
+    fn member_tests_build_beside_the_packages() {
+        let members = ["types".to_string()];
+        let build = Instrumented {
+            pkg: "demo",
+            features: None,
+            host: "h".into(),
+            target_dir: PathBuf::from("/t"),
+            members: &[],
+        }
+        .with_members(&members);
+        let args: Vec<_> = build
+            .tests(false)
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.windows(2).any(|w| w == ["-p", "types"]));
+        let benches: Vec<_> = build
+            .benches("soothfast", false)
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(!benches.contains(&"types".to_string()));
     }
 }
