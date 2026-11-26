@@ -93,7 +93,7 @@ struct Figure {
     total: u64,
     pct: u64,
     min: Option<u64>,
-    /// The figure is a lower bound: the bench's claims were not read.
+    /// The figure is not exact; the report's note gives the direction.
     partial: bool,
 }
 
@@ -704,7 +704,7 @@ fn fit(records: &[Record], accepted: Option<&str>) -> String {
 
 impl Figure {
     fn cell(&self) -> String {
-        let bound = if self.partial { " lower bound" } else { "" };
+        let bound = if self.partial { " (partial)" } else { "" };
         match self.min {
             Some(min) if self.pct < min => format!("{}%{bound} (min {min}, not met)", self.pct),
             Some(min) => format!("{}%{bound} (min {min})", self.pct),
@@ -881,12 +881,12 @@ mod tests {
     }
 
     #[test]
-    fn a_partial_figure_is_shown_as_a_lower_bound() {
+    fn a_partial_figure_is_marked_partial() {
         let partial = Figure {
             partial: true,
             ..figure("documented_strict", 1, 4, None)
         };
-        assert_eq!(partial.cell(), "25% lower bound");
+        assert_eq!(partial.cell(), "25% (partial)");
         assert_eq!(Figure::from_json(&partial.to_json()), Some(partial));
     }
 

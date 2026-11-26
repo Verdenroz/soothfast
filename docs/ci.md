@@ -1290,7 +1290,7 @@ neither started nor read from the store. The two follow their own minimums: a
 `tested` minimum starts only the test run, and a `measured` minimum only the
 bench run, which a package with no bench target does not have (`measured` is
 then `n/a`). A bench run that fails still yields a
-`measured` figure, recorded as a lower bound (`partial`) and not stored for
+`measured` figure, recorded as `partial` and not stored for
 later runs. `specified` applies to route and tool handlers, and every other item
 is `n/a`.
 `ci capture` runs `docs capture --check` for each docs package, or the `-p`

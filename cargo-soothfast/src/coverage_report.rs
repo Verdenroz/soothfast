@@ -38,7 +38,7 @@ struct Row {
     /// The workspace package the row's item belongs to.
     package: String,
     /// The item's claims were not read: no bench executable was listed, so
-    /// `documented_strict` is a lower bound.
+    /// `documented_strict` is partial.
     claims_unread: bool,
 }
 
@@ -525,8 +525,9 @@ fn targets_in(texts: impl Iterator<Item = String>) -> Markers {
     out
 }
 
-/// Whether `name`'s figure is a lower bound: `documented_strict` when a row's
-/// claims were not read, `measured` when the bench run failed.
+/// Whether `name`'s figure is not exact: `documented_strict` when a row's
+/// claims were not read, `measured` when the bench run failed or its harness
+/// credits setup.
 fn partial(rows: &[Row], name: &str) -> bool {
     name == "documented_strict" && rows.iter().any(|r| r.claims_unread)
         || executed::partial(rows, name)

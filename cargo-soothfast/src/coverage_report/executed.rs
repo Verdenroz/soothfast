@@ -36,8 +36,9 @@ pub(super) enum Origin {
     /// The run failed, so the column is a lower bound.
     Partial,
     /// The bench harness credits code that runs only in setup, so the column
-    /// is an upper bound on what is measured.
-    SetupCredited,
+    /// is an upper bound on what is measured. Carries the finish time of a
+    /// stored run.
+    SetupCredited(Option<u64>),
     /// A stored run, finished at this many seconds since the epoch.
     Stored(u64),
 }
@@ -139,10 +140,10 @@ fn credited_setup(column: Column, pkg: &str, lock: &str) -> Column {
     eprintln!(
         "{pkg}: bench harness soothfast-measure {version} predates setup exclusion; measured includes code that runs only in bench setup (upgrade soothfast to fix)"
     );
-    let origin = if origin == Origin::Partial {
-        origin
-    } else {
-        Origin::SetupCredited
+    let origin = match origin {
+        Origin::Partial => origin,
+        Origin::Stored(unix) => Origin::SetupCredited(Some(unix)),
+        _ => Origin::SetupCredited(None),
     };
     (regions, origin)
 }
@@ -206,7 +207,10 @@ pub(super) fn note(rows: &[Row], name: &str, told: bool) -> Option<String> {
     if origins.contains(&Origin::Partial) {
         parts.push("lower bound: the bench run failed".to_string());
     }
-    if origins.contains(&Origin::SetupCredited) {
+    if origins
+        .iter()
+        .any(|o| matches!(o, Origin::SetupCredited(_)))
+    {
         parts.push("upper bound: the bench harness predates setup exclusion".to_string());
     }
     match unrun_packages(rows, name) {
@@ -216,7 +220,7 @@ pub(super) fn note(rows: &[Row], name: &str, told: bool) -> Option<String> {
     let oldest = origins
         .iter()
         .filter_map(|o| match o {
-            Origin::Stored(unix) => Some(*unix),
+            Origin::Stored(unix) | Origin::SetupCredited(Some(unix)) => Some(*unix),
             _ => None,
         })
         .min();
@@ -239,7 +243,7 @@ pub(super) fn partial(rows: &[Row], name: &str) -> bool {
         && (rows.iter().any(|r| {
             matches!(
                 r.executed.of(name),
-                Some(Origin::Partial | Origin::SetupCredited)
+                Some(Origin::Partial | Origin::SetupCredited(_))
             )
         }) || unrun_packages(rows, name) > 0)
 }
@@ -405,7 +409,15 @@ mod tests {
     fn an_older_registry_harness_marks_the_measured_column_partial() {
         let lock = "[[package]]\nname = \"soothfast-measure\"\nversion = \"0.8.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n";
         let ran = || (Some(Regions::default()), Origin::Run);
-        assert_eq!(credited_setup(ran(), "demo", lock).1, Origin::SetupCredited);
+        assert_eq!(
+            credited_setup(ran(), "demo", lock).1,
+            Origin::SetupCredited(None)
+        );
+        let stored = (Some(Regions::default()), Origin::Stored(7));
+        assert_eq!(
+            credited_setup(stored, "demo", lock).1,
+            Origin::SetupCredited(Some(7))
+        );
         assert_eq!(credited_setup(ran(), "demo", "").1, Origin::Run);
         let path = "[[package]]\nname = \"soothfast-measure\"\nversion = \"0.8.0\"\n";
         assert_eq!(credited_setup(ran(), "demo", path).1, Origin::Run);
@@ -413,13 +425,15 @@ mod tests {
             "d::f",
             Provenance {
                 tests: None,
-                benches: Some(Origin::SetupCredited),
+                benches: Some(Origin::SetupCredited(Some(1_795_707_600))),
             },
         )];
         assert!(partial(&rows, "measured"));
         assert_eq!(
             note(&rows, "measured", true).as_deref(),
-            Some("upper bound: the bench harness predates setup exclusion")
+            Some(
+                "upper bound: the bench harness predates setup exclusion, cached run from 2026-11-26 15:40 UTC"
+            )
         );
     }
 
