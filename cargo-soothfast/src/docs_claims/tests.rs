@@ -146,6 +146,18 @@ fn doc_with(expr: &str) -> markdown::Doc {
 }
 
 #[test]
+fn a_claim_stated_twice_with_different_bounds_names_both_places() {
+    let a =
+        markdown::scan("intro\n<!-- soothfast:claim x::f.walltime.p99_ns < 500us -->\n").unwrap();
+    let b = markdown::scan("<!-- soothfast:claim x::f.walltime.p99_ns < 300us -->\n").unwrap();
+    let warnings = contradictions(&[("a.md", &a), ("b.md", &b)]);
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("a.md:2 and b.md:1 both claim x::f.walltime.p99_ns"));
+    let same = markdown::scan("<!-- soothfast:claim x::f.walltime.p99_ns < 500us -->\n").unwrap();
+    assert!(contradictions(&[("a.md", &a), ("c.md", &same)]).is_empty());
+}
+
+#[test]
 fn only_an_unchanged_claim_on_an_unmeasured_item_is_not_evaluated() {
     let b = baseline(&[entry(Reason::GateFailed, &["core::same"], &[])]);
     let expr = "core::same.alloc.allocs <= 0";

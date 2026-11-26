@@ -153,6 +153,20 @@ Summarizing a sample set costs at most eight allocations.
 Fingerprint hashing allocates nothing at all.
 <!-- /soothfast:claim -->
 
+A claim can also bound the bytes allocated, which `alloc = N` does not
+cover: a rewrite that keeps three allocations but swaps an 8-byte buffer for
+a 16-byte one passes the count and changes the size.
+
+```markdown ignore
+<!-- soothfast:claim soothfast_registry::bench_fnv1a.alloc.bytes <= 0 -->
+Fingerprint hashing allocates no bytes.
+<!-- /soothfast:claim -->
+```
+
+The gate already compares `alloc_bytes` against the merge-base on its own
+(+5%), separately from the allocation count, so an unclaimed size change
+still fails it.
+
 If either sentence stops being true, or the output above stops matching the
 real one, `cargo soothfast docs check` fails CI. It is the same mechanism
 that keeps every page on this site honest.
