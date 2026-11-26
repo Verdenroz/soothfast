@@ -114,6 +114,73 @@ last release when `report changelog` measures it: until a release ships with
 a harness that knows the setting, the changelog's perf delta against that
 release is left out with a warning (see [gating](gating.md)).
 
+## What tests and benches execute
+
+`coverage measure` counts an item as measured when a bench names it in
+`covers`. Nothing there checks that the bench runs it. `coverage executed`
+asks the question directly: it builds the package's tests, and separately its
+bench target, with `-C instrument-coverage`, runs them, and reports which
+public items any test ran (`tested`) and which any bench ran (`measured`).
+
+```console
+$ cargo soothfast coverage executed -p soothfast-registry
+tested measured soothfast_registry::Bencher::iter (function)
+       measured soothfast_registry::block_on_counting (function)
+                soothfast_registry::Assertions::new (function)
+tested          soothfast_registry::resolve_mock_seam (function)
+coverage executed: 7/34 public item(s) tested
+coverage executed: 9/34 public item(s) measured
+```
+
+`--tests` or `--benches` runs one column, and `--json` prints
+`{"package", "items": [{"path", "kind", "tested", "measured"}]}` with a
+column left out when it did not run. `--bench NAME` picks the bench target
+(default `soothfast`) and `--features` the feature set.
+
+The denominator is the public functions, structs, enums, unions and traits of
+the package, plus inherent methods. Trait-impl methods are not items of their
+own, and `#[doc(hidden)]` items are not in the rustdoc surface.
+
+### How an item counts as executed
+
+An item is executed when any region with a nonzero count lies on a line of its
+span, in the same file. The span comes from rustdoc. A function or inherent
+method has its own span. A struct, enum, union or trait has its own span plus
+the span of every method in every impl block for it, trait impls included, so
+a type counts as executed when any of its methods ran. That is a deliberate
+choice: a type with no methods is never executed, and neither is one that
+code only constructs or reads fields of. A generic is credited at the generic
+item, whatever the instantiation.
+
+Mapping is by source span rather than by symbol, so an item reached only
+through an inlined call is still credited: the counters sit in the compiler's
+MIR, ahead of inlining.
+
+### What it does not see
+
+- Doc tests are not instrumented, so an item only a doc test runs is untested.
+- Code that runs only at compile time has no runtime region. A `const fn`
+  body evaluated in a static, such as `MeasuredItem::new` in the macro
+  statics, reads as not executed.
+- Benches run under the dev profile, with the runner's `alloc` backend, which
+  runs each item once. Code behind `cfg(debug_assertions)` can credit an item
+  the bench profile never reaches.
+
+### Cost
+
+The instrumented build has its own target directory,
+`target/soothfast-coverage`, and the flags reach only the `--target <host>`
+artifacts of that cargo, so build scripts and proc macros are not
+instrumented and the artifacts `gate` and `measure` use are not touched.
+Profiles go to a temporary directory and are merged by `llvm-profdata`, then
+`llvm-cov export` writes the regions. Both tools come from the
+`llvm-tools` rustup component; the command names `rustup component add
+llvm-tools` when they are missing.
+
+The executed regions are kept under `.soothfast/coverage/`, keyed on the
+bytes of the instrumented executables. An unchanged tree reruns nothing: the
+rerun builds, finds the executables unchanged, and reads the stored regions.
+
 ## The statistics underneath
 
 <!-- soothfast:bind soothfast_measure::stats::summarize -->
