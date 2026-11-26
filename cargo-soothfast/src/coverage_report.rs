@@ -15,7 +15,7 @@ use crate::coverage_lang;
 use crate::invoke::{self, Build, CommonArgs};
 use crate::{benchexe, docs, docs_support, workspace};
 
-mod executed;
+pub(crate) mod executed;
 mod routes;
 use executed::{Provenance, Want, Wants};
 

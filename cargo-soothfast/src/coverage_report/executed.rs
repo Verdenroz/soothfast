@@ -13,7 +13,7 @@ use crate::workspace;
 
 /// Whether an executed run may happen while building a report.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Want {
+pub(crate) enum Want {
     Run,
     Stored,
     Skip,
@@ -21,7 +21,7 @@ pub(super) enum Want {
 
 /// What each executed column may do while building a report.
 #[derive(Clone, Copy)]
-pub(super) struct Wants {
+pub(crate) struct Wants {
     pub tests: Want,
     pub benches: Want,
 }
@@ -58,19 +58,20 @@ impl Provenance {
 
 /// The executed columns of one package: the items they can tell, the ones
 /// each run reached, and where each run came from.
-pub(super) struct Columns {
+pub(crate) struct Columns {
     package: String,
-    declared: BTreeSet<String>,
-    tested: Option<BTreeSet<String>>,
-    measured: Option<BTreeSet<String>>,
+    pub declared: BTreeSet<String>,
+    pub tested: Option<BTreeSet<String>>,
+    pub measured: Option<BTreeSet<String>>,
     provenance: Provenance,
 }
 
 type Column = (Option<Regions>, Origin);
 
-/// The executed columns of `pkg`. Tests build with `features`, the ones the
+/// The executed columns of `pkg`, for `coverage report` and `coverage
+/// executed` alike. Tests build with `features`, the ones the
 /// surface was read under; `bench` names the bench target and its features.
-pub(super) fn gather(
+pub(crate) fn gather(
     pkg: &str,
     surf: &Surface,
     root: &Path,
@@ -241,6 +242,52 @@ mod tests {
             executed,
             ..Row::default()
         }
+    }
+
+    #[test]
+    fn the_report_judges_the_items_the_standalone_run_lists() {
+        let mut surf = Surface::default();
+        let spans = vec![soothfast_docs::surface::Span {
+            file: "src/lib.rs".into(),
+            begin: 1,
+            end: 2,
+        }];
+        for (path, kind) in [
+            ("d::f", "function"),
+            ("d::C", "constant"),
+            ("d::M", "module"),
+        ] {
+            surf.items.insert(
+                path.into(),
+                soothfast_docs::surface::ItemInfo {
+                    kind: kind.into(),
+                    fingerprint: 1 + path.len() as u64,
+                    signature: String::new(),
+                    has_docs: false,
+                    example: false,
+                    spans: spans.clone(),
+                },
+            );
+        }
+        let columns = Columns {
+            package: "d".into(),
+            declared: coverage_executed::declared_paths(&surf),
+            tested: Some(BTreeSet::new()),
+            measured: None,
+            provenance: Provenance::default(),
+        };
+        let rows: Vec<Row> = surf
+            .counted()
+            .iter()
+            .map(|c| row(&c.path, Provenance::default()))
+            .collect();
+        let judged: BTreeSet<_> = attach(rows, &columns)
+            .into_iter()
+            .filter(|r| r.tested.is_some())
+            .map(|r| r.path)
+            .collect();
+        assert_eq!(judged, columns.declared);
+        assert_eq!(judged, BTreeSet::from(["d::f".to_string()]));
     }
 
     #[test]

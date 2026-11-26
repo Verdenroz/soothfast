@@ -184,7 +184,11 @@ bench build; unset, it is the package's `gate` features, which a bench target
 with `required-features` needs to build at all.
 
 The denominator is the public functions, structs, enums, unions and traits of
-the package, plus inherent methods. Trait-impl methods are not items of their
+the package, plus inherent methods, read under the same features and by the
+same code as the `tested` and `measured` columns of `coverage report
+--executed`, so the two commands print the same figures. An item a run cannot
+reach, such as one behind a feature the bench build leaves off, reads not
+executed and stays in the denominator. Trait-impl methods are not items of their
 own, and `#[doc(hidden)]` items are not in the rustdoc surface.
 
 A package that re-exports items of other workspace crates (`pub use

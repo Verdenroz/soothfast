@@ -6,6 +6,7 @@ use serde_json::json;
 
 use super::regions::{self, Declared};
 use crate::config::{Config, Group};
+use crate::coverage_report::executed::{Want, Wants, gather};
 use crate::invoke::{self, CommonArgs};
 
 /// Items are `tested` and `measured`; a column that was not run is absent.
@@ -79,25 +80,17 @@ fn execute(args: &[String]) -> Result<(), String> {
         .ok_or("coverage executed requires -p PKG")?;
     let features = flags.features.as_deref();
     let (surface, _, root) = crate::docs_support::surface_in(pkg, None, features)?;
+    let want = |on: bool| if on { Want::Run } else { Want::Skip };
+    let wants = Wants {
+        tests: want(flags.tests),
+        benches: want(flags.benches),
+    };
+    let executed = gather(pkg, &surface, &root, features, &flags.common, wants)?;
     let declared = regions::declared(&surface);
-    let members = super::defining_members(&surface, &root, pkg)?;
-    let tested = match flags.tests {
-        true => Some(regions::executed(
-            &declared,
-            &root,
-            &super::tests(pkg, features, &members)?,
-        )),
-        false => None,
+    let columns = Columns {
+        tested: executed.tested.as_ref(),
+        measured: executed.measured.as_ref(),
     };
-    let measured = match flags.benches {
-        true => Some(regions::executed(
-            &declared,
-            &root,
-            &super::benches(&flags.common)?,
-        )),
-        false => None,
-    };
-    let columns = Columns { tested, measured };
     if flags.json {
         println!("{}", columns.json(pkg, &declared));
     } else {
@@ -107,8 +100,8 @@ fn execute(args: &[String]) -> Result<(), String> {
 }
 
 struct Columns<'a> {
-    tested: Option<BTreeSet<&'a str>>,
-    measured: Option<BTreeSet<&'a str>>,
+    tested: Option<&'a BTreeSet<String>>,
+    measured: Option<&'a BTreeSet<String>>,
 }
 
 impl Columns<'_> {
@@ -117,9 +110,9 @@ impl Columns<'_> {
             .iter()
             .map(|d| {
                 let mut item = json!({ "path": d.path, "kind": d.kind });
-                for (name, set) in [("tested", &self.tested), ("measured", &self.measured)] {
+                for (name, set) in [("tested", self.tested), ("measured", self.measured)] {
                     if let Some(set) = set {
-                        item[name] = json!(set.contains(d.path.as_str()));
+                        item[name] = json!(set.contains(&d.path));
                     }
                 }
                 item
@@ -129,17 +122,17 @@ impl Columns<'_> {
     }
 
     fn print(&self, declared: &[Declared<'_>]) {
-        let mark = |set: &Option<BTreeSet<&str>>, path: &str, word: &str| match set {
+        let mark = |set: Option<&BTreeSet<String>>, path: &str, word: &str| match set {
             Some(set) if set.contains(path) => word.to_string(),
             Some(_) => " ".repeat(word.len()),
             None => String::new(),
         };
         for d in declared {
-            let tested = mark(&self.tested, &d.path, "tested");
-            let measured = mark(&self.measured, &d.path, "measured");
+            let tested = mark(self.tested, &d.path, "tested");
+            let measured = mark(self.measured, &d.path, "measured");
             println!("{tested} {measured} {} ({})", d.path, d.kind);
         }
-        for (name, set) in [("tested", &self.tested), ("measured", &self.measured)] {
+        for (name, set) in [("tested", self.tested), ("measured", self.measured)] {
             if let Some(set) = set {
                 println!(
                     "coverage executed: {}/{} public item(s) {name}",
@@ -222,8 +215,9 @@ mod tests {
             kind: "function",
             spans: &[],
         }];
+        let tested = BTreeSet::from(["demo::run".to_string()]);
         let columns = Columns {
-            tested: Some(BTreeSet::from(["demo::run"])),
+            tested: Some(&tested),
             measured: None,
         };
         assert_eq!(
