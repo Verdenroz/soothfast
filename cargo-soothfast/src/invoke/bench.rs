@@ -64,6 +64,9 @@ fn cargo_command(
         }
     }
     cmd.arg(verb);
+    if let Some(n) = &common.jobs {
+        cmd.args(["-j", n]);
+    }
     if let Some(td) = target_dir {
         cmd.env("CARGO_TARGET_DIR", td);
     }
@@ -490,7 +493,9 @@ pub fn bench_executable(
 mod tests {
     use std::process::Command;
 
-    use super::{CommonArgs, cpu_args};
+    use std::path::Path;
+
+    use super::{Build, CommonArgs, bench_build_command, cpu_args};
 
     fn cpu_flags(cpu: Option<&str>) -> Vec<String> {
         let common = CommonArgs {
@@ -502,6 +507,22 @@ mod tests {
         cmd.get_args()
             .map(|a| a.to_string_lossy().into_owned())
             .collect()
+    }
+
+    #[test]
+    fn jobs_reach_the_cargo_build() {
+        let common = CommonArgs {
+            jobs: Some("4".into()),
+            codegen_units: Some("inherit".into()),
+            ..CommonArgs::default()
+        };
+        let cmd =
+            bench_build_command(&common, Some(Path::new(".")), None, Build::Measure, &[]).unwrap();
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args[..3], ["bench", "-j", "4"]);
     }
 
     #[test]

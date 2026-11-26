@@ -20,6 +20,8 @@ pub struct CommonArgs {
     /// `--cpu`: what callgrind hides from the measured process beyond
     /// AVX-512, in the form [`CpuMask::parse`] takes.
     pub cpu: Option<String>,
+    /// `-j N` / `--jobs N`, handed to cargo for the bench build.
+    pub jobs: Option<String>,
     /// `--no-item-cache`: measure every item even where a stored measurement
     /// of the same executed code exists.
     pub no_item_cache: bool,
@@ -84,6 +86,7 @@ impl CommonArgs {
             "--bench" | "--target" => &mut self.target,
             "--codegen-units" => &mut self.codegen_units,
             "--cpu" => &mut self.cpu,
+            "-j" | "--jobs" => &mut self.jobs,
             _ => return false,
         };
         *slot = it.next().cloned();
@@ -152,6 +155,17 @@ const CANONICAL_CODEGEN_UNITS: &str = "1";
 mod tests {
     use super::{CommonArgs, Shard};
     use crate::cpu::CpuMask;
+
+    #[test]
+    fn jobs_parse_from_either_spelling() {
+        for flag in ["-j", "--jobs"] {
+            let argv = [flag.to_string(), "4".to_string()];
+            let mut it = argv[1..].iter();
+            let mut common = CommonArgs::default();
+            assert!(common.try_parse(flag, &mut it));
+            assert_eq!(common.jobs.as_deref(), Some("4"));
+        }
+    }
 
     #[test]
     fn a_shard_parses_from_one_and_rejects_out_of_range() {

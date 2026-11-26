@@ -225,7 +225,9 @@ commands:
   measure  [-p PKG] [--filter S] [--backend auto|all|walltime|alloc|perfcnt|callgrind|buildcost]
            [--samples N] [--features F] [--features-matrix \"default;full\"]
            [--target NAME] [--save-baseline NAME] [--no-reuse]
-           [--no-item-cache] [--cpu default|portable|NAMES]
+           [--no-item-cache] [--no-cache] [-j N] [--cpu default|portable|NAMES]
+           (--filter takes substrings, `|` alternatives and `^`/`$` anchors;
+           --no-cache is --no-reuse plus --no-item-cache; -j N goes to cargo)
            (under callgrind, reuses the counts stored for this bench binary
            and measures only timing again; --no-reuse measures in full;
            --no-item-cache measures every item rather than reusing those
@@ -234,7 +236,7 @@ commands:
            [--baseline NAME] [--ratchet NAME] [--against-ref REF] [--deps]
            [--features-matrix M] [--target NAME] [--save-baseline NAME]
            [--codegen-units N|inherit] [--no-reuse-base] [--allow-gone]
-           [--allow-harness-change] [--no-item-cache] [--cpu default|portable|NAMES]
+           [--allow-harness-change] [--no-item-cache] [-j N] [--cpu default|portable|NAMES]
            (--save-baseline persists the head run after a pass, listing
            walltime another run measured as unmeasured; a failed or errored
            gate lists its items as gate-failed; with --shard the file holds
@@ -414,29 +416,55 @@ fn dispatch(mut argv: Vec<String>) -> i32 {
     }
 }
 
-fn cmd_measure(args: &[String]) -> i32 {
-    let mut common = CommonArgs::default();
-    let mut save: Option<String> = None;
-    let mut matrix = String::from("default");
-    let mut reuse = true;
+struct MeasureArgs {
+    common: CommonArgs,
+    save: Option<String>,
+    matrix: String,
+    reuse: bool,
+}
+
+fn parse_measure(args: &[String]) -> Result<MeasureArgs, String> {
+    let mut out = MeasureArgs {
+        common: CommonArgs::default(),
+        save: None,
+        matrix: String::from("default"),
+        reuse: true,
+    };
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        if common.try_parse(a, &mut it) {
+        if out.common.try_parse(a, &mut it) {
             continue;
         }
         match a.as_str() {
             "--save-baseline" => match it.next() {
-                Some(n) => save = Some(n.clone()),
-                None => return arg_err("--save-baseline needs a name"),
+                Some(n) => out.save = Some(n.clone()),
+                None => return Err("--save-baseline needs a name".into()),
             },
-            "--no-reuse" => reuse = false,
+            "--no-reuse" => out.reuse = false,
+            "--no-cache" => {
+                out.reuse = false;
+                out.common.no_item_cache = true;
+            }
             "--features-matrix" => match it.next() {
-                Some(m) => matrix = m.clone(),
-                None => return arg_err("--features-matrix needs combos like \"default;full\""),
+                Some(m) => out.matrix = m.clone(),
+                None => return Err("--features-matrix needs combos like \"default;full\"".into()),
             },
-            other => return arg_err(&format!("unknown measure arg {other:?}")),
+            other => return Err(format!("unknown measure arg {other:?}")),
         }
     }
+    Ok(out)
+}
+
+fn cmd_measure(args: &[String]) -> i32 {
+    let MeasureArgs {
+        mut common,
+        save,
+        matrix,
+        reuse,
+    } = match parse_measure(args) {
+        Ok(a) => a,
+        Err(e) => return arg_err(&e),
+    };
 
     if let Err(e) = config::apply(&mut common, config::Group::Gate) {
         return arg_err(&e);
@@ -554,6 +582,16 @@ mod tests {
 
     fn argv(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn measure_accepts_no_cache_and_jobs() {
+        let a = parse_measure(&argv(&["--no-cache", "-j", "4", "--filter", "a|b"])).unwrap();
+        assert!(!a.reuse);
+        assert!(a.common.no_item_cache);
+        assert_eq!(a.common.jobs.as_deref(), Some("4"));
+        assert_eq!(a.common.filter.as_deref(), Some("a|b"));
+        assert!(parse_measure(&argv(&["--bogus"])).is_err());
     }
 
     #[test]
