@@ -433,13 +433,16 @@ prints a `note:` line for each operation the router serves that the spec
 lacks, and each the spec declares that no registration serves. The notes are
 advisory and never change the exit code.
 
-Paths match by shape, so `{id}`, `:id` and `{symbol}` are one segment, and by
-suffix, because a `.nest("/v2", ..)` prefix is applied away from the
-registration. Comments are ignored, and code after the first `#[cfg(test)]`
-marker is skipped, including anything that follows a mid-file test module. Only axum-style
-literal `.route(..)` calls are read; a package built on another framework, or
-one that registers no literal routes, gets a single note saying the check was
-skipped.
+Paths match by shape, so `{id}`, `:id`, `*rest` and `{symbol}` are one
+segment, and by suffix, because a `.nest("/v2", ..)` prefix is applied away
+from the registration. The match is loose: a short registration such as
+`/{id}` serves any operation whose path ends in one segment. A registration
+that names no verb, such as `any(handler)`, serves every method.
+
+Comments and `#[cfg(test)] mod` blocks are ignored. Only axum-style literal
+`.route(..)` calls under the package's own `src/` are read. A package built on
+another framework, or one that registers no literal routes there, gets a
+single note saying the check was skipped.
 
 ## Reconciliation
 

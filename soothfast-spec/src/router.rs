@@ -7,12 +7,13 @@
 
 use crate::DeclaredOp;
 
+const ANY: &str = "ANY";
 const VERBS: [&str; 7] = ["get", "post", "put", "delete", "patch", "head", "options"];
 
 /// One `.route("path", verb(handler))` registration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouterRoute {
-    /// Upper-case HTTP verb.
+    /// Upper-case HTTP verb, or `ANY` when the registration names none.
     pub method: String,
     /// The path literal as written, relative to any `.nest` prefix.
     pub path: String,
@@ -28,9 +29,10 @@ pub struct RouterDrift {
 }
 
 /// Every `.route("<literal>", verb(..)[.verb(..)])` registration in `source`,
-/// one entry per verb. Code after the first `#[cfg(test)]` is skipped.
+/// one entry per verb. A call naming no verb, such as `any(h)`, is one entry
+/// with method `ANY`. `#[cfg(test)] mod` blocks are skipped.
 pub fn scan_routes(source: &str) -> Vec<RouterRoute> {
-    let live = &strip_comments(source.split("#[cfg(test)]").next().unwrap_or(source));
+    let live = &strip_test_mods(&strip_comments(source));
     let bytes = live.as_bytes();
     let mut out = Vec::new();
     let mut at = 0;
@@ -44,9 +46,13 @@ pub fn scan_routes(source: &str) -> Vec<RouterRoute> {
         let Some((path, rest)) = leading_literal(args) else {
             continue;
         };
-        for verb in verbs(rest) {
+        let mut methods: Vec<String> = verbs(rest).iter().map(|v| v.to_uppercase()).collect();
+        if methods.is_empty() {
+            methods.push(ANY.to_string());
+        }
+        for method in methods {
             out.push(RouterRoute {
-                method: verb.to_uppercase(),
+                method,
                 path: path.to_string(),
             });
         }
@@ -58,23 +64,23 @@ pub fn scan_routes(source: &str) -> Vec<RouterRoute> {
 /// (`{id}`, `:id` and `{symbol}` are the same segment) and by suffix, since
 /// a `.nest("/v2", ..)` prefix is applied away from the registration.
 pub fn compare(routes: &[RouterRoute], declared: &[DeclaredOp]) -> RouterDrift {
-    let served = |d: &DeclaredOp| {
-        routes
-            .iter()
-            .any(|r| r.method.eq_ignore_ascii_case(&d.method) && suffix_of(&d.path, &r.path))
-    };
     RouterDrift {
         unspecified: routes
             .iter()
-            .filter(|r| {
-                !declared.iter().any(|d| {
-                    r.method.eq_ignore_ascii_case(&d.method) && suffix_of(&d.path, &r.path)
-                })
-            })
+            .filter(|r| !declared.iter().any(|d| serves(r, d)))
             .cloned()
             .collect(),
-        unserved: declared.iter().filter(|d| !served(d)).cloned().collect(),
+        unserved: declared
+            .iter()
+            .filter(|d| !routes.iter().any(|r| serves(r, d)))
+            .cloned()
+            .collect(),
     }
+}
+
+fn serves(route: &RouterRoute, declared: &DeclaredOp) -> bool {
+    (route.method == ANY || route.method.eq_ignore_ascii_case(&declared.method))
+        && suffix_of(&declared.path, &route.path)
 }
 
 fn suffix_of(spec_path: &str, route_path: &str) -> bool {
@@ -127,6 +133,53 @@ fn strip_comments(source: &str) -> String {
         i = end;
     }
     out
+}
+
+/// `source` without its `#[cfg(test)] mod name { .. }` blocks.
+fn strip_test_mods(source: &str) -> String {
+    const MARK: &str = "#[cfg(test)]";
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(at) = rest.find(MARK) {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + MARK.len()..];
+        let body = after.trim_start();
+        let close = body
+            .starts_with("mod ")
+            .then(|| body.find('{'))
+            .flatten()
+            .and_then(|open| matching_brace(body.as_bytes(), open));
+        match close {
+            Some(close) => rest = &body[close + 1..],
+            None => {
+                out.push_str(MARK);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The index of the `}` closing the `{` at `open`, skipping string literals.
+fn matching_brace(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => i = string_end(bytes, i)?,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// The index of the `)` closing the `(` at `open`, skipping string literals.
@@ -280,6 +333,20 @@ mod tests {
             &[route("GET", "/files/*rest")],
             &[op("GET", "/files/{*path}")],
         );
+        assert!(drift.unserved.is_empty() && drift.unspecified.is_empty());
+    }
+
+    #[test]
+    fn code_after_a_test_mod_or_a_cfg_test_use_is_still_read() {
+        let src = "#[cfg(test)]\nuse x::y;\nr.route(\"/a\", get(h));\n#[cfg(test)]\nmod t { fn f() { r.route(\"/t\", get(c)); } }\nr.route(\"/b\", get(h));";
+        assert_eq!(scan_routes(src), [route("GET", "/a"), route("GET", "/b")]);
+    }
+
+    #[test]
+    fn a_route_with_no_verb_serves_any_method() {
+        let routes = scan_routes(r#"r.route("/ws", any(ws))"#);
+        assert_eq!(routes, [route("ANY", "/ws")]);
+        let drift = compare(&routes, &[op("GET", "/ws")]);
         assert!(drift.unserved.is_empty() && drift.unspecified.is_empty());
     }
 
