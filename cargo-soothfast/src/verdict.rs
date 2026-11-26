@@ -93,6 +93,8 @@ struct Figure {
     total: u64,
     pct: u64,
     min: Option<u64>,
+    /// The figure is a lower bound: the bench's claims were not read.
+    partial: bool,
 }
 
 impl Figure {
@@ -103,6 +105,7 @@ impl Figure {
             "total": self.total,
             "pct": self.pct,
             "min": self.min,
+            "partial": self.partial,
         })
     }
 
@@ -113,6 +116,7 @@ impl Figure {
             total: v.get("total")?.as_u64()?,
             pct: v.get("pct")?.as_u64()?,
             min: v.get("min").and_then(Value::as_u64),
+            partial: v["partial"].as_bool().unwrap_or(false),
         })
     }
 }
@@ -700,10 +704,11 @@ fn fit(records: &[Record], accepted: Option<&str>) -> String {
 
 impl Figure {
     fn cell(&self) -> String {
+        let bound = if self.partial { " lower bound" } else { "" };
         match self.min {
-            Some(min) if self.pct < min => format!("{}% (min {min}, not met)", self.pct),
-            Some(min) => format!("{}% (min {min})", self.pct),
-            None => format!("{}%", self.pct),
+            Some(min) if self.pct < min => format!("{}%{bound} (min {min}, not met)", self.pct),
+            Some(min) => format!("{}%{bound} (min {min})", self.pct),
+            None => format!("{}%{bound}", self.pct),
         }
     }
 }
@@ -847,6 +852,7 @@ mod tests {
             total,
             pct: covered * 100 / total,
             min,
+            partial: false,
         }
     }
 
@@ -872,6 +878,16 @@ mod tests {
         let table = "| package | documented | documented_strict |\n| --- | --- | --- |\n| a | 100% (min 80) | n/a |\n| b | 75% (min 80, not met) | 25% |\n";
         assert!(body.contains(table), "{body}");
         assert!(!render(&records[2..], None).contains("| package |"));
+    }
+
+    #[test]
+    fn a_partial_figure_is_shown_as_a_lower_bound() {
+        let partial = Figure {
+            partial: true,
+            ..figure("documented_strict", 1, 4, None)
+        };
+        assert_eq!(partial.cell(), "25% lower bound");
+        assert_eq!(Figure::from_json(&partial.to_json()), Some(partial));
     }
 
     #[test]

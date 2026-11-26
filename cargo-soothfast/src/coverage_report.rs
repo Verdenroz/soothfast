@@ -21,6 +21,9 @@ struct Row {
     documented: bool,
     documented_strict: Option<bool>,
     measured_declared: Option<bool>,
+    /// The item's claims were not read: no bench executable was listed, so
+    /// `documented_strict` is a lower bound.
+    claims_unread: bool,
 }
 
 /// Every dimension a report carries: its JSON name and its label.
@@ -104,6 +107,7 @@ struct Figure {
     covered: u32,
     total: u32,
     min: Option<u32>,
+    partial: bool,
 }
 
 impl Figure {
@@ -128,6 +132,7 @@ fn figures(rows: &[Row], minimums: &Settings) -> Vec<Figure> {
                 covered,
                 total,
                 min,
+                partial: partial(rows, name),
             })
         })
         .collect()
@@ -153,6 +158,7 @@ fn held_to_minimums(rows: &[Row], pkgs: &[String]) -> i32 {
                 "total": f.total,
                 "pct": f.pct(),
                 "min": f.min,
+                "partial": f.partial,
             })
         })
         .collect();
@@ -189,6 +195,7 @@ fn rows(
             documented: e.documented,
             documented_strict: None,
             measured_declared: None,
+            claims_unread: false,
         }));
     }
     if pkgs.is_empty() {
@@ -218,11 +225,11 @@ fn rows(
     Ok(rows)
 }
 
-/// Whether `pkg` has a minimum on a dimension only its built bench target can
-/// tell.
+/// Whether `pkg` has a minimum on a dimension its bench target's claims and
+/// declarations decide.
 fn needs_bench(pkg: &str) -> Result<bool, String> {
     let minimums = config::coverage_defaults(&[pkg.to_string()])?;
-    Ok(["measured_declared", "gated"]
+    Ok(["documented_strict", "measured_declared", "gated"]
         .iter()
         .any(|d| minimums.minimum(d).is_some()))
 }
@@ -282,6 +289,7 @@ fn rust_rows(
             measured_declared: declared
                 .filter(|_| c.info.kind == "function")
                 .map(|declared| named(declared, &c.aliases)),
+            claims_unread: declared.is_none(),
         })
         .collect()
 }
@@ -338,6 +346,12 @@ fn targets_in(texts: impl Iterator<Item = String>) -> Markers {
     out
 }
 
+/// Whether `name`'s figure is a lower bound: only `documented_strict` is, and
+/// only when a row's claims were not read.
+fn partial(rows: &[Row], name: &str) -> bool {
+    name == "documented_strict" && rows.iter().any(|r| r.claims_unread)
+}
+
 /// Covered and total over the rows a dimension applies to; `None` when it
 /// applies to none.
 fn summarize(rows: &[Row], name: &str) -> Option<(u32, u32)> {
@@ -373,6 +387,13 @@ fn render_json(rows: &[Row]) -> Value {
                 Value::Null,
                 |s| json!({ "covered": s.0, "total": s.1, "pct": percent(s) }),
             );
+            let value = match value {
+                Value::Object(mut figure) if partial(rows, name) => {
+                    figure.insert("partial".into(), Value::Bool(true));
+                    Value::Object(figure)
+                }
+                other => other,
+            };
             (name.to_string(), value)
         })
         .collect();
@@ -406,8 +427,13 @@ fn render_text(rows: &[Row]) -> String {
 fn render_summary(rows: &[Row]) -> String {
     let mut out = String::new();
     for (name, label) in DIMENSIONS {
+        let note = if partial(rows, name) {
+            ", claims not read: no bench executable"
+        } else {
+            ""
+        };
         let figure = summarize(rows, name).map_or("n/a".to_string(), |s| {
-            format!("{}/{} ({}%)", s.0, s.1, percent(s))
+            format!("{}/{} ({}%{note})", s.0, s.1, percent(s))
         });
         out.push_str(&format!("{:<20} {figure}\n", format!("{label}:")));
     }
@@ -498,6 +524,30 @@ mod tests {
     }
 
     #[test]
+    fn an_unread_bench_marks_documented_plus_as_a_lower_bound() {
+        let rows = rust_rows(&surface(), None, &set(&[]));
+        let text = render_text(&rows);
+        assert!(
+            text.contains("documented+:         1/6 (16%, claims not read: no bench executable)"),
+            "{text}"
+        );
+        let json = render_json(&rows);
+        assert_eq!(json["summary"]["documented_strict"]["partial"], true);
+        assert!(json["summary"]["documented"].get("partial").is_none());
+        let read = render_json(&rust_rows(&surface(), Some(&set(&[])), &set(&[])));
+        assert!(
+            read["summary"]["documented_strict"]
+                .get("partial")
+                .is_none()
+        );
+        assert!(
+            figures(&rows, &Settings::default())
+                .iter()
+                .any(|f| f.partial)
+        );
+    }
+
+    #[test]
     fn markers_name_binds_and_claimed_bench_ids() {
         let md = "<!-- soothfast:bind d::a d::b -->\n<!-- soothfast:claim d::c.walltime.p99 < 1ms -->\n<!-- soothfast:claim d::x.alloc.allocs - d::y.alloc.allocs < 2 -->\n";
         let got = targets_in([md.to_string(), "```\nunclosed".to_string()].into_iter());
@@ -533,6 +583,7 @@ mod tests {
             documented: true,
             documented_strict: None,
             measured_declared: None,
+            claims_unread: false,
         }];
         let json = render_json(&rows);
         assert_eq!(json["summary"]["documented"]["pct"], 100);
@@ -575,6 +626,7 @@ mod tests {
             documented: true,
             documented_strict: None,
             measured_declared: None,
+            claims_unread: false,
         }];
         let settings = Settings {
             minimums: [("measured_declared".to_string(), 90)].into(),
