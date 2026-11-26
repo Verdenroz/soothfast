@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
+use crate::binstore;
 use crate::gate_save::HeadRun;
 use crate::headrun::{self, binary_digest, ref_doc};
 use crate::invoke::{self, CommonArgs, Run};
@@ -134,6 +135,12 @@ pub(super) fn base_method_differs(
     }
 }
 
+/// One path for both sides means extraction resolved head's own binary twice,
+/// unless the path is a store entry, which two trees of the same content share.
+fn resolved_twice(head: &std::path::Path, base: &std::path::Path) -> bool {
+    head == base && !binstore::holds(head)
+}
+
 /// The head and merge-base bench binaries, with digests of their machine code.
 pub(super) struct Binaries {
     pub(super) head: String,
@@ -155,9 +162,7 @@ pub(super) fn bench_text_digests(
     ) else {
         return None;
     };
-    // One path for both sides means extraction resolved head's own binary
-    // twice; treat it as failed and fall through to a real measurement.
-    if head == base {
+    if resolved_twice(&head, &base) {
         return None;
     }
     Some(Binaries {
@@ -174,11 +179,18 @@ mod tests {
 
     use super::{
         base_method_differs, identical_head, identical_pass, identical_pass_args,
-        identical_pass_cache,
+        identical_pass_cache, resolved_twice,
     };
 
     use crate::gate::test_support::run_with;
     use crate::invoke::{self, ItemMetrics, Run};
+
+    #[test]
+    fn one_built_path_for_both_sides_is_a_failed_extraction() {
+        let built = std::path::Path::new("/repo/target/release/deps/bench-1");
+        assert!(resolved_twice(built, built));
+        assert!(!resolved_twice(built, std::path::Path::new("/wt/bench-1")));
+    }
 
     #[test]
     fn a_named_gating_backend_keeps_its_counters_on_the_identical_pass() {

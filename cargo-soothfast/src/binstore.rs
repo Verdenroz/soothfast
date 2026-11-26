@@ -1,12 +1,12 @@
 //! Built bench executables kept on disk, keyed by everything that produces
 //! their bytes. The key and the entries follow `store`.
 //!
-//! The run cache, the item cache and the link maps all name a binary by its
-//! digest, so an entry must be the bytes cargo would write or be a miss. Two
-//! things beyond the sources reach those bytes: the checkout path (through
-//! `env!("CARGO_MANIFEST_DIR")`, `file!()` and debug info) and the target
-//! directory (through `OUT_DIR`). Both are part of the key, so a tree built at
-//! another path misses.
+//! The key names a tree's content and the toolchain, not where the tree lives.
+//! An entry also records the root it was built at and whether its bytes
+//! contain that path. One that does can open files under that root at run
+//! time, so it serves only a tree at the same root; one that does not serves
+//! any, so an executable built at the checkout root also serves the merge-base
+//! worktree of that commit.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,7 +38,6 @@ pub struct Request<'a> {
     pub toolchain: Option<&'a str>,
     /// `rustc -vV` of the compiler cargo picks.
     pub rustc: &'a str,
-    pub target_dir: &'a Path,
     /// `CARGO_HOME`, where registry sources (and so their panic paths) live.
     pub cargo_home: &'a str,
     pub env: &'a [(String, String)],
@@ -48,7 +47,7 @@ pub struct Request<'a> {
 /// live in `crate_dirs`. `None` when part of the input cannot be read.
 pub fn key(root: &Path, crate_dirs: &[PathBuf], req: &Request) -> Option<String> {
     let head = format!(
-        "bin1\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}",
+        "bin2\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}",
         req.pkg,
         req.target,
         req.profile,
@@ -56,8 +55,6 @@ pub fn key(root: &Path, crate_dirs: &[PathBuf], req: &Request) -> Option<String>
         req.codegen_units.unwrap_or(""),
         req.toolchain.unwrap_or(""),
         req.rustc,
-        root.display(),
-        req.target_dir.display(),
         req.cargo_home,
     );
     store::cheap_key_skipping(root, crate_dirs, &head, req.env, is_markdown)
@@ -77,9 +74,38 @@ pub fn dir() -> Option<PathBuf> {
 }
 
 /// The executable stored under `key` in `dir` whose inputs still hold what
-/// they did.
+/// they did and which may run from `root`.
 pub fn load(dir: &Path, key: &str, root: &Path) -> Option<PathBuf> {
-    store::lookup(dir, key, root, "bin")
+    let hit = store::lookup(dir, key, root, "bin")?;
+    serves(&hit, root).then_some(hit)
+}
+
+/// Whether the entry's executable may run from `root`: it does not carry the
+/// root it was built at, or that root is `root`. An entry that never recorded
+/// one is not served.
+fn serves(entry: &Path, root: &Path) -> bool {
+    let Some(body) = read_sidecar(entry, "built") else {
+        return false;
+    };
+    match body.split_once('\n') {
+        Some(("free", _)) => true,
+        Some(("bound", built)) => Path::new(built) == root,
+        _ => false,
+    }
+}
+
+/// Whether the bytes of `exe` contain `root` or its canonical form, which is
+/// what cargo bakes when the checkout is reached through a symlink. A file
+/// that cannot be read counts as bound.
+fn path_bound(exe: &Path, root: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(exe) else {
+        return true;
+    };
+    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    [root, canonical.as_path()].iter().any(|path| {
+        let needle = path.as_os_str().as_encoded_bytes();
+        bytes.windows(needle.len()).any(|w| w == needle)
+    })
 }
 
 /// Keep the executable cargo wrote at `exe` for a build that started at
@@ -105,6 +131,12 @@ pub fn store(
     }
     let entry =
         store::insert(dir, key, root, inputs, started, exe, "bin").ok_or(Skip::NotWritten)?;
+    let bound = if path_bound(exe, root) {
+        "bound"
+    } else {
+        "free"
+    };
+    write_sidecar(&entry, "built", &format!("{bound}\n{}", root.display()));
     let born = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| Skip::NotWritten)?
@@ -141,8 +173,11 @@ impl Skip {
     }
 }
 
-/// Remove every executable but the newest of its group, with the files kept
-/// beside it. A cache holds the binary a branch's lineage runs, not its
+/// Executables kept per group: HEAD's and the merge-base's.
+const KEPT_PER_GROUP: usize = 2;
+
+/// Remove every executable but the newest two of its group, with the files
+/// kept beside it. A cache holds the binaries a branch's lineage runs, not its
 /// history. Age is the time the entry was made, which a merge keeps.
 pub fn keep_newest(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -171,10 +206,10 @@ pub fn keep_newest(dir: &Path) {
             .or_default()
             .push((born, e.path()));
     }
-    for entries in groups.into_values() {
-        let newest = entries.iter().map(|(born, _)| *born).max().unwrap_or(0);
-        for (_, entry) in entries.into_iter().filter(|(born, _)| *born < newest) {
-            for ext in ["digest", "extents"] {
+    for mut entries in groups.into_values() {
+        entries.sort_by_key(|(born, _)| std::cmp::Reverse(*born));
+        for (_, entry) in entries.into_iter().skip(KEPT_PER_GROUP) {
+            for ext in ["digest", "extents", "built"] {
                 let _ = std::fs::remove_file(sidecar(&entry, ext));
             }
             let _ = std::fs::remove_file(entry);
@@ -297,8 +332,6 @@ mod tests {
     use super::*;
     use crate::store::testing::{Repo, inputs};
 
-    const TARGET: &str = "/t";
-
     fn request() -> Request<'static> {
         Request {
             pkg: "app",
@@ -308,7 +341,6 @@ mod tests {
             codegen_units: Some("1"),
             toolchain: None,
             rustc: "rustc 1.99.0",
-            target_dir: Path::new(TARGET),
             cargo_home: "/home/x/.cargo",
             env: &[],
         }
@@ -354,10 +386,6 @@ mod tests {
                 ..request()
             },
             Request {
-                target_dir: Path::new("/other"),
-                ..request()
-            },
-            Request {
                 cargo_home: "/root/.cargo",
                 ..request()
             },
@@ -391,9 +419,17 @@ mod tests {
     }
 
     #[test]
-    fn the_same_tree_at_another_path_has_another_key() {
+    fn the_same_tree_at_another_path_has_the_same_key() {
         let one = Repo::new("bin-path-one");
         let two = Repo::new("bin-path-two");
+        assert_eq!(key_with(&one, &request()), key_with(&two, &request()));
+    }
+
+    #[test]
+    fn another_tree_has_another_key() {
+        let one = Repo::new("bin-tree-one");
+        let two = Repo::new("bin-tree-two");
+        two.write("app/src/lib.rs", "pub fn app() -> u8 { 0 }\n");
         assert_ne!(key_with(&one, &request()), key_with(&two, &request()));
     }
 
@@ -520,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_newest_executable_of_a_group_is_kept() {
+    fn only_the_two_newest_executables_of_a_group_are_kept() {
         let repo = Repo::new("bin-group");
         let dir = repo.store_dir();
         let old = put(&repo, &dir, "a", "pkg", b"old");
@@ -531,11 +567,71 @@ mod tests {
             let file = std::fs::File::options().write(true).open(entry).unwrap();
             file.set_modified(past).unwrap();
         }
-        let new = put(&repo, &dir, "c", "pkg", b"new");
+        let mid = put(&repo, &dir, "c", "pkg", b"mid");
+        let new = put(&repo, &dir, "d", "pkg", b"new");
         assert!(!old.exists());
         assert!(!sidecar(&old, "extents").exists());
-        assert!(new.exists());
+        assert!(mid.exists() && new.exists());
         assert!(other.exists());
+    }
+
+    fn store_at(repo: &Repo, dir: &Path, exe_bytes: &[u8], group: &str) -> String {
+        let exe = repo.0.join("bench");
+        std::fs::write(&exe, exe_bytes).unwrap();
+        let key = key_with(repo, &request());
+        let read = inputs(&["app/src/lib.rs"]);
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        let key_now = Some(key.clone());
+        store(dir, &key, key_now, &repo.0, &read, future, &exe, group).unwrap();
+        key
+    }
+
+    #[test]
+    fn head_stored_in_the_group_of_the_merge_base_leaves_it_found() {
+        let base = Repo::new("bin-evict-base");
+        let head = Repo::new("bin-evict-head");
+        head.write("app/src/lib.rs", "pub fn app() -> u8 { 0 }\n");
+        let dir = base.store_dir();
+        let base_key = store_at(&base, &dir, b"base", "g");
+        store_at(&head, &dir, b"head", "g");
+        assert!(load(&dir, &base_key, &base.0).is_some());
+    }
+
+    #[test]
+    fn an_executable_carrying_its_root_serves_only_that_root() {
+        let one = Repo::new("bin-bound-one");
+        let two = Repo::new("bin-bound-two");
+        let dir = one.store_dir();
+        let bytes = format!("..{}..", one.0.display());
+        let key = store_at(&one, &dir, bytes.as_bytes(), "g");
+        assert_eq!(key, key_with(&two, &request()));
+        assert!(load(&dir, &key, &one.0).is_some());
+        assert_eq!(load(&dir, &key, &two.0), None);
+    }
+
+    #[test]
+    fn an_executable_carrying_the_canonical_root_is_bound_through_a_symlink() {
+        let real = Repo::new("bin-link-real");
+        let link = real.0.with_file_name("bin-link-alias");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&real.0, &link).unwrap();
+        let canonical = std::fs::canonicalize(&real.0).unwrap();
+        let exe = real.0.join("bench");
+        std::fs::write(&exe, format!("..{}..", canonical.display())).unwrap();
+        assert!(path_bound(&exe, &link));
+        std::fs::write(&exe, "no path").unwrap();
+        assert!(!path_bound(&exe, &link));
+        std::fs::remove_file(&link).unwrap();
+    }
+
+    #[test]
+    fn an_executable_without_its_root_serves_every_root() {
+        let one = Repo::new("bin-free-one");
+        let two = Repo::new("bin-free-two");
+        let dir = one.store_dir();
+        let key = store_at(&one, &dir, b"no path in here", "g");
+        assert!(load(&dir, &key, &one.0).is_some());
+        assert!(load(&dir, &key, &two.0).is_some());
     }
 
     fn built(repo: &Repo, dir: &Path, req: &Request) -> String {
@@ -621,10 +717,6 @@ mod tests {
                 ..request()
             },
             Request {
-                target_dir: Path::new("/elsewhere"),
-                ..request()
-            },
-            Request {
                 env: &flags,
                 ..request()
             },
@@ -653,7 +745,7 @@ mod tests {
             .iter()
             .map(|f| f.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(names.len(), 6);
+        assert_eq!(names.len(), 7);
         assert!(names.iter().any(|n| n.ends_with(".latest")));
     }
 }
