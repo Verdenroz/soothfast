@@ -12,6 +12,8 @@
 
 ### ✨ Features
 
+- Gate and measure usability fixes (#509)
+- Measure pub(crate) code with in-crate benches (#513)
 - Fold every coverage dimension into coverage report (#517)
 - Report every coverage dimension in CI and badges (#504)
 - Report router drift for generated specs (#508)
@@ -34,6 +36,22 @@
 ### 🔍 API surface
 
 ```
+# soothfast
+ADDED    soothfast::registry::filter
+ADDED    soothfast::registry::filter::has_unsupported_syntax
+ADDED    soothfast::registry::filter::matches
+ADDED    soothfast::registry::filter::validate
+
+# soothfast-registry
+ADDED    soothfast_registry::filter
+ADDED    soothfast_registry::filter::has_unsupported_syntax
+ADDED    soothfast_registry::filter::matches
+ADDED    soothfast_registry::filter::validate
+
+# soothfast-measure
+CHANGED  soothfast_measure::main (body)
+CHANGED  soothfast_measure::runner::main (body)
+
 # soothfast-docs
 ADDED    soothfast_docs::claims::HEADROOM_FACTOR
 ADDED    soothfast_docs::claims::contradicts

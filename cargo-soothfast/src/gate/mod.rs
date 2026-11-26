@@ -6,6 +6,7 @@
 mod accept;
 mod args;
 mod compare;
+mod features;
 mod harness;
 mod identical;
 mod imported;
@@ -274,7 +275,11 @@ pub fn run(args: &[String]) -> i32 {
         failing_ids.dedup();
         // buildcost pseudo-items have no runnable body to profile.
         failing_ids.retain(|id| !id.starts_with("buildcost::"));
-        triage(&g.common, &failing_ids);
+        let note = g
+            .against_ref
+            .as_deref()
+            .and_then(|r| features::shift_note_against(&g.common, r));
+        triage(&g.common, &failing_ids, note.as_deref());
         if let Some(hint) = reuse_hint(&reference, current.gating_backend.as_deref(), regressions) {
             println!("{hint}");
         }

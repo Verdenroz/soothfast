@@ -154,6 +154,30 @@ last release when `report changelog` measures it: until a release ships with
 a harness that knows the setting, the changelog's perf delta against that
 release is left out with a warning (see [gating](gating.md)).
 
+## How benches are built
+
+`measure` and `gate` build the bench target with `cargo bench --profile
+bench`. That profile inherits `[profile.release]`, so `lto` and the rest of
+the release settings apply, and `[profile.bench]` or `CARGO_PROFILE_BENCH_*`
+adjust them. The one exception is `codegen-units`: the measurement pin forces
+it to 1 for the workspace's own crates (see [gating](gating.md)), so a value
+set for the bench profile is overridden for those crates; dependencies keep it. `measure` and `gate` print a warning
+when one is set; `--codegen-units inherit` turns the pin off.
+
+## Running a subset
+
+`measure` and `gate` take `-p PKG`, `--features F` and `-j N` (also `-jN`, `--jobs=N`), which goes to
+cargo for the bench build. `--filter` selects items by id: a plain string
+matches as a substring, `|` separates alternatives, and a leading `^` or
+trailing `$` anchors an alternative to the start or end of the id, so
+`--filter 'fnv|block_on'` measures both. It is not a regex: with any other
+metacharacter (`( ) [ ] * + ? .`) that matches nothing, the runner warns that
+the filter is a substring match.
+
+`measure --no-cache` is `--no-reuse` and `--no-item-cache` together: it
+measures every item in full instead of reusing stored counts. `gate` has no
+single flag for this; it takes `--no-reuse-base` and `--no-item-cache`.
+
 ## What tests and benches execute
 
 `coverage measure` counts an item as measured when a bench names it in

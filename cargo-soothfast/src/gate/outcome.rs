@@ -11,16 +11,23 @@ use crate::invoke::{self, CommonArgs};
 /// AVX-512 hosts where callgrind SIGILLs — only running the real binary
 /// (which the runner's own probe does) tells the truth. One failed attempt
 /// disables triage for the rest of the run instead of failing per item.
-pub(super) fn triage(common: &CommonArgs, failing_ids: &[String]) {
+pub(super) fn triage(common: &CommonArgs, failing_ids: &[String], note: Option<&str>) {
     let Ok(root) = invoke::workspace_root() else {
         return;
     };
     let dir = root.join(".soothfast").join("triage");
     let _ = std::fs::create_dir_all(&dir);
+    if let Some(note) = note {
+        println!("triage: {note}");
+    }
     for id in failing_ids.iter().take(3) {
         match invoke::run_bench_raw(common, &["--triage", id]) {
             Ok(report) => {
                 let path = dir.join(format!("{}.txt", id.replace("::", "_")));
+                let report = match note {
+                    Some(note) => format!("{note}\n\n{report}"),
+                    None => report,
+                };
                 if std::fs::write(&path, report).is_ok() {
                     println!("triage: {}", path.display());
                 }

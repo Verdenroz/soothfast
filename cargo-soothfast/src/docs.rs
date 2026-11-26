@@ -24,6 +24,8 @@ struct DocsArgs {
     check_only: bool,
     /// `docs check` leaves claims unevaluated, for a run with no measurement.
     skip_claims: bool,
+    /// `docs check` runs the bind checks alone and reads no baseline.
+    binds_only: bool,
     /// `docs accept` drops locked binds no scanned page binds.
     allow_gone: bool,
     features: Option<String>,
@@ -105,6 +107,7 @@ pub fn run(args: &[String]) -> i32 {
         out: None,
         check_only: false,
         skip_claims: false,
+        binds_only: false,
         allow_gone: false,
         features: None,
         target: None,
@@ -134,6 +137,7 @@ pub fn run(args: &[String]) -> i32 {
             "--out" => a.out = it.next().map(PathBuf::from),
             "--check" => a.check_only = true,
             "--skip-claims" => a.skip_claims = true,
+            "--binds-only" => a.binds_only = true,
             "--allow-gone" => a.allow_gone = true,
             "--features" => a.features = it.next().cloned(),
             "--target" => a.target = it.next().cloned(),
@@ -177,6 +181,9 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     }
 
+    if a.binds_only && sub != "check" {
+        return err("--binds-only applies to docs check only");
+    }
     match sub.as_str() {
         "check" => check(&a),
         "accept" => accept(&a),
@@ -546,7 +553,7 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
 
     // 2. Claims vs the measurement baseline.
     let any_claims = scanned.docs.iter().any(|(_, d, _)| !d.claims.is_empty());
-    if any_claims {
+    if any_claims && !a.binds_only {
         let baseline = if a.skip_claims {
             None
         } else {
@@ -590,7 +597,7 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
     }
 
     // 3. Generated-artifact manifest: regenerate in memory, compare to disk.
-    if let Some(pkg) = &a.pkg {
+    if let Some(pkg) = a.pkg.as_ref().filter(|_| !a.binds_only) {
         match invoke::pkg_dir(pkg) {
             Err(e) => return err(&e.to_string()),
             Ok(dir) => {
@@ -1281,6 +1288,24 @@ mod tests {
             ..DocsArgs::default()
         };
         assert_eq!(check_scanned(&skip, &scan_at(&skip, dir).unwrap()), 0);
+    }
+
+    #[test]
+    fn binds_only_checks_binds_and_ignores_claims_and_the_baseline() {
+        let dir = project_without_cargo("bindsonly");
+        std::fs::write(
+            dir.join("README.md"),
+            "# Demo\n\n<!-- soothfast:claim pytest::t.py::test_parse.walltime.median_ns < 1000 -->\nfast.\n\n<!-- soothfast:bind src/util.py#parse -->\nparse.\n<!-- /soothfast:bind -->\n",
+        )
+        .unwrap();
+        let a = DocsArgs {
+            binds_only: true,
+            ..DocsArgs::default()
+        };
+        assert_eq!(accept_scanned(&a, &scan_at(&a, dir.clone()).unwrap()), 0);
+        assert_eq!(check_scanned(&a, &scan_at(&a, dir.clone()).unwrap()), 0);
+        std::fs::write(dir.join("src/util.py"), "def parse():\n    return 2\n").unwrap();
+        assert_eq!(check_scanned(&a, &scan_at(&a, dir).unwrap()), 1);
     }
 
     #[test]
