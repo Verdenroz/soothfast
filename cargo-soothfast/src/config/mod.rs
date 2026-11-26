@@ -212,11 +212,16 @@ impl Config {
     }
 
     /// [`Self::resolve`] in the `docs` group, except that `features` falls
-    /// back to `[gate] features`: coverage counts what the gate compiles.
+    /// back to what the gate resolves for `pkgs`: coverage counts what the
+    /// gate compiles.
     pub fn resolve_coverage(&self, pkgs: &[String]) -> Result<Settings, String> {
         let settings = self.resolve(pkgs, Group::Docs)?;
+        let features = match settings.features {
+            Some(features) => Some(features),
+            None => self.resolve(pkgs, Group::Gate)?.features,
+        };
         Ok(Settings {
-            features: settings.features.or(self.gate()?.features),
+            features,
             ..settings
         })
     }
@@ -328,6 +333,10 @@ mod tests {
         assert_eq!(features(&["core"]).as_deref(), Some("all"));
         assert_eq!(features(&["unlisted"]).as_deref(), Some("repo"));
         assert_eq!(features(&[]).as_deref(), Some("repo"));
+        let per_package =
+            config("[gate]\nfeatures = \"repo\"\n\n[package.core.gate]\nfeatures = \"bench\"\n");
+        let core = per_package.resolve_coverage(&pkgs(&["core"])).unwrap();
+        assert_eq!(core.features.as_deref(), Some("bench"));
         let docs = cfg.resolve(&pkgs(&["unlisted"]), Group::Docs).unwrap();
         assert_eq!(docs.features, None);
     }

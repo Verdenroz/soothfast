@@ -172,7 +172,7 @@ tree cannot tell, such as `documented+` for a non-Rust tree, is `null`, and
 the text report shows `n/a`.
 
 Coverage counts what the gate compiles: without `--features` it uses the
-package's features, else `[gate] features`.
+package's features, else the gate's `features` for it.
 
 ## Doc coverage outside Rust
 

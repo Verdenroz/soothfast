@@ -44,15 +44,17 @@ fn measure(args: &[String]) -> i32 {
         eprintln!("soothfast: coverage measure requires -p PKG");
         return 2;
     };
-    match config::apply(&mut common, Group::Docs) {
-        Ok(applied) => {
-            if common.features.is_none() {
-                common.features = applied.gate.features;
+    if let Err(e) = config::apply(&mut common, Group::Docs) {
+        eprintln!("soothfast: {e}");
+        return 2;
+    }
+    if common.features.is_none() {
+        match config::coverage_defaults(std::slice::from_ref(&pkg)) {
+            Ok(defaults) => common.features = defaults.features,
+            Err(e) => {
+                eprintln!("soothfast: {e}");
+                return 2;
             }
-        }
-        Err(e) => {
-            eprintln!("soothfast: {e}");
-            return 2;
         }
     }
 
@@ -201,26 +203,30 @@ fn docs(args: &[String]) -> i32 {
     0
 }
 
-/// The paths the registry's items declare they measure: their `covers`, or
-/// their own id where it is empty.
-pub(crate) fn declared_covers(records: &[Value]) -> BTreeSet<String> {
+/// The registry's benches as `(id, covers)`; `covers` is empty when the
+/// bench measures itself.
+pub(crate) fn benches(records: &[Value]) -> impl Iterator<Item = (&str, &str)> {
     records
         .iter()
         .filter(|r| r["type"] == "item")
-        .filter_map(|r| {
-            let covers = r["covers"].as_str().unwrap_or("");
-            let id = r["id"].as_str()?;
-            Some(if covers.is_empty() { id } else { covers }.to_string())
-        })
+        .filter_map(|r| Some((r["id"].as_str()?, r["covers"].as_str().unwrap_or(""))))
+}
+
+/// What a bench declares it measures: its `covers`, else its own id.
+pub(crate) fn measured_path<'a>(id: &'a str, covers: &'a str) -> &'a str {
+    if covers.is_empty() { id } else { covers }
+}
+
+/// The paths the registry's items declare they measure.
+pub(crate) fn declared_covers(records: &[Value]) -> BTreeSet<String> {
+    benches(records)
+        .map(|(id, covers)| measured_path(id, covers).to_string())
         .collect()
 }
 
 /// A warning per bench whose `covers` names no item or method of `surf`.
 pub(crate) fn dangling_covers(records: &[Value], surf: &Surface, pkg: &str) -> Vec<String> {
-    records
-        .iter()
-        .filter(|r| r["type"] == "item")
-        .filter_map(|r| Some((r["id"].as_str()?, r["covers"].as_str()?)))
+    benches(records)
         .filter(|(_, covers)| !covers.is_empty() && surf.lookup(covers).is_none())
         .map(|(id, covers)| {
             format!("warning: bench {id} covers {covers}, which is not a public item of {pkg}")
