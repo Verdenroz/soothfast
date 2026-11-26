@@ -248,6 +248,16 @@ up here instead of as a separate marker:</p>
 <p>Summarizing a sample set costs at most eight allocations.</p>
 <div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_registry::bench_fnv1a.alloc.allocs &lt;= 0"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_fnv1a</span><span class="chip-sep">—</span><span class="chip-detail">allocations 0</span><span class="chip-limit">(limit ≤ 0)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="8" y1="3" x2="8" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8" y2="11" class="chip-scale-fill" style="--fill-len:0"/><circle cx="8" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 0</span></span></span></span></div>
 <p>Fingerprint hashing allocates nothing at all.</p>
+<p>A claim can also bound the bytes allocated, which <code>alloc = N</code> does not
+cover: a rewrite that keeps three allocations but swaps an 8-byte buffer for
+a 16-byte one passes the count and changes the size.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">markdown · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>&lt;!-- soothfast:claim soothfast_registry::bench_fnv1a.alloc.bytes &lt;= 0 --&gt;
+Fingerprint hashing allocates no bytes.
+&lt;!-- /soothfast:claim --&gt;
+</code></pre></figure>
+<p>The gate already compares <code>alloc_bytes</code> against the merge-base on its own
+(+5%), separately from the allocation count, so an unclaimed size change
+still fails it.</p>
 <p>If either sentence stops being true, or the output above stops matching the
 real one, <code>cargo soothfast docs check</code> fails CI. It is the same mechanism
 that keeps every page on this site honest.</p>
