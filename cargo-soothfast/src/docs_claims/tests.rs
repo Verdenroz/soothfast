@@ -36,6 +36,15 @@ fn a_measured_claim_is_checked() {
 }
 
 #[test]
+fn an_allocation_bytes_claim_is_checked() {
+    let b = json!({ "items": { "core::vec": { "alloc": { "allocs": 3, "bytes": 16 } } } });
+    let holds = read("core::vec.alloc.bytes <= 16", &b);
+    assert_eq!(holds, Reading::Decided(Outcome::Holds(16.0)));
+    let violated = read("core::vec.alloc.bytes <= 8", &b);
+    assert_eq!(violated, Reading::Decided(Outcome::Violated(16.0)));
+}
+
+#[test]
 fn reused_counters_are_checked_and_their_walltime_reads_unmeasured() {
     let b = baseline(&[entry(
         Reason::ReusedWalltime,
@@ -134,6 +143,18 @@ fn a_difference_needs_every_missing_side_listed() {
 
 fn doc_with(expr: &str) -> markdown::Doc {
     markdown::scan(&format!("<!-- soothfast:claim {expr} -->\n")).unwrap()
+}
+
+#[test]
+fn a_claim_stated_twice_with_different_bounds_names_both_places() {
+    let a =
+        markdown::scan("intro\n<!-- soothfast:claim x::f.walltime.p99_ns < 500us -->\n").unwrap();
+    let b = markdown::scan("<!-- soothfast:claim x::f.walltime.p99_ns < 300us -->\n").unwrap();
+    let warnings = contradictions(&[("a.md", &a), ("b.md", &b)]);
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].starts_with("a.md:2 and b.md:1 both claim x::f.walltime.p99_ns"));
+    let same = markdown::scan("<!-- soothfast:claim x::f.walltime.p99_ns < 500us -->\n").unwrap();
+    assert!(contradictions(&[("a.md", &a), ("c.md", &same)]).is_empty());
 }
 
 #[test]

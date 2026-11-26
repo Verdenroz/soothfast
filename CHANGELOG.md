@@ -12,6 +12,8 @@
 
 ### ✨ Features
 
+- Report items behind features no gate compiles (#500)
+- Add a gated column to coverage report (#503)
 - Per-item coverage report with a shared denominator (#499)
 - Report whether routes and tools are specified (#498)
 - Suggest a lighter dev debuginfo profile (#494)
