@@ -11,7 +11,7 @@ use super::ci::Ci;
 use super::detect;
 use super::ecosystem::{Ecosystem, Entry, Project, Settings, Suite, parse_projects, parse_suites};
 use super::lookup::{action_ref, default_branch, pinned};
-use super::rust::{benched, docs_packages, has_markers, rust_meta};
+use super::rust::{benched, docs_packages, has_markers, routes_only, rust_meta};
 use super::workflow::{WORKFLOW_PATH, Workspace};
 use crate::invoke;
 
@@ -42,7 +42,7 @@ pub(super) fn target(
         flags
     };
     let rust = root_is_rust || root.join("Cargo.toml").is_file();
-    let (projects, notes) = plan(root, stored, flags, dir)?;
+    let (projects, mut notes) = plan(root, stored, flags, dir)?;
     if !rust && projects.is_empty() {
         return Err(if notes.is_empty() {
             "no Cargo.toml, build.gradle(.kts), pom.xml, pyproject.toml, setup.py or \
@@ -52,6 +52,7 @@ pub(super) fn target(
             notes.join("\n")
         });
     }
+    let config = Config::load(root)?;
     let markers = has_markers(root);
     let (benched, docs_packages) = if rust {
         invoke::workspace_root().map_err(|e| format!("not in a cargo workspace: {e}"))?;
@@ -61,14 +62,15 @@ pub(super) fn target(
         } else {
             Vec::new()
         };
-        (benched(&meta), docs)
+        let benched = benched(&meta, |p| config.bench_target(p))?;
+        notes.extend(routes_only(&meta, &benched, |p| config.bench_target(p))?);
+        (benched, docs)
     } else if bench.is_empty() {
         (Vec::new(), Vec::new())
     } else {
         return Err("-p adds a bench target to a cargo package".into());
     };
     let existing = std::fs::read_to_string(root.join(WORKFLOW_PATH)).unwrap_or_default();
-    let config = Config::load(root)?;
     let ws = Workspace {
         rust,
         projects,
