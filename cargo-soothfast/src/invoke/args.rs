@@ -4,6 +4,20 @@ use std::sync::Once;
 
 use crate::cpu::{self, CpuMask};
 
+/// The cargo feature a package declares to compile its in-crate benches.
+pub const INTERNALS_FEATURE: &str = "soothfast";
+
+/// `features` with [`INTERNALS_FEATURE`] added when `declared`.
+fn with_internals(features: Option<&str>, declared: bool) -> Option<String> {
+    match features {
+        Some(f) if declared && !f.split([',', ' ']).any(|name| name == INTERNALS_FEATURE) => {
+            Some(format!("{f},{INTERNALS_FEATURE}"))
+        }
+        None if declared => Some(INTERNALS_FEATURE.to_string()),
+        other => other.map(str::to_string),
+    }
+}
+
 /// Flags shared by `measure` and `gate`.
 #[derive(Default, Clone)]
 pub struct CommonArgs {
@@ -119,6 +133,16 @@ impl CommonArgs {
 }
 
 impl CommonArgs {
+    /// `features` plus [`INTERNALS_FEATURE`] when the package declares it in
+    /// the tree at `dir`, which is what builds its in-crate benches.
+    pub fn bench_features(&self, dir: Option<&std::path::Path>) -> Result<Option<String>, String> {
+        let declared = match &self.pkg {
+            Some(pkg) => crate::workspace::declares_feature(pkg, INTERNALS_FEATURE, dir)?,
+            None => false,
+        };
+        Ok(with_internals(self.features.as_deref(), declared))
+    }
+
     /// The mask `cpu` names, which is the default when unset.
     pub fn cpu_mask(&self) -> Result<CpuMask, String> {
         self.cpu
@@ -161,7 +185,7 @@ const CANONICAL_CODEGEN_UNITS: &str = "1";
 
 #[cfg(test)]
 mod tests {
-    use super::{CommonArgs, Shard};
+    use super::{CommonArgs, Shard, with_internals};
     use crate::cpu::CpuMask;
 
     #[test]
@@ -178,6 +202,21 @@ mod tests {
             assert!(common.try_parse(attached, &mut [].iter()));
             assert_eq!(common.jobs.as_deref(), Some("8"));
         }
+    }
+
+    #[test]
+    fn the_internals_feature_is_added_once_and_only_when_declared() {
+        assert_eq!(with_internals(None, true).as_deref(), Some("soothfast"));
+        assert_eq!(
+            with_internals(Some("a"), true).as_deref(),
+            Some("a,soothfast")
+        );
+        assert_eq!(
+            with_internals(Some("a soothfast"), true).as_deref(),
+            Some("a soothfast")
+        );
+        assert_eq!(with_internals(Some("a"), false).as_deref(), Some("a"));
+        assert_eq!(with_internals(None, false), None);
     }
 
     #[test]

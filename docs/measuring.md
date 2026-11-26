@@ -40,6 +40,46 @@ suite. Every soothfast crate carries one and measures itself this way.
 soothfast gate` compares against a baseline or merge-base and exits non-zero
 on a regression.
 
+## Benches inside the crate
+
+A bench target is a separate crate, so it reaches only public items. To
+measure a private or `pub(crate)` function, put the bench in the crate beside
+it, behind a cargo feature named `soothfast`, and make the dependency
+optional so the feature switches it on:
+
+```toml ignore
+[dependencies]
+soothfast = { version = "0.8", optional = true }
+
+[dev-dependencies]
+soothfast = { version = "0.8", features = ["runner"] }
+```
+
+`cargo soothfast init -p PKG --internals` writes the dev-dependency, the bench
+target and its stub, and the optional dependency. That dependency gives the
+package a `soothfast` feature with no `[features]` line, and the stub's
+`use my_crate as _;` links whatever the crate registers:
+
+```rust ignore
+#[cfg(feature = "soothfast")]
+#[soothfast::bench(group = "wire", setup = wire_quote,
+                   covers = "crate::adapters::yahoo::parse_quotes_batch")]
+fn de_quote_batch(json: &String) {
+    soothfast::keep(parse_quotes_batch(json));
+}
+```
+
+`measure`, `gate`, `coverage` and the merge-base build turn the feature on
+for a package that declares it, in the head tree and in the base tree alike,
+so the comparison builds both sides the same way. A package that does not
+declare it builds exactly as before. The bench is registered like any other,
+so a change to the private function it runs moves that item and no other.
+
+`covers` takes the crate-relative path. It is not a public item, so it does
+not count toward `coverage measure`'s denominator, and it is not warned about
+as long as its first module exists in the package's `src/` (a file, a
+directory with `mod.rs`, or an inline module in the crate root).
+
 ## What callgrind's counts depend on
 
 callgrind counts are exact for a given binary, valgrind and libc, but not for
