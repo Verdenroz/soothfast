@@ -1,4 +1,4 @@
-//! `--filter` matching: substring alternatives with `^`/`$` anchors.
+//! `--filter` matching for measured item ids.
 
 /// Why `filter` cannot select anything, when an alternative is empty or only
 /// an anchor: it would match every id.

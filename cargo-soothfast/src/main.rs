@@ -453,7 +453,7 @@ fn parse_measure(args: &[String]) -> Result<MeasureArgs, String> {
         }
     }
     if let Some(f) = &out.common.filter {
-        soothfast_measure::filter::validate(f)?;
+        soothfast_registry::filter::validate(f)?;
     }
     Ok(out)
 }

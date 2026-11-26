@@ -342,7 +342,7 @@ pub(super) fn compare(
             let filtered_out = ctx
                 .filter
                 .as_deref()
-                .is_some_and(|f| !soothfast_measure::filter::matches(f, id))
+                .is_some_and(|f| !soothfast_registry::filter::matches(f, id))
                 || ctx.shard.is_some_and(|s| !s.owns(id));
             let out_of_mode = id.starts_with("buildcost::") != ctx.buildcost_mode;
             // Bench ids start with the normalized package; buildcost ids

@@ -678,7 +678,9 @@ and head (bench-gate now also enables dataframe): codegen of unchanged code
 can shift under LTO` if the package's expanded features, read from the
 merge-base's `Cargo.toml`, or its locked registry and git dependencies
 (`Cargo.lock dependencies changed`) differ. The note explains a shift; it
-waives nothing, and is left out when the merge-base's files cannot be read.
+waives nothing, is left out when the merge-base's files cannot be read, and
+appears for any change to the locked registry or git dependencies, not only
+ones a feature pulled in.
 
 ## Per-package defaults
 

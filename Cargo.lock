@@ -24,7 +24,6 @@ dependencies = [
  "serde_json",
  "soothfast-docs",
  "soothfast-lang",
- "soothfast-measure",
  "soothfast-registry",
  "soothfast-report",
  "soothfast-sdk",

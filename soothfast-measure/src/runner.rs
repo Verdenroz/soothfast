@@ -10,7 +10,8 @@ use soothfast_registry::{Bencher, MeasuredItem, fixture_items, measured_items, r
 use std::cell::Cell;
 
 use crate::json::esc;
-use crate::{alloc, asyncexec, callgrind, clientreq, filter, sweep, walltime};
+use crate::{alloc, asyncexec, callgrind, clientreq, sweep, walltime};
+use soothfast_registry::filter;
 
 #[derive(PartialEq, Clone, Copy)]
 enum Backend {

@@ -194,7 +194,7 @@ pub fn mark_package(
         Some(ids) => owned_here(common, ids),
         None => unmeasured::owned_by(&prior, package)
             .into_iter()
-            .filter(|id| filter.is_none_or(|f| soothfast_measure::filter::matches(f, id)))
+            .filter(|id| filter.is_none_or(|f| soothfast_registry::filter::matches(f, id)))
             .collect(),
     };
     let detail = match (&items[..], listed) {
