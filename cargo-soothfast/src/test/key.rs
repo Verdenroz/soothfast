@@ -273,6 +273,26 @@ pub(crate) fn environment(
     ]))
 }
 
+/// [`environment`] widened by the files of every workspace package `package`
+/// depends on.
+pub(crate) fn environment_with_dependencies(
+    root: &Path,
+    pkgs: &[Package],
+    cfg: &TestConfig,
+    package: &str,
+) -> Result<String, String> {
+    let mut parts = vec![environment(root, pkgs, cfg, package)?];
+    for pkg in select::with_dependencies(pkgs, package)
+        .iter()
+        .filter(|name| *name != package)
+        .filter_map(|name| pkgs.iter().find(|p| p.name == *name))
+    {
+        let inputs = package_inputs(root, pkgs, cfg, pkg).map_err(|e| e.to_string())?;
+        parts.push(format!("{}\u{0}{inputs}", pkg.name));
+    }
+    Ok(hashed(&parts))
+}
+
 /// Digest of the files under a package dir, tracked or not yet
 /// committed.
 fn package_inputs(

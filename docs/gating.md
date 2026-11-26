@@ -694,7 +694,7 @@ paths = ["README.md", "docs/server"]
 | Group | Commands | Keys |
 | --- | --- | --- |
 | `gate` | `gate`, `measure`, `baseline`, `prebuild`, `trend append`, `buildcost` | `features`, `target`, `baseline`, `cpu` |
-| `docs` | `docs *`, `coverage`, `report`, `mcp` | `features`, `target`, `baseline`, `paths`, `coverage` |
+| `docs` | `docs *`, `coverage`, `report`, `mcp` | `features`, `target`, `baseline`, `paths`, `coverage`, `coverage_min.DIMENSION` |
 | `spec` | `spec *`, `sdk *` | `features`, `target` |
 | `test` | `test` | `features` |
 
@@ -710,9 +710,29 @@ rejects `coverage` as an unknown key of `[docs]`, so adopt it once every
 runner has updated. A key a group's
 commands have no flag for is an error naming its line.
 
+`coverage_min.DIMENSION` is the same percent for one dimension of `coverage
+report`: `documented`, `documented_strict`, `tested`, `measured_declared`,
+`measured`, `gated` and `specified`. A `tested` or `measured` minimum also makes
+`ci coverage` run the instrumented build those figures need. `ci coverage` fails a package that falls
+short of any minimum set, and reports every dimension that has none.
+`coverage` is `coverage_min.documented`; setting both to different values in
+one table is an error naming both lines. The keys are dotted keys of `[docs]`
+and `[package.NAME.docs]`, and `[package.NAME.docs]` overrides the repo-wide
+value one dimension at a time. A dimension name that does not exist is an
+error naming its line.
+
+```toml
+[docs]
+coverage = 90
+coverage_min.documented_strict = 50
+
+[package.server.docs]
+coverage_min.measured_declared = 25
+```
+
 From highest precedence: the command-line flag, `[package.NAME.GROUP]`,
 `[package.NAME]`, the repo-wide section (`[gate] features`, `[docs] paths`,
-`[docs] coverage`),
+`[docs] coverage` and `[docs] coverage_min.*`),
 then the built-in default. A file with no `[package.*]` table behaves as
 before. The package is the command's `-p` (`docs` also takes `[docs]
 package`); a command with none reads only the repo-wide section. Given
@@ -741,6 +761,26 @@ workspace, the others asking for `-p`.
 `gate accept`, `gate --import`, `coverage docs`, `docs *`, `test`, `ci *`, `prebuild`,
 `baseline`, `trend`, `report`, `mcp`, `spec html`, `spec probe`, `sdk build`
 and `sdk publish` keep their own meaning without `-p`.
+
+### Servers and binaries
+
+A measured lane is a bench target on a package, not a library. A server or an
+MCP binary gets one the same way: give its crate a library target that holds
+the code worth measuring (a bench target links the library, never the
+binary), a `benches/soothfast.rs` that calls `soothfast::bench_main!()`, and
+`cargo soothfast init -p PKG` writes the dev-dependency, the `[[bench]]` table
+and the stub. `plan` then lists the package beside the rest, and the gate
+runs it as one more lane.
+
+A package that registers its routes in a separate `soothfast-routes` target
+keeps it; the two targets coexist, and `spec` commands read the routes one
+through `[package.NAME.spec] target`. Without a `soothfast` target such a
+package is not measured, and `init` says so.
+
+The gate's target is `soothfast` unless `[package.NAME.gate] target` names
+another, and `plan`, `ci gate` and `init` follow that setting, so a server
+whose measured items live in `benches/server.rs` is planned and gated under
+that name.
 
 ## Skipping CI jobs
 

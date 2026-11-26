@@ -119,13 +119,16 @@ fn test_executables(messages: &[Value]) -> Vec<PathBuf> {
 /// Run `cmd` with raw profiles written into `profraw`, which must be a
 /// directory: each process adds a file of its own. A failing exit is an error
 /// unless `lenient`, for a run whose failure says nothing about what it
-/// executed.
-pub fn run_into(mut cmd: Command, profraw: &Path, lenient: bool) -> Result<(), String> {
+/// executed; that run returns `false`, its profiles a lower bound.
+pub fn run_into(mut cmd: Command, profraw: &Path, lenient: bool) -> Result<bool, String> {
     let dir = profraw.to_string_lossy().replace('%', "%%");
     cmd.env("LLVM_PROFILE_FILE", format!("{dir}/%m-%p.profraw"));
     let out = cmd.output().map_err(|e| format!("cargo: {e}"))?;
-    if out.status.success() || lenient {
-        return Ok(());
+    if out.status.success() {
+        return Ok(true);
+    }
+    if lenient {
+        return Ok(false);
     }
     let stderr = String::from_utf8_lossy(&out.stderr);
     let tail: Vec<&str> = stderr.lines().rev().take(20).collect();
@@ -153,6 +156,14 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn a_failing_run_is_an_error_unless_lenient_and_then_incomplete() {
+        let dir = std::env::temp_dir();
+        assert_eq!(run_into(Command::new("true"), &dir, false), Ok(true));
+        assert!(run_into(Command::new("false"), &dir, false).is_err());
+        assert_eq!(run_into(Command::new("false"), &dir, true), Ok(false));
+    }
 
     #[test]
     fn the_encoded_variable_wins_over_the_plain_one() {

@@ -9,8 +9,8 @@ use soothfast_report::{badges, changelog, perf_table, trend_chart};
 
 use crate::config::{self, Config, Group, Settings};
 use crate::{
-    buildstamp, coverage_lang, docs_support, headrun, invoke, project_surface, refrun, runcache,
-    trend, workspace,
+    buildstamp, coverage_lang, coverage_report, docs_support, headrun, invoke, project_surface,
+    refrun, runcache, trend, workspace,
 };
 
 pub fn run(args: &[String]) -> i32 {
@@ -136,13 +136,24 @@ fn render(args: &[String]) -> i32 {
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
         .and_then(|v| v["passed"].as_bool());
     let gate = badges::gate_badge(gate_passed);
-    let writes: &[(&str, String)] = &[
-        ("summary.md", summary),
-        ("summary.html", perf_table::html(&baseline)),
-        ("badges/gate.json", gate.to_string()),
-        ("badges/gate.svg", badges::svg_from(&gate)),
+    let mut writes: Vec<(String, String)> = vec![
+        ("summary.md".into(), summary),
+        ("summary.html".into(), perf_table::html(&baseline)),
+        ("badges/gate.json".into(), gate.to_string()),
+        ("badges/gate.svg".into(), badges::svg_from(&gate)),
     ];
-    for (file, content) in writes {
+    if !a.pkg.is_empty() {
+        match coverage_report::badge_files(&a.pkg, a.features.as_deref()) {
+            Ok(files) => {
+                for (stem, badge) in files {
+                    writes.push((format!("badges/{stem}.json"), badge.to_string()));
+                    writes.push((format!("badges/{stem}.svg"), badges::svg_from(&badge)));
+                }
+            }
+            Err(e) => eprintln!("report: no coverage badges: {e}"),
+        }
+    }
+    for (file, content) in &writes {
         if std::fs::write(out_dir.join(file), content).is_err() {
             return err(&format!("cannot write {file}"));
         }

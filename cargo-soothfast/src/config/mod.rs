@@ -13,6 +13,9 @@ pub mod package;
 
 pub use package::{Group, Settings};
 
+/// The bench target a package's gate builds unless its `gate` table names another.
+pub const DEFAULT_TARGET: &str = "soothfast";
+
 use crate::init::bot::Landing;
 use crate::invoke::{self, CommonArgs};
 use crate::test::config as test;
@@ -130,6 +133,13 @@ impl Config {
         Landing::parse(&self.text).map_err(|e| self.located(e))
     }
 
+    /// The bench target `pkg`'s gate builds: its `[package.NAME.gate] target`,
+    /// else `soothfast`.
+    pub fn bench_target(&self, pkg: &str) -> Result<String, String> {
+        let settings = self.resolve(&[pkg.to_string()], Group::Gate)?;
+        Ok(settings.target.unwrap_or_else(|| DEFAULT_TARGET.into()))
+    }
+
     /// The names of the `[package.NAME]` tables, in name order.
     pub fn package_names(&self) -> Result<Vec<String>, String> {
         let tables = package::parse(&self.text).map_err(|e| self.located(e))?;
@@ -241,6 +251,7 @@ impl Config {
                 Settings {
                     paths: Some(docs.paths).filter(|p| !p.is_empty()),
                     coverage: docs.coverage,
+                    minimums: docs.minimums,
                     ..Settings::default()
                 }
             }
@@ -396,6 +407,19 @@ mod tests {
     }
 
     #[test]
+    fn dimension_minimums_merge_key_by_key_over_the_repo_wide_ones() {
+        let text = "[docs]\ncoverage = 70\ncoverage_min.measured_declared = 10\ncoverage_min.documented_strict = 20\n\n[package.core.docs]\ncoverage_min.documented = 90\ncoverage_min.documented_strict = 30\n";
+        let cfg = config(text);
+        let core = cfg.resolve(&pkgs(&["core"]), Group::Docs).unwrap();
+        let other = cfg.resolve(&pkgs(&["other"]), Group::Docs).unwrap();
+        let got = |s: &Settings| {
+            ["documented", "documented_strict", "measured_declared"].map(|d| s.minimum(d))
+        };
+        assert_eq!(got(&core), [Some(90), Some(30), Some(10)]);
+        assert_eq!(got(&other), [Some(70), Some(20), Some(10)]);
+    }
+
+    #[test]
     fn packages_that_resolve_differently_have_no_default() {
         let e = config(TEXT)
             .resolve(&pkgs(&["core", "other"]), Group::Docs)
@@ -403,6 +427,13 @@ mod tests {
         assert!(e.contains("core and other") && e.contains("docs"), "{e}");
         let same = config(TEXT).resolve(&pkgs(&["core", "core"]), Group::Docs);
         assert!(same.is_ok());
+    }
+
+    #[test]
+    fn a_package_bench_target_defaults_to_soothfast() {
+        let cfg = config("[package.api.gate]\ntarget = \"api-bench\"\n");
+        assert_eq!(cfg.bench_target("api").unwrap(), "api-bench");
+        assert_eq!(cfg.bench_target("core").unwrap(), "soothfast");
     }
 
     #[test]

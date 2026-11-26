@@ -20,6 +20,7 @@ mod codekey;
 mod config;
 mod coverage;
 mod coverage_executed;
+mod coverage_features;
 mod coverage_fixtures;
 mod coverage_lang;
 mod coverage_report;
@@ -72,6 +73,7 @@ mod spec_gate;
 mod spec_gen;
 mod spec_html;
 mod spec_probe;
+mod spec_router;
 mod status;
 mod store;
 mod tagref;
@@ -163,8 +165,9 @@ commands:
            (spec check-proto for each package, recorded as proto-PKG; with
            no -p, every package with a [[proto]] entry)
   ci       coverage [-p PKG]...
-           (coverage docs for each package, recorded as coverage-PKG; with
-           no -p, every docs package that sets a coverage minimum)
+           (coverage report --check for each package, recorded as coverage-PKG;
+           with no -p, every workspace library; fails only on a minimum the
+           package sets)
   ci       capture [-p PKG]...
            (docs capture --check for each package, recorded as capture-PKG;
            with no -p, every docs package)
@@ -298,6 +301,8 @@ commands:
   docs     gh-deploy [--baseline NAME] [--branch NAME] [--remote NAME] [--message MSG]
            (build + publish to a gh-pages-style branch, replaces `mkdocs gh-deploy`)
   coverage measure|docs [-p PKG] [--min PCT] [--features F]
+  coverage features -p PKG [--json] [--max-outside N]   (public items behind features the
+           gate never builds)
   coverage report -p PKG [-p PKG]... [--features F] [--json]   (per-item documented,
            documented+ and declared-measured; --dir D --lang L reports documented only)
   coverage spec -p PKG [--min PCT] [--json]   (each route and tool: in the committed spec, probed)

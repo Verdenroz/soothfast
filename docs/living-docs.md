@@ -149,24 +149,53 @@ counts all of it; `coverage measure` counts only the callables, functions and
 methods. A minimum fails the run only when one is set, by `--min` or by
 `coverage` in `[docs]` or `[package.NAME.docs]`.
 
-`cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json]`
+`cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json] [--check] [--executed] [--features-section]`
 prints one row per item and a summary per dimension:
 
 | Dimension | An item is covered when |
 | --- | --- |
 | `documented` | its doc comment has text |
 | `documented+` | it is documented and its docs hold a fenced Rust example, or a `soothfast:bind` or `soothfast:claim` marker in the repo's tracked markdown names its path or a re-export of it; a claim names a bench, so it counts through that bench's `covers` (or the bench's own id), and only in a package with a bench target |
+| `tested` | the package's tests execute a line of it (doc tests are not instrumented) |
 | `measured (declared)` | a bench's `covers` names it, or the bench is the item; callables only, other items show `n/a` |
+| `measured` | the package's bench target executes a line of it, one pass over each bench |
+| `gated` | a bench in the gate's feature set declares it, through its `covers` or as the bench itself; callables only, other items show `n/a` |
+| `specified` | it is the handler of a route or tool, and the committed spec declares every one it serves and, for routes, a probe exercises it; every other item shows `n/a` |
 
 A fence counts as an example unless it names another language: no language,
 `rust` and rustdoc attributes such as `no_run`, `ignore` and `compile_fail`
 all count. `measured (declared)` reads what the benches declare; it does not
-check that the bench runs the item. A `covers` that names no public item of
+check that the bench runs the item. `tested` and `measured` do: they build the
+package with `-C instrument-coverage` into their own target directory, run its
+tests and its bench target (one pass over each item), and credit an item when
+a counted region of the run shares a line with it. They cover functions,
+types and inherent methods; other items show `n/a`, as does `measured` for a
+package with no bench target.
+
+That build is expensive, so a plain `coverage report` runs it only with
+`--executed`. Without the flag it reads the stored run for the tree as it is
+now, keyed on the package's files, those of every workspace crate it depends
+on, the workspace inputs, `Cargo.lock`, `rustc -vV` and the run, and prints
+`(cached run from DATE)` beside the figure so a reader knows it is not fresh.
+With no stored run, `tested` and `measured` read `n/a (not run: pass
+--executed)`. A figure over several packages counts only those that ran; the
+summary then adds `N package(s) not run` and the figure is a lower bound. Only a run that finished is stored: a bench run that exits
+non-zero still yields a figure, but a lower bound (`partial` in the JSON, `lower
+bound` in the text) that is not kept, and a failing test run is an error.
+
+`gated` reads the registry under the gate's features (`[gate] features`, or
+`[package.NAME.gate]`), not the report's. Where they differ, the report builds
+the package's bench a second time to list that registry. An item is gated when
+a bench the gate runs declares it. Claims sharpen what the gate checks but do
+not widen what it measures, so they add nothing here.
+A `covers` that names no public item of
 the package prints `warning: bench ID covers PATH, which is not a public item
 of PKG` on stderr, from `coverage report` and `coverage measure` alike.
 
 With `--json`, stdout is one object, `items` holding `path`, `kind`,
-`documented`, `documented_strict` and `measured_declared` per item, and
+`documented`, `documented_strict`, `tested`, `measured_declared`, `measured`,
+`gated` and `specified` per item, a `features` array with one `coverage
+features` object per package, and
 `summary` holding `covered`, `total` and `pct` per dimension. A dimension a
 tree cannot tell, such as `documented+` for a non-Rust tree, is `null`, and
 the text report shows `n/a`.
@@ -176,6 +205,32 @@ no bench of PKG` on stderr for each `#[soothfast::fixture]` in the package's
 `src` and `benches` whose name appears nowhere else in those files, since a
 bench names its fixture in `setup` or `setup_sized`. It reads source text, so
 a mention in a comment counts as a reference. The warning is advisory.
+
+With `--check`, the report prints only the per-dimension summary, then a
+line for each dimension below its configured minimum
+(`coverage_min.DIMENSION`, see [gating](gating.md#per-package-defaults)), then
+one `soothfast-coverage` line holding the figures as JSON for `ci coverage` to
+record. It exits 1 when a minimum is not met, and 2 when the report could not be
+built and a minimum is set; with no minimum set it prints
+`coverage could not run: ERROR` and exits 0. A package with no minimum on `documented_strict`, `measured_declared` or
+`gated` reads a stored bench executable if there is one and never builds it;
+`measured (declared)`, `gated` and `specified` are then `n/a`, and `documented+` is a lower bound (its
+text carries `claims not read`, and `partial` is true in the figure). The
+instrumented run happens under `--check` only for a package with a `tested` or
+`measured` minimum; otherwise both are `n/a`, and a stored run is not read.
+Each column follows its own minimum: a `tested` minimum starts only the test
+run, a `measured` minimum only the bench run. `--check --executed` runs both.
+
+A `specified` figure needs the package's spec files and a route listing. When
+either cannot be read the report prints a warning, shows `specified` as `n/a`
+and fails only if the package sets a `specified` minimum.
+
+With `--features-section`, the report ends with the `coverage features`
+section for each package: how many public items sit outside the gate's
+feature set, per feature (a `features` array in `--json`). It is off by
+default because it costs up to three rustdoc builds per package, and a package
+whose section cannot be built is left out with a warning. See [items the gate
+never compiles](#items-the-gate-never-compiles).
 
 Coverage counts what the gate compiles: without `--features` it uses the
 package's features, else the gate's `features` for it.
@@ -201,6 +256,45 @@ underscore in Python. Members count only when their container does. Trees
 named `node_modules`, `build`, `target`, `dist`, `venv`, `test`, `tests` or
 `__tests__`, and hidden directories, are skipped. `coverage report --dir D
 --lang L` prints the same symbols with `documented` only.
+
+## Items the gate never compiles
+
+Coverage is computed under one feature set, so a public item behind any other
+feature is missing from every denominator and no report says so.
+`cargo soothfast coverage features` lists the features of a package that its
+gate does not enable, with the number of public items behind each:
+
+```bash
+cargo soothfast coverage features -p mylib
+cargo soothfast coverage features -p mylib --json
+cargo soothfast coverage features -p mylib --max-outside 0
+```
+
+The gate's set is the one `gate` resolves for the package (`[gate] features`,
+`[package.X.gate]`), with the package's defaults on. The reference surface is a
+rustdoc build with `--all-features`; an item it has and the gate's surface
+lacks is outside the gate. Items are public functions, types and inherent
+methods, not trait-impl methods or `#[doc(hidden)]` items.
+
+rustdoc records each item's `#[cfg(feature = "...")]`, and an item also takes
+the features of the module, type or `impl` block around it. The features of a
+`cfg` that the gate does not enable get the credit, so under
+`all(feature = "a", feature = "b")` with `a` on, the item counts for `b`. An
+item gated on several features, as with `any(..)`, counts under each, so the
+per-feature counts can sum to more than the outside total. An item gated
+by `not(feature = "x")` exists only while `x` is off, so a gate with `x` on
+misses it and `--all-features` does not have it either. A build with no
+features finds those; they are counted apart as `off under a feature`. An item
+whose `cfg` names no feature the parser can read, or whose gating sits on a
+private module that a `pub use` re-exports, is listed as `(cfg not read)`, with
+a warning that names the rustdoc JSON format the parser was written for.
+
+A package whose features cannot all be on at once (a `compile_error!` under
+`--all-features`) is measured one feature at a time instead: the gate's set
+plus that feature, one rustdoc run each, and the output says so.
+
+The command reports and exits 0. `--max-outside N` fails it when more than `N`
+items are outside the gate.
 
 ## Fence tags on rust code blocks
 

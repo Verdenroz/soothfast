@@ -818,7 +818,7 @@ packages with `[[spec]]` entries, and `prebuild-docs: PKG` alone runs
 `cargo soothfast plan` also reads what else `soothfast.toml` configures and
 gives `run.yml` one job for each: `ci spec` for every package with a
 `[[spec]]` entry, `ci proto` for every package with a `[[proto]]` entry,
-`ci coverage` for every docs package with a `coverage` minimum, `ci capture`
+`ci coverage` for every workspace member with a library target, `ci capture`
 for every docs package with docs of its own, and `ci site` when the file has a `[site]` table. A
 job is named for its record, `spec-PKG` or `site`, runs
 `cargo soothfast ci KIND -p PKG`, and installs the pinned rustdoc toolchain
@@ -1253,11 +1253,46 @@ With nothing configured it says so and records nothing.
 entry, or the `-p` ones given, which reconciles each message's fields against
 its Rust struct. Each package records a `check` verdict named `proto-PKG`.
 With nothing configured it says so and records nothing.
-`ci coverage` runs `coverage docs` for every docs package that sets a
-`coverage` minimum, in its `[package.NAME.docs]` table or in `[docs]`, or the
-`-p` ones given, and fails when a package documents less than its minimum.
-Each package records a `check` verdict named `coverage-PKG`. With nothing
-configured it says so and records nothing.
+`ci coverage` runs `coverage report --check` for every workspace member with
+a library target, or the `-p` ones given, whether or not the repo has bind
+markers. It reports every coverage dimension, and holds a package only to the
+minimums its configuration sets: `coverage_min.DIMENSION` in `[docs]` or
+`[package.NAME.docs]`, and `coverage` for `documented` (see
+[Per-package defaults](gating.md#per-package-defaults)). A dimension with no minimum
+is advisory: it is in the comment and never fails the run. A package that
+misses a minimum exits 1 and records an `errored` verdict, which no label
+waives. A package whose report could not be built, for lack of a rustdoc
+build for example, passes with `coverage could not run: ERROR` in its output
+when it sets no minimum, and exits 2 with an `errored` verdict when it sets
+one.
+
+Each package records a `check` verdict named `coverage-PKG`, and the record
+carries the per-dimension figures (covered, total, percent and minimum). The
+comment shows them as one table above the sections, a row per package and a
+column per dimension, with `(min N)` where a minimum is set and `not met`
+beside one that failed. `report render` publishes the same figures as badges
+(see [Reports](reports.md#cargo-soothfast-report-render)).
+
+The report needs a package's bench target only for the dimensions its benches
+and routes decide. A package whose bench executable is stored (from the gate or the
+prebuild lane) is read from it. Otherwise `ci coverage` does not build the
+bench unless the package sets a `documented_strict`, `measured_declared`,
+`gated` or `specified` minimum; `measured (declared)` then reads `n/a` and `documented+`,
+which counts claims through the bench's `covers`, is marked a lower bound
+(`partial` in the record). With no library target in the workspace it says so
+and records nothing.
+
+`tested` and `measured` come from an instrumented build of the package's tests
+and bench target, which is slower than any other step. `ci coverage` runs it
+only for a package that sets a `tested` or `measured` minimum; every other
+package reads `n/a (not run: no tested or measured minimum)` and the run is
+neither started nor read from the store. The two follow their own minimums: a
+`tested` minimum starts only the test run, and a `measured` minimum only the
+bench run, which a package with no bench target does not have (`measured` is
+then `n/a`). A bench run that fails still yields a
+`measured` figure, recorded as a lower bound (`partial`) and not stored for
+later runs. `specified` applies to route and tool handlers, and every other item
+is `n/a`.
 `ci capture` runs `docs capture --check` for each docs package, or the `-p`
 ones given, which fails when the output recorded beside a capture block no
 longer matches what the block prints. A package with no capture block passes.

@@ -12,17 +12,46 @@
 
 ### ✨ Features
 
+- Fold every coverage dimension into coverage report (#517)
+- Report every coverage dimension in CI and badges (#504)
+- Report router drift for generated specs (#508)
+- Plan measured lanes by each package's gate target (#510)
+- Warn on loose and contradictory claims (#506)
+- Report items behind features no gate compiles (#500)
+- Add a gated column to coverage report (#503)
+- Per-item coverage report with a shared denominator (#499)
 - Report whether routes and tools are specified (#498)
 - Suggest a lighter dev debuginfo profile (#494)
 - Share test passes across linked worktrees (#493)
 - Certify unchanged test runs, cache doc tests (#492)
+
+### 🔧 Internal
+
+- Write the fake launcher from a child process (#512)
 
 ---
 
 ### 🔍 API surface
 
 ```
+# soothfast-docs
+ADDED    soothfast_docs::claims::HEADROOM_FACTOR
+ADDED    soothfast_docs::claims::contradicts
+ADDED    soothfast_docs::claims::loose_by
+ADDED    soothfast_docs::surface::Counted
+ADDED    soothfast_docs::surface::Span
+ADDED    soothfast_docs::surface::Surface::counted
+ADDED    soothfast_docs::surface::counted::Counted
+CHANGED  soothfast_docs::surface::ItemInfo (signature)
+CHANGED  soothfast_docs::surface::Surface (body)
+CHANGED  soothfast_docs::surface::from_rustdoc_with (body)
+
 # soothfast-spec
+ADDED    soothfast_spec::router
+ADDED    soothfast_spec::router::RouterDrift
+ADDED    soothfast_spec::router::RouterRoute
+ADDED    soothfast_spec::router::compare
+ADDED    soothfast_spec::router::scan_routes
 ADDED    soothfast_spec::specified
 ADDED    soothfast_spec::specified::Specified
 ADDED    soothfast_spec::specified::specified

@@ -21,25 +21,92 @@ pub fn through(
     let Some(dir) = runcache::state_dir("coverage") else {
         return run();
     };
-    let file = dir.join(format!(
-        "{}.json",
-        key(scope, &environment(pkg)?, executables)?
-    ));
-    if let Some(regions) = load(&file) {
-        return Ok(regions);
-    }
-    let regions = run()?;
-    if std::fs::write(&file, regions.to_json().to_string()).is_ok() {
-        runcache::prune_oldest(&dir, runcache::KEEP);
+    let inputs = environment(pkg)?;
+    let file = dir.join(format!("{}.json", key(scope, &inputs, executables)?));
+    let regions = match load(&file) {
+        Some(regions) => regions,
+        None => {
+            let regions = run()?;
+            store(&dir, &file, &regions);
+            regions
+        }
+    };
+    if file.exists() {
+        point(scope, &inputs, &file);
     }
     Ok(regions)
+}
+
+/// A stored run and when it finished, as seconds since the epoch.
+pub struct Cached {
+    /// The regions the run executed.
+    pub regions: Regions,
+    /// When the run was stored.
+    pub unix: u64,
+}
+
+/// The stored run for `scope` whose inputs are those of the tree now, found
+/// without building: a pointer keyed on the package's files, its workspace
+/// dependencies', `Cargo.lock`, rustc, the build flags and the scope names the
+/// entry [`through`] stored. Inputs that cannot be read mean no stored run.
+pub fn lookup(scope: &str, pkg: &str) -> Option<Cached> {
+    let (dir, at) = (
+        runcache::state_dir("coverage")?,
+        runcache::state_dir("coverage-inputs")?,
+    );
+    let inputs = environment(pkg).ok()?;
+    let name = std::fs::read_to_string(at.join(pointer_key(scope, &inputs))).ok()?;
+    let file = dir.join(name.trim());
+    let unix = std::fs::metadata(&file)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    load(&file).map(|regions| Cached { regions, unix })
+}
+
+fn pointer_key(scope: &str, inputs: &str) -> String {
+    let mut parts = vec![
+        "soothfast-coverage-at-v2".to_string(),
+        scope.to_string(),
+        inputs.to_string(),
+    ];
+    for var in [
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_BUILD_RUSTFLAGS",
+        "CARGO_BUILD_TARGET",
+    ] {
+        parts.push(format!("{var}={}", std::env::var(var).unwrap_or_default()));
+    }
+    runcache::hashed(&parts)
+}
+
+fn point(scope: &str, inputs: &str, file: &Path) {
+    let (Some(at), Some(name)) = (
+        runcache::state_dir("coverage-inputs"),
+        file.file_name().and_then(|n| n.to_str()),
+    ) else {
+        return;
+    };
+    if std::fs::write(at.join(pointer_key(scope, inputs)), name).is_ok() {
+        runcache::prune_oldest(&at, runcache::KEEP);
+    }
+}
+
+/// Only a run that finished is kept: a failed one stands for whatever ran
+/// before it stopped, and would otherwise answer every later lookup.
+fn store(dir: &Path, file: &Path, regions: &Regions) {
+    if !regions.partial && std::fs::write(file, regions.to_json().to_string()).is_ok() {
+        runcache::prune_oldest(dir, runcache::KEEP);
+    }
 }
 
 fn environment(pkg: &str) -> Result<String, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let cfg = Config::load(&root)?.test()?;
     let pkgs = select::packages(&root).map_err(|e| e.to_string())?;
-    key::environment(&root, &pkgs, &cfg, pkg)
+    key::environment_with_dependencies(&root, &pkgs, &cfg, pkg)
 }
 
 fn key(scope: &str, environment: &str, executables: &[PathBuf]) -> Result<String, String> {
@@ -58,4 +125,23 @@ fn key(scope: &str, environment: &str, executables: &[PathBuf]) -> Result<String
 fn load(file: &Path) -> Option<Regions> {
     let text = std::fs::read_to_string(file).ok()?;
     Regions::from_json(&serde_json::from_str(&text).ok()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_partial_run_is_not_stored() {
+        let dir = std::env::temp_dir().join(format!("soothfast-cov-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (whole, partial) = (dir.join("whole.json"), dir.join("partial.json"));
+        store(&dir, &whole, &Regions::default());
+        let mut failed = Regions::default();
+        failed.partial = true;
+        store(&dir, &partial, &failed);
+        assert!(load(&whole).is_some());
+        assert!(!partial.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
