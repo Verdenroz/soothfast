@@ -30,6 +30,7 @@
 
 ### 🐛 Fixes
 
+- Mark measured partial for harnesses predating setup exclusion (#524)
 - Coverage features, member tests and shared columns (#521)
 
 ### 🔧 Internal
