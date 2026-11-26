@@ -26,6 +26,10 @@ const RUN_SCHEMA: &str = "soothfast-test-run-v1";
 
 const ENV_PREFIXES: &[&str] = &["CARGO_", "RUSTFLAGS", "RUSTC", "RUSTDOC"];
 
+/// Set by cargo from make's jobserver, whose descriptors or fifo path differ
+/// on every invocation.
+const VOLATILE_ENV: &[&str] = &["CARGO_MAKEFLAGS"];
+
 /// Computes the certificate key for one run against the files as they are
 /// right now.
 pub struct Certifier<'a> {
@@ -123,6 +127,7 @@ fn toolchain_files(root: &Path) -> Vec<(PathBuf, String)> {
 fn relevant_env(vars: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
     let mut kept: Vec<(String, String)> = vars
         .filter(|(k, _)| ENV_PREFIXES.iter().any(|p| k.starts_with(p)))
+        .filter(|(k, _)| !VOLATILE_ENV.contains(&k.as_str()))
         .collect();
     kept.sort();
     kept
@@ -296,6 +301,7 @@ mod tests {
     fn only_cargo_and_compiler_variables_are_kept() {
         let vars = [
             "CARGO_TARGET_DIR",
+            "CARGO_MAKEFLAGS",
             "RUSTFLAGS",
             "RUSTDOCFLAGS",
             "RUSTC_WRAPPER",

@@ -148,6 +148,10 @@ fn every_binary_runs_in_the_builds_invocation_and_its_pass_is_reused() {
     assert!(ok, "{warm}");
     assert!(summary(&warm).contains(" 0 binaries run"), "{warm}");
     assert!(
+        warm.contains("test: skip doc tests for a (cached pass)"),
+        "{warm}"
+    );
+    assert!(
         warm.contains("test: skip d d (lib) (cached pass)"),
         "{warm}"
     );

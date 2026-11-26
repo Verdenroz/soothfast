@@ -48,6 +48,8 @@ pub struct DocSkip {
     pub original: Option<String>,
     pub crates: Vec<String>,
     pub root: PathBuf,
+    /// What the skip line names as the cause.
+    pub reason: String,
 }
 
 impl Plan {
@@ -63,7 +65,7 @@ impl Plan {
         let doc_skip = self
             .doc_skip
             .as_ref()
-            .map(|d| json!({ "original": d.original, "crates": d.crates, "root": d.root }));
+            .map(|d| json!({ "original": d.original, "crates": d.crates, "root": d.root, "reason": d.reason }));
         let plan = json!({
             "results": self.results,
             "runner": self.runner,
@@ -89,6 +91,7 @@ impl Plan {
                 original: d["original"].as_str().map(String::from),
                 crates: strings(&d["crates"]).ok_or_else(malformed)?,
                 root: PathBuf::from(d["root"].as_str().ok_or_else(malformed)?),
+                reason: d["reason"].as_str().ok_or_else(malformed)?.to_string(),
             }),
         };
         let entries = v["entries"]
@@ -247,6 +250,7 @@ mod tests {
             original: Some("/opt/rustdoc".into()),
             crates: argv(&["a", "b_c"]),
             root: PathBuf::from("/ws"),
+            reason: "--no-doc".into(),
         });
         let file = dir.0.join("plan.json");
         written.write(&file).unwrap();

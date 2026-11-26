@@ -143,6 +143,16 @@ fn drive(args: &[String]) -> Result<i32, String> {
         write_result(&args, &tally, 0, total, started)?;
         return Ok(0);
     }
+    if args.no_run {
+        let messages = cargo::build(&selected, &args.cargo_args).map_err(|e| e.to_string())?;
+        let built = cargo::collect(&messages, &pkgs);
+        println!(
+            "test: {} of {total} packages selected, {} binaries built, not run (--no-run)",
+            selected.len(),
+            built.tests.len()
+        );
+        return Ok(0);
+    }
     let certifier = cert::Certifier::new(&root, &cfg, &args, &selected)?;
     let certificate = match args.no_cache {
         true => None,
@@ -163,14 +173,6 @@ fn drive(args: &[String]) -> Result<i32, String> {
     let run_dir = RunDir::create()?;
     let messages = cargo::build(&selected, &args.cargo_args).map_err(|e| e.to_string())?;
     let built = cargo::collect(&messages, &pkgs);
-    if args.no_run {
-        println!(
-            "test: {} of {total} packages selected, {} binaries built, not run (--no-run)",
-            selected.len(),
-            built.tests.len()
-        );
-        return Ok(0);
-    }
     let triples = runner::triples(
         &host_triple()?,
         &args.cargo_args,
@@ -408,6 +410,11 @@ fn run_together(
                 .map(|b| b.target.replace('-', "_"))
                 .collect(),
             root: run.root.to_path_buf(),
+            reason: match args.no_doc {
+                true => "--no-doc",
+                false => "cached pass",
+            }
+            .into(),
         }),
     };
     let plan_path = dir.join(rustdoc::PLAN_FILE);
@@ -531,8 +538,9 @@ impl DocPasses {
         rest.cloned().collect()
     }
 
-    /// Store a pass for each package whose doc tests ran, when nothing failed
-    /// and the package's inputs are the ones it was keyed under.
+    /// Store a pass for each package whose doc tests ran, when no doc test
+    /// failed in the run and the package's inputs are the ones it was keyed
+    /// under. A failed binary does not matter: the key has no binaries in it.
     fn store(
         &self,
         keyer: &mut Keyer,
@@ -544,7 +552,7 @@ impl DocPasses {
         let Some(env) = &self.environment else {
             return Ok(());
         };
-        if !tally.failed.is_empty() || ran.is_empty() {
+        if !tally.doc_tests_passed() || ran.is_empty() {
             return Ok(());
         }
         keyer.refresh()?;
@@ -688,6 +696,15 @@ struct Tally {
 }
 
 impl Tally {
+    /// Whether cargo reported no failed doc test and no failure it could not
+    /// place, either of which may be one.
+    fn doc_tests_passed(&self) -> bool {
+        !self
+            .failed
+            .iter()
+            .any(|l| l == "doc tests" || l.starts_with("cargo test (exit"))
+    }
+
     fn is_clean(&self) -> bool {
         self.failed.is_empty() && self.flaky.is_empty()
     }
@@ -827,6 +844,17 @@ mod tests {
         assert!(tally(&[], &[]).is_clean());
         assert!(!tally(&["a"], &[]).is_clean());
         assert!(!tally(&[], &["a"]).is_clean());
+    }
+
+    #[test]
+    fn a_failed_binary_does_not_stop_doc_passes_but_a_failed_doc_test_does() {
+        let tally = |failed: &[&str]| Tally {
+            failed: failed.iter().map(|s| s.to_string()).collect(),
+            ..Tally::default()
+        };
+        assert!(tally(&["p t (lib)"]).doc_tests_passed());
+        assert!(!tally(&["p t (lib)", "doc tests"]).doc_tests_passed());
+        assert!(!tally(&["cargo test (exit 101)"]).doc_tests_passed());
     }
 
     #[test]
