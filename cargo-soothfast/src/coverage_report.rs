@@ -107,7 +107,11 @@ fn rows(
         for warning in dangling_covers(&records, &surf, pkg) {
             eprintln!("{warning}");
         }
-        rows.extend(rust_rows(&surf, &declared_covers(&records), &marked));
+        rows.extend(rust_rows(
+            &surf,
+            &declared_covers(&records),
+            &marked.items(&records),
+        ));
     }
     Ok(rows)
 }
@@ -149,18 +153,44 @@ fn rust_rows(surf: &Surface, declared: &BTreeSet<String>, marked: &BTreeSet<Stri
         .collect()
 }
 
-/// The Rust items the repo's tracked markdown binds or claims.
-fn marker_targets(root: &Path) -> BTreeSet<String> {
+/// What the repo's tracked markdown names: Rust items its binds target, and
+/// the bench ids its claims measure.
+#[derive(Default)]
+struct Markers {
+    binds: BTreeSet<String>,
+    claimed: BTreeSet<String>,
+}
+
+impl Markers {
+    /// The items markers cover: bound ones, and what a claimed bench `covers`
+    /// (its own id where that is empty).
+    fn items(&self, records: &[Value]) -> BTreeSet<String> {
+        let claimed = records
+            .iter()
+            .filter(|r| r["type"] == "item")
+            .filter_map(|r| Some((r["id"].as_str()?, r["covers"].as_str()?)))
+            .filter(|(id, _)| self.claimed.contains(*id))
+            .map(|(id, covers)| if covers.is_empty() { id } else { covers });
+        self.binds
+            .iter()
+            .map(String::as_str)
+            .chain(claimed)
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+fn marker_targets(root: &Path) -> Markers {
     let texts = docs::tracked_md(root)
         .into_iter()
         .filter_map(|f| std::fs::read_to_string(root.join(f)).ok());
     targets_in(texts)
 }
 
-fn targets_in(texts: impl Iterator<Item = String>) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
+fn targets_in(texts: impl Iterator<Item = String>) -> Markers {
+    let mut out = Markers::default();
     for doc in texts.filter_map(|t| markdown::scan(&t).ok()) {
-        out.extend(
+        out.binds.extend(
             doc.binds
                 .iter()
                 .flat_map(|b| b.targets())
@@ -171,8 +201,8 @@ fn targets_in(texts: impl Iterator<Item = String>) -> BTreeSet<String> {
             .iter()
             .filter_map(|c| claims::parse(&c.expr).ok())
         {
-            out.extend(claim.minus.map(|m| m.item));
-            out.insert(claim.item);
+            out.claimed.extend(claim.minus.map(|m| m.item));
+            out.claimed.insert(claim.item);
         }
     }
     out
@@ -325,10 +355,31 @@ mod tests {
     }
 
     #[test]
-    fn markers_name_binds_and_claim_items() {
+    fn markers_name_binds_and_claimed_bench_ids() {
         let md = "<!-- soothfast:bind d::a d::b -->\n<!-- soothfast:claim d::c.walltime.p99 < 1ms -->\n<!-- soothfast:claim d::x.alloc.allocs - d::y.alloc.allocs < 2 -->\n";
         let got = targets_in([md.to_string(), "```\nunclosed".to_string()].into_iter());
-        assert_eq!(got, set(&["d::a", "d::b", "d::c", "d::x", "d::y"]));
+        assert_eq!(got.binds, set(&["d::a", "d::b"]));
+        assert_eq!(got.claimed, set(&["d::c", "d::x", "d::y"]));
+    }
+
+    #[test]
+    fn a_claim_lifts_the_item_its_bench_covers() {
+        let md = "<!-- soothfast:claim demo::bench_run.alloc.allocs <= 8 -->\n<!-- soothfast:claim demo::bench_self.alloc.allocs <= 8 -->\n";
+        let markers = targets_in([md.to_string()].into_iter());
+        let records = [
+            json!({ "type": "item", "id": "demo::bench_run", "covers": "demo::run" }),
+            json!({ "type": "item", "id": "demo::bench_self", "covers": "" }),
+            json!({ "type": "item", "id": "demo::bench_idle", "covers": "demo::idle" }),
+        ];
+        assert_eq!(
+            markers.items(&records),
+            set(&["demo::run", "demo::bench_self"])
+        );
+        let mut surf = Surface::default();
+        surf.items
+            .insert("demo::run".into(), info("function", 1, true, false));
+        let rows = rust_rows(&surf, &set(&[]), &markers.items(&records));
+        assert_eq!(row(&rows, "demo::run").documented_strict, Some(true));
     }
 
     #[test]

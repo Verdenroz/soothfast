@@ -155,7 +155,7 @@ prints one row per item and a summary per dimension:
 | Dimension | An item is covered when |
 | --- | --- |
 | `documented` | its doc comment has text |
-| `documented+` | it is documented and its docs hold a fenced Rust example, or a `soothfast:bind` or `soothfast:claim` marker in the repo's tracked markdown names its path or a re-export of it |
+| `documented+` | it is documented and its docs hold a fenced Rust example, or a `soothfast:bind` or `soothfast:claim` marker in the repo's tracked markdown names its path or a re-export of it; a claim names a bench, so it counts through that bench's `covers` (or the bench's own id), and only in a package with a bench target |
 | `measured (declared)` | a bench's `covers` names it, or the bench is the item; callables only, other items show `n/a` |
 
 A fence counts as an example unless it names another language: no language,
