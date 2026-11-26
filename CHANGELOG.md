@@ -28,6 +28,10 @@
 - Share test passes across linked worktrees (#493)
 - Certify unchanged test runs, cache doc tests (#492)
 
+### 🐛 Fixes
+
+- Coverage features, member tests and shared columns (#521)
+
 ### 🔧 Internal
 
 - Write the fake launcher from a child process (#512)
