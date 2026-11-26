@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use super::store::{Pass, Store};
+use super::store::{Pass, Store, is_key};
 
 /// Stores `pass` for each lane of `listing` (the plan's `lanes.json`) whose
 /// every result is among `passed`. Returns how many it stored.
@@ -16,7 +16,7 @@ pub fn save(
 ) -> Result<usize, String> {
     let lanes: Vec<Value> =
         serde_json::from_str(listing).map_err(|e| format!("lanes.json: {e}"))?;
-    let mut saved = 0;
+    let mut entries = Vec::with_capacity(lanes.len());
     for lane in &lanes {
         let (Some(id), Some(key), Some(records)) = (
             lane["lane"].as_str(),
@@ -25,6 +25,13 @@ pub fn save(
         ) else {
             return Err("lanes.json: an entry lacks its lane, key or records".into());
         };
+        if !is_key(key) {
+            return Err(format!("lanes.json: {key:?} is not a lane key"));
+        }
+        entries.push((id, key, records));
+    }
+    let mut saved = 0;
+    for (id, key, records) in entries {
         let complete = !records.is_empty()
             && records
                 .iter()
@@ -39,6 +46,7 @@ pub fn save(
 
 #[cfg(test)]
 mod tests {
+    use super::super::store::key;
     use super::*;
     use crate::test::fixture::TempDir;
     use crate::verdict::{plain_passes, write_carried};
@@ -59,9 +67,13 @@ mod tests {
     fn listing(lanes: &[(&str, &[&str])]) -> String {
         let lanes: Vec<Value> = lanes
             .iter()
-            .map(|(lane, records)| json!({"lane": lane, "key": format!("k-{lane}"), "records": records, "kind": "rust"}))
+            .map(|(lane, records)| json!({"lane": lane, "key": lane_key(lane), "records": records, "kind": "rust"}))
             .collect();
         Value::Array(lanes).to_string()
+    }
+
+    fn lane_key(lane: &str) -> String {
+        key(lane, "fingerprint", "")
     }
 
     fn pass() -> Pass {
@@ -72,7 +84,7 @@ mod tests {
     }
 
     fn stored(store: &Store, lane: &str) -> bool {
-        store.lookup(lane, &format!("k-{lane}")).is_some()
+        store.lookup(lane, &lane_key(lane)).is_some()
     }
 
     #[test]
@@ -155,7 +167,22 @@ mod tests {
         let store = Store::at(dir.to_path_buf());
         let lanes = listing(&[("rust:core", &["core"])]);
         save(&lanes, &plain_passes(&results), &store, &pass()).unwrap();
-        assert_eq!(store.lookup("rust:core", "k-rust:core"), Some(pass()));
+        assert_eq!(
+            store.lookup("rust:core", &lane_key("rust:core")),
+            Some(pass())
+        );
+    }
+
+    #[test]
+    fn a_key_that_is_not_a_digest_is_refused_before_anything_is_written() {
+        let parent = TempDir::new("lane-save-escape");
+        let dir = parent.join("lanes");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::at(dir);
+        let passed = BTreeSet::from(["core".to_string()]);
+        let lanes = r#"[{"lane":"rust:core","key":"../x","records":["core"]}]"#;
+        assert!(save(lanes, &passed, &store, &pass()).is_err());
+        assert!(!parent.join("x").exists());
     }
 
     #[test]

@@ -13,6 +13,7 @@ use crate::init::ci::Ci;
 use crate::init::ecosystem::{Project, Suite, slug};
 use crate::init::{self, RustPlan};
 use crate::landing::{self, PullRequest};
+use crate::lanes::graph::Graph;
 use crate::test::project::{
     Pins, TEST_ALL_LABEL, Verdict, changed_since, covered, suites_for, target_for, toolchain_for,
     touches, write_result,
@@ -166,6 +167,13 @@ struct Plan {
     checks: Vec<Check>,
     /// Whether `[ci] pages = true` deploys the site the docs job builds.
     pages: bool,
+    /// Whether `[ci] site_run` hooks the site build, which then reads the
+    /// spec jobs' builds.
+    site_hook: bool,
+    /// `[ci] separate`: the checks that keep a job of their own.
+    separate: Vec<String>,
+    /// The workspace graph, which says which spec checks share crates.
+    graph: Option<Graph>,
     /// `[ci] trend_url`, which the docs job fetches the series from.
     trend_url: Option<String>,
     /// Whether this is a soothfast-bot landing, which runs no lane.
@@ -229,7 +237,14 @@ fn build(
     }
     let pages = config.pages()?;
     let trend_url = config.trend_url()?;
+    let site_hook = config.site_run()?.is_some();
+    let separate = config.separate()?;
     let checks = checks::planned(root, rust.is_some(), &skip)?;
+    let graph = checks
+        .iter()
+        .any(|c| c.kind == "spec")
+        .then(|| Graph::read(root))
+        .flatten();
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
     }
@@ -249,6 +264,9 @@ fn build(
         first_shard_only,
         checks,
         pages,
+        site_hook,
+        separate,
+        graph,
         trend_url,
         landing: false,
         carried: Vec::new(),
@@ -341,12 +359,36 @@ impl Plan {
         self.docs && self.checks.iter().any(|c| c.kind == "site")
     }
 
-    /// The checks that get a job of their own.
-    fn matrix_checks(&self) -> impl Iterator<Item = &Check> {
+    /// Whether the docs job waits for the spec jobs. Only a `site_run` hook
+    /// on the site build reads their builds; `docs check` never does.
+    fn docs_reads_specs(&self) -> bool {
+        self.site_in_docs() && self.site_hook && !self.carries("docs")
+    }
+
+    /// The checks that get a job, whichever job it is.
+    fn pending_checks(&self) -> impl Iterator<Item = &Check> {
         let in_docs = self.site_in_docs();
         self.checks.iter().filter(move |c| {
             !(in_docs && c.kind == "site") && !self.carries(&format!("check:{}", c.name()))
         })
+    }
+
+    fn check_matrix<'a>(&self, checks: impl Iterator<Item = &'a Check>) -> Value {
+        checks::matrix(checks, self.graph.as_ref(), &self.separate)
+    }
+
+    /// The checks the docs job waits for.
+    fn docs_checks(&self) -> impl Iterator<Item = &Check> {
+        let reads = self.docs_reads_specs();
+        self.pending_checks()
+            .filter(move |c| reads && c.kind == "spec")
+    }
+
+    /// The checks that get a job of their own, apart from the docs job's.
+    fn matrix_checks(&self) -> impl Iterator<Item = &Check> {
+        let reads = self.docs_reads_specs();
+        self.pending_checks()
+            .filter(move |c| !(reads && c.kind == "spec"))
     }
 
     /// The site deploys when the file asks for it and the docs job builds it.
@@ -519,7 +561,7 @@ impl Plan {
         let packages = self.packages().join(" ");
         let tests = self.test_matrix();
         format!(
-            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nlanding={}\nchecks={}\nchecks_any={}\nchecks_expect={}\nsite_in_docs={}\nsite_deploy={}\ntrend_url={}\n",
+            "matrix={}\nprojects={}\nrust={}\ntest={}\npackages={packages}\ndocs={}\ndocs_package={docs_package}\ndocs_binds_rust={}\ntest_matrix={}\ntest_projects={}\ntest_all={}\ntest_expect={}\nshards={}\nruns_on={}\nlanding={}\nchecks={}\nchecks_any={}\nchecks_docs={}\nchecks_docs_any={}\nchecks_expect={}\nsite_in_docs={}\nsite_deploy={}\ntrend_url={}\n",
             self.matrix(false),
             !self.matrix(false)["include"]
                 .as_array()
@@ -535,8 +577,10 @@ impl Plan {
             self.shard_legs(),
             self.ci.runs_on_json(),
             self.landing,
-            checks::matrix(self.matrix_checks()),
+            self.check_matrix(self.matrix_checks()),
             self.matrix_checks().next().is_some(),
+            self.check_matrix(self.docs_checks()),
+            self.docs_checks().next().is_some(),
             self.checks
                 .iter()
                 .map(Check::name)
@@ -627,6 +671,9 @@ pub(in crate::plan) mod tests {
             first_shard_only: false,
             checks: Vec::new(),
             pages: false,
+            site_hook: false,
+            separate: Vec::new(),
+            graph: None,
             trend_url: None,
             landing: false,
             carried: Vec::new(),
@@ -706,7 +753,7 @@ pub(in crate::plan) mod tests {
         assert_eq!(matrix["include"].as_array().unwrap().len(), 1);
         let pure = plan(None, vec![]).outputs();
         assert!(pure.contains("projects=false\nrust=false\n"), "{pure}");
-        let checks = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=\nsite_in_docs=false\nsite_deploy=false\ntrend_url=\n";
+        let checks = "checks={\"include\":[]}\nchecks_any=false\nchecks_docs={\"include\":[]}\nchecks_docs_any=false\nchecks_expect=\nsite_in_docs=false\nsite_deploy=false\ntrend_url=\n";
         assert!(pure.ends_with(checks), "{pure}");
     }
 
@@ -720,12 +767,49 @@ pub(in crate::plan) mod tests {
         let mut p = plan(Some(&["a"]), vec![]);
         p.checks = vec![site()];
         let alone = p.outputs();
-        assert!(alone.contains("checks_any=true\nchecks_expect=site\nsite_in_docs=false\n"));
+        assert!(alone.contains("checks_any=true\nchecks_docs={\"include\":[]}\nchecks_docs_any=false\nchecks_expect=site\nsite_in_docs=false\n"));
         p.docs = true;
         p.pages = true;
         let with_docs = p.outputs();
-        let moved = "checks={\"include\":[]}\nchecks_any=false\nchecks_expect=site\nsite_in_docs=true\nsite_deploy=true\ntrend_url=\n";
+        let moved = "checks={\"include\":[]}\nchecks_any=false\nchecks_docs={\"include\":[]}\nchecks_docs_any=false\nchecks_expect=site\nsite_in_docs=true\nsite_deploy=true\ntrend_url=\n";
         assert!(with_docs.ends_with(moved), "{with_docs}");
+    }
+
+    #[test]
+    fn the_docs_job_waits_for_spec_checks_only_when_a_hook_reads_them() {
+        let check = |kind, package: Option<&str>| Check {
+            kind,
+            package: package.map(String::from),
+            rustdoc: true,
+        };
+        let mut p = plan(Some(&["a"]), vec![]);
+        p.docs = true;
+        p.checks = vec![
+            check("site", None),
+            check("spec", Some("a")),
+            check("proto", Some("a")),
+        ];
+        let slugs = |m: Value| -> Vec<String> {
+            m["include"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert!(slugs(p.check_matrix(p.docs_checks())).is_empty());
+        assert_eq!(
+            slugs(p.check_matrix(p.matrix_checks())),
+            ["spec-a", "proto-a"]
+        );
+        p.site_hook = true;
+        assert_eq!(slugs(p.check_matrix(p.docs_checks())), ["spec-a"]);
+        assert_eq!(slugs(p.check_matrix(p.matrix_checks())), ["proto-a"]);
+        let out = p.outputs();
+        assert!(
+            out.contains("checks_docs_any=true\nchecks_expect=site spec-a proto-a\n"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -1021,7 +1105,7 @@ pub(in crate::plan) mod tests {
             "{out}"
         );
         assert!(
-            out.ends_with("landing=true\nchecks={\"include\":[]}\nchecks_any=false\nchecks_expect=\nsite_in_docs=false\nsite_deploy=false\ntrend_url=\n"),
+            out.ends_with("landing=true\nchecks={\"include\":[]}\nchecks_any=false\nchecks_docs={\"include\":[]}\nchecks_docs_any=false\nchecks_expect=\nsite_in_docs=false\nsite_deploy=false\ntrend_url=\n"),
             "{out}"
         );
     }
