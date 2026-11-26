@@ -28,7 +28,7 @@ try { var t = localStorage.getItem("soothfast-theme");
 </svg>
 </span>
       <span class="brand-name">soothfast</span>
-      <span class="brand-ver">v0.8.0</span>
+      <span class="brand-ver">v0.9.0</span>
     </a>
     
     <button class="search-toggle" id="searchtoggle" aria-label="Search docs" aria-expanded="false" aria-controls="search" type="button">
@@ -181,10 +181,10 @@ measure a private or <code>pub(crate)</code> function, put the bench in the crat
 it, behind a cargo feature named <code>soothfast</code>, and make the dependency
 optional so the feature switches it on:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[dependencies]</span>
-<span class="tok-ty">soothfast </span>= { version = &quot;0.8&quot;, optional = true }
+<span class="tok-ty">soothfast </span>= { version = &quot;0.9&quot;, optional = true }
 
 <span class="tok-kw">[dev-dependencies]</span>
-<span class="tok-ty">soothfast </span>= { version = &quot;0.8&quot;, features = [&quot;runner&quot;] }</code></pre></figure>
+<span class="tok-ty">soothfast </span>= { version = &quot;0.9&quot;, features = [&quot;runner&quot;] }</code></pre></figure>
 <p><code>cargo soothfast init -p PKG --internals</code> writes the dev-dependency, the bench
 target and its stub, and the optional dependency. That dependency gives the
 package a <code>soothfast</code> feature with no <code>[features]</code> line, and the stub's
