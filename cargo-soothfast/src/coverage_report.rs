@@ -7,7 +7,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 use soothfast_docs::{claims, markdown, surface::Surface};
 
-use crate::config::{self, Group};
+use crate::config::{self, Group, Settings};
 use crate::coverage::{self, dangling_covers, declared_covers};
 use crate::coverage_lang;
 use crate::invoke::{self, CommonArgs};
@@ -49,12 +49,17 @@ impl Row {
     }
 }
 
+/// The line `--check` ends with: a JSON array of every applicable dimension's
+/// figures, which a CI record reads back.
+pub(crate) const SUMMARY_PREFIX: &str = "soothfast-coverage ";
+
 pub fn run(args: &[String]) -> i32 {
     let mut pkgs: Vec<String> = Vec::new();
     let mut dirs: Vec<String> = Vec::new();
     let mut lang: Option<String> = None;
     let mut features: Option<String> = None;
     let mut json = false;
+    let mut check = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -63,6 +68,7 @@ pub fn run(args: &[String]) -> i32 {
             "--lang" => lang = it.next().cloned(),
             "--features" => features = it.next().cloned(),
             "--json" => json = true,
+            "--check" => check = true,
             other => {
                 eprintln!("soothfast: unknown coverage report arg {other:?}");
                 return 2;
@@ -76,13 +82,88 @@ pub fn run(args: &[String]) -> i32 {
             } else {
                 print!("{}", render_text(&rows));
             }
-            0
+            if check {
+                held_to_minimums(&rows, &pkgs)
+            } else {
+                0
+            }
         }
         Err((code, e)) => {
             eprintln!("soothfast: {e}");
-            code
+            if check { 2 } else { code }
         }
     }
+}
+
+/// A dimension's tally and the minimum it must reach, where one is set.
+struct Figure {
+    name: &'static str,
+    label: &'static str,
+    covered: u32,
+    total: u32,
+    min: Option<u32>,
+}
+
+impl Figure {
+    fn pct(&self) -> u32 {
+        percent((self.covered, self.total))
+    }
+
+    fn short(&self) -> bool {
+        self.min.is_some_and(|min| self.pct() < min)
+    }
+}
+
+fn figures(rows: &[Row], minimums: &Settings) -> Vec<Figure> {
+    DIMENSIONS
+        .iter()
+        .filter_map(|&(name, label)| {
+            let (covered, total) = summarize(rows, name)?;
+            let min = minimums.minimum(name);
+            Some(Figure {
+                name,
+                label,
+                covered,
+                total,
+                min,
+            })
+        })
+        .collect()
+}
+
+/// Prints the unmet minimums and the summary line. Exits 1 when a minimum is
+/// not met and 2 when the configuration cannot be read.
+fn held_to_minimums(rows: &[Row], pkgs: &[String]) -> i32 {
+    let settings = match config::coverage_defaults(pkgs) {
+        Ok(settings) => settings,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    let figures = figures(rows, &settings);
+    let summary: Vec<Value> = figures
+        .iter()
+        .map(|f| {
+            json!({
+                "dimension": f.name,
+                "covered": f.covered,
+                "total": f.total,
+                "pct": f.pct(),
+                "min": f.min,
+            })
+        })
+        .collect();
+    for f in figures.iter().filter(|f| f.short()) {
+        println!(
+            "coverage: {} is {}%, below the minimum {}%",
+            f.label,
+            f.pct(),
+            f.min.unwrap_or_default()
+        );
+    }
+    println!("{SUMMARY_PREFIX}{}", Value::Array(summary));
+    i32::from(figures.iter().any(Figure::short))
 }
 
 type Failure = (i32, String);
@@ -405,6 +486,50 @@ mod tests {
         let text = render_text(&rows);
         assert!(text.contains("documented+:         n/a"), "{text}");
         assert!(text.contains("documented:          1/1 (100%)"), "{text}");
+    }
+
+    #[test]
+    fn a_figure_is_short_only_below_a_minimum_that_is_set() {
+        let rows = rust_rows(&surface(), &set(&[]), &set(&[]));
+        let settings = |documented: Option<u32>, strict: Option<u32>| Settings {
+            coverage: documented,
+            minimums: strict
+                .map(|n| ("documented_strict".to_string(), n))
+                .into_iter()
+                .collect(),
+            ..Settings::default()
+        };
+        let short = |s: Settings| {
+            figures(&rows, &s)
+                .iter()
+                .filter(|f| f.short())
+                .map(|f| f.name)
+                .collect::<Vec<_>>()
+        };
+        assert!(short(settings(None, None)).is_empty());
+        assert!(short(settings(Some(83), Some(16))).is_empty());
+        assert_eq!(short(settings(Some(84), None)), ["documented"]);
+        assert_eq!(short(settings(None, Some(17))), ["documented_strict"]);
+    }
+
+    #[test]
+    fn a_dimension_that_does_not_apply_has_no_figure() {
+        let rows = vec![Row {
+            path: "src/a.py#f".into(),
+            kind: "function".into(),
+            documented: true,
+            documented_strict: None,
+            measured_declared: None,
+        }];
+        let settings = Settings {
+            minimums: [("measured_declared".to_string(), 90)].into(),
+            ..Settings::default()
+        };
+        let got = figures(&rows, &settings);
+        assert_eq!(
+            got.iter().map(|f| f.name).collect::<Vec<_>>(),
+            ["documented"]
+        );
     }
 
     #[test]

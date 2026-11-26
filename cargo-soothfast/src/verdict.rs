@@ -81,6 +81,40 @@ struct Record {
     unevaluated: bool,
     /// The commit whose pass this lane carries, when it did not run.
     carried: Option<String>,
+    /// A coverage check's figure for each dimension it could tell.
+    coverage: Vec<Figure>,
+}
+
+/// One coverage dimension's tally and the minimum it was held to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Figure {
+    dimension: String,
+    covered: u64,
+    total: u64,
+    pct: u64,
+    min: Option<u64>,
+}
+
+impl Figure {
+    fn to_json(&self) -> Value {
+        json!({
+            "dimension": self.dimension,
+            "covered": self.covered,
+            "total": self.total,
+            "pct": self.pct,
+            "min": self.min,
+        })
+    }
+
+    fn from_json(v: &Value) -> Option<Figure> {
+        Some(Figure {
+            dimension: v.get("dimension")?.as_str()?.to_string(),
+            covered: v.get("covered")?.as_u64()?,
+            total: v.get("total")?.as_u64()?,
+            pct: v.get("pct")?.as_u64()?,
+            min: v.get("min").and_then(Value::as_u64),
+        })
+    }
 }
 
 /// The test runner's verdict words, which are not the gate's.
@@ -126,6 +160,9 @@ impl Record {
         if let Some(commit) = &self.carried {
             v["carried"] = json!(commit);
         }
+        if !self.coverage.is_empty() {
+            v["coverage"] = self.coverage.iter().map(Figure::to_json).collect();
+        }
         v
     }
 
@@ -161,6 +198,12 @@ impl Record {
             flaky,
             unevaluated: v["unevaluated"].as_bool().unwrap_or(false),
             carried: v["carried"].as_str().map(String::from),
+            coverage: v["coverage"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Figure::from_json)
+                .collect(),
         })
     }
 
@@ -195,6 +238,7 @@ impl Record {
         self.flaky |= other.flaky;
         self.unevaluated |= other.unevaluated;
         self.carried = self.carried.take().filter(|_| other.carried.is_some());
+        self.coverage.extend(other.coverage);
     }
 }
 
@@ -288,6 +332,7 @@ pub(crate) fn write_carried(
         flaky: false,
         unevaluated: false,
         carried: Some(commit.to_string()),
+        coverage: Vec::new(),
     };
     store(&rec, out)
 }
@@ -305,7 +350,7 @@ fn short(sha: &str, len: usize) -> String {
 }
 
 fn build(name: String, kind: String, code: i32, output: &str, seconds: u64) -> Record {
-    let output = strip_ansi(output);
+    let (output, coverage) = split_coverage(&strip_ansi(output));
     let verdict = classify(code, &kind, &output);
     Record {
         name,
@@ -317,11 +362,30 @@ fn build(name: String, kind: String, code: i32, output: &str, seconds: u64) -> R
         reuse: parse_reuse(&output),
         unevaluated: kind == "docs" && output.contains(CLAIMS_SKIPPED),
         carried: None,
+        coverage,
         kind,
         verdict,
         seconds,
         flaky: false,
     }
+}
+
+/// The output without the summary line `coverage report --check` ends with,
+/// and the figures that line carries.
+fn split_coverage(output: &str) -> (String, Vec<Figure>) {
+    let mut figures = Vec::new();
+    let mut kept = Vec::new();
+    for line in output.lines() {
+        match line.strip_prefix(crate::coverage_report::SUMMARY_PREFIX) {
+            Some(json) => {
+                let parsed: Option<Value> = serde_json::from_str(json).ok();
+                let rows = parsed.as_ref().and_then(Value::as_array);
+                figures.extend(rows.into_iter().flatten().filter_map(Figure::from_json));
+            }
+            None => kept.push(line),
+        }
+    }
+    (kept.join("\n"), figures)
 }
 
 /// A docs or check failure is drift or breakage, not a perf regression, so
@@ -488,6 +552,7 @@ fn errored(name: String, kind: String, tail: String) -> Record {
         flaky: false,
         unevaluated: false,
         carried: None,
+        coverage: Vec::new(),
     }
 }
 
@@ -701,6 +766,7 @@ mod tests {
             flaky: false,
             unevaluated: false,
             carried: None,
+            coverage: Vec::new(),
         }
     }
 
@@ -710,6 +776,33 @@ mod tests {
             total,
             measuring,
         })
+    }
+
+    const SUMMARY: &str = "soothfast-coverage [{\"dimension\":\"documented\",\"covered\":3,\"total\":4,\"pct\":75,\"min\":80},{\"dimension\":\"measured_declared\",\"covered\":0,\"total\":2,\"pct\":0,\"min\":null}]";
+
+    #[test]
+    fn a_coverage_summary_line_becomes_the_records_figures() {
+        let out = format!("coverage: documented is 75%, below the minimum 80%\n{SUMMARY}\n");
+        let r = build("coverage-a".into(), "check".into(), 1, &out, 2);
+        assert_eq!(r.verdict, Verdict::Errored);
+        assert_eq!(r.tail, "coverage: documented is 75%, below the minimum 80%");
+        let figures: Vec<_> = r
+            .coverage
+            .iter()
+            .map(|f| (f.dimension.as_str(), f.pct, f.min))
+            .collect();
+        assert_eq!(
+            figures,
+            [("documented", 75, Some(80)), ("measured_declared", 0, None)]
+        );
+        assert_eq!(Record::from_json(&r.to_json()), Some(r));
+    }
+
+    #[test]
+    fn a_record_with_no_summary_has_no_figures() {
+        let r = build("a".into(), "check".into(), 2, "could not read config", 1);
+        assert!(r.coverage.is_empty());
+        assert!(r.to_json().get("coverage").is_none());
     }
 
     #[test]
