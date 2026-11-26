@@ -41,6 +41,7 @@ pub struct ItemInfo {
 /// A range of whole lines in a file, relative to the directory rustdoc ran in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Span {
+    /// Source file the span is in.
     pub file: String,
     /// First line, 1-based.
     pub begin: u32,
