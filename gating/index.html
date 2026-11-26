@@ -296,6 +296,13 @@ merge-base saved. When that push has not finished, it restores its own newest
 entry, then the default branch's newest. A fallback still serves every item
 whose code is unchanged, since items are keyed by the code they ran, not by
 commit.</p>
+<p>The merge-base's bench executable is not rebuilt when the
+<a href="../ci/#bench-executable-cache">executable store</a> holds one for that
+commit. Its key names the tree's content and toolchain, not the checkout
+path, so the executable the default branch built at the repository root also
+serves the merge-base worktree, unless the executable embeds the path it was
+built at, in which case it serves only that path. <code>prebuild</code> builds the
+merge-base side only when neither the store nor the run cache has it.</p>
 <p>Set <code>cache: &quot;false&quot;</code> to manage the cache yourself. Keep the key unique per
 commit with a prefix in <code>restore-keys</code>: an exact key is never rewritten once
 saved, so every later commit would miss.</p>
