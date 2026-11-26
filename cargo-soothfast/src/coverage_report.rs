@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use soothfast_docs::{claims, markdown, surface::Surface};
 use soothfast_report::badges;
 
-use crate::config::{self, Group, Settings};
+use crate::config::{self, Config, Group, Settings};
 use crate::coverage::{self, dangling_covers, declared_covers};
 use crate::coverage_features;
 use crate::coverage_lang;
@@ -278,14 +278,16 @@ fn rows(
         return Ok(rows);
     }
     let marked = marker_targets(&invoke::project_root());
+    let config = Config::load(&invoke::project_root()).map_err(|e| (2, e))?;
     for pkg in pkgs {
         let (surf, _, root) =
             docs_support::surface_in(pkg, None, features.as_deref()).map_err(|e| (1, e))?;
         let may_build = !check || needs_bench(pkg).map_err(|e| (2, e))?;
-        let build = bench_args(pkg, features.clone(), Group::Docs).map_err(|e| (1, e))?;
+        let build = gate_bench(&config, pkg).map_err(|e| (1, e))?;
         let minimums = executed_minimums(pkg).map_err(|e| (2, e))?;
         let wants = executed_wants(check, executed, minimums);
-        let columns = executed::gather(pkg, &surf, &root, &build, wants).map_err(|e| (1, e))?;
+        let columns = executed::gather(pkg, &surf, &root, features.as_deref(), &build, wants)
+            .map_err(|e| (1, e))?;
         let handlers = match may_build {
             true => specified_handlers(pkg, features.clone())?,
             false => None,
@@ -308,12 +310,12 @@ fn rows(
         for warning in dangling_covers(&records, &surf, pkg) {
             eprintln!("{warning}");
         }
-        let gate_records = gate_discovery(pkg, &build, &records, may_build).map_err(|e| (1, e))?;
+        let declared = declared_covers(&records);
         rows.extend(decorate(rust_rows(
             &surf,
-            Some(&declared_covers(&records)),
+            Some(&declared),
             &marked.items(&records),
-            gate_records.as_deref().map(declared_covers).as_ref(),
+            Some(&declared),
         )));
     }
     Ok(rows)
@@ -394,6 +396,17 @@ fn bench_args(pkg: &str, features: Option<String>, group: Group) -> Result<Commo
     Ok(common)
 }
 
+/// The bench build `pkg`'s gate runs, whose features the benches need to
+/// build at all. The report's own features stay with the surface and tests.
+fn gate_bench(config: &Config, pkg: &str) -> Result<CommonArgs, String> {
+    let mut common = CommonArgs {
+        pkg: Some(pkg.to_string()),
+        ..CommonArgs::default()
+    };
+    config.fill(&mut common, Group::Gate, &[pkg.to_string()])?;
+    Ok(common)
+}
+
 /// The registry's items for the bench `common` names, listed by a stored bench
 /// executable of either profile when there is one, else by a dev build when
 /// `may_build`. No items when its package has no such bench target to link them
@@ -414,22 +427,6 @@ fn discover(common: &CommonArgs, may_build: bool) -> Result<Option<Vec<Value>>, 
         return Ok(None);
     };
     listed.map(Some).map_err(|e| e.to_string())
-}
-
-/// The registry under the gate's features. A second bench build happens only
-/// where they differ from the report's.
-fn gate_discovery(
-    pkg: &str,
-    docs: &CommonArgs,
-    docs_records: &[Value],
-    may_build: bool,
-) -> Result<Option<Vec<Value>>, String> {
-    let features = config::defaults(&[pkg.to_string()], Group::Gate)?.features;
-    let gate = bench_args(pkg, features, Group::Gate)?;
-    if (&gate.features, &gate.target) == (&docs.features, &docs.target) {
-        return Ok(Some(docs_records.to_vec()));
-    }
-    discover(&gate, may_build)
 }
 
 /// Every item and method of `surf`, with `declared` the items benches cover
@@ -969,6 +966,22 @@ mod tests {
         assert!(wants(true, false, (true, false)) == (Want::Run, Want::Skip));
         assert!(wants(true, false, (false, true)) == (Want::Skip, Want::Run));
         assert!(wants(true, true, (false, false)) == (Want::Run, Want::Run));
+    }
+
+    #[test]
+    fn the_bench_build_takes_the_gate_features_not_the_report_ones() {
+        let dir = std::env::temp_dir().join(format!("soothfast-cov-gate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("soothfast.toml"),
+            "[package.demo.gate]\nfeatures = \"bench-gate\"\n[package.demo.docs]\nfeatures = \"full\"\n",
+        )
+        .unwrap();
+        let config = Config::load(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let bench = gate_bench(&config, "demo").unwrap();
+        assert_eq!(bench.features.as_deref(), Some("bench-gate"));
+        assert_eq!(bench.pkg.as_deref(), Some("demo"));
     }
 
     #[test]

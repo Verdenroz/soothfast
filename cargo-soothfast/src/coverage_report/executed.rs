@@ -68,15 +68,16 @@ pub(super) struct Columns {
 
 type Column = (Option<Regions>, Origin);
 
-/// The executed columns of `pkg`. `bench` names its bench target and features.
+/// The executed columns of `pkg`. Tests build with `features`, the ones the
+/// surface was read under; `bench` names the bench target and its features.
 pub(super) fn gather(
     pkg: &str,
     surf: &Surface,
     root: &Path,
+    features: Option<&str>,
     bench: &CommonArgs,
     wants: Wants,
 ) -> Result<Columns, String> {
-    let features = bench.features.as_deref();
     let tests = column(
         wants.tests,
         || coverage_executed::cached_tests(pkg, features),
