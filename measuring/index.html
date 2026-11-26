@@ -314,6 +314,15 @@ item, whatever the instantiation.</p>
 <p>Mapping is by source span rather than by symbol, so an item reached only
 through an inlined call is still credited: the counters sit in the compiler's
 MIR, ahead of inlining.</p>
+<h3 id="setup-is-not-measured">Setup is not measured<a class="anchor" href="#setup-is-not-measured" aria-label="Link to this section">#</a></h3>
+<p>llvm counters span the whole bench process, so by themselves they would credit
+a builder method a bench only calls to construct its input. The bench build
+therefore passes <code>--cfg soothfast_coverage</code>, and the runner then resets the
+profile counters right before each item's measured region and merges them into
+the profile right after it. Only code the region runs counts as <code>measured</code>.
+Normal bench builds do not set the cfg, so the runner compiles without this
+code. Runner code that executes after the last item's region, such as
+printing results, still counts.</p>
 <h3 id="what-it-does-not-see">What it does not see<a class="anchor" href="#what-it-does-not-see" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Doc tests are not instrumented, so an item only a doc test runs is untested.</li>
@@ -324,7 +333,8 @@ MIR, ahead of inlining.</p>
 </ul>
 <h3 id="cost">Cost<a class="anchor" href="#cost" aria-label="Link to this section">#</a></h3>
 <p>The instrumented build has its own target directory,
-<code>target/soothfast-coverage</code>, and the flags reach only the <code>--target &lt;host&gt;</code>
+<code>target/soothfast-coverage</code>, with the benches in its <code>benches</code> subdirectory
+because their cfg changes the build of every crate, and the flags reach only the <code>--target &lt;host&gt;</code>
 artifacts of that cargo, so build scripts and proc macros are not
 instrumented and the artifacts <code>gate</code> and <code>measure</code> use are not touched.
 Profiles go to a temporary directory and are merged by <code>llvm-profdata</code>, then
@@ -390,6 +400,8 @@ that keeps every page on this site honest.</p>
     <li><a class="toc-l2" href="#what-tests-and-benches-execute">What tests and benches execute</a></li>
   
     <li><a class="toc-l3" href="#how-an-item-counts-as-executed">How an item counts as executed</a></li>
+  
+    <li><a class="toc-l3" href="#setup-is-not-measured">Setup is not measured</a></li>
   
     <li><a class="toc-l3" href="#what-it-does-not-see">What it does not see</a></li>
   

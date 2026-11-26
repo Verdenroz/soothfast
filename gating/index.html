@@ -790,7 +790,7 @@ of <code>FAIL</code>:</p>
 <p>Two things keep this from becoming a second, quieter tolerance:</p>
 <ul>
 <li>**The ceiling is one-sided, anchored at the accepted value, not a band around it.** A metric at or under the accepted number always passes, no matter how far below the <em>original</em> reference it lands — a follow-up fix that claws back most of an accepted regression is an improvement, not a new review target.</li>
-<li><strong>It expires on its own.</strong> The next <code>--save-baseline</code> (<code>gate</code> or <code>measure</code>) that captures the accepted value as the new normal removes the lock entry for that bench automatically. There is nothing to clean up by hand, and nothing left over once the accepted state ships.</li>
+<li><strong>It expires on its own.</strong> The next <code>--save-baseline</code> (<code>gate</code> or <code>measure</code>) that captures the accepted value as the new normal removes the lock entry for that bench automatically. Removal happens in the checkout that saved the baseline, which in CI is never committed, so the committed file keeps the entry until <code>gate accept</code> next writes it. Deleting such an entry by hand is safe while the reference carries the accepted fingerprint, but it would stop accepting the bench if the reference returned to the entry's <code>base_fingerprint</code>, for example through a revert, so the lock's owner decides.</li>
 </ul>
 <p><code>gate accept</code> refuses a bench that isn't currently failing, unless it also
 clears <code>--headroom</code> (below) — accepting ahead of an actual regression would

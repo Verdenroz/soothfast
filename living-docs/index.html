@@ -231,7 +231,7 @@ taken as-is, and underscores are allowed for readability, as in <code>25_000</co
 <code>docs check</code> evaluates the expression against
 <code>baseline[&quot;items&quot;][item][backend][metric]</code> and fails if the metric is
 missing or the comparison does not hold.</p>
-<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 133 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.46" y2="11" class="chip-scale-fill" style="--fill-len:0.46"/><circle cx="8.46" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.46"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
+<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 187 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.65" y2="11" class="chip-scale-fill" style="--fill-len:0.65"/><circle cx="8.65" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.65"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
 <p>Parsing one claim expression, the exact work <code>docs check</code> does per marker on
 this page, costs under 50µs at the tail.</p>
 <p>A claim can also bound the difference of two items' metrics, which is how to
@@ -304,6 +304,11 @@ features</code> object per package, and
 <code>summary</code> holding <code>covered</code>, <code>total</code> and <code>pct</code> per dimension. A dimension a
 tree cannot tell, such as <code>documented+</code> for a non-Rust tree, is <code>null</code>, and
 the text report shows <code>n/a</code>.</p>
+<p><code>coverage report</code> also prints <code>warning: fixture NAME in PATH is referenced by
+no bench of PKG</code> on stderr for each <code>#[soothfast::fixture]</code> in the package's
+<code>src</code> and <code>benches</code> whose name appears nowhere else in those files, since a
+bench names its fixture in <code>setup</code> or <code>setup_sized</code>. It reads source text, so
+a mention in a comment counts as a reference. The warning is advisory.</p>
 <p>With <code>--check</code>, the report prints only the per-dimension summary, then a
 line for each dimension below its configured minimum
 (<code>coverage_min.DIMENSION</code>, see <a href="../gating/#per-package-defaults">gating</a>), then
@@ -459,6 +464,21 @@ dropping the others. A recorded page that was deleted, or has no blocks
 left, is dropped. To move a page to another package, delete its generated
 files and run gen-tests for both. A run without paths covers exactly the
 default scope.</p>
+<h2 id="which-blocks-run">Which blocks run<a class="anchor" href="#which-blocks-run" aria-label="Link to this section">#</a></h2>
+<p>A block that compiles is not a block that executes. <code>cargo soothfast docs
+stats [PATH ...] [--json]</code> reads the scanned pages and prints, for each, the
+rust blocks gen-tests turns into a running test (<code>executed</code>), the ones that
+only compile (<code>compile-only</code>: <code>no_run</code>, and <code>ignore</code>, <code>compile_fail</code> and the
+other rustdoc attributes, which gen-tests does not generate at all), and the
+page's <code>bind</code> and <code>claim</code> marker counts. A page with neither marker is
+flagged, since nothing ties its prose to code or a measurement. Capture
+blocks run in the capture example, so they are in neither count. The report
+is advisory and fails nothing.</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast docs stats
+docs/measuring.md: 4 executed, 2 compile-only, 6 bind(s), 3 claim(s)
+docs/ci.md: 0 executed, 5 compile-only, 0 bind(s), 0 claim(s)  no bind or claim
+docs stats: 4 of 11 doc block(s) execute; 1 of 2 page(s) have no bind or claim
+</code></pre></figure>
 <h2 id="why-this-page-has-almost-no-ignored-code">Why this page has almost no <code>ignore</code>d code<a class="anchor" href="#why-this-page-has-almost-no-ignored-code" aria-label="Link to this section">#</a></h2>
 <p>Every rust block on this site either runs for real, with <code>capture-output</code>
 producing its output rather than someone typing it, or is at least checked
@@ -499,6 +519,8 @@ or database, and prefer <code>no_run</code> even then if the code is otherwise r
     <li><a class="toc-l2" href="#what-gets-scanned">What gets scanned</a></li>
   
     <li><a class="toc-l2" href="#generated-files">Generated files</a></li>
+  
+    <li><a class="toc-l2" href="#which-blocks-run">Which blocks run</a></li>
   
     <li><a class="toc-l2" href="#why-this-page-has-almost-no-ignored-code">Why this page has almost no ignored code</a></li>
   
