@@ -56,6 +56,7 @@ fn cargo_command(
     if let Build::Measure = build
         && let Some(n) = common.codegen_units_env()
     {
+        crate::buildstamp::warn_inert_codegen_units(common, dir);
         for member in workspace_members(dir)? {
             cmd.arg("--config");
             cmd.arg(format!(
