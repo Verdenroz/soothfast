@@ -13,6 +13,9 @@ pub mod package;
 
 pub use package::{Group, Settings};
 
+/// The bench target a package's gate builds unless its `gate` table names another.
+pub const DEFAULT_TARGET: &str = "soothfast";
+
 use crate::init::bot::Landing;
 use crate::invoke::{self, CommonArgs};
 use crate::test::config as test;
@@ -132,11 +135,9 @@ impl Config {
 
     /// The bench target `pkg`'s gate builds: its `[package.NAME.gate] target`,
     /// else `soothfast`.
-    pub fn bench_target(&self, pkg: &str) -> String {
-        self.resolve(&[pkg.to_string()], Group::Gate)
-            .ok()
-            .and_then(|s| s.target)
-            .unwrap_or_else(|| "soothfast".into())
+    pub fn bench_target(&self, pkg: &str) -> Result<String, String> {
+        let settings = self.resolve(&[pkg.to_string()], Group::Gate)?;
+        Ok(settings.target.unwrap_or_else(|| DEFAULT_TARGET.into()))
     }
 
     /// The names of the `[package.NAME]` tables, in name order.
@@ -417,8 +418,8 @@ mod tests {
     #[test]
     fn a_package_bench_target_defaults_to_soothfast() {
         let cfg = config("[package.api.gate]\ntarget = \"api-bench\"\n");
-        assert_eq!(cfg.bench_target("api"), "api-bench");
-        assert_eq!(cfg.bench_target("core"), "soothfast");
+        assert_eq!(cfg.bench_target("api").unwrap(), "api-bench");
+        assert_eq!(cfg.bench_target("core").unwrap(), "soothfast");
     }
 
     #[test]

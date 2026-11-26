@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::ci::Ci;
 use super::target::ci;
-use crate::config::Config;
+use crate::config::{Config, DEFAULT_TARGET};
 use crate::{invoke, workspace};
 
 const BENCH_STUB: &str = "\
@@ -17,6 +17,8 @@ use @@crate@@ as _;
 
 soothfast::bench_main!();
 ";
+
+const ROUTES_TARGET: &str = "soothfast-routes";
 
 const BENCH_TARGET: &str = "
 [[bench]]
@@ -40,29 +42,39 @@ pub(super) fn rust_meta(root: &Path, bench: &[String], check: bool) -> Result<Va
 
 /// Members with the bench target their gate builds: `soothfast`, or the
 /// `target` their `[package.NAME.gate]` table names.
-pub(crate) fn benched(meta: &Value, target_of: impl Fn(&str) -> String) -> Vec<String> {
-    let mut names: Vec<String> = packages(meta)
-        .filter_map(|p| p["name"].as_str())
-        .filter(|name| workspace::bench_target_in(meta, name, &target_of(name)))
-        .map(String::from)
-        .collect();
+pub(crate) fn benched(
+    meta: &Value,
+    target_of: impl Fn(&str) -> Result<String, String>,
+) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    for name in packages(meta).filter_map(|p| p["name"].as_str()) {
+        if workspace::bench_target_in(meta, name, &target_of(name)?) {
+            names.push(name.to_string());
+        }
+    }
     names.sort();
-    names
+    Ok(names)
 }
 
 /// An advice line per member whose only soothfast bench target is a
 /// `soothfast-routes` one, which reads routes and measures nothing.
-pub(super) fn routes_only(meta: &Value, benched: &[String]) -> Vec<String> {
-    packages(meta)
-        .filter_map(|p| p["name"].as_str())
-        .filter(|name| !benched.iter().any(|b| b == name))
-        .filter(|name| workspace::bench_target_in(meta, name, "soothfast-routes"))
-        .map(|name| {
-            format!(
-                "advice   {name}: only a soothfast-routes bench target, so nothing in it is measured; `init -p {name}` adds a soothfast one"
-            )
-        })
-        .collect()
+pub(super) fn routes_only(
+    meta: &Value,
+    benched: &[String],
+    target_of: impl Fn(&str) -> Result<String, String>,
+) -> Result<Vec<String>, String> {
+    let mut advice = Vec::new();
+    for name in packages(meta).filter_map(|p| p["name"].as_str()) {
+        if !benched.iter().any(|b| b == name)
+            && target_of(name)? == DEFAULT_TARGET
+            && workspace::bench_target_in(meta, name, ROUTES_TARGET)
+        {
+            advice.push(format!(
+                "advice   {name}: only a {ROUTES_TARGET} bench target, so nothing in it is measured; `init -p {name}` adds a {DEFAULT_TARGET} one"
+            ));
+        }
+    }
+    Ok(advice)
 }
 
 /// The packages `docs check` reads: `[docs] package` when set, else the
@@ -173,7 +185,7 @@ pub fn rust_plan(root: &Path) -> Result<RustPlan, String> {
     };
     let config = Config::load(root)?;
     Ok(RustPlan {
-        packages: benched(&meta, |p| config.bench_target(p)),
+        packages: benched(&meta, |p| config.bench_target(p))?,
         docs_packages: docs,
     })
 }
@@ -189,7 +201,10 @@ mod tests {
             { "name": "a", "targets": [{ "name": "soothfast", "kind": ["bench"] }] },
             { "name": "c", "targets": [{ "name": "other", "kind": ["bench"] }] },
         ]});
-        assert_eq!(benched(&meta, |_| "soothfast".into()), ["a", "b"]);
+        assert_eq!(
+            benched(&meta, |_| Ok("soothfast".into())).unwrap(),
+            ["a", "b"]
+        );
     }
 
     #[test]
@@ -202,7 +217,10 @@ mod tests {
                 { "name": "soothfast-routes", "kind": ["bench"] },
             ] },
         ]});
-        let advice = routes_only(&meta, &["both".into(), "lib".into()]);
+        let advice = routes_only(&meta, &["both".into(), "lib".into()], |_| {
+            Ok("soothfast".into())
+        })
+        .unwrap();
         assert_eq!(advice.len(), 1);
         assert!(advice[0].starts_with("advice   server:") && advice[0].contains("init -p server"));
     }
@@ -221,7 +239,10 @@ mod tests {
                 "soothfast"
             }
         };
-        assert_eq!(benched(&meta, |p| target(p).into()), ["lib", "server"]);
+        assert_eq!(
+            benched(&meta, |p| Ok(target(p).into())).unwrap(),
+            ["lib", "server"]
+        );
     }
 
     #[test]

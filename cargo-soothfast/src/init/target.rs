@@ -62,8 +62,8 @@ pub(super) fn target(
         } else {
             Vec::new()
         };
-        let benched = benched(&meta, |p| config.bench_target(p));
-        notes.extend(routes_only(&meta, &benched));
+        let benched = benched(&meta, |p| config.bench_target(p))?;
+        notes.extend(routes_only(&meta, &benched, |p| config.bench_target(p))?);
         (benched, docs)
     } else if bench.is_empty() {
         (Vec::new(), Vec::new())
