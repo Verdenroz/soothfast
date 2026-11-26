@@ -94,11 +94,18 @@ fn serves(entry: &Path, root: &Path) -> bool {
     }
 }
 
-/// Whether the bytes of `exe` contain `root`. A file that cannot be read
-/// counts as bound.
+/// Whether the bytes of `exe` contain `root` or its canonical form, which is
+/// what cargo bakes when the checkout is reached through a symlink. A file
+/// that cannot be read counts as bound.
 fn path_bound(exe: &Path, root: &Path) -> bool {
-    let needle = root.as_os_str().as_encoded_bytes();
-    !std::fs::read(exe).is_ok_and(|bytes| bytes.windows(needle.len()).all(|w| w != needle))
+    let Ok(bytes) = std::fs::read(exe) else {
+        return true;
+    };
+    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    [root, canonical.as_path()].iter().any(|path| {
+        let needle = path.as_os_str().as_encoded_bytes();
+        bytes.windows(needle.len()).any(|w| w == needle)
+    })
 }
 
 /// Keep the executable cargo wrote at `exe` for a build that started at
@@ -600,6 +607,21 @@ mod tests {
         assert_eq!(key, key_with(&two, &request()));
         assert!(load(&dir, &key, &one.0).is_some());
         assert_eq!(load(&dir, &key, &two.0), None);
+    }
+
+    #[test]
+    fn an_executable_carrying_the_canonical_root_is_bound_through_a_symlink() {
+        let real = Repo::new("bin-link-real");
+        let link = real.0.with_file_name("bin-link-alias");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&real.0, &link).unwrap();
+        let canonical = std::fs::canonicalize(&real.0).unwrap();
+        let exe = real.0.join("bench");
+        std::fs::write(&exe, format!("..{}..", canonical.display())).unwrap();
+        assert!(path_bound(&exe, &link));
+        std::fs::write(&exe, "no path").unwrap();
+        assert!(!path_bound(&exe, &link));
+        std::fs::remove_file(&link).unwrap();
     }
 
     #[test]
