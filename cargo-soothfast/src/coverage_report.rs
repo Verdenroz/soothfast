@@ -9,6 +9,7 @@ use soothfast_docs::{claims, markdown, surface::Surface};
 
 use crate::config::{self, Group};
 use crate::coverage::{self, dangling_covers, declared_covers};
+use crate::coverage_fixtures;
 use crate::coverage_lang;
 use crate::invoke::{self, CommonArgs};
 use crate::{docs, workspace};
@@ -105,6 +106,10 @@ fn rows(
         let surf = coverage::load_surface(pkg, features.as_deref()).map_err(|e| (1, e))?;
         let records = discover(pkg, features.as_deref()).map_err(|e| (1, e))?;
         for warning in dangling_covers(&records, &surf, pkg) {
+            eprintln!("{warning}");
+        }
+        let dir = invoke::pkg_dir(pkg).map_err(|e| (1, e.to_string()))?;
+        for warning in coverage_fixtures::unreferenced(&coverage_fixtures::sources(&dir), pkg) {
             eprintln!("{warning}");
         }
         rows.extend(rust_rows(

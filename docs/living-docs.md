@@ -171,6 +171,12 @@ With `--json`, stdout is one object, `items` holding `path`, `kind`,
 tree cannot tell, such as `documented+` for a non-Rust tree, is `null`, and
 the text report shows `n/a`.
 
+`coverage report` also prints `warning: fixture NAME in PATH is referenced by
+no bench of PKG` on stderr for each `#[soothfast::fixture]` in the package's
+`src` and `benches` whose name appears nowhere else in those files, since a
+bench names its fixture in `setup` or `setup_sized`. It reads source text, so
+a mention in a comment counts as a reference. The warning is advisory.
+
 Coverage counts what the gate compiles: without `--features` it uses the
 package's features, else the gate's `features` for it.
 

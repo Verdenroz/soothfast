@@ -20,6 +20,7 @@ mod codekey;
 mod config;
 mod coverage;
 mod coverage_executed;
+mod coverage_fixtures;
 mod coverage_lang;
 mod coverage_report;
 mod coverage_spec;
