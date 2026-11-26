@@ -13,6 +13,7 @@ use crate::init::ci::Ci;
 use crate::init::ecosystem::{Project, Suite, slug};
 use crate::init::{self, RustPlan};
 use crate::landing::{self, PullRequest};
+use crate::lanes::graph::Graph;
 use crate::test::project::{
     Pins, TEST_ALL_LABEL, Verdict, changed_since, covered, suites_for, target_for, toolchain_for,
     touches, write_result,
@@ -169,6 +170,8 @@ struct Plan {
     /// Whether `[ci] site_run` hooks the site build, which then reads the
     /// spec jobs' builds.
     site_hook: bool,
+    /// The workspace graph, which says which spec checks share crates.
+    graph: Option<Graph>,
     /// `[ci] trend_url`, which the docs job fetches the series from.
     trend_url: Option<String>,
     /// Whether this is a soothfast-bot landing, which runs no lane.
@@ -234,6 +237,11 @@ fn build(
     let trend_url = config.trend_url()?;
     let site_hook = config.site_run()?.is_some();
     let checks = checks::planned(root, rust.is_some(), &skip)?;
+    let graph = checks
+        .iter()
+        .any(|c| c.kind == "spec")
+        .then(|| Graph::read(root))
+        .flatten();
     if pins.java.is_some() || pins.node.is_some() {
         pins.runner = Some(ci.runs_on_json());
     }
@@ -254,6 +262,7 @@ fn build(
         checks,
         pages,
         site_hook,
+        graph,
         trend_url,
         landing: false,
         carried: Vec::new(),
@@ -289,6 +298,7 @@ impl Plan {
             checks: Vec::new(),
             pages: false,
             site_hook: false,
+            graph: None,
             landing: true,
             ..self
         }
@@ -359,6 +369,10 @@ impl Plan {
         self.checks.iter().filter(move |c| {
             !(in_docs && c.kind == "site") && !self.carries(&format!("check:{}", c.name()))
         })
+    }
+
+    fn check_matrix<'a>(&self, checks: impl Iterator<Item = &'a Check>) -> Value {
+        checks::matrix(checks, self.graph.as_ref())
     }
 
     /// The checks the docs job waits for.
@@ -561,9 +575,9 @@ impl Plan {
             self.shard_legs(),
             self.ci.runs_on_json(),
             self.landing,
-            checks::matrix(self.matrix_checks()),
+            self.check_matrix(self.matrix_checks()),
             self.matrix_checks().next().is_some(),
-            checks::matrix(self.docs_checks()),
+            self.check_matrix(self.docs_checks()),
             self.docs_checks().next().is_some(),
             self.checks
                 .iter()
@@ -656,6 +670,7 @@ pub(in crate::plan) mod tests {
             checks: Vec::new(),
             pages: false,
             site_hook: false,
+            graph: None,
             trend_url: None,
             landing: false,
             carried: Vec::new(),
@@ -779,14 +794,14 @@ pub(in crate::plan) mod tests {
                 .map(|e| e["slug"].as_str().unwrap().to_string())
                 .collect()
         };
-        assert!(slugs(checks::matrix(p.docs_checks())).is_empty());
+        assert!(slugs(p.check_matrix(p.docs_checks())).is_empty());
         assert_eq!(
-            slugs(checks::matrix(p.matrix_checks())),
+            slugs(p.check_matrix(p.matrix_checks())),
             ["spec-a", "proto-a"]
         );
         p.site_hook = true;
-        assert_eq!(slugs(checks::matrix(p.docs_checks())), ["spec-a"]);
-        assert_eq!(slugs(checks::matrix(p.matrix_checks())), ["proto-a"]);
+        assert_eq!(slugs(p.check_matrix(p.docs_checks())), ["spec-a"]);
+        assert_eq!(slugs(p.check_matrix(p.matrix_checks())), ["proto-a"]);
         let out = p.outputs();
         assert!(
             out.contains("checks_docs_any=true\nchecks_expect=site spec-a proto-a\n"),

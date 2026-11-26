@@ -19,6 +19,10 @@ inputs:
   cache:
     description: The name the rust-cache entry is shared under.
     required: true
+  legacy:
+    description: The slug of the job a grouped entry replaced, whose cache it starts from when its own is empty.
+    required: false
+    default: ""
   rustdoc:
     description: Whether a check reads rustdoc JSON, so needs the pinned nightly.
     required: false
@@ -59,6 +63,8 @@ runs:
           soothfast-check-${{ inputs.slug }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-
           soothfast-check-${{ inputs.slug }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
           soothfast-check-${{ inputs.slug }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.repository.default_branch }}-
+          soothfast-check-${{ inputs.legacy || inputs.slug }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
+          soothfast-check-${{ inputs.legacy || inputs.slug }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.repository.default_branch }}-
     - name: Check
       shell: bash
       env:

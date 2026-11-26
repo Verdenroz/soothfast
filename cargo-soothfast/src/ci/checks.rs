@@ -1,12 +1,14 @@
 //! The check jobs a repository's configuration calls for, which `plan` turns
 //! into the workflow's matrix.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::{Value, json};
 
 use super::env::CiEnv;
 use super::{capture, coverage, proto, site, spec};
+use crate::lanes::graph::Graph;
 
 type Run = fn(&CiEnv, &[String]) -> i32;
 
@@ -112,25 +114,101 @@ fn collect(
 
 /// The matrix the workflow's check job runs over. An entry's `slug` names
 /// its job, caches and artifacts, `runs` the tokens `ci checks` takes, and
-/// `spec` the spec packages whose builds it stages.
-pub fn matrix<'a>(checks: impl Iterator<Item = &'a Check>) -> Value {
+/// `spec` the spec packages whose builds it stages. A group of spec checks
+/// whose packages share workspace crates is one entry, which falls back to
+/// the cache of its first member's own job through `legacy`.
+pub fn matrix<'a>(checks: impl Iterator<Item = &'a Check>, graph: Option<&Graph>) -> Value {
+    let checks: Vec<&Check> = checks.collect();
+    let specs: Vec<&Check> = checks
+        .iter()
+        .copied()
+        .filter(|c| c.kind == "spec")
+        .collect();
+    let groups = spec_groups(&specs, graph);
     let include: Vec<Value> = checks
-        .map(|c| {
-            let spec = if c.kind == "spec" {
-                c.package.clone()
-            } else {
-                None
-            };
-            json!({
-                "slug": c.name(),
-                "runs": c.token(),
-                "spec": spec.unwrap_or_default(),
-                "cache": c.kind,
-                "rustdoc": c.rustdoc,
-            })
+        .iter()
+        .filter_map(|c| {
+            if c.kind != "spec" {
+                return Some(entry(c.name(), c.kind.to_string(), String::new(), &[c]));
+            }
+            let group = groups.iter().find(|g| std::ptr::eq(g[0], *c))?;
+            Some(spec_entry(group, groups.len() == 1))
         })
         .collect();
     json!({ "include": include })
+}
+
+fn entry(slug: String, cache: String, legacy: String, members: &[&Check]) -> Value {
+    let runs: Vec<String> = members.iter().map(|c| c.token()).collect();
+    let spec: Vec<&str> = members
+        .iter()
+        .filter(|c| c.kind == "spec")
+        .filter_map(|c| c.package.as_deref())
+        .collect();
+    json!({
+        "slug": slug,
+        "runs": runs.join(" "),
+        "spec": spec.join(" "),
+        "cache": cache,
+        "legacy": legacy,
+        "rustdoc": members.iter().any(|c| c.rustdoc),
+    })
+}
+
+fn spec_entry(group: &[&Check], sole: bool) -> Value {
+    let first = group[0];
+    if group.len() == 1 {
+        return entry(first.name(), first.kind.to_string(), String::new(), group);
+    }
+    let slug = if sole {
+        "spec-shared".to_string()
+    } else {
+        format!("{}-group", first.name())
+    };
+    let cache = if sole {
+        "spec".to_string()
+    } else {
+        format!("spec-{slug}")
+    };
+    entry(slug, cache, first.name(), group)
+}
+
+/// The spec checks split into groups whose packages reach no workspace crate
+/// in common with another group, each in the order its first member came.
+/// Without a graph every check is one group.
+fn spec_groups<'a>(specs: &[&'a Check], graph: Option<&Graph>) -> Vec<Vec<&'a Check>> {
+    if specs.is_empty() {
+        return Vec::new();
+    }
+    let Some(graph) = graph else {
+        return vec![specs.to_vec()];
+    };
+    let reach: Vec<_> = specs
+        .iter()
+        .map(|c| graph.closure(c.package.as_deref().unwrap_or_default()))
+        .collect();
+    let mut parent: Vec<usize> = (0..specs.len()).collect();
+    for i in 0..specs.len() {
+        for j in i + 1..specs.len() {
+            if !reach[i].is_disjoint(&reach[j]) {
+                let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                parent[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    let mut groups: BTreeMap<usize, Vec<&Check>> = BTreeMap::new();
+    for (i, check) in specs.iter().enumerate() {
+        groups.entry(root(&mut parent, i)).or_default().push(check);
+    }
+    groups.into_values().collect()
+}
+
+fn root(parent: &mut [usize], mut i: usize) -> usize {
+    while parent[i] != i {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+    }
+    i
 }
 
 /// The kinds `tokens` name, in order of first mention, each with its
@@ -205,17 +283,87 @@ mod tests {
             ["spec-server", "coverage-core", "coverage-server", "site"]
         );
         assert_eq!(
-            matrix(checks.iter())["include"][0],
-            json!({"slug": "spec-server", "runs": "spec:server", "spec": "server", "cache": "spec", "rustdoc": true})
+            matrix(checks.iter(), None)["include"][0],
+            json!({"slug": "spec-server", "runs": "spec:server", "spec": "server", "cache": "spec", "legacy": "", "rustdoc": true})
         );
         assert_eq!(
-            matrix(checks.iter())["include"][3],
-            json!({"slug": "site", "runs": "site", "spec": "", "cache": "site", "rustdoc": true})
+            matrix(checks.iter(), None)["include"][3],
+            json!({"slug": "site", "runs": "site", "spec": "", "cache": "site", "legacy": "", "rustdoc": true})
         );
     }
 
     fn tokens(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn workspace(members: &[(&str, &[&str])]) -> Graph {
+        let packages: Vec<Value> = members
+            .iter()
+            .map(|(name, deps)| {
+                let deps: Vec<Value> = deps.iter().map(|d| json!({ "name": d })).collect();
+                json!({
+                    "name": name,
+                    "manifest_path": format!("/ws/{name}/Cargo.toml"),
+                    "dependencies": deps,
+                })
+            })
+            .collect();
+        Graph::from_metadata(&json!({ "packages": packages }), Path::new("/ws")).unwrap()
+    }
+
+    fn spec(package: &str) -> Check {
+        Check {
+            kind: "spec",
+            package: Some(package.into()),
+            rustdoc: true,
+        }
+    }
+
+    fn slugs(matrix: &Value) -> Vec<&str> {
+        let entries = matrix["include"].as_array().unwrap();
+        entries
+            .iter()
+            .map(|e| e["slug"].as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn spec_packages_sharing_a_crate_build_in_one_entry() {
+        let graph = workspace(&[
+            ("api", &["core"]),
+            ("admin", &["core"]),
+            ("core", &[]),
+            ("lone", &[]),
+        ]);
+        let checks = [spec("api"), spec("admin")];
+        let m = matrix(checks.iter(), Some(&graph));
+        assert_eq!(slugs(&m), ["spec-shared"]);
+        let shared = &m["include"][0];
+        assert_eq!(shared["runs"], "spec:api spec:admin");
+        assert_eq!(shared["spec"], "api admin");
+        assert_eq!(shared["cache"], "spec");
+        assert_eq!(shared["legacy"], "spec-api");
+    }
+
+    #[test]
+    fn disjoint_spec_packages_keep_their_own_entries_beside_a_group() {
+        let graph = workspace(&[
+            ("api", &["core"]),
+            ("admin", &["core"]),
+            ("core", &[]),
+            ("lone", &[]),
+        ]);
+        let checks = [spec("api"), spec("lone"), spec("admin")];
+        let m = matrix(checks.iter(), Some(&graph));
+        assert_eq!(slugs(&m), ["spec-api-group", "spec-lone"]);
+        assert_eq!(m["include"][0]["cache"], "spec-spec-api-group");
+        assert_eq!(m["include"][1]["cache"], "spec");
+    }
+
+    #[test]
+    fn without_a_graph_every_spec_check_is_one_group() {
+        let checks = [spec("a"), spec("b")];
+        assert_eq!(slugs(&matrix(checks.iter(), None)), ["spec-shared"]);
     }
 
     #[test]

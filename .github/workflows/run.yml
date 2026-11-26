@@ -1137,6 +1137,7 @@ jobs:
           runs: ${{ matrix.runs }}
           spec: ${{ matrix.spec }}
           cache: ${{ matrix.cache }}
+          legacy: ${{ matrix.legacy }}
           rustdoc: ${{ matrix.rustdoc }}
           stage: >-
             ${{ inputs.bot && github.event_name == 'push'
@@ -1181,6 +1182,7 @@ jobs:
           runs: ${{ matrix.runs }}
           spec: ${{ matrix.spec }}
           cache: ${{ matrix.cache }}
+          legacy: ${{ matrix.legacy }}
           rustdoc: ${{ matrix.rustdoc }}
           stage: "true"
           regen: ${{ inputs.bot }}
