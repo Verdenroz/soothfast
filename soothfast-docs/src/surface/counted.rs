@@ -66,6 +66,7 @@ mod tests {
             signature: String::new(),
             has_docs: false,
             example: false,
+            spans: Vec::new(),
         }
     }
 

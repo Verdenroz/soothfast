@@ -19,6 +19,7 @@ mod ci;
 mod codekey;
 mod config;
 mod coverage;
+mod coverage_executed;
 mod coverage_features;
 mod coverage_lang;
 mod coverage_report;
@@ -164,8 +165,9 @@ commands:
            (spec check-proto for each package, recorded as proto-PKG; with
            no -p, every package with a [[proto]] entry)
   ci       coverage [-p PKG]...
-           (coverage docs for each package, recorded as coverage-PKG; with
-           no -p, every docs package that sets a coverage minimum)
+           (coverage report --check for each package, recorded as coverage-PKG;
+           with no -p, every workspace library; fails only on a minimum the
+           package sets)
   ci       capture [-p PKG]...
            (docs capture --check for each package, recorded as capture-PKG;
            with no -p, every docs package)

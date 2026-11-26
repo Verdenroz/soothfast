@@ -9,8 +9,8 @@ use soothfast_spec::specified::{Specified, specified};
 use crate::config::{self, Group};
 use crate::coverage::pct;
 use crate::invoke::{self, CommonArgs};
-use crate::spec::gather_registered;
-use crate::spec_config;
+use crate::spec::{SpecReport, gather_registered};
+use crate::spec_config::{self, SpecEntry};
 use crate::spec_probe::{load_probes, probe_covers};
 
 /// A spec operation no registered route implements, with its spec file.
@@ -56,27 +56,60 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-fn measure(pkg: &str, common: &CommonArgs, min: Option<u32>, json: bool) -> Result<i32, String> {
+/// What a package registers against its spec files.
+struct Collected {
+    entries: Vec<SpecEntry>,
+    reports: Vec<SpecReport>,
+    items: Vec<Specified>,
+    unhandled: Vec<Unhandled>,
+}
+
+fn collect(pkg: &str, common: &CommonArgs) -> Result<Collected, String> {
     let pkg_dir = invoke::pkg_dir(pkg).map_err(|e| e.to_string())?;
     let entries = spec_config::load(&pkg_dir)?.entries;
-    if entries.is_empty() {
-        println!("coverage spec: {pkg} has no spec packages");
-        return Ok(0);
+    let mut collected = Collected {
+        entries,
+        reports: Vec::new(),
+        items: Vec::new(),
+        unhandled: Vec::new(),
+    };
+    if collected.entries.is_empty() {
+        return Ok(collected);
     }
     let probes = load_probes(&pkg_dir)?;
-    let reports = gather_registered(pkg, common)?;
-    let mut items: Vec<Specified> = Vec::new();
-    let mut unhandled: Vec<Unhandled> = Vec::new();
-    for rep in &reports {
-        items.extend(specified(&rep.spec_file, &rep.routes, &rep.rec, |op| {
-            probes.iter().any(|p| probe_covers(p, op))
-        }));
-        unhandled.extend(
+    collected.reports = gather_registered(pkg, common)?;
+    for rep in &collected.reports {
+        collected
+            .items
+            .extend(specified(&rep.spec_file, &rep.routes, &rep.rec, |op| {
+                probes.iter().any(|p| probe_covers(p, op))
+            }));
+        collected.unhandled.extend(
             rep.rec
                 .missing_handler
                 .iter()
                 .map(|op| (rep.spec_file.clone(), op.clone())),
         );
+    }
+    Ok(collected)
+}
+
+/// The routes and tools `pkg` registers, each with whether it is specified.
+/// Empty for a package with no spec packages.
+pub(crate) fn specified_items(pkg: &str, common: &CommonArgs) -> Result<Vec<Specified>, String> {
+    collect(pkg, common).map(|c| c.items)
+}
+
+fn measure(pkg: &str, common: &CommonArgs, min: Option<u32>, json: bool) -> Result<i32, String> {
+    let Collected {
+        entries,
+        reports,
+        items,
+        unhandled,
+    } = collect(pkg, common)?;
+    if entries.is_empty() {
+        println!("coverage spec: {pkg} has no spec packages");
+        return Ok(0);
     }
     let total = items.len() as u32;
     let missing = items.iter().filter(|i| !i.is_specified()).count() as u32;
