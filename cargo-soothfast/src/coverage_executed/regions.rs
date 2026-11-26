@@ -239,7 +239,7 @@ mod tests {
             file: "pkg/src/lib.rs".into(),
             ..span(5, 5)
         };
-        assert!(r.reaches(Path::new("/ws"), &[member.clone()]));
+        assert!(r.reaches(Path::new("/ws"), std::slice::from_ref(&member)));
         assert!(!r.reaches(Path::new("/ws/pkg"), &[member]));
     }
 

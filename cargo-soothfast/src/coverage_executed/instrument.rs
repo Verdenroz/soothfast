@@ -1,5 +1,5 @@
 //! The instrumented build: flags, target directory and the cargo commands
-//! that build and run a package's tests.
+//! that build and run a package's tests and benches.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -13,8 +13,8 @@ const FLAG: &str = "-Cinstrument-coverage";
 /// A package's instrumented build. Everything lands in its own target
 /// directory, so the artifacts `gate` and `measure` keep are never touched.
 pub struct Instrumented<'a> {
-    pub pkg: &'a str,
-    pub features: Option<&'a str>,
+    pkg: &'a str,
+    features: Option<&'a str>,
     host: String,
     target_dir: PathBuf,
 }
@@ -82,11 +82,8 @@ pub fn build_tests(instrumented: &Instrumented<'_>) -> Result<Vec<PathBuf>, Stri
     if !out.status.success() {
         return Err("the instrumented test build failed".into());
     }
-    Ok(test_executables(
-        invoke::cargo_messages(&out.stdout)
-            .collect::<Vec<_>>()
-            .as_slice(),
-    ))
+    let messages: Vec<Value> = invoke::cargo_messages(&out.stdout).collect();
+    Ok(test_executables(&messages))
 }
 
 /// The instrumented executable of the bench target `target`.
