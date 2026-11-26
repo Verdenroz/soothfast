@@ -711,9 +711,9 @@ runner has updated. A key a group's
 commands have no flag for is an error naming its line.
 
 `coverage_min.DIMENSION` is the same percent for one dimension of `coverage
-report`: `documented`, `documented_strict`, `measured_declared`, `gated`, and the
-names `tested`, `measured` and `specified`, which parse now and take effect
-once a command computes them. `ci coverage` fails a package that falls
+report`: `documented`, `documented_strict`, `tested`, `measured_declared`,
+`measured`, `gated` and `specified`. A `tested` or `measured` minimum also makes
+`ci coverage` run the instrumented build those figures need. `ci coverage` fails a package that falls
 short of any minimum set, and reports every dimension that has none.
 `coverage` is `coverage_min.documented`; setting both to different values in
 one table is an error naming both lines. The keys are dotted keys of `[docs]`
