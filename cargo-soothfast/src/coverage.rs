@@ -11,6 +11,7 @@ use soothfast_docs::surface::Surface;
 
 use crate::config::{self, Group};
 use crate::coverage_executed;
+use crate::coverage_features;
 use crate::coverage_lang::{self, Target};
 use crate::coverage_report;
 use crate::invoke::{self, CommonArgs};
@@ -20,11 +21,12 @@ pub fn run(args: &[String]) -> i32 {
         Some("measure") => measure(&args[1..]),
         Some("docs") => docs(&args[1..]),
         Some("executed") => coverage_executed::run(&args[1..]),
+        Some("features") => coverage_features::run(&args[1..]),
         Some("report") => coverage_report::run(&args[1..]),
         Some("spec") => crate::coverage_spec::run(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast coverage measure|docs|executed -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]\n       coverage report -p PKG [-p PKG ...] [--features F] [--json]\n       coverage report --dir D --lang L [--json]\n       coverage executed -p PKG [--tests|--benches] [--features F] [--json]\n       coverage spec -p PKG [--min PCT] [--json]"
+                "soothfast: usage: cargo soothfast coverage measure|docs|executed -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]\n       coverage features -p PKG [--json] [--max-outside N]\n       coverage report -p PKG [-p PKG ...] [--features F] [--json]\n       coverage report --dir D --lang L [--json]\n       coverage executed -p PKG [--tests|--benches] [--features F] [--json]\n       coverage spec -p PKG [--min PCT] [--json]"
             );
             2
         }

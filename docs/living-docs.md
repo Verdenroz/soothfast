@@ -157,16 +157,24 @@ prints one row per item and a summary per dimension:
 | `documented` | its doc comment has text |
 | `documented+` | it is documented and its docs hold a fenced Rust example, or a `soothfast:bind` or `soothfast:claim` marker in the repo's tracked markdown names its path or a re-export of it; a claim names a bench, so it counts through that bench's `covers` (or the bench's own id), and only in a package with a bench target |
 | `measured (declared)` | a bench's `covers` names it, or the bench is the item; callables only, other items show `n/a` |
+| `gated` | a bench in the gate's feature set declares it, through its `covers` or as the bench itself; callables only, other items show `n/a` |
 
 A fence counts as an example unless it names another language: no language,
 `rust` and rustdoc attributes such as `no_run`, `ignore` and `compile_fail`
 all count. `measured (declared)` reads what the benches declare; it does not
-check that the bench runs the item. A `covers` that names no public item of
+check that the bench runs the item.
+
+`gated` reads the registry under the gate's features (`[gate] features`, or
+`[package.NAME.gate]`), not the report's. Where they differ, the report builds
+the package's bench a second time to list that registry. An item is gated when
+a bench the gate runs declares it. Claims sharpen what the gate checks but do
+not widen what it measures, so they add nothing here.
+A `covers` that names no public item of
 the package prints `warning: bench ID covers PATH, which is not a public item
 of PKG` on stderr, from `coverage report` and `coverage measure` alike.
 
 With `--json`, stdout is one object, `items` holding `path`, `kind`,
-`documented`, `documented_strict` and `measured_declared` per item, and
+`documented`, `documented_strict`, `measured_declared` and `gated` per item, and
 `summary` holding `covered`, `total` and `pct` per dimension. A dimension a
 tree cannot tell, such as `documented+` for a non-Rust tree, is `null`, and
 the text report shows `n/a`.
@@ -195,6 +203,45 @@ underscore in Python. Members count only when their container does. Trees
 named `node_modules`, `build`, `target`, `dist`, `venv`, `test`, `tests` or
 `__tests__`, and hidden directories, are skipped. `coverage report --dir D
 --lang L` prints the same symbols with `documented` only.
+
+## Items the gate never compiles
+
+Coverage is computed under one feature set, so a public item behind any other
+feature is missing from every denominator and no report says so.
+`cargo soothfast coverage features` lists the features of a package that its
+gate does not enable, with the number of public items behind each:
+
+```bash
+cargo soothfast coverage features -p mylib
+cargo soothfast coverage features -p mylib --json
+cargo soothfast coverage features -p mylib --max-outside 0
+```
+
+The gate's set is the one `gate` resolves for the package (`[gate] features`,
+`[package.X.gate]`), with the package's defaults on. The reference surface is a
+rustdoc build with `--all-features`; an item it has and the gate's surface
+lacks is outside the gate. Items are public functions, types and inherent
+methods, not trait-impl methods or `#[doc(hidden)]` items.
+
+rustdoc records each item's `#[cfg(feature = "...")]`, and an item also takes
+the features of the module, type or `impl` block around it. The features of a
+`cfg` that the gate does not enable get the credit, so under
+`all(feature = "a", feature = "b")` with `a` on, the item counts for `b`. An
+item gated on several features, as with `any(..)`, counts under each, so the
+per-feature counts can sum to more than the outside total. An item gated
+by `not(feature = "x")` exists only while `x` is off, so a gate with `x` on
+misses it and `--all-features` does not have it either. A build with no
+features finds those; they are counted apart as `off under a feature`. An item
+whose `cfg` names no feature the parser can read, or whose gating sits on a
+private module that a `pub use` re-exports, is listed as `(cfg not read)`, with
+a warning that names the rustdoc JSON format the parser was written for.
+
+A package whose features cannot all be on at once (a `compile_error!` under
+`--all-features`) is measured one feature at a time instead: the gate's set
+plus that feature, one rustdoc run each, and the output says so.
+
+The command reports and exits 0. `--max-outside N` fails it when more than `N`
+items are outside the gate.
 
 ## Fence tags on rust code blocks
 
