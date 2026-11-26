@@ -169,9 +169,9 @@ impl Config {
         Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.site_run)
     }
 
-    /// The `[ci] separate` kinds or records that keep a job of their own.
-    pub fn separate(&self) -> Result<Vec<String>, String> {
-        Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.separate)
+    /// The `[ci] group` kinds whose checks share a job.
+    pub fn group(&self) -> Result<Vec<String>, String> {
+        Ok(ci::parse(&self.text).map_err(|e| self.located(e))?.group)
     }
 
     /// Whether `[ci] pages = true` asks for the built site to be deployed.

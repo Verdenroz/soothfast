@@ -832,27 +832,24 @@ commands reads rustdoc JSON (`spec`, `coverage` and `site`). Records stay one
 per package, so the verdict, the comment and the carried lanes see the same
 names as before.
 
-- The spec checks of packages that reach a workspace crate in common (through
-  a dependency of any kind) run in one job, `spec-shared`, because they would
-  each compile that crate. When the packages split into several such groups,
-  each is `spec-PKG-group`, named for its first package. A shared core crate
-  usually puts every spec package in one group, so they run one after
-  another in one job. `[ci] separate = ["spec"]` brings parallel jobs back for
-  an account with runners to spare.
+- Each spec check runs in its own job, `spec-PKG`, so the packages build in
+  parallel. `[ci] group = ["spec"]` puts the packages that reach a workspace
+  crate in common (through a dependency of any kind) in one job,
+  `spec-shared`, or `spec-PKG-group` named for its first package when they
+  split into several groups. Grouping halves runner jobs but runs the members
+  one after another, so it lengthens wall time when spec is the critical path.
 - The proto, coverage and capture checks, and a site that is not built in the
   docs job, run together in one job, `checks`.
 - A spec group with one package, and a lone check of another kind, keep the
   job named for their record.
 
-`[ci] separate` names the kinds or records that keep a job of their own:
+`[ci] group` names the check kinds that share a job; only `spec` can be
+grouped:
 
 ```toml
 [ci]
-separate = ["spec", "coverage-core"]
+group = ["spec"]
 ```
-
-A kind (`spec`) splits every check of that kind into its own job, and a record
-name (`coverage-core`) splits that one, whichever the kind.
 
 A cache or artifact is named for its job, so the first run of a regrouped job
 starts from the cache of its first package's earlier job where there is one.

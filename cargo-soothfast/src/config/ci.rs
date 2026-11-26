@@ -13,9 +13,9 @@ pub struct CiTable {
     /// The CI job kinds whose findings fail the run, where they are
     /// advisory by default. Only `"spec"` is accepted.
     pub enforce: Vec<String>,
-    /// The check kinds or records that keep a job of their own, where the
-    /// plan would run them together with others.
-    pub separate: Vec<String>,
+    /// The check kinds that share a job where each would otherwise have its
+    /// own. Only `"spec"` is accepted.
+    pub group: Vec<String>,
     /// Whether a default-branch push deploys the built site to GitHub Pages.
     pub pages: bool,
     /// The published site's `https://` URL, which holds the trend series.
@@ -33,6 +33,7 @@ pub struct CiTable {
 }
 
 const ENFORCEABLE: [&str; 1] = ["spec"];
+const GROUPABLE: [&str; 1] = ["spec"];
 
 /// Parse the `[ci]` table of a `soothfast.toml`.
 pub fn parse(text: &str) -> Result<CiTable, String> {
@@ -64,7 +65,15 @@ pub fn parse(text: &str) -> Result<CiTable, String> {
                 }
                 table.enforce = kinds;
             }
-            ("separate", TomlValue::StrArray(names)) => table.separate = names,
+            ("group", TomlValue::StrArray(kinds)) => {
+                if let Some(kind) = kinds.iter().find(|k| !GROUPABLE.contains(&k.as_str())) {
+                    return Err(format!(
+                        "line {lineno}: `{kind}` cannot be grouped under [ci]; only {} can",
+                        GROUPABLE.join(", ")
+                    ));
+                }
+                table.group = kinds;
+            }
             ("pages", TomlValue::Bool(pages)) => table.pages = pages,
             ("trend_url", TomlValue::Str(url)) if url.starts_with("https://") => {
                 table.trend_url = Some(url);
@@ -130,11 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn separate_lists_the_checks_that_keep_their_own_job() {
-        let text = "[ci]\nseparate = [\"spec\", \"coverage-core\"]\n";
-        assert_eq!(parse(text).unwrap().separate, ["spec", "coverage-core"]);
-        assert!(parse("[ci]\npages = true\n").unwrap().separate.is_empty());
-        assert!(parse("[ci]\nseparate = \"spec\"\n").is_err());
+    fn group_lists_the_kinds_that_share_a_job() {
+        assert_eq!(parse("[ci]\ngroup = [\"spec\"]\n").unwrap().group, ["spec"]);
+        assert!(parse("[ci]\npages = true\n").unwrap().group.is_empty());
+        assert!(parse("[ci]\ngroup = \"spec\"\n").is_err());
+        assert!(parse("[ci]\ngroup = [\"coverage\"]\n").is_err());
     }
 
     #[test]

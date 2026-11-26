@@ -117,32 +117,32 @@ fn collect(
 /// `spec` the spec packages whose builds it stages. A group of spec checks
 /// whose packages share workspace crates is one entry, which falls back to
 /// the cache of its first member's own job through `legacy`; the other kinds
-/// share one. A check whose kind or record name is in `separate` keeps an
-/// entry of its own.
+/// share one. Spec checks are grouped only when `group` names `spec`; by
+/// default each keeps an entry of its own.
 pub fn matrix<'a>(
     checks: impl Iterator<Item = &'a Check>,
     graph: Option<&Graph>,
-    separate: &[String],
+    group: &[String],
 ) -> Value {
     let checks: Vec<&Check> = checks.collect();
-    let alone = |c: &Check| separate.iter().any(|s| s == c.kind || *s == c.name());
     let specs: Vec<&Check> = checks
         .iter()
         .copied()
-        .filter(|c| c.kind == "spec" && !alone(c))
+        .filter(|c| c.kind == "spec")
         .collect();
     let others: Vec<&Check> = checks
         .iter()
         .copied()
-        .filter(|c| c.kind != "spec" && !alone(c))
+        .filter(|c| c.kind != "spec")
         .collect();
-    let groups = spec_groups(&specs, graph);
+    let groups = if group.iter().any(|g| g == "spec") {
+        spec_groups(&specs, graph)
+    } else {
+        specs.iter().map(|c| vec![*c]).collect()
+    };
     let include: Vec<Value> = checks
         .iter()
         .filter_map(|c| {
-            if alone(c) {
-                return Some(single(c));
-            }
             if c.kind == "spec" {
                 let group = groups.iter().find(|g| std::ptr::eq(g[0], *c))?;
                 return Some(spec_entry(group, groups.len() == 1));
@@ -318,22 +318,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn separate_names_a_kind_or_a_record_to_keep_apart() {
-        let checks = collect(true, &[], found, || Ok(true)).unwrap();
-        let by_kind = matrix(checks.iter(), None, &tokens(&["coverage", "spec"]));
-        assert_eq!(
-            slugs(&by_kind),
-            ["spec-server", "coverage-core", "coverage-server", "site"]
-        );
-        let by_record = matrix(checks.iter(), None, &tokens(&["coverage-core"]));
-        assert_eq!(
-            slugs(&by_record),
-            ["spec-server", "coverage-core", "checks"]
-        );
-        assert_eq!(by_record["include"][2]["runs"], "coverage:server site");
-    }
-
     fn tokens(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
     }
@@ -370,7 +354,16 @@ mod tests {
     }
 
     #[test]
-    fn spec_packages_sharing_a_crate_build_in_one_entry() {
+    fn spec_packages_sharing_a_crate_get_their_own_entries_by_default() {
+        let graph = workspace(&[("api", &["core"]), ("admin", &["core"]), ("core", &[])]);
+        let checks = [spec("api"), spec("admin")];
+        let m = matrix(checks.iter(), Some(&graph), &[]);
+        assert_eq!(slugs(&m), ["spec-api", "spec-admin"]);
+        assert_eq!(m["include"][0]["legacy"], "");
+    }
+
+    #[test]
+    fn grouped_spec_packages_sharing_a_crate_build_in_one_entry() {
         let graph = workspace(&[
             ("api", &["core"]),
             ("admin", &["core"]),
@@ -378,7 +371,7 @@ mod tests {
             ("lone", &[]),
         ]);
         let checks = [spec("api"), spec("admin")];
-        let m = matrix(checks.iter(), Some(&graph), &[]);
+        let m = matrix(checks.iter(), Some(&graph), &tokens(&["spec"]));
         assert_eq!(slugs(&m), ["spec-shared"]);
         let shared = &m["include"][0];
         assert_eq!(shared["runs"], "spec:api spec:admin");
@@ -395,14 +388,15 @@ mod tests {
             ("lone", &[]),
         ]);
         let checks = [spec("api"), spec("lone"), spec("admin")];
-        let m = matrix(checks.iter(), Some(&graph), &[]);
+        let m = matrix(checks.iter(), Some(&graph), &tokens(&["spec"]));
         assert_eq!(slugs(&m), ["spec-api-group", "spec-lone"]);
     }
 
     #[test]
-    fn without_a_graph_every_spec_check_is_one_group() {
+    fn without_a_graph_every_grouped_spec_check_is_one_group() {
         let checks = [spec("a"), spec("b")];
-        assert_eq!(slugs(&matrix(checks.iter(), None, &[])), ["spec-shared"]);
+        let group = tokens(&["spec"]);
+        assert_eq!(slugs(&matrix(checks.iter(), None, &group)), ["spec-shared"]);
     }
 
     #[test]
