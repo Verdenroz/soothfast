@@ -340,6 +340,10 @@ the profile right after it. Only code the region runs counts as <code>measured</
 Normal bench builds do not set the cfg, so the runner compiles without this
 code. Runner code that executes after the last item's region, such as
 printing results, still counts.</p>
+<p>A workspace whose <code>Cargo.lock</code> pins a registry <code>soothfast-measure</code> older than
+0.9.0 builds a runner without this code, so setup still counts. <code>coverage
+executed</code> and <code>coverage report --executed</code> warn once per package and mark
+<code>measured</code> as a bound (<code>partial</code> in the JSON).</p>
 <h3 id="what-it-does-not-see">What it does not see<a class="anchor" href="#what-it-does-not-see" aria-label="Link to this section">#</a></h3>
 <ul>
 <li>Doc tests are not instrumented, so an item only a doc test runs is untested.</li>
