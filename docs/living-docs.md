@@ -183,9 +183,11 @@ the features of the module, type or `impl` block around it. The features of a
 `cfg` that the gate does not enable get the credit, so under
 `all(feature = "a", feature = "b")` with `a` on, the item counts for `b`. An
 item gated on several features, as with `any(..)`, counts under each, so the
-per-feature counts can sum to more than the outside total. An item whose `cfg`
-names no feature (a `not(..)`, say) is listed as unattributed, with a warning
-that names the rustdoc JSON format the parser was written for.
+per-feature counts can sum to more than the outside total. An item gated
+by `not(feature = "x")` exists only while `x` is off, so a gate with `x` on
+misses it; those are counted apart as `off under a feature`. An item whose
+`cfg` names no feature the parser can read is listed as `(cfg not read)`, with
+a warning that names the rustdoc JSON format the parser was written for.
 
 A package whose features cannot all be on at once (a `compile_error!` under
 `--all-features`) is measured one feature at a time instead: the gate's set

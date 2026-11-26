@@ -23,6 +23,8 @@ pub struct Entry {
     pub counted: bool,
     /// Features the item, or anything enclosing it, is `cfg`-gated on.
     pub features: BTreeSet<String>,
+    /// Features the item, or anything enclosing it, is `cfg`-gated off under.
+    pub off: BTreeSet<String>,
 }
 
 /// What lies outside the gate's feature set.
@@ -34,7 +36,9 @@ pub struct Outside {
     pub outside: u32,
     /// Outside items per feature; an item gated on several counts under each.
     pub features: BTreeMap<String, u32>,
-    /// Outside items whose gating `cfg` names no feature.
+    /// Outside items present only while a gate-enabled feature is off.
+    pub off_under_feature: u32,
+    /// Outside items whose gating `cfg` the parser cannot read.
     pub unattributed: u32,
 }
 
@@ -64,8 +68,15 @@ pub fn public_items(doc: &Value) -> BTreeMap<String, Entry> {
             continue;
         }
         if let Some(path) = path_of(id) {
-            let features = cfg_features(item);
-            items.insert(path, Entry { counted, features });
+            let (features, off) = cfg_features(item);
+            items.insert(
+                path,
+                Entry {
+                    counted,
+                    features,
+                    off,
+                },
+            );
         }
     }
     for imp in index.values() {
@@ -79,7 +90,7 @@ pub fn public_items(doc: &Value) -> BTreeMap<String, Entry> {
         else {
             continue;
         };
-        let impl_features = cfg_features(imp);
+        let (impl_features, impl_off) = cfg_features(imp);
         let members = inner["items"].as_array().into_iter().flatten();
         for member in members.filter_map(|id| index.get(&id.as_u64()?.to_string())) {
             let Some(name) = member["name"].as_str() else {
@@ -88,13 +99,15 @@ pub fn public_items(doc: &Value) -> BTreeMap<String, Entry> {
             if member["visibility"] != "public" || !member["inner"]["function"].is_object() {
                 continue;
             }
-            let mut features = cfg_features(member);
+            let (mut features, mut off) = cfg_features(member);
             features.extend(impl_features.iter().cloned());
+            off.extend(impl_off.iter().cloned());
             items.insert(
                 format!("{owner}::{name}"),
                 Entry {
                     counted: true,
                     features,
+                    off,
                 },
             );
         }
@@ -104,41 +117,60 @@ pub fn public_items(doc: &Value) -> BTreeMap<String, Entry> {
     items
 }
 
-/// Each item also carries the features its enclosing modules and types are
-/// gated on, which rustdoc records on those items alone.
+/// Each item also carries the gating of its enclosing modules and types,
+/// which rustdoc records on those items alone.
 fn inherit_features(items: &mut BTreeMap<String, Entry>) {
-    let own: BTreeMap<String, BTreeSet<String>> = items
+    let own: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = items
         .iter()
-        .filter(|(_, entry)| !entry.features.is_empty())
-        .map(|(path, entry)| (path.clone(), entry.features.clone()))
+        .filter(|(_, entry)| !entry.features.is_empty() || !entry.off.is_empty())
+        .map(|(path, entry)| (path.clone(), (entry.features.clone(), entry.off.clone())))
         .collect();
     for (path, entry) in items.iter_mut() {
         let mut end = 0;
         while let Some(at) = path[end..].find("::") {
             end += at;
             if let Some(outer) = own.get(&path[..end]) {
-                entry.features.extend(outer.iter().cloned());
+                entry.features.extend(outer.0.iter().cloned());
+                entry.off.extend(outer.1.iter().cloned());
             }
             end += 2;
         }
     }
 }
 
-/// The features a `#[cfg]` on `item` names. A `not(..)` names features the
-/// item needs off, so the attribute attributes nothing.
-fn cfg_features(item: &Value) -> BTreeSet<String> {
+/// The features a `#[cfg]` on `item` needs on, and those it needs off. A
+/// `not(..)` wrapping anything but one feature is not read.
+fn cfg_features(item: &Value) -> (BTreeSet<String>, BTreeSet<String>) {
     const FEATURE: &str = "name: \"feature\", value: Some(\"";
-    let mut features = BTreeSet::new();
+    let (mut on, mut off) = (BTreeSet::new(), BTreeSet::new());
     let attrs = item["attrs"].as_array().into_iter().flatten();
     for attr in attrs.filter_map(|a| a["other"].as_str().or(a.as_str())) {
-        if !attr.contains("CfgTrace") || attr.contains("Not(") {
+        if !attr.contains("CfgTrace") {
             continue;
         }
-        for chunk in attr.split(FEATURE).skip(1) {
-            features.extend(chunk.split_once('"').map(|(name, _)| name.to_string()));
+        let mut chunks = attr.split(FEATURE);
+        let negations = attr.matches("Not(").count();
+        let mut direct = Vec::new();
+        let mut before = chunks.next().unwrap_or_default();
+        for chunk in chunks {
+            let Some((name, _)) = chunk.split_once('"') else {
+                continue;
+            };
+            direct.push((
+                name.to_string(),
+                before.trim_end_matches("NameValue { ").ends_with("Not("),
+            ));
+            before = chunk;
+        }
+        if direct.iter().filter(|(_, negated)| *negated).count() != negations {
+            continue;
+        }
+        for (name, negated) in direct {
+            let side = if negated { &mut off } else { &mut on };
+            side.insert(name);
         }
     }
-    features
+    (on, off)
 }
 
 /// Every feature a build with `requested` (plus the defaults) turns on, from
@@ -192,7 +224,14 @@ pub fn from_cfg(
         }
         out.outside += 1;
         let gating: Vec<&String> = entry.features.difference(enabled).collect();
-        out.unattributed += u32::from(gating.is_empty());
+        if gating.is_empty() {
+            let counter = if entry.off.is_empty() {
+                &mut out.unattributed
+            } else {
+                &mut out.off_under_feature
+            };
+            *counter += 1;
+        }
         for feature in gating {
             *out.features.entry(feature.clone()).or_default() += 1;
         }
@@ -215,6 +254,7 @@ pub fn from_runs(gate: &BTreeSet<String>, runs: &BTreeMap<String, BTreeSet<Strin
         reference: (gate.len() + union.len()) as u32,
         outside: union.len() as u32,
         features,
+        off_under_feature: 0,
         unattributed: 0,
     }
 }
@@ -229,7 +269,13 @@ pub fn run(args: &[String]) -> i32 {
         match a.as_str() {
             "-p" | "--package" => pkg = it.next().cloned(),
             "--json" => json = true,
-            "--max-outside" => max_outside = it.next().and_then(|v| v.parse().ok()),
+            "--max-outside" => match it.next().and_then(|v| v.parse().ok()) {
+                Some(n) => max_outside = Some(n),
+                None => {
+                    eprintln!("soothfast: --max-outside takes a whole number");
+                    return 2;
+                }
+            },
             other => {
                 eprintln!("soothfast: unknown coverage features arg {other:?}");
                 return 2;
@@ -352,13 +398,19 @@ fn render_text(pkg: &str, gate: Option<&str>, out: &Outside, route: Route) -> St
     for (feature, items) in &out.features {
         text.push_str(&format!("{feature:<24} {items} public item(s)\n"));
     }
+    if out.off_under_feature > 0 {
+        text.push_str(&format!(
+            "{:<24} {} public item(s)\n",
+            "off under a feature", out.off_under_feature
+        ));
+    }
     if out.unattributed > 0 {
         text.push_str(&format!(
             "{:<24} {} public item(s)\n",
-            "(no feature in its cfg)", out.unattributed
+            "(cfg not read)", out.unattributed
         ));
         text.push_str(&format!(
-            "warning: items with no feature in their cfg are either gated by `not(..)` or by a cfg this parser no longer reads (rustdoc JSON format {})\n",
+            "warning: items whose cfg names no feature the parser can read (rustdoc JSON format {})\n",
             invoke::RUSTDOC_FORMAT_VERSION
         ));
     }
@@ -383,6 +435,7 @@ fn render_json(pkg: &str, gate: Option<&str>, out: &Outside, route: Route) -> Va
         "public_items": out.reference,
         "outside": out.outside,
         "features": features,
+        "off_under_feature": out.off_under_feature,
         "unattributed": out.unattributed,
     })
 }
@@ -493,15 +546,21 @@ mod tests {
         let not = attrs(
             r#"#[attr = CfgTrace([Not(NameValue { name: "feature", value: Some("y"), span: src/lib.rs:18:11: 18:26 (#0) }, src/lib.rs:18:10: 18:27 (#0))])]"#,
         );
-        assert_eq!(cfg_features(&single), set(&["x"]));
-        assert_eq!(cfg_features(&all), set(&["a", "b"]));
-        assert_eq!(cfg_features(&any), set(&["a", "b"]));
-        assert_eq!(cfg_features(&not), set(&[]));
+        assert_eq!(cfg_features(&single), (set(&["x"]), set(&[])));
+        assert_eq!(cfg_features(&all), (set(&["a", "b"]), set(&[])));
+        assert_eq!(cfg_features(&any), (set(&["a", "b"]), set(&[])));
+        assert_eq!(cfg_features(&not), (set(&[]), set(&["y"])));
+        let nested = attrs(
+            r#"#[attr = CfgTrace([Not(Any([NameValue { name: "feature", value: Some("a"), span: s (#0) }], s (#0)), s (#0))])]"#,
+        );
+        assert_eq!(cfg_features(&nested), (set(&[]), set(&[])));
     }
 
     #[test]
-    fn a_negated_cfg_attributes_to_no_feature() {
-        assert!(public_items(&doc())["k::not_b"].features.is_empty());
+    fn a_negated_cfg_is_kept_apart_from_the_features_an_item_needs() {
+        let items = public_items(&doc());
+        assert!(items["k::not_b"].features.is_empty());
+        assert_eq!(items["k::not_b"].off, set(&["b"]));
     }
 
     #[test]
@@ -538,7 +597,8 @@ mod tests {
                 ("unused".to_string(), 0)
             ])
         );
-        assert_eq!(out.unattributed, 2);
+        assert_eq!(out.off_under_feature, 1);
+        assert_eq!(out.unattributed, 1);
     }
 
     #[test]
