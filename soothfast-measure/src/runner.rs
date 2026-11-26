@@ -11,6 +11,7 @@ use std::cell::Cell;
 
 use crate::json::esc;
 use crate::{alloc, asyncexec, callgrind, clientreq, profile, sweep, walltime};
+use soothfast_registry::filter;
 
 #[derive(PartialEq, Clone, Copy)]
 enum Backend {
@@ -83,7 +84,12 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
                 }
             }
             "--filter" => match it.next() {
-                Some(f) => args.filter = Some(f),
+                Some(f) => {
+                    if let Err(e) = filter::validate(&f) {
+                        die(&e);
+                    }
+                    args.filter = Some(f);
+                }
                 None => die("--filter needs a value"),
             },
             "--id" => match it.next() {
@@ -389,7 +395,7 @@ pub fn main() {
         }
     }
     if let Some(f) = &args.filter {
-        entries.retain(|e| e.id.contains(f.as_str()));
+        entries.retain(|e| filter::matches(f, &e.id));
     }
     if !args.ids.is_empty() {
         entries.retain(|e| args.ids.contains(&e.id));
@@ -423,10 +429,13 @@ pub fn main() {
                  registrations reach the linker",
             );
         } else {
-            die(&format!(
-                "no measured items match --filter {:?}",
-                args.filter.as_deref().unwrap_or("")
-            ));
+            let f = args.filter.as_deref().unwrap_or("");
+            let hint = if filter::has_unsupported_syntax(f) {
+                " (warning: --filter is a substring match; only `|`, a leading `^` and a trailing `$` are special)"
+            } else {
+                ""
+            };
+            die(&format!("no measured items match --filter {f:?}{hint}"));
         }
     }
 

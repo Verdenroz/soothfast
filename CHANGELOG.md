@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Measure pub(crate) code with in-crate benches (#513)
 - Fold every coverage dimension into coverage report (#517)
 - Report every coverage dimension in CI and badges (#504)
 - Report router drift for generated specs (#508)

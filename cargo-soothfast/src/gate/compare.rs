@@ -339,7 +339,10 @@ pub(super) fn compare(
             // Out-of-scope disappearances are expected: a --filter run only
             // measures matching ids, bench runs never see buildcost items,
             // and `-p PKG` never sees other packages' baseline entries.
-            let filtered_out = ctx.filter.as_deref().is_some_and(|f| !id.contains(f))
+            let filtered_out = ctx
+                .filter
+                .as_deref()
+                .is_some_and(|f| !soothfast_registry::filter::matches(f, id))
                 || ctx.shard.is_some_and(|s| !s.owns(id));
             let out_of_mode = id.starts_with("buildcost::") != ctx.buildcost_mode;
             // Bench ids start with the normalized package; buildcost ids

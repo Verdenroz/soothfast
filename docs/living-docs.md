@@ -61,6 +61,10 @@ a Rust item path as above. File binds are parsed with tree-sitter, so
 `docs check` and `docs accept` need no cargo project and no `-p`; a repo whose
 binds are all file binds never builds rustdoc JSON.
 
+`docs check --binds-only` runs the bind checks and skips claim evaluation and
+the generated-artifact check, so it needs no baseline and is the cheap check before a push. `--skip-claims`
+also needs none, but lists each claim as not evaluated.
+
 ```markdown ignore
 <!-- soothfast:bind src/app/util.py#Parser.parse -->
 <!-- soothfast:bind web/src/price.ts#formatPrice -->

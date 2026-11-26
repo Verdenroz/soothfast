@@ -41,7 +41,12 @@ pub(super) fn run_imported(g: &GateArgs, root: &std::path::Path) -> i32 {
         return err(&e);
     }
     if let Some(f) = &g.common.filter {
-        current.items.retain(|id, _| id.contains(f.as_str()));
+        if let Err(e) = soothfast_registry::filter::validate(f) {
+            return err(&e);
+        }
+        current
+            .items
+            .retain(|id, _| soothfast_registry::filter::matches(f, id));
         if current.items.is_empty() {
             return err("--filter matches no imported item; refusing to gate");
         }
