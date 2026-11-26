@@ -535,6 +535,30 @@ path, handler id, reconciliation status, the handler's own rustdoc summary,
 and a measured-cost line when the handler is also a measured item,
 attributed by id or <code>covers=</code>. It is the FastAPI-style page <code>#[route]</code> exists to
 produce without hand-maintaining it.</p>
+<h2 id="specified-coverage">Specified coverage<a class="anchor" href="#specified-coverage" aria-label="Link to this section">#</a></h2>
+<p><code>cargo soothfast coverage spec -p PKG [--min PCT] [--json]</code> reports, for
+every route and MCP tool the package registers, whether the committed spec
+file declares it and whether a probe in <code>probes.toml</code> exercises it:</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">text</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code>UNSPECIFIED POST /items (fx::create_item) in spec: no, probed: no
+            mismatch: method POST != spec PUT
+specified   GET /items/{id} (fx::get_item) in spec: yes, probed: yes
+coverage: 1/3 route(s) specified (33%)
+</code></pre></figure>
+<p>A route is in the spec when reconciliation matches its operation with the
+method and path the code serves; a disagreement is reported as <code>mismatch</code>
+and counts as not in the spec. A probe covers a route by the rule <code>spec
+probe</code> uses for its own count: same verb, and a path the route's template
+accepts. An HTTP probe cannot exercise an MCP tool, so a tool reports
+<code>probed: n/a</code> and counts as specified when it is in the spec. The handler's
+public path is the id the route registry records, and <code>--json</code> carries it
+with both flags for each route.</p>
+<p>Spec operations that no registered route implements are listed after the
+routes as <code>declared, no handler: &lt;operation&gt; &lt;method&gt; &lt;path&gt;</code> (<code>unhandled</code>
+in <code>--json</code>). They stay out of the total, which counts registered routes.</p>
+<p>The command is advisory. <code>--min PCT</code> fails it when the share of routes that
+are specified falls below <code>PCT</code>; no routes counts as 100%. A package with no
+<code>[[spec]]</code> entries prints that and exits 0, and a spec file with no
+registered routes prints <code>PKG: no routes registered for FILE</code>.</p>
 <h2 id="probing-data-quality">Probing data quality<a class="anchor" href="#probing-data-quality" aria-label="Link to this section">#</a></h2>
 <p>Reconciliation proves every operation exists on both sides; nothing above
 notices an endpoint that answers 200 with half its fields silently null —
@@ -645,6 +669,8 @@ scheduled workflow that files an issue on failure, not in PR CI.</p>
     <li><a class="toc-l2" href="#where-route-markers-live">Where route markers live</a></li>
   
     <li><a class="toc-l2" href="#the-endpoint-reference">The endpoint reference</a></li>
+  
+    <li><a class="toc-l2" href="#specified-coverage">Specified coverage</a></li>
   
     <li><a class="toc-l2" href="#probing-data-quality">Probing data quality</a></li>
   
