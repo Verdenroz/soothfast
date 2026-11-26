@@ -762,6 +762,26 @@ workspace, the others asking for `-p`.
 `baseline`, `trend`, `report`, `mcp`, `spec html`, `spec probe`, `sdk build`
 and `sdk publish` keep their own meaning without `-p`.
 
+### Servers and binaries
+
+A measured lane is a bench target on a package, not a library. A server or an
+MCP binary gets one the same way: give its crate a library target that holds
+the code worth measuring (a bench target links the library, never the
+binary), a `benches/soothfast.rs` that calls `soothfast::bench_main!()`, and
+`cargo soothfast init -p PKG` writes the dev-dependency, the `[[bench]]` table
+and the stub. `plan` then lists the package beside the rest, and the gate
+runs it as one more lane.
+
+A package that registers its routes in a separate `soothfast-routes` target
+keeps it; the two targets coexist, and `spec` commands read the routes one
+through `[package.NAME.spec] target`. Without a `soothfast` target such a
+package is not measured, and `init` says so.
+
+The gate's target is `soothfast` unless `[package.NAME.gate] target` names
+another, and `plan`, `ci gate` and `init` follow that setting, so a server
+whose measured items live in `benches/server.rs` is planned and gated under
+that name.
+
 ## Skipping CI jobs
 
 `[ci] skip` in the root `soothfast.toml` names the kinds of CI job not to run:
