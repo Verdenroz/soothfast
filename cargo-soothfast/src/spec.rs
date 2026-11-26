@@ -13,17 +13,26 @@ use crate::invoke::{self, CommonArgs};
 use crate::spec_config::{self, ProtoEntry};
 
 /// One spec file's declared surface reconciled against the route registry.
-struct SpecReport {
-    spec_file: String,
+pub(crate) struct SpecReport {
+    pub(crate) spec_file: String,
     kind: SpecKind,
     declared_count: usize,
-    routes: Vec<RouteDecl>,
-    rec: reconcile::Reconciliation,
+    pub(crate) routes: Vec<RouteDecl>,
+    pub(crate) rec: reconcile::Reconciliation,
 }
 
 /// Collect `#[route]` registrations grouped by spec file, parse each spec,
 /// and reconcile. Shared by `spec check` and `docs routes`.
 fn gather(pkg: &str, common: &CommonArgs) -> Result<Vec<SpecReport>, String> {
+    let reports = gather_registered(pkg, common)?;
+    if reports.is_empty() {
+        return Err(format!("no #[route] annotations registered in {pkg}"));
+    }
+    Ok(reports)
+}
+
+/// [`gather`] without the error for a package that registers no routes.
+pub(crate) fn gather_registered(pkg: &str, common: &CommonArgs) -> Result<Vec<SpecReport>, String> {
     let records = invoke::run_discovery(common, &["--list-routes"]).map_err(|e| e.to_string())?;
     let mut by_spec: BTreeMap<String, Vec<RouteDecl>> = BTreeMap::new();
     for r in records.iter().filter(|r| r["type"] == "route") {
@@ -37,9 +46,6 @@ fn gather(pkg: &str, common: &CommonArgs) -> Result<Vec<SpecReport>, String> {
             .entry(r["spec"].as_str().unwrap_or("").to_string())
             .or_default()
             .push(route);
-    }
-    if by_spec.is_empty() {
-        return Err(format!("no #[route] annotations registered in {pkg}"));
     }
     let pkg_dir = invoke::pkg_dir(pkg).map_err(|e| e.to_string())?;
 

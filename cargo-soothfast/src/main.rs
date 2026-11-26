@@ -20,6 +20,7 @@ mod codekey;
 mod config;
 mod coverage;
 mod coverage_lang;
+mod coverage_spec;
 mod cpu;
 mod docs;
 mod docs_binds;
@@ -293,6 +294,7 @@ commands:
   docs     gh-deploy [--baseline NAME] [--branch NAME] [--remote NAME] [--message MSG]
            (build + publish to a gh-pages-style branch, replaces `mkdocs gh-deploy`)
   coverage measure|docs [-p PKG] [--min PCT] [--features F]
+  coverage spec -p PKG [--min PCT] [--json]   (each route and tool: in the committed spec, probed)
   coverage docs --dir D --lang L [--min PCT]   (Kotlin, Java, Python, TS/JS symbols; reads
            [[project]] dir/ecosystem from soothfast.toml when no -p or --dir is given)
   spec     gen [-p PKG] [--features F] [--check]
