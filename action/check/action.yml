@@ -16,9 +16,6 @@ inputs:
     description: The spec packages whose builds to stage, separated by spaces.
     required: false
     default: ""
-  cache:
-    description: The name the rust-cache entry is shared under.
-    required: true
   legacy:
     description: The slug of the job a grouped entry replaced, whose cache it starts from when its own is empty.
     required: false
@@ -44,7 +41,8 @@ runs:
         toolchain: stable
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
-        shared-key: check-${{ inputs.cache }}
+        shared-key: check-${{ inputs.slug }}
+        save-if: ${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && env.SOOTHFAST_NO_TARGET != '1' }}
     - uses: ./.soothfast-action/action/install
     - name: Install the pinned rustdoc toolchain
       if: inputs.rustdoc == 'true'
@@ -71,6 +69,10 @@ runs:
         RUNS: ${{ inputs.runs }}
         SOOTHFAST_REGEN: ${{ inputs.regen == 'true' && 'true' || '' }}
       run: cargo soothfast ci checks $RUNS
+    - name: Note an empty target
+      if: always()
+      shell: bash
+      run: ./.soothfast-action/action/mark-empty-target.sh
     # Both lanes are store hits after the check, so this only copies what
     # the site's routes pages and the regeneration read.
     - name: Stage the spec builds

@@ -857,6 +857,13 @@ name (`coverage-core`) splits that one, whichever the kind.
 A cache or artifact is named for its job, so the first run of a regrouped job
 starts from the cache of its first package's earlier job where there is one.
 
+The build, test and check jobs restore the cargo cache on every run and save
+it only on a push to the default branch, and only when the target holds build
+output. A job whose stores all hit compiles nothing, and an empty target
+saved under a key that is never saved again would leave later runs to compile
+cold. Pull requests save nothing, so they do not spend the repository's cache
+budget.
+
 A finding of `ci spec` (`spec gate` found a consumer-breaking change, or
 `spec check` found a spec that no longer matches its routes) is advisory:
 the job exits 0, its output is in the log and the comment, and the section

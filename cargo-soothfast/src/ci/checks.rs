@@ -149,7 +149,7 @@ pub fn matrix<'a>(
             }
             std::ptr::eq(others[0], *c).then(|| match others.as_slice() {
                 [only] => single(only),
-                _ => entry("checks".into(), "other".into(), String::new(), &others),
+                _ => entry("checks".into(), String::new(), &others),
             })
         })
         .collect();
@@ -157,15 +157,10 @@ pub fn matrix<'a>(
 }
 
 fn single(check: &Check) -> Value {
-    entry(
-        check.name(),
-        check.kind.to_string(),
-        String::new(),
-        &[check],
-    )
+    entry(check.name(), String::new(), &[check])
 }
 
-fn entry(slug: String, cache: String, legacy: String, members: &[&Check]) -> Value {
+fn entry(slug: String, legacy: String, members: &[&Check]) -> Value {
     let runs: Vec<String> = members.iter().map(|c| c.token()).collect();
     let spec: Vec<&str> = members
         .iter()
@@ -176,7 +171,6 @@ fn entry(slug: String, cache: String, legacy: String, members: &[&Check]) -> Val
         "slug": slug,
         "runs": runs.join(" "),
         "spec": spec.join(" "),
-        "cache": cache,
         "legacy": legacy,
         "rustdoc": members.iter().any(|c| c.rustdoc),
     })
@@ -192,12 +186,7 @@ fn spec_entry(group: &[&Check], sole: bool) -> Value {
     } else {
         format!("{}-group", first.name())
     };
-    let cache = if sole {
-        "spec".to_string()
-    } else {
-        format!("spec-{slug}")
-    };
-    entry(slug, cache, first.name(), group)
+    entry(slug, first.name(), group)
 }
 
 /// The spec checks split into groups whose packages reach no workspace crate
@@ -311,11 +300,11 @@ mod tests {
         );
         assert_eq!(
             matrix(checks.iter(), None, &[])["include"][0],
-            json!({"slug": "spec-server", "runs": "spec:server", "spec": "server", "cache": "spec", "legacy": "", "rustdoc": true})
+            json!({"slug": "spec-server", "runs": "spec:server", "spec": "server", "legacy": "", "rustdoc": true})
         );
         assert_eq!(
             matrix(checks.iter(), None, &[])["include"][1],
-            json!({"slug": "checks", "runs": "coverage:core coverage:server site", "spec": "", "cache": "other", "legacy": "", "rustdoc": true})
+            json!({"slug": "checks", "runs": "coverage:core coverage:server site", "spec": "", "legacy": "", "rustdoc": true})
         );
         assert_eq!(matrix(checks.iter(), None, &[])["include"][2], Value::Null);
     }
@@ -394,7 +383,6 @@ mod tests {
         let shared = &m["include"][0];
         assert_eq!(shared["runs"], "spec:api spec:admin");
         assert_eq!(shared["spec"], "api admin");
-        assert_eq!(shared["cache"], "spec");
         assert_eq!(shared["legacy"], "spec-api");
     }
 
@@ -409,8 +397,6 @@ mod tests {
         let checks = [spec("api"), spec("lone"), spec("admin")];
         let m = matrix(checks.iter(), Some(&graph), &[]);
         assert_eq!(slugs(&m), ["spec-api-group", "spec-lone"]);
-        assert_eq!(m["include"][0]["cache"], "spec-spec-api-group");
-        assert_eq!(m["include"][1]["cache"], "spec");
     }
 
     #[test]
