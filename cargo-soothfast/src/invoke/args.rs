@@ -4,6 +4,9 @@ use std::sync::Once;
 
 use crate::cpu::{self, CpuMask};
 
+/// The cargo feature a package declares to compile its in-crate benches.
+pub const INTERNALS_FEATURE: &str = "soothfast";
+
 /// Flags shared by `measure` and `gate`.
 #[derive(Default, Clone)]
 pub struct CommonArgs {
@@ -108,6 +111,20 @@ impl CommonArgs {
 }
 
 impl CommonArgs {
+    /// `features` plus [`INTERNALS_FEATURE`] when the package declares it in
+    /// the tree at `dir`, which is what builds its in-crate benches.
+    pub fn bench_features(&self, dir: Option<&std::path::Path>) -> Option<String> {
+        let declared = self
+            .pkg
+            .as_deref()
+            .is_some_and(|pkg| crate::workspace::declares_feature(pkg, INTERNALS_FEATURE, dir));
+        match (&self.features, declared) {
+            (features, false) => features.clone(),
+            (Some(f), true) => Some(format!("{f},{INTERNALS_FEATURE}")),
+            (None, true) => Some(INTERNALS_FEATURE.to_string()),
+        }
+    }
+
     /// The mask `cpu` names, which is the default when unset.
     pub fn cpu_mask(&self) -> Result<CpuMask, String> {
         self.cpu

@@ -166,6 +166,22 @@ pub(crate) fn bench_target_in(meta: &Value, pkg: &str, target: &str) -> bool {
         })
 }
 
+/// Whether `pkg` declares the cargo feature `feature`, in `meta`.
+pub(crate) fn declares_feature_in(meta: &Value, pkg: &str, feature: &str) -> bool {
+    meta["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| p["name"].as_str() == Some(pkg))
+        .any(|p| p["features"].get(feature).is_some())
+}
+
+/// [`declares_feature_in`] for the tree at `dir`; false when cargo cannot
+/// read it.
+pub fn declares_feature(pkg: &str, feature: &str, dir: Option<&Path>) -> bool {
+    metadata(dir, true).is_ok_and(|meta| declares_feature_in(&meta, pkg, feature))
+}
+
 /// The source file of `pkg`'s bench target `target`, from `meta`.
 pub(crate) fn bench_src_in(meta: &Value, pkg: &str, target: &str) -> Option<String> {
     let packages = meta["packages"].as_array().into_iter().flatten();
@@ -354,6 +370,17 @@ mod tests {
         // A bench under a different name is not the one the gate runs.
         assert!(!bench_target_in(&m, "server", "criterion"));
         assert!(!bench_target_in(&m, "absent", "soothfast"));
+    }
+
+    #[test]
+    fn a_declared_feature_is_found_only_on_the_package_that_has_it() {
+        let internals = json!({ "name": "core", "id": "core", "targets": [],
+            "features": { "soothfast": ["dep:soothfast"] } });
+        let plain = json!({ "name": "plain", "id": "plain", "targets": [], "features": {} });
+        let m = meta(vec![internals, plain], vec!["core", "plain"], vec![]);
+        assert!(declares_feature_in(&m, "core", "soothfast"));
+        assert!(!declares_feature_in(&m, "plain", "soothfast"));
+        assert!(!declares_feature_in(&m, "absent", "soothfast"));
     }
 
     #[test]
