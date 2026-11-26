@@ -1261,8 +1261,10 @@ minimums its configuration sets: `coverage_min.DIMENSION` in `[docs]` or
 [Per-package defaults](gating.md#per-package-defaults)). A dimension with no minimum
 is advisory: it is in the comment and never fails the run. A package that
 misses a minimum exits 1 and records an `errored` verdict, which no label
-waives; a package whose report could not be built exits 2 and records the same
-verdict with the error in its output.
+waives. A package whose report could not be built, for lack of a rustdoc
+build for example, passes with `coverage could not run: ERROR` in its output
+when it sets no minimum, and exits 2 with an `errored` verdict when it sets
+one.
 
 Each package records a `check` verdict named `coverage-PKG`, and the record
 carries the per-dimension figures (covered, total, percent and minimum). The

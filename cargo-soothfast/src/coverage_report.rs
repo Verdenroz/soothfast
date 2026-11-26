@@ -94,11 +94,39 @@ pub fn run(args: &[String]) -> i32 {
                 0
             }
         }
+        Err((code, e)) if check => could_not_run(&pkgs, &e),
         Err((code, e)) => {
             eprintln!("soothfast: {e}");
-            if check { 2 } else { code }
+            code
         }
     }
+}
+
+/// A `--check` whose report could not be built fails only a package that sets
+/// a minimum; any other passes with a note in its output.
+fn could_not_run(pkgs: &[String], error: &str) -> i32 {
+    let settings = config::coverage_defaults(pkgs);
+    let code = unbuilt_exit(&settings);
+    if code == 0 {
+        println!("{}", skip_note(error));
+    } else {
+        eprintln!("soothfast: {error}");
+    }
+    code
+}
+
+fn unbuilt_exit(settings: &Result<Settings, String>) -> i32 {
+    match settings {
+        Ok(settings) if !settings.holds_minimum() => 0,
+        _ => 2,
+    }
+}
+
+fn skip_note(error: &str) -> String {
+    format!(
+        "coverage could not run: {}",
+        error.lines().next().unwrap_or_default()
+    )
 }
 
 /// A dimension's tally and the minimum it must reach, where one is set.
@@ -690,6 +718,31 @@ mod tests {
         assert!(short(settings(Some(83), Some(16))).is_empty());
         assert_eq!(short(settings(Some(84), None)), ["documented"]);
         assert_eq!(short(settings(None, Some(17))), ["documented_strict"]);
+    }
+
+    #[test]
+    fn an_unbuilt_report_fails_only_a_package_with_a_minimum() {
+        let with = |min: Settings| unbuilt_exit(&Ok(min));
+        assert_eq!(with(Settings::default()), 0);
+        let documented = Settings {
+            coverage: Some(80),
+            ..Settings::default()
+        };
+        assert_eq!(with(documented), 2);
+        let other = Settings {
+            minimums: [("gated".to_string(), 10)].into(),
+            ..Settings::default()
+        };
+        assert_eq!(with(other), 2);
+        assert_eq!(unbuilt_exit(&Err("bad config".into())), 2);
+    }
+
+    #[test]
+    fn the_skip_note_carries_the_first_error_line() {
+        assert_eq!(
+            skip_note("rustdoc failed\n  --> src/lib.rs"),
+            "coverage could not run: rustdoc failed"
+        );
     }
 
     #[test]

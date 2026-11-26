@@ -89,6 +89,11 @@ impl Settings {
         }
     }
 
+    /// Whether any coverage dimension has a minimum.
+    pub fn holds_minimum(&self) -> bool {
+        self.coverage.is_some() || !self.minimums.is_empty()
+    }
+
     /// The minimum percent `dimension` must reach, where one is set.
     pub fn minimum(&self, dimension: &str) -> Option<u32> {
         match dimension {

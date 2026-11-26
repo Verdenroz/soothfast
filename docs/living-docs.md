@@ -175,8 +175,9 @@ With `--check`, the report prints only the per-dimension summary, then a
 line for each dimension below its configured minimum
 (`coverage_min.DIMENSION`, see [gating](gating.md#per-package-defaults)), then
 one `soothfast-coverage` line holding the figures as JSON for `ci coverage` to
-record. It exits 1 when a minimum is not met and 2 when the report could not be
-built. A package with no minimum on `documented_strict`, `measured_declared` or
+record. It exits 1 when a minimum is not met, and 2 when the report could not be
+built and a minimum is set; with no minimum set it prints
+`coverage could not run: ERROR` and exits 0. A package with no minimum on `documented_strict`, `measured_declared` or
 `gated` reads a stored bench executable if there is one and never builds it;
 `measured (declared)` is then `n/a`, and `documented+` is a lower bound (its
 text carries `claims not read`, and `partial` is true in the figure).
