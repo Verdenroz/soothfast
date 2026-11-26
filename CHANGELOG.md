@@ -12,6 +12,8 @@
 
 ### ✨ Features
 
+- Report router drift for generated specs (#508)
+- Plan measured lanes by each package's gate target (#510)
 - Warn on loose and contradictory claims (#506)
 - Report items behind features no gate compiles (#500)
 - Add a gated column to coverage report (#503)
@@ -20,6 +22,10 @@
 - Suggest a lighter dev debuginfo profile (#494)
 - Share test passes across linked worktrees (#493)
 - Certify unchanged test runs, cache doc tests (#492)
+
+### 🔧 Internal
+
+- Write the fake launcher from a child process (#512)
 
 ---
 
@@ -38,6 +44,11 @@ CHANGED  soothfast_docs::surface::Surface (body)
 CHANGED  soothfast_docs::surface::from_rustdoc_with (body)
 
 # soothfast-spec
+ADDED    soothfast_spec::router
+ADDED    soothfast_spec::router::RouterDrift
+ADDED    soothfast_spec::router::RouterRoute
+ADDED    soothfast_spec::router::compare
+ADDED    soothfast_spec::router::scan_routes
 ADDED    soothfast_spec::specified
 ADDED    soothfast_spec::specified::Specified
 ADDED    soothfast_spec::specified::specified
