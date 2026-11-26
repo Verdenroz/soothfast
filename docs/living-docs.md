@@ -184,8 +184,12 @@ on, the workspace inputs, `Cargo.lock`, `rustc -vV` and the run, and prints
 With no stored run, `tested` and `measured` read `n/a (not run: pass
 --executed)`. A figure over several packages counts only those that ran; the
 summary then adds `N package(s) not run` and the figure is a lower bound. Only a run that finished is stored: a bench run that exits
-non-zero still yields a figure, but a lower bound (`partial` in the JSON, `lower
-bound` in the text) that is not kept, and a failing test run is an error.
+non-zero still yields a figure, but a lower bound (`partial` in the JSON,
+`(partial)` in the text, `lower bound` in its note) that is not kept, and a failing test run is an error. A
+registry `soothfast-measure` older than 0.9.0 in `Cargo.lock` has no setup
+exclusion, so `measured` also credits code only a bench's setup runs: it warns
+and marks the figure `partial` with an `upper bound` note. `partial` means
+the figure is not exact; its note gives the direction.
 
 The report builds the package's bench under the gate's features (`[gate]
 features`, or `[package.NAME.gate]`), not the report's: a bench target with

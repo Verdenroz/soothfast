@@ -25,8 +25,8 @@ pub use bench::{
     run_bench_dir, run_bench_in, run_bench_raw, run_discovery, run_discovery_in,
 };
 pub use git::{git, git_in};
-pub(crate) use harness::lock_packages;
 pub use harness::{HarnessSync, harness_versions, sync_harness_versions, tree_is_clean};
+pub(crate) use harness::{harness_predating_setup_exclusion, lock_packages};
 #[cfg(test)]
 pub use hostenv::Guest;
 pub use hostenv::{HostEnv, host_env, list_items};
