@@ -165,6 +165,15 @@ pub fn rustdoc_json_exactly(
     rustdoc_json_with(pkg, dir, Features::Exactly(features), visibility)
 }
 
+/// [`rustdoc_json_in`] for `pkg` built with `--all-features`.
+pub fn rustdoc_json_all(
+    pkg: &str,
+    dir: Option<&Path>,
+    visibility: Visibility,
+) -> io::Result<(Value, PathBuf)> {
+    rustdoc_json_with(pkg, dir, Features::All, visibility)
+}
+
 /// The features `pkg`'s own build enables in each package it depends on,
 /// by lib crate name: what `cargo tree` resolves for `pkg` with `features`.
 pub fn dependency_features(
@@ -209,6 +218,8 @@ enum Features<'a> {
     Requested(Option<&'a str>),
     /// This set and nothing else.
     Exactly(&'a str),
+    /// Every feature of the package.
+    All,
 }
 
 impl Features<'_> {
@@ -216,6 +227,7 @@ impl Features<'_> {
         match self {
             Features::Requested(f) => f.map(str::to_string),
             Features::Exactly(f) => Some(format!("--no-default-features {f}")),
+            Features::All => Some("--all-features".to_string()),
         }
     }
 }
@@ -337,6 +349,9 @@ fn rustdoc_command(
         Features::Requested(None) => {}
         Features::Exactly(f) => {
             cmd.args(["--no-default-features", "--features", f]);
+        }
+        Features::All => {
+            cmd.arg("--all-features");
         }
     }
     cmd.args(["--", "--output-format", "json", "-Zunstable-options"]);
