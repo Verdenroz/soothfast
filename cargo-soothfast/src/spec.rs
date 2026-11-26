@@ -6,17 +6,18 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use soothfast_spec::{RouteDecl, SpecKind, providers, reconcile, sniff_kind};
+use soothfast_spec::{DeclaredOp, RouteDecl, SpecKind, providers, reconcile, sniff_kind};
 
 use crate::config::{self, Group};
 use crate::invoke::{self, CommonArgs};
 use crate::spec_config::{self, ProtoEntry};
+use crate::spec_router;
 
 /// One spec file's declared surface reconciled against the route registry.
 pub(crate) struct SpecReport {
     pub(crate) spec_file: String,
     kind: SpecKind,
-    declared_count: usize,
+    declared: Vec<DeclaredOp>,
     pub(crate) routes: Vec<RouteDecl>,
     pub(crate) rec: reconcile::Reconciliation,
 }
@@ -61,7 +62,7 @@ pub(crate) fn gather_registered(pkg: &str, common: &CommonArgs) -> Result<Vec<Sp
         reports.push(SpecReport {
             spec_file,
             kind,
-            declared_count: declared.len(),
+            declared,
             routes,
             rec,
         });
@@ -116,12 +117,28 @@ fn run_check(args: &[String]) -> i32 {
         }
     };
 
+    let pkg_dir = match invoke::pkg_dir(&pkg) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    let spec_cfg = match spec_config::load(&pkg_dir) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
     let mut failures = 0u32;
     for rep in &reports {
         let spec_file = &rep.spec_file;
         println!(
             "spec: {spec_file} ({:?}) — {} declared, {} matched",
-            rep.kind, rep.declared_count, rep.rec.matched
+            rep.kind,
+            rep.declared.len(),
+            rep.rec.matched
         );
         for d in &rep.rec.missing_handler {
             failures += 1;
@@ -143,6 +160,9 @@ fn run_check(args: &[String]) -> i32 {
                 "FAIL  {spec_file}: `{}` ({}) mismatch: {what}",
                 r.operation, r.id
             );
+        }
+        for note in spec_router::notes(&pkg_dir, &spec_cfg, spec_file, rep.kind, &rep.declared) {
+            println!("{note}");
         }
     }
 
@@ -362,7 +382,7 @@ pub fn routes_cmd(
         ));
         out_md.push_str(&format!(
             "\n{}\n",
-            gauge_html(rep.rec.matched, rep.declared_count)
+            gauge_html(rep.rec.matched, rep.declared.len())
         ));
 
         let mut routes = rep.routes.clone();

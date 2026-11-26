@@ -27,6 +27,7 @@ pub mod probe;
 pub mod proto;
 pub mod providers;
 pub mod reconcile;
+pub mod router;
 pub mod schema;
 pub mod serialize;
 pub mod specified;
