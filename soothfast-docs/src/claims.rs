@@ -208,6 +208,17 @@ mod tests {
     }
 
     #[test]
+    fn allocation_bytes_claims_evaluate_against_the_baseline() {
+        let baseline =
+            json!({ "items": { "demo::f": { "alloc": { "allocs": 3, "bytes": 16.0 } } } });
+        let c = parse("demo::f.alloc.bytes <= 16").unwrap();
+        assert_eq!((c.backend.as_str(), c.metric.as_str()), ("alloc", "bytes"));
+        assert_eq!(evaluate(&c, &baseline).unwrap(), (true, 16.0));
+        let c = parse("demo::f.alloc.bytes < 16").unwrap();
+        assert_eq!(evaluate(&c, &baseline).unwrap(), (false, 16.0));
+    }
+
+    #[test]
     fn imported_ids_may_hold_dots_and_spaces() {
         let c = parse("pytest::t.py::test_parse.walltime.median_ns < 1us").unwrap();
         assert_eq!(c.item, "pytest::t.py::test_parse");

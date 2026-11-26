@@ -36,6 +36,15 @@ fn a_measured_claim_is_checked() {
 }
 
 #[test]
+fn an_allocation_bytes_claim_is_checked() {
+    let b = json!({ "items": { "core::vec": { "alloc": { "allocs": 3, "bytes": 16 } } } });
+    let holds = read("core::vec.alloc.bytes <= 16", &b);
+    assert_eq!(holds, Reading::Decided(Outcome::Holds(16.0)));
+    let violated = read("core::vec.alloc.bytes <= 8", &b);
+    assert_eq!(violated, Reading::Decided(Outcome::Violated(16.0)));
+}
+
+#[test]
 fn reused_counters_are_checked_and_their_walltime_reads_unmeasured() {
     let b = baseline(&[entry(
         Reason::ReusedWalltime,
