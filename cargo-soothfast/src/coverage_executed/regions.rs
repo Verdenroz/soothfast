@@ -15,6 +15,9 @@ const CODE_REGION: u64 = 0;
 #[derive(Debug, Default)]
 pub struct Regions {
     by_file: BTreeMap<PathBuf, BTreeSet<(u32, u32)>>,
+    /// The run that produced them failed, so more code may have run than
+    /// they show.
+    pub partial: bool,
 }
 
 impl Regions {
@@ -69,7 +72,10 @@ impl Regions {
                 Some((PathBuf::from(file), ranges))
             })
             .collect::<Option<_>>()?;
-        Some(Regions { by_file })
+        Some(Regions {
+            by_file,
+            partial: false,
+        })
     }
 
     /// Whether any executed region shares a line with one of `spans`, which

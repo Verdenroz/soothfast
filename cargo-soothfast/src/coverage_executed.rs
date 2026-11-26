@@ -69,7 +69,11 @@ fn run_and_export(
     let regions = std::fs::create_dir_all(&profraw)
         .map_err(|e| e.to_string())
         .and_then(|()| instrument::run_into(run, &profraw, lenient))
-        .and_then(|()| export::regions(tools, executables, &profraw));
+        .and_then(|complete| {
+            let mut regions = export::regions(tools, executables, &profraw)?;
+            regions.partial = !complete;
+            Ok(regions)
+        });
     let _ = std::fs::remove_dir_all(&profraw);
     regions
 }

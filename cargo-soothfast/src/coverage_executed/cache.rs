@@ -29,10 +29,16 @@ pub fn through(
         return Ok(regions);
     }
     let regions = run()?;
-    if std::fs::write(&file, regions.to_json().to_string()).is_ok() {
-        runcache::prune_oldest(&dir, runcache::KEEP);
-    }
+    store(&dir, &file, &regions);
     Ok(regions)
+}
+
+/// Only a run that finished is kept: a failed one stands for whatever ran
+/// before it stopped, and would otherwise answer every later lookup.
+fn store(dir: &Path, file: &Path, regions: &Regions) {
+    if !regions.partial && std::fs::write(file, regions.to_json().to_string()).is_ok() {
+        runcache::prune_oldest(dir, runcache::KEEP);
+    }
 }
 
 fn environment(pkg: &str) -> Result<String, String> {
@@ -58,4 +64,23 @@ fn key(scope: &str, environment: &str, executables: &[PathBuf]) -> Result<String
 fn load(file: &Path) -> Option<Regions> {
     let text = std::fs::read_to_string(file).ok()?;
     Regions::from_json(&serde_json::from_str(&text).ok()?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_partial_run_is_not_stored() {
+        let dir = std::env::temp_dir().join(format!("soothfast-cov-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (whole, partial) = (dir.join("whole.json"), dir.join("partial.json"));
+        store(&dir, &whole, &Regions::default());
+        let mut failed = Regions::default();
+        failed.partial = true;
+        store(&dir, &partial, &failed);
+        assert!(load(&whole).is_some());
+        assert!(!partial.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
