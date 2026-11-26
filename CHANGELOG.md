@@ -12,9 +12,21 @@
 
 ### ✨ Features
 
+- Report whether routes and tools are specified (#498)
 - Suggest a lighter dev debuginfo profile (#494)
 - Share test passes across linked worktrees (#493)
 - Certify unchanged test runs, cache doc tests (#492)
+
+---
+
+### 🔍 API surface
+
+```
+# soothfast-spec
+ADDED    soothfast_spec::specified
+ADDED    soothfast_spec::specified::Specified
+ADDED    soothfast_spec::specified::specified
+```
 
 
 ## 0.8.0 - 2026-11-22
