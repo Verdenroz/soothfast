@@ -19,6 +19,7 @@ mod ci;
 mod codekey;
 mod config;
 mod coverage;
+mod coverage_features;
 mod coverage_lang;
 mod coverage_report;
 mod coverage_spec;
@@ -296,6 +297,8 @@ commands:
   docs     gh-deploy [--baseline NAME] [--branch NAME] [--remote NAME] [--message MSG]
            (build + publish to a gh-pages-style branch, replaces `mkdocs gh-deploy`)
   coverage measure|docs [-p PKG] [--min PCT] [--features F]
+  coverage features -p PKG [--json] [--max-outside N]   (public items behind features the
+           gate never builds)
   coverage report -p PKG [-p PKG]... [--features F] [--json]   (per-item documented,
            documented+ and declared-measured; --dir D --lang L reports documented only)
   coverage spec -p PKG [--min PCT] [--json]   (each route and tool: in the committed spec, probed)
