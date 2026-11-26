@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Warn on loose and contradictory claims (#506)
 - Report items behind features no gate compiles (#500)
 - Add a gated column to coverage report (#503)
 - Per-item coverage report with a shared denominator (#499)
@@ -26,6 +27,9 @@
 
 ```
 # soothfast-docs
+ADDED    soothfast_docs::claims::HEADROOM_FACTOR
+ADDED    soothfast_docs::claims::contradicts
+ADDED    soothfast_docs::claims::loose_by
 ADDED    soothfast_docs::surface::Counted
 ADDED    soothfast_docs::surface::Surface::counted
 ADDED    soothfast_docs::surface::counted::Counted
