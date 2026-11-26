@@ -1,13 +1,47 @@
 # Changelog
 
-## Unreleased (draft vs v0.8.0)
+## 0.9.0 - 2026-11-26
 
 <!-- soothfast:notes -->
-<!-- ### Overview -->
-<!-- What this release means for someone using it. One paragraph. -->
+### Overview
+Coverage now says what a gate actually checks. `cargo soothfast coverage
+report` gives one row per public item, counting functions, types and
+inherent methods once each across `pub use` paths, with separate
+dimensions: documented, documented with an example or marker, tested and
+measured from instrumented test and bench runs, measured as declared by
+`covers`, gated, and specified for routes and tools. `ci coverage` reports
+every library crate, fails only on minimums a repository sets, and puts the
+figures in the verdict and the badges. `cargo soothfast test` answers an
+unchanged tree without running cargo, caches doc-test passes per package and
+shares passes across linked worktrees. A crate can bench its private code
+from inside itself behind a `soothfast` feature, any package can take a
+measured lane through its gate target, and `spec check` notes router routes
+a generated spec is missing. `measure` gains `-j`, `--no-cache` and
+alternation in `--filter`; gate triage names a change in the resolved
+feature set or the locked dependencies; `docs check` warns about loose and
+contradictory claims.
 
-<!-- ### Upgrade notes -->
-<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+### Upgrade notes
+- `coverage docs` counts inherent methods. A crate with a documentation
+  minimum can drop below it until those methods have `///` docs.
+- `ci coverage` runs `coverage report --check` for every workspace member
+  with a library target, not only packages with a minimum. Every dimension
+  is advisory unless `coverage_min.<dimension>` (or the existing `coverage`
+  key) sets a minimum, and a report that cannot be built fails only a
+  package that sets one.
+- The coverage badge `report render` writes is the mean of the dimensions
+  that were computed, with one badge per dimension beside it, so it usually
+  reads lower than the old documented-only figure.
+- `tested` and `measured` need the `llvm-tools` rustup component and run
+  only for `coverage report --executed`, `coverage executed`, or a `tested`
+  or `measured` minimum.
+- Setup-time exclusion in `measured` needs a bench harness of 0.9.0 or
+  later. With an older `soothfast` dependency the figure is marked partial
+  and counts code that runs only in bench setup.
+- `--filter` treats `|`, `^` and `$` as alternation and anchors. An empty
+  alternative is an error.
+- `soothfast_docs::surface::ItemInfo` gains public fields, so code that
+  builds it with a struct literal needs the new fields.
 <!-- /soothfast:notes -->
 
 ### ✨ Features
