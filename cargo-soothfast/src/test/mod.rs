@@ -5,7 +5,7 @@ mod cert;
 pub(crate) mod config;
 #[cfg(test)]
 pub(crate) mod fixture;
-mod key;
+pub(crate) mod key;
 pub(crate) mod last;
 pub(crate) mod project;
 mod runner;
