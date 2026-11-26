@@ -52,6 +52,7 @@ pub fn check(
     let mut base: Option<Claims> = None;
     let mut failures = 0u32;
     let mut skipped = 0u32;
+    let mut advisories = 0u32;
     for (file, doc) in docs {
         for cm in &doc.claims {
             let at = format!("{file}:{} claim `{}`", cm.line, cm.expr);
@@ -82,7 +83,19 @@ pub fn check(
                 }
             };
             match outcome {
-                Outcome::Holds(actual) => println!("ok    {at} (actual {actual:.1})"),
+                Outcome::Holds(actual) => {
+                    println!("ok    {at} (actual {actual:.1})");
+                    let loose = claims::parse(&cm.expr)
+                        .ok()
+                        .and_then(|c| Some((c.bound, claims::loose_by(&c, actual)?)));
+                    if let Some((bound, ratio)) = loose {
+                        println!(
+                            "warn  {at}: bound {bound} is {ratio:.1}x from the measured {actual:.1}, past {}x",
+                            claims::HEADROOM_FACTOR
+                        );
+                        advisories += 1;
+                    }
+                }
                 Outcome::Violated(actual) => {
                     failures += 1;
                     println!("FAIL  {at} VIOLATED (actual {actual:.1})");
@@ -98,10 +111,43 @@ pub fn check(
             }
         }
     }
+    for warning in contradictions(docs) {
+        println!("warn  {warning}");
+        advisories += 1;
+    }
     if skipped > 0 {
         println!("docs check: {skipped} claim(s) not evaluated");
     }
+    if advisories > 0 {
+        println!("docs check: {advisories} claim advisory(ies), which do not fail the check");
+    }
     Ok(failures)
+}
+
+/// One line per pair of claims that bound the same metric the same way with
+/// different bounds, naming both locations.
+fn contradictions(docs: &[(&str, &markdown::Doc)]) -> Vec<String> {
+    let parsed: Vec<(String, claims::Claim)> = docs
+        .iter()
+        .flat_map(|(file, doc)| {
+            doc.claims.iter().filter_map(move |cm| {
+                let claim = claims::parse(&cm.expr).ok()?;
+                Some((format!("{file}:{}", cm.line), claim))
+            })
+        })
+        .collect();
+    let mut out = Vec::new();
+    for (i, (at, a)) in parsed.iter().enumerate() {
+        for (other, b) in &parsed[i + 1..] {
+            if claims::contradicts(a, b) {
+                out.push(format!(
+                    "{at} and {other} both claim {}.{}.{} with different bounds ({} and {})",
+                    a.item, a.backend, a.metric, a.bound, b.bound
+                ));
+            }
+        }
+    }
+    out
 }
 
 /// A baseline claims are read against, with its entries and owners read once.
