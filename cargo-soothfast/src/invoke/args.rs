@@ -34,6 +34,8 @@ pub struct CommonArgs {
     /// `--cpu`: what callgrind hides from the measured process beyond
     /// AVX-512, in the form [`CpuMask::parse`] takes.
     pub cpu: Option<String>,
+    /// `-j N` / `--jobs N`, handed to cargo for the bench build.
+    pub jobs: Option<String>,
     /// `--no-item-cache`: measure every item even where a stored measurement
     /// of the same executed code exists.
     pub no_item_cache: bool,
@@ -81,6 +83,14 @@ impl std::fmt::Display for Shard {
 impl CommonArgs {
     /// Consume one flag if it belongs to the common set.
     pub fn try_parse<'a>(&mut self, arg: &str, it: &mut impl Iterator<Item = &'a String>) -> bool {
+        let attached = arg.strip_prefix("--jobs=").or_else(|| {
+            arg.strip_prefix("-j")
+                .filter(|n| n.starts_with(|c: char| c.is_ascii_digit()))
+        });
+        if let Some(n) = attached {
+            self.jobs = Some(n.to_string());
+            return true;
+        }
         let slot = match arg {
             "--no-item-cache" => {
                 self.no_item_cache = true;
@@ -98,6 +108,7 @@ impl CommonArgs {
             "--bench" | "--target" => &mut self.target,
             "--codegen-units" => &mut self.codegen_units,
             "--cpu" => &mut self.cpu,
+            "-j" | "--jobs" => &mut self.jobs,
             _ => return false,
         };
         *slot = it.next().cloned();
@@ -176,6 +187,22 @@ const CANONICAL_CODEGEN_UNITS: &str = "1";
 mod tests {
     use super::{CommonArgs, Shard, with_internals};
     use crate::cpu::CpuMask;
+
+    #[test]
+    fn jobs_parse_from_either_spelling() {
+        for flag in ["-j", "--jobs"] {
+            let argv = [flag.to_string(), "4".to_string()];
+            let mut it = argv[1..].iter();
+            let mut common = CommonArgs::default();
+            assert!(common.try_parse(flag, &mut it));
+            assert_eq!(common.jobs.as_deref(), Some("4"));
+        }
+        for attached in ["-j8", "--jobs=8"] {
+            let mut common = CommonArgs::default();
+            assert!(common.try_parse(attached, &mut [].iter()));
+            assert_eq!(common.jobs.as_deref(), Some("8"));
+        }
+    }
 
     #[test]
     fn the_internals_feature_is_added_once_and_only_when_declared() {

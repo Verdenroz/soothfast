@@ -383,6 +383,23 @@ fn a_vanished_item_fails_only_in_the_shard_that_owns_it() {
 }
 
 #[test]
+fn a_vanished_item_under_an_alternation_filter_fails_only_when_it_matches() {
+    let gone =
+        json!({ "version": 1, "items": { "pkg::gone": {}, "pkg::bt_base_to_htf_index": {} } });
+    let head = run_with(ItemMetrics::default());
+    let under = |filter: &str| {
+        let ctx = CompareCtx {
+            filter: Some(filter.into()),
+            ..ctx()
+        };
+        gate_failures_with(&gone, &head, ctx).0
+    };
+    assert_eq!(under("gone|bt_base"), 1);
+    assert_eq!(under("^pkg::gone$|other"), 1);
+    assert_eq!(under("other|bt_base"), 0);
+}
+
+#[test]
 fn an_item_reused_from_the_store_softens_its_walltime() {
     let mut doc = walltime_reference();
     doc["items"]["pkg::bt_base_to_htf_index"]["reused_from"] = json!("item cache");

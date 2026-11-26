@@ -5,6 +5,7 @@
 //! back through accessor functions. This crate is the only runtime dependency
 //! the user-facing surface carries.
 
+pub mod filter;
 pub use linkme;
 
 use std::cell::Cell;

@@ -8,7 +8,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, Once, PoisonError};
 
 use serde_json::{Value, json};
 use soothfast_site::toml::logical_lines;
@@ -113,6 +113,35 @@ pub fn capture(common: &CommonArgs, dir: Option<&Path>) -> BuildStamp {
         rustflags: hash(&rustflag_lines(root.as_deref())),
         cpu: common.cpu_stamp(),
     }
+}
+
+/// Warn, once per process, that a `codegen-units` set for the bench profile
+/// is overridden by the measurement pin.
+pub fn warn_inert_codegen_units(common: &CommonArgs, dir: Option<&Path>) {
+    static SAID: Once = Once::new();
+    SAID.call_once(|| {
+        let root = match dir {
+            Some(d) => Some(d.to_path_buf()),
+            None => crate::invoke::workspace_root().ok(),
+        };
+        let lines = profile_lines(root.as_deref());
+        let env_set = std::env::var_os("CARGO_PROFILE_BENCH_CODEGEN_UNITS").is_some();
+        if let Some(note) = inert_codegen_units(common, env_set, &lines) {
+            eprintln!("soothfast: warning: {note}");
+        }
+    });
+}
+
+fn inert_codegen_units(common: &CommonArgs, env_set: bool, lines: &[String]) -> Option<String> {
+    let pin = common.codegen_units_env()?;
+    let manifest_set = lines
+        .iter()
+        .any(|l| l.starts_with("profile.bench.codegen-units"));
+    (env_set || manifest_set).then(|| {
+        format!(
+            "codegen-units from [profile.bench] or CARGO_PROFILE_BENCH_CODEGEN_UNITS is overridden by the measurement pin ({pin}) for workspace members; dependencies keep the configured value. Pass --codegen-units inherit to use it for members too"
+        )
+    })
 }
 
 /// Why two runs are not comparable.
@@ -351,6 +380,21 @@ mod tests {
             "{}",
             why.detail
         );
+    }
+
+    #[test]
+    fn a_bench_codegen_units_is_flagged_only_while_the_pin_is_active() {
+        let set = vec!["profile.bench.codegen-units = 16".to_string()];
+        let pinned = CommonArgs::default();
+        let note = inert_codegen_units(&pinned, false, &set).unwrap();
+        assert!(note.contains("pin (1)") && note.contains("--codegen-units inherit"));
+        assert!(inert_codegen_units(&pinned, true, &[]).is_some());
+        assert!(inert_codegen_units(&pinned, false, &[]).is_none());
+        let inherit = CommonArgs {
+            codegen_units: Some("inherit".into()),
+            ..CommonArgs::default()
+        };
+        assert!(inert_codegen_units(&inherit, true, &set).is_none());
     }
 
     #[test]
