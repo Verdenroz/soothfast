@@ -108,6 +108,11 @@ After building, each test executable gets a key. A stored pass under
 it. Only passes are stored, never failures, and the store keeps the 2048 most
 recently used entries.
 
+Linked git worktrees share the main worktree's `.soothfast/tests` rather
+than each keeping its own, so a fresh `git worktree add` starts with every
+pass the main worktree has. A pass is written to a temporary file and renamed
+into place, so worktrees running at once never read a partial entry.
+
 The key hashes:
 
 - the executable's loaded sections, so source changes, features, profile and
