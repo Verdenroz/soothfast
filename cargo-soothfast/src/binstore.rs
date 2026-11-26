@@ -1,12 +1,11 @@
 //! Built bench executables kept on disk, keyed by everything that produces
 //! their bytes. The key and the entries follow `store`.
 //!
-//! The run cache, the item cache and the link maps all name a binary by its
-//! digest, so an entry must be the bytes cargo would write or be a miss. Two
-//! things beyond the sources reach those bytes: the checkout path (through
-//! `env!("CARGO_MANIFEST_DIR")`, `file!()` and debug info) and the target
-//! directory (through `OUT_DIR`). Both are part of the key, so a tree built at
-//! another path misses.
+//! The key names a tree's content and the toolchain, not where the tree lives,
+//! so an executable built at the checkout root also serves the merge-base
+//! worktree of that commit. Absolute paths baked into the bytes (through
+//! `env!("CARGO_MANIFEST_DIR")`, `OUT_DIR` and debug info) are those of the
+//! tree that built the entry.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,7 +37,6 @@ pub struct Request<'a> {
     pub toolchain: Option<&'a str>,
     /// `rustc -vV` of the compiler cargo picks.
     pub rustc: &'a str,
-    pub target_dir: &'a Path,
     /// `CARGO_HOME`, where registry sources (and so their panic paths) live.
     pub cargo_home: &'a str,
     pub env: &'a [(String, String)],
@@ -48,7 +46,7 @@ pub struct Request<'a> {
 /// live in `crate_dirs`. `None` when part of the input cannot be read.
 pub fn key(root: &Path, crate_dirs: &[PathBuf], req: &Request) -> Option<String> {
     let head = format!(
-        "bin1\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}",
+        "bin2\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}\u{1}{}",
         req.pkg,
         req.target,
         req.profile,
@@ -56,8 +54,6 @@ pub fn key(root: &Path, crate_dirs: &[PathBuf], req: &Request) -> Option<String>
         req.codegen_units.unwrap_or(""),
         req.toolchain.unwrap_or(""),
         req.rustc,
-        root.display(),
-        req.target_dir.display(),
         req.cargo_home,
     );
     store::cheap_key_skipping(root, crate_dirs, &head, req.env, is_markdown)
@@ -297,8 +293,6 @@ mod tests {
     use super::*;
     use crate::store::testing::{Repo, inputs};
 
-    const TARGET: &str = "/t";
-
     fn request() -> Request<'static> {
         Request {
             pkg: "app",
@@ -308,7 +302,6 @@ mod tests {
             codegen_units: Some("1"),
             toolchain: None,
             rustc: "rustc 1.99.0",
-            target_dir: Path::new(TARGET),
             cargo_home: "/home/x/.cargo",
             env: &[],
         }
@@ -354,10 +347,6 @@ mod tests {
                 ..request()
             },
             Request {
-                target_dir: Path::new("/other"),
-                ..request()
-            },
-            Request {
                 cargo_home: "/root/.cargo",
                 ..request()
             },
@@ -391,9 +380,17 @@ mod tests {
     }
 
     #[test]
-    fn the_same_tree_at_another_path_has_another_key() {
+    fn the_same_tree_at_another_path_has_the_same_key() {
         let one = Repo::new("bin-path-one");
         let two = Repo::new("bin-path-two");
+        assert_eq!(key_with(&one, &request()), key_with(&two, &request()));
+    }
+
+    #[test]
+    fn another_tree_has_another_key() {
+        let one = Repo::new("bin-tree-one");
+        let two = Repo::new("bin-tree-two");
+        two.write("app/src/lib.rs", "pub fn app() -> u8 { 0 }\n");
         assert_ne!(key_with(&one, &request()), key_with(&two, &request()));
     }
 
@@ -618,10 +615,6 @@ mod tests {
             },
             Request {
                 codegen_units: None,
-                ..request()
-            },
-            Request {
-                target_dir: Path::new("/elsewhere"),
                 ..request()
             },
             Request {

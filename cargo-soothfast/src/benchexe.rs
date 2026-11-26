@@ -133,7 +133,6 @@ impl Plan {
                 codegen_units: self.codegen_units.as_deref(),
                 toolchain: self.toolchain.as_deref(),
                 rustc: &self.rustc,
-                target_dir: &self.target_dir,
                 cargo_home: &self.cargo_home,
                 env: &self.env,
             },

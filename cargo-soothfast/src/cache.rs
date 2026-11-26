@@ -101,7 +101,6 @@ mod tests {
             codegen_units: None,
             toolchain: None,
             rustc: "rustc 1.99.0",
-            target_dir: Path::new("/t"),
             cargo_home: "/home/x/.cargo",
             env: &[],
         };
