@@ -94,7 +94,7 @@ pub fn run(args: &[String]) -> i32 {
                 0
             }
         }
-        Err((code, e)) if check => could_not_run(&pkgs, &e),
+        Err((_, e)) if check => could_not_run(&pkgs, &e),
         Err((code, e)) => {
             eprintln!("soothfast: {e}");
             code
