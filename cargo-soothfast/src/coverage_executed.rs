@@ -2,14 +2,18 @@
 //! builds mapped onto rustdoc spans.
 
 use std::path::PathBuf;
+use std::process::Command;
 
 use crate::invoke::CommonArgs;
 
+mod cache;
+mod cli;
 mod export;
 mod instrument;
 mod regions;
 mod tools;
 
+pub use cli::run;
 pub use regions::Regions;
 
 /// The regions the package's tests execute. Doc tests are not instrumented.
@@ -17,13 +21,9 @@ pub fn tests(pkg: &str, features: Option<&str>) -> Result<Regions, String> {
     let tools = tools::locate()?;
     let build = instrument::Instrumented::new(pkg, features, tools::host_triple()?)?;
     let executables = instrument::build_tests(&build)?;
-    let profraw = scratch("tests");
-    let ran = std::fs::create_dir_all(&profraw)
-        .map_err(|e| e.to_string())
-        .and_then(|()| instrument::run_into(build.tests(false), &profraw))
-        .and_then(|()| export::regions(&tools, &executables, &profraw));
-    let _ = std::fs::remove_dir_all(&profraw);
-    ran
+    cache::through("tests", &executables, || {
+        run_and_export(&tools, &executables, "tests", build.tests(false))
+    })
 }
 
 /// The regions the package's bench target executes, one pass over each item.
@@ -37,15 +37,29 @@ pub fn benches(common: &CommonArgs) -> Result<Regions, String> {
     let build =
         instrument::Instrumented::new(pkg, common.features.as_deref(), tools::host_triple()?)?;
     let executable = instrument::build_bench(&build, target)?;
-    let profraw = scratch("benches");
-    let ran = std::fs::create_dir_all(&profraw)
-        .map_err(|e| e.to_string())
-        .and_then(|()| instrument::run_into(build.benches(target, false), &profraw))
-        .and_then(|()| export::regions(&tools, &[executable], &profraw));
-    let _ = std::fs::remove_dir_all(&profraw);
-    ran
+    let executables = [executable];
+    cache::through("benches", &executables, || {
+        run_and_export(
+            &tools,
+            &executables,
+            "benches",
+            build.benches(target, false),
+        )
+    })
 }
 
-fn scratch(what: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("soothfast-coverage-{what}-{}", std::process::id()))
+fn run_and_export(
+    tools: &tools::Tools,
+    executables: &[PathBuf],
+    what: &str,
+    run: Command,
+) -> Result<Regions, String> {
+    let profraw =
+        std::env::temp_dir().join(format!("soothfast-coverage-{what}-{}", std::process::id()));
+    let regions = std::fs::create_dir_all(&profraw)
+        .map_err(|e| e.to_string())
+        .and_then(|()| instrument::run_into(run, &profraw))
+        .and_then(|()| export::regions(tools, executables, &profraw));
+    let _ = std::fs::remove_dir_all(&profraw);
+    regions
 }

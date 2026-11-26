@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use soothfast_docs::surface::{ItemInfo, Span, Surface};
 
 /// Region kind 0 in the export format: counted code, as opposed to
@@ -14,7 +14,7 @@ const CODE_REGION: u64 = 0;
 /// The line ranges of every region with a nonzero count, by absolute file.
 #[derive(Debug, Default)]
 pub struct Regions {
-    by_file: BTreeMap<PathBuf, Vec<(u32, u32)>>,
+    by_file: BTreeMap<PathBuf, BTreeSet<(u32, u32)>>,
 }
 
 impl Regions {
@@ -43,10 +43,33 @@ impl Regions {
                     self.by_file
                         .entry(path.clone())
                         .or_default()
-                        .push((begin as u32, end as u32));
+                        .insert((begin as u32, end as u32));
                 }
             }
         }
+    }
+
+    /// The regions as `{file: [[begin, end], ...]}`.
+    pub fn to_json(&self) -> Value {
+        Value::Object(
+            self.by_file
+                .iter()
+                .map(|(file, ranges)| (file.to_string_lossy().into_owned(), json!(ranges)))
+                .collect(),
+        )
+    }
+
+    /// Regions written by [`Regions::to_json`].
+    pub fn from_json(doc: &Value) -> Option<Regions> {
+        let by_file = doc
+            .as_object()?
+            .iter()
+            .map(|(file, ranges)| {
+                let ranges: BTreeSet<(u32, u32)> = serde_json::from_value(ranges.clone()).ok()?;
+                Some((PathBuf::from(file), ranges))
+            })
+            .collect::<Option<_>>()?;
+        Some(Regions { by_file })
     }
 
     /// Whether any executed region shares a line with one of `spans`, which
@@ -236,6 +259,15 @@ mod tests {
         }));
         assert!(r.reaches(&dir.join("link"), &[span(1, 1)]));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn regions_survive_a_json_round_trip() {
+        let mut r = regions(export(json!([[1, 1, 2, 2, 1, 0, 0, 0]])));
+        r.add_export(&export(json!([[1, 1, 2, 2, 4, 1, 0, 0]])));
+        let back = Regions::from_json(&r.to_json()).unwrap();
+        assert_eq!(back.to_json(), r.to_json());
+        assert!(back.reaches(Path::new("/ws"), &[span(2, 2)]));
     }
 
     #[test]

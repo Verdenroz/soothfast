@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::config::{self, Group};
+use crate::coverage_executed;
 use crate::coverage_lang::{self, Target};
 use crate::invoke::{self, CommonArgs};
 
@@ -14,9 +15,10 @@ pub fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("measure") => measure(&args[1..]),
         Some("docs") => docs(&args[1..]),
+        Some("executed") => coverage_executed::run(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast coverage measure|docs -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]"
+                "soothfast: usage: cargo soothfast coverage measure|docs|executed -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]"
             );
             2
         }

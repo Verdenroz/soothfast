@@ -1,0 +1,176 @@
+//! `coverage executed`: the public items tests and benches run.
+
+use std::collections::BTreeSet;
+
+use serde_json::json;
+
+use super::regions::{self, Declared};
+use crate::invoke::CommonArgs;
+
+/// Items are `tested` and `measured`; a column that was not run is absent.
+pub fn run(args: &[String]) -> i32 {
+    match execute(args) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            1
+        }
+    }
+}
+
+struct Flags {
+    common: CommonArgs,
+    tests: bool,
+    benches: bool,
+    json: bool,
+}
+
+fn parse(args: &[String]) -> Result<Flags, String> {
+    let mut flags = Flags {
+        common: CommonArgs::default(),
+        tests: false,
+        benches: false,
+        json: false,
+    };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--tests" => flags.tests = true,
+            "--benches" => flags.benches = true,
+            "--json" => flags.json = true,
+            other if flags.common.try_parse(other, &mut it) => {}
+            other => return Err(format!("unknown coverage executed arg {other:?}")),
+        }
+    }
+    if !flags.tests && !flags.benches {
+        flags.tests = true;
+        flags.benches = true;
+    }
+    Ok(flags)
+}
+
+fn execute(args: &[String]) -> Result<(), String> {
+    let flags = parse(args)?;
+    let pkg = flags
+        .common
+        .pkg
+        .as_deref()
+        .ok_or("coverage executed requires -p PKG")?;
+    let features = flags.common.features.as_deref();
+    let (surface, _, root) = crate::docs_support::surface_in(pkg, None, features)?;
+    let declared = regions::declared(&surface);
+    let tested = match flags.tests {
+        true => Some(regions::executed(
+            &declared,
+            &root,
+            &super::tests(pkg, features)?,
+        )),
+        false => None,
+    };
+    let measured = match flags.benches {
+        true => Some(regions::executed(
+            &declared,
+            &root,
+            &super::benches(&flags.common)?,
+        )),
+        false => None,
+    };
+    let columns = Columns { tested, measured };
+    if flags.json {
+        println!("{}", columns.json(pkg, &declared));
+    } else {
+        columns.print(&declared);
+    }
+    Ok(())
+}
+
+struct Columns<'a> {
+    tested: Option<BTreeSet<&'a str>>,
+    measured: Option<BTreeSet<&'a str>>,
+}
+
+impl Columns<'_> {
+    fn json(&self, pkg: &str, declared: &[Declared<'_>]) -> serde_json::Value {
+        let items: Vec<_> = declared
+            .iter()
+            .map(|d| {
+                let mut item = json!({ "path": d.path, "kind": d.kind });
+                for (name, set) in [("tested", &self.tested), ("measured", &self.measured)] {
+                    if let Some(set) = set {
+                        item[name] = json!(set.contains(d.path));
+                    }
+                }
+                item
+            })
+            .collect();
+        json!({ "package": pkg, "items": items })
+    }
+
+    fn print(&self, declared: &[Declared<'_>]) {
+        let mark = |set: &Option<BTreeSet<&str>>, path: &str, word: &str| match set {
+            Some(set) if set.contains(path) => word.to_string(),
+            Some(_) => " ".repeat(word.len()),
+            None => String::new(),
+        };
+        for d in declared {
+            let tested = mark(&self.tested, d.path, "tested");
+            let measured = mark(&self.measured, d.path, "measured");
+            println!("{tested} {measured} {} ({})", d.path, d.kind);
+        }
+        for (name, set) in [("tested", &self.tested), ("measured", &self.measured)] {
+            if let Some(set) = set {
+                println!(
+                    "coverage executed: {}/{} public item(s) {name}",
+                    set.len(),
+                    declared.len()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flags(args: &[&str]) -> Result<Flags, String> {
+        parse(&args.iter().map(|a| a.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn no_column_flag_runs_both() {
+        let f = flags(&["-p", "demo"]).unwrap();
+        assert!(f.tests && f.benches);
+        assert_eq!(f.common.pkg.as_deref(), Some("demo"));
+    }
+
+    #[test]
+    fn a_column_flag_runs_only_that_column() {
+        let f = flags(&["-p", "demo", "--benches", "--json"]).unwrap();
+        assert!(!f.tests && f.benches && f.json);
+    }
+
+    #[test]
+    fn an_unknown_flag_is_refused() {
+        assert!(flags(&["--nope"]).is_err());
+    }
+
+    #[test]
+    fn json_omits_a_column_that_did_not_run() {
+        let declared = [Declared {
+            path: "demo::run",
+            kind: "function",
+            spans: &[],
+        }];
+        let columns = Columns {
+            tested: Some(BTreeSet::from(["demo::run"])),
+            measured: None,
+        };
+        assert_eq!(
+            columns.json("demo", &declared),
+            json!({ "package": "demo", "items": [
+                { "path": "demo::run", "kind": "function", "tested": true }
+            ] })
+        );
+    }
+}
