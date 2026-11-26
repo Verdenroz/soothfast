@@ -219,6 +219,7 @@ impl Config {
             Group::Docs => {
                 let docs = self.docs()?;
                 Settings {
+                    features: self.gate()?.features,
                     paths: Some(docs.paths).filter(|p| !p.is_empty()),
                     coverage: docs.coverage,
                     ..Settings::default()
@@ -304,6 +305,15 @@ mod tests {
         assert_eq!(docs.baseline.as_deref(), Some("main"));
         let spec = cfg.resolve(&pkgs(&["unlisted"]), Group::Spec).unwrap();
         assert_eq!(spec.features.as_deref(), Some("repo"));
+    }
+
+    #[test]
+    fn docs_inherit_the_repo_wide_gate_features() {
+        let cfg = config("[gate]\nfeatures = \"repo\"\n\n[package.core]\nfeatures = \"all\"\n");
+        let docs = |p: &[&str]| cfg.resolve(&pkgs(p), Group::Docs).unwrap().features;
+        assert_eq!(docs(&["core"]).as_deref(), Some("all"));
+        assert_eq!(docs(&["unlisted"]).as_deref(), Some("repo"));
+        assert_eq!(docs(&[]).as_deref(), Some("repo"));
     }
 
     #[test]
