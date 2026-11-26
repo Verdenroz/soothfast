@@ -48,6 +48,15 @@ fn measure(args: &[String]) -> i32 {
         eprintln!("soothfast: {e}");
         return 2;
     }
+    if common.features.is_none() {
+        match config::coverage_defaults(std::slice::from_ref(&pkg)) {
+            Ok(defaults) => common.features = defaults.features,
+            Err(e) => {
+                eprintln!("soothfast: {e}");
+                return 2;
+            }
+        }
+    }
 
     // What is measured: registry list, attributing `covers` where set.
     let records = match invoke::run_discovery(&common, &["--list"]) {
@@ -121,7 +130,7 @@ fn docs(args: &[String]) -> i32 {
             }
         }
     }
-    let (features, min) = match config::defaults(&pkgs, Group::Docs) {
+    let (features, min) = match config::coverage_defaults(&pkgs) {
         Ok(defaults) => (features.or(defaults.features), min.or(defaults.coverage)),
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -194,13 +203,24 @@ fn docs(args: &[String]) -> i32 {
     0
 }
 
-/// The paths the registry's items declare they measure: their `covers`, or
-/// their own id where it is empty.
-pub(crate) fn declared_covers(records: &[Value]) -> BTreeSet<String> {
+/// The registry's benches as `(id, covers)`; `covers` is empty when the
+/// bench measures itself.
+pub(crate) fn benches(records: &[Value]) -> impl Iterator<Item = (&str, &str)> {
     records
         .iter()
         .filter(|r| r["type"] == "item")
-        .filter_map(measured_path)
+        .filter_map(|r| Some((r["id"].as_str()?, r["covers"].as_str().unwrap_or(""))))
+}
+
+/// What a bench declares it measures: its `covers`, else its own id.
+pub(crate) fn measured_path<'a>(id: &'a str, covers: &'a str) -> &'a str {
+    if covers.is_empty() { id } else { covers }
+}
+
+/// The paths the registry's items declare they measure.
+pub(crate) fn declared_covers(records: &[Value]) -> BTreeSet<String> {
+    benches(records)
+        .map(|(id, covers)| measured_path(id, covers).to_string())
         .collect()
 }
 
@@ -208,26 +228,17 @@ pub(crate) fn declared_covers(records: &[Value]) -> BTreeSet<String> {
 /// (`alloc`, `p99` or `complexity`). A harness that lists no assertions
 /// yields none.
 pub(crate) fn asserted_covers(records: &[Value]) -> BTreeSet<String> {
-    records
+    let asserted: Vec<Value> = records
         .iter()
-        .filter(|r| r["type"] == "item")
         .filter(|r| r["assertions"].as_object().is_some_and(|a| !a.is_empty()))
-        .filter_map(measured_path)
-        .collect()
-}
-
-fn measured_path(record: &Value) -> Option<String> {
-    let covers = record["covers"].as_str().unwrap_or("");
-    let id = record["id"].as_str()?;
-    Some(if covers.is_empty() { id } else { covers }.to_string())
+        .cloned()
+        .collect();
+    declared_covers(&asserted)
 }
 
 /// A warning per bench whose `covers` names no item or method of `surf`.
 pub(crate) fn dangling_covers(records: &[Value], surf: &Surface, pkg: &str) -> Vec<String> {
-    records
-        .iter()
-        .filter(|r| r["type"] == "item")
-        .filter_map(|r| Some((r["id"].as_str()?, r["covers"].as_str()?)))
+    benches(records)
         .filter(|(_, covers)| !covers.is_empty() && surf.lookup(covers).is_none())
         .map(|(id, covers)| {
             format!("warning: bench {id} covers {covers}, which is not a public item of {pkg}")

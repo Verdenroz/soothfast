@@ -86,7 +86,7 @@ fn rows(
     lang: Option<&str>,
     features: Option<String>,
 ) -> Result<Vec<Row>, Failure> {
-    let defaults = config::defaults(pkgs, Group::Docs).map_err(|e| (2, e))?;
+    let defaults = config::coverage_defaults(pkgs).map_err(|e| (2, e))?;
     let features = features.or(defaults.features);
     let targets = coverage::lang_targets(pkgs, dirs, lang).map_err(|e| (2, e))?;
     let mut rows = Vec::new();
@@ -216,12 +216,9 @@ impl Markers {
 
     /// What a claimed bench `covers` (its own id where that is empty).
     fn claimed_items(&self, records: &[Value]) -> BTreeSet<String> {
-        records
-            .iter()
-            .filter(|r| r["type"] == "item")
-            .filter_map(|r| Some((r["id"].as_str()?, r["covers"].as_str()?)))
+        coverage::benches(records)
             .filter(|(id, _)| self.claimed.contains(*id))
-            .map(|(id, covers)| if covers.is_empty() { id } else { covers })
+            .map(|(id, covers)| coverage::measured_path(id, covers))
             .map(str::to_string)
             .collect()
     }
