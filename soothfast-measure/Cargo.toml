@@ -26,3 +26,6 @@ soothfast = { path = "../soothfast", features = ["runner"] }
 [[bench]]
 name = "soothfast"
 harness = false
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(soothfast_coverage)'] }

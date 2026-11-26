@@ -205,6 +205,50 @@ pub fn test_file(rel_path: &str, doc: &Doc) -> Option<String> {
     Some(out)
 }
 
+/// What one page's rust blocks and markers add up to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PageCounts {
+    /// Blocks gen-tests turns into a running `#[test]`.
+    pub executed: usize,
+    /// Blocks that are only compiled (`no_run`) or never generated
+    /// (`ignore`, `compile_fail` and the other rustdoc attributes).
+    pub compile_only: usize,
+    /// `soothfast:bind` markers.
+    pub binds: usize,
+    /// `soothfast:claim` markers.
+    pub claims: usize,
+}
+
+impl PageCounts {
+    /// Whether nothing on the page ties its prose to code or a measurement.
+    pub fn unanchored(&self) -> bool {
+        self.binds == 0 && self.claims == 0
+    }
+}
+
+/// Count `doc`'s rust blocks by whether they execute, and its markers.
+/// Capture blocks run in the capture example, not as doc tests, so they are
+/// in neither count.
+pub fn page_counts(doc: &Doc) -> PageCounts {
+    let mut counts = PageCounts {
+        binds: doc.binds.len(),
+        claims: doc.claims.len(),
+        ..PageCounts::default()
+    };
+    for block in doc
+        .blocks
+        .iter()
+        .filter(|b| b.is_rust_example() && !b.is_capture())
+    {
+        if block.is_testable_rust() && !block.has_tag("no_run") {
+            counts.executed += 1;
+        } else {
+            counts.compile_only += 1;
+        }
+    }
+    counts
+}
+
 /// The one example target every capture block of a package compiles into.
 pub const CAPTURE_DIR: &str = "examples/soothfast_capture";
 
@@ -387,6 +431,21 @@ fn top_level_main(line: &str) -> Option<bool> {
 mod tests {
     use super::*;
     use crate::markdown;
+
+    #[test]
+    fn page_counts_split_executed_from_compile_only() {
+        let md = "<!-- soothfast:bind item=a::b -->\n```rust\nlet x = 1;\n```\n```rust no_run\nloop {}\n```\n```rust ignore\nx();\n```\n```rust,compile_fail\nbad;\n```\n```rust capture-output\nprintln!(\"h\");\n```\n```console\n$ ls\n```\n";
+        let counts = page_counts(&markdown::scan(md).unwrap());
+        assert_eq!((counts.executed, counts.compile_only), (1, 3));
+        assert_eq!((counts.binds, counts.claims), (1, 0));
+        assert!(!counts.unanchored());
+    }
+
+    #[test]
+    fn a_page_with_no_markers_is_unanchored() {
+        let counts = page_counts(&markdown::scan("```rust\nlet x = 1;\n```\n").unwrap());
+        assert!(counts.unanchored());
+    }
 
     #[test]
     fn generates_tests_and_examples() {
