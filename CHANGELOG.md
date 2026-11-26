@@ -16,6 +16,7 @@
 
 ### 🐛 Fixes
 
+- ci: Run spec packages in parallel jobs by default (#533)
 - Reuse stored bench executables for the merge-base (#530)
 
 
