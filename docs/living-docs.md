@@ -142,6 +142,18 @@ an imported id that contains ` - ` still reads as one item. The bound applies
 to the left value minus the right. A side with no measurement fails the claim and
 the message names it; a ` -` with nothing after it fails to parse.
 
+Two advisory lints run beside the claim check. Neither fails `docs check`;
+they print as `warn` lines and in the verdict.
+
+- A held claim whose bound is more than 4x from the measured value (the
+  bound over the measured value for `<`/`<=`, the reverse for `>`/`>=`)
+  guards nothing. The warning names the claim, the bound, the measured value
+  and the ratio. A measured value of zero has no ratio and is not flagged.
+- The same `item.backend.metric` claimed twice in the same direction with
+  different bounds, on one page or two, contradicts itself. The warning names
+  both `file:line` locations. A floor and a ceiling on one metric state a
+  range and are not flagged.
+
 ## Coverage
 
 `cargo soothfast coverage docs -p PKG` and `coverage measure -p PKG` count the
