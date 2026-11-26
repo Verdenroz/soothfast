@@ -29,7 +29,6 @@ impl CodeBlock {
     pub fn is_testable_rust(&self) -> bool {
         self.lang == "rust" && !self.has_tag("ignore") && !self.has_tag("capture-output")
     }
-    /// A rust block whose output `capture-output` splices into the page.
     /// A fence rustdoc compiles as Rust: no language, `rust`, or only
     /// rustdoc attributes, comma-joined (`no_run`, `rust,ignore`).
     pub fn is_rust_example(&self) -> bool {
@@ -46,6 +45,7 @@ impl CodeBlock {
             .split(',')
             .all(|t| RUSTDOC_TAGS.contains(&t) || t.starts_with("edition"))
     }
+    /// A rust block whose output `capture-output` splices into the page.
     pub fn is_capture(&self) -> bool {
         self.lang == "rust" && self.has_tag("capture-output")
     }
