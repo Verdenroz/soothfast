@@ -263,6 +263,7 @@ mod tests {
                 fingerprint: 1,
                 signature: format!("pub fn {path}()"),
                 has_docs: true,
+                example: false,
             };
             s.items.insert(path.to_string(), info);
         }

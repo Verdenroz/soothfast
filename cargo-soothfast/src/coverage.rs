@@ -293,6 +293,7 @@ mod tests {
             fingerprint: 1,
             signature: String::new(),
             has_docs: true,
+            example: false,
         };
         let mut s = Surface::default();
         s.items.insert("demo::run".into(), info("function"));

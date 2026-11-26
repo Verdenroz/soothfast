@@ -35,6 +35,8 @@ pub struct ItemInfo {
     pub signature: String,
     /// Whether the item carries a `///` doc comment.
     pub has_docs: bool,
+    /// Whether the docs carry a fenced Rust example.
+    pub example: bool,
 }
 
 /// Public items keyed by full path (`crate::module::item`).
@@ -160,7 +162,7 @@ pub fn from_rustdoc_with(
         let (fingerprint, signature) =
             item_fingerprint(index, item, kind, source_root, &mut file_cache)
                 .unwrap_or((0, String::new()));
-        let has_docs = item["docs"].as_str().is_some_and(|d| !d.trim().is_empty());
+        let docs = item["docs"].as_str().unwrap_or_default();
 
         surface.items.insert(
             full,
@@ -168,7 +170,8 @@ pub fn from_rustdoc_with(
                 kind: kind.to_string(),
                 fingerprint,
                 signature,
-                has_docs,
+                has_docs: !docs.trim().is_empty(),
+                example: has_example(docs),
             },
         );
     }
@@ -182,6 +185,10 @@ pub fn from_rustdoc_with(
     alias_reexports(&links, &mut surface);
     index_members(index, paths, source_root, &mut file_cache, &mut surface);
     surface
+}
+
+fn has_example(docs: &str) -> bool {
+    crate::markdown::scan(docs).is_ok_and(|doc| doc.blocks.iter().any(|b| b.is_rust_example()))
 }
 
 /// The rustdoc name of every other crate a `pub use` in `doc` re-exports an
@@ -250,13 +257,13 @@ fn index_members(
             let (fingerprint, signature) =
                 item_fingerprint(index, member, kind, source_root, file_cache)
                     .unwrap_or((0, String::new()));
+            let docs = member["docs"].as_str().unwrap_or_default();
             let info = ItemInfo {
                 kind: kind.to_string(),
                 fingerprint,
                 signature,
-                has_docs: member["docs"]
-                    .as_str()
-                    .is_some_and(|d| !d.trim().is_empty()),
+                has_docs: !docs.trim().is_empty(),
+                example: has_example(docs),
             };
             for spelling in &spellings {
                 surface
@@ -769,6 +776,26 @@ mod tests {
     }
 
     #[test]
+    fn a_fenced_rust_example_in_the_docs_is_recorded() {
+        let doc = |docs: &str| {
+            json!({
+                "index": { "1": {
+                    "name": "f",
+                    "visibility": "public",
+                    "docs": docs,
+                    "inner": { "function": {} },
+                } },
+                "paths": { "1": { "path": ["a", "f"], "kind": "function" } },
+            })
+        };
+        let at = Path::new(".");
+        let with = from_rustdoc(&doc("Runs.\n\n```\nf();\n```\n"), at);
+        let without = from_rustdoc(&doc("Runs.\n\n```text\nf()\n```\n"), at);
+        assert!(with.items["a::f"].example && with.items["a::f"].has_docs);
+        assert!(!without.items["a::f"].example && without.items["a::f"].has_docs);
+    }
+
+    #[test]
     fn counted_takes_inherent_methods_and_leaves_trait_impls_and_private_ones() {
         let dir =
             std::env::temp_dir().join(format!("soothfast-surface-counted-{}", std::process::id()));
@@ -788,6 +815,7 @@ mod tests {
             fingerprint,
             signature: String::new(),
             has_docs: false,
+            example: false,
         }
     }
 

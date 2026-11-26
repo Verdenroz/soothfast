@@ -19,7 +19,8 @@ impl Surface {
     /// Every item and every pub inherent method, deduplicated across `pub
     /// use` aliases and in path order. Trait-impl methods are never indexed
     /// and rustdoc omits `#[doc(hidden)]` items, so neither is counted.
-    /// Associated consts are left out: coverage counts callables and types.
+    /// Every top-level item kind counts, plus inherent methods; associated
+    /// consts do not.
     pub fn counted(&self) -> Vec<Counted<'_>> {
         let groups = self.grouped();
         let mut owner: HashMap<&str, usize> = HashMap::new();
@@ -64,6 +65,7 @@ mod tests {
             fingerprint,
             signature: String::new(),
             has_docs: false,
+            example: false,
         }
     }
 

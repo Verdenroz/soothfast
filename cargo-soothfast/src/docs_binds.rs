@@ -72,6 +72,7 @@ mod tests {
                 fingerprint: 0xabc,
                 signature: String::new(),
                 has_docs: false,
+                example: false,
             },
         );
         surface

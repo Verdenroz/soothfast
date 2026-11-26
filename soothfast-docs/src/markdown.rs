@@ -30,6 +30,22 @@ impl CodeBlock {
         self.lang == "rust" && !self.has_tag("ignore") && !self.has_tag("capture-output")
     }
     /// A rust block whose output `capture-output` splices into the page.
+    /// A fence rustdoc compiles as Rust: no language, `rust`, or only
+    /// rustdoc attributes, comma-joined (`no_run`, `rust,ignore`).
+    pub fn is_rust_example(&self) -> bool {
+        const RUSTDOC_TAGS: [&str; 7] = [
+            "",
+            "rust",
+            "no_run",
+            "ignore",
+            "should_panic",
+            "compile_fail",
+            "test_harness",
+        ];
+        self.lang
+            .split(',')
+            .all(|t| RUSTDOC_TAGS.contains(&t) || t.starts_with("edition"))
+    }
     pub fn is_capture(&self) -> bool {
         self.lang == "rust" && self.has_tag("capture-output")
     }
@@ -293,6 +309,34 @@ fn splice_after(lines: &[&str], close_idx: usize, output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rust_examples_are_fences_rustdoc_compiles() {
+        let doc = scan(
+            "```
+a
+```
+```rust
+b
+```
+```no_run
+c
+```
+```rust,edition2021
+d
+```
+```text
+e
+```
+```toml
+f
+```
+",
+        )
+        .unwrap();
+        let rust: Vec<_> = doc.blocks.iter().map(CodeBlock::is_rust_example).collect();
+        assert_eq!(rust, [true, true, true, true, false, false]);
+    }
 
     const MD: &str = "\
 # T
