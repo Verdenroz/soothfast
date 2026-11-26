@@ -668,6 +668,8 @@ fn render_summary(rows: &[Row]) -> String {
 mod tests {
     use soothfast_docs::surface::ItemInfo;
 
+    use crate::test::fixture::TempDir;
+
     use super::*;
 
     fn info(kind: &str, fingerprint: u64, has_docs: bool, example: bool) -> ItemInfo {
@@ -970,15 +972,14 @@ mod tests {
 
     #[test]
     fn the_bench_build_takes_the_gate_features_not_the_report_ones() {
-        let dir = std::env::temp_dir().join(format!("soothfast-cov-gate-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TempDir::new("cov-gate");
+        std::fs::create_dir_all(&*dir).unwrap();
         std::fs::write(
             dir.join("soothfast.toml"),
             "[package.demo.gate]\nfeatures = \"bench-gate\"\n[package.demo.docs]\nfeatures = \"full\"\n",
         )
         .unwrap();
         let config = Config::load(&dir).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
         let bench = gate_bench(&config, "demo").unwrap();
         assert_eq!(bench.features.as_deref(), Some("bench-gate"));
         assert_eq!(bench.pkg.as_deref(), Some("demo"));

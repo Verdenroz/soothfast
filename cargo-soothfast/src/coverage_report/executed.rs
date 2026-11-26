@@ -79,7 +79,10 @@ pub(crate) fn gather(
     bench: &CommonArgs,
     wants: Wants,
 ) -> Result<Columns, String> {
-    let members = coverage_executed::defining_members(surf, root, pkg)?;
+    let members = match wants.tests {
+        Want::Skip => Vec::new(),
+        _ => coverage_executed::defining_members(surf, root, pkg)?,
+    };
     let tests = column(
         wants.tests,
         || coverage_executed::cached_tests(pkg, features, &members),

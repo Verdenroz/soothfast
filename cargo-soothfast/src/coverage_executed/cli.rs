@@ -147,18 +147,13 @@ impl Columns<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test::fixture::TempDir;
 
-    fn config(toml: &str) -> Config {
-        let dir = std::env::temp_dir().join(format!(
-            "soothfast-cov-cli-{}-{}",
-            std::process::id(),
-            toml.len()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+    fn config(name: &str, toml: &str) -> Config {
+        let dir = TempDir::new(name);
+        std::fs::create_dir_all(&*dir).unwrap();
         std::fs::write(dir.join("soothfast.toml"), toml).unwrap();
-        let config = Config::load(&dir).unwrap();
-        let _ = std::fs::remove_dir_all(&dir);
-        config
+        Config::load(&dir).unwrap()
     }
 
     fn flags(args: &[&str]) -> Result<Flags, String> {
@@ -181,6 +176,7 @@ mod tests {
     #[test]
     fn the_configured_features_fill_what_a_flag_leaves_unset() {
         let config = config(
+            "cov-cli-both",
             "[package.demo.gate]\nfeatures = \"bench-gate\"\n[package.demo.docs]\nfeatures = \"full\"\n",
         );
         let mut bare = flags(&["-p", "demo"]).unwrap();
@@ -196,7 +192,10 @@ mod tests {
 
     #[test]
     fn a_features_flag_leaves_the_bench_build_to_the_gate() {
-        let config = config("[package.demo.gate]\nfeatures = \"bench-gate\"\n");
+        let config = config(
+            "cov-cli-gate",
+            "[package.demo.gate]\nfeatures = \"bench-gate\"\n",
+        );
         let mut f = flags(&["-p", "demo", "--features", "lite"]).unwrap();
         resolve(&mut f, &config).unwrap();
         assert_eq!(f.features.as_deref(), Some("lite"));

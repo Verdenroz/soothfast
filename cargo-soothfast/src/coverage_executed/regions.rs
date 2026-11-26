@@ -138,11 +138,15 @@ pub fn foreign_members(
         .iter()
         .map(|(name, dir)| (name.as_str(), resolved(dir)))
         .collect();
-    declared
+    let files: BTreeSet<&Path> = declared
         .iter()
         .flat_map(|item| item.spans)
-        .filter_map(|span| {
-            let file = resolved(&root.join(&span.file));
+        .map(|span| Path::new(&span.file))
+        .collect();
+    files
+        .into_iter()
+        .filter_map(|file| {
+            let file = resolved(&root.join(file));
             dirs.iter()
                 .filter(|(_, dir)| file.starts_with(dir))
                 .max_by_key(|(_, dir)| dir.components().count())
