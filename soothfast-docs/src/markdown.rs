@@ -21,6 +21,7 @@ pub struct CodeBlock {
 }
 
 impl CodeBlock {
+    /// Whether the info string carries `tag`.
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.iter().any(|t| t == tag)
     }
@@ -28,6 +29,7 @@ impl CodeBlock {
     pub fn is_testable_rust(&self) -> bool {
         self.lang == "rust" && !self.has_tag("ignore") && !self.has_tag("capture-output")
     }
+    /// A rust block whose output `capture-output` splices into the page.
     pub fn is_capture(&self) -> bool {
         self.lang == "rust" && self.has_tag("capture-output")
     }

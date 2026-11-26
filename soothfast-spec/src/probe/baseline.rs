@@ -65,12 +65,14 @@ pub struct Findings {
 }
 
 impl Findings {
+    /// Whether the run found nothing to report.
     pub fn is_clean(&self) -> bool {
         self.regressed.is_empty() && self.new_fields.is_empty() && self.uncovered.is_empty()
     }
 }
 
 impl Baseline {
+    /// Read a `probes.lock` document.
     pub fn parse(text: &str) -> Result<Baseline, String> {
         let doc: Value =
             serde_json::from_str(text).map_err(|e| format!("probes.lock is not JSON: {e}"))?;
@@ -111,6 +113,7 @@ impl Baseline {
         Ok(Baseline { probes })
     }
 
+    /// The lock as the text `probes.lock` holds.
     pub fn render(&self) -> String {
         let probes: BTreeMap<&str, Value> = self
             .probes
