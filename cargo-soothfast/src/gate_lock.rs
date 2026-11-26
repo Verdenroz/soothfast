@@ -7,7 +7,7 @@
 //! save when the accepted shift has become the norm and the entry can be
 //! dropped (see `prune_absorbed`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -159,6 +159,32 @@ pub fn prune_absorbed(entries: &Entries, run: &Run) -> (Entries, Vec<String>) {
             .items
             .get(id)
             .is_some_and(|m| m.fingerprint == entry.head_fingerprint)
+        {
+            pruned.remove(id);
+            removed.push(id.clone());
+        }
+    }
+    (pruned, removed)
+}
+
+/// Drop entries the `reference` run already carries: its fingerprint for the
+/// id is the entry's `head_fingerprint`, so the accepted workload has shipped
+/// and no longer differs from `base_fingerprint`, which no `allows` against
+/// this reference can match. Entries in `keep` were just written. Returns the
+/// pruned map and the dropped ids.
+pub fn prune_shipped(
+    entries: &Entries,
+    reference: &Value,
+    keep: &BTreeSet<&str>,
+) -> (Entries, Vec<String>) {
+    let mut pruned = entries.clone();
+    let mut removed = Vec::new();
+    for (id, entry) in entries {
+        let shipped = reference["items"][id.as_str()]["fingerprint"].as_str()
+            == Some(entry.head_fingerprint.as_str());
+        if shipped
+            && entry.base_fingerprint != entry.head_fingerprint
+            && !keep.contains(id.as_str())
         {
             pruned.remove(id);
             removed.push(id.clone());
@@ -324,5 +350,28 @@ mod tests {
         assert_eq!(removed, vec!["pkg::absorbed".to_string()]);
         assert!(!pruned.contains_key("pkg::absorbed"));
         assert!(pruned.contains_key("pkg::still-open"));
+    }
+
+    #[test]
+    fn prune_shipped_drops_entries_the_reference_already_carries() {
+        let mut entries = Entries::new();
+        for (id, base, head) in [
+            ("pkg::shipped", "old", "new"),
+            ("pkg::pending", "old", "newer"),
+            ("pkg::fresh", "old", "new"),
+            ("pkg::same", "fp", "fp"),
+        ] {
+            entries.insert(id.into(), entry(base, head, &[("instructions", 1.0)]));
+        }
+        let reference = json!({ "items": {
+            "pkg::shipped": { "fingerprint": "new" },
+            "pkg::pending": { "fingerprint": "old" },
+            "pkg::fresh": { "fingerprint": "new" },
+            "pkg::same": { "fingerprint": "fp" },
+        } });
+        let keep = BTreeSet::from(["pkg::fresh"]);
+        let (pruned, removed) = prune_shipped(&entries, &reference, &keep);
+        assert_eq!(removed, vec!["pkg::shipped".to_string()]);
+        assert_eq!(pruned.len(), 3);
     }
 }

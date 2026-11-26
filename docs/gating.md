@@ -808,8 +808,12 @@ Two things keep this from becoming a second, quieter tolerance:
   new review target.
 - **It expires on its own.** The next `--save-baseline` (`gate` or
   `measure`) that captures the accepted value as the new normal removes the
-  lock entry for that bench automatically. There is nothing to clean up by
-  hand, and nothing left over once the accepted state ships.
+  lock entry for that bench automatically. A baseline saved in CI never
+  reaches the committed file, so `gate accept` also drops, in the write it
+  already makes, every entry whose bench the reference side carries at the
+  accepted fingerprint. Such an entry cannot match that reference, so
+  dropping it changes no verdict; the only difference is that a later
+  failure on that bench no longer prints the stale-accept `NOTE`.
 
 `gate accept` refuses a bench that isn't currently failing, unless it also
 clears `--headroom` (below) — accepting ahead of an actual regression would

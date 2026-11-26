@@ -170,6 +170,14 @@ fn accept_parsed(a: AcceptArgs, walltime_advisory: bool) -> i32 {
         );
     }
 
+    let (entries, shipped) = gate_lock::prune_shipped(
+        &entries,
+        &reference,
+        &by_id.keys().copied().collect::<BTreeSet<_>>(),
+    );
+    for id in shipped {
+        println!("gate accept: {id} already ships in the reference, entry removed");
+    }
     // Written before the exit code, so a partial `--only` match (exit 3
     // below) still leaves the lock file usable for the next CI step.
     if let Err(e) = gate_lock::write(&root, &entries) {
