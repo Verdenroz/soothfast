@@ -49,10 +49,10 @@ optional so the feature switches it on:
 
 ```toml ignore
 [dependencies]
-soothfast = { version = "0.8", optional = true }
+soothfast = { version = "0.9", optional = true }
 
 [dev-dependencies]
-soothfast = { version = "0.8", features = ["runner"] }
+soothfast = { version = "0.9", features = ["runner"] }
 ```
 
 `cargo soothfast init -p PKG --internals` writes the dev-dependency, the bench
