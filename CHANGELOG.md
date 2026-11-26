@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.9.0)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### ✨ Features
+
+- ci: Consolidate check jobs into shared lanes (#529)
+
+
 ## 0.9.0 - 2026-11-26
 
 <!-- soothfast:notes -->
