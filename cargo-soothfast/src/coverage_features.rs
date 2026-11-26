@@ -23,8 +23,6 @@ pub struct Entry {
     pub counted: bool,
     /// Features the item, or anything enclosing it, is `cfg`-gated on.
     pub features: BTreeSet<String>,
-    /// Features the item, or anything enclosing it, is `cfg`-gated off under.
-    pub off: BTreeSet<String>,
 }
 
 /// What lies outside the gate's feature set.
@@ -68,15 +66,8 @@ pub fn public_items(doc: &Value) -> BTreeMap<String, Entry> {
             continue;
         }
         if let Some(path) = path_of(id) {
-            let (features, off) = cfg_features(item);
-            items.insert(
-                path,
-                Entry {
-                    counted,
-                    features,
-                    off,
-                },
-            );
+            let features = cfg_features(item);
+            items.insert(path, Entry { counted, features });
         }
     }
     for imp in index.values() {
@@ -90,7 +81,10 @@ pub fn public_items(doc: &Value) -> BTreeMap<String, Entry> {
         else {
             continue;
         };
-        let (impl_features, impl_off) = cfg_features(imp);
+        if !items.get(&owner).is_some_and(|e| e.counted) {
+            continue;
+        }
+        let impl_features = cfg_features(imp);
         let members = inner["items"].as_array().into_iter().flatten();
         for member in members.filter_map(|id| index.get(&id.as_u64()?.to_string())) {
             let Some(name) = member["name"].as_str() else {
@@ -99,15 +93,13 @@ pub fn public_items(doc: &Value) -> BTreeMap<String, Entry> {
             if member["visibility"] != "public" || !member["inner"]["function"].is_object() {
                 continue;
             }
-            let (mut features, mut off) = cfg_features(member);
+            let mut features = cfg_features(member);
             features.extend(impl_features.iter().cloned());
-            off.extend(impl_off.iter().cloned());
             items.insert(
                 format!("{owner}::{name}"),
                 Entry {
                     counted: true,
                     features,
-                    off,
                 },
             );
         }
@@ -120,57 +112,58 @@ pub fn public_items(doc: &Value) -> BTreeMap<String, Entry> {
 /// Each item also carries the gating of its enclosing modules and types,
 /// which rustdoc records on those items alone.
 fn inherit_features(items: &mut BTreeMap<String, Entry>) {
-    let own: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = items
+    let own: BTreeMap<String, BTreeSet<String>> = items
         .iter()
-        .filter(|(_, entry)| !entry.features.is_empty() || !entry.off.is_empty())
-        .map(|(path, entry)| (path.clone(), (entry.features.clone(), entry.off.clone())))
+        .filter(|(_, entry)| !entry.features.is_empty())
+        .map(|(path, entry)| (path.clone(), entry.features.clone()))
         .collect();
     for (path, entry) in items.iter_mut() {
         let mut end = 0;
         while let Some(at) = path[end..].find("::") {
             end += at;
             if let Some(outer) = own.get(&path[..end]) {
-                entry.features.extend(outer.0.iter().cloned());
-                entry.off.extend(outer.1.iter().cloned());
+                entry.features.extend(outer.iter().cloned());
             }
             end += 2;
         }
     }
 }
 
-/// The features a `#[cfg]` on `item` needs on, and those it needs off. A
-/// `not(..)` wrapping anything but one feature is not read.
-fn cfg_features(item: &Value) -> (BTreeSet<String>, BTreeSet<String>) {
+/// The features a `#[cfg]` on `item` needs on. A feature under an odd number
+/// of `not(..)` is needed off and is left out.
+fn cfg_features(item: &Value) -> BTreeSet<String> {
     const FEATURE: &str = "name: \"feature\", value: Some(\"";
-    let (mut on, mut off) = (BTreeSet::new(), BTreeSet::new());
+    let mut on = BTreeSet::new();
     let attrs = item["attrs"].as_array().into_iter().flatten();
     for attr in attrs.filter_map(|a| a["other"].as_str().or(a.as_str())) {
         if !attr.contains("CfgTrace") {
             continue;
         }
-        let mut chunks = attr.split(FEATURE);
-        let negations = attr.matches("Not(").count();
-        let mut direct = Vec::new();
-        let mut before = chunks.next().unwrap_or_default();
-        for chunk in chunks {
-            let Some((name, _)) = chunk.split_once('"') else {
+        let mut nots: Vec<bool> = Vec::new();
+        let mut at = 0;
+        while at < attr.len() {
+            let rest = &attr[at..];
+            if let Some(after) = rest.strip_prefix(FEATURE) {
+                let name = after.split('"').next().unwrap_or_default();
+                if nots.iter().filter(|not| **not).count() % 2 == 0 {
+                    on.insert(name.to_string());
+                }
+                at += FEATURE.len() + name.len();
                 continue;
-            };
-            direct.push((
-                name.to_string(),
-                before.trim_end_matches("NameValue { ").ends_with("Not("),
-            ));
-            before = chunk;
-        }
-        if direct.iter().filter(|(_, negated)| *negated).count() != negations {
-            continue;
-        }
-        for (name, negated) in direct {
-            let side = if negated { &mut off } else { &mut on };
-            side.insert(name);
+            }
+            let Some(c) = rest.chars().next() else { break };
+            match c {
+                '(' => nots.push(attr[..at].ends_with("Not")),
+                '[' | '{' => nots.push(false),
+                ')' | ']' | '}' => {
+                    nots.pop();
+                }
+                _ => {}
+            }
+            at += c.len_utf8();
         }
     }
-    (on, off)
+    on
 }
 
 /// Every feature a build with `requested` (plus the defaults) turns on, from
@@ -209,6 +202,7 @@ pub fn from_cfg(
     gate: &BTreeSet<String>,
     enabled: &BTreeSet<String>,
     declared: &BTreeSet<String>,
+    bare: &BTreeSet<String>,
 ) -> Outside {
     let mut out = Outside {
         reference: reference.len() as u32,
@@ -224,25 +218,44 @@ pub fn from_cfg(
         }
         out.outside += 1;
         let gating: Vec<&String> = entry.features.difference(enabled).collect();
-        if gating.is_empty() {
-            let counter = if entry.off.is_empty() {
-                &mut out.unattributed
-            } else {
-                &mut out.off_under_feature
-            };
-            *counter += 1;
-        }
+        out.unattributed += u32::from(gating.is_empty());
         for feature in gating {
             *out.features.entry(feature.clone()).or_default() += 1;
         }
     }
+    let reference_paths = reference.keys().collect();
+    out.count_off_under_feature(bare, gate, &reference_paths);
     out
+}
+
+impl Outside {
+    /// Items of the surface built with no features that neither the gate nor
+    /// the reference has: they exist only while some feature is off, which a
+    /// gate that turns it on never compiles.
+    fn count_off_under_feature(
+        &mut self,
+        bare: &BTreeSet<String>,
+        gate: &BTreeSet<String>,
+        reference: &BTreeSet<&String>,
+    ) {
+        let missed = bare
+            .iter()
+            .filter(|path| !gate.contains(*path) && !reference.contains(path))
+            .count() as u32;
+        self.off_under_feature = missed;
+        self.outside += missed;
+        self.reference += missed;
+    }
 }
 
 /// Outside items from one surface per feature, each built with the gate's
 /// features plus that feature, for a package whose features cannot all be
 /// on together. An item present under several runs counts under each.
-pub fn from_runs(gate: &BTreeSet<String>, runs: &BTreeMap<String, BTreeSet<String>>) -> Outside {
+pub fn from_runs(
+    gate: &BTreeSet<String>,
+    runs: &BTreeMap<String, BTreeSet<String>>,
+    bare: &BTreeSet<String>,
+) -> Outside {
     let mut union = BTreeSet::new();
     let mut features = BTreeMap::new();
     for (feature, surface) in runs {
@@ -250,13 +263,15 @@ pub fn from_runs(gate: &BTreeSet<String>, runs: &BTreeMap<String, BTreeSet<Strin
         features.insert(feature.clone(), added.len() as u32);
         union.extend(added);
     }
-    Outside {
+    let mut out = Outside {
         reference: (gate.len() + union.len()) as u32,
         outside: union.len() as u32,
         features,
-        off_under_feature: 0,
-        unattributed: 0,
-    }
+        ..Outside::default()
+    };
+    let reference_paths = union.iter().copied().collect();
+    out.count_off_under_feature(bare, gate, &reference_paths);
+    out
 }
 
 /// `coverage features -p PKG [--json] [--max-outside N]`.
@@ -337,9 +352,19 @@ fn measure(pkg: &str, gate_features: Option<&str>) -> Result<(Outside, Route), S
     let (gate_doc, _) = invoke::rustdoc_json_in(pkg, None, gate_features, Visibility::Public)
         .map_err(|e| e.to_string())?;
     let gate: BTreeSet<String> = public_items(&gate_doc).into_keys().collect();
-    if let Ok((doc, _)) = invoke::rustdoc_json_all(pkg, None, Visibility::Public) {
-        let outside = from_cfg(&public_items(&doc), &gate, &enabled, &declared);
-        return Ok((outside, Route::AllFeatures));
+    let bare: BTreeSet<String> = if enabled.iter().any(|f| table.contains_key(f)) {
+        let (doc, _) = invoke::rustdoc_json_exactly(pkg, None, "", Visibility::Public)
+            .map_err(|e| e.to_string())?;
+        public_items(&doc).into_keys().collect()
+    } else {
+        gate.clone()
+    };
+    match invoke::rustdoc_json_all(pkg, None, Visibility::Public) {
+        Ok((doc, _)) => {
+            let outside = from_cfg(&public_items(&doc), &gate, &enabled, &declared, &bare);
+            return Ok((outside, Route::AllFeatures));
+        }
+        Err(e) => eprintln!("soothfast: --all-features rustdoc failed: {e}"),
     }
     let mut runs = BTreeMap::new();
     for feature in declared.difference(&enabled) {
@@ -351,7 +376,7 @@ fn measure(pkg: &str, gate_features: Option<&str>) -> Result<(Outside, Route), S
             .map_err(|e| format!("rustdoc with feature {feature}: {e}"))?;
         runs.insert(feature.clone(), public_items(&doc).into_keys().collect());
     }
-    Ok((from_runs(&gate, &runs), Route::PerFeature))
+    Ok((from_runs(&gate, &runs, &bare), Route::PerFeature))
 }
 
 /// The `[features]` table of workspace package `pkg`.
@@ -392,7 +417,7 @@ fn render_text(pkg: &str, gate: Option<&str>, out: &Outside, route: Route) -> St
     );
     if matches!(route, Route::PerFeature) {
         text.push_str(
-            "note: --all-features does not build; each feature was built on top of the gate's set, one rustdoc run per feature\n",
+            "note: --all-features rustdoc failed; each feature was built on top of the gate's set, one rustdoc run per feature\n",
         );
     }
     for (feature, items) in &out.features {
@@ -546,21 +571,24 @@ mod tests {
         let not = attrs(
             r#"#[attr = CfgTrace([Not(NameValue { name: "feature", value: Some("y"), span: src/lib.rs:18:11: 18:26 (#0) }, src/lib.rs:18:10: 18:27 (#0))])]"#,
         );
-        assert_eq!(cfg_features(&single), (set(&["x"]), set(&[])));
-        assert_eq!(cfg_features(&all), (set(&["a", "b"]), set(&[])));
-        assert_eq!(cfg_features(&any), (set(&["a", "b"]), set(&[])));
-        assert_eq!(cfg_features(&not), (set(&[]), set(&["y"])));
+        assert_eq!(cfg_features(&single), set(&["x"]));
+        assert_eq!(cfg_features(&all), set(&["a", "b"]));
+        assert_eq!(cfg_features(&any), set(&["a", "b"]));
+        assert_eq!(cfg_features(&not), set(&[]));
         let nested = attrs(
             r#"#[attr = CfgTrace([Not(Any([NameValue { name: "feature", value: Some("a"), span: s (#0) }], s (#0)), s (#0))])]"#,
         );
-        assert_eq!(cfg_features(&nested), (set(&[]), set(&[])));
+        assert_eq!(cfg_features(&nested), set(&[]));
+        let mixed = attrs(
+            r#"#[attr = CfgTrace([All([NameValue { name: "feature", value: Some("a"), span: s (#0) }, Not(NameValue { name: "feature", value: Some("b"), span: s (#0) }, s (#0)), Not(Any([NameValue { name: "feature", value: Some("c"), span: s (#0) }], s (#0)), s (#0))], s (#0))])]"#,
+        );
+        assert_eq!(cfg_features(&mixed), set(&["a"]));
     }
 
     #[test]
-    fn a_negated_cfg_is_kept_apart_from_the_features_an_item_needs() {
+    fn a_negated_cfg_attributes_to_no_feature() {
         let items = public_items(&doc());
         assert!(items["k::not_b"].features.is_empty());
-        assert_eq!(items["k::not_b"].off, set(&["b"]));
     }
 
     #[test]
@@ -583,11 +611,17 @@ mod tests {
     #[test]
     fn outside_items_are_attributed_to_their_ungated_features() {
         let items = public_items(&doc());
-        let gate = set(&["k::always", "k::only_b", "k::m::inner"]);
+        let gate = set(&["k::always", "k::only_b", "k::m::inner", "k::not_b"]);
         let declared = set(&["a", "b", "c", "d", "unused"]);
         let enabled = set(&["a", "b"]);
-        let out = from_cfg(&items, &gate, &enabled, &declared);
-        assert_eq!(out.reference, 7);
+        let out = from_cfg(
+            &items,
+            &gate,
+            &enabled,
+            &declared,
+            &set(&["k::always", "k::nb"]),
+        );
+        assert_eq!(out.reference, 8);
         assert_eq!(out.outside, 4);
         assert_eq!(
             out.features,
@@ -609,9 +643,10 @@ mod tests {
             ("y".to_string(), set(&["k::a", "k::both"])),
             ("z".to_string(), set(&["k::a"])),
         ]);
-        let out = from_runs(&gate, &runs);
-        assert_eq!(out.outside, 2);
-        assert_eq!(out.reference, 3);
+        let out = from_runs(&gate, &runs, &set(&["k::a", "k::nb"]));
+        assert_eq!(out.outside, 3);
+        assert_eq!(out.reference, 4);
+        assert_eq!(out.off_under_feature, 1);
         assert_eq!(
             out.features,
             BTreeMap::from([
