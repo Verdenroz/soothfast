@@ -43,6 +43,20 @@ impl<'a> Instrumented<'a> {
         cmd
     }
 
+    /// `cargo bench` of the bench target `target` under the dev profile,
+    /// which executes the same code as the bench profile, and with the
+    /// runner's cheapest backend: one pass over each item.
+    pub fn benches(&self, target: &str, no_run: bool) -> Command {
+        let mut cmd = self.cargo("bench");
+        cmd.args(["--bench", target, "--profile", "dev"]);
+        if no_run {
+            cmd.args(["--no-run", "--message-format=json"]);
+        } else {
+            cmd.args(["--", "--backend", "alloc"]);
+        }
+        cmd
+    }
+
     /// The flags reach only the artifacts of an explicit `--target`, so
     /// build scripts and proc macros stay uninstrumented.
     fn cargo(&self, verb: &str) -> Command {
@@ -73,6 +87,18 @@ pub fn build_tests(instrumented: &Instrumented<'_>) -> Result<Vec<PathBuf>, Stri
             .collect::<Vec<_>>()
             .as_slice(),
     ))
+}
+
+/// The instrumented executable of the bench target `target`.
+pub fn build_bench(instrumented: &Instrumented<'_>, target: &str) -> Result<PathBuf, String> {
+    let mut cmd = instrumented.benches(target, true);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
+    let out = cmd.output().map_err(|e| format!("cargo: {e}"))?;
+    if !out.status.success() {
+        return Err("the instrumented bench build failed".into());
+    }
+    invoke::bench_artifact(&out.stdout, target)
+        .ok_or_else(|| format!("cargo built no bench executable named {target:?}"))
 }
 
 fn test_executables(messages: &[Value]) -> Vec<PathBuf> {
@@ -175,5 +201,41 @@ mod tests {
         let env: Vec<_> = cmd.get_envs().collect();
         assert!(env.iter().any(|(k, v)| *k == "CARGO_TARGET_DIR"
             && *v == Some(std::ffi::OsStr::new("/t/soothfast-coverage"))));
+    }
+
+    #[test]
+    fn a_bench_run_takes_the_dev_profile_and_the_cheapest_backend() {
+        let build = Instrumented {
+            pkg: "demo",
+            features: None,
+            host: "h".into(),
+            target_dir: PathBuf::from("/t"),
+        };
+        let args = |cmd: Command| -> Vec<String> {
+            cmd.get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            args(build.benches("soothfast", false)),
+            [
+                "bench",
+                "-p",
+                "demo",
+                "--target",
+                "h",
+                "--bench",
+                "soothfast",
+                "--profile",
+                "dev",
+                "--",
+                "--backend",
+                "alloc"
+            ]
+        );
+        assert!(
+            args(build.benches("soothfast", true))
+                .ends_with(&["--no-run".to_string(), "--message-format=json".to_string()])
+        );
     }
 }
