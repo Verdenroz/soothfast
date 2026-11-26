@@ -30,6 +30,15 @@ pub(crate) const DIMENSIONS: [(&str, &str); 3] = [
     ("measured_declared", "measured (declared)"),
 ];
 
+/// Dimensions other commands compute, named so a minimum for one parses
+/// before its values reach a report.
+const PENDING: [&str; 4] = ["gated", "tested", "measured", "specified"];
+
+/// Whether `name` is a dimension a minimum may be set on.
+pub(crate) fn is_dimension(name: &str) -> bool {
+    DIMENSIONS.iter().any(|(d, _)| *d == name) || PENDING.contains(&name)
+}
+
 impl Row {
     fn dimension(&self, name: &str) -> Option<bool> {
         match name {

@@ -7,16 +7,40 @@ use std::collections::BTreeMap;
 
 use soothfast_site::toml::{TomlValue, logical_lines, parse_value};
 
-use crate::coverage_report::DIMENSIONS;
+use crate::coverage_report::is_dimension;
 
-/// The dimension and percent a `coverage_min.DIMENSION = N` line sets. `None`
-/// for any other line, and for a dimension or value that does not exist.
-pub(super) fn coverage_min(key: &str, value: &TomlValue) -> Option<(&'static str, u32)> {
-    let name = key.strip_prefix("coverage_min.")?.trim();
-    let (dimension, _) = DIMENSIONS.iter().find(|(d, _)| *d == name)?;
+/// The dimension and percent a `coverage = N` or `coverage_min.DIMENSION = N`
+/// line sets. `None` for any other line, and for a dimension or value that
+/// does not exist.
+pub(super) fn coverage_min(key: &str, value: &TomlValue) -> Option<(String, u32)> {
+    let name = match key {
+        "coverage" => "documented",
+        _ => key.strip_prefix("coverage_min.")?.trim(),
+    };
     match value {
-        TomlValue::Int(n) if (0..=100).contains(n) => Some((dimension, *n as u32)),
+        TomlValue::Int(n) if is_dimension(name) && (0..=100).contains(n) => {
+            Some((name.to_string(), *n as u32))
+        }
         _ => None,
+    }
+}
+
+/// Notes the `documented` minimum a line sets, and refuses a different one
+/// than an earlier line of the same table set: `coverage` and
+/// `coverage_min.documented` are one key.
+pub(super) fn claim_documented(
+    seen: &mut Option<(usize, u32)>,
+    lineno: usize,
+    n: u32,
+) -> Result<(), String> {
+    match *seen {
+        Some((line, prior)) if prior != n => Err(format!(
+            "line {lineno}: documented minimum {n} conflicts with {prior} on line {line}"
+        )),
+        _ => {
+            *seen = Some((lineno, n));
+            Ok(())
+        }
     }
 }
 
@@ -51,6 +75,7 @@ impl Default for DocsConfig {
 pub fn parse(text: &str) -> Result<DocsConfig, String> {
     let mut cfg = DocsConfig::default();
     let mut in_docs = false;
+    let mut documented = None;
 
     for (lineno, line) in logical_lines(text) {
         let line = line.as_str();
@@ -67,11 +92,11 @@ pub fn parse(text: &str) -> Result<DocsConfig, String> {
         };
         let value = parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
         if let Some((dimension, n)) = coverage_min(key.trim(), &value) {
-            match dimension {
-                "documented" => cfg.coverage = Some(n),
-                _ => {
-                    cfg.minimums.insert(dimension.to_string(), n);
-                }
+            if dimension == "documented" {
+                claim_documented(&mut documented, lineno, n)?;
+                cfg.coverage = Some(n);
+            } else {
+                cfg.minimums.insert(dimension, n);
             }
             continue;
         }
@@ -80,9 +105,6 @@ pub fn parse(text: &str) -> Result<DocsConfig, String> {
             ("package", TomlValue::Str(name)) => cfg.package = Some(vec![name]),
             ("package", TomlValue::StrArray(names)) if !names.is_empty() => {
                 cfg.package = Some(names)
-            }
-            ("coverage", TomlValue::Int(n)) if (0..=100).contains(&n) => {
-                cfg.coverage = Some(n as u32)
             }
             (k, _) => {
                 return Err(format!(
@@ -141,8 +163,20 @@ mod tests {
         assert_eq!(cfg.minimums["documented_strict"], 60);
         assert!(!cfg.minimums.contains_key("documented"));
         assert!(parse("[docs]\ncoverage_min.docs = 60\n").is_err());
+        assert!(parse("[docs]\ncoverage_min.gated = 60\n").is_ok());
         assert!(parse("[docs]\ncoverage_min.documented = 101\n").is_err());
         assert!(parse("[docs]\ncoverage_min.documented = \"9\"\n").is_err());
+    }
+
+    #[test]
+    fn coverage_and_the_documented_minimum_may_not_disagree() {
+        let same = "[docs]\ncoverage = 90\ncoverage_min.documented = 90\n";
+        assert_eq!(parse(same).unwrap().coverage, Some(90));
+        let e = parse("[docs]\ncoverage = 90\ncoverage_min.documented = 80\n").unwrap_err();
+        assert_eq!(
+            e,
+            "line 3: documented minimum 80 conflicts with 90 on line 2"
+        );
     }
 
     #[test]

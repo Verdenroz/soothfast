@@ -81,6 +81,14 @@ pub struct Settings {
 }
 
 impl Settings {
+    fn set_minimum(&mut self, dimension: String, n: u32) {
+        if dimension == "documented" {
+            self.coverage = Some(n);
+        } else {
+            self.minimums.insert(dimension, n);
+        }
+    }
+
     /// The minimum percent `dimension` must reach, where one is set.
     pub fn minimum(&self, dimension: &str) -> Option<u32> {
         match dimension {
@@ -132,6 +140,7 @@ struct Open {
 pub fn parse(text: &str) -> Result<BTreeMap<String, PackageTable>, String> {
     let mut packages: BTreeMap<String, PackageTable> = BTreeMap::new();
     let mut open: Option<Open> = None;
+    let mut documented: BTreeMap<String, (usize, u32)> = BTreeMap::new();
 
     for (lineno, line) in logical_lines(text) {
         let line = line.as_str();
@@ -146,6 +155,13 @@ pub fn parse(text: &str) -> Result<BTreeMap<String, PackageTable>, String> {
             return Err(format!("line {lineno}: expected `key = value`"));
         };
         let value = parse_value(value.trim()).map_err(|e| format!("line {lineno}: {e}"))?;
+        if let Some((dimension, n)) = super::docs::coverage_min(key.trim(), &value)
+            && dimension == "documented"
+        {
+            let mut seen = documented.get(&open.header).copied();
+            super::docs::claim_documented(&mut seen, lineno, n)?;
+            documented.extend(seen.map(|s| (open.header.clone(), s)));
+        }
         let table = packages.entry(open.name.clone()).or_default();
         let settings = match open.group {
             Some(group) => table.groups.entry(group).or_default(),
@@ -217,12 +233,7 @@ fn set(
     }
     if let Some((dimension, n)) = super::docs::coverage_min(key, &value).filter(|_| group.is_some())
     {
-        match dimension {
-            "documented" => settings.coverage = Some(n),
-            _ => {
-                settings.minimums.insert(dimension.to_string(), n);
-            }
-        }
+        settings.set_minimum(dimension, n);
         return Ok(());
     }
     match (key, value) {
@@ -231,9 +242,6 @@ fn set(
         ("cpu", value) => settings.cpu = Some(super::gate::cpu_mask(value).map_err(|_| ())?),
         ("baseline", TomlValue::Str(s)) => settings.baseline = Some(s),
         ("paths", TomlValue::StrArray(v)) => settings.paths = Some(v),
-        ("coverage", TomlValue::Int(n)) if group.is_some() => {
-            settings.coverage = Some(u32::try_from(n).ok().filter(|n| *n <= 100).ok_or(())?)
-        }
         _ => return Err(()),
     }
     Ok(())
@@ -332,6 +340,17 @@ mod tests {
         assert!(parse("[package.a.gate]\ncoverage_min.documented = 80\n").is_err());
         assert!(parse("[package.a]\ncoverage_min.documented = 80\n").is_err());
         assert!(parse("[package.a.docs]\ncoverage_min.docs = 80\n").is_err());
+    }
+
+    #[test]
+    fn coverage_and_the_documented_minimum_may_not_disagree() {
+        let e =
+            parse("[package.a.docs]\ncoverage = 90\ncoverage_min.documented = 80\n").unwrap_err();
+        assert_eq!(
+            e,
+            "line 3: documented minimum 80 conflicts with 90 on line 2"
+        );
+        assert!(parse("[package.a.docs]\ncoverage = 90\ncoverage_min.documented = 90\n").is_ok());
     }
 
     #[test]
