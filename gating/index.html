@@ -641,6 +641,18 @@ once, for <code>gate</code>, <code>measure</code> and <code>spec gen</code> alik
 the command line left unset. The action passes no features of its own, so a
 repository that configures the file gets one behaviour from a hand-run
 <code>cargo soothfast gate</code> and from the action.</p>
+<p>The same feature name can enable different things from one commit to the
+next: a <code>[features]</code> entry gains a dependency, or <code>Cargo.lock</code> resolves
+another version. Under fat LTO that can shift the code of unchanged functions
+by a few percent with no source change. When <code>gate --against-ref</code> fails, the
+console and every triage report open with <code>feature set changed between base
+and head (bench-gate now also enables dataframe): codegen of unchanged code
+can shift under LTO</code> if the package's expanded features, read from the
+merge-base's <code>Cargo.toml</code>, or its locked registry and git dependencies
+(<code>Cargo.lock dependencies changed</code>) differ. The note explains a shift; it
+waives nothing, is left out when the merge-base's files cannot be read, and
+appears for any change to the locked registry or git dependencies, not only
+ones a feature pulled in.</p>
 <h2 id="per-package-defaults">Per-package defaults<a class="anchor" href="#per-package-defaults" aria-label="Link to this section">#</a></h2>
 <p>A repository with several packages, or one package that builds with
 different features per command, repeats <code>-p</code>, <code>--features</code>, <code>--bench</code> and

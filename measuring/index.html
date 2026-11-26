@@ -262,6 +262,25 @@ be this release or newer: an older one exits with <code>unknown runner arg
 last release when <code>report changelog</code> measures it: until a release ships with
 a harness that knows the setting, the changelog's perf delta against that
 release is left out with a warning (see <a href="../gating/">gating</a>).</p>
+<h2 id="how-benches-are-built">How benches are built<a class="anchor" href="#how-benches-are-built" aria-label="Link to this section">#</a></h2>
+<p><code>measure</code> and <code>gate</code> build the bench target with <code>cargo bench --profile
+bench</code>. That profile inherits <code>[profile.release]</code>, so <code>lto</code> and the rest of
+the release settings apply, and <code>[profile.bench]</code> or <code>CARGO_PROFILE_BENCH_*</code>
+adjust them. The one exception is <code>codegen-units</code>: the measurement pin forces
+it to 1 for the workspace's own crates (see <a href="../gating/">gating</a>), so a value
+set for the bench profile is overridden for those crates; dependencies keep it. <code>measure</code> and <code>gate</code> print a warning
+when one is set; <code>--codegen-units inherit</code> turns the pin off.</p>
+<h2 id="running-a-subset">Running a subset<a class="anchor" href="#running-a-subset" aria-label="Link to this section">#</a></h2>
+<p><code>measure</code> and <code>gate</code> take <code>-p PKG</code>, <code>--features F</code> and <code>-j N</code> (also <code>-jN</code>, <code>--jobs=N</code>), which goes to
+cargo for the bench build. <code>--filter</code> selects items by id: a plain string
+matches as a substring, <code>|</code> separates alternatives, and a leading <code>^</code> or
+trailing <code>$</code> anchors an alternative to the start or end of the id, so
+<code>--filter &#39;fnv|block_on&#39;</code> measures both. It is not a regex: with any other
+metacharacter (<code>( ) [ ] * + ? .</code>) that matches nothing, the runner warns that
+the filter is a substring match.</p>
+<p><code>measure --no-cache</code> is <code>--no-reuse</code> and <code>--no-item-cache</code> together: it
+measures every item in full instead of reusing stored counts. <code>gate</code> has no
+single flag for this; it takes <code>--no-reuse-base</code> and <code>--no-item-cache</code>.</p>
 <h2 id="what-tests-and-benches-execute">What tests and benches execute<a class="anchor" href="#what-tests-and-benches-execute" aria-label="Link to this section">#</a></h2>
 <p><code>coverage measure</code> counts an item as measured when a bench names it in
 <code>covers</code>. Nothing there checks that the bench runs it. <code>coverage executed</code>
@@ -363,6 +382,10 @@ that keeps every page on this site honest.</p>
     <li><a class="toc-l2" href="#benches-inside-the-crate">Benches inside the crate</a></li>
   
     <li><a class="toc-l2" href="#what-callgrind-s-counts-depend-on">What callgrind&#39;s counts depend on</a></li>
+  
+    <li><a class="toc-l2" href="#how-benches-are-built">How benches are built</a></li>
+  
+    <li><a class="toc-l2" href="#running-a-subset">Running a subset</a></li>
   
     <li><a class="toc-l2" href="#what-tests-and-benches-execute">What tests and benches execute</a></li>
   

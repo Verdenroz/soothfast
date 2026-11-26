@@ -288,6 +288,22 @@ package name for it.</p>
 </code></pre></figure>
 <p>Attach the shape overrides. Separate from [<code>RouteItem::new</code>] so that
 later spec dialects can add their own without growing its arity.</p>
+<h2 id="soothfast-registry-filter"><code>soothfast::registry::filter</code><a class="anchor" href="#soothfast-registry-filter" aria-label="Link to this section">#</a></h2>
+<h3 id="has-unsupported-syntax-function"><code>has_unsupported_syntax</code> <sup>function</sup><a class="anchor" href="#has-unsupported-syntax-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">has_unsupported_syntax</span>(filter: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">bool</span>
+</code></pre></figure>
+<p>Whether <code>filter</code> holds a regex metacharacter this matcher reads literally.</p>
+<h3 id="matches-function"><code>matches</code> <sup>function</sup><a class="anchor" href="#matches-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">matches</span>(filter: &amp;<span class="tok-ty">str</span>, id: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">bool</span>
+</code></pre></figure>
+<p>Whether <code>id</code> matches <code>filter</code>: any <code>|</code>-separated alternative that is a
+substring of <code>id</code>, with a leading <code>^</code> pinning it to the start and a
+trailing <code>$</code> to the end.</p>
+<h3 id="validate-function"><code>validate</code> <sup>function</sup><a class="anchor" href="#validate-function" aria-label="Link to this section">#</a></h3>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">rust · ignore</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">pub</span> <span class="tok-kw">fn</span> <span class="tok-fn">validate</span>(filter: &amp;<span class="tok-ty">str</span>) -&gt; <span class="tok-ty">Result</span>&lt;(), <span class="tok-ty">String</span>&gt;
+</code></pre></figure>
+<p>Why <code>filter</code> cannot select anything, when an alternative is empty or only
+an anchor: it would match every id.</p>
 
 <div class="doc-foot">
   <span>built with <b>cargo soothfast docs build</b></span>
@@ -363,6 +379,14 @@ later spec dialects can add their own without growing its arity.</p>
     <li><a class="toc-l3" href="#new-function">new function</a></li>
   
     <li><a class="toc-l3" href="#with-shape-function">with_shape function</a></li>
+  
+    <li><a class="toc-l2" href="#soothfast-registry-filter">soothfast::registry::filter</a></li>
+  
+    <li><a class="toc-l3" href="#has-unsupported-syntax-function">has_unsupported_syntax function</a></li>
+  
+    <li><a class="toc-l3" href="#matches-function">matches function</a></li>
+  
+    <li><a class="toc-l3" href="#validate-function">validate function</a></li>
   
   </ul>
 
