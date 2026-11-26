@@ -113,16 +113,11 @@ fn rows(
             eprintln!("{warning}");
         }
         let gate_records = gate_discovery(pkg, &build, &records).map_err(|e| (1, e))?;
-        let gated: BTreeSet<String> = declared_covers(&gate_records)
-            .into_iter()
-            .chain(asserted_covers(&records))
-            .chain(marked.claimed_items(&records))
-            .collect();
         rows.extend(rust_rows(
             &surf,
             &declared_covers(&records),
             &marked.items(&records),
-            &gated,
+            &gated_paths(&gate_records, &marked),
         ));
     }
     Ok(rows)
@@ -162,6 +157,16 @@ fn gate_discovery(
         return Ok(docs_records.to_vec());
     }
     discover(&gate)
+}
+
+/// What the gate's benches measure, plus what a claim on one of them covers.
+/// A bench outside the gate's registry gates nothing: no gate run enforces it.
+fn gated_paths(gate_records: &[Value], marked: &Markers) -> BTreeSet<String> {
+    declared_covers(gate_records)
+        .into_iter()
+        .chain(asserted_covers(gate_records))
+        .chain(marked.claimed_items(gate_records))
+        .collect()
 }
 
 /// Every item and method of `surf`. `documented_strict` implies `documented`:
@@ -411,6 +416,15 @@ mod tests {
         assert_eq!(row(&rows, "d::Thing::go").gated, Some(true));
         assert_eq!(row(&rows, "d::bare").gated, Some(false));
         assert_eq!(row(&rows, "d::Thing").gated, None);
+    }
+
+    #[test]
+    fn a_claim_on_a_bench_the_gate_does_not_run_gates_nothing() {
+        let md = "<!-- soothfast:claim demo::bench_docs_only.alloc.allocs <= 8 -->\n";
+        let markers = targets_in([md.to_string()].into_iter());
+        let gate_bench = json!({ "type": "item", "id": "demo::bench_run", "covers": "demo::run",
+            "assertions": { "max_allocs": 0 } });
+        assert_eq!(gated_paths(&[gate_bench], &markers), set(&["demo::run"]));
     }
 
     #[test]
