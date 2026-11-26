@@ -181,6 +181,39 @@ pub fn evaluate(claim: &Claim, baseline: &Value) -> Result<(bool, f64), String> 
     Ok((holds, actual))
 }
 
+/// How many times the bound may sit from the measured value before a held
+/// claim counts as loose: past it the claim guards nothing.
+pub const HEADROOM_FACTOR: f64 = 4.0;
+
+/// The bound-to-measured ratio (measured-to-bound for `>`/`>=`) when it
+/// exceeds [`HEADROOM_FACTOR`]. A measured value or bound of zero has no
+/// ratio and is never loose.
+pub fn loose_by(claim: &Claim, actual: f64) -> Option<f64> {
+    let (big, small) = match claim.op {
+        Op::Lt | Op::Le => (claim.bound, actual),
+        Op::Gt | Op::Ge => (actual, claim.bound),
+    };
+    let ratio = big / small;
+    (small > 0.0 && ratio > HEADROOM_FACTOR).then_some(ratio)
+}
+
+/// Whether two claims bound the same metric the same way with different
+/// bounds. A floor and a ceiling on one metric state a range and do not
+/// conflict.
+pub fn contradicts(a: &Claim, b: &Claim) -> bool {
+    let ceiling = |op| matches!(op, Op::Lt | Op::Le);
+    let minus = |c: &Claim| {
+        c.minus
+            .as_ref()
+            .map(|m| (m.item.clone(), m.backend.clone(), m.metric.clone()))
+    };
+    (a.item.as_str(), a.backend.as_str(), a.metric.as_str())
+        == (b.item.as_str(), b.backend.as_str(), b.metric.as_str())
+        && minus(a) == minus(b)
+        && ceiling(a.op) == ceiling(b.op)
+        && a.bound != b.bound
+}
+
 fn measured(baseline: &Value, item: &str, backend: &str, metric: &str) -> Result<f64, String> {
     baseline["items"][item][backend][metric]
         .as_f64()
@@ -205,6 +238,48 @@ mod tests {
         assert_eq!(c.bound, 1e6);
         assert!(matches!(c.op, Op::Lt));
         assert_eq!(parse("a::b.alloc.allocs <= 2").unwrap().bound, 2.0);
+    }
+
+    #[test]
+    fn allocation_bytes_claims_evaluate_against_the_baseline() {
+        let baseline =
+            json!({ "items": { "demo::f": { "alloc": { "allocs": 3, "bytes": 16.0 } } } });
+        let c = parse("demo::f.alloc.bytes <= 16").unwrap();
+        assert_eq!((c.backend.as_str(), c.metric.as_str()), ("alloc", "bytes"));
+        assert_eq!(evaluate(&c, &baseline).unwrap(), (true, 16.0));
+        let c = parse("demo::f.alloc.bytes < 16").unwrap();
+        assert_eq!(evaluate(&c, &baseline).unwrap(), (false, 16.0));
+    }
+
+    #[test]
+    fn a_ceiling_over_the_headroom_factor_is_loose() {
+        let loose = |expr: &str, actual| loose_by(&parse(expr).unwrap(), actual);
+        assert_eq!(
+            loose("a.walltime.median_ns < 100ns", 3.4),
+            Some(100.0 / 3.4)
+        );
+        assert_eq!(loose("a.walltime.median_ns <= 40ns", 10.0), None);
+        assert_eq!(loose("a.walltime.median_ns <= 41ns", 10.0), Some(4.1));
+        assert_eq!(loose("a.perfcnt.instructions >= 10", 50.0), Some(5.0));
+        assert_eq!(loose("a.perfcnt.instructions >= 10", 40.0), None);
+        assert_eq!(loose("a.alloc.allocs <= 8", 0.0), None);
+    }
+
+    #[test]
+    fn only_same_direction_bounds_with_different_values_contradict() {
+        let c = |expr| parse(expr).unwrap();
+        let ceiling = c("a.walltime.p99_ns < 500us");
+        assert!(contradicts(&ceiling, &c("a.walltime.p99_ns <= 300us")));
+        assert!(!contradicts(&ceiling, &c("a.walltime.p99_ns < 500us")));
+        assert!(!contradicts(&ceiling, &c("a.walltime.p99_ns > 1us")));
+        assert!(!contradicts(&ceiling, &c("b.walltime.p99_ns < 300us")));
+        assert!(!contradicts(&ceiling, &c("a.walltime.median_ns < 300us")));
+        let diff = c("a.walltime.p99_ns - b.walltime.p99_ns < 1us");
+        assert!(!contradicts(&ceiling, &diff));
+        assert!(contradicts(
+            &diff,
+            &c("a.walltime.p99_ns - b.walltime.p99_ns < 2us")
+        ));
     }
 
     #[test]
