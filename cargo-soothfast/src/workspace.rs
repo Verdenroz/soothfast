@@ -199,6 +199,28 @@ pub fn bench_crates(target: &str, dir: Option<&Path>) -> Result<Vec<String>, Str
     Ok(crates)
 }
 
+/// The members with a library target, in name order.
+pub(crate) fn lib_crates_in(meta: &Value) -> Vec<String> {
+    let mut crates: Vec<String> = meta["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|p| {
+            p["targets"].as_array().into_iter().flatten().any(|t| {
+                t["kind"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|k| k == "lib")
+            })
+        })
+        .filter_map(|p| p["name"].as_str())
+        .map(str::to_string)
+        .collect();
+    crates.sort();
+    crates
+}
+
 /// The lookup itself, over metadata already in hand.
 pub(crate) fn bench_crates_in(meta: &Value, target: &str) -> Vec<String> {
     let mut crates: Vec<String> = meta["packages"]
@@ -257,6 +279,13 @@ mod tests {
 
     fn lib(name: &str) -> Value {
         json!({ "name": name, "id": name, "targets": [{ "kind": ["lib"], "name": name }] })
+    }
+
+    #[test]
+    fn library_crates_exclude_binary_only_members() {
+        let bin = json!({ "name": "cli", "targets": [{ "kind": ["bin"], "name": "cli" }] });
+        let meta = json!({ "packages": [lib("b"), bin, lib("a")] });
+        assert_eq!(lib_crates_in(&meta), ["a", "b"]);
     }
 
     fn meta(packages: Vec<Value>, members: Vec<&str>, nodes: Vec<Value>) -> Value {
