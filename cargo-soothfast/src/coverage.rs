@@ -19,9 +19,10 @@ pub fn run(args: &[String]) -> i32 {
         Some("measure") => measure(&args[1..]),
         Some("docs") => docs(&args[1..]),
         Some("report") => coverage_report::run(&args[1..]),
+        Some("spec") => crate::coverage_spec::run(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast coverage measure|docs -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]\n       coverage report -p PKG [-p PKG ...] [--features F] [--json]\n       coverage report --dir D --lang L [--json]"
+                "soothfast: usage: cargo soothfast coverage measure|docs -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]\n       coverage report -p PKG [-p PKG ...] [--features F] [--json]\n       coverage report --dir D --lang L [--json]\n       coverage spec -p PKG [--min PCT] [--json]"
             );
             2
         }
