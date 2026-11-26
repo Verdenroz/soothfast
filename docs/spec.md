@@ -513,6 +513,31 @@ and a measured-cost line when the handler is also a measured item,
 attributed by id or `covers=`. It is the FastAPI-style page `#[route]` exists to
 produce without hand-maintaining it.
 
+## Specified coverage
+
+`cargo soothfast coverage spec -p PKG [--min PCT] [--json]` reports, for
+every route and MCP tool the package registers, whether the committed spec
+file declares it and whether a probe in `probes.toml` exercises it:
+
+```text
+UNSPECIFIED POST /items (fx::create_item) in spec: no, probed: no
+            mismatch: method POST != spec PUT
+specified   GET /items/{id} (fx::get_item) in spec: yes, probed: yes
+coverage: 1/3 route(s) specified (33%)
+```
+
+A route is in the spec when reconciliation matches its operation with the
+method and path the code serves; a disagreement is reported as `mismatch`
+and counts as not in the spec. A probe covers a route by the rule `spec
+probe` uses for its own count: same verb, and a path the route's template
+accepts. Tools and other non-HTTP operations are never covered by an HTTP
+probe. The handler's public path is the id the route registry records, and
+`--json` carries it with both flags for each route.
+
+The command is advisory. `--min PCT` fails it when the share of routes that
+are both in the spec and probed falls below `PCT`. A package with no
+`[[spec]]` entries prints that and exits 0.
+
 ## Probing data quality
 
 Reconciliation proves every operation exists on both sides; nothing above
