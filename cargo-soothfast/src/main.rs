@@ -85,7 +85,7 @@ usage: cargo soothfast <command>
 
 commands:
   init     [-p PKG]... [--check] [--force] [--no-bot] [--labels] [--no-labels]
-           [--dir D]
+           [--dev-profile] [--dir D]
            [--runner-labels A,B] [--no-test] [--pin REF]
            [--ecosystem rust|gradle|maven|python|node] [--bench-cmd CMD]
            [--bench-out PATH] [--from FORMAT]
@@ -99,7 +99,9 @@ commands:
            regenerated files and acts on pull request labels as
            soothfast-bot, and implies --labels, which saves [bot] labels = true, adds the labels job
            and creates the soothfast labels with gh, named as [bot]
-           configures them; --no-labels skips all three)
+           configures them; --no-labels skips all three; a cargo workspace
+           with no [profile.dev] debug setting gets advice for a faster dev
+           and test debuginfo profile, which --dev-profile writes)
   bump     [--to VERSION] [--check]
            (moves every soothfast pin in the repository to one release, the
            running CLI's unless --to names another: soothfast* requirements
