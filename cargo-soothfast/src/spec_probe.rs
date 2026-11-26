@@ -51,7 +51,7 @@ struct Header {
 
 /// One `[[probe]]` entry.
 #[derive(Debug)]
-struct Probe {
+pub(crate) struct Probe {
     name: String,
     path: String,
     /// Request verb, upper-cased at parse time. Defaults to `GET`.
@@ -404,10 +404,20 @@ fn probe_in(
 
 /// Whether `entry` exercises `op`: same verb, and a path the route's
 /// template accepts.
-fn probe_covers(entry: &Probe, op: &soothfast_spec::DeclaredOp) -> bool {
+pub(crate) fn probe_covers(entry: &Probe, op: &soothfast_spec::DeclaredOp) -> bool {
     let path = entry.path.split('?').next().unwrap_or(&entry.path);
     let concrete: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     entry.method.eq_ignore_ascii_case(&op.method) && shape::template_matches(&op.path, &concrete)
+}
+
+/// The package's `[[probe]]` entries; a package with no `probes.toml` has none.
+pub(crate) fn load_probes(pkg_dir: &Path) -> Result<Vec<Probe>, String> {
+    let path = pkg_dir.join("probes.toml");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => parse_manifest(&text).map(|m| m.probes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("cannot read {}: {e}", path.display())),
+    }
 }
 
 fn uncovered_note(baseline: &Baseline, probe: &str) -> String {

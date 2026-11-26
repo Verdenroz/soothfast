@@ -16,9 +16,10 @@ pub fn run(args: &[String]) -> i32 {
         Some("measure") => measure(&args[1..]),
         Some("docs") => docs(&args[1..]),
         Some("executed") => coverage_executed::run(&args[1..]),
+        Some("spec") => crate::coverage_spec::run(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast coverage measure|docs|executed -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]"
+                "soothfast: usage: cargo soothfast coverage measure|docs|executed -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]\n       coverage spec -p PKG [--min PCT] [--json]"
             );
             2
         }
@@ -235,7 +236,7 @@ fn report(what: &str, total: u32, missing: u32) -> u32 {
 }
 
 /// Integer floor percentage; an empty surface counts as fully covered.
-fn pct(total: u32, missing: u32) -> u32 {
+pub(crate) fn pct(total: u32, missing: u32) -> u32 {
     let covered = total.saturating_sub(missing);
     covered
         .saturating_mul(100)
