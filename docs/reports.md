@@ -55,7 +55,7 @@ With `-p` packages, it also writes `badges/coverage.json` and `.svg` from
 `coverage report`: the mean of the percentages of the dimensions that apply,
 floored. A `badges/coverage-DIMENSION.json` and `.svg` beside it carries each
 dimension's own percent (`documented`, `documented_strict`,
-`measured_declared`), so a composite cannot hide one dimension behind the
+`measured_declared`, `gated`), so a composite cannot hide one dimension behind the
 others; a dimension no package can tell reads `n/a` in grey. When the
 coverage cannot be computed, the render warns and writes the rest.
 
