@@ -22,14 +22,15 @@ pub struct Specified {
     pub in_spec: bool,
     /// How the spec's declaration of this operation disagrees with the code.
     pub mismatch: Option<String>,
-    /// Some probe exercises this method and path.
-    pub probed: bool,
+    /// Some probe exercises this method and path. `None` for a `TOOL`, which
+    /// no HTTP probe can reach.
+    pub probed: Option<bool>,
 }
 
 impl Specified {
-    /// In the spec and probed.
+    /// In the spec and, where a probe can reach it, probed.
     pub fn is_specified(&self) -> bool {
-        self.in_spec && self.probed
+        self.in_spec && self.probed.unwrap_or(true)
     }
 }
 
@@ -63,7 +64,7 @@ pub fn specified(
                 spec: spec.to_string(),
                 in_spec: !absent && mismatch.is_none(),
                 mismatch,
-                probed: covers(&op),
+                probed: (route.method != "TOOL").then(|| covers(&op)),
                 operation: route.operation.clone(),
                 method: route.method.clone(),
                 path: route.path.clone(),
@@ -105,20 +106,21 @@ mod tests {
         let rec = reconcile(&declared, &routes);
         let items = specified("api.yaml", &routes, &rec, |op| op.operation == "getItem");
         assert_eq!(items.len(), 2);
-        assert!(items[0].in_spec && items[0].probed && items[0].is_specified());
-        assert!(!items[1].in_spec && !items[1].probed && !items[1].is_specified());
+        assert!(items[0].in_spec && items[0].probed == Some(true) && items[0].is_specified());
+        assert!(!items[1].in_spec && items[1].probed == Some(false) && !items[1].is_specified());
         assert_eq!(items[0].handler, "app::getItem");
         assert_eq!(items[0].spec, "api.yaml");
     }
 
     #[test]
-    fn an_mcp_tool_route_is_specified_by_name_and_never_http_probed() {
+    fn an_mcp_tool_is_specified_by_being_in_the_spec_alone() {
         let declared = vec![op("search", "TOOL", "search")];
         let routes = vec![route("search", "TOOL", "search")];
         let rec = reconcile(&declared, &routes);
-        let items = specified("tools.json", &routes, &rec, |op| op.method != "TOOL");
+        let items = specified("tools.json", &routes, &rec, |_| false);
         assert!(items[0].in_spec);
-        assert!(!items[0].probed);
+        assert_eq!(items[0].probed, None);
+        assert!(items[0].is_specified());
     }
 
     #[test]
@@ -128,6 +130,7 @@ mod tests {
         let rec = reconcile(&declared, &routes);
         let items = specified("api.yaml", &routes, &rec, |_| true);
         assert!(!items[0].in_spec);
+        assert_eq!(items[0].probed, Some(true));
         assert_eq!(
             items[0].mismatch.as_deref(),
             Some("method POST != spec GET")

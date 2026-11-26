@@ -3,14 +3,18 @@
 //! Advisory unless `--min PCT` is given.
 
 use serde_json::{Value, json};
+use soothfast_spec::DeclaredOp;
 use soothfast_spec::specified::{Specified, specified};
 
 use crate::config::{self, Group};
 use crate::coverage::pct;
 use crate::invoke::{self, CommonArgs};
-use crate::spec::gather;
+use crate::spec::gather_registered;
 use crate::spec_config;
 use crate::spec_probe::{load_probes, probe_covers};
+
+/// A spec operation no registered route implements, with its spec file.
+type Unhandled = (String, DeclaredOp);
 
 pub fn run(args: &[String]) -> i32 {
     let mut common = CommonArgs::default();
@@ -54,26 +58,38 @@ pub fn run(args: &[String]) -> i32 {
 
 fn measure(pkg: &str, common: &CommonArgs, min: Option<u32>, json: bool) -> Result<i32, String> {
     let pkg_dir = invoke::pkg_dir(pkg).map_err(|e| e.to_string())?;
-    if spec_config::load(&pkg_dir)?.entries.is_empty() {
+    let entries = spec_config::load(&pkg_dir)?.entries;
+    if entries.is_empty() {
         println!("coverage spec: {pkg} has no spec packages");
         return Ok(0);
     }
     let probes = load_probes(&pkg_dir)?;
-    let items: Vec<Specified> = gather(pkg, common)?
-        .iter()
-        .flat_map(|rep| {
-            specified(&rep.spec_file, &rep.routes, &rep.rec, |op| {
-                probes.iter().any(|p| probe_covers(p, op))
-            })
-        })
-        .collect();
+    let reports = gather_registered(pkg, common)?;
+    let mut items: Vec<Specified> = Vec::new();
+    let mut unhandled: Vec<Unhandled> = Vec::new();
+    for rep in &reports {
+        items.extend(specified(&rep.spec_file, &rep.routes, &rep.rec, |op| {
+            probes.iter().any(|p| probe_covers(p, op))
+        }));
+        unhandled.extend(
+            rep.rec
+                .missing_handler
+                .iter()
+                .map(|op| (rep.spec_file.clone(), op.clone())),
+        );
+    }
     let total = items.len() as u32;
     let missing = items.iter().filter(|i| !i.is_specified()).count() as u32;
     let p = pct(total, missing);
     if json {
-        println!("{}", render_json(&items, p));
+        println!("{}", render_json(&items, &unhandled, p));
     } else {
-        print!("{}", render_text(&items, p));
+        for entry in &entries {
+            if !reports.iter().any(|r| r.spec_file == entry.path) {
+                println!("{pkg}: no routes registered for {}", entry.path);
+            }
+        }
+        print!("{}", render_text(&items, &unhandled, p));
     }
     if let Some(min) = min
         && p < min
@@ -88,7 +104,11 @@ fn yes_no(flag: bool) -> &'static str {
     if flag { "yes" } else { "no" }
 }
 
-fn render_text(items: &[Specified], percent: u32) -> String {
+fn probed_label(probed: Option<bool>) -> &'static str {
+    probed.map_or("n/a", yes_no)
+}
+
+fn render_text(items: &[Specified], unhandled: &[Unhandled], percent: u32) -> String {
     let mut out = String::new();
     for i in items {
         let mark = if i.is_specified() {
@@ -102,11 +122,17 @@ fn render_text(items: &[Specified], percent: u32) -> String {
             i.path,
             i.handler,
             yes_no(i.in_spec),
-            yes_no(i.probed),
+            probed_label(i.probed),
         ));
         if let Some(what) = &i.mismatch {
             out.push_str(&format!("            mismatch: {what}\n"));
         }
+    }
+    for (_, op) in unhandled {
+        out.push_str(&format!(
+            "declared, no handler: {} {} {}\n",
+            op.operation, op.method, op.path
+        ));
     }
     let done = items.iter().filter(|i| i.is_specified()).count();
     out.push_str(&format!(
@@ -116,7 +142,7 @@ fn render_text(items: &[Specified], percent: u32) -> String {
     out
 }
 
-fn render_json(items: &[Specified], percent: u32) -> Value {
+fn render_json(items: &[Specified], unhandled: &[Unhandled], percent: u32) -> Value {
     json!({
         "percent": percent,
         "routes": items.iter().map(|i| json!({
@@ -129,6 +155,12 @@ fn render_json(items: &[Specified], percent: u32) -> Value {
             "mismatch": i.mismatch,
             "probed": i.probed,
         })).collect::<Vec<_>>(),
+        "unhandled": unhandled.iter().map(|(spec, op)| json!({
+            "spec": spec,
+            "operation": op.operation,
+            "method": op.method,
+            "path": op.path,
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -136,7 +168,7 @@ fn render_json(items: &[Specified], percent: u32) -> Value {
 mod tests {
     use super::*;
 
-    fn item(handler: &str, in_spec: bool, probed: bool) -> Specified {
+    fn item(handler: &str, in_spec: bool, probed: Option<bool>) -> Specified {
         Specified {
             spec: "api.yaml".into(),
             operation: "getItem".into(),
@@ -149,23 +181,48 @@ mod tests {
         }
     }
 
-    #[test]
-    fn text_marks_each_route_and_totals_the_specified_share() {
-        let text = render_text(
-            &[item("app::a", true, true), item("app::b", true, false)],
-            50,
-        );
-        assert!(text.contains("specified   GET /items/{id} (app::a) in spec: yes, probed: yes"));
-        assert!(text.contains("UNSPECIFIED GET /items/{id} (app::b) in spec: yes, probed: no"));
-        assert!(text.ends_with("coverage: 1/2 route(s) specified (50%)\n"));
+    fn orphan() -> Unhandled {
+        (
+            "api.yaml".into(),
+            DeclaredOp {
+                operation: "listItems".into(),
+                method: "GET".into(),
+                path: "/items".into(),
+            },
+        )
     }
 
     #[test]
-    fn json_carries_the_handler_path_and_both_flags() {
-        let v = render_json(&[item("app::a", false, true)], 0);
+    fn text_marks_each_route_and_totals_the_specified_share() {
+        let text = render_text(
+            &[
+                item("app::a", true, Some(true)),
+                item("app::b", true, Some(false)),
+                item("app::c", true, None),
+            ],
+            &[],
+            67,
+        );
+        assert!(text.contains("specified   GET /items/{id} (app::a) in spec: yes, probed: yes"));
+        assert!(text.contains("UNSPECIFIED GET /items/{id} (app::b) in spec: yes, probed: no"));
+        assert!(text.contains("specified   GET /items/{id} (app::c) in spec: yes, probed: n/a"));
+        assert!(text.ends_with("coverage: 2/3 route(s) specified (67%)\n"));
+    }
+
+    #[test]
+    fn text_lists_unhandled_operations_outside_the_total() {
+        let text = render_text(&[], &[orphan()], 100);
+        assert!(text.contains("declared, no handler: listItems GET /items\n"));
+        assert!(text.ends_with("coverage: 0/0 route(s) specified (100%)\n"));
+    }
+
+    #[test]
+    fn json_carries_the_handler_path_flags_and_unhandled_operations() {
+        let v = render_json(&[item("app::a", false, None)], &[orphan()], 0);
         assert_eq!(v["percent"], 0);
         assert_eq!(v["routes"][0]["handler"], "app::a");
         assert_eq!(v["routes"][0]["in_spec"], false);
-        assert_eq!(v["routes"][0]["probed"], true);
+        assert_eq!(v["routes"][0]["probed"], Value::Null);
+        assert_eq!(v["unhandled"][0]["operation"], "listItems");
     }
 }
