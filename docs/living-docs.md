@@ -149,7 +149,7 @@ counts all of it; `coverage measure` counts only the callables, functions and
 methods. A minimum fails the run only when one is set, by `--min` or by
 `coverage` in `[docs]` or `[package.NAME.docs]`.
 
-`cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json] [--check] [--executed]`
+`cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json] [--check] [--executed] [--features-section]`
 prints one row per item and a summary per dimension:
 
 | Dimension | An item is covered when |
@@ -178,7 +178,8 @@ now, keyed on the package's files, those of every workspace crate it depends
 on, the workspace inputs, `Cargo.lock`, `rustc -vV` and the run, and prints
 `(cached run from DATE)` beside the figure so a reader knows it is not fresh.
 With no stored run, `tested` and `measured` read `n/a (not run: pass
---executed)`. Only a run that finished is stored: a bench run that exits
+--executed)`. A figure over several packages counts only those that ran; the
+summary then adds `N package(s) not run` and the figure is a lower bound. Only a run that finished is stored: a bench run that exits
 non-zero still yields a figure, but a lower bound (`partial` in the JSON, `lower
 bound` in the text) that is not kept, and a failing test run is an error.
 
@@ -211,10 +212,19 @@ built and a minimum is set; with no minimum set it prints
 text carries `claims not read`, and `partial` is true in the figure). The
 instrumented run happens under `--check` only for a package with a `tested` or
 `measured` minimum; otherwise both are `n/a`, and a stored run is not read.
+Each column follows its own minimum: a `tested` minimum starts only the test
+run, a `measured` minimum only the bench run. `--check --executed` runs both.
 
-Without `--check`, the report ends with the `coverage features` section for
-each package: how many public items sit outside the gate's feature set, per
-feature. See [items the gate never compiles](#items-the-gate-never-compiles).
+A `specified` figure needs the package's spec files and a route listing. When
+either cannot be read the report prints a warning, shows `specified` as `n/a`
+and fails only if the package sets a `specified` minimum.
+
+With `--features-section`, the report ends with the `coverage features`
+section for each package: how many public items sit outside the gate's
+feature set, per feature (a `features` array in `--json`). It is off by
+default because it costs up to three rustdoc builds per package, and a package
+whose section cannot be built is left out with a warning. See [items the gate
+never compiles](#items-the-gate-never-compiles).
 
 Coverage counts what the gate compiles: without `--features` it uses the
 package's features, else the gate's `features` for it.

@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 use serde_json::json;
 
 use super::regions::{self, Declared};
-use crate::invoke::CommonArgs;
+use crate::config::{Config, Group};
+use crate::invoke::{self, CommonArgs};
 
 /// Items are `tested` and `measured`; a column that was not run is absent.
 pub fn run(args: &[String]) -> i32 {
@@ -49,8 +50,19 @@ fn parse(args: &[String]) -> Result<Flags, String> {
     Ok(flags)
 }
 
+/// Fill the flags the way `coverage report` resolves them, so a run stored
+/// here is the one the report looks up.
+fn resolve(common: &mut CommonArgs, config: &Config) -> Result<(), String> {
+    let pkgs: Vec<String> = common.pkg.iter().cloned().collect();
+    if common.features.is_none() {
+        common.features = config.resolve_coverage(&pkgs)?.features;
+    }
+    config.fill(common, Group::Docs, &pkgs).map(|_| ())
+}
+
 fn execute(args: &[String]) -> Result<(), String> {
-    let flags = parse(args)?;
+    let mut flags = parse(args)?;
+    resolve(&mut flags.common, &Config::load(&invoke::project_root())?)?;
     let pkg = flags
         .common
         .pkg
@@ -148,6 +160,21 @@ mod tests {
     fn a_column_flag_runs_only_that_column() {
         let f = flags(&["-p", "demo", "--benches", "--json"]).unwrap();
         assert!(!f.tests && f.benches && f.json);
+    }
+
+    #[test]
+    fn the_configured_features_fill_what_a_flag_leaves_unset() {
+        let dir = std::env::temp_dir().join(format!("soothfast-cov-cli-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("soothfast.toml"), "[gate]\nfeatures = \"full\"\n").unwrap();
+        let config = Config::load(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut bare = flags(&["-p", "demo"]).unwrap().common;
+        resolve(&mut bare, &config).unwrap();
+        assert_eq!(bare.features.as_deref(), Some("full"));
+        let mut given = flags(&["-p", "demo", "--features", "lite"]).unwrap().common;
+        resolve(&mut given, &config).unwrap();
+        assert_eq!(given.features.as_deref(), Some("lite"));
     }
 
     #[test]

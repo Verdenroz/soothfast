@@ -1286,7 +1286,10 @@ and records nothing.
 and bench target, which is slower than any other step. `ci coverage` runs it
 only for a package that sets a `tested` or `measured` minimum; every other
 package reads `n/a (not run: no tested or measured minimum)` and the run is
-neither started nor read from the store. A bench run that fails still yields a
+neither started nor read from the store. The two follow their own minimums: a
+`tested` minimum starts only the test run, and a `measured` minimum only the
+bench run, which a package with no bench target does not have (`measured` is
+then `n/a`). A bench run that fails still yields a
 `measured` figure, recorded as a lower bound (`partial`) and not stored for
 later runs. `specified` applies to route and tool handlers, and every other item
 is `n/a`.

@@ -284,6 +284,7 @@ pub(crate) fn environment_with_dependencies(
     let mut parts = vec![environment(root, pkgs, cfg, package)?];
     for pkg in select::with_dependencies(pkgs, package)
         .iter()
+        .filter(|name| *name != package)
         .filter_map(|name| pkgs.iter().find(|p| p.name == *name))
     {
         let inputs = package_inputs(root, pkgs, cfg, pkg).map_err(|e| e.to_string())?;

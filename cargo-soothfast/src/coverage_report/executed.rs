@@ -19,6 +19,13 @@ pub(super) enum Want {
     Skip,
 }
 
+/// What each executed column may do while building a report.
+#[derive(Clone, Copy)]
+pub(super) struct Wants {
+    pub tests: Want,
+    pub benches: Want,
+}
+
 /// Where a column's items came from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Origin {
@@ -49,7 +56,10 @@ impl Provenance {
     }
 }
 
+/// The executed columns of one package: the items they can tell, the ones
+/// each run reached, and where each run came from.
 pub(super) struct Columns {
+    package: String,
     declared: BTreeSet<String>,
     tested: Option<BTreeSet<String>>,
     measured: Option<BTreeSet<String>>,
@@ -64,18 +74,18 @@ pub(super) fn gather(
     surf: &Surface,
     root: &Path,
     bench: &CommonArgs,
-    want: Want,
+    wants: Wants,
 ) -> Result<Columns, String> {
     let features = bench.features.as_deref();
     let tests = column(
-        want,
+        wants.tests,
         || coverage_executed::cached_tests(pkg, features),
         || coverage_executed::tests(pkg, features),
     )?;
     let target = bench.target.as_deref().unwrap_or("soothfast");
     let benches = if workspace::has_bench_target(pkg, target, None).map_err(|e| e.to_string())? {
         Some(column(
-            want,
+            wants.benches,
             || coverage_executed::cached_benches(bench),
             || coverage_executed::benches(bench),
         )?)
@@ -89,6 +99,7 @@ pub(super) fn gather(
             .map(|regions| coverage_executed::reach(surf, root, regions))
     };
     Ok(Columns {
+        package: pkg.to_string(),
         tested: hit(&tests),
         measured: benches.as_ref().and_then(hit),
         provenance: Provenance {
@@ -101,12 +112,12 @@ pub(super) fn gather(
 
 fn column(
     want: Want,
-    stored: impl FnOnce() -> Result<Option<Cached>, String>,
+    stored: impl FnOnce() -> Option<Cached>,
     run: impl FnOnce() -> Result<Regions, String>,
 ) -> Result<Column, String> {
     Ok(match want {
         Want::Skip => (None, Origin::Skipped),
-        Want::Stored => match stored()? {
+        Want::Stored => match stored() {
             Some(cached) => (Some(cached.regions), Origin::Stored(cached.unix)),
             None => (None, Origin::NotRun),
         },
@@ -134,13 +145,15 @@ pub(super) fn attach(rows: Vec<Row>, columns: &Columns) -> Vec<Row> {
             tested: judge(&columns.tested, &row.path),
             measured: judge(&columns.measured, &row.path),
             executed: columns.provenance,
+            package: columns.package.clone(),
             ..row
         })
         .collect()
 }
 
-/// The note a summary line carries for `name`: for a figure its run's age or
-/// bound, and for a dimension no row could tell, why not.
+/// The note a summary line carries for `name`: for a figure its run's age,
+/// bound and the packages left out, and for a dimension no row could tell,
+/// why not.
 pub(super) fn note(rows: &[Row], name: &str, told: bool) -> Option<String> {
     let origins: Vec<Origin> = rows.iter().filter_map(|r| r.executed.of(name)).collect();
     if !told {
@@ -152,8 +165,13 @@ pub(super) fn note(rows: &[Row], name: &str, told: bool) -> Option<String> {
                 .then(|| "not run: no tested or measured minimum".to_string())
         };
     }
+    let mut parts = Vec::new();
     if origins.contains(&Origin::Partial) {
-        return Some("lower bound: the bench run failed".to_string());
+        parts.push("lower bound: the bench run failed".to_string());
+    }
+    match unrun_packages(rows, name) {
+        0 => {}
+        n => parts.push(format!("{n} package(s) not run")),
     }
     let oldest = origins
         .iter()
@@ -161,15 +179,27 @@ pub(super) fn note(rows: &[Row], name: &str, told: bool) -> Option<String> {
             Origin::Stored(unix) => Some(*unix),
             _ => None,
         })
-        .min()?;
-    Some(format!("cached run from {}", stamp(oldest)))
+        .min();
+    parts.extend(oldest.map(|unix| format!("cached run from {}", stamp(unix))));
+    (!parts.is_empty()).then(|| parts.join(", "))
 }
 
+fn unrun_packages(rows: &[Row], name: &str) -> usize {
+    rows.iter()
+        .filter(|r| matches!(r.executed.of(name), Some(Origin::NotRun | Origin::Skipped)))
+        .map(|r| r.package.as_str())
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+/// Whether the figure for `name` is a lower bound: a bench run failed, or a
+/// package it would count was not run.
 pub(super) fn partial(rows: &[Row], name: &str) -> bool {
-    name == "measured"
-        && rows
+    matches!(name, "tested" | "measured")
+        && (rows
             .iter()
             .any(|r| r.executed.of(name) == Some(Origin::Partial))
+            || unrun_packages(rows, name) > 0)
 }
 
 /// `unix` as `YYYY-MM-DD HH:MM UTC`.
@@ -204,6 +234,7 @@ mod tests {
     fn row(path: &str, executed: Provenance) -> Row {
         Row {
             path: path.into(),
+            package: path.split("::").next().unwrap_or_default().into(),
             kind: "function".into(),
             executed,
             ..Row::default()
@@ -220,6 +251,7 @@ mod tests {
     #[test]
     fn only_declared_items_are_judged() {
         let columns = Columns {
+            package: "d".into(),
             declared: BTreeSet::from(["d::f".to_string(), "d::g".to_string()]),
             tested: Some(BTreeSet::from(["d::f".to_string()])),
             measured: None,
@@ -279,5 +311,24 @@ mod tests {
             Some("lower bound: the bench run failed")
         );
         assert!(partial(&rows, "measured") && !partial(&rows, "tested"));
+    }
+
+    #[test]
+    fn a_package_without_a_run_leaves_the_figure_a_lower_bound() {
+        let ran = Provenance {
+            tests: Some(Origin::Run),
+            benches: None,
+        };
+        let idle = Provenance {
+            tests: Some(Origin::NotRun),
+            benches: None,
+        };
+        let rows = [row("a::f", ran), row("b::f", idle), row("b::g", idle)];
+        assert!(partial(&rows, "tested"));
+        assert_eq!(
+            note(&rows, "tested", true).as_deref(),
+            Some("1 package(s) not run")
+        );
+        assert!(!partial(&rows[..1], "tested"));
     }
 }

@@ -39,40 +39,47 @@ pub fn through(
 
 /// A stored run and when it finished, as seconds since the epoch.
 pub struct Cached {
+    /// The regions the run executed.
     pub regions: Regions,
+    /// When the run was stored.
     pub unix: u64,
 }
 
 /// The stored run for `scope` whose inputs are those of the tree now, found
 /// without building: a pointer keyed on the package's files, its workspace
-/// dependencies', `Cargo.lock`, rustc and the scope names the entry
-/// [`through`] stored.
-pub fn lookup(scope: &str, pkg: &str) -> Result<Option<Cached>, String> {
-    let (Some(dir), Some(at)) = (
-        runcache::state_dir("coverage"),
-        runcache::state_dir("coverage-inputs"),
-    ) else {
-        return Ok(None);
-    };
-    let pointer = at.join(pointer_key(scope, &environment(pkg)?));
-    let Ok(name) = std::fs::read_to_string(pointer) else {
-        return Ok(None);
-    };
+/// dependencies', `Cargo.lock`, rustc, the build flags and the scope names the
+/// entry [`through`] stored. Inputs that cannot be read mean no stored run.
+pub fn lookup(scope: &str, pkg: &str) -> Option<Cached> {
+    let (dir, at) = (
+        runcache::state_dir("coverage")?,
+        runcache::state_dir("coverage-inputs")?,
+    );
+    let inputs = environment(pkg).ok()?;
+    let name = std::fs::read_to_string(at.join(pointer_key(scope, &inputs))).ok()?;
     let file = dir.join(name.trim());
     let unix = std::fs::metadata(&file)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |d| d.as_secs());
-    Ok(load(&file).map(|regions| Cached { regions, unix }))
+    load(&file).map(|regions| Cached { regions, unix })
 }
 
 fn pointer_key(scope: &str, inputs: &str) -> String {
-    runcache::hashed(&[
-        "soothfast-coverage-at-v1".into(),
-        scope.into(),
-        inputs.into(),
-    ])
+    let mut parts = vec![
+        "soothfast-coverage-at-v2".to_string(),
+        scope.to_string(),
+        inputs.to_string(),
+    ];
+    for var in [
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_BUILD_RUSTFLAGS",
+        "CARGO_BUILD_TARGET",
+    ] {
+        parts.push(format!("{var}={}", std::env::var(var).unwrap_or_default()));
+    }
+    runcache::hashed(&parts)
 }
 
 fn point(scope: &str, inputs: &str, file: &Path) {

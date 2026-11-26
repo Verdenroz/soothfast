@@ -51,16 +51,13 @@ pub fn tests(pkg: &str, features: Option<&str>) -> Result<Regions, String> {
 }
 
 /// The stored [`tests`] run for the tree as it is now, if any.
-pub fn cached_tests(pkg: &str, features: Option<&str>) -> Result<Option<Cached>, String> {
+pub fn cached_tests(pkg: &str, features: Option<&str>) -> Option<Cached> {
     cache::lookup(&tests_scope(pkg, features), pkg)
 }
 
 /// The stored [`benches`] run for the tree as it is now, if any.
-pub fn cached_benches(common: &CommonArgs) -> Result<Option<Cached>, String> {
-    let pkg = common
-        .pkg
-        .as_deref()
-        .ok_or("coverage executed requires -p PKG")?;
+pub fn cached_benches(common: &CommonArgs) -> Option<Cached> {
+    let pkg = common.pkg.as_deref()?;
     let target = common.target.as_deref().unwrap_or("soothfast");
     cache::lookup(&benches_scope(pkg, target, common.features.as_deref()), pkg)
 }

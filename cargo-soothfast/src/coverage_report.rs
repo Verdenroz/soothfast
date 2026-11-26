@@ -1,7 +1,7 @@
 //! `coverage report`: one row per public item with the dimensions it is
 //! covered on. A dimension a tree cannot tell is `n/a`, never 0%.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -17,7 +17,7 @@ use crate::{benchexe, docs, docs_support, workspace};
 
 mod executed;
 mod routes;
-use executed::{Provenance, Want};
+use executed::{Provenance, Want, Wants};
 
 /// A public item and what covers it. `None` is a dimension the item's tree
 /// has no way to tell.
@@ -34,6 +34,8 @@ struct Row {
     specified: Option<bool>,
     /// Where the executed columns came from.
     executed: Provenance,
+    /// The workspace package the row's item belongs to.
+    package: String,
     /// The item's claims were not read: no bench executable was listed, so
     /// `documented_strict` is a lower bound.
     claims_unread: bool,
@@ -81,6 +83,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut json = false;
     let mut check = false;
     let mut executed = false;
+    let mut features_section = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -91,6 +94,7 @@ pub fn run(args: &[String]) -> i32 {
             "--json" => json = true,
             "--check" => check = true,
             "--executed" => executed = true,
+            "--features-section" => features_section = true,
             other => {
                 eprintln!("soothfast: unknown coverage report arg {other:?}");
                 return 2;
@@ -99,20 +103,15 @@ pub fn run(args: &[String]) -> i32 {
     }
     match rows(&pkgs, &dirs, lang.as_deref(), features, check, executed) {
         Ok(rows) => {
-            let outside = match check {
-                true => Ok(Vec::new()),
-                false => pkgs.iter().map(|p| coverage_features::section(p)).collect(),
-            };
-            let outside: Vec<(String, Value)> = match outside {
-                Ok(outside) => outside,
-                Err(e) => {
-                    eprintln!("soothfast: {e}");
-                    return 1;
-                }
+            let outside = match features_section && !check {
+                true => outside_gate(&pkgs),
+                false => Vec::new(),
             };
             if json {
                 let mut doc = render_json(&rows);
-                doc["features"] = outside.into_iter().map(|(_, json)| json).collect();
+                if features_section {
+                    doc["features"] = outside.into_iter().map(|(_, json)| json).collect();
+                }
                 println!("{doc:#}");
             } else if check {
                 print!("{}", render_summary(&rows));
@@ -134,6 +133,20 @@ pub fn run(args: &[String]) -> i32 {
             code
         }
     }
+}
+
+/// The `coverage features` report of each package, which costs up to three
+/// rustdoc builds apiece. A package whose report fails is left out.
+fn outside_gate(pkgs: &[String]) -> Vec<(String, Value)> {
+    pkgs.iter()
+        .filter_map(|pkg| match coverage_features::section(pkg) {
+            Ok(section) => Some(section),
+            Err(e) => {
+                eprintln!("{pkg}: no features section: {e}");
+                None
+            }
+        })
+        .collect()
 }
 
 /// A `--check` whose report could not be built fails only a package that sets
@@ -270,14 +283,11 @@ fn rows(
             docs_support::surface_in(pkg, None, features.as_deref()).map_err(|e| (1, e))?;
         let may_build = !check || needs_bench(pkg).map_err(|e| (2, e))?;
         let build = bench_args(pkg, features.clone(), Group::Docs).map_err(|e| (1, e))?;
-        let min_set = check && needs_executed(pkg).map_err(|e| (2, e))?;
-        let want = executed_want(check, executed, min_set);
-        let columns = executed::gather(pkg, &surf, &root, &build, want).map_err(|e| (1, e))?;
+        let minimums = executed_minimums(pkg).map_err(|e| (2, e))?;
+        let wants = executed_wants(check, executed, minimums);
+        let columns = executed::gather(pkg, &surf, &root, &build, wants).map_err(|e| (1, e))?;
         let handlers = match may_build {
-            true => {
-                let spec = bench_args(pkg, features.clone(), Group::Spec).map_err(|e| (1, e))?;
-                Some(routes::handlers(pkg, &spec).map_err(|e| (1, e))?)
-            }
+            true => specified_handlers(pkg, features.clone())?,
             false => None,
         };
         let decorate = |rows: Vec<Row>| {
@@ -309,38 +319,69 @@ fn rows(
     Ok(rows)
 }
 
+/// Whether `pkg` has a minimum on any of `dimensions`.
+fn has_minimum(pkg: &str, dimensions: &[&str]) -> Result<bool, String> {
+    let minimums = config::coverage_defaults(&[pkg.to_string()])?;
+    Ok(dimensions.iter().any(|d| minimums.minimum(d).is_some()))
+}
+
 /// Whether `pkg` has a minimum on a dimension its bench target's claims,
 /// declarations and routes decide.
 fn needs_bench(pkg: &str) -> Result<bool, String> {
-    let minimums = config::coverage_defaults(&[pkg.to_string()])?;
-    Ok([
-        "documented_strict",
-        "measured_declared",
-        "gated",
-        "specified",
-    ]
-    .iter()
-    .any(|d| minimums.minimum(d).is_some()))
+    has_minimum(
+        pkg,
+        &[
+            "documented_strict",
+            "measured_declared",
+            "gated",
+            "specified",
+        ],
+    )
 }
 
-/// A `--check` runs the instrumented build only for a package with a minimum
-/// on `tested` or `measured`. A plain report runs it on `--executed` and
-/// otherwise reads a stored run.
-fn executed_want(check: bool, executed: bool, min_set: bool) -> Want {
-    match (check, executed) {
-        (true, _) if min_set => Want::Run,
-        (true, _) => Want::Skip,
-        (false, true) => Want::Run,
-        (false, false) => Want::Stored,
+/// The routes and tools `pkg` registers, by handler. A package whose spec
+/// cannot be read has `specified` n/a with a warning, unless it sets a
+/// minimum on it.
+fn specified_handlers(
+    pkg: &str,
+    features: Option<String>,
+) -> Result<Option<BTreeMap<String, bool>>, Failure> {
+    let spec = bench_args(pkg, features, Group::Spec).map_err(|e| (1, e))?;
+    match routes::handlers(pkg, &spec) {
+        Ok(handlers) => Ok(Some(handlers)),
+        Err(e) if has_minimum(pkg, &["specified"]).map_err(|e| (2, e))? => Err((1, e)),
+        Err(e) => {
+            eprintln!(
+                "{pkg}: specified is n/a: {}",
+                e.lines().next().unwrap_or_default()
+            );
+            Ok(None)
+        }
     }
 }
 
-/// Whether `pkg` has a minimum on a dimension an instrumented run decides.
-fn needs_executed(pkg: &str) -> Result<bool, String> {
-    let minimums = config::coverage_defaults(&[pkg.to_string()])?;
-    Ok(["tested", "measured"]
-        .iter()
-        .any(|d| minimums.minimum(d).is_some()))
+/// What a report may run for each executed column. A `--check` runs a column's
+/// instrumented build only for a package with a minimum on it, `--executed`
+/// runs both, and otherwise a stored run is read. `minimums` is whether
+/// `tested` and `measured` have one.
+fn executed_wants(check: bool, executed: bool, minimums: (bool, bool)) -> Wants {
+    let when = |set: bool| match (executed, check, set) {
+        (true, _, _) | (false, true, true) => Want::Run,
+        (false, true, false) => Want::Skip,
+        (false, false, _) => Want::Stored,
+    };
+    Wants {
+        tests: when(minimums.0),
+        benches: when(minimums.1),
+    }
+}
+
+/// Whether `pkg` has a minimum on `tested` and on `measured`.
+fn executed_minimums(pkg: &str) -> Result<(bool, bool), String> {
+    Ok((
+        has_minimum(pkg, &["tested"])?,
+        has_minimum(pkg, &["measured"])?,
+    ))
 }
 
 fn bench_args(pkg: &str, features: Option<String>, group: Group) -> Result<CommonArgs, String> {
@@ -919,10 +960,15 @@ mod tests {
 
     #[test]
     fn the_instrumented_run_happens_on_a_flag_or_a_minimum() {
-        assert!(executed_want(false, true, false) == Want::Run);
-        assert!(executed_want(false, false, false) == Want::Stored);
-        assert!(executed_want(true, false, true) == Want::Run);
-        assert!(executed_want(true, false, false) == Want::Skip);
+        let wants = |check, executed, minimums| {
+            let w = executed_wants(check, executed, minimums);
+            (w.tests, w.benches)
+        };
+        assert!(wants(false, true, (false, false)) == (Want::Run, Want::Run));
+        assert!(wants(false, false, (true, true)) == (Want::Stored, Want::Stored));
+        assert!(wants(true, false, (true, false)) == (Want::Run, Want::Skip));
+        assert!(wants(true, false, (false, true)) == (Want::Skip, Want::Run));
+        assert!(wants(true, true, (false, false)) == (Want::Run, Want::Run));
     }
 
     #[test]
