@@ -141,6 +141,23 @@ fn add_bench(meta: &Value, pkg: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Give `pkg` the optional `soothfast` dependency, whose implicit feature of
+/// the same name builds its in-crate benches.
+pub(super) fn add_internals(pkg: &str) -> Result<(), String> {
+    let version = env!("CARGO_PKG_VERSION");
+    let status = Command::new("cargo")
+        .args(["add", "--optional", "-p", pkg])
+        .arg(format!("soothfast@{version}"))
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err(format!(
+            "cargo add --optional soothfast@{version} failed for {pkg}"
+        ));
+    }
+    Ok(())
+}
+
 /// The packages and docs packages `plan` reads from a cargo workspace.
 pub struct RustPlan {
     pub packages: Vec<String>,

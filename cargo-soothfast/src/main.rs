@@ -88,7 +88,7 @@ usage: cargo soothfast <command>
 
 commands:
   init     [-p PKG]... [--check] [--force] [--no-bot] [--labels] [--no-labels]
-           [--dev-profile] [--dir D]
+           [--dev-profile] [--internals] [--dir D]
            [--runner-labels A,B] [--no-test] [--pin REF]
            [--ecosystem rust|gradle|maven|python|node] [--bench-cmd CMD]
            [--bench-out PATH] [--from FORMAT]
@@ -97,7 +97,9 @@ commands:
            project in D, which a repo with several ecosystems saves as
            [[project]] tables; --runner-labels A,B saves
            [runner] labels, --no-test saves [test] ci = false, and --pin REF
-           makes the workflow use that soothfast commit; -p gives PKG a soothfast bench target; --check reports
+           makes the workflow use that soothfast commit; -p gives PKG a soothfast bench target, and --internals also
+           gives it the optional soothfast dependency that in-crate benches
+           need; --check reports
            drift and writes nothing; the bot, on unless --no-bot, lands
            regenerated files and acts on pull request labels as
            soothfast-bot, and implies --labels, which saves [bot] labels = true, adds the labels job
