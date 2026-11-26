@@ -221,7 +221,8 @@ covers:
   `/`, `$CARGO_HOME/config.toml` and `rust-toolchain(.toml)`;
 - `rustc -vV`, `cargo -V` and `rustdoc -vV`;
 - every environment variable whose name starts with `CARGO_`, `RUSTFLAGS`,
-  `RUSTC` or `RUSTDOC`;
+  `RUSTC` or `RUSTDOC`, except `CARGO_MAKEFLAGS`, which differs on every
+  invocation under make;
 - the values of the `[test] env` variables;
 - the cargo flags and the arguments after `--`, including `--no-doc`;
 - the selected packages.
