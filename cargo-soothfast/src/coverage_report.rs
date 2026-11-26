@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 use soothfast_docs::{claims, markdown, surface::Surface};
+use soothfast_report::badges;
 
 use crate::config::{self, Group, Settings};
 use crate::coverage::{self, dangling_covers, declared_covers};
@@ -352,6 +353,43 @@ fn partial(rows: &[Row], name: &str) -> bool {
     name == "documented_strict" && rows.iter().any(|r| r.claims_unread)
 }
 
+/// The badges for `pkgs`, by file stem: `coverage`, the mean of the percentages
+/// of the dimensions that apply, and `coverage-DIMENSION` for each, so one
+/// dimension cannot carry the composite unseen.
+pub(crate) fn badge_files(
+    pkgs: &[String],
+    features: Option<&str>,
+) -> Result<Vec<(String, Value)>, String> {
+    let mut rows = Vec::new();
+    for pkg in pkgs {
+        let features = features.map(str::to_string);
+        rows.extend(
+            self::rows(std::slice::from_ref(pkg), &[], None, features, false).map_err(|f| f.1)?,
+        );
+    }
+    Ok(badge_set(&rows))
+}
+
+fn badge_set(rows: &[Row]) -> Vec<(String, Value)> {
+    let pcts: Vec<Option<u32>> = DIMENSIONS
+        .iter()
+        .map(|(name, _)| summarize(rows, name).map(percent))
+        .collect();
+    let applicable: Vec<u32> = pcts.iter().flatten().copied().collect();
+    let badge = |label: &str, pct: Option<u32>| match pct {
+        Some(pct) => badges::coverage_badge(label, pct),
+        None => badges::badge(label, "n/a", "lightgrey"),
+    };
+    let composite =
+        (!applicable.is_empty()).then(|| applicable.iter().sum::<u32>() / applicable.len() as u32);
+    let mut files = vec![("coverage".to_string(), badge("coverage", composite))];
+    for ((name, label), pct) in DIMENSIONS.iter().zip(pcts) {
+        let stem = format!("coverage-{name}");
+        files.push((stem, badge(&format!("coverage {label}"), pct)));
+    }
+    files
+}
+
 /// Covered and total over the rows a dimension applies to; `None` when it
 /// applies to none.
 fn summarize(rows: &[Row], name: &str) -> Option<(u32, u32)> {
@@ -545,6 +583,39 @@ mod tests {
                 .iter()
                 .any(|f| f.partial)
         );
+    }
+
+    #[test]
+    fn the_composite_badge_is_the_mean_of_the_applicable_dimensions() {
+        let rows = rust_rows(&surface(), Some(&set(&["d::sorted"])), &set(&[]));
+        let files = badge_set(&rows);
+        let message = |stem: &str| {
+            let (_, badge) = files.iter().find(|(s, _)| s == stem).unwrap();
+            badge["message"].as_str().unwrap().to_string()
+        };
+        assert_eq!(message("coverage-documented"), "83%");
+        assert_eq!(message("coverage-documented_strict"), "16%");
+        assert_eq!(message("coverage-measured_declared"), "20%");
+        assert_eq!(message("coverage"), "39%");
+    }
+
+    #[test]
+    fn a_dimension_no_row_can_tell_has_a_grey_badge_and_no_vote() {
+        let rows = vec![Row {
+            path: "src/a.py#f".into(),
+            kind: "function".into(),
+            documented: true,
+            documented_strict: None,
+            measured_declared: None,
+            claims_unread: false,
+        }];
+        let files = badge_set(&rows);
+        assert_eq!(files[0].1["message"], "100%");
+        let strict = files
+            .iter()
+            .find(|(s, _)| s == "coverage-documented_strict");
+        assert_eq!(strict.unwrap().1["message"], "n/a");
+        assert!(badge_set(&[]).iter().all(|(_, b)| b["message"] == "n/a"));
     }
 
     #[test]
