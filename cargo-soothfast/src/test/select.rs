@@ -178,6 +178,21 @@ fn with_dependents(pkgs: &[Package], direct: BTreeSet<&str>) -> BTreeSet<String>
     seen.into_iter().map(String::from).collect()
 }
 
+/// `name` and every workspace package it depends on, transitively.
+pub fn with_dependencies(pkgs: &[Package], name: &str) -> BTreeSet<String> {
+    let mut seen: BTreeSet<&str> = BTreeSet::from([name]);
+    let mut queue = vec![name];
+    while let Some(next) = queue.pop() {
+        let deps = pkgs.iter().find(|p| p.name == next).map(|p| &p.deps);
+        for dep in deps.into_iter().flatten() {
+            if pkgs.iter().any(|p| p.name == *dep) && seen.insert(dep) {
+                queue.push(dep);
+            }
+        }
+    }
+    seen.into_iter().map(String::from).collect()
+}
+
 /// Workspace-relative paths changed since `base`'s merge-base with HEAD,
 /// plus uncommitted and untracked ones. The workspace may sit below the git
 /// toplevel; `--relative` and `ls-files` both report paths from `root`.
@@ -260,6 +275,18 @@ mod tests {
         );
         assert_eq!(names(&sel), ["cli", "core", "server"]);
         assert_eq!(sel.everything_because, None);
+    }
+
+    #[test]
+    fn a_package_with_its_transitive_dependencies() {
+        let pkgs = graph();
+        let got = |name| {
+            with_dependencies(&pkgs, name)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(got("cli"), ["cli", "core", "server"]);
+        assert_eq!(got("core"), ["core"]);
     }
 
     #[test]
