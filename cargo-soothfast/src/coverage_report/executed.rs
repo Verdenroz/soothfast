@@ -23,6 +23,8 @@ pub(super) enum Want {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Origin {
     NotRun,
+    /// A check with no minimum on `tested` or `measured`.
+    Skipped,
     Run,
     /// The run failed, so the column is a lower bound.
     Partial,
@@ -103,7 +105,7 @@ fn column(
     run: impl FnOnce() -> Result<Regions, String>,
 ) -> Result<Column, String> {
     Ok(match want {
-        Want::Skip => (None, Origin::NotRun),
+        Want::Skip => (None, Origin::Skipped),
         Want::Stored => match stored()? {
             Some(cached) => (Some(cached.regions), Origin::Stored(cached.unix)),
             None => (None, Origin::NotRun),
@@ -142,9 +144,13 @@ pub(super) fn attach(rows: Vec<Row>, columns: &Columns) -> Vec<Row> {
 pub(super) fn note(rows: &[Row], name: &str, told: bool) -> Option<String> {
     let origins: Vec<Origin> = rows.iter().filter_map(|r| r.executed.of(name)).collect();
     if !told {
-        return origins
-            .contains(&Origin::NotRun)
-            .then(|| "not run: pass --executed".to_string());
+        return if origins.contains(&Origin::NotRun) {
+            Some("not run: pass --executed".to_string())
+        } else {
+            origins
+                .contains(&Origin::Skipped)
+                .then(|| "not run: no tested or measured minimum".to_string())
+        };
     }
     if origins.contains(&Origin::Partial) {
         return Some("lower bound: the bench run failed".to_string());
@@ -247,6 +253,14 @@ mod tests {
             Some("not run: pass --executed")
         );
         assert_eq!(note(&rows, "measured", false), None);
+        let skipped = Provenance {
+            tests: Some(Origin::Skipped),
+            benches: None,
+        };
+        assert_eq!(
+            note(&[row("d::f", skipped)], "tested", false).as_deref(),
+            Some("not run: no tested or measured minimum")
+        );
     }
 
     #[test]
