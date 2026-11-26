@@ -74,7 +74,7 @@ fn cargo_command(
         cmd.args(["-p", p]);
     }
     // Cargo-level flag: must precede the `--` separating runner args.
-    if let Some(f) = common.bench_features(dir) {
+    if let Some(f) = common.bench_features(dir).map_err(io::Error::other)? {
         cmd.args(["--features", &f]);
     }
     let target = common.target.as_deref().unwrap_or("soothfast");

@@ -148,6 +148,9 @@ fn run_at(root: &Path, args: &[String]) -> i32 {
         Err(e) => return err(&e),
     };
     ws.labels = labels;
+    if internals && bench.is_empty() {
+        return err("--internals needs -p PKG");
+    }
     if internals && !check {
         for pkg in &bench {
             if let Err(e) = rust::add_internals(pkg) {

@@ -176,10 +176,27 @@ pub(crate) fn declares_feature_in(meta: &Value, pkg: &str, feature: &str) -> boo
         .any(|p| p["features"].get(feature).is_some())
 }
 
-/// [`declares_feature_in`] for the tree at `dir`; false when cargo cannot
-/// read it.
-pub fn declares_feature(pkg: &str, feature: &str, dir: Option<&Path>) -> bool {
-    metadata(dir, true).is_ok_and(|meta| declares_feature_in(&meta, pkg, feature))
+/// [`declares_feature_in`] for the tree at `dir`. Read once per process and
+/// tree; a failed read is asked again.
+pub fn declares_feature(pkg: &str, feature: &str, dir: Option<&Path>) -> Result<bool, String> {
+    type Key = (String, String, Option<std::path::PathBuf>);
+    static DECLARED: OnceLock<Mutex<HashMap<Key, bool>>> = OnceLock::new();
+    let key = (
+        pkg.to_string(),
+        feature.to_string(),
+        dir.map(Path::to_path_buf),
+    );
+    let mut memo = DECLARED
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|e| e.to_string())?;
+    if let Some(declared) = memo.get(&key) {
+        return Ok(*declared);
+    }
+    let meta = metadata(dir, true).map_err(|e| e.to_string())?;
+    let declared = declares_feature_in(&meta, pkg, feature);
+    memo.insert(key, declared);
+    Ok(declared)
 }
 
 /// The source file of `pkg`'s bench target `target`, from `meta`.

@@ -55,10 +55,10 @@ soothfast = { version = "0.8", optional = true }
 soothfast = { version = "0.8", features = ["runner"] }
 ```
 
-`cargo soothfast init -p PKG --internals` writes both, with the bench target
-and its stub. The optional dependency gives the package a `soothfast` feature
-with no `[features]` line, and the bench target's `use my_crate as _;` stub
-links whatever the crate registers:
+`cargo soothfast init -p PKG --internals` writes the dev-dependency, the bench
+target and its stub, and the optional dependency. That dependency gives the
+package a `soothfast` feature with no `[features]` line, and the stub's
+`use my_crate as _;` links whatever the crate registers:
 
 ```rust ignore
 #[cfg(feature = "soothfast")]
