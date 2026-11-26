@@ -165,7 +165,7 @@ counts all of it; `coverage measure` counts only the callables, functions and
 methods. A minimum fails the run only when one is set, by `--min` or by
 `coverage` in `[docs]` or `[package.NAME.docs]`.
 
-`cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json]`
+`cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json] [--check]`
 prints one row per item and a summary per dimension:
 
 | Dimension | An item is covered when |
@@ -194,6 +194,17 @@ With `--json`, stdout is one object, `items` holding `path`, `kind`,
 `summary` holding `covered`, `total` and `pct` per dimension. A dimension a
 tree cannot tell, such as `documented+` for a non-Rust tree, is `null`, and
 the text report shows `n/a`.
+
+With `--check`, the report prints only the per-dimension summary, then a
+line for each dimension below its configured minimum
+(`coverage_min.DIMENSION`, see [gating](gating.md#per-package-defaults)), then
+one `soothfast-coverage` line holding the figures as JSON for `ci coverage` to
+record. It exits 1 when a minimum is not met, and 2 when the report could not be
+built and a minimum is set; with no minimum set it prints
+`coverage could not run: ERROR` and exits 0. A package with no minimum on `documented_strict`, `measured_declared` or
+`gated` reads a stored bench executable if there is one and never builds it;
+`measured (declared)` and `gated` are then `n/a`, and `documented+` is a lower bound (its
+text carries `claims not read`, and `partial` is true in the figure).
 
 Coverage counts what the gate compiles: without `--features` it uses the
 package's features, else the gate's `features` for it.
