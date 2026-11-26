@@ -79,6 +79,8 @@ pub fn run(args: &[String]) -> i32 {
         Ok(rows) => {
             if json {
                 println!("{:#}", render_json(&rows));
+            } else if check {
+                print!("{}", render_summary(&rows));
             } else {
                 print!("{}", render_text(&rows));
             }
@@ -357,6 +359,12 @@ fn render_text(rows: &[Row]) -> String {
             r.kind
         ));
     }
+    out.push_str(&render_summary(rows));
+    out
+}
+
+fn render_summary(rows: &[Row]) -> String {
+    let mut out = String::new();
     for (name, label) in DIMENSIONS {
         let figure = summarize(rows, name).map_or("n/a".to_string(), |s| {
             format!("{}/{} ({}%)", s.0, s.1, percent(s))

@@ -698,6 +698,47 @@ fn fit(records: &[Record], accepted: Option<&str>) -> String {
     body
 }
 
+impl Figure {
+    fn cell(&self) -> String {
+        match self.min {
+            Some(min) if self.pct < min => format!("{}% (min {min}, not met)", self.pct),
+            Some(min) => format!("{}% (min {min})", self.pct),
+            None => format!("{}%", self.pct),
+        }
+    }
+}
+
+/// Package by dimension, from the figures coverage checks recorded. Empty
+/// when no record carries any.
+fn coverage_table(records: &[Record]) -> String {
+    let known = |f: &&Figure| crate::coverage_report::is_dimension(&f.dimension);
+    let mut rows: Vec<&Record> = records.iter().filter(|r| !r.coverage.is_empty()).collect();
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut columns: Vec<&str> = Vec::new();
+    for f in rows.iter().flat_map(|r| &r.coverage).filter(known) {
+        if !columns.contains(&f.dimension.as_str()) {
+            columns.push(&f.dimension);
+        }
+    }
+    if columns.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("\n| package | {} |\n", columns.join(" | "));
+    out.push_str(&format!("|{}\n", " --- |".repeat(columns.len() + 1)));
+    for r in rows {
+        let cells: Vec<String> = columns
+            .iter()
+            .map(|c| {
+                let figure = r.coverage.iter().find(|f| f.dimension == *c);
+                figure.map_or("n/a".to_string(), Figure::cell)
+            })
+            .collect();
+        let name = plain(r.name.strip_prefix("coverage-").unwrap_or(&r.name));
+        out.push_str(&format!("| {name} | {} |\n", cells.join(" | ")));
+    }
+    out
+}
+
 fn render(records: &[Record], accepted: Option<&str>) -> String {
     let count = |v: Verdict| records.iter().filter(|r| r.verdict == v).count();
     let advisory = match count(Verdict::Advisory) {
@@ -717,6 +758,7 @@ fn render(records: &[Record], accepted: Option<&str>) -> String {
     if let Some(label) = accepted.filter(|_| count(Verdict::Regressed) > 0) {
         out.push_str(&format!("\nRegressions accepted by the `{label}` label.\n"));
     }
+    out.push_str(&coverage_table(records));
     for r in records {
         let carried = r
             .carried
@@ -796,6 +838,49 @@ mod tests {
             [("documented", 75, Some(80)), ("measured_declared", 0, None)]
         );
         assert_eq!(Record::from_json(&r.to_json()), Some(r));
+    }
+
+    fn figure(dimension: &str, covered: u64, total: u64, min: Option<u64>) -> Figure {
+        Figure {
+            dimension: dimension.into(),
+            covered,
+            total,
+            pct: covered * 100 / total,
+            min,
+        }
+    }
+
+    #[test]
+    fn coverage_figures_render_as_a_package_by_dimension_table() {
+        let with = |name: &str, coverage: Vec<Figure>| Record {
+            coverage,
+            kind: "check".into(),
+            ..rec(name, Verdict::Pass, "")
+        };
+        let records = [
+            with(
+                "coverage-b",
+                vec![
+                    figure("documented", 3, 4, Some(80)),
+                    figure("documented_strict", 1, 4, None),
+                ],
+            ),
+            with("coverage-a", vec![figure("documented", 4, 4, Some(80))]),
+            rec("spec-a", Verdict::Pass, ""),
+        ];
+        let body = render(&records, None);
+        let table = "| package | documented | documented_strict |\n| --- | --- | --- |\n| a | 100% (min 80) | n/a |\n| b | 75% (min 80, not met) | 25% |\n";
+        assert!(body.contains(table), "{body}");
+        assert!(!render(&records[2..], None).contains("| package |"));
+    }
+
+    #[test]
+    fn a_dimension_the_record_invents_is_not_a_column() {
+        let r = Record {
+            coverage: vec![figure("x|y", 1, 1, None)],
+            ..rec("coverage-a", Verdict::Pass, "")
+        };
+        assert!(!render(&[r], None).contains("| package |"));
     }
 
     #[test]
