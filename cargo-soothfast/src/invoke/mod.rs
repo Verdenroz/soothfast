@@ -41,8 +41,8 @@ pub use run::{
 };
 pub(crate) use rustdoc::{RUSTDOC_FORMAT_VERSION, crate_dirs};
 pub use rustdoc::{
-    Visibility, dependency_features, rustdoc_build, rustdoc_holds, rustdoc_json_all, rustdoc_json_exactly,
-    rustdoc_json_in, rustdoc_key,
+    Visibility, dependency_features, rustdoc_build, rustdoc_holds, rustdoc_json_all,
+    rustdoc_json_exactly, rustdoc_json_in, rustdoc_key,
 };
 pub use worktree::{
     forget_missing_worktree, sync_untracked_cargo_config, with_merge_base_worktree,

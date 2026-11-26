@@ -3,10 +3,17 @@
 //! so an item behind any other feature is absent from every denominator.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::process::Command;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
-const COUNTED: [&str; 6] = ["function", "struct", "enum", "union", "trait", "type_alias"];
+use crate::config::{self, Group};
+use crate::invoke::{self, Visibility};
+
+/// Whether a rustdoc item kind belongs in the denominator.
+fn counted(kind: &str) -> bool {
+    ["function", "struct", "enum", "union", "trait", "type_alias"].contains(&kind)
+}
 
 /// One public item of a rustdoc surface.
 #[derive(Debug, Default, PartialEq)]
@@ -52,7 +59,7 @@ pub fn public_items(doc: &Value) -> BTreeMap<String, Entry> {
         let Some(kind) = item["inner"].as_object().and_then(|i| i.keys().next()) else {
             continue;
         };
-        let counted = COUNTED.contains(&kind.as_str());
+        let counted = counted(kind);
         if item["visibility"] != "public" || !(counted || kind == "module") {
             continue;
         }
@@ -212,6 +219,174 @@ pub fn from_runs(gate: &BTreeSet<String>, runs: &BTreeMap<String, BTreeSet<Strin
     }
 }
 
+/// `coverage features -p PKG [--json] [--max-outside N]`.
+pub fn run(args: &[String]) -> i32 {
+    let mut pkg = None;
+    let mut json = false;
+    let mut max_outside: Option<u32> = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "-p" | "--package" => pkg = it.next().cloned(),
+            "--json" => json = true,
+            "--max-outside" => max_outside = it.next().and_then(|v| v.parse().ok()),
+            other => {
+                eprintln!("soothfast: unknown coverage features arg {other:?}");
+                return 2;
+            }
+        }
+    }
+    let Some(pkg) = pkg else {
+        eprintln!("soothfast: coverage features requires -p PKG");
+        return 2;
+    };
+    let gate_features = match config::defaults(std::slice::from_ref(&pkg), Group::Gate) {
+        Ok(settings) => settings.features,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 2;
+        }
+    };
+    let (outside, route) = match measure(&pkg, gate_features.as_deref()) {
+        Ok(measured) => measured,
+        Err(e) => {
+            eprintln!("soothfast: {e}");
+            return 1;
+        }
+    };
+    if json {
+        println!(
+            "{}",
+            render_json(&pkg, gate_features.as_deref(), &outside, route)
+        );
+    } else {
+        print!(
+            "{}",
+            render_text(&pkg, gate_features.as_deref(), &outside, route)
+        );
+    }
+    match max_outside {
+        Some(max) if outside.outside > max => {
+            eprintln!(
+                "coverage features: FAILED ({} outside item(s) > allowed {max})",
+                outside.outside
+            );
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// How the reference surface was obtained.
+#[derive(Clone, Copy)]
+enum Route {
+    AllFeatures,
+    PerFeature,
+}
+
+fn measure(pkg: &str, gate_features: Option<&str>) -> Result<(Outside, Route), String> {
+    let table = feature_table(pkg)?;
+    let enabled = enabled_features(&table, gate_features);
+    let declared: BTreeSet<String> = table.keys().cloned().collect();
+    let (gate_doc, _) = invoke::rustdoc_json_in(pkg, None, gate_features, Visibility::Public)
+        .map_err(|e| e.to_string())?;
+    let gate: BTreeSet<String> = public_items(&gate_doc).into_keys().collect();
+    if let Ok((doc, _)) = invoke::rustdoc_json_all(pkg, None, Visibility::Public) {
+        let outside = from_cfg(&public_items(&doc), &gate, &enabled, &declared);
+        return Ok((outside, Route::AllFeatures));
+    }
+    let mut runs = BTreeMap::new();
+    for feature in declared.difference(&enabled) {
+        let features = match gate_features {
+            Some(g) => format!("{g},{feature}"),
+            None => feature.clone(),
+        };
+        let (doc, _) = invoke::rustdoc_json_in(pkg, None, Some(&features), Visibility::Public)
+            .map_err(|e| format!("rustdoc with feature {feature}: {e}"))?;
+        runs.insert(feature.clone(), public_items(&doc).into_keys().collect());
+    }
+    Ok((from_runs(&gate, &runs), Route::PerFeature))
+}
+
+/// The `[features]` table of workspace package `pkg`.
+fn feature_table(pkg: &str) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let root = invoke::workspace_root().map_err(|e| e.to_string())?;
+    let out = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("cargo metadata: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let meta: Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    let package = (meta["packages"].as_array().into_iter().flatten())
+        .find(|p| p["name"] == pkg)
+        .ok_or_else(|| format!("no workspace package {pkg:?}"))?;
+    Ok((package["features"].as_object().into_iter().flatten())
+        .map(|(name, implied)| {
+            let implied = implied.as_array().into_iter().flatten();
+            (
+                name.clone(),
+                implied
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect(),
+            )
+        })
+        .collect())
+}
+
+fn render_text(pkg: &str, gate: Option<&str>, out: &Outside, route: Route) -> String {
+    let mut text = format!(
+        "coverage features: {pkg} (gate features: {})\n",
+        gate.unwrap_or("none")
+    );
+    if matches!(route, Route::PerFeature) {
+        text.push_str(
+            "note: --all-features does not build; each feature was built on top of the gate's set, one rustdoc run per feature\n",
+        );
+    }
+    for (feature, items) in &out.features {
+        text.push_str(&format!("{feature:<24} {items} public item(s)\n"));
+    }
+    if out.unattributed > 0 {
+        text.push_str(&format!(
+            "{:<24} {} public item(s)\n",
+            "(no feature in its cfg)", out.unattributed
+        ));
+        text.push_str(&format!(
+            "warning: items with no feature in their cfg are either gated by `not(..)` or by a cfg this parser no longer reads (rustdoc JSON format {})\n",
+            invoke::RUSTDOC_FORMAT_VERSION
+        ));
+    }
+    text.push_str(&format!(
+        "coverage features: {}/{} public item(s) sit outside the gate's feature set\n",
+        out.outside, out.reference
+    ));
+    text
+}
+
+fn render_json(pkg: &str, gate: Option<&str>, out: &Outside, route: Route) -> Value {
+    let features: Vec<Value> = (out.features.iter())
+        .map(|(feature, items)| json!({ "feature": feature, "items": items }))
+        .collect();
+    json!({
+        "package": pkg,
+        "gate_features": gate,
+        "reference": match route {
+            Route::AllFeatures => "all-features",
+            Route::PerFeature => "per-feature",
+        },
+        "public_items": out.reference,
+        "outside": out.outside,
+        "features": features,
+        "unattributed": out.unattributed,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -271,9 +446,8 @@ mod tests {
     #[test]
     fn items_inherit_the_features_of_their_module_and_impl() {
         let items = public_items(&doc());
-        let features = |path: &str| -> Vec<&str> {
-            items[path].features.iter().map(String::as_str).collect()
-        };
+        let features =
+            |path: &str| -> Vec<&str> { items[path].features.iter().map(String::as_str).collect() };
         assert_eq!(features("k::always"), Vec::<&str>::new());
         assert_eq!(features("k::only_b"), ["b"]);
         assert_eq!(features("k::m::inner"), ["a"]);
@@ -300,6 +474,32 @@ mod tests {
     }
 
     #[test]
+    fn cfg_attributes_parse_as_rustdoc_writes_them() {
+        assert_eq!(
+            invoke::RUSTDOC_FORMAT_VERSION,
+            61,
+            "recapture the attrs below"
+        );
+        let attrs = |text: &str| json!({ "attrs": [{ "other": text }] });
+        let single = attrs(
+            r#"#[attr = CfgTrace([NameValue { name: "feature", value: Some("x"), span: src/lib.rs:2:7: 2:20 (#0) }])]"#,
+        );
+        let all = attrs(
+            r#"#[attr = CfgTrace([All([NameValue { name: "feature", value: Some("a"), span: src/lib.rs:4:11: 4:24 (#0) }, NameValue { name: "feature", value: Some("b"), span: src/lib.rs:4:26: 4:39 (#0) }], src/lib.rs:4:10: 4:40 (#0))])]"#,
+        );
+        let any = attrs(
+            r#"#[attr = CfgTrace([Any([NameValue { name: "feature", value: Some("a"), span: src/lib.rs:16:11: 16:24 (#0) }, NameValue { name: "feature", value: Some("b"), span: src/lib.rs:16:26: 16:39 (#0) }], src/lib.rs:16:10: 16:40 (#0))])]"#,
+        );
+        let not = attrs(
+            r#"#[attr = CfgTrace([Not(NameValue { name: "feature", value: Some("y"), span: src/lib.rs:18:11: 18:26 (#0) }, src/lib.rs:18:10: 18:27 (#0))])]"#,
+        );
+        assert_eq!(cfg_features(&single), set(&["x"]));
+        assert_eq!(cfg_features(&all), set(&["a", "b"]));
+        assert_eq!(cfg_features(&any), set(&["a", "b"]));
+        assert_eq!(cfg_features(&not), set(&[]));
+    }
+
+    #[test]
     fn a_negated_cfg_attributes_to_no_feature() {
         assert!(public_items(&doc())["k::not_b"].features.is_empty());
     }
@@ -309,7 +509,10 @@ mod tests {
         let table = BTreeMap::from([
             ("default".to_string(), vec!["std".to_string()]),
             ("std".to_string(), vec![]),
-            ("full".to_string(), vec!["x/y".to_string(), "dep:z".to_string()]),
+            (
+                "full".to_string(),
+                vec!["x/y".to_string(), "dep:z".to_string()],
+            ),
             ("x".to_string(), vec![]),
             ("opt".to_string(), vec!["w?/v".to_string()]),
             ("w".to_string(), vec![]),
