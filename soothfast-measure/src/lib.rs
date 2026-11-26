@@ -16,6 +16,7 @@ mod ctl;
 mod json;
 #[cfg(target_os = "linux")]
 pub mod perfcnt;
+mod profile;
 pub mod runner;
 pub mod stats;
 pub mod sweep;
