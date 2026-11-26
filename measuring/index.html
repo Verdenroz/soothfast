@@ -232,6 +232,61 @@ be this release or newer: an older one exits with <code>unknown runner arg
 last release when <code>report changelog</code> measures it: until a release ships with
 a harness that knows the setting, the changelog's perf delta against that
 release is left out with a warning (see <a href="../gating/">gating</a>).</p>
+<h2 id="what-tests-and-benches-execute">What tests and benches execute<a class="anchor" href="#what-tests-and-benches-execute" aria-label="Link to this section">#</a></h2>
+<p><code>coverage measure</code> counts an item as measured when a bench names it in
+<code>covers</code>. Nothing there checks that the bench runs it. <code>coverage executed</code>
+asks the question directly: it builds the package's tests, and separately its
+bench target, with <code>-C instrument-coverage</code>, runs them, and reports which
+public items any test ran (<code>tested</code>) and which any bench ran (<code>measured</code>).</p>
+<figure class="code"><figcaption class="code-bar"><span class="code-lang">console</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">$ </span>cargo soothfast coverage executed -p soothfast-registry
+tested measured soothfast_registry::Bencher::iter (function)
+       measured soothfast_registry::block_on_counting (function)
+                soothfast_registry::Assertions::new (function)
+tested          soothfast_registry::resolve_mock_seam (function)
+coverage executed: 7/34 public item(s) tested
+coverage executed: 9/34 public item(s) measured
+</code></pre></figure>
+<p><code>--tests</code> or <code>--benches</code> runs one column, and <code>--json</code> prints
+<code>{&quot;package&quot;, &quot;items&quot;: [{&quot;path&quot;, &quot;kind&quot;, &quot;tested&quot;, &quot;measured&quot;}]}</code> with a
+column left out when it did not run. <code>--bench NAME</code> picks the bench target
+(default <code>soothfast</code>) and <code>--features</code> the feature set.</p>
+<p>The denominator is the public functions, structs, enums, unions and traits of
+the package, plus inherent methods. Trait-impl methods are not items of their
+own, and <code>#[doc(hidden)]</code> items are not in the rustdoc surface.</p>
+<h3 id="how-an-item-counts-as-executed">How an item counts as executed<a class="anchor" href="#how-an-item-counts-as-executed" aria-label="Link to this section">#</a></h3>
+<p>An item is executed when any region with a nonzero count lies on a line of its
+span, in the same file. The span comes from rustdoc. A function or inherent
+method has its own span. A struct, enum, union or trait has its own span plus
+the span of every method in every impl block for it, trait impls included, so
+a type counts as executed when any of its methods ran. That is a deliberate
+choice: a type with no methods is never executed, and neither is one that
+code only constructs or reads fields of. A generic is credited at the generic
+item, whatever the instantiation.</p>
+<p>Mapping is by source span rather than by symbol, so an item reached only
+through an inlined call is still credited: the counters sit in the compiler's
+MIR, ahead of inlining.</p>
+<h3 id="what-it-does-not-see">What it does not see<a class="anchor" href="#what-it-does-not-see" aria-label="Link to this section">#</a></h3>
+<ul>
+<li>Doc tests are not instrumented, so an item only a doc test runs is untested.</li>
+<li>Code that runs only at compile time has no runtime region. A <code>const fn</code> body evaluated in a static, such as <code>MeasuredItem::new</code> in the macro statics, reads as not executed.</li>
+<li>Benches run under the dev profile, with the runner's <code>alloc</code> backend, which runs each item once. Code behind <code>cfg(debug_assertions)</code> can credit an item the bench profile never reaches. A bench run that exits nonzero, such as a claim that holds only under the bench profile, still counts.</li>
+<li>A function a macro generates has its regions on the lines of the macro definition, while its span is the invocation, so it reads as not executed.</li>
+<li>The build takes its flags from <code>CARGO_ENCODED_RUSTFLAGS</code> or <code>RUSTFLAGS</code> plus <code>-Cinstrument-coverage</code>. Flags set only in <code>.cargo/config.toml</code> are not applied.</li>
+</ul>
+<h3 id="cost">Cost<a class="anchor" href="#cost" aria-label="Link to this section">#</a></h3>
+<p>The instrumented build has its own target directory,
+<code>target/soothfast-coverage</code>, and the flags reach only the <code>--target &lt;host&gt;</code>
+artifacts of that cargo, so build scripts and proc macros are not
+instrumented and the artifacts <code>gate</code> and <code>measure</code> use are not touched.
+Profiles go to a temporary directory and are merged by <code>llvm-profdata</code>, then
+<code>llvm-cov export</code> writes the regions. Both tools come from the
+<code>llvm-tools</code> rustup component; the command names <code>rustup component add
+llvm-tools</code> when they are missing.</p>
+<p>The executed regions are kept under <code>.soothfast/coverage/</code>, keyed on the
+bytes of the instrumented executables and on the inputs the <code>test</code> pass cache
+keys on: the package's files, <code>[test] inputs</code>, the <code>[test] env</code> values and the
+compiler version. An unchanged tree reruns nothing: the rerun builds, finds
+the key unchanged, and reads the stored regions.</p>
 <h2 id="the-statistics-underneath">The statistics underneath<a class="anchor" href="#the-statistics-underneath" aria-label="Link to this section">#</a></h2>
 <p>Every walltime measurement is reduced with <code>summarize</code>, which reports median
 and median absolute deviation rather than mean and standard deviation. That
@@ -276,6 +331,14 @@ that keeps every page on this site honest.</p>
     <li><a class="toc-l2" href="#from-annotation-to-measurement">From annotation to measurement</a></li>
   
     <li><a class="toc-l2" href="#what-callgrind-s-counts-depend-on">What callgrind&#39;s counts depend on</a></li>
+  
+    <li><a class="toc-l2" href="#what-tests-and-benches-execute">What tests and benches execute</a></li>
+  
+    <li><a class="toc-l3" href="#how-an-item-counts-as-executed">How an item counts as executed</a></li>
+  
+    <li><a class="toc-l3" href="#what-it-does-not-see">What it does not see</a></li>
+  
+    <li><a class="toc-l3" href="#cost">Cost</a></li>
   
     <li><a class="toc-l2" href="#the-statistics-underneath">The statistics underneath</a></li>
   

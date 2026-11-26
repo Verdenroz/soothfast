@@ -679,9 +679,9 @@ rejects <code>coverage</code> as an unknown key of <code>[docs]</code>, so adopt
 runner has updated. A key a group's
 commands have no flag for is an error naming its line.</p>
 <p><code>coverage_min.DIMENSION</code> is the same percent for one dimension of <code>coverage
-report</code>: <code>documented</code>, <code>documented_strict</code>, <code>measured_declared</code>, <code>gated</code>, and the
-names <code>tested</code>, <code>measured</code> and <code>specified</code>, which parse now and take effect
-once a command computes them. <code>ci coverage</code> fails a package that falls
+report</code>: <code>documented</code>, <code>documented_strict</code>, <code>tested</code>, <code>measured_declared</code>,
+<code>measured</code>, <code>gated</code> and <code>specified</code>. A <code>tested</code> or <code>measured</code> minimum also makes
+<code>ci coverage</code> run the instrumented build those figures need. <code>ci coverage</code> fails a package that falls
 short of any minimum set, and reports every dimension that has none.
 <code>coverage</code> is <code>coverage_min.documented</code>; setting both to different values in
 one table is an error naming both lines. The keys are dotted keys of <code>[docs]</code>

@@ -163,9 +163,12 @@ by the last <code>gate</code> run, through <code>badges::gate_badge</code>.</p>
 <p>With <code>-p</code> packages, it also writes <code>badges/coverage.json</code> and <code>.svg</code> from
 <code>coverage report</code>: the mean of the percentages of the dimensions that apply,
 floored. A <code>badges/coverage-DIMENSION.json</code> and <code>.svg</code> beside it carries each
-dimension's own percent (<code>documented</code>, <code>documented_strict</code>,
-<code>measured_declared</code>, <code>gated</code>), so a composite cannot hide one dimension behind the
-others; a dimension no package can tell reads <code>n/a</code> in grey. When the
+dimension's own percent (<code>documented</code>, <code>documented_strict</code>, <code>tested</code>,
+<code>measured_declared</code>, <code>measured</code>, <code>gated</code>, <code>specified</code>), so a composite cannot
+hide one dimension behind the others; a dimension no package can tell reads
+<code>n/a</code> in grey. <code>tested</code> and <code>measured</code> read the stored instrumented run and
+never start one, so they are <code>n/a</code> until <code>coverage report --executed</code> or a
+<code>ci coverage</code> with a minimum on them has run. When the
 coverage cannot be computed, the render warns and writes the rest.</p>
 <p>The trend SVGs (<code>trend-instructions.svg</code>, <code>trend-walltime_median_ns.svg</code>,
 <code>trend-allocs.svg</code>) only appear once <code>.soothfast/trend.jsonl</code> holds at least

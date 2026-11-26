@@ -228,7 +228,7 @@ taken as-is, and underscores are allowed for readability, as in <code>25_000</co
 <code>docs check</code> evaluates the expression against
 <code>baseline[&quot;items&quot;][item][backend][metric]</code> and fails if the metric is
 missing or the comparison does not hold.</p>
-<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 145 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.5" y2="11" class="chip-scale-fill" style="--fill-len:0.5"/><circle cx="8.5" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.5"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
+<div class="claimline"><span class="chip chip-pass" data-soothfast-claim data-state="pass" title="soothfast_docs::bench_claim_parse.walltime.p99_ns &lt; 50000"><span class="chip-head"><span class="chip-mark">✓</span><span class="chip-item">bench_claim_parse</span><span class="chip-sep">—</span><span class="chip-detail">p99 time 190 ns</span><span class="chip-limit">(limit &lt; 50.0 µs)</span></span><span class="chip-gauge"><svg class="chip-scale" viewBox="0 0 220 22" aria-hidden="true" focusable="false"><line x1="8" y1="11" x2="212" y2="11" class="chip-scale-rail"/><line x1="8" y1="7" x2="8" y2="15" class="chip-scale-cap"/><line x1="212" y1="7" x2="212" y2="15" class="chip-scale-cap"/><line x1="180.88" y1="3" x2="180.88" y2="19" class="chip-scale-limit"/><line x1="8" y1="11" x2="8.66" y2="11" class="chip-scale-fill" style="--fill-len:0.66"/><circle cx="8.66" cy="11" r="3.2" class="chip-scale-marker" style="--mx:8.66"/></svg><span class="chip-scale-axis"><span>0</span><span>limit 50.0 µs</span></span></span></span></div>
 <p>Parsing one claim expression, the exact work <code>docs check</code> does per marker on
 this page, costs under 50µs at the tail.</p>
 <p>A claim can also bound the difference of two items' metrics, which is how to
@@ -244,12 +244,6 @@ both halves end in a known backend (<code>perfcnt</code>, <code>walltime</code>,
 an imported id that contains <code>-</code> still reads as one item. The bound applies
 to the left value minus the right. A side with no measurement fails the claim and
 the message names it; a <code>-</code> with nothing after it fails to parse.</p>
-<p>Two advisory lints run beside the claim check. Neither fails <code>docs check</code>;
-they print as <code>warn</code> lines and in the verdict.</p>
-<ul>
-<li>A held claim whose bound is more than 4x from the measured value (the bound over the measured value for <code>&lt;</code>/<code>&lt;=</code>, the reverse for <code>&gt;</code>/<code>&gt;=</code>) guards nothing. The warning names the claim, the bound, the measured value and the ratio. A measured value of zero has no ratio and is not flagged.</li>
-<li>The same <code>item.backend.metric</code> claimed twice in the same direction with different bounds, on one page or two, contradicts itself. The warning names both <code>file:line</code> locations. A floor and a ceiling on one metric state a range and are not flagged.</li>
-</ul>
 <h2 id="coverage">Coverage<a class="anchor" href="#coverage" aria-label="Link to this section">#</a></h2>
 <p><code>cargo soothfast coverage docs -p PKG</code> and <code>coverage measure -p PKG</code> count the
 same public surface. It is every public item (functions, types, traits,
@@ -259,21 +253,39 @@ items are not counted, and neither are associated consts. <code>coverage docs</c
 counts all of it; <code>coverage measure</code> counts only the callables, functions and
 methods. A minimum fails the run only when one is set, by <code>--min</code> or by
 <code>coverage</code> in <code>[docs]</code> or <code>[package.NAME.docs]</code>.</p>
-<p><code>cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json] [--check]</code>
+<p><code>cargo soothfast coverage report -p PKG [-p PKG ...] [--features F] [--json] [--check] [--executed] [--features-section]</code>
 prints one row per item and a summary per dimension:</p>
 <div class="tablewrap"><table>
 <thead><tr><th>Dimension</th><th>An item is covered when</th></tr></thead>
 <tbody>
 <tr><td><code>documented</code></td><td>its doc comment has text</td></tr>
 <tr><td><code>documented+</code></td><td>it is documented and its docs hold a fenced Rust example, or a <code>soothfast:bind</code> or <code>soothfast:claim</code> marker in the repo's tracked markdown names its path or a re-export of it; a claim names a bench, so it counts through that bench's <code>covers</code> (or the bench's own id), and only in a package with a bench target</td></tr>
+<tr><td><code>tested</code></td><td>the package's tests execute a line of it (doc tests are not instrumented)</td></tr>
 <tr><td><code>measured (declared)</code></td><td>a bench's <code>covers</code> names it, or the bench is the item; callables only, other items show <code>n/a</code></td></tr>
+<tr><td><code>measured</code></td><td>the package's bench target executes a line of it, one pass over each bench</td></tr>
 <tr><td><code>gated</code></td><td>a bench in the gate's feature set declares it, through its <code>covers</code> or as the bench itself; callables only, other items show <code>n/a</code></td></tr>
+<tr><td><code>specified</code></td><td>it is the handler of a route or tool, and the committed spec declares every one it serves and, for routes, a probe exercises it; every other item shows <code>n/a</code></td></tr>
 </tbody>
 </table></div>
 <p>A fence counts as an example unless it names another language: no language,
 <code>rust</code> and rustdoc attributes such as <code>no_run</code>, <code>ignore</code> and <code>compile_fail</code>
 all count. <code>measured (declared)</code> reads what the benches declare; it does not
-check that the bench runs the item.</p>
+check that the bench runs the item. <code>tested</code> and <code>measured</code> do: they build the
+package with <code>-C instrument-coverage</code> into their own target directory, run its
+tests and its bench target (one pass over each item), and credit an item when
+a counted region of the run shares a line with it. They cover functions,
+types and inherent methods; other items show <code>n/a</code>, as does <code>measured</code> for a
+package with no bench target.</p>
+<p>That build is expensive, so a plain <code>coverage report</code> runs it only with
+<code>--executed</code>. Without the flag it reads the stored run for the tree as it is
+now, keyed on the package's files, those of every workspace crate it depends
+on, the workspace inputs, <code>Cargo.lock</code>, <code>rustc -vV</code> and the run, and prints
+<code>(cached run from DATE)</code> beside the figure so a reader knows it is not fresh.
+With no stored run, <code>tested</code> and <code>measured</code> read <code>n/a (not run: pass
+--executed)</code>. A figure over several packages counts only those that ran; the
+summary then adds <code>N package(s) not run</code> and the figure is a lower bound. Only a run that finished is stored: a bench run that exits
+non-zero still yields a figure, but a lower bound (<code>partial</code> in the JSON, <code>lower
+bound</code> in the text) that is not kept, and a failing test run is an error.</p>
 <p><code>gated</code> reads the registry under the gate's features (<code>[gate] features</code>, or
 <code>[package.NAME.gate]</code>), not the report's. Where they differ, the report builds
 the package's bench a second time to list that registry. An item is gated when
@@ -283,7 +295,9 @@ A <code>covers</code> that names no public item of
 the package prints <code>warning: bench ID covers PATH, which is not a public item
 of PKG</code> on stderr, from <code>coverage report</code> and <code>coverage measure</code> alike.</p>
 <p>With <code>--json</code>, stdout is one object, <code>items</code> holding <code>path</code>, <code>kind</code>,
-<code>documented</code>, <code>documented_strict</code>, <code>measured_declared</code> and <code>gated</code> per item, and
+<code>documented</code>, <code>documented_strict</code>, <code>tested</code>, <code>measured_declared</code>, <code>measured</code>,
+<code>gated</code> and <code>specified</code> per item, a <code>features</code> array with one <code>coverage
+features</code> object per package, and
 <code>summary</code> holding <code>covered</code>, <code>total</code> and <code>pct</code> per dimension. A dimension a
 tree cannot tell, such as <code>documented+</code> for a non-Rust tree, is <code>null</code>, and
 the text report shows <code>n/a</code>.</p>
@@ -295,8 +309,21 @@ record. It exits 1 when a minimum is not met, and 2 when the report could not be
 built and a minimum is set; with no minimum set it prints
 <code>coverage could not run: ERROR</code> and exits 0. A package with no minimum on <code>documented_strict</code>, <code>measured_declared</code> or
 <code>gated</code> reads a stored bench executable if there is one and never builds it;
-<code>measured (declared)</code> and <code>gated</code> are then <code>n/a</code>, and <code>documented+</code> is a lower bound (its
-text carries <code>claims not read</code>, and <code>partial</code> is true in the figure).</p>
+<code>measured (declared)</code>, <code>gated</code> and <code>specified</code> are then <code>n/a</code>, and <code>documented+</code> is a lower bound (its
+text carries <code>claims not read</code>, and <code>partial</code> is true in the figure). The
+instrumented run happens under <code>--check</code> only for a package with a <code>tested</code> or
+<code>measured</code> minimum; otherwise both are <code>n/a</code>, and a stored run is not read.
+Each column follows its own minimum: a <code>tested</code> minimum starts only the test
+run, a <code>measured</code> minimum only the bench run. <code>--check --executed</code> runs both.</p>
+<p>A <code>specified</code> figure needs the package's spec files and a route listing. When
+either cannot be read the report prints a warning, shows <code>specified</code> as <code>n/a</code>
+and fails only if the package sets a <code>specified</code> minimum.</p>
+<p>With <code>--features-section</code>, the report ends with the <code>coverage features</code>
+section for each package: how many public items sit outside the gate's
+feature set, per feature (a <code>features</code> array in <code>--json</code>). It is off by
+default because it costs up to three rustdoc builds per package, and a package
+whose section cannot be built is left out with a warning. See <a href="#items-the-gate-never-compiles">items the gate
+never compiles</a>.</p>
 <p>Coverage counts what the gate compiles: without <code>--features</code> it uses the
 package's features, else the gate's <code>features</code> for it.</p>
 <h2 id="doc-coverage-outside-rust">Doc coverage outside Rust<a class="anchor" href="#doc-coverage-outside-rust" aria-label="Link to this section">#</a></h2>
