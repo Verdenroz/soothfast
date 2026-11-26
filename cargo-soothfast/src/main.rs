@@ -19,6 +19,7 @@ mod ci;
 mod codekey;
 mod config;
 mod coverage;
+mod coverage_executed;
 mod coverage_features;
 mod coverage_lang;
 mod coverage_report;

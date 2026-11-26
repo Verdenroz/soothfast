@@ -557,6 +557,7 @@ mod tests {
             signature: String::new(),
             has_docs,
             example,
+            spans: Vec::new(),
         }
     }
 
