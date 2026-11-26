@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (draft vs v0.8.0)
+
+<!-- soothfast:notes -->
+<!-- ### Overview -->
+<!-- What this release means for someone using it. One paragraph. -->
+
+<!-- ### Upgrade notes -->
+<!-- What a consumer has to do. "Nothing" is a useful answer. -->
+<!-- /soothfast:notes -->
+
+### ✨ Features
+
+- Certify unchanged test runs, cache doc tests (#492)
+
+
 ## 0.8.0 - 2026-11-22
 
 <!-- soothfast:notes -->
