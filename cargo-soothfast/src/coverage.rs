@@ -6,9 +6,13 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use serde_json::Value;
+use soothfast_docs::surface::Surface;
+
 use crate::config::{self, Group};
 use crate::coverage_features;
 use crate::coverage_lang::{self, Target};
+use crate::coverage_report;
 use crate::invoke::{self, CommonArgs};
 
 pub fn run(args: &[String]) -> i32 {
@@ -16,10 +20,11 @@ pub fn run(args: &[String]) -> i32 {
         Some("measure") => measure(&args[1..]),
         Some("docs") => docs(&args[1..]),
         Some("features") => coverage_features::run(&args[1..]),
+        Some("report") => coverage_report::run(&args[1..]),
         Some("spec") => crate::coverage_spec::run(&args[1..]),
         _ => {
             eprintln!(
-                "soothfast: usage: cargo soothfast coverage measure|docs -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage features -p PKG [--json] [--max-outside N]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]\n       coverage spec -p PKG [--min PCT] [--json]"
+                "soothfast: usage: cargo soothfast coverage measure|docs -p PKG [-p PKG ...] [--min PCT] [--badge FILE]\n       coverage docs --dir D --lang L [--min PCT] [--badge FILE]\n       coverage features -p PKG [--json] [--max-outside N]\n       coverage report -p PKG [-p PKG ...] [--features F] [--json]\n       coverage report --dir D --lang L [--json]\n       coverage spec -p PKG [--min PCT] [--json]"
             );
             2
         }
@@ -46,6 +51,15 @@ fn measure(args: &[String]) -> i32 {
         eprintln!("soothfast: {e}");
         return 2;
     }
+    if common.features.is_none() {
+        match config::coverage_defaults(std::slice::from_ref(&pkg)) {
+            Ok(defaults) => common.features = defaults.features,
+            Err(e) => {
+                eprintln!("soothfast: {e}");
+                return 2;
+            }
+        }
+    }
 
     // What is measured: registry list, attributing `covers` where set.
     let records = match invoke::run_discovery(&common, &["--list"]) {
@@ -55,15 +69,7 @@ fn measure(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let covered: BTreeSet<String> = records
-        .iter()
-        .filter(|r| r["type"] == "item")
-        .filter_map(|r| {
-            let covers = r["covers"].as_str().unwrap_or("");
-            let id = r["id"].as_str()?;
-            Some(if covers.is_empty() { id } else { covers }.to_string())
-        })
-        .collect();
+    let covered = declared_covers(&records);
 
     let surf = match load_surface(&pkg, common.features.as_deref()) {
         Ok(s) => s,
@@ -72,14 +78,17 @@ fn measure(args: &[String]) -> i32 {
             return 1;
         }
     };
+    for warning in dangling_covers(&records, &surf, &pkg) {
+        eprintln!("{warning}");
+    }
     let mut missing = 0u32;
-    let groups: Vec<_> = surf
-        .grouped()
+    let callables: Vec<_> = surf
+        .counted()
         .into_iter()
-        .filter(|g| surf.items[g.representative].kind == "function")
+        .filter(|c| c.info.kind == "function")
         .collect();
-    for g in &groups {
-        let is_measured = g.aliases.iter().any(|a| covered.contains(a.as_str()));
+    for c in &callables {
+        let is_measured = c.aliases.iter().any(|a| covered.contains(a.as_str()));
         let mark = if is_measured {
             "measured  "
         } else {
@@ -88,9 +97,9 @@ fn measure(args: &[String]) -> i32 {
         if !is_measured {
             missing += 1;
         }
-        println!("{mark} {}", g.representative);
+        println!("{mark} {}", c.path);
     }
-    let p = report("measured", groups.len() as u32, missing);
+    let p = report("measured", callables.len() as u32, missing);
     for file in &badges {
         if let Err(e) = write_badge(Path::new(file), "soothfast measured", p) {
             eprintln!("soothfast: {e}");
@@ -124,7 +133,7 @@ fn docs(args: &[String]) -> i32 {
             }
         }
     }
-    let (features, min) = match config::defaults(&pkgs, Group::Docs) {
+    let (features, min) = match config::coverage_defaults(&pkgs) {
         Ok(defaults) => (features.or(defaults.features), min.or(defaults.coverage)),
         Err(e) => {
             eprintln!("soothfast: {e}");
@@ -167,20 +176,19 @@ fn docs(args: &[String]) -> i32 {
                 return 1;
             }
         };
-        let groups = surf.grouped();
-        for g in &groups {
-            let info = &surf.items[g.representative];
-            let mark = if info.has_docs {
+        let counted = surf.counted();
+        for c in &counted {
+            let mark = if c.info.has_docs {
                 "documented  "
             } else {
                 "UNDOCUMENTED"
             };
-            if !info.has_docs {
+            if !c.info.has_docs {
                 missing += 1;
             }
-            println!("{mark} {} ({})", g.representative, info.kind);
+            println!("{mark} {} ({})", c.path, c.info.kind);
         }
-        total += groups.len() as u32;
+        total += counted.len() as u32;
     }
     let p = report("documented", total, missing);
     for file in &badges {
@@ -198,9 +206,40 @@ fn docs(args: &[String]) -> i32 {
     0
 }
 
+/// The registry's benches as `(id, covers)`; `covers` is empty when the
+/// bench measures itself.
+pub(crate) fn benches(records: &[Value]) -> impl Iterator<Item = (&str, &str)> {
+    records
+        .iter()
+        .filter(|r| r["type"] == "item")
+        .filter_map(|r| Some((r["id"].as_str()?, r["covers"].as_str().unwrap_or(""))))
+}
+
+/// What a bench declares it measures: its `covers`, else its own id.
+pub(crate) fn measured_path<'a>(id: &'a str, covers: &'a str) -> &'a str {
+    if covers.is_empty() { id } else { covers }
+}
+
+/// The paths the registry's items declare they measure.
+pub(crate) fn declared_covers(records: &[Value]) -> BTreeSet<String> {
+    benches(records)
+        .map(|(id, covers)| measured_path(id, covers).to_string())
+        .collect()
+}
+
+/// A warning per bench whose `covers` names no item or method of `surf`.
+pub(crate) fn dangling_covers(records: &[Value], surf: &Surface, pkg: &str) -> Vec<String> {
+    benches(records)
+        .filter(|(_, covers)| !covers.is_empty() && surf.lookup(covers).is_none())
+        .map(|(id, covers)| {
+            format!("warning: bench {id} covers {covers}, which is not a public item of {pkg}")
+        })
+        .collect()
+}
+
 /// Source trees to cover besides the `-p` crates: `--dir`/`--lang`, else the
 /// manifest's non-Rust projects when no crate was named.
-fn lang_targets(
+pub(crate) fn lang_targets(
     pkgs: &[String],
     dirs: &[String],
     lang: Option<&str>,
@@ -218,7 +257,7 @@ fn lang_targets(
     coverage_lang::targets(Path::new("."), dirs, lang)
 }
 
-fn load_surface(
+pub(crate) fn load_surface(
     pkg: &str,
     features: Option<&str>,
 ) -> Result<soothfast_docs::surface::Surface, String> {
@@ -267,7 +306,41 @@ fn write_badge(path: &Path, label: &str, pct: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{pct, write_badge};
+    use serde_json::json;
+    use soothfast_docs::surface::{ItemInfo, Surface};
+
+    use super::{dangling_covers, pct, write_badge};
+
+    fn surface() -> Surface {
+        let info = |kind: &str| ItemInfo {
+            kind: kind.into(),
+            fingerprint: 1,
+            signature: String::new(),
+            has_docs: true,
+            example: false,
+        };
+        let mut s = Surface::default();
+        s.items.insert("demo::run".into(), info("function"));
+        s.members.insert("demo::Thing::go".into(), info("function"));
+        s
+    }
+
+    #[test]
+    fn a_covers_naming_nothing_is_warned_about() {
+        let records = [
+            json!({ "type": "item", "id": "demo::bench_run", "covers": "demo::run" }),
+            json!({ "type": "item", "id": "demo::bench_go", "covers": "demo::Thing::go" }),
+            json!({ "type": "item", "id": "demo::bench_old", "covers": "demo::gone" }),
+            json!({ "type": "item", "id": "demo::bench_plain", "covers": "" }),
+            json!({ "type": "result", "id": "demo::bench_old", "covers": "demo::other" }),
+        ];
+        assert_eq!(
+            dangling_covers(&records, &surface(), "demo"),
+            [
+                "warning: bench demo::bench_old covers demo::gone, which is not a public item of demo"
+            ]
+        );
+    }
 
     #[test]
     fn pct_floors_and_treats_empty_as_full() {
