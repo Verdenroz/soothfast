@@ -814,15 +814,14 @@ commands reads rustdoc JSON (<code>spec</code>, <code>coverage</code> and <code>
 per package, so the verdict, the comment and the carried lanes see the same
 names as before.</p>
 <ul>
-<li>The spec checks of packages that reach a workspace crate in common (through a dependency of any kind) run in one job, <code>spec-shared</code>, because they would each compile that crate. When the packages split into several such groups, each is <code>spec-PKG-group</code>, named for its first package. A shared core crate usually puts every spec package in one group, so they run one after another in one job. <code>[ci] separate = [&quot;spec&quot;]</code> brings parallel jobs back for an account with runners to spare.</li>
+<li>Each spec check runs in its own job, <code>spec-PKG</code>, so the packages build in parallel. <code>[ci] group = [&quot;spec&quot;]</code> puts the packages that reach a workspace crate in common (through a dependency of any kind) in one job, <code>spec-shared</code>, or <code>spec-PKG-group</code> named for its first package when they split into several groups. Grouping halves runner jobs but runs the members one after another, so it lengthens wall time when spec is the critical path.</li>
 <li>The proto, coverage and capture checks, and a site that is not built in the docs job, run together in one job, <code>checks</code>.</li>
 <li>A spec group with one package, and a lone check of another kind, keep the job named for their record.</li>
 </ul>
-<p><code>[ci] separate</code> names the kinds or records that keep a job of their own:</p>
+<p><code>[ci] group</code> names the check kinds that share a job; only <code>spec</code> can be
+grouped:</p>
 <figure class="code"><figcaption class="code-bar"><span class="code-lang">toml</span><button class="code-copy" type="button" data-copy>Copy</button></figcaption><pre><code><span class="tok-kw">[ci]</span>
-<span class="tok-ty">separate </span>=<span class="tok-str"> [&quot;spec&quot;, &quot;coverage-core&quot;]</span></code></pre></figure>
-<p>A kind (<code>spec</code>) splits every check of that kind into its own job, and a record
-name (<code>coverage-core</code>) splits that one, whichever the kind.</p>
+<span class="tok-ty">group </span>=<span class="tok-str"> [&quot;spec&quot;]</span></code></pre></figure>
 <p>A cache or artifact is named for its job, so the first run of a regrouped job
 starts from the cache of its first package's earlier job where there is one.</p>
 <p>The build, test and check jobs restore the cargo cache on every run and save
