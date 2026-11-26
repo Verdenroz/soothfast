@@ -423,19 +423,13 @@ pub fn main() {
                  registrations reach the linker",
             );
         } else {
-            if let Some(f) = args
-                .filter
-                .as_deref()
-                .filter(|f| filter::has_unsupported_syntax(f))
-            {
-                eprintln!(
-                    "soothfast runner: warning: --filter {f:?} is a substring match; only `|`, a leading `^` and a trailing `$` are special"
-                );
-            }
-            die(&format!(
-                "no measured items match --filter {:?}",
-                args.filter.as_deref().unwrap_or("")
-            ));
+            let f = args.filter.as_deref().unwrap_or("");
+            let hint = if filter::has_unsupported_syntax(f) {
+                " (warning: --filter is a substring match; only `|`, a leading `^` and a trailing `$` are special)"
+            } else {
+                ""
+            };
+            die(&format!("no measured items match --filter {f:?}{hint}"));
         }
     }
 
