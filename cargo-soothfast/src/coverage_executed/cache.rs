@@ -21,16 +21,70 @@ pub fn through(
     let Some(dir) = runcache::state_dir("coverage") else {
         return run();
     };
-    let file = dir.join(format!(
-        "{}.json",
-        key(scope, &environment(pkg)?, executables)?
-    ));
-    if let Some(regions) = load(&file) {
-        return Ok(regions);
+    let inputs = environment(pkg)?;
+    let file = dir.join(format!("{}.json", key(scope, &inputs, executables)?));
+    let regions = match load(&file) {
+        Some(regions) => regions,
+        None => {
+            let regions = run()?;
+            store(&dir, &file, &regions);
+            regions
+        }
+    };
+    if file.exists() {
+        point(scope, &inputs, &file);
     }
-    let regions = run()?;
-    store(&dir, &file, &regions);
     Ok(regions)
+}
+
+/// A stored run and when it finished, as seconds since the epoch.
+pub struct Cached {
+    pub regions: Regions,
+    pub unix: u64,
+}
+
+/// The stored run for `scope` whose inputs are those of the tree now, found
+/// without building: a pointer keyed on the package's files, its workspace
+/// dependencies', `Cargo.lock`, rustc and the scope names the entry
+/// [`through`] stored.
+pub fn lookup(scope: &str, pkg: &str) -> Result<Option<Cached>, String> {
+    let (Some(dir), Some(at)) = (
+        runcache::state_dir("coverage"),
+        runcache::state_dir("coverage-inputs"),
+    ) else {
+        return Ok(None);
+    };
+    let pointer = at.join(pointer_key(scope, &environment(pkg)?));
+    let Ok(name) = std::fs::read_to_string(pointer) else {
+        return Ok(None);
+    };
+    let file = dir.join(name.trim());
+    let unix = std::fs::metadata(&file)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    Ok(load(&file).map(|regions| Cached { regions, unix }))
+}
+
+fn pointer_key(scope: &str, inputs: &str) -> String {
+    runcache::hashed(&[
+        "soothfast-coverage-at-v1".into(),
+        scope.into(),
+        inputs.into(),
+    ])
+}
+
+fn point(scope: &str, inputs: &str, file: &Path) {
+    let (Some(at), Some(name)) = (
+        runcache::state_dir("coverage-inputs"),
+        file.file_name().and_then(|n| n.to_str()),
+    ) else {
+        return;
+    };
+    if std::fs::write(at.join(pointer_key(scope, inputs)), name).is_ok() {
+        runcache::prune_oldest(&at, runcache::KEEP);
+    }
 }
 
 /// Only a run that finished is kept: a failed one stands for whatever ran
@@ -45,7 +99,7 @@ fn environment(pkg: &str) -> Result<String, String> {
     let root = invoke::workspace_root().map_err(|e| e.to_string())?;
     let cfg = Config::load(&root)?.test()?;
     let pkgs = select::packages(&root).map_err(|e| e.to_string())?;
-    key::environment(&root, &pkgs, &cfg, pkg)
+    key::environment_with_dependencies(&root, &pkgs, &cfg, pkg)
 }
 
 fn key(scope: &str, environment: &str, executables: &[PathBuf]) -> Result<String, String> {

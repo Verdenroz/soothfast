@@ -12,33 +12,43 @@ use crate::config::{self, Group, Settings};
 use crate::coverage::{self, dangling_covers, declared_covers};
 use crate::coverage_lang;
 use crate::invoke::{self, Build, CommonArgs};
-use crate::{benchexe, docs, workspace};
+use crate::{benchexe, docs, docs_support, workspace};
+
+mod executed;
+use executed::{Provenance, Want};
 
 /// A public item and what covers it. `None` is a dimension the item's tree
 /// has no way to tell.
+#[derive(Default)]
 struct Row {
     path: String,
     kind: String,
     documented: bool,
     documented_strict: Option<bool>,
+    tested: Option<bool>,
     measured_declared: Option<bool>,
+    measured: Option<bool>,
     gated: Option<bool>,
+    /// Where the executed columns came from.
+    executed: Provenance,
     /// The item's claims were not read: no bench executable was listed, so
     /// `documented_strict` is a lower bound.
     claims_unread: bool,
 }
 
 /// Every dimension a report carries: its JSON name and its label.
-pub(crate) const DIMENSIONS: [(&str, &str); 4] = [
+pub(crate) const DIMENSIONS: [(&str, &str); 6] = [
     ("documented", "documented"),
     ("documented_strict", "documented+"),
+    ("tested", "tested"),
     ("measured_declared", "measured (declared)"),
+    ("measured", "measured"),
     ("gated", "gated"),
 ];
 
 /// Dimensions other commands compute, named so a minimum for one parses
 /// before its values reach a report.
-const PENDING: [&str; 3] = ["tested", "measured", "specified"];
+const PENDING: [&str; 1] = ["specified"];
 
 /// Whether `name` is a dimension a minimum may be set on.
 pub(crate) fn is_dimension(name: &str) -> bool {
@@ -50,7 +60,9 @@ impl Row {
         match name {
             "documented" => Some(self.documented),
             "documented_strict" => self.documented_strict,
+            "tested" => self.tested,
             "measured_declared" => self.measured_declared,
+            "measured" => self.measured,
             _ => self.gated,
         }
     }
@@ -67,6 +79,7 @@ pub fn run(args: &[String]) -> i32 {
     let mut features: Option<String> = None;
     let mut json = false;
     let mut check = false;
+    let mut executed = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -76,13 +89,14 @@ pub fn run(args: &[String]) -> i32 {
             "--features" => features = it.next().cloned(),
             "--json" => json = true,
             "--check" => check = true,
+            "--executed" => executed = true,
             other => {
                 eprintln!("soothfast: unknown coverage report arg {other:?}");
                 return 2;
             }
         }
     }
-    match rows(&pkgs, &dirs, lang.as_deref(), features, check) {
+    match rows(&pkgs, &dirs, lang.as_deref(), features, check, executed) {
         Ok(rows) => {
             if json {
                 println!("{:#}", render_json(&rows));
@@ -217,6 +231,7 @@ fn rows(
     lang: Option<&str>,
     features: Option<String>,
     check: bool,
+    executed: bool,
 ) -> Result<Vec<Row>, Failure> {
     let defaults = config::coverage_defaults(pkgs).map_err(|e| (2, e))?;
     let features = features.or(defaults.features);
@@ -228,10 +243,8 @@ fn rows(
             path: e.id,
             kind: e.kind,
             documented: e.documented,
-            documented_strict: None,
-            measured_declared: None,
-            gated: None,
             claims_unread: false,
+            ..Row::default()
         }));
     }
     if pkgs.is_empty() {
@@ -239,26 +252,36 @@ fn rows(
     }
     let marked = marker_targets(&invoke::project_root());
     for pkg in pkgs {
-        let surf = coverage::load_surface(pkg, features.as_deref()).map_err(|e| (1, e))?;
+        let (surf, _, root) =
+            docs_support::surface_in(pkg, None, features.as_deref()).map_err(|e| (1, e))?;
         let may_build = !check || needs_bench(pkg).map_err(|e| (2, e))?;
         let build = bench_args(pkg, features.clone(), Group::Docs).map_err(|e| (1, e))?;
+        let min_set = check && needs_executed(pkg).map_err(|e| (2, e))?;
+        let want = executed_want(check, executed, min_set);
+        let columns = executed::gather(pkg, &surf, &root, &build, want).map_err(|e| (1, e))?;
         let records = discover(&build, may_build).map_err(|e| (1, e))?;
         let Some(records) = records else {
             eprintln!(
                 "{pkg}: no built bench executable; measured (declared) and gated are n/a and documented+ counts binds only"
             );
-            rows.extend(rust_rows(&surf, None, &marked.items(&[]), None));
+            rows.extend(executed::attach(
+                rust_rows(&surf, None, &marked.items(&[]), None),
+                &columns,
+            ));
             continue;
         };
         for warning in dangling_covers(&records, &surf, pkg) {
             eprintln!("{warning}");
         }
         let gate_records = gate_discovery(pkg, &build, &records, may_build).map_err(|e| (1, e))?;
-        rows.extend(rust_rows(
-            &surf,
-            Some(&declared_covers(&records)),
-            &marked.items(&records),
-            gate_records.as_deref().map(declared_covers).as_ref(),
+        rows.extend(executed::attach(
+            rust_rows(
+                &surf,
+                Some(&declared_covers(&records)),
+                &marked.items(&records),
+                gate_records.as_deref().map(declared_covers).as_ref(),
+            ),
+            &columns,
         ));
     }
     Ok(rows)
@@ -269,6 +292,26 @@ fn rows(
 fn needs_bench(pkg: &str) -> Result<bool, String> {
     let minimums = config::coverage_defaults(&[pkg.to_string()])?;
     Ok(["documented_strict", "measured_declared", "gated"]
+        .iter()
+        .any(|d| minimums.minimum(d).is_some()))
+}
+
+/// A `--check` runs the instrumented build only for a package with a minimum
+/// on `tested` or `measured`. A plain report runs it on `--executed` and
+/// otherwise reads a stored run.
+fn executed_want(check: bool, executed: bool, min_set: bool) -> Want {
+    match (check, executed) {
+        (true, _) if min_set => Want::Run,
+        (true, _) => Want::Skip,
+        (false, true) => Want::Run,
+        (false, false) => Want::Stored,
+    }
+}
+
+/// Whether `pkg` has a minimum on a dimension an instrumented run decides.
+fn needs_executed(pkg: &str) -> Result<bool, String> {
+    let minimums = config::coverage_defaults(&[pkg.to_string()])?;
+    Ok(["tested", "measured"]
         .iter()
         .any(|d| minimums.minimum(d).is_some()))
 }
@@ -351,6 +394,7 @@ fn rust_rows(
                 .filter(|_| c.info.kind == "function")
                 .map(|gated| named(gated, &c.aliases)),
             claims_unread: declared.is_none(),
+            ..Row::default()
         })
         .collect()
 }
@@ -411,10 +455,11 @@ fn targets_in(texts: impl Iterator<Item = String>) -> Markers {
     out
 }
 
-/// Whether `name`'s figure is a lower bound: only `documented_strict` is, and
-/// only when a row's claims were not read.
+/// Whether `name`'s figure is a lower bound: `documented_strict` when a row's
+/// claims were not read, `measured` when the bench run failed.
 fn partial(rows: &[Row], name: &str) -> bool {
     name == "documented_strict" && rows.iter().any(|r| r.claims_unread)
+        || executed::partial(rows, name)
 }
 
 /// The badges for `pkgs`, by file stem: `coverage`, the mean of the percentages
@@ -428,7 +473,8 @@ pub(crate) fn badge_files(
     for pkg in pkgs {
         let features = features.map(str::to_string);
         rows.extend(
-            self::rows(std::slice::from_ref(pkg), &[], None, features, false).map_err(|f| f.1)?,
+            self::rows(std::slice::from_ref(pkg), &[], None, features, false, false)
+                .map_err(|f| f.1)?,
         );
     }
     Ok(badge_set(&rows))
@@ -478,7 +524,9 @@ fn render_json(rows: &[Row]) -> Value {
                 "kind": r.kind,
                 "documented": r.documented,
                 "documented_strict": r.documented_strict,
+                "tested": r.tested,
                 "measured_declared": r.measured_declared,
+                "measured": r.measured,
                 "gated": r.gated,
             })
         })
@@ -509,20 +557,20 @@ fn render_text(rows: &[Row]) -> String {
         Some(false) => "no",
         None => "n/a",
     };
-    let mut out = format!(
-        "{:<10} {:<11} {:<19} {:<5} item\n",
-        "documented", "documented+", "measured (declared)", "gated"
-    );
+    let mut out = String::new();
+    for (_, label) in DIMENSIONS {
+        out.push_str(&format!("{label:<w$} ", w = label.len()));
+    }
+    out.push_str("item\n");
     for r in rows {
-        out.push_str(&format!(
-            "{:<10} {:<11} {:<19} {:<5} {} ({})\n",
-            cell(Some(r.documented)),
-            cell(r.documented_strict),
-            cell(r.measured_declared),
-            cell(r.gated),
-            r.path,
-            r.kind
-        ));
+        for (name, label) in DIMENSIONS {
+            out.push_str(&format!(
+                "{:<w$} ",
+                cell(r.dimension(name)),
+                w = label.len()
+            ));
+        }
+        out.push_str(&format!("{} ({})\n", r.path, r.kind));
     }
     out.push_str(&render_summary(rows));
     out
@@ -531,14 +579,20 @@ fn render_text(rows: &[Row]) -> String {
 fn render_summary(rows: &[Row]) -> String {
     let mut out = String::new();
     for (name, label) in DIMENSIONS {
-        let note = if partial(rows, name) {
-            ", claims not read: no bench executable"
-        } else {
-            ""
+        let told = summarize(rows, name);
+        let note = match (name, told) {
+            ("documented_strict", Some(_)) if partial(rows, name) => {
+                Some("claims not read: no bench executable".to_string())
+            }
+            ("tested" | "measured", told) => executed::note(rows, name, told.is_some()),
+            _ => None,
         };
-        let figure = summarize(rows, name).map_or("n/a".to_string(), |s| {
-            format!("{}/{} ({}%{note})", s.0, s.1, percent(s))
-        });
+        let figure = match (told, note) {
+            (Some(s), Some(n)) => format!("{}/{} ({}%, {n})", s.0, s.1, percent(s)),
+            (Some(s), None) => format!("{}/{} ({}%)", s.0, s.1, percent(s)),
+            (None, Some(n)) => format!("n/a ({n})"),
+            (None, None) => "n/a".to_string(),
+        };
         out.push_str(&format!("{:<20} {figure}\n", format!("{label}:")));
     }
     out
@@ -694,10 +748,7 @@ mod tests {
             path: "src/a.py#f".into(),
             kind: "function".into(),
             documented: true,
-            documented_strict: None,
-            measured_declared: None,
-            claims_unread: false,
-            gated: None,
+            ..Row::default()
         }];
         let files = badge_set(&rows);
         assert_eq!(files[0].1["message"], "100%");
@@ -772,10 +823,7 @@ mod tests {
             path: "src/a.py#f".into(),
             kind: "function".into(),
             documented: true,
-            documented_strict: None,
-            measured_declared: None,
-            claims_unread: false,
-            gated: None,
+            ..Row::default()
         }];
         let json = render_json(&rows);
         assert_eq!(json["summary"]["documented"]["pct"], 100);
@@ -811,6 +859,14 @@ mod tests {
     }
 
     #[test]
+    fn the_instrumented_run_happens_on_a_flag_or_a_minimum() {
+        assert!(executed_want(false, true, false) == Want::Run);
+        assert!(executed_want(false, false, false) == Want::Stored);
+        assert!(executed_want(true, false, true) == Want::Run);
+        assert!(executed_want(true, false, false) == Want::Skip);
+    }
+
+    #[test]
     fn an_unbuilt_report_fails_only_a_package_with_a_minimum() {
         let with = |min: Settings| unbuilt_exit(&Ok(min));
         assert_eq!(with(Settings::default()), 0);
@@ -841,10 +897,7 @@ mod tests {
             path: "src/a.py#f".into(),
             kind: "function".into(),
             documented: true,
-            documented_strict: None,
-            measured_declared: None,
-            claims_unread: false,
-            gated: None,
+            ..Row::default()
         }];
         let settings = Settings {
             minimums: [("measured_declared".to_string(), 90)].into(),
