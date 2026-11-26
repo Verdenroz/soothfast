@@ -9,23 +9,25 @@ use std::path::Path;
 /// else in `sources`: a bench that used it would name it in `setup`,
 /// `setup_sized` or a call.
 pub fn unreferenced(sources: &[(String, String)], pkg: &str) -> Vec<String> {
-    let mut uses: BTreeMap<&str, usize> = BTreeMap::new();
+    let defined: Vec<_> = sources
+        .iter()
+        .flat_map(|(path, text)| fixture_names(text).into_iter().map(move |n| (path, n)))
+        .collect();
+    let mut uses: BTreeMap<&str, usize> = defined.iter().map(|(_, n)| (*n, 0)).collect();
     for (_, text) in sources {
         for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
-            *uses.entry(word).or_default() += 1;
-        }
-    }
-    let mut out = Vec::new();
-    for (path, text) in sources {
-        for name in fixture_names(text) {
-            if uses.get(name).copied().unwrap_or(0) <= 1 {
-                out.push(format!(
-                    "warning: fixture {name} in {path} is referenced by no bench of {pkg}"
-                ));
+            if let Some(count) = uses.get_mut(word) {
+                *count += 1;
             }
         }
     }
-    out
+    defined
+        .iter()
+        .filter(|(_, name)| uses[name] <= 1)
+        .map(|(path, name)| {
+            format!("warning: fixture {name} in {path} is referenced by no bench of {pkg}")
+        })
+        .collect()
 }
 
 fn fixture_names(text: &str) -> Vec<&str> {
