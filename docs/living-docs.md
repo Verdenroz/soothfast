@@ -156,7 +156,7 @@ prints one row per item and a summary per dimension:
 | --- | --- |
 | `documented` | its doc comment has text |
 | `documented+` | it is documented and its docs hold a fenced Rust example, or a `soothfast:bind` or `soothfast:claim` marker in the repo's tracked markdown names its path or a re-export of it; a claim names a bench, so it counts through that bench's `covers` (or the bench's own id), and only in a package with a bench target |
-| `tested` | the package's tests execute a line of it (doc tests are not instrumented) |
+| `tested` | the package's tests, or those of a workspace crate it re-exports the item from, execute a line of it (doc tests are not instrumented) |
 | `measured (declared)` | a bench's `covers` names it, or the bench is the item; callables only, other items show `n/a` |
 | `measured` | the package's bench target executes a line of it, one pass over each bench |
 | `gated` | a bench in the gate's feature set declares it, through its `covers` or as the bench itself; callables only, other items show `n/a` |

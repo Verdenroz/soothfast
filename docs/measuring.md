@@ -187,6 +187,15 @@ The denominator is the public functions, structs, enums, unions and traits of
 the package, plus inherent methods. Trait-impl methods are not items of their
 own, and `#[doc(hidden)]` items are not in the rustdoc surface.
 
+A package that re-exports items of other workspace crates (`pub use
+other_crate::item`) is credited by those crates' tests too. When a counted
+item's span lies in another member, `tested` builds and runs that member's test
+targets beside the package's own, so `finance_query::indicators::wma` counts
+when the crate that defines it tests it. The cost is one more instrumented test
+build and run per such member, a stored run stays valid until any file of the
+package or its workspace dependencies changes, and a member only ever adds
+credit: its tests never remove an item from `tested`.
+
 ### How an item counts as executed
 
 An item is executed when any region with a nonzero count lies on a line of its

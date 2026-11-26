@@ -78,10 +78,11 @@ pub(super) fn gather(
     bench: &CommonArgs,
     wants: Wants,
 ) -> Result<Columns, String> {
+    let members = coverage_executed::defining_members(surf, root, pkg)?;
     let tests = column(
         wants.tests,
-        || coverage_executed::cached_tests(pkg, features),
-        || coverage_executed::tests(pkg, features),
+        || coverage_executed::cached_tests(pkg, features, &members),
+        || coverage_executed::tests(pkg, features, &members),
     )?;
     let target = bench.target.as_deref().unwrap_or("soothfast");
     let benches = if workspace::has_bench_target(pkg, target, None).map_err(|e| e.to_string())? {

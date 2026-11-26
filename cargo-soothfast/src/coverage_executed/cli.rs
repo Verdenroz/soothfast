@@ -80,11 +80,12 @@ fn execute(args: &[String]) -> Result<(), String> {
     let features = flags.features.as_deref();
     let (surface, _, root) = crate::docs_support::surface_in(pkg, None, features)?;
     let declared = regions::declared(&surface);
+    let members = super::defining_members(&surface, &root, pkg)?;
     let tested = match flags.tests {
         true => Some(regions::executed(
             &declared,
             &root,
-            &super::tests(pkg, features)?,
+            &super::tests(pkg, features, &members)?,
         )),
         false => None,
     };
