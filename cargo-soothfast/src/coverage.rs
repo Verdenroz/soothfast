@@ -6,6 +6,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use serde_json::Value;
+use soothfast_docs::surface::Surface;
+
 use crate::config::{self, Group};
 use crate::coverage_lang::{self, Target};
 use crate::invoke::{self, CommonArgs};
@@ -69,6 +72,9 @@ fn measure(args: &[String]) -> i32 {
             return 1;
         }
     };
+    for warning in dangling_covers(&records, &surf, &pkg) {
+        eprintln!("{warning}");
+    }
     let mut missing = 0u32;
     let callables: Vec<_> = surf
         .counted()
@@ -194,6 +200,19 @@ fn docs(args: &[String]) -> i32 {
     0
 }
 
+/// A warning per bench whose `covers` names no item or method of `surf`.
+pub(crate) fn dangling_covers(records: &[Value], surf: &Surface, pkg: &str) -> Vec<String> {
+    records
+        .iter()
+        .filter(|r| r["type"] == "item")
+        .filter_map(|r| Some((r["id"].as_str()?, r["covers"].as_str()?)))
+        .filter(|(_, covers)| !covers.is_empty() && surf.lookup(covers).is_none())
+        .map(|(id, covers)| {
+            format!("warning: bench {id} covers {covers}, which is not a public item of {pkg}")
+        })
+        .collect()
+}
+
 /// Source trees to cover besides the `-p` crates: `--dir`/`--lang`, else the
 /// manifest's non-Rust projects when no crate was named.
 fn lang_targets(
@@ -263,7 +282,40 @@ fn write_badge(path: &Path, label: &str, pct: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{pct, write_badge};
+    use serde_json::json;
+    use soothfast_docs::surface::{ItemInfo, Surface};
+
+    use super::{dangling_covers, pct, write_badge};
+
+    fn surface() -> Surface {
+        let info = |kind: &str| ItemInfo {
+            kind: kind.into(),
+            fingerprint: 1,
+            signature: String::new(),
+            has_docs: true,
+        };
+        let mut s = Surface::default();
+        s.items.insert("demo::run".into(), info("function"));
+        s.members.insert("demo::Thing::go".into(), info("function"));
+        s
+    }
+
+    #[test]
+    fn a_covers_naming_nothing_is_warned_about() {
+        let records = [
+            json!({ "type": "item", "id": "demo::bench_run", "covers": "demo::run" }),
+            json!({ "type": "item", "id": "demo::bench_go", "covers": "demo::Thing::go" }),
+            json!({ "type": "item", "id": "demo::bench_old", "covers": "demo::gone" }),
+            json!({ "type": "item", "id": "demo::bench_plain", "covers": "" }),
+            json!({ "type": "result", "id": "demo::bench_old", "covers": "demo::other" }),
+        ];
+        assert_eq!(
+            dangling_covers(&records, &surface(), "demo"),
+            [
+                "warning: bench demo::bench_old covers demo::gone, which is not a public item of demo"
+            ]
+        );
+    }
 
     #[test]
     fn pct_floors_and_treats_empty_as_full() {
