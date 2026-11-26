@@ -1,5 +1,6 @@
 //! The run certificate: proof that a whole `cargo soothfast test` run passed
-//! under inputs that have not changed since.
+//! under inputs that have not changed since. Its environment digest also keys
+//! the per-package doc-test passes.
 //!
 //! A key covers the tree snapshot, `Cargo.lock`, every cargo config and
 //! toolchain file cargo would read, the compiler, cargo and rustdoc versions,
@@ -64,16 +65,13 @@ impl<'a> Certifier<'a> {
     /// The key a certificate for this run is stored under, or `None` when
     /// the run cannot be certified.
     pub fn key(&self) -> Result<Option<String>, String> {
-        let Some(snapshot) = self
-            .certifiable
-            .then(|| last::snapshot(self.root))
-            .flatten()
+        let (Some(environment), Some(snapshot)) = (self.environment()?, last::snapshot(self.root))
         else {
             return Ok(None);
         };
         Ok(Some(run_key_of(RunParts {
             snapshot: &snapshot,
-            environment: &self.environment()?,
+            environment: &environment,
             test_env: &self.test_env,
             cargo_args: &self.args.cargo_args,
             run_args: &self.args.run_args,
@@ -82,7 +80,12 @@ impl<'a> Certifier<'a> {
         })))
     }
 
-    fn environment(&self) -> Result<String, String> {
+    /// The digest of everything outside the tree that a run's outcome
+    /// depends on, or `None` when the run cannot be certified.
+    pub fn environment(&self) -> Result<Option<String>, String> {
+        if !self.certifiable {
+            return Ok(None);
+        }
         let cargo_home = runner::cargo_home(|k| std::env::var(k).ok());
         let mut files = runner::config_files(self.root, cargo_home);
         files.extend(toolchain_files(self.root));
@@ -92,12 +95,12 @@ impl<'a> Certifier<'a> {
             version("rustdoc", "-vV")?,
         ];
         let lock = std::fs::read_to_string(self.root.join("Cargo.lock")).unwrap_or_default();
-        Ok(environment_digest(&EnvParts {
+        Ok(Some(environment_digest(&EnvParts {
             files: &files,
             tools: &tools,
             vars: &relevant_env(std::env::vars()),
             lock: &lock,
-        }))
+        })))
     }
 }
 

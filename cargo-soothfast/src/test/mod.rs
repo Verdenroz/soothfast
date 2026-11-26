@@ -143,13 +143,10 @@ fn drive(args: &[String]) -> Result<i32, String> {
         write_result(&args, &tally, 0, total, started)?;
         return Ok(0);
     }
-    let certifier = match args.no_run {
+    let certifier = cert::Certifier::new(&root, &cfg, &args, &selected)?;
+    let certificate = match args.no_cache {
         true => None,
-        false => Some(cert::Certifier::new(&root, &cfg, &args, &selected)?),
-    };
-    let certificate = match (&certifier, args.no_cache) {
-        (Some(c), false) => c.key()?,
-        _ => None,
+        false => certifier.key()?,
     };
     let passes = Passes::open();
     if certificate
@@ -193,7 +190,14 @@ fn drive(args: &[String]) -> Result<i32, String> {
         args.run_args.clone(),
         built.siblings,
     )?;
-    let doc = doc_packages(&args, &built.tests);
+    let docs = DocPasses::new(
+        &certifier,
+        &mut keyer,
+        &args,
+        doc_packages(&args, &built.tests),
+    )?;
+    let doc_cached = docs.cached(passes.as_ref(), args.no_cache);
+    let doc = docs.uncached(&doc_cached);
     match mode {
         runner::Runner::Shim(chained) => {
             let run = Together {
@@ -203,6 +207,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
                 chained,
                 root: &root,
                 doc: &doc,
+                doc_cached: &doc_cached,
             };
             run_together(&args, &built.tests, &run, &mut keyer, &mut tally)?;
         }
@@ -212,6 +217,7 @@ fn drive(args: &[String]) -> Result<i32, String> {
             run_doc_tests(&args, &doc, &mut tally)?;
         }
     }
+    tally.doc_cached = doc_cached.len();
     rerun_failed(&mut tally, retries, |label| {
         let Some(bin) = built.tests.iter().find(|b| b.label() == label) else {
             return Ok(false);
@@ -220,8 +226,11 @@ fn drive(args: &[String]) -> Result<i32, String> {
         cargo::run_target(bin, &args.cargo_args, &args.run_args)
             .map_err(|e| format!("{label}: {e}"))
     })?;
-    if let (Some(certifier), Some(key), Some(passes)) = (&certifier, &certificate, &passes) {
-        store_certificate(certifier, key, passes, &tally)?;
+    if let (Some(key), Some(passes)) = (&certificate, &passes) {
+        store_certificate(&certifier, key, passes, &tally)?;
+    }
+    if let Some(passes) = &passes {
+        docs.store(&mut keyer, passes, &doc, &args, &tally)?;
     }
     println!("{}", tally.summary(selected.len(), total));
     last::record(&root, tally.failed.len());
@@ -343,6 +352,8 @@ struct Together<'a> {
     chained: Vec<String>,
     root: &'a Path,
     doc: &'a [String],
+    /// Packages whose doc tests have a stored pass.
+    doc_cached: &'a [String],
 }
 
 /// Run every selected binary in one `cargo test` that matches the build, the
@@ -372,7 +383,8 @@ fn run_together(
         planned.push((bin, key, cached));
     }
     let dir = run.run_dir.dir.clone();
-    let skip_doc = args.no_doc && !cargo::narrows_targets(&args.cargo_args);
+    let skip_doc =
+        (args.no_doc || !run.doc_cached.is_empty()) && !cargo::narrows_targets(&args.cargo_args);
     let plan = Plan {
         results: dir.clone(),
         runner: run.chained.clone(),
@@ -391,6 +403,7 @@ fn run_together(
             crates: tests
                 .iter()
                 .filter(|b| b.has_doc_tests())
+                .filter(|b| args.no_doc || run.doc_cached.contains(&b.package))
                 .map(|b| b.target.replace('-', "_"))
                 .collect(),
             root: run.root.to_path_buf(),
@@ -402,7 +415,7 @@ fn run_together(
         true => Some(rustdoc::install(&dir, &run.run_dir.exe).map_err(|e| e.to_string())?),
         false => None,
     };
-    if !skip_doc && !run.doc.is_empty() {
+    if !run.doc.is_empty() {
         println!("test: doc tests for {}", run.doc.join(", "));
         tally.doc = run.doc.len();
     }
@@ -467,6 +480,79 @@ fn attribute_cargo_failure(outcome: &cargo::RunOutcome, binary_failed: bool, tal
             println!("  {line}");
         }
         tally.failed.push(format!("cargo test (exit {code})"));
+    }
+}
+
+/// The doc-test packages and their pass keys. The keys are empty when the
+/// run cannot be certified, so every package's doc tests run.
+struct DocPasses {
+    packages: Vec<String>,
+    environment: Option<String>,
+    keys: Vec<(String, String)>,
+}
+
+impl DocPasses {
+    fn new(
+        certifier: &cert::Certifier,
+        keyer: &mut Keyer,
+        args: &TestArgs,
+        packages: Vec<String>,
+    ) -> Result<DocPasses, String> {
+        let environment = certifier.environment()?;
+        let keys = match &environment {
+            Some(env) => packages
+                .iter()
+                .map(|p| Ok((p.clone(), keyer.doc_key(p, env, &args.cargo_args)?)))
+                .collect::<Result<Vec<_>, String>>()?,
+            None => Vec::new(),
+        };
+        Ok(DocPasses {
+            packages,
+            environment,
+            keys,
+        })
+    }
+
+    /// The packages whose doc tests have a stored pass.
+    fn cached(&self, passes: Option<&Passes>, no_cache: bool) -> Vec<String> {
+        let Some(passes) = passes.filter(|_| !no_cache) else {
+            return Vec::new();
+        };
+        self.keys
+            .iter()
+            .filter(|(_, key)| passes.has(key))
+            .map(|(package, _)| package.clone())
+            .collect()
+    }
+
+    fn uncached(&self, cached: &[String]) -> Vec<String> {
+        let rest = self.packages.iter().filter(|p| !cached.contains(p));
+        rest.cloned().collect()
+    }
+
+    /// Store a pass for each package whose doc tests ran, when nothing failed
+    /// and the package's inputs are the ones it was keyed under.
+    fn store(
+        &self,
+        keyer: &mut Keyer,
+        passes: &Passes,
+        ran: &[String],
+        args: &TestArgs,
+        tally: &Tally,
+    ) -> Result<(), String> {
+        let Some(env) = &self.environment else {
+            return Ok(());
+        };
+        if !tally.failed.is_empty() || ran.is_empty() {
+            return Ok(());
+        }
+        keyer.refresh()?;
+        for (package, key) in self.keys.iter().filter(|(p, _)| ran.contains(p)) {
+            if keyer.doc_key(package, env, &args.cargo_args)? == *key {
+                passes.record(&format!("{package} doc tests"), key);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -571,7 +657,7 @@ fn named(args: &TestArgs, pkgs: &[Package]) -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// Selected packages with a library target, whose doc tests cannot be cached.
+/// Selected packages with a library target, whose doc tests run.
 fn doc_packages(args: &TestArgs, tests: &[TestBin]) -> Vec<String> {
     if args.no_doc || cargo::narrows_targets(&args.cargo_args) {
         return Vec::new();
@@ -594,6 +680,8 @@ struct Tally {
     failed: Vec<String>,
     /// Binaries that failed, then passed on a rerun.
     flaky: Vec<String>,
+    /// Packages whose doc tests were skipped on a stored pass.
+    doc_cached: usize,
     /// The run was answered from a stored certificate.
     certified: bool,
 }
@@ -613,6 +701,9 @@ impl Tally {
             "test: {selected} of {total} packages selected, {} binaries run, {} skipped (cached), doc tests in {} packages",
             self.ran, self.skipped, self.doc
         );
+        if self.doc_cached > 0 {
+            line.push_str(&format!(" ({} cached)", self.doc_cached));
+        }
         if !self.flaky.is_empty() {
             line.push_str(&format!("\ntest: FLAKY: {}", self.flaky.join(", ")));
         }
