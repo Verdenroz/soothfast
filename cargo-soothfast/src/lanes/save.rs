@@ -16,7 +16,7 @@ pub fn save(
 ) -> Result<usize, String> {
     let lanes: Vec<Value> =
         serde_json::from_str(listing).map_err(|e| format!("lanes.json: {e}"))?;
-    let mut saved = 0;
+    let mut entries = Vec::with_capacity(lanes.len());
     for lane in &lanes {
         let (Some(id), Some(key), Some(records)) = (
             lane["lane"].as_str(),
@@ -28,6 +28,10 @@ pub fn save(
         if !is_key(key) {
             return Err(format!("lanes.json: {key:?} is not a lane key"));
         }
+        entries.push((id, key, records));
+    }
+    let mut saved = 0;
+    for (id, key, records) in entries {
         let complete = !records.is_empty()
             && records
                 .iter()
