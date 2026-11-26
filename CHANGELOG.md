@@ -14,6 +14,10 @@
 
 - ci: Consolidate check jobs into shared lanes (#529)
 
+### 🐛 Fixes
+
+- Reuse stored bench executables for the merge-base (#530)
+
 
 ## 0.9.0 - 2026-11-26
 
