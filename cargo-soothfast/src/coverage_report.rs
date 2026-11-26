@@ -23,7 +23,8 @@ struct Row {
     measured_declared: Option<bool>,
 }
 
-const DIMENSIONS: [(&str, &str); 3] = [
+/// Every dimension a report carries: its JSON name and its label.
+pub(crate) const DIMENSIONS: [(&str, &str); 3] = [
     ("documented", "documented"),
     ("documented_strict", "documented+"),
     ("measured_declared", "measured (declared)"),

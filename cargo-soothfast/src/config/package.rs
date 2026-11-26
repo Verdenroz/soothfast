@@ -53,7 +53,7 @@ impl Group {
             "target" => self != Group::Test,
             "baseline" => matches!(self, Group::Gate | Group::Docs),
             "paths" | "coverage" => self == Group::Docs,
-            _ => false,
+            _ => key.starts_with("coverage_min.") && self == Group::Docs,
         }
     }
 }
@@ -76,9 +76,19 @@ pub struct Settings {
     pub paths: Option<Vec<String>>,
     /// The minimum percent `coverage docs` requires, as `--min` takes it.
     pub coverage: Option<u32>,
+    /// The minimum percent of each other coverage dimension, by name.
+    pub minimums: BTreeMap<String, u32>,
 }
 
 impl Settings {
+    /// The minimum percent `dimension` must reach, where one is set.
+    pub fn minimum(&self, dimension: &str) -> Option<u32> {
+        match dimension {
+            "documented" => self.coverage,
+            _ => self.minimums.get(dimension).copied(),
+        }
+    }
+
     /// These settings, with `lower` supplying every key they leave unset.
     pub fn or(self, lower: Settings) -> Settings {
         Settings {
@@ -88,6 +98,7 @@ impl Settings {
             baseline: self.baseline.or(lower.baseline),
             paths: self.paths.or(lower.paths),
             coverage: self.coverage.or(lower.coverage),
+            minimums: lower.minimums.into_iter().chain(self.minimums).collect(),
         }
     }
 }
@@ -204,6 +215,16 @@ fn set(
     if group.is_some_and(|g| !g.takes(key)) {
         return Err(());
     }
+    if let Some((dimension, n)) = super::docs::coverage_min(key, &value).filter(|_| group.is_some())
+    {
+        match dimension {
+            "documented" => settings.coverage = Some(n),
+            _ => {
+                settings.minimums.insert(dimension.to_string(), n);
+            }
+        }
+        return Ok(());
+    }
     match (key, value) {
         ("features", TomlValue::Str(s)) => settings.features = Some(s),
         ("target", TomlValue::Str(s)) if group.is_some() => settings.target = Some(s),
@@ -296,6 +317,21 @@ mod tests {
         assert!(parse("[package.a]\ncoverage = 85\n").is_err());
         assert!(parse("[package.a.docs]\ncoverage = 101\n").is_err());
         assert!(parse("[package.a.docs]\ncoverage = \"85\"\n").is_err());
+    }
+
+    #[test]
+    fn a_dimension_minimum_belongs_to_the_docs_group() {
+        let tables = parse(
+            "[package.a.docs]\ncoverage_min.documented = 80\ncoverage_min.measured_declared = 50\n",
+        )
+        .unwrap();
+        let docs = tables["a"].settings(Group::Docs);
+        assert_eq!(docs.minimum("documented"), Some(80));
+        assert_eq!(docs.minimum("measured_declared"), Some(50));
+        assert_eq!(docs.minimum("documented_strict"), None);
+        assert!(parse("[package.a.gate]\ncoverage_min.documented = 80\n").is_err());
+        assert!(parse("[package.a]\ncoverage_min.documented = 80\n").is_err());
+        assert!(parse("[package.a.docs]\ncoverage_min.docs = 80\n").is_err());
     }
 
     #[test]

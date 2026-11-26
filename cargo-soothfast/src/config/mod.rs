@@ -236,6 +236,7 @@ impl Config {
                 Settings {
                     paths: Some(docs.paths).filter(|p| !p.is_empty()),
                     coverage: docs.coverage,
+                    minimums: docs.minimums,
                     ..Settings::default()
                 }
             }
@@ -384,6 +385,19 @@ mod tests {
             None
         );
         assert_eq!(config("").resolve(&[], Group::Docs).unwrap().coverage, None);
+    }
+
+    #[test]
+    fn dimension_minimums_merge_key_by_key_over_the_repo_wide_ones() {
+        let text = "[docs]\ncoverage = 70\ncoverage_min.measured_declared = 10\ncoverage_min.documented_strict = 20\n\n[package.core.docs]\ncoverage_min.documented = 90\ncoverage_min.documented_strict = 30\n";
+        let cfg = config(text);
+        let core = cfg.resolve(&pkgs(&["core"]), Group::Docs).unwrap();
+        let other = cfg.resolve(&pkgs(&["other"]), Group::Docs).unwrap();
+        let got = |s: &Settings| {
+            ["documented", "documented_strict", "measured_declared"].map(|d| s.minimum(d))
+        };
+        assert_eq!(got(&core), [Some(90), Some(30), Some(10)]);
+        assert_eq!(got(&other), [Some(70), Some(20), Some(10)]);
     }
 
     #[test]
