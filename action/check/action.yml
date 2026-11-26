@@ -1,23 +1,26 @@
 name: soothfast-check
 description: >-
   Run one check job of the reusable run workflow: the toolchain and caches,
-  `cargo soothfast ci` for the check's kind, the spec builds staged for the
-  jobs that read them, and the result upload. Expects the workflow's
+  `cargo soothfast ci checks` over the entry's checks, the spec builds staged
+  for the jobs that read them, and the result upload. Expects the workflow's
   repository checked out at its ref in `.soothfast-action`, and the caller's
   own checkout in the workspace.
 inputs:
-  kind:
-    description: The check kind, which names the rust-cache entry.
+  slug:
+    description: The entry's name, which names its caches and artifacts.
     required: true
-  package:
-    description: The package the check covers; empty for a kind that has none.
+  runs:
+    description: The `KIND[:PACKAGE]` tokens `ci checks` runs, separated by spaces.
+    required: true
+  spec:
+    description: The spec packages whose builds to stage, separated by spaces.
     required: false
     default: ""
-  name:
-    description: The check's record name, which names its caches and artifacts.
+  cache:
+    description: The name the rust-cache entry is shared under.
     required: true
   rustdoc:
-    description: Whether the check reads rustdoc JSON, so needs the pinned nightly.
+    description: Whether a check reads rustdoc JSON, so needs the pinned nightly.
     required: false
     default: "false"
   stage:
@@ -37,7 +40,7 @@ runs:
         toolchain: stable
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
-        shared-key: check-${{ inputs.kind }}
+        shared-key: check-${{ inputs.cache }}
     - uses: ./.soothfast-action/action/install
     - name: Install the pinned rustdoc toolchain
       if: inputs.rustdoc == 'true'
@@ -51,38 +54,39 @@ runs:
         path: |
           .soothfast/rustdoc
           .soothfast/bins
-        key: soothfast-check-${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-${{ github.sha }}
+        key: soothfast-check-${{ inputs.slug }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-${{ github.sha }}
         restore-keys: |
-          soothfast-check-${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-
-          soothfast-check-${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
-          soothfast-check-${{ inputs.name }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.repository.default_branch }}-
+          soothfast-check-${{ inputs.slug }}-${{ runner.os }}-${{ runner.arch }}-${{ github.ref_name }}-
+          soothfast-check-${{ inputs.slug }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.pull_request.base.ref || github.ref_name }}-
+          soothfast-check-${{ inputs.slug }}-${{ runner.os }}-${{ runner.arch }}-${{ github.event.repository.default_branch }}-
     - name: Check
       shell: bash
       env:
-        KIND: ${{ inputs.kind }}
-        PACKAGE: ${{ inputs.package }}
+        RUNS: ${{ inputs.runs }}
         SOOTHFAST_REGEN: ${{ inputs.regen == 'true' && 'true' || '' }}
-      run: cargo soothfast ci "$KIND" ${PACKAGE:+-p "$PACKAGE"}
+      run: cargo soothfast ci checks $RUNS
     # Both lanes are store hits after the check, so this only copies what
     # the site's routes pages and the regeneration read.
     - name: Stage the spec builds
-      if: ${{ !cancelled() && inputs.kind == 'spec' && inputs.stage == 'true' }}
+      if: ${{ !cancelled() && inputs.spec != '' && inputs.stage == 'true' }}
       shell: bash
       env:
-        PACKAGE: ${{ inputs.package }}
+        SPEC: ${{ inputs.spec }}
         STAGE: ${{ runner.temp }}/store
       run: |
+        packages=()
+        for package in $SPEC; do packages+=(--spec "$package"); done
         for lane in routes rustdoc; do
-          cargo soothfast ci build "$lane" --stage "$STAGE" ${PACKAGE:+--spec "$PACKAGE"} \
+          cargo soothfast ci build "$lane" --stage "$STAGE" "${packages[@]}" \
             || echo "::warning::could not stage the $lane builds"
         done
         if [ -d "$STAGE" ]; then tar -C "$STAGE" -cf "$RUNNER_TEMP/store.tar" .; fi
     # Only the staging step writes the tar, so nothing uploads without it.
     - name: Upload the spec builds
-      if: ${{ !cancelled() && inputs.kind == 'spec' }}
+      if: ${{ !cancelled() && inputs.spec != '' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: soothfast-store-${{ inputs.name }}
+        name: soothfast-store-${{ inputs.slug }}
         path: ${{ runner.temp }}/store.tar
         if-no-files-found: ignore
         retention-days: 1
@@ -91,6 +95,6 @@ runs:
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: soothfast-result-${{ inputs.name }}-attempt-${{ github.run_attempt }}
+        name: soothfast-result-${{ inputs.slug }}-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/soothfast-results
         if-no-files-found: ignore

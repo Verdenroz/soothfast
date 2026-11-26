@@ -1101,7 +1101,7 @@ jobs:
   # in soothfast.toml. Each is `cargo soothfast ci KIND`, so its flags and
   # packages come from the file.
   check:
-    name: ${{ matrix.name }}
+    name: ${{ matrix.slug }}
     needs: plan
     if: github.event_name != 'schedule' && needs.plan.outputs.checks_any == 'true'
     runs-on: ${{ fromJSON(needs.plan.outputs.runs_on) }}
@@ -1131,9 +1131,10 @@ jobs:
           persist-credentials: false
       - uses: ./.soothfast-action/action/check
         with:
-          kind: ${{ matrix.kind }}
-          package: ${{ matrix.package }}
-          name: ${{ matrix.name }}
+          slug: ${{ matrix.slug }}
+          runs: ${{ matrix.runs }}
+          spec: ${{ matrix.spec }}
+          cache: ${{ matrix.cache }}
           rustdoc: ${{ matrix.rustdoc }}
           stage: >-
             ${{ needs.plan.outputs.site_in_docs == 'true'

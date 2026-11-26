@@ -5,7 +5,10 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use super::env::CiEnv;
 use super::{capture, coverage, proto, site, spec};
+
+type Run = fn(&CiEnv, &[String]) -> i32;
 
 /// A per-package check kind: where its packages come from, and whether its
 /// command reads rustdoc JSON and so needs the pinned nightly.
@@ -13,6 +16,7 @@ struct Kind {
     name: &'static str,
     rustdoc: bool,
     packages: fn(&Path) -> Result<Vec<String>, String>,
+    run: Run,
 }
 
 const KINDS: &[Kind] = &[
@@ -20,21 +24,25 @@ const KINDS: &[Kind] = &[
         name: "spec",
         rustdoc: true,
         packages: spec::configured_at,
+        run: spec::run,
     },
     Kind {
         name: "proto",
         rustdoc: false,
         packages: proto::configured_at,
+        run: proto::run,
     },
     Kind {
         name: "coverage",
         rustdoc: true,
         packages: coverage::configured_at,
+        run: coverage::run,
     },
     Kind {
         name: "capture",
         rustdoc: false,
         packages: capture::configured_at,
+        run: capture::run,
     },
 ];
 
@@ -53,6 +61,14 @@ impl Check {
     pub fn name(&self) -> String {
         match &self.package {
             Some(package) => format!("{}-{package}", self.kind),
+            None => self.kind.to_string(),
+        }
+    }
+
+    /// The `KIND[:PACKAGE]` token `ci checks` runs it by.
+    pub fn token(&self) -> String {
+        match &self.package {
+            Some(package) => format!("{}:{package}", self.kind),
             None => self.kind.to_string(),
         }
     }
@@ -94,19 +110,75 @@ fn collect(
     Ok(checks)
 }
 
-/// The matrix the workflow's check job runs over.
+/// The matrix the workflow's check job runs over. An entry's `slug` names
+/// its job, caches and artifacts, `runs` the tokens `ci checks` takes, and
+/// `spec` the spec packages whose builds it stages.
 pub fn matrix<'a>(checks: impl Iterator<Item = &'a Check>) -> Value {
     let include: Vec<Value> = checks
         .map(|c| {
+            let spec = if c.kind == "spec" {
+                c.package.clone()
+            } else {
+                None
+            };
             json!({
-                "name": c.name(),
-                "kind": c.kind,
-                "package": c.package.clone().unwrap_or_default(),
+                "slug": c.name(),
+                "runs": c.token(),
+                "spec": spec.unwrap_or_default(),
+                "cache": c.kind,
                 "rustdoc": c.rustdoc,
             })
         })
         .collect();
     json!({ "include": include })
+}
+
+/// The kinds `tokens` name, in order of first mention, each with its
+/// packages.
+fn grouped(tokens: &[String]) -> Result<Vec<(&str, Vec<&str>)>, String> {
+    let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
+    for token in tokens {
+        let (kind, package) = match token.split_once(':') {
+            Some((kind, package)) => (kind, Some(package)),
+            None => (token.as_str(), None),
+        };
+        if kind != SITE && !KINDS.iter().any(|k| k.name == kind) {
+            return Err(format!("unknown check kind {kind:?}"));
+        }
+        let at = match groups.iter().position(|(k, _)| *k == kind) {
+            Some(at) => at,
+            None => {
+                groups.push((kind, Vec::new()));
+                groups.len() - 1
+            }
+        };
+        groups[at].1.extend(package);
+    }
+    Ok(groups)
+}
+
+/// Entry point for `ci checks KIND[:PACKAGE]...`: runs each kind once over
+/// its packages and returns the worst exit code.
+pub fn run(env: &CiEnv, tokens: &[String]) -> i32 {
+    let groups = match grouped(tokens) {
+        Ok(groups) => groups,
+        Err(e) => return crate::arg_err(&e),
+    };
+    groups
+        .iter()
+        .map(|(kind, packages)| {
+            let run: Run = KINDS
+                .iter()
+                .find(|k| k.name == *kind)
+                .map_or(site::run, |k| k.run);
+            let args: Vec<String> = packages
+                .iter()
+                .flat_map(|p| ["-p".to_string(), p.to_string()])
+                .collect();
+            run(env, &args)
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -134,9 +206,31 @@ mod tests {
         );
         assert_eq!(
             matrix(checks.iter())["include"][0],
-            json!({"name": "spec-server", "kind": "spec", "package": "server", "rustdoc": true})
+            json!({"slug": "spec-server", "runs": "spec:server", "spec": "server", "cache": "spec", "rustdoc": true})
         );
-        assert_eq!(matrix(checks.iter())["include"][3]["package"], "");
+        assert_eq!(
+            matrix(checks.iter())["include"][3],
+            json!({"slug": "site", "runs": "site", "spec": "", "cache": "site", "rustdoc": true})
+        );
+    }
+
+    fn tokens(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn tokens_group_by_kind_in_order() {
+        let given = tokens(&["spec:a", "proto:w", "spec:b", "site"]);
+        let groups = grouped(&given).unwrap();
+        assert_eq!(
+            groups,
+            [
+                ("spec", vec!["a", "b"]),
+                ("proto", vec!["w"]),
+                ("site", vec![])
+            ]
+        );
+        assert!(grouped(&tokens(&["nope:a"])).is_err());
     }
 
     #[test]
