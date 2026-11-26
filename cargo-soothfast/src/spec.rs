@@ -13,17 +13,17 @@ use crate::invoke::{self, CommonArgs};
 use crate::spec_config::{self, ProtoEntry};
 
 /// One spec file's declared surface reconciled against the route registry.
-struct SpecReport {
-    spec_file: String,
+pub(crate) struct SpecReport {
+    pub(crate) spec_file: String,
     kind: SpecKind,
     declared_count: usize,
-    routes: Vec<RouteDecl>,
-    rec: reconcile::Reconciliation,
+    pub(crate) routes: Vec<RouteDecl>,
+    pub(crate) rec: reconcile::Reconciliation,
 }
 
 /// Collect `#[route]` registrations grouped by spec file, parse each spec,
 /// and reconcile. Shared by `spec check` and `docs routes`.
-fn gather(pkg: &str, common: &CommonArgs) -> Result<Vec<SpecReport>, String> {
+pub(crate) fn gather(pkg: &str, common: &CommonArgs) -> Result<Vec<SpecReport>, String> {
     let records = invoke::run_discovery(common, &["--list-routes"]).map_err(|e| e.to_string())?;
     let mut by_spec: BTreeMap<String, Vec<RouteDecl>> = BTreeMap::new();
     for r in records.iter().filter(|r| r["type"] == "route") {
