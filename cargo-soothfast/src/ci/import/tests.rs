@@ -278,8 +278,7 @@ fn a_project_leaves_one_record_named_for_it_of_kind_import() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let exe = dir.join("fake-soothfast");
-    std::fs::write(&exe, "#!/bin/sh\necho \"regressed: $*\"\nexit 1\n").unwrap();
-    std::fs::set_permissions(&exe, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    write_script(&exe, "#!/bin/sh\necho \"regressed: $*\"\nexit 1\n");
     let results = dir.join("results");
     let env = ci_env(Event::PullRequest, Some("b4se"), Some(&results));
     assert_eq!(launch(&env, &exe, &job(Ecosystem::Gradle)), 1);
@@ -572,4 +571,20 @@ fn the_node_bench_is_one_script_run_by_bash() {
         .remove(0);
     gate(&mut host, &ctx, &job);
     assert!(host.ran("/repo/p bash -ec npm ci\nrun --json bench.json"));
+}
+
+/// Writes an executable script from a child process: a write handle held by
+/// this process could leak into a sibling test's fork and fail exec with ETXTBSY.
+fn write_script(path: &std::path::Path, body: &str) {
+    let status = std::process::Command::new("sh")
+        .args([
+            "-c",
+            "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+            "sh",
+            body,
+        ])
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success());
 }
