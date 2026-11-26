@@ -12,6 +12,7 @@
 
 ### ✨ Features
 
+- Report every coverage dimension in CI and badges (#504)
 - Report router drift for generated specs (#508)
 - Plan measured lanes by each package's gate target (#510)
 - Warn on loose and contradictory claims (#506)
