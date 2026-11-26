@@ -530,13 +530,19 @@ A route is in the spec when reconciliation matches its operation with the
 method and path the code serves; a disagreement is reported as `mismatch`
 and counts as not in the spec. A probe covers a route by the rule `spec
 probe` uses for its own count: same verb, and a path the route's template
-accepts. Tools and other non-HTTP operations are never covered by an HTTP
-probe. The handler's public path is the id the route registry records, and
-`--json` carries it with both flags for each route.
+accepts. An HTTP probe cannot exercise an MCP tool, so a tool reports
+`probed: n/a` and counts as specified when it is in the spec. The handler's
+public path is the id the route registry records, and `--json` carries it
+with both flags for each route.
+
+Spec operations that no registered route implements are listed after the
+routes as `declared, no handler: <operation> <method> <path>` (`unhandled`
+in `--json`). They stay out of the total, which counts registered routes.
 
 The command is advisory. `--min PCT` fails it when the share of routes that
-are both in the spec and probed falls below `PCT`. A package with no
-`[[spec]]` entries prints that and exits 0.
+are specified falls below `PCT`; no routes counts as 100%. A package with no
+`[[spec]]` entries prints that and exits 0, and a spec file with no
+registered routes prints `PKG: no routes registered for FILE`.
 
 ## Probing data quality
 
