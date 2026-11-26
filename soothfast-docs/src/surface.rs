@@ -13,9 +13,12 @@ use std::path::Path;
 
 use serde_json::Value;
 
+mod counted;
 mod generated;
 #[cfg(test)]
 mod generated_tests;
+
+pub use counted::Counted;
 
 /// What the surface records about one public item — enough to detect any
 /// change to it (fingerprint), classify the change (signature), and audit
@@ -39,8 +42,9 @@ pub struct ItemInfo {
 pub struct Surface {
     pub items: BTreeMap<String, ItemInfo>,
     /// Pub methods and associated consts of inherent impls, keyed
-    /// `type_path::name`. Kept apart from `items` so coverage, the API
-    /// reference and the API diff keep counting top-level items only.
+    /// `type_path::name`. Kept apart from `items` so the API reference and
+    /// the API diff list top-level items only; [`Surface::counted`] joins
+    /// the two for coverage.
     pub members: BTreeMap<String, ItemInfo>,
 }
 
@@ -760,6 +764,20 @@ mod tests {
             surface.lookup("rw::Rewriter::rewrite").unwrap().fingerprint,
             method.fingerprint
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn counted_takes_inherent_methods_and_leaves_trait_impls_and_private_ones() {
+        let dir =
+            std::env::temp_dir().join(format!("soothfast-surface-counted-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "pub struct Rewriter;\n    pub fn rewrite() {}\n    fn hidden() {}\n    pub const LIMIT: u8 = 1;\n    fn default() {}\n").unwrap();
+
+        let surface = from_rustdoc(&impl_doc(), &dir);
+        let paths: Vec<_> = surface.counted().into_iter().map(|c| c.path).collect();
+        assert_eq!(paths, ["rw", "rw::Rewriter", "rw::Rewriter::rewrite"]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

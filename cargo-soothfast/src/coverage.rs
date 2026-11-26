@@ -70,13 +70,13 @@ fn measure(args: &[String]) -> i32 {
         }
     };
     let mut missing = 0u32;
-    let groups: Vec<_> = surf
-        .grouped()
+    let callables: Vec<_> = surf
+        .counted()
         .into_iter()
-        .filter(|g| surf.items[g.representative].kind == "function")
+        .filter(|c| c.info.kind == "function")
         .collect();
-    for g in &groups {
-        let is_measured = g.aliases.iter().any(|a| covered.contains(a.as_str()));
+    for c in &callables {
+        let is_measured = c.aliases.iter().any(|a| covered.contains(a.as_str()));
         let mark = if is_measured {
             "measured  "
         } else {
@@ -85,9 +85,9 @@ fn measure(args: &[String]) -> i32 {
         if !is_measured {
             missing += 1;
         }
-        println!("{mark} {}", g.representative);
+        println!("{mark} {}", c.path);
     }
-    let p = report("measured", groups.len() as u32, missing);
+    let p = report("measured", callables.len() as u32, missing);
     for file in &badges {
         if let Err(e) = write_badge(Path::new(file), "soothfast measured", p) {
             eprintln!("soothfast: {e}");
@@ -164,20 +164,19 @@ fn docs(args: &[String]) -> i32 {
                 return 1;
             }
         };
-        let groups = surf.grouped();
-        for g in &groups {
-            let info = &surf.items[g.representative];
-            let mark = if info.has_docs {
+        let counted = surf.counted();
+        for c in &counted {
+            let mark = if c.info.has_docs {
                 "documented  "
             } else {
                 "UNDOCUMENTED"
             };
-            if !info.has_docs {
+            if !c.info.has_docs {
                 missing += 1;
             }
-            println!("{mark} {} ({})", g.representative, info.kind);
+            println!("{mark} {} ({})", c.path, c.info.kind);
         }
-        total += groups.len() as u32;
+        total += counted.len() as u32;
     }
     let p = report("documented", total, missing);
     for file in &badges {
