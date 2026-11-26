@@ -37,6 +37,7 @@ pub struct Change {
 }
 
 impl Change {
+    /// A change of `severity` at `at`, described by `detail`.
     pub fn new(severity: Severity, at: impl Into<String>, detail: impl Into<String>) -> Self {
         Change {
             severity,

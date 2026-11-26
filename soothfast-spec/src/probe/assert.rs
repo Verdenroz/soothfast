@@ -47,6 +47,7 @@ enum Op {
 }
 
 impl Assertion {
+    /// Parse one assertion line: a field path, an operator and a JSON operand.
     pub fn parse(line: &str) -> Result<Assertion, String> {
         let mut parts = line.split_whitespace();
         let path_text = parts.next().ok_or("empty assertion")?;

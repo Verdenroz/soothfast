@@ -245,7 +245,7 @@ fn md_files(a: &DocsArgs, root: &Path, scope: &[String]) -> Vec<PathBuf> {
 }
 
 /// Tracked markdown files, relative to `root`. Empty outside a git checkout.
-fn tracked_md(root: &Path) -> Vec<String> {
+pub(crate) fn tracked_md(root: &Path) -> Vec<String> {
     invoke::git_in(root, &["ls-files", "*.md"])
         .map(|out| out.lines().map(str::to_string).collect())
         .unwrap_or_default()

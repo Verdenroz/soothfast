@@ -47,6 +47,11 @@ pub fn defaults(pkgs: &[String], group: Group) -> Result<Settings, String> {
     Config::load(&invoke::project_root())?.resolve(pkgs, group)
 }
 
+/// [`defaults`] of `pkgs` for the `coverage` commands.
+pub fn coverage_defaults(pkgs: &[String]) -> Result<Settings, String> {
+    Config::load(&invoke::project_root())?.resolve_coverage(pkgs)
+}
+
 /// What a measurement of `pkgs` hides beyond AVX-512, as a stamp records it:
 /// the gate's mask for them, or the repo-wide one when they resolve
 /// differently, and nothing where the harness has no mask to apply.
@@ -206,6 +211,21 @@ impl Config {
         Ok(own.or(self.repo_wide(group)?))
     }
 
+    /// [`Self::resolve`] in the `docs` group, except that `features` falls
+    /// back to what the gate resolves for `pkgs`: coverage counts what the
+    /// gate compiles.
+    pub fn resolve_coverage(&self, pkgs: &[String]) -> Result<Settings, String> {
+        let settings = self.resolve(pkgs, Group::Docs)?;
+        let features = match settings.features {
+            Some(features) => Some(features),
+            None => self.resolve(pkgs, Group::Gate)?.features,
+        };
+        Ok(Settings {
+            features,
+            ..settings
+        })
+    }
+
     fn repo_wide(&self, group: Group) -> Result<Settings, String> {
         Ok(match group {
             Group::Gate | Group::Spec => {
@@ -304,6 +324,21 @@ mod tests {
         assert_eq!(docs.baseline.as_deref(), Some("main"));
         let spec = cfg.resolve(&pkgs(&["unlisted"]), Group::Spec).unwrap();
         assert_eq!(spec.features.as_deref(), Some("repo"));
+    }
+
+    #[test]
+    fn coverage_falls_back_to_the_gate_features_after_the_package_ones() {
+        let cfg = config("[gate]\nfeatures = \"repo\"\n\n[package.core]\nfeatures = \"all\"\n");
+        let features = |p: &[&str]| cfg.resolve_coverage(&pkgs(p)).unwrap().features;
+        assert_eq!(features(&["core"]).as_deref(), Some("all"));
+        assert_eq!(features(&["unlisted"]).as_deref(), Some("repo"));
+        assert_eq!(features(&[]).as_deref(), Some("repo"));
+        let per_package =
+            config("[gate]\nfeatures = \"repo\"\n\n[package.core.gate]\nfeatures = \"bench\"\n");
+        let core = per_package.resolve_coverage(&pkgs(&["core"])).unwrap();
+        assert_eq!(core.features.as_deref(), Some("bench"));
+        let docs = cfg.resolve(&pkgs(&["unlisted"]), Group::Docs).unwrap();
+        assert_eq!(docs.features, None);
     }
 
     #[test]
