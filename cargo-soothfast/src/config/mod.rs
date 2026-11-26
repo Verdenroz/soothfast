@@ -84,14 +84,6 @@ impl Config {
         Ok(Self { path, text })
     }
 
-    /// A config over `text`, for a file read from somewhere other than disk.
-    pub fn from_text(text: String) -> Self {
-        Self {
-            path: PathBuf::from("soothfast.toml"),
-            text,
-        }
-    }
-
     /// Fill the flags `common` leaves unset from the defaults of `pkgs` in
     /// `group`. `target` fills `--bench`, the bench target the command builds.
     pub fn fill(

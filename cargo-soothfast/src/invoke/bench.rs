@@ -523,7 +523,8 @@ mod tests {
             .get_args()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(args[..3], ["bench", "-j", "4"]);
+        let at = args.iter().position(|a| a == "bench").unwrap();
+        assert_eq!(args[at..at + 3], ["bench", "-j", "4"]);
     }
 
     #[test]

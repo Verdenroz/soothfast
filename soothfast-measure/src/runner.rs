@@ -83,7 +83,12 @@ fn parse_args_from(mut it: impl Iterator<Item = String>) -> Args {
                 }
             }
             "--filter" => match it.next() {
-                Some(f) => args.filter = Some(f),
+                Some(f) => {
+                    if let Err(e) = filter::validate(&f) {
+                        die(&e);
+                    }
+                    args.filter = Some(f);
+                }
                 None => die("--filter needs a value"),
             },
             "--id" => match it.next() {

@@ -121,12 +121,12 @@ bench`. That profile inherits `[profile.release]`, so `lto` and the rest of
 the release settings apply, and `[profile.bench]` or `CARGO_PROFILE_BENCH_*`
 adjust them. The one exception is `codegen-units`: the measurement pin forces
 it to 1 for the workspace's own crates (see [gating](gating.md)), so a value
-set for the bench profile is overridden. `measure` and `gate` print a warning
+set for the bench profile is overridden for those crates; dependencies keep it. `measure` and `gate` print a warning
 when one is set; `--codegen-units inherit` turns the pin off.
 
 ## Running a subset
 
-`measure` and `gate` take `-p PKG`, `--features F` and `-j N`, which goes to
+`measure` and `gate` take `-p PKG`, `--features F` and `-j N` (also `-jN`, `--jobs=N`), which goes to
 cargo for the bench build. `--filter` selects items by id: a plain string
 matches as a substring, `|` separates alternatives, and a leading `^` or
 trailing `$` anchors an alternative to the start or end of the id, so

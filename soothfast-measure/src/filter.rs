@@ -1,5 +1,19 @@
 //! `--filter` matching: substring alternatives with `^`/`$` anchors.
 
+/// Why `filter` cannot select anything, when an alternative is empty or only
+/// an anchor: it would match every id.
+pub fn validate(filter: &str) -> Result<(), String> {
+    let empty = filter
+        .split('|')
+        .any(|alt| alt.trim_start_matches('^').trim_end_matches('$').is_empty());
+    if empty {
+        return Err(format!(
+            "--filter {filter:?} has an empty alternative, which would match every item"
+        ));
+    }
+    Ok(())
+}
+
 /// Whether `id` matches `filter`: any `|`-separated alternative that is a
 /// substring of `id`, with a leading `^` pinning it to the start and a
 /// trailing `$` to the end.
@@ -46,6 +60,17 @@ mod tests {
         assert!(!matches("a$", "a::x"));
         assert!(matches("^a::x$", "a::x"));
         assert!(!matches("^a::$", "a::x"));
+    }
+
+    #[test]
+    fn empty_alternatives_are_rejected() {
+        for bad in ["fnv|", "a||b", "|a", "^", "$", "^$", "a|^"] {
+            let e = validate(bad).unwrap_err();
+            assert!(e.contains(&format!("{bad:?}")), "{bad}: {e}");
+        }
+        for ok in ["fnv", "^a::", "a$|b", "^a$"] {
+            assert!(validate(ok).is_ok(), "{ok}");
+        }
     }
 
     #[test]

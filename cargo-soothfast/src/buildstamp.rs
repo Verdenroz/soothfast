@@ -119,15 +119,17 @@ pub fn capture(common: &CommonArgs, dir: Option<&Path>) -> BuildStamp {
 /// is overridden by the measurement pin.
 pub fn warn_inert_codegen_units(common: &CommonArgs, dir: Option<&Path>) {
     static SAID: Once = Once::new();
-    let root = match dir {
-        Some(d) => Some(d.to_path_buf()),
-        None => crate::invoke::workspace_root().ok(),
-    };
-    let lines = profile_lines(root.as_deref());
-    let env_set = std::env::var_os("CARGO_PROFILE_BENCH_CODEGEN_UNITS").is_some();
-    if let Some(note) = inert_codegen_units(common, env_set, &lines) {
-        SAID.call_once(|| eprintln!("soothfast: warning: {note}"));
-    }
+    SAID.call_once(|| {
+        let root = match dir {
+            Some(d) => Some(d.to_path_buf()),
+            None => crate::invoke::workspace_root().ok(),
+        };
+        let lines = profile_lines(root.as_deref());
+        let env_set = std::env::var_os("CARGO_PROFILE_BENCH_CODEGEN_UNITS").is_some();
+        if let Some(note) = inert_codegen_units(common, env_set, &lines) {
+            eprintln!("soothfast: warning: {note}");
+        }
+    });
 }
 
 fn inert_codegen_units(common: &CommonArgs, env_set: bool, lines: &[String]) -> Option<String> {
@@ -137,7 +139,7 @@ fn inert_codegen_units(common: &CommonArgs, env_set: bool, lines: &[String]) -> 
         .any(|l| l.starts_with("profile.bench.codegen-units"));
     (env_set || manifest_set).then(|| {
         format!(
-            "codegen-units from [profile.bench] or CARGO_PROFILE_BENCH_CODEGEN_UNITS is overridden by the measurement pin ({pin}); pass --codegen-units inherit to use it"
+            "codegen-units from [profile.bench] or CARGO_PROFILE_BENCH_CODEGEN_UNITS is overridden by the measurement pin ({pin}) for workspace members; dependencies keep the configured value. Pass --codegen-units inherit to use it for members too"
         )
     })
 }

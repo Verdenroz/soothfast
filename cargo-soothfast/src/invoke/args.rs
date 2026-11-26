@@ -69,6 +69,14 @@ impl std::fmt::Display for Shard {
 impl CommonArgs {
     /// Consume one flag if it belongs to the common set.
     pub fn try_parse<'a>(&mut self, arg: &str, it: &mut impl Iterator<Item = &'a String>) -> bool {
+        let attached = arg.strip_prefix("--jobs=").or_else(|| {
+            arg.strip_prefix("-j")
+                .filter(|n| n.starts_with(|c: char| c.is_ascii_digit()))
+        });
+        if let Some(n) = attached {
+            self.jobs = Some(n.to_string());
+            return true;
+        }
         let slot = match arg {
             "--no-item-cache" => {
                 self.no_item_cache = true;
@@ -164,6 +172,11 @@ mod tests {
             let mut common = CommonArgs::default();
             assert!(common.try_parse(flag, &mut it));
             assert_eq!(common.jobs.as_deref(), Some("4"));
+        }
+        for attached in ["-j8", "--jobs=8"] {
+            let mut common = CommonArgs::default();
+            assert!(common.try_parse(attached, &mut [].iter()));
+            assert_eq!(common.jobs.as_deref(), Some("8"));
         }
     }
 

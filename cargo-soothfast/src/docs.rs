@@ -181,6 +181,9 @@ pub fn run(args: &[String]) -> i32 {
         Err(e) => return err(&e),
     }
 
+    if a.binds_only && sub != "check" {
+        return err("--binds-only applies to docs check only");
+    }
     match sub.as_str() {
         "check" => check(&a),
         "accept" => accept(&a),
@@ -594,7 +597,7 @@ fn check_scanned(a: &DocsArgs, scanned: &Scanned) -> i32 {
     }
 
     // 3. Generated-artifact manifest: regenerate in memory, compare to disk.
-    if let Some(pkg) = &a.pkg {
+    if let Some(pkg) = a.pkg.as_ref().filter(|_| !a.binds_only) {
         match invoke::pkg_dir(pkg) {
             Err(e) => return err(&e.to_string()),
             Ok(dir) => {

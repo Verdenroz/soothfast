@@ -452,6 +452,9 @@ fn parse_measure(args: &[String]) -> Result<MeasureArgs, String> {
             other => return Err(format!("unknown measure arg {other:?}")),
         }
     }
+    if let Some(f) = &out.common.filter {
+        soothfast_measure::filter::validate(f)?;
+    }
     Ok(out)
 }
 
